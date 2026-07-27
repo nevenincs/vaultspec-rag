@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from sentence_transformers import CrossEncoder
+
     from ..embeddings import EmbeddingModel
     from ..search import SearchResult
     from ..store import VaultStore
@@ -194,11 +196,17 @@ class TestCloseAll:
     def test_close_all_clears_state(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        # Use a separate registry to avoid corrupting the shared fixture
+        # Use a separate registry to avoid corrupting the shared fixture.
+        # Seed the session reranker the same way the model is seeded: this
+        # test exercises close_all's state clearing, not reranker
+        # construction, and an unseeded registry lazily loads a private
+        # ~2.3GB copy at slot creation.
         reg = ServiceRegistry()
         reg._model = embedding_model
+        reg._reranker = shared_reranker
         root = _make_vault_dir(tmp_path)
         slot = reg.peek_project(root)
         store = slot.store
@@ -549,6 +557,9 @@ class TestSharedReranker:
         embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
+        # Deliberately unseeded: this test exercises the registry's own
+        # lazy reranker construction and its release by close_all, so it
+        # must load a private instance rather than the session-shared one.
         reg = ServiceRegistry()
         reg._model = embedding_model
         root = _make_vault_dir(tmp_path)
@@ -648,10 +659,14 @@ class TestPerRootLocks:
     def test_close_all_clears_root_locks(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
+        # Seeded like the model: this test exercises root-lock clearing,
+        # not reranker construction.
         reg = ServiceRegistry()
         reg._model = embedding_model
+        reg._reranker = shared_reranker
         root = _make_vault_dir(tmp_path)
         reg.peek_project(root)
         assert len(reg._root_locks) > 0
@@ -667,12 +682,19 @@ class TestLeaseApi:
     def _reg(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         *,
         max_projects: int,
         idle_ttl: float,
     ) -> ServiceRegistry:
+        # Seed the session reranker the same way the model is seeded: these
+        # tests exercise lease, refcount, sweep and drain semantics, not
+        # reranker construction, and an unseeded registry lazily loads a
+        # private ~2.3GB copy at every slot creation - a dozen of them per
+        # module is what once drove the tier into CUDA OOM here.
         reg = ServiceRegistry()
         reg._model = embedding_model
+        reg._reranker = shared_reranker
         reg._max_projects = max_projects
         reg._idle_ttl_seconds = idle_ttl
         return reg
@@ -680,9 +702,10 @@ class TestLeaseApi:
     def test_lease_increments_refcount(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
         try:
             with reg.lease(root) as slot:
@@ -694,9 +717,10 @@ class TestLeaseApi:
     def test_lease_decrements_on_exit(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
         try:
             with reg.lease(root) as _slot:
@@ -708,9 +732,10 @@ class TestLeaseApi:
     def test_store_lease_pins_warm_store_against_concurrent_eviction(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
         slot = reg.peek_project(root)
         outcomes: list[tuple[bool, str]] = []
@@ -737,9 +762,10 @@ class TestLeaseApi:
     def test_store_count_remains_leased_while_real_count_is_blocked(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
         slot = reg.peek_project(root)
         slot.store.ensure_table()
@@ -780,9 +806,10 @@ class TestLeaseApi:
     def test_store_lease_excludes_warm_slot_from_idle_sweep(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=5.0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=5.0)
         root = _make_vault_dir(tmp_path / "leased").resolve()
         trigger_root = _make_vault_dir(tmp_path / "trigger").resolve()
         slot = reg.peek_project(root)
@@ -926,9 +953,10 @@ class TestLeaseApi:
     def test_peek_does_not_change_refcount(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
         try:
             slot = reg.peek_project(root)
@@ -943,11 +971,12 @@ class TestLeaseApi:
     def test_sweep_evicts_idle(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
         # Large TTL so the first lease doesn't immediately sweep itself;
         # we rewind last_access manually below.
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=5.0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=5.0)
         root_a = _make_vault_dir(tmp_path / "a").resolve()
         root_b = _make_vault_dir(tmp_path / "b").resolve()
         try:
@@ -967,9 +996,10 @@ class TestLeaseApi:
     def test_lru_admission_evicts_oldest(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=2, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=2, idle_ttl=0)
         root_a = _make_vault_dir(tmp_path / "a").resolve()
         root_b = _make_vault_dir(tmp_path / "b").resolve()
         root_c = _make_vault_dir(tmp_path / "c").resolve()
@@ -992,6 +1022,7 @@ class TestLeaseApi:
     def test_try_evict_reports_busy_while_leased(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
         """try_evict refuses a leased slot and succeeds once the lease drops.
@@ -1001,7 +1032,7 @@ class TestLeaseApi:
         zero for the duration of the ``with`` block, so the busy branch of
         try_evict is exercised without racing a background search.
         """
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
         try:
             with reg.lease(root):
@@ -1019,9 +1050,10 @@ class TestLeaseApi:
     def test_lru_full_raises(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=1, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=1, idle_ttl=0)
         root_a = _make_vault_dir(tmp_path / "a").resolve()
         root_b = _make_vault_dir(tmp_path / "b").resolve()
         try:
@@ -1043,9 +1075,10 @@ class TestLeaseApi:
     def test_acquire_blocks_during_shutdown(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
         try:
             with reg.lease(root):
@@ -1065,9 +1098,10 @@ class TestLeaseApi:
     def test_close_all_drains_then_force(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
-        reg = self._reg(embedding_model, max_projects=4, idle_ttl=0)
+        reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
         # Seed the slot, then hold ref_count directly (simulating an
         # in-flight request pinned through the drain deadline).  We
