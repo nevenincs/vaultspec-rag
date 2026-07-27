@@ -18,6 +18,7 @@ from ._render import (
     _emit_json_error_and_exit,
     _format_local_index_busy_message,
     _plain,
+    _print_next_action,
     address_line,
 )
 from ._status_labels import render_degradation
@@ -231,9 +232,7 @@ def _render_status_text(
         _plain(line, soft_wrap=line.startswith(("Index data:", "Project:", "Address:")))
     if service_port is not None:
         _plain(f"  vaultspec-rag server status --port {service_port}")
-    if next_action:
-        _plain("Next action:")
-        _plain(f"  {next_action}")
+    _print_next_action(next_action)
 
 
 def _emit_status_json(

@@ -1084,14 +1084,6 @@ def _failure_belongs_to_this_generation(record: dict[str, object]) -> bool:
     return finished_at >= generation_start
 
 
-def _job_source(record: dict[str, object]) -> object:
-    """Return the content source a job record indexed, or ``None``."""
-    spec = record.get("spec")
-    if isinstance(spec, dict):
-        return cast("dict[str, object]", spec).get("source")
-    return record.get("source")
-
-
 def _failure_was_superseded(
     failed: dict[str, object],
     records: list[dict[str, object]],
@@ -1106,7 +1098,7 @@ def _failure_was_superseded(
     after it, and the operator is told the *latest* job failed while newer
     ones are visibly finishing clean.
     """
-    from ._routes_jobs import job_state, job_updated_timestamp
+    from ._routes_jobs import _job_source, job_state, job_updated_timestamp
 
     failed_at = job_updated_timestamp(failed)
     if failed_at is None:

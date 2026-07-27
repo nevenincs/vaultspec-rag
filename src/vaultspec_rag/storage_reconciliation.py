@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from . import store_schema
 from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
+from ._store_writes import _free_bytes
 from .storage_survey import is_canonical_prefix
 from .storage_survey_ops import directory_size_bytes
 
@@ -30,17 +31,6 @@ _RECONCILE_HEADROOM_FACTOR = 0.5
 
 def _no_progress(_line: str) -> None:
     """Drop a progress line when the caller has no reporting surface."""
-
-
-def _free_bytes(path: Path) -> int | None:
-    """Free bytes on *path*'s volume, or ``None`` if it cannot be read."""
-    import shutil
-
-    try:
-        return shutil.disk_usage(path).free
-    except OSError:
-        logger.debug("free-space probe failed for %s", path, exc_info=True)
-        return None
 
 
 @dataclass(frozen=True)
@@ -452,8 +442,16 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
     from qdrant_client import models
 
     (
-        client, entry, storage_dir, target, budget_s, poll_s, wait, sleep,
-        monotonic, stop,
+        client,
+        entry,
+        storage_dir,
+        target,
+        budget_s,
+        poll_s,
+        wait,
+        sleep,
+        monotonic,
+        stop,
     ) = (
         request.client,
         request.entry,
@@ -581,7 +579,14 @@ def _reconcile_collections(request: _BatchRequest) -> ReconcileBatch:
         The :class:`ReconcileBatch` for this pass.
     """
     (
-        client, storage_dir, target, cap, budget_s, dry_run, wait, stop,
+        client,
+        storage_dir,
+        target,
+        cap,
+        budget_s,
+        dry_run,
+        wait,
+        stop,
         on_progress,
     ) = (
         request.client,
