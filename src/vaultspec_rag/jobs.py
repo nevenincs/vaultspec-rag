@@ -64,6 +64,7 @@ __all__ = [
     "active_index_support_profiles",
     "get_job_manager",
     "index_job_status",
+    "progress_rate",
     "record_finish",
     "record_progress",
     "record_start",
@@ -115,6 +116,19 @@ Phase = Literal[
 
 _lock = threading.Lock()
 _records: deque[dict[str, object]] = deque(maxlen=MAX_RECORDS)
+# Progress-rate sampling. The window rides on its own record, so it is
+# evicted with that record by the ring and needs no second bound.
+#
+# The window is per-step and is discarded whenever the step changes,
+# because an index job's steps have very different per-unit costs:
+# a rate carried over from discovery into embedding predicts embedding
+# badly, and a wrong estimate is worse than none.
+_PROGRESS_WINDOW_KEY = "progress_window"
+_PROGRESS_WINDOW_SAMPLES = 16
+# Two samples milliseconds apart divide a small count by a smaller
+# interval and yield a rate off by orders of magnitude. Refusing to
+# answer until the window spans a real interval costs one refresh.
+_MIN_RATE_SPAN_SECONDS = 1.0
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
 _manager_lock = threading.Lock()
 _job_manager: JobManager | None = None
@@ -355,6 +369,68 @@ def record_start(
     return record_id
 
 
+def _sample_progress(
+    record: dict[str, object],
+    *,
+    step: str,
+    previous_step: object,
+    completed: int,
+    at: float,
+) -> None:
+    """Record one progress observation on *record* (caller holds the lock).
+
+    The window is discarded when the step changes, and when the count moves
+    backwards - a resumed attempt replays committed units, so measuring
+    across that reset would report a negative rate or a wildly low one.
+    """
+    window = record.get(_PROGRESS_WINDOW_KEY)
+    samples = (
+        cast("deque[tuple[float, int]]", window)
+        if isinstance(window, deque)
+        else deque(maxlen=_PROGRESS_WINDOW_SAMPLES)
+    )
+    if previous_step != step or (samples and completed < samples[-1][1]):
+        samples.clear()
+    samples.append((at, completed))
+    record[_PROGRESS_WINDOW_KEY] = samples
+
+
+def _window_rate(samples: deque[tuple[float, int]]) -> float | None:
+    """Return the completion rate per second across *samples*, or ``None``.
+
+    Declines to answer rather than guessing: a single sample measures no
+    interval, a short span divides by near-zero, and a flat count over a
+    real span is a stall the caller should not convert into an estimate.
+    """
+    if len(samples) < 2:
+        return None
+    first_at, first_completed = samples[0]
+    last_at, last_completed = samples[-1]
+    span = last_at - first_at
+    advanced = last_completed - first_completed
+    if span < _MIN_RATE_SPAN_SECONDS or advanced <= 0:
+        return None
+    return advanced / span
+
+
+def progress_rate(record_id: str) -> float | None:
+    """Return the windowed completion rate for one job, or ``None``.
+
+    ``None`` means the service declines to estimate - the job is unknown,
+    has not reported twice within one step, or has not advanced. It never
+    means zero.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] != record_id:
+                continue
+            window = record.get(_PROGRESS_WINDOW_KEY)
+            if not isinstance(window, deque):
+                return None
+            return _window_rate(cast("deque[tuple[float, int]]", window))
+    return None
+
+
 def record_progress(
     record_id: str,
     step: str,
@@ -378,12 +454,20 @@ def record_progress(
                 if isinstance(progress, dict):
                     progress_data = cast("dict[str, object]", progress)
                     progress_step = progress_data.get("step")
+                now = time.time()
                 record["progress"] = {
                     "step": step,
                     "completed": completed,
                     "total": total,
-                    "last_updated": time.time(),
+                    "last_updated": now,
                 }
+                _sample_progress(
+                    record,
+                    step=step,
+                    previous_step=progress_step,
+                    completed=completed,
+                    at=now,
+                )
                 if progress_step != step:
                     log_fields = {
                         "job_id": record_id,
@@ -540,6 +624,11 @@ def snapshot() -> list[dict[str, object]]:
         copied: list[dict[str, object]] = []
         for record in reversed(_records):
             item = dict(record)
+            # Sampling state backs the rate estimate and is not part of the
+            # job resource. Dropping it here keeps it off every projection
+            # that builds from a snapshot, rather than relying on each one
+            # to remember to exclude it.
+            item.pop(_PROGRESS_WINDOW_KEY, None)
             prog = record.get("progress")
             if isinstance(prog, dict):
                 item["progress"] = dict(cast("dict[str, object]", prog))
@@ -1022,15 +1111,17 @@ def _bind_index_dispatch(
     """Attach one logical job to the production indexing implementation."""
     from .job_dispatch import IndexJobBinding, bind_index_job
 
-    return bind_index_job(IndexJobBinding(
-        manager=manager,
-        job_id=job_id,
-        registry=get_registry() if registry is None else registry,
-        code_preflight=code_preflight,
-        document_preflight=document_preflight,
-        on_started=_sync_legacy_started,
-        on_finished=_sync_legacy_finished,
-    ))
+    return bind_index_job(
+        IndexJobBinding(
+            manager=manager,
+            job_id=job_id,
+            registry=get_registry() if registry is None else registry,
+            code_preflight=code_preflight,
+            document_preflight=document_preflight,
+            on_started=_sync_legacy_started,
+            on_finished=_sync_legacy_finished,
+        )
+    )
 
 
 def _prepare_index_job_activation(

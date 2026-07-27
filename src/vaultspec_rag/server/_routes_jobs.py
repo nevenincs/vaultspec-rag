@@ -326,6 +326,52 @@ def _job_stalled(record: dict[str, object], now: float) -> bool:
     return age is not None and age >= STALL_THRESHOLD_SECONDS
 
 
+def _countable_progress(record: dict[str, object]) -> tuple[int, int] | None:
+    """Return ``(completed, total)`` when the job reports countable work.
+
+    Work is countable only when the service published a total, that total is
+    positive, and the count has not already reached it. A step reporting a
+    count with no total is progress an operator can read but not a basis for
+    an estimate.
+    """
+    progress = _job_mapping(record, "progress")
+    completed = progress.get("completed")
+    total = progress.get("total")
+    if isinstance(completed, bool) or not isinstance(completed, int):
+        return None
+    if isinstance(total, bool) or not isinstance(total, int):
+        return None
+    if total <= 0 or completed >= total or completed < 0:
+        return None
+    return completed, total
+
+
+def _job_completion_estimate(
+    record: dict[str, object],
+) -> tuple[float | None, float | None]:
+    """Return ``(rate_per_second, remaining_seconds)`` for one job.
+
+    Both are ``None`` unless the job is actually doing countable work now.
+    Queued, waiting, paused, transitional and terminal jobs are all inert or
+    finished, and an estimate over any of them describes work that is not
+    happening. ``None`` is the honest answer, and is rendered as unknown
+    rather than as zero.
+    """
+    if job_state(record) != JobState.RUNNING.value or _job_is_waiting(record):
+        return None, None
+    counts = _countable_progress(record)
+    if counts is None:
+        return None, None
+    identifier = record.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        return None, None
+    rate = _jobs.progress_rate(identifier)
+    if rate is None or rate <= 0:
+        return None, None
+    completed, total = counts
+    return round(rate, 3), round((total - completed) / rate, 1)
+
+
 def _round_measure(value: object) -> float | None:
     """Round a megabyte or second measure to operator precision, or drop it."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -407,6 +453,9 @@ def _job_with_liveness(
     )
     enriched["control_pending_age_seconds"] = _control_pending_age_seconds(record, now)
     enriched["stalled"] = _job_stalled(record, now)
+    rate, remaining = _job_completion_estimate(record)
+    enriched["progress_rate_per_second"] = rate
+    enriched["estimated_remaining_seconds"] = remaining
     resources = record.get("resources")
     if isinstance(resources, dict):
         resources_map = cast("dict[str, object]", resources)
