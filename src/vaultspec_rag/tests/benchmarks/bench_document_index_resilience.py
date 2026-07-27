@@ -288,7 +288,10 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
         DocumentChunkingOptions,
         chunk_document_and_hash_file,
     )
-    from ...indexer._streaming import iter_weighted_document_slices
+    from ...indexer._streaming import (
+        DocumentSliceStreamRequest,
+        iter_weighted_document_slices,
+    )
 
     resolved = root.resolve()
     indexer = DocumentIndexer(
@@ -322,8 +325,10 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
             )
             generated_chunks += len(result.chunks)
             for weighted in iter_weighted_document_slices(
-                result.chunks,
-                max_chunks=int(cfg.embedding_batch_size),
+                DocumentSliceStreamRequest(
+                    chunks=result.chunks,
+                    max_chunks=int(cfg.embedding_batch_size),
+                )
             ):
                 weighted_bytes += weighted.estimated_bytes
                 queue_bytes = max(queue_bytes, weighted.estimated_bytes)

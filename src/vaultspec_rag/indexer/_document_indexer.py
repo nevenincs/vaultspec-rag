@@ -32,6 +32,8 @@ from ._route_migration import reconcile_generation_storage
 from ._run_ledger_models import FinalizationPhase, RunOperation
 from ._run_policy import RunPolicy
 from ._streaming import (
+    DocumentSliceRequest,
+    DocumentSliceStreamRequest,
     _SliceWriter,
     encode_and_upsert_document_slice,
     iter_weighted_document_slices,
@@ -572,9 +574,11 @@ class DocumentIndexer:
         slice_size = max(1, int(cfg.embedding_batch_size))
         flush_slices = max(1, int(cfg.document_cache_flush_slices))
         weighted_slices = iter_weighted_document_slices(
-            result.chunks,
-            max_chunks=slice_size,
-            run_control=request.run_control,
+            DocumentSliceStreamRequest(
+                chunks=result.chunks,
+                max_chunks=slice_size,
+                run_control=request.run_control,
+            )
         )
         point_ids: list[str] = []
         request.reporter.phase_start("embed + upsert document chunks", None)
@@ -693,21 +697,23 @@ class DocumentIndexer:
             request.budget.memory_budget.record_forward_peak_mb
         ):
             encode_and_upsert_document_slice(
-                request.selected,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                release_cache=request.release_cache,
-                encode_batch_size=int(
-                    get_config().embedding_document_encode_batch_size
-                ),
-                write_policy=request.checkpoint.run_policy.store_write_policy,
-                on_storage_confirmed=_on_storage_confirmed,
-                after_forward=_after_forward,
-                on_cuda_oom=_on_cuda_oom,
-                run_control=request.run_control,
-                reuse=request.reuse,
-                writer=request.writer,
+                DocumentSliceRequest(
+                    chunks=request.selected,
+                    model=self.model,
+                    store=self.store,
+                    gpu_lock=self._gpu_lock,
+                    release_cache=request.release_cache,
+                    encode_batch_size=int(
+                        get_config().embedding_document_encode_batch_size
+                    ),
+                    write_policy=request.checkpoint.run_policy.store_write_policy,
+                    on_storage_confirmed=_on_storage_confirmed,
+                    after_forward=_after_forward,
+                    on_cuda_oom=_on_cuda_oom,
+                    run_control=request.run_control,
+                    reuse=request.reuse,
+                    writer=request.writer,
+                )
             )
 
     def _open_checkpoint(

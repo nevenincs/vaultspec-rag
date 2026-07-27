@@ -34,6 +34,8 @@ from ._file_state import FileStateKind
 from ._run_checkpoint import CodeRunConfiguration
 from ._run_ledger_models import RunOperation
 from ._streaming import (
+    CodeFileSegmentRequest,
+    CodeSliceRequest,
     _release_cuda_cache,
     encode_and_upsert_code_slice,
     iter_code_file_segments,
@@ -463,13 +465,15 @@ class CodeConsumerPipeline:
             )
         consumer_run.metadata[result.rel_path] = result.content_hash
         segments = iter_code_file_segments(
-            drain_code_chunks(result.chunks),
-            max_chunks=limits.segment_max_chunks,
-            max_bytes=limits.segment_max_bytes,
-            dense_dimension=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            sparse_dimension=limits.sparse_dimension,
-            run_control=run_control,
+            CodeFileSegmentRequest(
+                chunks=drain_code_chunks(result.chunks),
+                max_chunks=limits.segment_max_chunks,
+                max_bytes=limits.segment_max_bytes,
+                dense_dimension=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                sparse_dimension=limits.sparse_dimension,
+                run_control=run_control,
+            )
         )
         measured_segments = self._measure_code_segments(segments)
         pending_segments = (
@@ -570,24 +574,28 @@ class CodeConsumerPipeline:
             # the job's demand rather than a process-wide high-water.
             with self._forward_peak_recording():
                 encode_and_upsert_code_slice(
-                    slice_chunks,
-                    model=self._model,
-                    store=self._store,
-                    gpu_lock=self._gpu_lock,
-                    release_cache=(completed_slice_index % limits.flush_slices == 0),
-                    encode_batch_size=limits.encode_batch_size,
-                    write_policy=(
-                        checkpoint.run_policy.store_write_policy
-                        if checkpoint is not None
-                        else None
-                    ),
-                    ingest_wait=consumer_run.ingest_wait,
-                    collection=consumer_run.code_build_target,
-                    on_storage_confirmed=on_storage_confirmed,
-                    after_forward=_after_forward,
-                    on_cuda_oom=_on_cuda_oom,
-                    run_control=run_control,
-                    reuse=consumer_run.donor_reuse,
+                    CodeSliceRequest(
+                        chunks=slice_chunks,
+                        model=self._model,
+                        store=self._store,
+                        gpu_lock=self._gpu_lock,
+                        release_cache=(
+                            completed_slice_index % limits.flush_slices == 0
+                        ),
+                        encode_batch_size=limits.encode_batch_size,
+                        write_policy=(
+                            checkpoint.run_policy.store_write_policy
+                            if checkpoint is not None
+                            else None
+                        ),
+                        ingest_wait=consumer_run.ingest_wait,
+                        collection=consumer_run.code_build_target,
+                        on_storage_confirmed=on_storage_confirmed,
+                        after_forward=_after_forward,
+                        on_cuda_oom=_on_cuda_oom,
+                        run_control=run_control,
+                        reuse=consumer_run.donor_reuse,
+                    )
                 )
             run_control.checkpoint()
             consumer_run.new_ids.update(chunk.id for chunk in slice_chunks)
