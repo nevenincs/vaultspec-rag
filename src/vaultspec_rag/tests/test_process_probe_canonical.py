@@ -17,6 +17,7 @@ behavioural test of the existing call sites can see.
 from __future__ import annotations
 
 import ast
+import collections
 import hashlib
 import os
 import re
@@ -2278,44 +2279,51 @@ class TestNoSymbolKeptAliveForTests:
         ),
     }
 
-    def test_no_private_symbol_is_reachable_only_from_tests(self) -> None:
-        import ast
-        import collections
-        import re
+    @staticmethod
+    def _source_outside_dunder_all(text: str, tree: ast.Module) -> str:
+        """Return *text* with the lines of every ``__all__`` assignment dropped.
 
+        An ``__all__`` listing is a declaration of intent, not a use. Counting
+        it as one hid an exported symbol that nothing imported and only tests
+        called - the case this test exists to catch.
+        """
+        exported = [
+            (node.lineno, node.end_lineno or node.lineno)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "__all__"
+                for target in node.targets
+            )
+        ]
+        return "\n".join(
+            line
+            for number, line in enumerate(text.split("\n"), start=1)
+            if not any(lo <= number <= hi for lo, hi in exported)
+        )
+
+    @staticmethod
+    def _private_function_definitions(tree: ast.Module) -> list[tuple[str, int]]:
+        """Return the ``(name, line)`` of every single-underscore function."""
+        return [
+            (node.name, node.lineno)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name.startswith("_")
+            and not node.name.startswith("__")
+        ]
+
+    def test_no_private_symbol_is_reachable_only_from_tests(self) -> None:
         definitions: dict[str, list[str]] = {}
         production: list[str] = []
         for path in _production_sources():
             text = path.read_text(encoding="utf-8")
             tree = ast.parse(text)
-            # An __all__ listing is a declaration of intent, not a use.
-            # Counting it as one hid an exported symbol that nothing imported
-            # and only tests called - the case this test exists to catch.
-            exported = [
-                (node.lineno, node.end_lineno or node.lineno)
-                for node in ast.walk(tree)
-                if isinstance(node, ast.Assign)
-                and any(
-                    isinstance(target, ast.Name) and target.id == "__all__"
-                    for target in node.targets
+            production.append(self._source_outside_dunder_all(text, tree))
+            for name, lineno in self._private_function_definitions(tree):
+                definitions.setdefault(name, []).append(
+                    f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{lineno}"
                 )
-            ]
-            production.append(
-                "\n".join(
-                    line
-                    for number, line in enumerate(text.split("\n"), start=1)
-                    if not any(lo <= number <= hi for lo, hi in exported)
-                )
-            )
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-                    and node.name.startswith("_")
-                    and not node.name.startswith("__")
-                ):
-                    definitions.setdefault(node.name, []).append(
-                        f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{node.lineno}"
-                    )
 
         tests_dir = _PACKAGE_ROOT / "tests"
         test_blob = "\n".join(
@@ -2634,6 +2642,26 @@ class TestNoCompatibilityAliases:
     #: entry cannot outlive it and quietly re-permit the name.
     KNOWN: ClassVar[frozenset[tuple[str, str]]] = frozenset()
 
+    @staticmethod
+    def _module_level_imports(tree: ast.Module) -> set[str]:
+        """Return every name a top-level import binds in *tree*."""
+        imported: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom):
+                imported.update(a.asname or a.name for a in node.names)
+            elif isinstance(node, ast.Import):
+                imported.update(a.asname or a.name.split(".")[0] for a in node.names)
+        return imported
+
+    @staticmethod
+    def _rebinds_an_import(value: ast.expr, imported: set[str]) -> bool:
+        """``X = Y``, or ``X = mod.Y``, where the right-hand side is imported."""
+        return (isinstance(value, ast.Name) and value.id in imported) or (
+            isinstance(value, ast.Attribute)
+            and isinstance(value.value, ast.Name)
+            and value.value.id in imported
+        )
+
     def test_no_module_rebinds_an_imported_name(self) -> None:
         offenders: list[str] = []
         for path in _production_sources():
@@ -2641,14 +2669,7 @@ class TestNoCompatibilityAliases:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except SyntaxError:  # pragma: no cover - parsed elsewhere
                 continue
-            imported: set[str] = set()
-            for node in tree.body:
-                if isinstance(node, ast.ImportFrom):
-                    imported.update(a.asname or a.name for a in node.names)
-                elif isinstance(node, ast.Import):
-                    imported.update(
-                        a.asname or a.name.split(".")[0] for a in node.names
-                    )
+            imported = self._module_level_imports(tree)
             for node in tree.body:
                 if not (
                     isinstance(node, ast.Assign)
@@ -2657,17 +2678,12 @@ class TestNoCompatibilityAliases:
                 ):
                     continue
                 target = node.targets[0].id
-                value = node.value
-                # X = Y, or X = mod.Y, where the right-hand side is imported.
-                rebinds = (isinstance(value, ast.Name) and value.id in imported) or (
-                    isinstance(value, ast.Attribute)
-                    and isinstance(value.value, ast.Name)
-                    and value.value.id in imported
-                )
-                if not rebinds or (path.name, target) in self.KNOWN:
+                if not self._rebinds_an_import(node.value, imported):
+                    continue
+                if (path.name, target) in self.KNOWN:
                     continue
                 offenders.append(
-                    f"{path.name}:{node.lineno} {target} = {ast.unparse(value)}"
+                    f"{path.name}:{node.lineno} {target} = {ast.unparse(node.value)}"
                 )
         assert not offenders, (
             f"compatibility aliases at {offenders}; import the canonical name "
@@ -3912,10 +3928,12 @@ class TestJobEnumGroupingsAreDeclared:
     no name gets described by whichever nearby word is close enough.
     """
 
-    def test_no_module_enumerates_a_job_enum_grouping(self) -> None:
+    @staticmethod
+    def _declared_groupings() -> dict[str, frozenset[str]]:
+        """Return each named subset as the enum itself declares it."""
         from ..job_models import JobSource, JobState
 
-        groupings = {
+        return {
             "JobState.is_live_attempt": frozenset(
                 m.name for m in JobState if m.is_live_attempt
             ),
@@ -3927,6 +3945,39 @@ class TestJobEnumGroupingsAreDeclared:
             ),
             "JobSource.is_corpus": frozenset(m.name for m in JobSource if m.is_corpus),
         }
+
+    @staticmethod
+    def _job_enum_members(node: ast.Set | ast.Tuple | ast.List) -> set[str]:
+        """Return the ``JobState``/``JobSource`` member names *node* lists."""
+        return {
+            element.attr
+            for element in node.elts
+            if isinstance(element, ast.Attribute)
+            and isinstance(element.value, ast.Name)
+            and element.value.id in {"JobState", "JobSource"}
+        }
+
+    @classmethod
+    def _relisted_groupings(
+        cls, tree: ast.Module, groupings: dict[str, frozenset[str]]
+    ) -> list[tuple[int, str]]:
+        """Return ``(line, grouping)`` for every literal restating a grouping."""
+        found: list[tuple[int, str]] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Set | ast.Tuple | ast.List):
+                continue
+            members = cls._job_enum_members(node)
+            if not members:
+                continue
+            found.extend(
+                (node.lineno, name)
+                for name, expected in groupings.items()
+                if members == expected
+            )
+        return found
+
+    def test_no_module_enumerates_a_job_enum_grouping(self) -> None:
+        groupings = self._declared_groupings()
         offenders: list[str] = []
         for path in _production_sources():
             if path.name == "job_models.py":
@@ -3935,21 +3986,10 @@ class TestJobEnumGroupingsAreDeclared:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except SyntaxError:  # pragma: no cover - parsed elsewhere
                 continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Set | ast.Tuple | ast.List):
-                    continue
-                members = {
-                    element.attr
-                    for element in node.elts
-                    if isinstance(element, ast.Attribute)
-                    and isinstance(element.value, ast.Name)
-                    and element.value.id in {"JobState", "JobSource"}
-                }
-                if not members:
-                    continue
-                for name, expected in groupings.items():
-                    if members == expected:
-                        offenders.append(f"{path.name}:{node.lineno} relists {name}")
+            offenders.extend(
+                f"{path.name}:{lineno} relists {name}"
+                for lineno, name in self._relisted_groupings(tree, groupings)
+            )
         assert not offenders, (
             f"{offenders}; ask the enum, so a member added to the grouping "
             "reaches every caller instead of whichever ones get remembered"

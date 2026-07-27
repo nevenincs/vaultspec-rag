@@ -541,25 +541,20 @@ def _spawn_service(
     return proc.pid
 
 
-def _cleanup_late_service_spawn(
+def _discover_extra_late_candidates(
+    candidates: dict[int, float],
     *,
     launcher_pid: int,
-    launcher_start_time: float,
     port: int,
     launch_token: str,
-    timeout: float,
+    discovery_deadline: float,
 ) -> str:
-    """Find and stop a late launcher, detached daemon, and witnessed Qdrant."""
-    deadline = time.monotonic() + max(0.0, timeout)
-    candidates: dict[int, float] = {}
-    if launcher_start_time > 0.0:
-        candidates[launcher_pid] = launcher_start_time
-    last_error = ""
+    """Poll for late-launch witnesses until one besides the launcher appears.
 
-    discovery_deadline = min(
-        deadline,
-        time.monotonic() + min(2.0, max(0.0, timeout * 0.5)),
-    )
+    Mutates *candidates* in place with every witness found; returns the last
+    discovery error observed (empty when the most recent poll found none).
+    """
+    last_error = ""
     while time.monotonic() < discovery_deadline:
         discovered, last_error = _discover_late_service_pids(
             port=port,
@@ -570,7 +565,16 @@ def _cleanup_late_service_spawn(
         if any(pid != launcher_pid for pid in candidates):
             break
         time.sleep(min(0.02, max(0.0, discovery_deadline - time.monotonic())))
+    return last_error
 
+
+def _terminate_known_candidates(
+    candidates: dict[int, float],
+    *,
+    launcher_pid: int,
+    deadline: float,
+) -> None:
+    """Terminate every candidate still matching its recorded start time."""
     for candidate in sorted(candidates, key=lambda pid: pid == launcher_pid):
         remaining = deadline - time.monotonic()
         if remaining <= 0.0:
@@ -582,6 +586,35 @@ def _cleanup_late_service_spawn(
             # Windows CTRL_BREAK to it is unsafe (see _terminate_pid).
             _terminate_pid(candidate, timeout=remaining, console_group_signal=False)
 
+
+def _terminate_live_candidates(
+    live: list[int],
+    *,
+    launcher_pid: int,
+    deadline: float,
+) -> None:
+    """Terminate an already-filtered set of live pids, launcher last."""
+    for candidate in sorted(live, key=lambda pid: pid == launcher_pid):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            break
+        _terminate_pid(candidate, timeout=remaining, console_group_signal=False)
+
+
+def _drain_late_service_candidates(
+    candidates: dict[int, float],
+    *,
+    launcher_pid: int,
+    port: int,
+    launch_token: str,
+    deadline: float,
+) -> tuple[bool, str]:
+    """Discover, filter to live, and terminate candidates until none remain.
+
+    Returns ``(cleared, last_error)``: ``cleared`` is True once a poll finds
+    no live candidate, mirroring the deadline loop's early success exit.
+    """
+    last_error = ""
     while time.monotonic() < deadline:
         discovered, last_error = _discover_late_service_pids(
             port=port,
@@ -595,13 +628,50 @@ def _cleanup_late_service_spawn(
             if pid_matches_start_time(pid, start_time, timeout=_PROBE_BUDGET_SECONDS)
         ]
         if not live:
-            return ""
-        for candidate in sorted(live, key=lambda pid: pid == launcher_pid):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                break
-            _terminate_pid(candidate, timeout=remaining, console_group_signal=False)
+            return True, last_error
+        _terminate_live_candidates(live, launcher_pid=launcher_pid, deadline=deadline)
         time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+    return False, last_error
+
+
+def _cleanup_late_service_spawn(
+    *,
+    launcher_pid: int,
+    launcher_start_time: float,
+    port: int,
+    launch_token: str,
+    timeout: float,
+) -> str:
+    """Find and stop a late launcher, detached daemon, and witnessed Qdrant."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    candidates: dict[int, float] = {}
+    if launcher_start_time > 0.0:
+        candidates[launcher_pid] = launcher_start_time
+
+    discovery_deadline = min(
+        deadline,
+        time.monotonic() + min(2.0, max(0.0, timeout * 0.5)),
+    )
+    _discover_extra_late_candidates(
+        candidates,
+        launcher_pid=launcher_pid,
+        port=port,
+        launch_token=launch_token,
+        discovery_deadline=discovery_deadline,
+    )
+    _terminate_known_candidates(
+        candidates, launcher_pid=launcher_pid, deadline=deadline
+    )
+
+    cleared, last_error = _drain_late_service_candidates(
+        candidates,
+        launcher_pid=launcher_pid,
+        port=port,
+        launch_token=launch_token,
+        deadline=deadline,
+    )
+    if cleared:
+        return ""
     survivors = sorted(
         pid
         for pid, start_time in candidates.items()

@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from vaultspec_rag.config import EnvVar
+from ..config import EnvVar
 
 pytestmark = [pytest.mark.unit]
 

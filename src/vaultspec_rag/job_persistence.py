@@ -150,13 +150,21 @@ def _atomic_replace(source: Path, destination: Path) -> None:
     """Durably publish one state file, in this layer's error vocabulary.
 
     The replace itself, its Windows write-through, and the sharing-violation
-    ladder live in ``_atomic_write``. What stays here is the translation: a
-    sync failure means the state IS published and only its crash-durability is
-    in doubt, which this layer reports as ``published=True`` so a caller does
-    not roll back a write every reader can already see. Any other ``OSError``
-    means the replace itself failed - the Windows write-through move is atomic
-    and durable in one call, so a failure there published nothing - and
-    propagates for the caller to report as an unpublished write.
+    ladder live in ``_atomic_write``. What stays here is the translation, and
+    it turns on one question only: did the replace land?
+
+    ``NotDurableError`` is the sole way that layer reports a landed replace it
+    could not force to disk. The state IS published then, and only its
+    crash-durability is in doubt, so this reports ``published=True`` and the
+    caller does not roll back a write every reader can already see.
+
+    Any other ``OSError`` means the replace itself failed and the previous
+    generation is still the one on disk, on every platform. Windows is not
+    special here: the write-through move publishes and syncs in one call, so a
+    failure leaves nothing behind. Reporting those as published would strand a
+    caller's in-memory mutation with no rollback and no record on disk, which
+    is the opposite of what happened. Letting them out lets the caller
+    classify them ``published=False``.
     """
     from ._atomic_write import NotDurableError, replace_durably
 
