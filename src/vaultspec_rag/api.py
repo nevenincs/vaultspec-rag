@@ -182,7 +182,7 @@ def _preflight_code_index(
         root,
         model=cast("Any", None),
         store=cast("Any", None),
-        extra_excludes=extra_excludes,
+        options=CodebaseIndexer.Options(extra_excludes=extra_excludes),
     )
     return indexer.preflight_content(sample_limit=sample_limit)
 

@@ -24,7 +24,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, cast
+from typing import IO, TYPE_CHECKING
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._rmtree import remove_tree
@@ -115,15 +115,16 @@ def file_sha256(path: Path) -> str:
 class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
     """Allow redirects only inside :data:`ALLOWED_DOWNLOAD_HOSTS`."""
 
-    def redirect_request(
+    def redirect_request(  # noqa: PLR0913 - stdlib redirect callback contract
         self,
         req: urllib.request.Request,
-        *response: object,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
     ) -> urllib.request.Request | None:
         """Reject redirect targets outside the pinned HTTPS host set."""
-        fp, code, msg, headers, newurl = cast(
-            "tuple[IO[bytes], int, str, HTTPMessage, str]", response
-        )
         parsed = urllib.parse.urlparse(newurl)
         # A redirect must stay HTTPS: a downgrade to http on an allowed
         # host would still strip TLS, so reject it as firmly as a

@@ -780,7 +780,7 @@ class ServiceRegistry:
                 root,
                 model,
                 store,
-                gpu_lock=self._gpu_lock,
+                options=CodebaseIndexer.Options(gpu_lock=self._gpu_lock),
             )
             document_indexer = DocumentIndexer(
                 root,
