@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
 if TYPE_CHECKING:
@@ -134,27 +135,36 @@ def _parse_index_source(
 
 
 def _format_index_duration(raw: object) -> str:
+    milliseconds = _duration_milliseconds(raw)
+    if milliseconds is None:
+        return "not reported"
+    if milliseconds < 1000:
+        return _counted_unit(milliseconds, "millisecond")
+    seconds = milliseconds / 1000.0
+    if seconds < 10:
+        return (
+            _counted_unit(int(seconds), "second")
+            if seconds.is_integer()
+            else f"{seconds:.1f} seconds"
+        )
+    return _counted_unit(round(seconds), "second")
+
+
+def _duration_milliseconds(raw: object) -> int | None:
+    """Normalize an optional daemon duration into a non-negative whole value."""
     if isinstance(raw, int | float):
         raw_milliseconds = float(raw)
     elif isinstance(raw, str):
         try:
             raw_milliseconds = float(raw)
         except ValueError:
-            return "not reported"
+            return None
     else:
-        return "not reported"
+        return None
     try:
-        milliseconds = max(0, int(raw_milliseconds))
+        return max(0, int(raw_milliseconds))
     except (OverflowError, ValueError):
-        return "not reported"
-    if milliseconds < 1000:
-        return _counted_unit(milliseconds, "millisecond")
-    seconds = milliseconds / 1000.0
-    if seconds < 10:
-        if seconds.is_integer():
-            return _counted_unit(int(seconds), "second")
-        return f"{seconds:.1f} seconds"
-    return _counted_unit(round(seconds), "second")
+        return None
 
 
 def _print_index_summary(sources: list[dict[str, object]], *, via: str) -> None:
@@ -197,6 +207,31 @@ class _DryRunScan(NamedTuple):
     def total(self) -> int:
         document_total = self.document_scan.total_files if self.document_scan else 0
         return len(self.code_files) + document_total
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceDelegationRequest:
+    """The exact CLI selection offered to a running index service."""
+
+    port: int
+    exclude: list[str] | None
+    json_mode: bool
+    index_type: PublicSourceType
+    rebuild: bool
+    target: pathlib.Path
+    allow_fallback: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexRunRequest:
+    """One source selection that may execute locally or only scan."""
+
+    index_type: PublicSourceType
+    rebuild: bool
+    model: str | None
+    exclude: list[str] | None
+    target: pathlib.Path
+    json_mode: bool
 
 
 def _validate_dry_run_request(
@@ -374,21 +409,20 @@ def _render_hidden_dry_run_files(
 
 
 def _handle_dry_run(
-    index_type: PublicSourceType,
-    json_mode: bool,
-    target: pathlib.Path,
-    exclude: list[str] | None,
+    request: _IndexRunRequest,
     dry_run_limit: int,
     no_preprocess: bool,
 ) -> None:
-    _validate_dry_run_request(index_type, json_mode, dry_run_limit)
+    _validate_dry_run_request(request.index_type, request.json_mode, dry_run_limit)
     if no_preprocess:
         _apply_preprocess_off_env()
-    scan = _scan_dry_run_sources(index_type, target, exclude, dry_run_limit)
-    if json_mode:
+    scan = _scan_dry_run_sources(
+        request.index_type, request.target, request.exclude, dry_run_limit
+    )
+    if request.json_mode:
         _emit_dry_run_json(scan)
         return
-    _render_dry_run(scan, index_type, dry_run_limit)
+    _render_dry_run(scan, request.index_type, dry_run_limit)
 
 
 def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
@@ -425,24 +459,16 @@ def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
         raise typer.Exit(code=2)
 
 
-def _try_service_delegation(
-    port: int,
-    exclude: list[str] | None,
-    json_mode: bool,
-    index_type: PublicSourceType,
-    rebuild: bool,
-    target: pathlib.Path,
-    allow_fallback: bool,
-) -> bool:
-    if exclude and not json_mode:
+def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
+    if request.exclude and not request.json_mode:
         _cli.console.print(
             "--exclude is ignored when using the running service.",
         )
     data = _try_http_reindex(
-        index_type,
-        rebuild,
-        port,
-        str(target),
+        request.index_type,
+        request.rebuild,
+        request.port,
+        str(request.target),
         initiator_kind="cli",
     )
     if (
@@ -450,25 +476,29 @@ def _try_service_delegation(
         and data.get("ok") is False
         and data.get("partial") is not True
     ):
-        if not json_mode:
+        if not request.json_mode:
             _plain(
-                f"Reindex {index_type.value} reported an error; "
+                f"Reindex {request.index_type.value} reported an error; "
                 "refusing to silently fall back."
             )
-        _display_service_error(data, json_mode=json_mode, command="index")
+        _display_service_error(data, json_mode=request.json_mode, command="index")
         raise typer.Exit(code=1)
 
     if data is not None:
-        if json_mode:
+        if request.json_mode:
             _emit_json(
                 True,
                 "index",
-                data={"via": "service", "source": index_type.value, "outcome": data},
+                data={
+                    "via": "service",
+                    "source": request.index_type.value,
+                    "outcome": data,
+                },
             )
         elif "job_id" in data:
             _plain(
-                f"{_index_source_label(index_type.value)} re-index job queued on "
-                f"service: {data.get('job_id')}"
+                f"{_index_source_label(request.index_type.value)} re-index job "
+                f"queued on service: {data.get('job_id')}"
             )
             _cli.console.print("Check progress with: vaultspec-rag server jobs")
         elif _print_service_domain_outcomes(data.get("domains")):
@@ -483,7 +513,7 @@ def _try_service_delegation(
                 _print_index_summary(
                     [
                         {
-                            "source": index_type.value,
+                            "source": request.index_type.value,
                             **data,
                         }
                     ],
@@ -491,11 +521,11 @@ def _try_service_delegation(
                 )
         return True
 
-    if not allow_fallback:
+    if not request.allow_fallback:
         _display_port_unreachable_error(
-            port,
+            request.port,
             command="indexing",
-            json_mode=json_mode,
+            json_mode=request.json_mode,
         )
         raise typer.Exit(code=1)
 
@@ -533,7 +563,7 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
         "Uses the running service when available; otherwise runs locally."
     ),
 )
-def handle_index(
+def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option schema.
     ctx: typer.Context,
     index_type: Annotated[
         str,
@@ -626,10 +656,7 @@ def handle_index(
 
     if dry_run:
         _handle_dry_run(
-            source,
-            json_mode,
-            target,
-            exclude,
+            _IndexRunRequest(source, rebuild, model, exclude, target, json_mode),
             dry_run_limit,
             no_preprocess,
         )
@@ -664,7 +691,15 @@ def handle_index(
         _warn_preprocess_flag_ignored_when_delegating(json_mode)
 
     if port is not None and _try_service_delegation(
-        port, exclude, json_mode, source, rebuild, target, allow_fallback
+        _ServiceDelegationRequest(
+            port,
+            exclude,
+            json_mode,
+            source,
+            rebuild,
+            target,
+            allow_fallback,
+        )
     ):
         return
 
@@ -673,17 +708,12 @@ def handle_index(
     if no_preprocess:
         _apply_preprocess_off_env()
 
-    _try_in_process_indexing(source, rebuild, model, exclude, target, json_mode)
+    _try_in_process_indexing(
+        _IndexRunRequest(source, rebuild, model, exclude, target, json_mode)
+    )
 
 
-def _try_in_process_indexing(
-    index_type: PublicSourceType,
-    rebuild: bool,
-    model: str | None,
-    exclude: list[str] | None,
-    target: pathlib.Path,
-    json_mode: bool,
-) -> None:
+def _try_in_process_indexing(request: _IndexRunRequest) -> None:
     import contextlib
 
     import vaultspec_rag
@@ -696,7 +726,7 @@ def _try_in_process_indexing(
     # broker parsing stdout got a syntax error instead of an outcome.
     reporter_ctx: AbstractContextManager[ProgressReporter] = (
         contextlib.nullcontext(NullProgressReporter())
-        if json_mode
+        if request.json_mode
         else RichProgressReporter(_cli.console)
     )
     with reporter_ctx as reporter:
@@ -707,22 +737,18 @@ def _try_in_process_indexing(
         try:
             v_res, c_res, d_res, all_outcomes = _execute_source_indexing(
                 vaultspec_rag,
-                index_type=index_type,
-                target=target,
-                rebuild=rebuild,
+                request=request,
                 reporter=reporter,
-                model=model,
-                exclude=exclude,
             )
         except VaultStoreLockedError as exc:
-            if json_mode:
+            if request.json_mode:
                 _emit_json_error_and_exit(
                     "index",
-                    "rebuild_locked" if rebuild else "index_locked",
+                    "rebuild_locked" if request.rebuild else "index_locked",
                     "Cannot update the index because the local index is busy.",
                     1,
                     db_path=str(exc.db_path),
-                    index_type=index_type.value,
+                    index_type=request.index_type.value,
                     remediation=[
                         server_status_command(),
                         "Use --port with a running service for concurrent work.",
@@ -735,13 +761,13 @@ def _try_in_process_indexing(
             # A RuntimeError subclass: without this branch the disk
             # preflight refusal would fall into the GPU-error handler
             # and be misdiagnosed as a torch problem.
-            if json_mode:
+            if request.json_mode:
                 _emit_json_error_and_exit(
                     "index",
                     "disk_preflight_failed",
                     str(exc),
                     1,
-                    index_type=index_type.value,
+                    index_type=request.index_type.value,
                     remediation=[
                         "vaultspec-rag server storage survey",
                         "vaultspec-rag server storage prune --dry-run",
@@ -755,7 +781,7 @@ def _try_in_process_indexing(
 
     in_process_sources = _collect_index_rows(v_res, c_res, d_res, all_outcomes)
 
-    if json_mode:
+    if request.json_mode:
         _emit_json(
             True,
             "index",
@@ -824,12 +850,8 @@ def _render_failed_index_rows(rows: list[dict[str, object]]) -> None:
 def _execute_source_indexing(
     api: Any,
     *,
-    index_type: PublicSourceType,
-    target: pathlib.Path,
-    rebuild: bool,
+    request: _IndexRunRequest,
     reporter: Any,
-    model: str | None,
-    exclude: list[str] | None,
 ) -> tuple[
     IndexResult | None,
     IndexResult | None,
@@ -839,38 +861,38 @@ def _execute_source_indexing(
     """Execute exactly one canonical source selection without fallback."""
     from ..api import AllIndexOptions, CodeIndexOptions, DocumentIndexOptions
 
-    if index_type is PublicSourceType.COMBINED:
+    if request.index_type is PublicSourceType.COMBINED:
         return (
             None,
             None,
             None,
-            api.index_all(target, AllIndexOptions(
-                clean=rebuild,
+            api.index_all(request.target, AllIndexOptions(
+                clean=request.rebuild,
                 reporter=reporter,
-                model_name=model,
-                extra_excludes=exclude,
+                model_name=request.model,
+                extra_excludes=request.exclude,
             )),
         )
-    if index_type is PublicSourceType.VAULT:
+    if request.index_type is PublicSourceType.VAULT:
         return (
             api.index(
-                target,
-                clean=rebuild,
+                request.target,
+                clean=request.rebuild,
                 reporter=reporter,
-                model_name=model,
+                model_name=request.model,
             ),
             None,
             None,
             None,
         )
-    if index_type is PublicSourceType.CODE:
+    if request.index_type is PublicSourceType.CODE:
         return (
             None,
-            api.index_codebase(target, CodeIndexOptions(
-                clean=rebuild,
+            api.index_codebase(request.target, CodeIndexOptions(
+                clean=request.rebuild,
                 reporter=reporter,
-                model_name=model,
-                extra_excludes=exclude,
+                model_name=request.model,
+                extra_excludes=request.exclude,
             )),
             None,
             None,
@@ -878,11 +900,11 @@ def _execute_source_indexing(
     return (
         None,
         None,
-        api.index_documents(target, DocumentIndexOptions(
-            clean=rebuild,
+        api.index_documents(request.target, DocumentIndexOptions(
+            clean=request.rebuild,
             reporter=reporter,
-            model_name=model,
-            extra_excludes=exclude,
+            model_name=request.model,
+            extra_excludes=request.exclude,
         )),
         None,
     )

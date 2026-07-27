@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
@@ -42,7 +43,7 @@ from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir, read_
 if TYPE_CHECKING:
     from collections.abc import Callable
     from http.client import HTTPMessage
-    from typing import IO, Any
+    from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,16 @@ class ChecksumMismatchError(RuntimeError):
         )
 
 
+@dataclass(frozen=True)
+class _DownloadInstallRequest:
+    url: str
+    asset: str
+    expected_sha256: str
+    version_dir: Path
+    previously: str
+    on_progress: Callable[[str], None] = _no_progress
+
+
 def file_sha256(path: Path) -> str:
     """Return the hex SHA256 digest of *path*'s content."""
     digest = hashlib.sha256()
@@ -104,7 +115,7 @@ def file_sha256(path: Path) -> str:
 class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
     """Allow redirects only inside :data:`ALLOWED_DOWNLOAD_HOSTS`."""
 
-    def redirect_request(
+    def redirect_request(  # noqa: PLR0913 - stdlib redirect callback contract
         self,
         req: urllib.request.Request,
         fp: IO[bytes],
@@ -113,6 +124,7 @@ class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
         headers: HTTPMessage,
         newurl: str,
     ) -> urllib.request.Request | None:
+        """Reject redirect targets outside the pinned HTTPS host set."""
         parsed = urllib.parse.urlparse(newurl)
         # A redirect must stay HTTPS: a downgrade to http on an allowed
         # host would still strip TLS, so reject it as firmly as a
@@ -432,16 +444,16 @@ def _provision_operator_binary(
     return ProvisionReport(action=action, binary=target, sha256=digest)
 
 
-def _download_and_install(
-    *,
-    url: str,
-    asset: str,
-    expected_sha256: str,
-    version_dir: Path,
-    previously: str,
-    on_progress: Callable[[str], None] = _no_progress,
-) -> ProvisionReport:
+def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
     """Download, verify, extract, and record the pinned binary."""
+    url, asset, expected_sha256, version_dir, previously, on_progress = (
+        request.url,
+        request.asset,
+        request.expected_sha256,
+        request.version_dir,
+        request.previously,
+        request.on_progress,
+    )
     version_dir.mkdir(parents=True, exist_ok=True)
     archive = version_dir / f"{asset}.partial"
     try:
@@ -591,12 +603,14 @@ def provision(
         )
 
     return _download_and_install(
-        url=url,
-        asset=asset,
-        expected_sha256=expected,
-        version_dir=version_dir,
-        previously=state,
-        on_progress=on_progress,
+        _DownloadInstallRequest(
+            url,
+            asset,
+            expected,
+            version_dir,
+            state,
+            on_progress,
+        )
     )
 
 

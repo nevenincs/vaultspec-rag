@@ -7,6 +7,7 @@ falling back to character splitting only for oversized leaf nodes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from ._chunking import (
@@ -19,6 +20,17 @@ from ._chunking import (
 if TYPE_CHECKING:
     from tree_sitter import Node as TSNode
     from tree_sitter_language_pack import SupportedLanguage
+
+
+type ChunkRecord = tuple[str, int, int, str | None, str | None, str | None]
+
+
+@dataclass(frozen=True)
+class _ChunkCollectionContext:
+    source: str
+    source_bytes: bytes
+    top_nodes: set[str]
+    out: list[ChunkRecord]
 
 
 class ASTChunker:
@@ -65,8 +77,10 @@ class ASTChunker:
         root = tree.root_node
 
         top_nodes = _TOP_LEVEL_NODES.get(grammar, set())
-        chunks: list[tuple[str, int, int, str | None, str | None, str | None]] = []
-        self._collect_chunks(root, source, source_bytes, top_nodes, chunks)
+        chunks: list[ChunkRecord] = []
+        self._collect_chunks(
+            root, _ChunkCollectionContext(source, source_bytes, top_nodes, chunks)
+        )
 
         # Merge tiny adjacent chunks that are under half the budget.
         return self._merge_small(chunks)
@@ -157,7 +171,7 @@ class ASTChunker:
         text: str,
         function_name: str | None,
         class_name: str | None,
-        out: list[tuple[str, int, int, str | None, str | None, str | None]],
+        out: list[ChunkRecord],
     ) -> None:
         node_start_line = node.start_point[0] + 1
         line_cursor = node_start_line
@@ -171,10 +185,7 @@ class ASTChunker:
     def _collect_chunks(
         self,
         node: TSNode,
-        source: str,
-        source_bytes: bytes,
-        top_nodes: set[str],
-        out: list[tuple[str, int, int, str | None, str | None, str | None]],
+        context: _ChunkCollectionContext,
         parent_class_name: str | None = None,
     ) -> None:
         """Recursively collect AST-aligned chunks.
@@ -197,6 +208,11 @@ class ASTChunker:
             parent_class_name: Class name inherited from an enclosing
                 class node, or ``None`` at the top level.
         """
+        source_bytes, top_nodes, out = (
+            context.source_bytes,
+            context.top_nodes,
+            context.out,
+        )
         text = source_bytes[node.start_byte : node.end_byte].decode("utf-8")
         node_type: str = node.type
 
@@ -223,10 +239,7 @@ class ASTChunker:
         )
         self._process_children(
             children,
-            source,
-            source_bytes,
-            top_nodes,
-            out,
+            context,
             function_name,
             child_class_name,
         )
@@ -234,13 +247,15 @@ class ASTChunker:
     def _process_children(
         self,
         children: list[TSNode],
-        source: str,
-        source_bytes: bytes,
-        top_nodes: set[str],
-        out: list[tuple[str, int, int, str | None, str | None, str | None]],
+        context: _ChunkCollectionContext,
         function_name: str | None,
         child_class_name: str | None,
     ) -> None:
+        source_bytes, top_nodes, out = (
+            context.source_bytes,
+            context.top_nodes,
+            context.out,
+        )
         buffer_parts: list[str] = []
         buffer_start: int | None = None
         buffer_end: int = 0
@@ -279,10 +294,7 @@ class ASTChunker:
                 _flush_buffer()
                 self._collect_chunks(
                     child,
-                    source,
-                    source_bytes,
-                    top_nodes,
-                    out,
+                    context,
                     child_class_name,
                 )
             elif buffer_len + len(child_text) + 1 > self.chunk_size:

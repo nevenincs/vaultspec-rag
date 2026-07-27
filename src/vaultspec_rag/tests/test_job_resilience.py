@@ -11,7 +11,8 @@ import pytest
 
 from ..cli._service_jobs import _resilience_summary_lines
 from ..job_control import RunControlToken
-from ..job_manager import JobManager
+from ..job_manager._control import _AttemptTerminal
+from ..job_manager.manager import JobManager
 from ..job_models import (
     IndexResilienceSnapshot,
     JobInitiator,
@@ -129,10 +130,12 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
         assert (
             manager.finish_attempt(
                 created.job.id,
-                attempt=1,
-                task=owner_task,
-                state=JobState.FAILED,
-                result="bounded failure",
+                _AttemptTerminal(
+                    attempt=1,
+                    task=owner_task,
+                    state=JobState.FAILED,
+                    result="bounded failure",
+                ),
             ).code
             == "job_finished"
         )

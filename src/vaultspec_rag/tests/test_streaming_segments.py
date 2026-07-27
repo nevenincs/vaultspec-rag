@@ -22,6 +22,7 @@ from ..indexer._consumer_pipeline import CodeConsumerPipeline
 from ..indexer._run_policy import DurableProgressKind, RunPolicy
 from ..indexer._streaming import (
     CodeFileSegment,
+    CodeFileSegmentRequest,
     WeightedCodeSlice,
     _dense_vector_to_list,
     _release_vector_fields,
@@ -55,11 +56,13 @@ def test_file_segments_preserve_order_and_mark_only_the_final_unit() -> None:
 
     segments = list(
         iter_code_file_segments(
-            chunks,
-            max_chunks=2,
-            max_bytes=1_000_000,
-            dense_dimension=4,
-            sparse_enabled=False,
+            CodeFileSegmentRequest(
+                chunks=chunks,
+                max_chunks=2,
+                max_bytes=1_000_000,
+                dense_dimension=4,
+                sparse_enabled=False,
+            )
         )
     )
 
@@ -80,11 +83,13 @@ def test_file_segments_obey_the_weighted_byte_boundary() -> None:
 
     segments = list(
         iter_code_file_segments(
-            chunks,
-            max_chunks=10,
-            max_bytes=2 * one_chunk_bytes,
-            dense_dimension=4,
-            sparse_enabled=False,
+            CodeFileSegmentRequest(
+                chunks=chunks,
+                max_chunks=10,
+                max_bytes=2 * one_chunk_bytes,
+                dense_dimension=4,
+                sparse_enabled=False,
+            )
         )
     )
 
@@ -97,11 +102,13 @@ def test_sparse_weight_reserves_the_full_supported_model_output() -> None:
 
     segments = list(
         iter_code_file_segments(
-            chunks,
-            max_chunks=64,
-            max_bytes=8 * 1024 * 1024,
-            dense_dimension=1024,
-            sparse_enabled=True,
+            CodeFileSegmentRequest(
+                chunks=chunks,
+                max_chunks=64,
+                max_bytes=8 * 1024 * 1024,
+                dense_dimension=1024,
+                sparse_enabled=True,
+            )
         )
     )
 
@@ -118,11 +125,13 @@ def test_weighted_slice_packs_safe_segments_up_to_the_larger_queue_budget() -> N
     segments = list(
         chain.from_iterable(
             iter_code_file_segments(
-                chunks,
-                max_chunks=64,
-                max_bytes=8 * 1024 * 1024,
-                dense_dimension=1024,
-                sparse_enabled=True,
+                CodeFileSegmentRequest(
+                    chunks=chunks,
+                    max_chunks=64,
+                    max_bytes=8 * 1024 * 1024,
+                    dense_dimension=1024,
+                    sparse_enabled=True,
+                )
             )
             for chunks in files
         )
@@ -147,11 +156,13 @@ def test_file_segment_stream_rejects_cross_file_and_overweight_input() -> None:
     with pytest.raises(ValueError, match="cannot cross file boundaries"):
         list(
             iter_code_file_segments(
-                cross_file,
-                max_chunks=2,
-                max_bytes=1_000_000,
-                dense_dimension=4,
-                sparse_enabled=False,
+                CodeFileSegmentRequest(
+                    chunks=cross_file,
+                    max_chunks=2,
+                    max_bytes=1_000_000,
+                    dense_dimension=4,
+                    sparse_enabled=False,
+                )
             )
         )
 
@@ -159,11 +170,13 @@ def test_file_segment_stream_rejects_cross_file_and_overweight_input() -> None:
     with pytest.raises(ValueError, match="exceeds index_segment_max_bytes"):
         list(
             iter_code_file_segments(
-                [large],
-                max_chunks=2,
-                max_bytes=100,
-                dense_dimension=4,
-                sparse_enabled=False,
+                CodeFileSegmentRequest(
+                    chunks=[large],
+                    max_chunks=2,
+                    max_bytes=100,
+                    dense_dimension=4,
+                    sparse_enabled=False,
+                )
             )
         )
 
@@ -172,11 +185,13 @@ def test_empty_file_stream_has_no_durable_unit() -> None:
     assert (
         list(
             iter_code_file_segments(
-                [],
-                max_chunks=2,
-                max_bytes=1_000,
-                dense_dimension=4,
-                sparse_enabled=False,
+                CodeFileSegmentRequest(
+                    chunks=[],
+                    max_chunks=2,
+                    max_bytes=1_000,
+                    dense_dimension=4,
+                    sparse_enabled=False,
+                )
             )
         )
         == []
@@ -197,11 +212,13 @@ def test_weighted_queue_backpressure_releases_on_consumer_transfer() -> None:
     chunks = [_chunk(f"queued-{index}") for index in range(2)]
     segments = list(
         iter_code_file_segments(
-            chunks,
-            max_chunks=1,
-            max_bytes=1_000_000,
-            dense_dimension=4,
-            sparse_enabled=False,
+            CodeFileSegmentRequest(
+                chunks=chunks,
+                max_chunks=1,
+                max_bytes=1_000_000,
+                dense_dimension=4,
+                sparse_enabled=False,
+            )
         )
     )
     queue_bytes = max(segment.estimated_bytes for segment in segments)
@@ -236,11 +253,13 @@ def test_weighted_queue_rejects_a_segment_above_its_byte_budget() -> None:
     chunk = _chunk("oversized")
     segment = next(
         iter_code_file_segments(
-            [chunk],
-            max_chunks=1,
-            max_bytes=1_000_000,
-            dense_dimension=4,
-            sparse_enabled=False,
+            CodeFileSegmentRequest(
+                chunks=[chunk],
+                max_chunks=1,
+                max_bytes=1_000_000,
+                dense_dimension=4,
+                sparse_enabled=False,
+            )
         )
     )
     segment_q = WeightedCodeSegmentQueue(
@@ -256,11 +275,13 @@ def test_normal_consumer_drain_extends_while_storage_progress_continues() -> Non
     chunks = [_chunk(f"drain-{index}") for index in range(4)]
     segments = list(
         iter_code_file_segments(
-            chunks,
-            max_chunks=1,
-            max_bytes=1_000_000,
-            dense_dimension=4,
-            sparse_enabled=False,
+            CodeFileSegmentRequest(
+                chunks=chunks,
+                max_chunks=1,
+                max_bytes=1_000_000,
+                dense_dimension=4,
+                sparse_enabled=False,
+            )
         )
     )
     queue_bytes = sum(segment.estimated_bytes for segment in segments)
@@ -305,6 +326,7 @@ def test_explicit_stream_limits_do_not_resolve_global_configuration() -> None:
     script = """
 from vaultspec_rag._store_models import CodeChunk  # absolute-import-ok
 from vaultspec_rag.indexer._streaming import (  # absolute-import-ok
+    CodeFileSegmentRequest,
     iter_code_file_segments,
     iter_weighted_code_slices,
 )
@@ -318,11 +340,13 @@ chunk = CodeChunk(
     line_end=1,
 )
 segments = list(iter_code_file_segments(
-    [chunk],
-    max_chunks=1,
-    max_bytes=1_000_000,
-    dense_dimension=4,
-    sparse_enabled=False,
+    CodeFileSegmentRequest(
+        chunks=[chunk],
+        max_chunks=1,
+        max_bytes=1_000_000,
+        dense_dimension=4,
+        sparse_enabled=False,
+    )
 ))
 slices = list(iter_weighted_code_slices(
     segments,
@@ -349,18 +373,22 @@ def test_weighted_slices_pack_whole_segments_without_reordering() -> None:
     segments = list(
         chain(
             iter_code_file_segments(
-                first_file,
-                max_chunks=2,
-                max_bytes=1_000_000,
-                dense_dimension=4,
-                sparse_enabled=False,
+                CodeFileSegmentRequest(
+                    chunks=first_file,
+                    max_chunks=2,
+                    max_bytes=1_000_000,
+                    dense_dimension=4,
+                    sparse_enabled=False,
+                )
             ),
             iter_code_file_segments(
-                second_file,
-                max_chunks=2,
-                max_bytes=1_000_000,
-                dense_dimension=4,
-                sparse_enabled=False,
+                CodeFileSegmentRequest(
+                    chunks=second_file,
+                    max_chunks=2,
+                    max_bytes=1_000_000,
+                    dense_dimension=4,
+                    sparse_enabled=False,
+                )
             ),
         )
     )

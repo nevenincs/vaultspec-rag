@@ -230,20 +230,6 @@ target-version = "py313"
     [tool.ruff.lint.pep8-naming]
     extend-ignore-names = ["do_GET", "do_HEAD", "do_POST"]
 
-    # BASELINE-CALIBRATED gates (captured 2026-06-10): each threshold sits at
-    # the current worst offender so the gate is green today and can only be
-    # ratcheted DOWN by the remediation campaign. Never raise these.
-    # Ruff defaults: max-args=5, max-returns=6, max-branches=12,
-    # max-statements=50, max-nested-blocks=5.
-    # max-nested-blocks feeds PLR1702 (preview-only), which is enforced by
-    # `just dev lint nesting` via `ruff check --select PLR1702 --preview`.
-    [tool.ruff.lint.pylint]
-    max-args = 23         # baseline worst: 23 (44 functions exceed default 5)
-    max-nested-blocks = 6 # baseline worst: 6 (indexer/_streaming.py)
-    max-returns = 10      # baseline worst: 10 (8 functions exceed default 6)
-    max-statements = 58   # baseline worst: 58 (3 functions exceed default 50)
-
-
     [tool.ruff.lint.isort]
     known-first-party = ["vaultspec_rag"]
 

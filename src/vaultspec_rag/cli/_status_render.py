@@ -11,6 +11,7 @@ source of truth: every signal is surfaced and the verdict is derived from all.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
 import typer
@@ -32,7 +33,7 @@ from ..serviceclient._discovery import (
     MachineResolution,
     _default_service_port,
     _delete_service_status,
-    _read_service_status,
+    read_service_status,
     resolve_machine_service,
 )
 from ..serviceclient._status import (
@@ -51,9 +52,9 @@ from ..serviceclient._status import (
     compose_discovery_status,
 )
 from ..serviceclient._transport import (
-    _probe_unavailable,
     _try_http_admin,
     _try_http_health,
+    probe_unavailable,
 )
 from ._app import (
     JSON_OPTION_HELP,
@@ -64,7 +65,7 @@ from ._cli_format import NOT_REPORTED
 from ._process import (
     _is_our_service,
 )
-from ._render import _address_line, _emit_json, _plain
+from ._render import _emit_json, _plain, address_line
 from ._service_jobs import (
     _human_progress,
     _operation_label,
@@ -108,6 +109,36 @@ __all__ = [
     "_status_next_action",
     "service_status",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class _StatusSignals:
+    """The local discovery record and every probe-derived service signal."""
+
+    pid: int
+    port: int
+    started_at: str
+    pid_alive: bool
+    pid_is_ours: bool
+    port_listening: bool
+    heartbeat_age: float | None
+    heartbeat_stale: bool
+    token_match: bool | None
+    state: str
+    state_label: str
+    exit_code: int
+
+
+@dataclass(frozen=True, slots=True)
+class _StatusSummaryRequest:
+    """The status values rendered in the concise operator summary."""
+
+    state_label: str
+    port: int
+    port_listening: bool
+    health: dict[str, object] | None
+    operational: dict[str, object] | None
+    exit_code: int
 
 
 def _compute_token_match(
@@ -205,12 +236,14 @@ def _render_discovery_verdict(
         return
 
     _render_status_summary(
-        state_label=verdict.label,
-        port=port or _default_service_port() or 8766,
-        port_listening=verdict.signals.port_listening,
-        health=health,
-        operational=None,
-        exit_code=verdict.exit_code,
+        _StatusSummaryRequest(
+            state_label=verdict.label,
+            port=port or _default_service_port() or 8766,
+            port_listening=verdict.signals.port_listening,
+            health=health,
+            operational=None,
+            exit_code=verdict.exit_code,
+        )
     )
 
 
@@ -258,9 +291,7 @@ def _compute_state(
 
 def _evaluate_service_signals(
     status: dict[str, Any],
-) -> tuple[
-    int, int, str, bool, bool, bool, float | None, bool, bool | None, str, str, int
-]:
+) -> _StatusSignals:
     pid = int(status.get("pid", 0))
     port = int(status.get("port", 0))
     started_at = str(status.get("started_at", ""))
@@ -294,66 +325,46 @@ def _evaluate_service_signals(
         phase=_service_phase(status),
     )
 
-    return (
-        pid,
-        port,
-        started_at,
-        pid_alive,
-        pid_is_ours,
-        port_listening,
-        heartbeat_age,
-        heartbeat_stale,
-        token_match,
-        state,
-        state_label,
-        exit_code,
+    return _StatusSignals(
+        pid, port, started_at, pid_alive, pid_is_ours, port_listening,
+        heartbeat_age, heartbeat_stale, token_match, state, state_label, exit_code,
     )
 
 
 def _render_status_json(
-    pid: int,
-    port: int,
-    started_at: str,
-    pid_alive: bool,
-    pid_is_ours: bool,
-    port_listening: bool,
-    heartbeat_age: float | None,
-    heartbeat_stale: bool,
-    token_match: bool | None,
-    state: str,
-    exit_code: int,
+    signals: _StatusSignals,
     health: dict[str, object] | None,
     operational: dict[str, object] | None,
 ) -> None:
     payload: dict[str, object] = {
         "service_json_present": True,
-        "pid": pid,
-        "port": port,
-        "started_at": started_at,
-        "pid_alive": pid_alive,
-        "pid_matches_service": pid_is_ours,
-        "port_listening": port_listening,
-        "heartbeat_age_seconds": heartbeat_age,
-        "heartbeat_stale": heartbeat_stale,
-        "service_token_match": token_match,
-        "state": state,
+        "pid": signals.pid,
+        "port": signals.port,
+        "started_at": signals.started_at,
+        "pid_alive": signals.pid_alive,
+        "pid_matches_service": signals.pid_is_ours,
+        "port_listening": signals.port_listening,
+        "heartbeat_age_seconds": signals.heartbeat_age,
+        "heartbeat_stale": signals.heartbeat_stale,
+        "service_token_match": signals.token_match,
+        "state": signals.state,
     }
     if isinstance(health, dict):
         payload["health"] = health
     if isinstance(operational, dict):
         payload["operational"] = operational
     _emit_json(
-        exit_code == 0,
+        signals.exit_code == 0,
         "service.status",
         data=payload,
         **(
-            {"error": state, "message": f"Service status: {state}"}
-            if exit_code != 0
+            {"error": signals.state, "message": f"Service status: {signals.state}"}
+            if signals.exit_code != 0
             else {}
         ),
     )
-    if exit_code != 0:
-        raise typer.Exit(code=exit_code)
+    if signals.exit_code != 0:
+        raise typer.Exit(code=signals.exit_code)
 
 
 def _job_progress_summary(job: dict[str, object]) -> str:
@@ -664,7 +675,7 @@ def _status_jobs_summary(port: int, port_listening: bool) -> dict[str, object]:
             _try_http_admin("get_jobs", {"limit": 5}, port),
         )
     except Exception as exc:
-        return _probe_unavailable("jobs", exc)
+        return probe_unavailable("jobs", exc)
 
 
 def _status_next_action(
@@ -798,75 +809,65 @@ def _print_next_action(next_action: object) -> None:
         _print_status_lines(["Next action:", f"  {next_action}"])
 
 
-def _render_status_summary(
-    *,
-    state_label: str,
-    port: int,
-    port_listening: bool,
-    health: dict[str, object] | None,
-    operational: dict[str, object] | None,
-    exit_code: int,
-) -> None:
-    jobs = operational.get("jobs") if isinstance(operational, dict) else None
+def _render_status_summary(request: _StatusSummaryRequest) -> None:
+    jobs = (
+        request.operational.get("jobs")
+        if isinstance(request.operational, dict)
+        else None
+    )
     jobs_dict = cast("dict[str, object]", jobs) if isinstance(jobs, dict) else None
+    request_status = _status_health_label(
+        request.health,
+        port_listening=request.port_listening,
+    )
     lines = [
-        f"Server: {_plain_status_label(state_label)}",
-        f"Requests: {_status_health_label(health, port_listening=port_listening)}",
-        *_degraded_lines(operational, health),
+        f"Server: {_plain_status_label(request.state_label)}",
+        f"Requests: {request_status}",
+        *_degraded_lines(request.operational, request.health),
         f"Busy: {_status_busy_label(jobs_dict)}",
-        _address_line(port),
-        f"Service env: {_status_env_label(health)}",
-        f"Uptime: {_status_uptime_label(health)}",
+        address_line(request.port),
+        f"Service env: {_status_env_label(request.health)}",
+        f"Uptime: {_status_uptime_label(request.health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Processed jobs: {_status_jobs_label(jobs_dict)}",
-        *_failure_lines(operational),
+        *_failure_lines(request.operational),
     ]
     _print_status_lines(lines)
     _print_current_job_detail(jobs_dict)
-    if isinstance(operational, dict):
-        _print_next_action(operational.get("next_action"))
-    if exit_code != 0:
-        raise typer.Exit(code=exit_code)
+    if isinstance(request.operational, dict):
+        _print_next_action(request.operational.get("next_action"))
+    if request.exit_code != 0:
+        raise typer.Exit(code=request.exit_code)
 
 
 def _render_status_detail(
-    pid: int,
-    port: int,
-    started_at: str,
-    pid_alive: bool,
-    pid_is_ours: bool,
-    port_listening: bool,
-    heartbeat_age: float | None,
-    heartbeat_stale: bool,
-    token_match: bool | None,
-    state_label: str,
-    exit_code: int,
+    signals: _StatusSignals,
     health: dict[str, object] | None,
     operational: dict[str, object] | None,
 ) -> None:
     _cli.console.print("Service status")
     _print_detail_line("Local record", "found")
-    _print_detail_line("Process ID", pid)
-    _print_status_lines([_address_line(port)])
-    _print_detail_line("Started", _format_started_label(started_at))
-    _print_detail_line("Process", "running" if pid_alive else "not running")
+    _print_detail_line("Process ID", signals.pid)
+    _print_status_lines([address_line(signals.port)])
+    _print_detail_line("Started", _format_started_label(signals.started_at))
+    _print_detail_line("Process", "running" if signals.pid_alive else "not running")
     _print_detail_line(
         "Process check",
-        _process_identity_label(pid_alive, pid_is_ours),
+        _process_identity_label(signals.pid_alive, signals.pid_is_ours),
     )
-    _print_detail_line("Identity check", _get_token_label(token_match))
-    _print_detail_line("Network", _network_label(port_listening))
-    if heartbeat_age is None:
+    _print_detail_line("Identity check", _get_token_label(signals.token_match))
+    _print_detail_line("Network", _network_label(signals.port_listening))
+    if signals.heartbeat_age is None:
         _print_detail_line("Heartbeat", "absent")
     else:
-        suffix = " (stale)" if heartbeat_stale else ""
-        _print_detail_line("Heartbeat", f"{heartbeat_age:.0f}s ago{suffix}")
-    _print_detail_line("Server", _plain_status_label(state_label))
+        suffix = " (stale)" if signals.heartbeat_stale else ""
+        _print_detail_line("Heartbeat", f"{signals.heartbeat_age:.0f}s ago{suffix}")
+    _print_detail_line("Server", _plain_status_label(signals.state_label))
 
-    _print_health_detail(health, port_listening, operational)
+    _print_health_detail(health, signals.port_listening, operational)
     _print_operational_detail(operational)
-    if exit_code != 0:
-        raise typer.Exit(code=exit_code)
+    if signals.exit_code != 0:
+        raise typer.Exit(code=signals.exit_code)
 
 
 def _render_port_only_status(
@@ -928,19 +929,21 @@ def _render_port_only_status(
     if not verbose:
         rendered_state = "running" if state == "running" else state
         _render_status_summary(
-            state_label=rendered_state,
-            port=port,
-            port_listening=port_listening,
-            health=health,
-            operational=operational,
-            exit_code=exit_code,
+            _StatusSummaryRequest(
+                state_label=rendered_state,
+                port=port,
+                port_listening=port_listening,
+                health=health,
+                operational=operational,
+                exit_code=exit_code,
+            )
         )
         return
 
     _cli.console.print("Service status")
     _print_detail_line("Local record", "not found")
     _print_detail_line("Process", "not reported")
-    _print_status_lines([_address_line(port)])
+    _print_status_lines([address_line(port)])
     _print_detail_line(
         "Network",
         "accepting connections" if port_listening else "not accepting connections",
@@ -1023,20 +1026,24 @@ def _render_explicit_port_status(
     )
     if target_port != status_file_port:
         operational["status_file_port"] = status_file_port
+    signals = _StatusSignals(
+        pid,
+        target_port,
+        started_at,
+        pid_alive,
+        pid_is_ours,
+        port_listening,
+        heartbeat_age,
+        heartbeat_stale,
+        token_match,
+        state,
+        state_label,
+        exit_code,
+    )
 
     if json_mode:
         _render_status_json(
-            pid,
-            target_port,
-            started_at,
-            pid_alive,
-            pid_is_ours,
-            port_listening,
-            heartbeat_age,
-            heartbeat_stale,
-            token_match,
-            state,
-            exit_code,
+            signals,
             health,
             operational,
         )
@@ -1050,28 +1057,20 @@ def _render_explicit_port_status(
         )
     if verbose:
         _render_status_detail(
-            pid,
-            target_port,
-            started_at,
-            pid_alive,
-            pid_is_ours,
-            port_listening,
-            heartbeat_age,
-            heartbeat_stale,
-            token_match,
-            state_label,
-            exit_code,
+            signals,
             health,
             operational,
         )
         return
     _render_status_summary(
-        state_label=state_label,
-        port=target_port,
-        port_listening=port_listening,
-        health=health,
-        operational=operational,
-        exit_code=exit_code,
+        _StatusSummaryRequest(
+            state_label=state_label,
+            port=target_port,
+            port_listening=port_listening,
+            health=health,
+            operational=operational,
+            exit_code=exit_code,
+        )
     )
 
 
@@ -1123,7 +1122,7 @@ def service_status(
         loading models; it is not yet accepting connections). Retry
         shortly rather than treating it as crashed.
     """
-    status = _read_service_status()
+    status = read_service_status()
 
     if status is None:
         if requested_port is not None:
@@ -1169,12 +1168,14 @@ def service_status(
             _print_detail_line("Server", "stopped")
         else:
             _render_status_summary(
-                state_label="stopped",
-                port=_default_service_port() or 8766,
-                port_listening=False,
-                health=None,
-                operational=None,
-                exit_code=3,
+                _StatusSummaryRequest(
+                    state_label="stopped",
+                    port=_default_service_port() or 8766,
+                    port_listening=False,
+                    health=None,
+                    operational=None,
+                    exit_code=3,
+                )
             )
             return
         raise typer.Exit(code=3)
@@ -1188,44 +1189,21 @@ def service_status(
         )
         return
 
-    (
-        pid,
-        status_file_port,
-        started_at,
-        pid_alive,
-        pid_is_ours,
-        port_listening,
-        heartbeat_age,
-        heartbeat_stale,
-        token_match,
-        state,
-        state_label,
-        exit_code,
-    ) = _evaluate_service_signals(status)
+    signals = _evaluate_service_signals(status)
 
-    target_port = status_file_port
-    health = _try_http_health(target_port) if port_listening else None
+    target_port = signals.port
+    health = _try_http_health(target_port) if signals.port_listening else None
     operational = _status_operational_summary(
-        state,
+        signals.state,
         target_port,
-        port_listening,
+        signals.port_listening,
         health,
         explicit_port=False,
     )
 
     if json_mode:
         _render_status_json(
-            pid,
-            target_port,
-            started_at,
-            pid_alive,
-            pid_is_ours,
-            port_listening,
-            heartbeat_age,
-            heartbeat_stale,
-            token_match,
-            state,
-            exit_code,
+            signals,
             health,
             operational,
         )
@@ -1233,26 +1211,18 @@ def service_status(
 
     if verbose:
         _render_status_detail(
-            pid,
-            target_port,
-            started_at,
-            pid_alive,
-            pid_is_ours,
-            port_listening,
-            heartbeat_age,
-            heartbeat_stale,
-            token_match,
-            state_label,
-            exit_code,
+            signals,
             health,
             operational,
         )
         return
     _render_status_summary(
-        state_label=state_label,
-        port=target_port,
-        port_listening=port_listening,
-        health=health,
-        operational=operational,
-        exit_code=exit_code,
+        _StatusSummaryRequest(
+            state_label=signals.state_label,
+            port=target_port,
+            port_listening=signals.port_listening,
+            health=health,
+            operational=operational,
+            exit_code=signals.exit_code,
+        )
     )

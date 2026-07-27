@@ -14,8 +14,9 @@ import json
 import logging
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .._atomic_write import replace_atomically
 from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
@@ -29,6 +30,25 @@ if TYPE_CHECKING:
     from ._preprocess_config import PreprocessRule
 
 logger = logging.getLogger(__name__)
+
+
+class _MetaPublishOptions(TypedDict, total=False):
+    generation_id: str
+    membership_epoch: str
+    content_epoch: str
+    published_points_count: int
+    published_files_count: int | None
+
+
+@dataclass(frozen=True)
+class _MetaPublishRequest:
+    meta_path: pathlib.Path
+    states: Iterable[FileState]
+    generation_id: str
+    membership_epoch: str
+    content_epoch: str
+    published_points_count: int
+    published_files_count: int | None = None
 
 #: Version of the embedding-input format for code chunks. ``2`` embeds
 #: a one-line locational header (path, class, function) ahead of the
@@ -162,13 +182,15 @@ def load_meta(meta_path: pathlib.Path) -> dict[str, str]:
 def publish_meta_from_file_states(
     meta_path: pathlib.Path,
     states: Iterable[FileState],
-    *,
-    generation_id: str,
-    membership_epoch: str,
-    content_epoch: str,
-    published_points_count: int,
-    published_files_count: int | None = None,
+    **options: Unpack[_MetaPublishOptions],
 ) -> int:
+    """Atomically stream converged indexed hashes into the code sidecar."""
+    return _publish_meta_from_file_states(
+        _MetaPublishRequest(meta_path, states, **options)
+    )
+
+
+def _publish_meta_from_file_states(request: _MetaPublishRequest) -> int:
     """Atomically stream converged indexed hashes into the code sidecar.
 
     ``states`` is expected to come from the run ledger's bounded row iterator.
@@ -177,6 +199,19 @@ def publish_meta_from_file_states(
     order aborts publication and leaves the prior sidecar untouched.
     """
     from ._file_state import iter_publishable_states
+
+    (
+        meta_path, states, generation_id, membership_epoch, content_epoch,
+        published_points_count, published_files_count,
+    ) = (
+        request.meta_path,
+        request.states,
+        request.generation_id,
+        request.membership_epoch,
+        request.content_epoch,
+        request.published_points_count,
+        request.published_files_count,
+    )
 
     for name, value in (
         ("generation_id", generation_id),

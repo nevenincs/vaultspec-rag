@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -20,7 +21,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, TextContent
 
-from ...job_manager import JobManager
+from ...job_manager.manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...serviceclient._transport import (
     _do_http_call,
@@ -48,6 +49,55 @@ type ConcurrentProbeResponses = tuple[
     CallToolResult,
 ]
 type RebuildProbeRun = tuple[str, dict[str, object], ConcurrentProbeResponses]
+
+
+@dataclass(frozen=True, slots=True)
+class _SearchProbeContext:
+    """One service job and its latest truth for concurrent probe failures."""
+
+    port: int
+    token: str
+    job_id: str
+    last_job: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class _ConcurrentSearchRequest:
+    """Independent search shapes expected during one matching rebuild."""
+
+    root: Path
+    matching_empty_query: str
+    raw_payloads: RawSearchPayloads
+
+
+@dataclass(frozen=True, slots=True)
+class _McpConcurrentRequest:
+    """One MCP search process attached to a matching rebuild barrier."""
+
+    port: int
+    status_dir: Path
+    root: Path
+    query: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RebuildSearchInputs:
+    """All independent inputs used to probe one matching vault rebuild."""
+
+    port: int
+    token: str
+    status_dir: Path
+    root: Path
+    matching_empty_query: str
+    raw_payloads: RawSearchPayloads
+
+
+@dataclass(frozen=True, slots=True)
+class _KnownDocumentSearch:
+    """A real document expected to remain searchable during a paused rebuild."""
+
+    document_id: str
+    needle: str
 
 
 def _assert_empty_search_phase_timing(
@@ -403,25 +453,22 @@ def _submit_clean_vault_rebuild(
 
 
 def _search_with_failure_evidence(
-    port: int,
-    token: str,
-    job_id: str,
+    context: _SearchProbeContext,
     payload: dict[str, object],
     *,
     label: str,
-    last_job: dict[str, object],
     last_response: RawSearchResponse | None = None,
 ) -> RawSearchResponse:
     try:
-        return _raw_search(port, token, payload, timeout=300)
+        return _raw_search(context.port, context.token, payload, timeout=300)
     except Exception as exc:
         pytest.fail(
             f"{label} failed: {exc}\n"
             + _bounded_failure_evidence(
-                port,
-                token,
-                job_id,
-                last_job=last_job,
+                context.port,
+                context.token,
+                context.job_id,
+                last_job=context.last_job,
                 last_response=last_response,
             )
         )
@@ -429,40 +476,28 @@ def _search_with_failure_evidence(
 
 def _search_after_concurrent_admission(
     admission: threading.Barrier,
-    port: int,
-    token: str,
-    job_id: str,
+    context: _SearchProbeContext,
     payload: dict[str, object],
     *,
     label: str,
-    last_job: dict[str, object],
 ) -> RawSearchResponse:
     _wait_for_concurrent_admission(
         admission,
-        port,
-        token,
-        job_id,
+        context,
         label=label,
-        last_job=last_job,
     )
     return _search_with_failure_evidence(
-        port,
-        token,
-        job_id,
+        context,
         payload,
         label=label,
-        last_job=last_job,
     )
 
 
 def _wait_for_concurrent_admission(
     admission: threading.Barrier,
-    port: int,
-    token: str,
-    job_id: str,
+    context: _SearchProbeContext,
     *,
     label: str,
-    last_job: dict[str, object],
 ) -> None:
     try:
         admission.wait(timeout=10)
@@ -470,39 +505,32 @@ def _wait_for_concurrent_admission(
         pytest.fail(
             f"{label} did not reach concurrent admission: {exc}\n"
             + _bounded_failure_evidence(
-                port,
-                token,
-                job_id,
-                last_job=last_job,
+                context.port,
+                context.token,
+                context.job_id,
+                last_job=context.last_job,
             )
         )
 
 
 def _shared_search_after_concurrent_admission(
     admission: threading.Barrier,
-    port: int,
-    token: str,
-    job_id: str,
+    context: _SearchProbeContext,
     query: str,
     root: Path,
-    *,
-    last_job: dict[str, object],
 ) -> dict[str, object]:
     label = "shared-client matching empty search request"
     _wait_for_concurrent_admission(
         admission,
-        port,
-        token,
-        job_id,
+        context,
         label=label,
-        last_job=last_job,
     )
     try:
         result = _try_http_search(
             query,
             "vault",
             5,
-            port,
+            context.port,
             str(root),
             timeout=300,
         )
@@ -510,20 +538,20 @@ def _shared_search_after_concurrent_admission(
         pytest.fail(
             f"{label} failed: {exc}\n"
             + _bounded_failure_evidence(
-                port,
-                token,
-                job_id,
-                last_job=last_job,
+                context.port,
+                context.token,
+                context.job_id,
+                last_job=context.last_job,
             )
         )
     if not isinstance(result, dict):
         pytest.fail(
             f"{label} returned {result!r}\n"
             + _bounded_failure_evidence(
-                port,
-                token,
-                job_id,
-                last_job=last_job,
+                context.port,
+                context.token,
+                context.job_id,
+                last_job=context.last_job,
             )
         )
     return result
@@ -532,17 +560,14 @@ def _shared_search_after_concurrent_admission(
 async def _mcp_search_after_concurrent_admission_async(
     admission: threading.Barrier,
     initialized: threading.Event,
-    port: int,
-    status_dir: Path,
-    root: Path,
-    query: str,
+    request: _McpConcurrentRequest,
 ) -> CallToolResult:
     env = dict(os.environ)
     env.update(
         {
-            "VAULTSPEC_RAG_PORT": str(port),
-            "VAULTSPEC_RAG_ROOT": str(root),
-            "VAULTSPEC_RAG_STATUS_DIR": str(status_dir),
+            "VAULTSPEC_RAG_PORT": str(request.port),
+            "VAULTSPEC_RAG_ROOT": str(request.root),
+            "VAULTSPEC_RAG_STATUS_DIR": str(request.status_dir),
         }
     )
     server = StdioServerParameters(
@@ -564,9 +589,9 @@ async def _mcp_search_after_concurrent_admission_async(
             session.call_tool(
                 "search_vault",
                 arguments={
-                    "query": query,
+                    "query": request.query,
                     "top_k": 5,
-                    "project_root": str(root),
+                    "project_root": str(request.root),
                 },
                 read_timeout_seconds=timedelta(seconds=300),
             ),
@@ -577,19 +602,13 @@ async def _mcp_search_after_concurrent_admission_async(
 def _mcp_search_after_concurrent_admission(
     admission: threading.Barrier,
     initialized: threading.Event,
-    port: int,
-    status_dir: Path,
-    root: Path,
-    query: str,
+    request: _McpConcurrentRequest,
 ) -> CallToolResult:
     return asyncio.run(
         _mcp_search_after_concurrent_admission_async(
             admission,
             initialized,
-            port,
-            status_dir,
-            root,
-            query,
+            request,
         )
     )
 
@@ -622,59 +641,41 @@ def _run_concurrent_search_probes(
     executor: ThreadPoolExecutor,
     admission: threading.Barrier,
     mcp_future: Future[CallToolResult],
-    port: int,
-    token: str,
-    job_id: str,
-    root: Path,
-    matching_empty_query: str,
-    raw_payloads: RawSearchPayloads,
-    *,
-    last_job: dict[str, object],
+    context: _SearchProbeContext,
+    request: _ConcurrentSearchRequest,
 ) -> ConcurrentProbeResponses:
     (
         search_payload,
         unrelated_payload,
         unrelated_source_payload,
-    ) = raw_payloads
+    ) = request.raw_payloads
     search_future = executor.submit(
         _search_after_concurrent_admission,
         admission,
-        port,
-        token,
-        job_id,
+        context,
         search_payload,
         label="matching empty search request",
-        last_job=last_job,
     )
     unrelated_future = executor.submit(
         _search_after_concurrent_admission,
         admission,
-        port,
-        token,
-        job_id,
+        context,
         unrelated_payload,
         label="unrelated-root empty search request",
-        last_job=last_job,
     )
     unrelated_source_future = executor.submit(
         _search_after_concurrent_admission,
         admission,
-        port,
-        token,
-        job_id,
+        context,
         unrelated_source_payload,
         label="unrelated-source empty search request",
-        last_job=last_job,
     )
     shared_client_future = executor.submit(
         _shared_search_after_concurrent_admission,
         admission,
-        port,
-        token,
-        job_id,
-        matching_empty_query,
-        root,
-        last_job=last_job,
+        context,
+        request.matching_empty_query,
+        request.root,
     )
     try:
         mcp_response = mcp_future.result(timeout=390)
@@ -682,10 +683,10 @@ def _run_concurrent_search_probes(
         pytest.fail(
             f"MCP matching empty search request failed: {exc}\n"
             + _bounded_failure_evidence(
-                port,
-                token,
-                job_id,
-                last_job=last_job,
+                context.port,
+                context.token,
+                context.job_id,
+                last_job=context.last_job,
             )
         )
     return (
@@ -698,12 +699,7 @@ def _run_concurrent_search_probes(
 
 
 def _run_probes_during_matching_rebuild(
-    port: int,
-    token: str,
-    status_dir: Path,
-    root: Path,
-    matching_empty_query: str,
-    raw_payloads: RawSearchPayloads,
+    inputs: _RebuildSearchInputs,
 ) -> RebuildProbeRun:
     admission = threading.Barrier(5)
     initialized = threading.Event()
@@ -712,30 +708,33 @@ def _run_probes_during_matching_rebuild(
             _mcp_search_after_concurrent_admission,
             admission,
             initialized,
-            port,
-            status_dir,
-            root,
-            matching_empty_query,
+            _McpConcurrentRequest(
+                inputs.port,
+                inputs.status_dir,
+                inputs.root,
+                inputs.matching_empty_query,
+            ),
         )
-        _wait_for_mcp_initialization(initialized, mcp_future, port, token)
+        _wait_for_mcp_initialization(
+            initialized, mcp_future, inputs.port, inputs.token
+        )
         job_id = _submit_clean_vault_rebuild(
-            port,
-            token,
-            root,
+            inputs.port,
+            inputs.token,
+            inputs.root,
             label="matching-rebuild",
         )
-        running_job = _wait_for_running_job(port, token, job_id)
+        running_job = _wait_for_running_job(inputs.port, inputs.token, job_id)
         responses = _run_concurrent_search_probes(
             executor,
             admission,
             mcp_future,
-            port,
-            token,
-            job_id,
-            root,
-            matching_empty_query,
-            raw_payloads,
-            last_job=running_job,
+            _SearchProbeContext(inputs.port, inputs.token, job_id, running_job),
+            _ConcurrentSearchRequest(
+                inputs.root,
+                inputs.matching_empty_query,
+                inputs.raw_payloads,
+            ),
         )
     return job_id, running_job, responses
 
@@ -977,15 +976,17 @@ def _run_clean_rebuild_availability_phase(
     }
 
     job_id, running_job, probe_responses = _run_probes_during_matching_rebuild(
-        port,
-        token,
-        status_dir,
-        root,
-        matching_empty_query,
-        (
-            search_payload,
-            unrelated_payload,
-            unrelated_source_payload,
+        _RebuildSearchInputs(
+            port,
+            token,
+            status_dir,
+            root,
+            matching_empty_query,
+            (
+                search_payload,
+                unrelated_payload,
+                unrelated_source_payload,
+            ),
         ),
     )
     (
@@ -1079,12 +1080,9 @@ def _run_clean_rebuild_availability_phase(
         last_response=search_response,
     )
     post_response = _search_with_failure_evidence(
-        port,
-        token,
-        job_id,
+        _SearchProbeContext(port, token, job_id, terminal_job),
         search_payload,
         label="post-convergence empty search request",
-        last_job=terminal_job,
         last_response=search_response,
     )
     post_status, _post_headers, post_body = post_response
@@ -1189,23 +1187,19 @@ def _assert_nonempty_search_with_paused_rebuild(
     root: Path,
     *,
     job_id: str,
-    known_doc_id: str,
-    known_needle: str,
+    expected: _KnownDocumentSearch,
 ) -> None:
     paused_before = _wait_for_paused_rebuild_job(port, token, job_id, root)
     payload: dict[str, object] = {
-        "query": known_needle,
+        "query": expected.needle,
         "type": "vault",
         "top_k": 5,
         "project_root": str(root),
     }
     response = _search_with_failure_evidence(
-        port,
-        token,
-        job_id,
+        _SearchProbeContext(port, token, job_id, paused_before),
         payload,
         label="matching nonempty search with paused rebuild",
-        last_job=paused_before,
     )
     evidence = _bounded_failure_evidence(
         port,
@@ -1216,7 +1210,7 @@ def _assert_nonempty_search_with_paused_rebuild(
     )
     _assert_matching_nonempty_response(
         response,
-        expected_doc_id=known_doc_id,
+        expected_doc_id=expected.document_id,
         evidence=evidence,
     )
     request_id = _assert_request_id(response[2])
@@ -1270,8 +1264,7 @@ def test_search_index_unavailable_during_matching_rebuild(tmp_path: Path) -> Non
             token,
             root,
             job_id=paused_job_id,
-            known_doc_id=known_doc.doc_id,
-            known_needle=known_doc.needle,
+            expected=_KnownDocumentSearch(known_doc.doc_id, known_doc.needle),
         )
 
 

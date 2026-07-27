@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CudaCeilingObservation",
     "MemoryBudget",
     "MemoryBudgetSnapshot",
-    "CudaCeilingObservation",
     "MemoryProbe",
     "MemorySample",
     "cuda_forward_peak_capture",
@@ -799,12 +799,16 @@ class MemoryBudget:
                     cuda_allocated_mb=reading.cuda_allocated_mb,
                     cuda_available=reading.cuda_available,
                     peak_cuda_allocated_mb=max(
-                        reading.cuda_peak_allocated_mb if reading.cuda_available else 0.0,
+                        reading.cuda_peak_allocated_mb
+                        if reading.cuda_available
+                        else 0.0,
                         previous.peak_cuda_allocated_mb if previous else 0.0,
                     ),
                     cuda_reserved_mb=reading.cuda_reserved_mb,
                     peak_cuda_reserved_mb=max(
-                        reading.cuda_peak_reserved_mb if reading.cuda_available else 0.0,
+                        reading.cuda_peak_reserved_mb
+                        if reading.cuda_available
+                        else 0.0,
                         previous.peak_cuda_reserved_mb if previous else 0.0,
                     ),
                     cuda_ceiling_mb=self.cuda_ceiling_mb,

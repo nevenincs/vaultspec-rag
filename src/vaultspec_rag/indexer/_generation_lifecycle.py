@@ -16,14 +16,15 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
 from .._index_breadth import PUBLISHED_POINTS_KEY, parse_reserved_count
 from ._content_policy import ContentKind
 from ._drift_owner import CodeDriftOwner
 from ._route_migration import reconcile_generation_storage
 from ._run_checkpoint import CodeRunCheckpoint
-from ._run_ledger import (
+from ._run_ledger_models import (
     CommitUnitKind,
     FinalizationPhase,
     RunTerminalState,
@@ -36,12 +37,33 @@ if TYPE_CHECKING:
 
     from ..job_control import RunControl
     from ..progress import ProgressReporter
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_checkpoint import CodeRunConfiguration
-    from ._run_ledger import RunOperation
+    from ._run_ledger_models import RunOperation
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class CodeGenerationBindings:
+    root_dir: pathlib.Path
+    data_root: pathlib.Path
+    meta_path: pathlib.Path
+    store: VaultStore
+    load_meta: Callable[[], Mapping[str, str]]
+    read_meta_raw: Callable[[], Mapping[str, str]]
+
+
+@dataclass(frozen=True, slots=True)
+class CodeGenerationOpenRequest:
+    policy: ResolvedIndexPolicy
+    operation: RunOperation
+    clean: bool
+    configuration: CodeRunConfiguration
+    dense_dimensions: int
+    sparse_enabled: bool
+    run_control: RunControl
 
 
 class CodeGenerationLifecycle:
@@ -60,13 +82,8 @@ class CodeGenerationLifecycle:
 
     def __init__(
         self,
-        root_dir: pathlib.Path,
-        *,
-        data_root: pathlib.Path,
-        meta_path: pathlib.Path,
-        store: VaultStore,
-        load_meta: Callable[[], Mapping[str, str]],
-        read_meta_raw: Callable[[], Mapping[str, str]],
+        bindings: CodeGenerationBindings | None = None,
+        **legacy: object,
     ) -> None:
         """Bind the lifecycle to one root's ledger, storage, and metadata.
 
@@ -78,12 +95,16 @@ class CodeGenerationLifecycle:
             load_meta: Reader for the parsed sidecar, called at each use.
             read_meta_raw: Reader for the unparsed sidecar, called at each use.
         """
-        self._root_dir = root_dir
-        self._data_root = data_root
-        self._meta_path = meta_path
-        self._store = store
-        self._load_meta = load_meta
-        self._read_meta_raw = read_meta_raw
+        if bindings is None:
+            bindings = CodeGenerationBindings(**cast("dict[str, Any]", legacy))
+        elif legacy:
+            raise TypeError("use either CodeGenerationBindings or named inputs")
+        self._root_dir = bindings.root_dir
+        self._data_root = bindings.data_root
+        self._meta_path = bindings.meta_path
+        self._store = bindings.store
+        self._load_meta = bindings.load_meta
+        self._read_meta_raw = bindings.read_meta_raw
         self._last_checkpoint: CodeRunCheckpoint | None = None
         # Bound to the generation once a run opens its checkpoint, because
         # superseding evidence is meaningless without one to supersede in.
@@ -121,17 +142,23 @@ class CodeGenerationLifecycle:
 
     def open_checkpoint(
         self,
-        *,
-        policy: ResolvedIndexPolicy,
-        operation: RunOperation,
-        clean: bool,
-        configuration: CodeRunConfiguration,
-        dense_dimensions: int,
-        sparse_enabled: bool,
-        run_control: RunControl,
+        request: CodeGenerationOpenRequest | None = None,
+        **legacy: object,
     ) -> CodeRunCheckpoint:
         """Open one compatible storage-confirmed code generation."""
         from ..config import get_config
+
+        if request is None:
+            request = CodeGenerationOpenRequest(**cast("dict[str, Any]", legacy))
+        elif legacy:
+            raise TypeError("use either CodeGenerationOpenRequest or named inputs")
+        policy = request.policy
+        operation = request.operation
+        clean = request.clean
+        configuration = request.configuration
+        dense_dimensions = request.dense_dimensions
+        sparse_enabled = request.sparse_enabled
+        run_control = request.run_control
 
         config = get_config()
         model_identity = json.dumps(

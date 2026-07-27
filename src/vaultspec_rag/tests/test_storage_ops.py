@@ -10,6 +10,7 @@ integration tier against a live daemon.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -27,17 +28,15 @@ from ..storage_manifest import (
     update_activity_stamps,
     update_orphan_stamps,
 )
-from ..storage_ops import (
-    GeometryEntry,
-    MigrateResult,
+from ..storage_migration import MigrateResult, carry_migrated_identity
+from ..storage_reclamation import (
+    MaintenanceCycleRequest,
     ReclaimPolicy,
-    ReconcileResult,
-    carry_migrated_identity,
     evaluate_reclaim,
-    plan_reconcile,
     run_maintenance_cycle,
     sweep_archive,
 )
+from ..storage_reconciliation import GeometryEntry, ReconcileResult, plan_reconcile
 from ..storage_survey import NamespaceSurvey, is_temp_rooted
 from ..store_schema import (
     SERVER_SEGMENT_NUMBER,
@@ -428,13 +427,22 @@ class TestMigrateCarriesIdentity:
 
 
 class TestSweepArchive:
-    """Age-based retention and oldest-first byte-cap eviction."""
+    """Age-based retention and oldest-first whole-archive eviction."""
 
     def _touch(self, path: Path, *, size: int, age_days: float) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"x" * size)
         mtime = (_NOW - timedelta(days=age_days)).timestamp()
         os.utime(path, (mtime, mtime))
+
+    def _stamp_archive(self, path: Path, *, age_days: float) -> None:
+        """Set one completed archive directory's retention clock."""
+        path.mkdir(parents=True, exist_ok=True)
+        completed_at = _NOW - timedelta(days=age_days)
+        (path / "snapshot-manifest.json").write_text(
+            json.dumps({"completed_at": completed_at.isoformat()}),
+            encoding="utf-8",
+        )
 
     def test_missing_dir_is_a_noop(self, tmp_path: Path) -> None:
         assert (
@@ -447,28 +455,59 @@ class TestSweepArchive:
             == []
         )
 
-    def test_expired_archives_are_deleted(self, tmp_path: Path) -> None:
+    def test_expired_archive_is_deleted_as_a_complete_directory(
+        self, tmp_path: Path
+    ) -> None:
         archive = tmp_path / "archive"
-        self._touch(archive / "p1" / "old.snapshot", size=10, age_days=31)
-        self._touch(archive / "p1" / "fresh.snapshot", size=10, age_days=1)
+        expired = archive / "p1"
+        self._touch(expired / "old.snapshot", size=10, age_days=31)
+        self._touch(expired / "snapshot-manifest.json", size=10, age_days=1)
+        self._stamp_archive(expired, age_days=31)
+        fresh = archive / "p2"
+        self._touch(fresh / "fresh.snapshot", size=10, age_days=31)
+        self._stamp_archive(fresh, age_days=1)
         deleted = sweep_archive(
             archive, now=_NOW, retention_days=30.0, max_total_bytes=10_000
         )
-        assert [p.name for p in deleted] == ["old.snapshot"]
-        assert (archive / "p1" / "fresh.snapshot").exists()
+        assert deleted == [expired]
+        assert not expired.exists()
+        assert (fresh / "fresh.snapshot").exists()
 
-    def test_byte_cap_evicts_oldest_first(self, tmp_path: Path) -> None:
+    def test_byte_cap_evicts_oldest_complete_archive_first(
+        self, tmp_path: Path
+    ) -> None:
         archive = tmp_path / "archive"
-        self._touch(archive / "a.snapshot", size=600, age_days=3)
-        self._touch(archive / "b.snapshot", size=600, age_days=2)
-        self._touch(archive / "c.snapshot", size=600, age_days=1)
+        oldest = archive / "a"
+        self._touch(oldest / "a.snapshot", size=600, age_days=1)
+        self._touch(oldest / "snapshot-manifest.json", size=20, age_days=1)
+        self._stamp_archive(oldest, age_days=3)
+        middle = archive / "b"
+        self._touch(middle / "b.snapshot", size=600, age_days=1)
+        self._touch(middle / "snapshot-manifest.json", size=20, age_days=1)
+        self._stamp_archive(middle, age_days=2)
+        newest = archive / "c"
+        self._touch(newest / "c.snapshot", size=600, age_days=1)
+        self._touch(newest / "snapshot-manifest.json", size=20, age_days=1)
+        self._stamp_archive(newest, age_days=1)
         deleted = sweep_archive(
-            archive, now=_NOW, retention_days=30.0, max_total_bytes=1300
+            archive, now=_NOW, retention_days=30.0, max_total_bytes=1_300
         )
-        assert [p.name for p in deleted] == ["a.snapshot"]
-        assert not (archive / "a.snapshot").exists()
-        assert (archive / "b.snapshot").exists()
-        assert (archive / "c.snapshot").exists()
+        assert deleted == [oldest]
+        assert not oldest.exists()
+        assert (middle / "snapshot-manifest.json").exists()
+        assert (newest / "snapshot-manifest.json").exists()
+
+    def test_missing_completion_stamp_is_never_guessed_from_file_mtime(
+        self, tmp_path: Path
+    ) -> None:
+        archive = tmp_path / "archive"
+        legacy = archive / "legacy"
+        self._touch(legacy / "copied-metadata.json", size=600, age_days=365)
+        deleted = sweep_archive(
+            archive, now=_NOW, retention_days=30.0, max_total_bytes=0
+        )
+        assert deleted == []
+        assert legacy.exists()
 
 
 class TestSurveySnapshot:
@@ -767,7 +806,7 @@ class TestDebrisVisibility:
         return debris_dir
 
     def test_debris_dirs_surface_with_footprint(self, tmp_path: Path) -> None:
-        from ..storage_ops import debris_surveys
+        from ..storage_survey_ops import debris_surveys
 
         storage = tmp_path / "collections"
         storage.mkdir()
@@ -782,12 +821,12 @@ class TestDebrisVisibility:
         assert surveys[0].points == 0
 
     def test_no_storage_dir_yields_no_debris(self) -> None:
-        from ..storage_ops import debris_surveys
+        from ..storage_survey_ops import debris_surveys
 
         assert debris_surveys(["a"], None) == []
 
     def test_backend_totals_roll_up_all_statuses(self) -> None:
-        from ..storage_ops import backend_totals
+        from ..storage_survey_ops import backend_totals
 
         surveys = [
             _survey("raaaaaaaaaaa1_", status="live", footprint=100),
@@ -810,7 +849,7 @@ class TestDebrisVisibility:
         }
 
     def test_prune_debris_dry_run_removes_nothing(self, tmp_path: Path) -> None:
-        from ..storage_ops import prune_debris
+        from ..storage_survey_ops import prune_debris
 
         storage = tmp_path / "collections"
         storage.mkdir()
@@ -823,7 +862,7 @@ class TestDebrisVisibility:
         assert debris_dir.exists()
 
     def test_prune_debris_removes_only_unlisted_dirs(self, tmp_path: Path) -> None:
-        from ..storage_ops import prune_debris
+        from ..storage_survey_ops import prune_debris
 
         storage = tmp_path / "collections"
         storage.mkdir()
@@ -840,7 +879,7 @@ class TestDebrisVisibility:
         assert live_dir.exists()
 
     def test_prune_debris_with_nothing_to_do_is_success(self, tmp_path: Path) -> None:
-        from ..storage_ops import prune_debris
+        from ..storage_survey_ops import prune_debris
 
         storage = tmp_path / "collections"
         storage.mkdir()
@@ -1012,7 +1051,7 @@ class _ScriptedClient:
     Convergence depends on *when* readings stop moving, which a live server
     cannot be made to reproduce on demand. Each scripted step names the
     segment count, the collection status, and how many filler blocks should
-    exist on disk at that moment - so `_dir_bytes` measures a real directory
+    exist on disk at that moment - so ``directory_size_bytes`` measures a real directory
     that really inflates and then shrinks, exactly as a merge does.
     """
 
@@ -1051,7 +1090,7 @@ class TestConvergenceDetection:
 
     @staticmethod
     def _wait(client: object, path: Path, budget_s: float = 60.0):
-        from ..storage_ops import _await_convergence
+        from ..storage_reconciliation import await_convergence
 
         clock = {"t": 0.0}
 
@@ -1061,7 +1100,7 @@ class TestConvergenceDetection:
         def _sleep(seconds: float) -> None:
             clock["t"] += seconds
 
-        return _await_convergence(
+        return await_convergence(
             cast("QdrantClient", client),
             "rfeedfacefeed_vault_docs",
             path,
@@ -1145,14 +1184,14 @@ class TestConvergenceDetection:
     def test_shutdown_event_abandons_the_wait(self, tmp_path: Path) -> None:
         import threading
 
-        from ..storage_ops import _await_convergence
+        from ..storage_reconciliation import await_convergence
 
         path = tmp_path / "coll"
         client = _ScriptedClient(path, [(9, "yellow", 12)])
         stop = threading.Event()
         stop.set()
 
-        result = _await_convergence(
+        result = await_convergence(
             cast("QdrantClient", client),
             "rfeedfacefeed_vault_docs",
             path,
@@ -1198,7 +1237,7 @@ class TestGeometryScope:
         foreign collection is an unauthorised mutation of someone else's
         data - the same reason every destructive verb is prefix-guarded.
         """
-        from ..storage_ops import read_geometry
+        from ..storage_reconciliation import read_geometry
 
         client = _GeometryClient(
             [
@@ -1219,7 +1258,7 @@ class TestGeometryScope:
         assert client.inspected == ["rfeedfacefeed_vault_docs"]
 
     def test_owned_collection_at_target_is_not_drifted(self, tmp_path: Path) -> None:
-        from ..storage_ops import plan_reconcile, read_geometry
+        from ..storage_reconciliation import plan_reconcile, read_geometry
 
         client = _GeometryClient(
             ["rfeedfacefeed_vault_docs"], target=SERVER_SEGMENT_NUMBER
@@ -1374,13 +1413,15 @@ def _run_cycle(
 ):
     """Run one real maintenance cycle against *client*, reconcile disabled."""
     return run_maintenance_cycle(
-        cast("QdrantClient", client),
-        now=now,
-        policy=policy or ReclaimPolicy(reconcile=False),
-        storage_dir=None,
-        snapshots_dir=tmp_path / "snapshots",
-        archive_dir=tmp_path / "archive",
-        active_prefixes=lambda: active,
+        MaintenanceCycleRequest(
+            client=cast("QdrantClient", client),
+            now=now,
+            policy=policy or ReclaimPolicy(reconcile=False),
+            storage_dir=None,
+            snapshots_dir=tmp_path / "snapshots",
+            archive_dir=tmp_path / "archive",
+            active_prefixes=lambda: active,
+        )
     )
 
 
@@ -1411,7 +1452,9 @@ class TestPreDropRecount:
         assert client.snapshotted == []
         assert client.deleted == []
 
-    def test_data_tier_defers_when_the_archive_is_torn(self, tmp_path: Path) -> None:
+    def test_data_tier_fails_when_the_completed_archive_is_torn(
+        self, tmp_path: Path
+    ) -> None:
         prefix = _orphaned_namespace(tmp_path, now=_NOW)
         collection = _collection_of(prefix)
         client = _CycleClient(
@@ -1421,8 +1464,9 @@ class TestPreDropRecount:
         )
         result = _run_cycle(client, tmp_path)
         decision = next(d for d in result.decisions if d.prefix == prefix)
-        assert decision.action == "deferred"
-        assert decision.reason == "points_changed_during_archive"
+        assert decision.action == "failed"
+        assert decision.reason is not None
+        assert decision.reason.startswith("archive_failed:")
         assert client.snapshotted == [collection]
         assert client.deleted == []
 
@@ -1496,7 +1540,7 @@ class TestActiveIndexPrefixes:
         from .. import jobs
         from .._store_models import root_collection_prefix
         from ..job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
-        from ..storage_ops import _active_index_prefixes
+        from ..storage_reclamation import _active_index_prefixes
 
         jobs.reset()
         try:

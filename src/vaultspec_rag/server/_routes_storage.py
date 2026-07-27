@@ -17,6 +17,7 @@ and CLI import paths.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from starlette.responses import JSONResponse
@@ -45,6 +46,16 @@ _STORAGE_SURVEY_MAX_LIMIT = 1000
 _STORAGE_SURVEY_STATUSES = frozenset({"live", "orphaned", "unknown", "unverifiable"})
 
 
+@dataclass(frozen=True, slots=True)
+class _SurveyPayloadRequest:
+    surveys: list[NamespaceSurvey]
+    status_filter: str | None
+    limit: int
+    root: str | None
+    computed_at: str
+    source: str
+
+
 def _clamp_survey_limit(raw: str | None) -> int:
     """Parse and clamp the survey ``?limit=`` to a bounded window."""
     if raw is None:
@@ -70,7 +81,7 @@ def _fetch_surveys() -> list[NamespaceSurvey]:
     from qdrant_client import QdrantClient
 
     from ..config import get_config
-    from ..storage_ops import gather_survey, server_storage_collections_dir
+    from ..storage_survey_ops import gather_survey, server_storage_collections_dir
 
     cfg = get_config()
     url = cfg.effective_qdrant_url
@@ -98,15 +109,7 @@ def _generation_fields(report: RootGenerations | None) -> dict[str, Any]:
     }
 
 
-def _shape_survey_payload(
-    surveys: list[NamespaceSurvey],
-    status_filter: str | None,
-    limit: int,
-    root: str | None,
-    *,
-    computed_at: str,
-    source: str,
-) -> dict[str, Any]:
+def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     """Shape a classified survey as the bounded route response.
 
     Applies the optional status and root filters, truncates to the clamped
@@ -137,12 +140,18 @@ def _shape_survey_payload(
     from .. import store_schema
     from .._store_models import root_collection_prefix
     from ..generation_survey import survey_generations
-    from ..storage_ops import backend_totals
     from ..storage_survey import is_temp_rooted
+    from ..storage_survey_ops import backend_totals
 
     # Whole-backend rollup, computed before any filter so consumers see
     # true total size and per-status composition regardless of the view.
-    totals = backend_totals(surveys)
+    totals = backend_totals(request.surveys)
+    status_filter = request.status_filter
+    limit = request.limit
+    root = request.root
+    computed_at = request.computed_at
+    source = request.source
+    surveys = request.surveys
 
     if status_filter:
         surveys = [s for s in surveys if s.status == status_filter]
@@ -230,12 +239,14 @@ def _serve_survey_from_snapshot(
     if snapshot is None:
         return None
     return _shape_survey_payload(
-        list(snapshot.surveys),
-        status_filter,
-        limit,
-        root,
-        computed_at=snapshot.computed_at,
-        source="cache",
+        _SurveyPayloadRequest(
+            surveys=list(snapshot.surveys),
+            status_filter=status_filter,
+            limit=limit,
+            root=root,
+            computed_at=snapshot.computed_at,
+            source="cache",
+        )
     )
 
 
@@ -260,7 +271,14 @@ def _publish_and_shape_survey(
     computed_at = datetime.now(UTC).isoformat()
     publish_survey_snapshot(surveys, computed_at=computed_at)
     return _shape_survey_payload(
-        surveys, status_filter, limit, root, computed_at=computed_at, source="fresh"
+        _SurveyPayloadRequest(
+            surveys=surveys,
+            status_filter=status_filter,
+            limit=limit,
+            root=root,
+            computed_at=computed_at,
+            source="fresh",
+        )
     )
 
 

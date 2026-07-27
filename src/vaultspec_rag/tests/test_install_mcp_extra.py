@@ -105,12 +105,14 @@ class TestInstallEnsuresMcpExtra:
 
 def test_cli_install_flag_defaults_mcp_on() -> None:
     """The `vaultspec-rag install` --mcp/--no-mcp flag defaults to on."""
-    import inspect
+    from typer.main import get_command
 
-    from ..cli._install import handle_install
+    from ..cli._app import app
 
-    param = inspect.signature(handle_install).parameters["install_mcp"]
-    assert param.default is True
+    install = get_command(app).get_command(None, "install")
+    assert install is not None
+    mcp_option = next(option for option in install.params if option.name == "mcp")
+    assert mcp_option.default is True
 
 
 class TestMcpExtraPlacement:

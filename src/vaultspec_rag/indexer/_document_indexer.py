@@ -11,7 +11,7 @@ import pathlib
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import get_index_support_profile
@@ -29,9 +29,11 @@ from ._document_meta import (
 from ._file_state import FileStateKind
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
-from ._run_ledger import FinalizationPhase, RunOperation
+from ._run_ledger_models import FinalizationPhase, RunOperation
 from ._run_policy import RunPolicy
 from ._streaming import (
+    DocumentSliceRequest,
+    DocumentSliceStreamRequest,
     _SliceWriter,
     encode_and_upsert_document_slice,
     iter_weighted_document_slices,
@@ -51,7 +53,7 @@ if TYPE_CHECKING:
     from ._preprocess_config import PreprocessContext
     from ._resolved_policy import ResolvedIndexPolicy
     from ._reuse import DonorReuseContext, ReuseStats
-    from ._run_ledger import CommitUnit
+    from ._run_ledger_models import CommitUnit
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +218,73 @@ class _DocumentRunCounts:
     preprocess_ok: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class _DocumentPublishRequest:
+    """Shared authority for publishing one document file."""
+
+    policy: ResolvedIndexPolicy
+    prep: PreprocessContext | None
+    budget: _DocumentResourceBudget
+    checkpoint: DocumentRunCheckpoint
+    reporter: ProgressReporter
+    run_control: RunControl
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentSliceWriteRequest:
+    """One ordered document-slice publication request."""
+
+    selected: list[DocumentChunk]
+    unit: CommitUnit
+    ordinal: int
+    rel_path: str
+    budget: _DocumentResourceBudget
+    checkpoint: DocumentRunCheckpoint
+    writer: _SliceWriter
+    run_control: RunControl
+    reuse: DonorReuseContext | None = None
+    release_cache: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentResultDetails:
+    """Measured output for one document indexing attempt."""
+
+    started: float
+    added: int
+    updated: int
+    removed: int
+    files: int
+    preprocess_ok: int
+    failures: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentMetadataReplacement:
+    """One in-memory document manifest replacement after slice publication."""
+
+    current: dict[str, DocumentFileMetadata]
+    rel: str
+    old: DocumentFileMetadata | None
+    metadata: DocumentFileMetadata
+    chunk_count: int
+    counts: _DocumentRunCounts
+    checkpoint: DocumentRunCheckpoint
+
+
+class _DocumentIndexerOptions(TypedDict, total=False):
+    gpu_lock: threading.Lock | None
+    extra_excludes: list[str] | None
+    content_policy: RootContentPolicy | None
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentIndexerConfig:
+    gpu_lock: threading.Lock | None = None
+    extra_excludes: list[str] | None = None
+    content_policy: RootContentPolicy | None = None
+
+
 class DocumentIndexer:
     """Index only paths explicitly admitted to the document domain."""
 
@@ -224,17 +293,15 @@ class DocumentIndexer:
         root_dir: pathlib.Path,
         model: EmbeddingModel,
         store: VaultStore,
-        *,
-        gpu_lock: threading.Lock | None = None,
-        extra_excludes: list[str] | None = None,
-        content_policy: RootContentPolicy | None = None,
+        **options: Unpack[_DocumentIndexerOptions],
     ) -> None:
+        config = _DocumentIndexerConfig(**options)
         self.root_dir = root_dir.resolve()
         self.model = model
         self.store = store
-        self._gpu_lock = gpu_lock
-        self._extra_excludes = tuple(extra_excludes or ())
-        self._content_policy = content_policy or RootContentPolicy(
+        self._gpu_lock = config.gpu_lock
+        self._extra_excludes = tuple(config.extra_excludes or ())
+        self._content_policy = config.content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
         )
         self._writer_lock = threading.RLock()
@@ -472,30 +539,29 @@ class DocumentIndexer:
         self,
         path: pathlib.Path,
         *,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
-        reporter: ProgressReporter,
-        run_control: RunControl,
+        request: _DocumentPublishRequest,
     ) -> tuple[DocumentFileMetadata | None, int, str | None]:
         """Chunk and publish one document, returning durable file evidence."""
         from ._run_policy import RunPolicy
 
-        run_control.checkpoint()
-        budget.checkpoint_runtime_resources(f"{path.name} before extraction")
-        extractor_policy = RunPolicy.from_config(run_control=run_control)
+        request.run_control.checkpoint()
+        request.budget.checkpoint_runtime_resources(f"{path.name} before extraction")
+        extractor_policy = RunPolicy.from_config(run_control=request.run_control)
         result = _chunk_worker.stream_document_and_hash_file(
             path,
             self.root_dir,
-            prep,
-            self._execution_policy(policy),
-            run_control,
-            lambda: extractor_policy.checkpoint("document extractor polling"),
+            _chunk_worker.DocumentChunkingOptions(
+                prep=request.prep,
+                execution_policy=self._execution_policy(request.policy),
+                run_control=request.run_control,
+                preprocess_checkpoint=lambda: extractor_policy.checkpoint(
+                    "document extractor polling"
+                ),
+            ),
         )
         if result.preprocess_status == "skipped":
             reason = result.preprocess_reason or "document extraction skipped"
-            checkpoint.record_processing_failure(
+            request.checkpoint.record_processing_failure(
                 result.rel_path,
                 FileStateKind.EXTRACT_RETRYABLE,
                 reason,
@@ -508,12 +574,14 @@ class DocumentIndexer:
         slice_size = max(1, int(cfg.embedding_batch_size))
         flush_slices = max(1, int(cfg.document_cache_flush_slices))
         weighted_slices = iter_weighted_document_slices(
-            result.chunks,
-            max_chunks=slice_size,
-            run_control=run_control,
+            DocumentSliceStreamRequest(
+                chunks=result.chunks,
+                max_chunks=slice_size,
+                run_control=request.run_control,
+            )
         )
         point_ids: list[str] = []
-        reporter.phase_start("embed + upsert document chunks", None)
+        request.reporter.phase_start("embed + upsert document chunks", None)
         writer = _SliceWriter(name="document-slice-writer")
         try:
             try:
@@ -521,10 +589,10 @@ class DocumentIndexer:
                 weighted = next(iterator, None)
                 ordinal = 0
                 while weighted is not None:
-                    run_control.checkpoint()
+                    request.run_control.checkpoint()
                     following = next(iterator, None)
                     selected = list(weighted.chunks)
-                    budget.reserve(
+                    request.budget.reserve(
                         len(selected),
                         weighted.estimated_bytes,
                         sum(
@@ -532,43 +600,46 @@ class DocumentIndexer:
                             for chunk in selected
                         ),
                     )
-                    budget.checkpoint_runtime_resources(
+                    request.budget.checkpoint_runtime_resources(
                         f"{result.rel_path} slice-{ordinal} before encode"
                     )
-                    unit = checkpoint.unit_for(
+                    unit = request.checkpoint.unit_for(
                         result.rel_path,
                         result.content_hash,
                         ordinal,
                         is_file_end=following is None,
                         point_ids=tuple(chunk.id for chunk in selected),
                     )
-                    if not checkpoint.slice_committed(unit):
+                    if not request.checkpoint.slice_committed(unit):
                         self._encode_slice_through_writer(
-                            selected,
-                            unit=unit,
-                            ordinal=ordinal,
-                            rel_path=result.rel_path,
-                            budget=budget,
-                            checkpoint=checkpoint,
-                            writer=writer,
-                            run_control=run_control,
-                            reuse=self._donor_reuse,
-                            release_cache=(
-                                following is None or (ordinal + 1) % flush_slices == 0
-                            ),
+                            _DocumentSliceWriteRequest(
+                                selected=selected,
+                                unit=unit,
+                                ordinal=ordinal,
+                                rel_path=result.rel_path,
+                                budget=request.budget,
+                                checkpoint=request.checkpoint,
+                                writer=writer,
+                                run_control=request.run_control,
+                                reuse=self._donor_reuse,
+                                release_cache=(
+                                    following is None
+                                    or (ordinal + 1) % flush_slices == 0
+                                ),
+                            )
                         )
                     point_ids.extend(chunk.id for chunk in selected)
-                    reporter.advance(len(selected))
+                    request.reporter.advance(len(selected))
                     ordinal += 1
                     weighted = following
             except BaseException:
                 writer.abandon()
                 raise
-            writer.close(run_control=run_control)
+            writer.close(run_control=request.run_control)
         finally:
-            reporter.phase_end()
+            request.reporter.phase_end()
         if not point_ids:
-            checkpoint.record_processing_failure(
+            request.checkpoint.record_processing_failure(
                 result.rel_path,
                 FileStateKind.CHUNK_FAILED,
                 "document produced no decodable content",
@@ -587,17 +658,7 @@ class DocumentIndexer:
 
     def _encode_slice_through_writer(
         self,
-        selected: list[DocumentChunk],
-        *,
-        unit: CommitUnit,
-        ordinal: int,
-        rel_path: str,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
-        writer: _SliceWriter,
-        run_control: RunControl,
-        reuse: DonorReuseContext | None = None,
-        release_cache: bool = True,
+        request: _DocumentSliceWriteRequest,
     ) -> None:
         """Encode one uncommitted slice and hand its publication to the writer.
 
@@ -609,44 +670,50 @@ class DocumentIndexer:
         from ..config import get_config
         from ..memory_probe import record_forward_peaks
 
-        self.store.disk_headroom_preflight(len(selected))
+        self.store.disk_headroom_preflight(len(request.selected))
 
         def _after_forward(kind: str) -> None:
-            run_control.checkpoint()
-            budget.checkpoint_runtime_resources(
-                f"{rel_path} slice-{ordinal} after-{kind}-forward"
+            request.run_control.checkpoint()
+            request.budget.checkpoint_runtime_resources(
+                f"{request.rel_path} slice-{request.ordinal} after-{kind}-forward"
             )
-            run_control.checkpoint()
+            request.run_control.checkpoint()
 
         def _on_cuda_oom(exc: BaseException) -> None:
-            budget.fail_cuda_oom(f"{rel_path} slice-{ordinal} allocator-oom", exc)
+            request.budget.fail_cuda_oom(
+                f"{request.rel_path} slice-{request.ordinal} allocator-oom", exc
+            )
 
         def _on_storage_confirmed() -> None:
-            checkpoint.record_confirmed_slice(unit)
-            budget.checkpoint_runtime_resources(
-                f"{rel_path} slice-{ordinal} after store"
+            request.checkpoint.record_confirmed_slice(request.unit)
+            request.budget.checkpoint_runtime_resources(
+                f"{request.rel_path} slice-{request.ordinal} after store"
             )
 
         # Route the lock-bracketed forward captures into this job's own
         # budget so checkpoints enforce the job's demand rather than a
         # process-wide high-water.
-        with record_forward_peaks(budget.memory_budget.record_forward_peak_mb):
+        with record_forward_peaks(
+            request.budget.memory_budget.record_forward_peak_mb
+        ):
             encode_and_upsert_document_slice(
-                selected,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                release_cache=release_cache,
-                encode_batch_size=int(
-                    get_config().embedding_document_encode_batch_size
-                ),
-                write_policy=checkpoint.run_policy.store_write_policy,
-                on_storage_confirmed=_on_storage_confirmed,
-                after_forward=_after_forward,
-                on_cuda_oom=_on_cuda_oom,
-                run_control=run_control,
-                reuse=reuse,
-                writer=writer,
+                DocumentSliceRequest(
+                    chunks=request.selected,
+                    model=self.model,
+                    store=self.store,
+                    gpu_lock=self._gpu_lock,
+                    release_cache=request.release_cache,
+                    encode_batch_size=int(
+                        get_config().embedding_document_encode_batch_size
+                    ),
+                    write_policy=request.checkpoint.run_policy.store_write_policy,
+                    on_storage_confirmed=_on_storage_confirmed,
+                    after_forward=_after_forward,
+                    on_cuda_oom=_on_cuda_oom,
+                    run_control=request.run_control,
+                    reuse=request.reuse,
+                    writer=request.writer,
+                )
             )
 
     def _open_checkpoint(
@@ -729,51 +796,32 @@ class DocumentIndexer:
         finally:
             reporter.phase_end()
         return self._finish_result(
-            started=started,
-            added=0,
-            updated=0,
-            removed=0,
-            files=0,
-            preprocess_ok=0,
-            failures=[],
+            _DocumentResultDetails(started, 0, 0, 0, 0, 0, []),
         )
 
     def _finish_result(
         self,
-        *,
-        started: float,
-        added: int,
-        updated: int,
-        removed: int,
-        files: int,
-        preprocess_ok: int,
-        failures: list[str],
+        details: _DocumentResultDetails,
     ) -> IndexResult:
         return IndexResult(
             total=self.store.count_document(),
-            added=added,
-            updated=updated,
-            removed=removed,
-            duration_ms=int((time.monotonic() - started) * 1000),
+            added=details.added,
+            updated=details.updated,
+            removed=details.removed,
+            duration_ms=int((time.monotonic() - details.started) * 1000),
             device=str(getattr(self.model, "device", "unknown")),
-            files=files,
-            preprocess_ok=preprocess_ok,
-            preprocess_skipped=len(failures),
-            preprocess_failures=failures,
+            files=details.files,
+            preprocess_ok=details.preprocess_ok,
+            preprocess_skipped=len(details.failures),
+            preprocess_failures=details.failures,
             reuse=self._reuse_snapshot(),
         )
 
     def _publish_full_paths(
         self,
         paths: tuple[pathlib.Path, ...],
-        *,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
         previous_files: dict[str, DocumentFileMetadata],
-        reporter: ProgressReporter,
-        run_control: RunControl,
+        request: _DocumentPublishRequest,
     ) -> tuple[list[DocumentFileMetadata], _DocumentRunCounts, list[str]]:
         """Publish a full discovered set while retaining failed prior points."""
         published: list[DocumentFileMetadata] = []
@@ -781,7 +829,10 @@ class DocumentIndexer:
         failures: list[str] = []
         for path in paths:
             rel = path.relative_to(self.root_dir).as_posix()
-            if policy.execution_mode == "off" and policy.match_preprocess(rel):
+            if (
+                request.policy.execution_mode == "off"
+                and request.policy.match_preprocess(rel)
+            ):
                 retained = previous_files.get(rel)
                 if retained is not None:
                     published.append(retained)
@@ -791,12 +842,7 @@ class DocumentIndexer:
                 continue
             metadata, chunk_count, failure = self._publish_file(
                 path,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                checkpoint=checkpoint,
-                reporter=reporter,
-                run_control=run_control,
+                request=request,
             )
             if failure is not None:
                 failures.append(failure)
@@ -810,7 +856,7 @@ class DocumentIndexer:
                 counts.updated += chunk_count
             else:
                 counts.added += chunk_count
-            if policy.match_preprocess(rel) is not None:
+            if request.policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
         return published, counts, failures
 
@@ -865,14 +911,8 @@ class DocumentIndexer:
     def _reconcile_incremental_paths(
         self,
         selected: set[str],
-        *,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
         previous_files: dict[str, DocumentFileMetadata],
-        reporter: ProgressReporter,
-        run_control: RunControl,
+        request: _DocumentPublishRequest,
     ) -> tuple[dict[str, DocumentFileMetadata], _DocumentRunCounts, list[str]]:
         """Apply one selected incremental set under the document writer lock."""
         current = dict(previous_files)
@@ -880,16 +920,19 @@ class DocumentIndexer:
         failures: list[str] = []
         for rel in sorted(selected):
             path = self.root_dir / pathlib.PurePosixPath(rel)
-            disposition = policy.classify(rel).disposition
+            disposition = request.policy.classify(rel).disposition
             admitted = disposition.admitted and disposition.kind is ContentKind.DOCUMENT
             if not path.is_file() or not admitted:
                 old = current.pop(rel, None)
                 if old is not None:
                     self.store.delete_document_content_chunks(list(old.point_ids))
-                    checkpoint.record_confirmed_deletion(rel, old.point_ids)
+                    request.checkpoint.record_confirmed_deletion(rel, old.point_ids)
                     counts.removed += len(old.point_ids)
                 continue
-            if policy.execution_mode == "off" and policy.match_preprocess(rel):
+            if (
+                request.policy.execution_mode == "off"
+                and request.policy.match_preprocess(rel)
+            ):
                 failures.append(
                     f"{rel}: preprocessing disabled; retained work as stale"
                 )
@@ -897,12 +940,7 @@ class DocumentIndexer:
             old = current.get(rel)
             metadata, chunk_count, failure = self._publish_file(
                 path,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                checkpoint=checkpoint,
-                reporter=reporter,
-                run_control=run_control,
+                request=request,
             )
             if failure is not None:
                 failures.append(failure)
@@ -910,41 +948,40 @@ class DocumentIndexer:
             assert metadata is not None
             current[rel] = metadata
             self._replace_incremental_metadata(
-                current,
-                rel=rel,
-                old=old,
-                metadata=metadata,
-                chunk_count=chunk_count,
-                counts=counts,
-                checkpoint=checkpoint,
+                _DocumentMetadataReplacement(
+                    current,
+                    rel,
+                    old,
+                    metadata,
+                    chunk_count,
+                    counts,
+                    request.checkpoint,
+                )
             )
-            if policy.match_preprocess(rel) is not None:
+            if request.policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
         return current, counts, failures
 
     def _replace_incremental_metadata(
         self,
-        current: dict[str, DocumentFileMetadata],
-        *,
-        rel: str,
-        old: DocumentFileMetadata | None,
-        metadata: DocumentFileMetadata,
-        chunk_count: int,
-        counts: _DocumentRunCounts,
-        checkpoint: DocumentRunCheckpoint,
+        replacement: _DocumentMetadataReplacement,
     ) -> None:
         """Replace one file generation and account for obsolete points."""
-        current[rel] = metadata
-        obsolete = set(old.point_ids if old else ()) - set(metadata.point_ids)
+        replacement.current[replacement.rel] = replacement.metadata
+        obsolete = set(
+            replacement.old.point_ids if replacement.old else ()
+        ) - set(replacement.metadata.point_ids)
         if obsolete:
             obsolete_ids = tuple(sorted(obsolete))
             self.store.delete_document_content_chunks(list(obsolete_ids))
-            checkpoint.record_confirmed_stale_deletion(rel, obsolete_ids)
-            counts.removed += len(obsolete)
-        if old is None:
-            counts.added += chunk_count
+            replacement.checkpoint.record_confirmed_stale_deletion(
+                replacement.rel, obsolete_ids
+            )
+            replacement.counts.removed += len(obsolete)
+        if replacement.old is None:
+            replacement.counts.added += replacement.chunk_count
         else:
-            counts.updated += chunk_count
+            replacement.counts.updated += replacement.chunk_count
 
     def full_index(
         self,
@@ -985,12 +1022,14 @@ class DocumentIndexer:
                     paths,
                     started=started,
                     effective_clean=effective_clean,
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    checkpoint=checkpoint,
-                    reporter=reporter,
-                    run_control=run_control,
+                    request=_DocumentPublishRequest(
+                        policy=policy,
+                        prep=prep,
+                        budget=budget,
+                        checkpoint=checkpoint,
+                        reporter=reporter,
+                        run_control=run_control,
+                    ),
                 ),
                 event_logger=logger,
                 store=self.store,
@@ -1008,14 +1047,12 @@ class DocumentIndexer:
         *,
         started: float,
         effective_clean: bool,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
-        reporter: ProgressReporter,
-        run_control: RunControl,
+        request: _DocumentPublishRequest,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`."""
+        policy = request.policy
+        checkpoint = request.checkpoint
+        reporter = request.reporter
         resumed = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -1046,13 +1083,8 @@ class DocumentIndexer:
             self.store.ensure_document_table()
             published, counts, failures = self._publish_full_paths(
                 paths,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                checkpoint=checkpoint,
                 previous_files=previous_files,
-                reporter=reporter,
-                run_control=run_control,
+                request=request,
             )
             removed = self._reconcile_full_stale(
                 previous_files,
@@ -1071,13 +1103,15 @@ class DocumentIndexer:
                 checkpoint.publish_metadata(self._meta_path)
                 checkpoint.publish_generation()
         return self._finish_result(
-            started=started,
-            added=counts.added,
-            updated=counts.updated,
-            removed=removed,
-            files=len(paths),
-            preprocess_ok=counts.preprocess_ok,
-            failures=failures,
+            _DocumentResultDetails(
+                started,
+                counts.added,
+                counts.updated,
+                removed,
+                len(paths),
+                counts.preprocess_ok,
+                failures,
+            ),
         )
 
     def incremental_index(
@@ -1138,13 +1172,15 @@ class DocumentIndexer:
                     authorized_paths,
                     started=started,
                     scoped=changed_paths is not None,
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    checkpoint=checkpoint,
+                    request=_DocumentPublishRequest(
+                        policy=policy,
+                        prep=prep,
+                        budget=budget,
+                        checkpoint=checkpoint,
+                        reporter=reporter,
+                        run_control=run_control,
+                    ),
                     previous=previous,
-                    reporter=reporter,
-                    run_control=run_control,
                 ),
                 event_logger=logger,
                 store=self.store,
@@ -1164,15 +1200,13 @@ class DocumentIndexer:
         *,
         started: float,
         scoped: bool,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
+        request: _DocumentPublishRequest,
         previous: DocumentIndexMetadata,
-        reporter: ProgressReporter,
-        run_control: RunControl,
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`."""
+        policy = request.policy
+        checkpoint = request.checkpoint
+        reporter = request.reporter
         resumed = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -1192,13 +1226,8 @@ class DocumentIndexer:
         with checkpoint.preserve_incomplete_generation():
             _current, counts, failures = self._reconcile_incremental_paths(
                 selected,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                checkpoint=checkpoint,
                 previous_files=previous_files,
-                reporter=reporter,
-                run_control=run_control,
+                request=request,
             )
             if failures:
                 checkpoint.mark_failed("; ".join(failures))
@@ -1212,11 +1241,13 @@ class DocumentIndexer:
                 checkpoint.publish_metadata(self._meta_path)
                 checkpoint.publish_generation()
             return self._finish_result(
-                started=started,
-                added=counts.added,
-                updated=counts.updated,
-                removed=counts.removed,
-                files=len(selected),
-                preprocess_ok=counts.preprocess_ok,
-                failures=failures,
+                _DocumentResultDetails(
+                    started,
+                    counts.added,
+                    counts.updated,
+                    counts.removed,
+                    len(selected),
+                    counts.preprocess_ok,
+                    failures,
+                ),
             )

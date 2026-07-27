@@ -14,12 +14,13 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .. import store_schema
 from ._content_policy import ContentKind
-from ._run_ledger import RunLedger, index_run_ledger_path
+from ._run_ledger_models import index_run_ledger_path
+from ._run_ledger_runtime import RunLedger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._file_state import FileState
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_policy import RunPolicy
@@ -362,20 +363,24 @@ def reconcile_origin_after_destination(
     if not _destination_evidence_is_current(
         store,
         checkpoint.ledger,
-        destination_generation_id=checkpoint.generation_id,
-        destination_kind=destination_kind,
-        rel_path=rel_path,
-        run_policy=checkpoint.run_policy,
+        _DestinationEvidenceRequest(
+            destination_generation_id=checkpoint.generation_id,
+            destination_kind=destination_kind,
+            rel_path=rel_path,
+            run_policy=checkpoint.run_policy,
+        ),
     ):
         return 0
     checkpoint.run_policy.checkpoint("route migration resume entry")
     removed = _resume_path_migrations(
         store,
         journal,
-        rel_path=rel_path,
-        origin_kind=origin_kind,
-        destination_kind=destination_kind,
-        destination_generation_id=checkpoint.generation_id,
+        _ResumePathMigration(
+            rel_path=rel_path,
+            origin_kind=origin_kind,
+            destination_kind=destination_kind,
+            destination_generation_id=checkpoint.generation_id,
+        ),
     )
     while point_ids := origin_point_ids(store, origin_kind, rel_path):
         checkpoint.run_policy.checkpoint("route migration before journal")
@@ -436,10 +441,12 @@ def reconcile_checkpoint_routes(
                 destination_evidence[rel_path] = _destination_evidence_is_current(
                     store,
                     checkpoint.ledger,
-                    destination_generation_id=checkpoint.generation_id,
-                    destination_kind=destination_kind,
-                    rel_path=rel_path,
-                    run_policy=checkpoint.run_policy,
+                    _DestinationEvidenceRequest(
+                        destination_generation_id=checkpoint.generation_id,
+                        destination_kind=destination_kind,
+                        rel_path=rel_path,
+                        run_policy=checkpoint.run_policy,
+                    ),
                 )
             if not destination_evidence[rel_path]:
                 continue
@@ -576,10 +583,12 @@ def resume_pending_migrations(
             destination_evidence[evidence_key] = _destination_evidence_is_current(
                 store,
                 ledger,
-                destination_generation_id=migration.destination_generation_id,
-                destination_kind=migration.destination_kind,
-                rel_path=migration.rel_path,
-                run_policy=run_policy,
+                _DestinationEvidenceRequest(
+                    destination_generation_id=migration.destination_generation_id,
+                    destination_kind=migration.destination_kind,
+                    rel_path=migration.rel_path,
+                    run_policy=run_policy,
+                ),
             )
         if not destination_evidence[evidence_key]:
             continue
@@ -664,22 +673,26 @@ def _stored_row_is_retained(
     return row.point_id in retained_ids
 
 
+@dataclass(frozen=True, slots=True)
+class _ResumePathMigration:
+    rel_path: str
+    origin_kind: ContentKind
+    destination_kind: ContentKind
+    destination_generation_id: str
+
+
 def _resume_path_migrations(
     store: VaultStore,
     journal: RouteMigrationJournal,
-    *,
-    rel_path: str,
-    origin_kind: ContentKind,
-    destination_kind: ContentKind,
-    destination_generation_id: str,
+    request: _ResumePathMigration,
 ) -> int:
     removed = 0
     for migration in journal.pending():
         if (
-            migration.rel_path != rel_path
-            or migration.origin_kind is not origin_kind
-            or migration.destination_kind is not destination_kind
-            or migration.destination_generation_id != destination_generation_id
+            migration.rel_path != request.rel_path
+            or migration.origin_kind is not request.origin_kind
+            or migration.destination_kind is not request.destination_kind
+            or migration.destination_generation_id != request.destination_generation_id
         ):
             continue
         _delete_origin_points(store, migration)
@@ -688,50 +701,54 @@ def _resume_path_migrations(
     return removed
 
 
+@dataclass(frozen=True, slots=True)
+class _DestinationEvidenceRequest:
+    destination_generation_id: str
+    destination_kind: ContentKind
+    rel_path: str
+    run_policy: RunPolicy | None
+
+
 def _destination_evidence_is_current(
     store: VaultStore,
     ledger: RunLedger,
-    *,
-    destination_generation_id: str,
-    destination_kind: ContentKind,
-    rel_path: str,
-    run_policy: RunPolicy | None,
+    request: _DestinationEvidenceRequest,
 ) -> bool:
     """Require the exact checkpointed destination points before origin cleanup."""
     try:
-        generation = ledger.generation(destination_generation_id)
+        generation = ledger.generation(request.destination_generation_id)
     except KeyError:
         return False
     expected_collection = (
         store_schema.CODE_COLLECTION
-        if destination_kind is ContentKind.CODE
+        if request.destination_kind is ContentKind.CODE
         else store_schema.DOCUMENT_COLLECTION
     )
     if (
-        generation.signature.source_type is not destination_kind
+        generation.signature.source_type is not request.destination_kind
         or generation.signature.collection_identity != expected_collection
         or not ledger.file_complete(
-            destination_generation_id,
-            rel_path,
+            request.destination_generation_id,
+            request.rel_path,
         )
     ):
         return False
     point_ids = ledger.iter_retained_point_ids(
-        destination_generation_id,
-        rel_path=rel_path,
+        request.destination_generation_id,
+        rel_path=request.rel_path,
     )
     found_any = False
     while batch := tuple(itertools.islice(point_ids, _DEFAULT_PAGE_SIZE)):
         found_any = True
-        if run_policy is not None:
-            run_policy.checkpoint("route destination evidence before retrieve")
-        if destination_kind is ContentKind.CODE:
+        if request.run_policy is not None:
+            request.run_policy.checkpoint("route destination evidence before retrieve")
+        if request.destination_kind is ContentKind.CODE:
             if not store.code_content_ids_exist(batch):
                 return False
         elif not store.document_content_ids_exist(batch):
             return False
-        if run_policy is not None:
-            run_policy.checkpoint("route destination evidence after retrieve")
+        if request.run_policy is not None:
+            request.run_policy.checkpoint("route destination evidence after retrieve")
     return found_any
 
 

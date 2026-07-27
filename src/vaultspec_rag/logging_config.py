@@ -121,10 +121,6 @@ def log_event(
     target_logger: logging.Logger,
     namespace: str,
     event: str,
-    *,
-    severity: int = logging.INFO,
-    exc_info: Any = None,
-    fields: Mapping[str, object] | None = None,
     **extra_fields: object,
 ) -> None:
     """Emit a parseable service event through the configured logger.
@@ -142,6 +138,9 @@ def log_event(
         msg = f"invalid log event name: {event!r}"
         raise ValueError(msg)
 
+    severity = cast("int", extra_fields.pop("severity", logging.INFO))
+    exc_info = extra_fields.pop("exc_info", None)
+    fields = cast("Mapping[str, object] | None", extra_fields.pop("fields", None))
     combined_fields: dict[str, object] = {}
     if fields is not None:
         combined_fields.update(fields)
@@ -676,7 +675,11 @@ def _validated_managed_log_group(
 ) -> ManagedLogGroup | None:
     """Validate one exact source group from the live response."""
     data = cast("dict[str, object]", raw) if isinstance(raw, dict) else None
-    lines = _validated_managed_log_lines(data.get("lines"), limit=limit) if data else None
+    lines = (
+        _validated_managed_log_lines(data.get("lines"), limit=limit)
+        if data
+        else None
+    )
     if data is None or data.get("source") != expected_source or lines is None:
         return None
     group: ManagedLogGroup = {"source": expected_source, "lines": lines}

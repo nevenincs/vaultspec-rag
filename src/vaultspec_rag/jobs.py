@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -517,11 +517,7 @@ def _finish_record(
     target_phase: str,
     summary: str | None,
     error: str | None,
-    preprocess_ok: int,
-    preprocess_skipped: int,
-    preprocess_failures: list[str] | None,
-    reuse: dict[str, object] | None,
-    drift: dict[str, object] | None,
+    details: _FinishDetails,
 ) -> dict[str, object] | None:
     """Apply the terminal state to *record* in place (caller holds the lock).
 
@@ -540,11 +536,11 @@ def _finish_record(
     record["finished_at"] = time.time()
     record["result"] = summary
     record["error_kind"] = classify_error_text(error) if error is not None else None
-    record["preprocess_ok"] = preprocess_ok
-    record["preprocess_skipped"] = preprocess_skipped
-    record["preprocess_failures"] = list(preprocess_failures or [])
-    record["reuse"] = dict(reuse) if reuse is not None else None
-    record["drift"] = dict(drift) if drift is not None else None
+    record["preprocess_ok"] = details.preprocess_ok
+    record["preprocess_skipped"] = details.preprocess_skipped
+    record["preprocess_failures"] = list(details.preprocess_failures or [])
+    record["reuse"] = dict(details.reuse) if details.reuse is not None else None
+    record["drift"] = dict(details.drift) if details.drift is not None else None
     resources = record.get("resources")
     if isinstance(resources, dict):
         cast("dict[str, object]", resources)["finished"] = resource_snapshot()
@@ -558,17 +554,25 @@ def _finish_record(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _FinishDetails:
+    preprocess_ok: int = 0
+    preprocess_skipped: int = 0
+    preprocess_failures: list[str] | None = None
+    reuse: dict[str, object] | None = None
+    drift: dict[str, object] | None = None
+
+
+_DEFAULT_FINISH_DETAILS = _FinishDetails()
+
+
 def record_finish(
     record_id: str,
     *,
     result: str | None = None,
     error: str | None = None,
     phase: Phase | None = None,
-    preprocess_ok: int = 0,
-    preprocess_skipped: int = 0,
-    preprocess_failures: list[str] | None = None,
-    reuse: dict[str, object] | None = None,
-    drift: dict[str, object] | None = None,
+    details: _FinishDetails = _DEFAULT_FINISH_DETAILS,
 ) -> None:
     """Mark the record with *record_id* finished, in place.
 
@@ -614,11 +618,7 @@ def record_finish(
                     target_phase=target_phase,
                     summary=summary,
                     error=error,
-                    preprocess_ok=preprocess_ok,
-                    preprocess_skipped=preprocess_skipped,
-                    preprocess_failures=preprocess_failures,
-                    reuse=reuse,
-                    drift=drift,
+                    details=details,
                 )
                 if log_fields is None:
                     return
@@ -928,7 +928,11 @@ def validate_code_support_profile(
 
     from ._store_writes import probe_store_volume, probe_workspace_volume
     from .config import get_config
-    from .index_profiles import IndexDomain, validate_profile_admission
+    from .index_profiles import (
+        AdmissionEnvironment,
+        IndexDomain,
+        validate_profile_admission,
+    )
     from .indexer._codebase_indexer import CodeIndexPreflight
 
     discovered = (
@@ -946,10 +950,12 @@ def validate_code_support_profile(
         cfg.index_support_profile,
         IndexDomain.CODE,
         measurement,
-        backend="server" if cfg.effective_server_mode() else "local",
-        available_ram_bytes=int(psutil.virtual_memory().total),
-        store_volume=probe_store_volume(root),
-        workspace_volume=probe_workspace_volume(root),
+        AdmissionEnvironment(
+            backend="server" if cfg.effective_server_mode() else "local",
+            available_ram_bytes=int(psutil.virtual_memory().total),
+            store_volume=probe_store_volume(root),
+            workspace_volume=probe_workspace_volume(root),
+        ),
     )
     return measurement
 
@@ -1009,6 +1015,7 @@ def validate_document_support_profile(
     from ._store_writes import probe_store_volume, probe_workspace_volume
     from .config import get_config
     from .index_profiles import (
+        AdmissionEnvironment,
         IndexDomain,
         SupportMeasurement,
         validate_profile_admission,
@@ -1041,10 +1048,12 @@ def validate_document_support_profile(
         cfg.index_support_profile,
         IndexDomain.DOCUMENT,
         measurement,
-        backend="server" if cfg.effective_server_mode() else "local",
-        available_ram_bytes=int(psutil.virtual_memory().total),
-        store_volume=probe_store_volume(root),
-        workspace_volume=probe_workspace_volume(root),
+        AdmissionEnvironment(
+            backend="server" if cfg.effective_server_mode() else "local",
+            available_ram_bytes=int(psutil.virtual_memory().total),
+            store_volume=probe_store_volume(root),
+            workspace_volume=probe_workspace_volume(root),
+        ),
     )
 
 
@@ -1088,13 +1097,17 @@ def _sync_legacy_finished(
         record_finish(
             snapshot.id,
             result=snapshot.result,
-            preprocess_ok=result.preprocess_ok if result is not None else 0,
-            preprocess_skipped=(result.preprocess_skipped if result is not None else 0),
-            preprocess_failures=(
-                list(result.preprocess_failures) if result is not None else None
+            details=_FinishDetails(
+                preprocess_ok=result.preprocess_ok if result is not None else 0,
+                preprocess_skipped=(
+                    result.preprocess_skipped if result is not None else 0
+                ),
+                preprocess_failures=(
+                    list(result.preprocess_failures) if result is not None else None
+                ),
+                reuse=result.reuse if result is not None else None,
+                drift=result.drift if result is not None else None,
             ),
-            reuse=result.reuse if result is not None else None,
-            drift=result.drift if result is not None else None,
         )
     elif snapshot.state is JobState.FAILED:
         record_finish(snapshot.id, error=snapshot.result or str(error or "job failed"))

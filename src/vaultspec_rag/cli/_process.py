@@ -26,7 +26,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
 
 from .._process_probe import (
     bounded_call,
@@ -49,7 +49,7 @@ from .._win32 import (
 from ..config import EnvVar
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
-from ._service_status import _read_service_status
+from ._service_status import read_service_status
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -283,14 +283,33 @@ def _call_interruptibly[T](
     return cast("T", outcome)
 
 
+class _ServiceChildEnvOptions(TypedDict, total=False):
+    watch: bool | None
+    watch_debounce_ms: int | None
+    watch_cooldown_s: float | None
+    qdrant: bool | None
+    local_only: bool | None
+    preprocess_mode: Literal["off"] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceChildEnvRequest:
+    watch: bool | None = None
+    watch_debounce_ms: int | None = None
+    watch_cooldown_s: float | None = None
+    qdrant: bool | None = None
+    local_only: bool | None = None
+    preprocess_mode: Literal["off"] | None = None
+
+
 def _service_child_env(
-    watch: bool | None = None,
-    watch_debounce_ms: int | None = None,
-    watch_cooldown_s: float | None = None,
-    qdrant: bool | None = None,
-    local_only: bool | None = None,
-    preprocess_mode: Literal["off"] | None = None,
+    **options: Unpack[_ServiceChildEnvOptions],
 ) -> dict[str, str]:
+    """Build the environment for the detached daemon process."""
+    return _build_service_child_env(_ServiceChildEnvRequest(**options))
+
+
+def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]:
     """Build the environment for the detached daemon process.
 
     The daemon inherits configuration only through the environment (it
@@ -318,6 +337,14 @@ def _service_child_env(
     Returns:
         The child-process environment mapping.
     """
+    watch, watch_debounce_ms, watch_cooldown_s, qdrant, local_only, preprocess_mode = (
+        request.watch,
+        request.watch_debounce_ms,
+        request.watch_cooldown_s,
+        request.qdrant,
+        request.local_only,
+        request.preprocess_mode,
+    )
     # Strip VAULTSPEC_RAG_ROOT from the daemon env - the HTTP service is
     # multi-tenant and must not fall back to a baked-in project root.
     # Case-insensitive compare: Windows os.environ stores original case
@@ -425,33 +452,63 @@ def _probe_daemon_cuda(
         )
     except OSError as exc:
         return (False, f"could not probe the service interpreter ({exc})")
-    code = proc.returncode
-    if code == 0:
-        return None
-    if code == 3:
-        return (True, "torch is not installed in the service interpreter")
-    if code == 4:
-        return (True, "the service interpreter has a CPU-only torch wheel (no CUDA)")
-    if code == 5:
-        return (
+    return _cuda_probe_exit_outcome(proc.returncode)
+
+
+def _cuda_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
+    """Map the isolated torch probe's documented exit contract."""
+    outcomes = {
+        0: None,
+        3: (True, "torch is not installed in the service interpreter"),
+        4: (True, "the service interpreter has a CPU-only torch wheel (no CUDA)"),
+        5: (
             True,
             "torch is a CUDA build but no CUDA device is visible (driver/GPU)",
-        )
-    return (False, f"the torch pre-flight returned an unexpected exit code {code}")
+        ),
+    }
+    return outcomes.get(
+        code,
+        (False, f"the torch pre-flight returned an unexpected exit code {code}"),
+    )
+
+
+class _ServiceSpawnOptions(_ServiceChildEnvOptions, total=False):
+    timeout: float | None
+    cleanup_timeout: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceSpawnRequest:
+    port: int
+    log_path: Path
+    child_env: _ServiceChildEnvRequest
+    timeout: float | None = None
+    cleanup_timeout: float = 15.0
 
 
 def _spawn_service(
     port: int,
     log_path: Path,
-    watch: bool | None = None,
-    watch_debounce_ms: int | None = None,
-    watch_cooldown_s: float | None = None,
-    qdrant: bool | None = None,
-    local_only: bool | None = None,
-    preprocess_mode: Literal["off"] | None = None,
-    timeout: float | None = None,
-    cleanup_timeout: float = 15.0,
+    **options: Unpack[_ServiceSpawnOptions],
 ) -> int:
+    """Spawn the RAG service as a detached background process."""
+    child_options = {
+        name: value
+        for name, value in options.items()
+        if name in _ServiceChildEnvOptions.__annotations__
+    }
+    return _spawn_service_request(
+        _ServiceSpawnRequest(
+            port,
+            log_path,
+            _ServiceChildEnvRequest(**child_options),
+            options.get("timeout"),
+            float(options.get("cleanup_timeout", 15.0)),
+        )
+    )
+
+
+def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     """Spawn the RAG service as a detached background process.
 
     Args:
@@ -474,6 +531,12 @@ def _spawn_service(
         enforce_pytest_managed_singleton_containment,
     )
 
+    port, log_path, timeout, cleanup_timeout = (
+        request.port,
+        request.log_path,
+        request.timeout,
+        request.cleanup_timeout,
+    )
     enforce_pytest_managed_singleton_containment(
         operation="spawn the managed service process",
         targets=(log_path,),
@@ -492,14 +555,7 @@ def _spawn_service(
         "--launch-token",
         launch_token,
     ]
-    env = _service_child_env(
-        watch=watch,
-        watch_debounce_ms=watch_debounce_ms,
-        watch_cooldown_s=watch_cooldown_s,
-        qdrant=qdrant,
-        local_only=local_only,
-        preprocess_mode=preprocess_mode,
-    )
+    env = _build_service_child_env(request.child_env)
     # Owner-only log, refusing a pre-planted symlink at the path where the
     # platform offers O_NOFOLLOW (local log-tamper / redirect hardening).
     _log_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
@@ -698,7 +754,7 @@ def _discover_late_service_pids(
     discovery rather than blocking the cleanup.
     """
     candidates: dict[int, float] = {}
-    status = _read_service_status()
+    status = read_service_status()
     status_pid = 0
     if (
         status is not None
@@ -968,56 +1024,92 @@ def _owned_qdrant_identity(
     )
 
     identity = read_qdrant_identity()
-    if (
-        identity is None
-        or identity.owner_pid != service_pid
-        or identity.owner_start_time <= 0.0
-        or identity.qdrant_pid <= 0
-        or identity.qdrant_start_time <= 0.0
+    if identity is None or not _is_owned_qdrant_identity(
+        identity,
+        _QdrantValidationContext(
+            service_pid=service_pid,
+            deadline=deadline,
+            expected_storage=Path(
+                str(get_config().qdrant_storage_dir)
+            ).expanduser().resolve(),
+            expected_version=QDRANT_SERVER_VERSION,
+            probe=probe_qdrant_endpoint,
+        ),
     ):
         return None
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return None
-    if not pid_matches_start_time(
-        identity.owner_pid,
-        identity.owner_start_time,
-        timeout=remaining,
+    return identity
+
+
+@dataclass(frozen=True, slots=True)
+class _QdrantValidationContext:
+    """External facts required to validate one recorded Qdrant identity."""
+
+    service_pid: int
+    deadline: float
+    expected_storage: Path
+    expected_version: str
+    probe: Callable[..., object]
+
+
+def _is_owned_qdrant_identity(
+    identity: QdrantIdentity,
+    context: _QdrantValidationContext,
+) -> bool:
+    """Verify every immutable ownership witness before a Qdrant reap."""
+    recorded_storage = Path(identity.storage_path).expanduser().resolve()
+    remaining = context.deadline - time.monotonic()
+    identity_matches = (
+        identity.owner_pid == context.service_pid
+        and identity.owner_start_time > 0.0
+        and identity.qdrant_pid > 0
+        and identity.qdrant_start_time > 0.0
+        and recorded_storage == context.expected_storage
+        and identity.version == context.expected_version
+    )
+    if not identity_matches or remaining <= 0 or not pid_matches_start_time(
+        identity.owner_pid, identity.owner_start_time, timeout=remaining
     ):
-        return None
+        return False
+    return _qdrant_process_is_live(
+        identity,
+        deadline=context.deadline,
+        expected_version=context.expected_version,
+        probe=context.probe,
+    )
+
+
+def _qdrant_process_is_live(
+    identity: QdrantIdentity,
+    *,
+    deadline: float,
+    expected_version: str,
+    probe: Callable[..., object],
+) -> bool:
+    """Verify Qdrant's exact PID, listener, and protocol incarnation."""
     remaining = deadline - time.monotonic()
     if remaining <= 0 or not pid_matches_start_time(
-        identity.qdrant_pid,
-        identity.qdrant_start_time,
-        timeout=remaining,
+        identity.qdrant_pid, identity.qdrant_start_time, timeout=remaining
     ):
-        return None
-    cfg = get_config()
-    expected_storage = Path(str(cfg.qdrant_storage_dir)).expanduser().resolve()
-    recorded_storage = Path(identity.storage_path).expanduser().resolve()
+        return False
     remaining = deadline - time.monotonic()
-    if (
-        remaining <= 0
-        or recorded_storage != expected_storage
-        or identity.version != QDRANT_SERVER_VERSION
-        or not pid_image_matches(identity.qdrant_pid, "qdrant", timeout=remaining)
+    if remaining <= 0 or not pid_image_matches(
+        identity.qdrant_pid, "qdrant", timeout=remaining
     ):
-        return None
+        return False
     remaining = deadline - time.monotonic()
     if remaining <= 0 or not pid_listens_on_loopback_port(
         identity.qdrant_pid, identity.http_port, timeout=remaining
     ):
-        return None
+        return False
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        return None
-    probe = probe_qdrant_endpoint(
-        identity.http_port,
-        timeout=max(0.001, min(2.0, remaining / 2.0)),
+        return False
+    result = probe(
+        identity.http_port, timeout=max(0.001, min(2.0, remaining / 2.0))
     )
-    if not probe.ready or probe.version != QDRANT_SERVER_VERSION:
-        return None
-    return identity
+    return bool(getattr(result, "ready", False)) and (
+        getattr(result, "version", None) == expected_version
+    )
 
 
 def _reap_owned_qdrant(
@@ -1026,7 +1118,7 @@ def _reap_owned_qdrant(
     deadline: float,
 ) -> None:
     """Revalidate and reap the same previously captured Qdrant incarnation."""
-    if identity is None:
+    if identity is None or not pid_alive(identity.qdrant_pid):
         return
     from pathlib import Path
 
@@ -1039,54 +1131,55 @@ def _reap_owned_qdrant(
     )
 
     qdrant_pid = identity.qdrant_pid
-    if not pid_alive(qdrant_pid):
-        return
     current = read_qdrant_identity()
     expected_storage = Path(str(get_config().qdrant_storage_dir)).expanduser().resolve()
     recorded_storage = Path(identity.storage_path).expanduser().resolve()
     remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return
-    if (
-        current != identity
-        or identity.qdrant_start_time <= 0.0
-        or recorded_storage != expected_storage
-        or identity.version != QDRANT_SERVER_VERSION
-    ):
-        return
-    if not pid_matches_start_time(
+    is_valid = (
+        remaining > 0
+        and (
+            current == identity
+            and identity.qdrant_start_time > 0.0
+            and recorded_storage == expected_storage
+            and identity.version == QDRANT_SERVER_VERSION
+        )
+    )
+    is_valid = is_valid and pid_matches_start_time(
         qdrant_pid,
         identity.qdrant_start_time,
         timeout=remaining,
-    ):
-        return
+    )
     remaining = deadline - time.monotonic()
-    if remaining <= 0 or not pid_image_matches(qdrant_pid, "qdrant", timeout=remaining):
-        return
+    is_valid = is_valid and remaining > 0 and pid_image_matches(
+        qdrant_pid, "qdrant", timeout=remaining
+    )
     remaining = deadline - time.monotonic()
-    if remaining <= 0 or not pid_listens_on_loopback_port(
+    is_valid = is_valid and remaining > 0 and pid_listens_on_loopback_port(
         qdrant_pid,
         identity.http_port,
         timeout=remaining,
-    ):
-        return
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return
-    probe = probe_qdrant_endpoint(
-        identity.http_port,
-        timeout=max(0.001, min(2.0, remaining / 2.0)),
     )
-    if not probe.ready or probe.version != QDRANT_SERVER_VERSION:
-        return
     remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return
-    if not reap_qdrant_orphan(
+    probe = (
+        probe_qdrant_endpoint(
+            identity.http_port,
+            timeout=max(0.001, min(2.0, remaining / 2.0)),
+        )
+        if is_valid and remaining > 0
+        else None
+    )
+    is_valid = (
+        is_valid
+        and probe is not None
+        and probe.ready
+        and probe.version == QDRANT_SERVER_VERSION
+    )
+    reaped = is_valid and reap_qdrant_orphan(
         qdrant_pid,
         wait_seconds=remaining,
         expected_start_time=identity.qdrant_start_time,
-    ):
+    )
+    if is_valid and not reaped:
         logger.warning(
             "validated service-owned qdrant pid %d survived forced service stop",
             qdrant_pid,

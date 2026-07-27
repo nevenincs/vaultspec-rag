@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._atomic_write import replace_atomically
+from ._rmtree import remove_tree
 from ._timestamps import parse_iso_timestamp
 from .storage_manifest import (
     SnapshotCollection,
     StorageSnapshotManifest,
     load_manifest,
+    snapshot_manifest_path,
     write_snapshot_manifest,
 )
 from .storage_reconciliation import ReconcileBatch, reconcile_collections
@@ -413,6 +416,7 @@ def archive_prefix(
     entry = load_manifest().get(prefix)
     identities = {} if entry is None else entry.collection_identity
     for name in targets:
+        points = int(client.count(collection_name=name).count)
         description = client.create_snapshot(collection_name=name, wait=True)
         if description is None or not description.name:
             raise RuntimeError(f"snapshot creation returned no name for {name}")
@@ -426,7 +430,7 @@ def archive_prefix(
             SnapshotCollection(
                 name=name,
                 snapshot_file=dest.name,
-                points=int(client.count(collection_name=name).count),
+                points=points,
                 identity=identities.get(name),
             )
         )
@@ -455,8 +459,72 @@ def archive_prefix(
             metadata_files=tuple(sorted(metadata_files)),
         ),
     )
+    _verify_completed_archive(client, dest_dir, manifest_path)
     archived.append(manifest_path)
     return archived
+
+
+def _verify_completed_archive(
+    client: QdrantClient,
+    archive_dir: Path,
+    manifest_path: Path,
+) -> None:
+    """Re-read a completed archive and prove it still describes live data."""
+    records = _read_archive_records(manifest_path)
+    for name, snapshot_file, points in records:
+        artifact = archive_dir / snapshot_file
+        if artifact.parent != archive_dir or not artifact.is_file():
+            raise RuntimeError(f"archived snapshot file not found: {artifact}")
+        try:
+            if artifact.stat().st_size <= 0:
+                raise RuntimeError(f"archived snapshot file is empty: {artifact}")
+        except OSError as exc:
+            message = f"archived snapshot file is unreadable: {artifact}"
+            raise RuntimeError(message) from exc
+        current_points = int(client.count(collection_name=name).count)
+        if current_points != points:
+            raise RuntimeError(
+                f"archived snapshot point count changed for {name}: "
+                f"expected {points}, found {current_points}"
+            )
+
+
+def _read_archive_records(manifest_path: Path) -> tuple[tuple[str, str, int], ...]:
+    """Load the snapshot records from a non-empty completed archive manifest."""
+    try:
+        if manifest_path.stat().st_size <= 0:
+            raise RuntimeError(f"archive manifest is empty: {manifest_path}")
+        payload: object = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"archive manifest is unreadable: {manifest_path}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
+    raw_records = cast("dict[str, object]", payload).get("collections")
+    if not isinstance(raw_records, list):
+        message = f"archive manifest has no collection records: {manifest_path}"
+        raise RuntimeError(message)
+    records = cast("list[object]", raw_records)
+    return tuple(_archive_record(record, manifest_path) for record in records)
+
+
+def _archive_record(record: object, manifest_path: Path) -> tuple[str, str, int]:
+    """Validate one persisted snapshot record before using its file name."""
+    if not isinstance(record, dict):
+        raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
+    fields = cast("dict[str, object]", record)
+    name = fields.get("name")
+    snapshot_file = fields.get("snapshot_file")
+    points = fields.get("points")
+    if (
+        not isinstance(name, str)
+        or not isinstance(snapshot_file, str)
+        or Path(snapshot_file).name != snapshot_file
+        or isinstance(points, bool)
+        or not isinstance(points, int)
+        or points < 0
+    ):
+        raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
+    return name, snapshot_file, points
 
 
 def sweep_archive(
@@ -471,32 +539,23 @@ def sweep_archive(
     Args:
         archive_dir: The archive tree to bound. Missing dir is a no-op.
         now: The evaluation clock (timezone-aware).
-        retention_days: Age past which an archive file is deleted.
+        retention_days: Age past which a completed archive is deleted.
         max_total_bytes: Total-byte cap after age-based deletion.
 
     Returns:
-        The deleted archive paths.
+        The deleted archive-directory paths.
     """
     if not archive_dir.is_dir():
         return []
-    files: list[tuple[float, int, Path]] = []
-    for path in archive_dir.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        files.append((stat.st_mtime, stat.st_size, path))
+    archives = _archive_directories(archive_dir)
     deleted: list[Path] = []
     cutoff = now.timestamp() - retention_days * 86400.0
     kept: list[tuple[float, int, Path]] = []
-    for mtime, size, path in files:
+    for mtime, size, path in archives:
         if mtime < cutoff:
-            try:
-                path.unlink()
+            if _delete_archive_directory(path):
                 deleted.append(path)
-            except OSError:
+            else:
                 kept.append((mtime, size, path))
         else:
             kept.append((mtime, size, path))
@@ -504,13 +563,60 @@ def sweep_archive(
     for _mtime, size, path in sorted(kept, key=lambda item: item[0]):
         if total <= max_total_bytes:
             break
-        try:
-            path.unlink()
+        if _delete_archive_directory(path):
             deleted.append(path)
             total -= size
-        except OSError:
-            continue
     return deleted
+
+
+def _archive_directories(archive_dir: Path) -> list[tuple[float, int, Path]]:
+    """Measure direct completed archive directories by their manifest clock."""
+    archives: list[tuple[float, int, Path]] = []
+    for path in archive_dir.iterdir():
+        if not path.is_dir() or path.is_symlink():
+            continue
+        completed_at = _archive_completion_timestamp(path)
+        if completed_at is None:
+            continue
+        archives.append((completed_at, _archive_size(path), path))
+    return archives
+
+
+def _archive_completion_timestamp(archive: Path) -> float | None:
+    """Return one archive's persisted completion clock, never a file mtime."""
+    manifest = snapshot_manifest_path(archive)
+    try:
+        payload: object = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    completed_at = parse_iso_timestamp(
+        payload.get("completed_at"),
+        field="archive completed_at",
+    )
+    return None if completed_at is None else completed_at.timestamp()
+
+
+def _archive_size(archive: Path) -> int:
+    """Return all readable artifact bytes belonging to one archive."""
+    total = 0
+    for artifact in archive.rglob("*"):
+        if artifact.is_file():
+            try:
+                total += artifact.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _delete_archive_directory(archive: Path) -> bool:
+    """Delete an entire archive directory, returning whether it succeeded."""
+    try:
+        remove_tree(archive)
+    except OSError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -580,25 +686,10 @@ def _apply_reclaim(
     Returns:
         The outcome decision and the archive paths written.
     """
-    # Liveness first. An archive taken across a live writer is torn, so this
-    # gate has to precede the archive, not just the drop.
-    if decision.prefix in active_prefixes():
-        return _redecide(decision, "deferred", "active_index_job"), []
-    # Re-count immediately before acting, in BOTH tiers. The survey reading
-    # can be many minutes stale by the time this prefix's turn arrives, and
-    # any movement since means a writer this cycle cannot see. An archive
-    # makes loss recoverable, never prevented, so the data tier needs this
-    # check at least as much as the empty tier.
-    observed = _prefix_points(client, decision.prefix)
-    if observed is None:
-        return _redecide(decision, "deferred", "points_unverifiable"), []
-    if observed != decision.points:
-        moved = (
-            "points_appeared_since_survey"
-            if decision.tier == "empty"
-            else "points_changed_since_survey"
-        )
-        return _redecide(decision, "deferred", moved), []
+    gate = _pre_drop_reclaim_gate(client, decision, active_prefixes=active_prefixes)
+    if isinstance(gate, ReclaimDecision):
+        return gate, []
+    observed = gate
     archived: list[Path] = []
     if decision.action == "reclaim_data":
         try:
@@ -632,6 +723,33 @@ def _apply_reclaim(
         ),
         archived,
     )
+
+
+def _pre_drop_reclaim_gate(
+    client: QdrantClient,
+    decision: ReclaimDecision,
+    *,
+    active_prefixes: Callable[[], frozenset[str]],
+) -> int | ReclaimDecision:
+    """Return the stable point count, or one precise pre-drop deferral."""
+    # Liveness first. An archive taken across a live writer is torn, so this
+    # gate has to precede the archive, not just the drop.
+    if decision.prefix in active_prefixes():
+        return _redecide(decision, "deferred", "active_index_job")
+    # Re-count immediately before acting, in BOTH tiers. The survey reading
+    # can be many minutes stale by the time this prefix's turn arrives, and
+    # any movement since means a writer this cycle cannot see.
+    observed = _prefix_points(client, decision.prefix)
+    if observed is None:
+        return _redecide(decision, "deferred", "points_unverifiable")
+    if observed != decision.points:
+        moved = (
+            "points_appeared_since_survey"
+            if decision.tier == "empty"
+            else "points_changed_since_survey"
+        )
+        return _redecide(decision, "deferred", moved)
+    return observed
 
 
 def _reclaim_generations_for_cycle(
@@ -677,29 +795,37 @@ def _reclaim_generations_for_cycle(
             return True
 
     results, advanced = reclaim_superseded_generations(
-        client,
-        roots=roots,
-        stamps=load_generation_stamps(),
-        now=now,
-        grace_hours=policy.grace_hours_data,
-        reader_present=_reader_present,
-        dry_run=dry_run,
+        GenerationReclaimRequest(
+            client=client,
+            roots=roots,
+            stamps=load_generation_stamps(),
+            now=now,
+            grace_hours=policy.grace_hours_data,
+            reader_present=_reader_present,
+            dry_run=dry_run,
+        )
     )
     if not dry_run:
         record_generation_stamps(advanced)
     return results
 
 
+@dataclass(frozen=True)
+class MaintenanceCycleRequest:
+    """All dependencies and controls for one scheduled maintenance cycle."""
+
+    client: QdrantClient
+    now: datetime
+    policy: ReclaimPolicy
+    storage_dir: Path | None
+    snapshots_dir: Path
+    archive_dir: Path
+    dry_run: bool = False
+    active_prefixes: Callable[[], frozenset[str]] = _active_index_prefixes
+
+
 def run_maintenance_cycle(
-    client: QdrantClient,
-    *,
-    now: datetime,
-    policy: ReclaimPolicy,
-    storage_dir: Path | None,
-    snapshots_dir: Path,
-    archive_dir: Path,
-    dry_run: bool = False,
-    active_prefixes: Callable[[], frozenset[str]] = _active_index_prefixes,
+    request: MaintenanceCycleRequest,
 ) -> MaintenanceResult:
     """Run one scheduled reclamation cycle end to end.
 
@@ -741,10 +867,10 @@ def run_maintenance_cycle(
     """
     from .storage_manifest import update_activity_stamps, update_orphan_stamps
 
-    surveys = gather_survey(client, storage_dir)
+    surveys = gather_survey(request.client, request.storage_dir)
     stamps = update_orphan_stamps(
         {s.prefix: s.status for s in surveys},
-        now_iso=now.isoformat(),
+        now_iso=request.now.isoformat(),
     )
     # The ephemeral tier's idle clock, advanced from what the stored data is
     # doing rather than from index-run stamps alone. Reading the manifest
@@ -752,35 +878,35 @@ def run_maintenance_cycle(
     # the blind spot this tier cannot afford.
     last_indexed = update_activity_stamps(
         {s.prefix: (s.status, s.points) for s in surveys},
-        now_iso=now.isoformat(),
+        now_iso=request.now.isoformat(),
     )
     decisions = evaluate_reclaim(
         surveys,
         stamps,
-        now=now,
-        policy=policy,
+        now=request.now,
+        policy=request.policy,
         last_indexed=last_indexed,
     )
     generations = _reclaim_generations_for_cycle(
-        client,
+        request.client,
         surveys=surveys,
-        now=now,
-        policy=policy,
-        dry_run=dry_run,
+        now=request.now,
+        policy=request.policy,
+        dry_run=request.dry_run,
     )
     applied: list[ReclaimDecision] = []
     archived: list[Path] = []
     reclaimed = 0
     for decision in decisions:
-        if decision.action not in ("reclaim_empty", "reclaim_data") or dry_run:
+        if decision.action not in ("reclaim_empty", "reclaim_data") or request.dry_run:
             applied.append(decision)
             continue
         outcome, artifacts = _apply_reclaim(
-            client,
+            request.client,
             decision,
-            snapshots_dir=snapshots_dir,
-            archive_dir=archive_dir,
-            active_prefixes=active_prefixes,
+            snapshots_dir=request.snapshots_dir,
+            archive_dir=request.archive_dir,
+            active_prefixes=request.active_prefixes,
         )
         archived.extend(artifacts)
         applied.append(outcome)
@@ -788,25 +914,25 @@ def run_maintenance_cycle(
             reclaimed += outcome.footprint_bytes
     swept = (
         []
-        if dry_run
+        if request.dry_run
         else sweep_archive(
-            archive_dir,
-            now=now,
-            retention_days=policy.archive_retention_days,
-            max_total_bytes=policy.archive_max_bytes,
+            request.archive_dir,
+            now=request.now,
+            retention_days=request.policy.archive_retention_days,
+            max_total_bytes=request.policy.archive_max_bytes,
         )
     )
     # Reconcile runs last so a convergence budget is never spent on a
     # namespace this same cycle just destroyed. It is non-destructive and
     # independent of the grace machinery above.
     reconcile: ReconcileBatch | None = None
-    if policy.reconcile:
+    if request.policy.reconcile:
         reconcile = reconcile_collections(
-            client,
-            storage_dir=storage_dir,
-            cap=policy.reconcile_max_per_cycle,
-            budget_s=policy.reconcile_budget_seconds,
-            dry_run=dry_run,
+            request.client,
+            storage_dir=request.storage_dir,
+            cap=request.policy.reconcile_max_per_cycle,
+            budget_s=request.policy.reconcile_budget_seconds,
+            dry_run=request.dry_run,
         )
     counts: dict[str, int] = {}
     for survey in surveys:
@@ -849,16 +975,19 @@ def _evaluate_generation_reports(
         has_reader = reader_present(report.root)
         for collection in report.unreferenced:
             unreferenced.append(collection)
-            decision = decide_generation_reclaim(collection, GenerationReclaimContext(
-                stamps=stamps,
-                now=now,
-                grace_hours=grace_hours,
-                reader_present=has_reader,
-                # survey_generations already omitted any root whose pointer it
-                # could not read, so every collection reaching here came from a
-                # root whose served name was legible at decision time.
-                pointer_verifiable=True,
-            ))
+            decision = decide_generation_reclaim(
+                collection,
+                GenerationReclaimContext(
+                    stamps=stamps,
+                    now=now,
+                    grace_hours=grace_hours,
+                    reader_present=has_reader,
+                    # survey_generations already omitted any root whose pointer it
+                    # could not read, so every collection reaching here came from a
+                    # root whose served name was legible at decision time.
+                    pointer_verifiable=True,
+                ),
+            )
             if decision.action == "held":
                 held.append(collection)
             if decision.droppable:
@@ -908,15 +1037,21 @@ def _drop_generation_collections(
     return results, dropped
 
 
+@dataclass(frozen=True)
+class GenerationReclaimRequest:
+    """All evidence and controls for one superseded-generation pass."""
+
+    client: QdrantClient
+    roots: Mapping[str, str]
+    stamps: Mapping[str, str]
+    now: datetime
+    grace_hours: float
+    reader_present: Callable[[str], bool]
+    dry_run: bool
+
+
 def reclaim_superseded_generations(
-    client: QdrantClient,
-    *,
-    roots: Mapping[str, str],
-    stamps: Mapping[str, str],
-    now: datetime,
-    grace_hours: float,
-    reader_present: Callable[[str], bool],
-    dry_run: bool,
+    request: GenerationReclaimRequest,
 ) -> tuple[list[DeleteResult], dict[str, str]]:
     """Drop code generations no root serves any more, and advance their clocks.
 
@@ -945,24 +1080,24 @@ def reclaim_superseded_generations(
     """
     from .generation_survey import advance_generation_stamps, survey_generations
 
-    live = [c.name for c in client.get_collections().collections]
-    reports = survey_generations(roots, live)
+    live = [c.name for c in request.client.get_collections().collections]
+    reports = survey_generations(request.roots, live)
     results, droppable, held, unreferenced = _evaluate_generation_reports(
         reports,
-        stamps=stamps,
-        now=now,
-        grace_hours=grace_hours,
-        reader_present=reader_present,
+        stamps=request.stamps,
+        now=request.now,
+        grace_hours=request.grace_hours,
+        reader_present=request.reader_present,
     )
 
     # A root omitted from the report had an unreadable pointer, so any
     # generation of it that exists must have its clock reset rather than keep
     # accumulating a window it did not continuously earn.
     reported = {report.root for report in reports}
-    _hold_unreported_root_generations(roots, live, reported, held)
+    _hold_unreported_root_generations(request.roots, live, reported, held)
 
     drop_results, dropped = _drop_generation_collections(
-        client, droppable, held, dry_run=dry_run
+        request.client, droppable, held, dry_run=request.dry_run
     )
     results.extend(drop_results)
 
@@ -970,9 +1105,9 @@ def reclaim_superseded_generations(
     # it would outlive it as debris that never expires. A failed drop is not
     # dropped, so it stays in the held set and its window restarts.
     advanced = advance_generation_stamps(
-        stamps,
+        request.stamps,
         unreferenced=(name for name in unreferenced if name not in dropped),
         held=[*held, *dropped],
-        now_iso=now.isoformat(),
+        now_iso=request.now.isoformat(),
     )
     return results, advanced

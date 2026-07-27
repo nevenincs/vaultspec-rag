@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel
     from ..search import SearchResult
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.integration]
 
@@ -44,6 +44,28 @@ def _make_vault_dir(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return tmp_path
+
+
+def _wait_for_cold_store_construction(reg: ServiceRegistry) -> None:
+    """Observe the real transient-construction interval before shutdown begins."""
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        with reg._lock:
+            if reg._transient_store_constructions > 0:
+                return
+        time.sleep(0.001)
+    raise AssertionError("no real cold-store construction was observed")
+
+
+def _wait_for_registry_shutdown(reg: ServiceRegistry) -> None:
+    """Wait until the registry has entered the shutdown state under test."""
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        with reg._lock:
+            if reg._shutting_down:
+                return
+        time.sleep(0.001)
+    raise AssertionError("registry did not enter shutdown")
 
 
 @pytest.fixture(scope="module")
@@ -910,25 +932,11 @@ class TestLeaseApi:
             thread.start()
         barrier.wait(timeout=10)
 
-        deadline = time.monotonic() + 10.0
-        observed_construction = False
-        while time.monotonic() < deadline:
-            with reg._lock:
-                observed_construction = reg._transient_store_constructions > 0
-            if observed_construction:
-                break
-            time.sleep(0.001)
-        assert observed_construction, "no real cold-store construction was observed"
+        _wait_for_cold_store_construction(reg)
 
         shutdown = threading.Thread(target=reg.close_all, name="registry-shutdown")
         shutdown.start()
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            with reg._lock:
-                if reg._shutting_down:
-                    break
-            time.sleep(0.001)
-        assert reg._shutting_down
+        _wait_for_registry_shutdown(reg)
         release.set()
 
         for thread in threads:

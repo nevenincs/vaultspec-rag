@@ -10,6 +10,8 @@ manifest never touches the real host. No GPU: these are pure storage ops.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -756,6 +758,126 @@ def test_archive_manifest_carries_identity_from_the_real_manifest(
         assert entry.get("identity") is not None
         assert entry["identity"]["dense_model"] == "superseded/dense"
         assert entry["identity"]["sparse_model"] is None
+    finally:
+        client.close()
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_archive_rejects_a_real_write_after_its_first_snapshot(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """The completed-archive gate catches a live write with real Qdrant I/O.
+
+    A real writer watches Qdrant's first snapshot artifact, then upserts a
+    second point while the archive is still taking the remaining collection
+    snapshots. Removing the completed-archive verification makes
+    `archive_prefix` return instead of raising.
+    """
+    from qdrant_client import QdrantClient, models
+
+    from ...storage_reclamation import archive_prefix
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=30)
+    writer = QdrantClient(url=ops_qdrant.url, timeout=30)
+    thread: threading.Thread | None = None
+    try:
+        root = tmp_path / "archive-race"
+        root.mkdir()
+        prefix = root_collection_prefix(root)
+        record_root(root, backend="server")
+        names = [f"{prefix}archive_race_{index}" for index in range(3)]
+        for name in names:
+            _make_collection(client, name)
+
+        snapshots_dir = ops_qdrant.storage_dir.parent / "snapshots"
+        first_snapshot_dir = snapshots_dir / names[0]
+        write_landed = threading.Event()
+        writer_error: list[Exception] = []
+
+        def write_after_first_snapshot() -> None:
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                if first_snapshot_dir.is_dir() and any(first_snapshot_dir.iterdir()):
+                    try:
+                        writer.upsert(
+                            collection_name=names[0],
+                            points=[
+                                models.PointStruct(
+                                    id=2,
+                                    vector=[0.4, 0.3, 0.2, 0.1],
+                                    payload={},
+                                )
+                            ],
+                            wait=True,
+                        )
+                    except Exception as exc:
+                        writer_error.append(exc)
+                    else:
+                        write_landed.set()
+                    return
+                time.sleep(0.001)
+
+        thread = threading.Thread(target=write_after_first_snapshot)
+        thread.start()
+        with pytest.raises(RuntimeError, match="archived snapshot point count changed"):
+            archive_prefix(
+                client,
+                prefix,
+                snapshots_dir=snapshots_dir,
+                archive_dir=tmp_path / "archive",
+            )
+    finally:
+        if thread is not None:
+            thread.join(timeout=30)
+        writer.close()
+        client.close()
+
+    assert thread is not None
+    assert not thread.is_alive()
+    assert writer_error == []
+    assert write_landed.is_set()
+
+
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_completed_archive_rejects_a_missing_real_snapshot(
+    ops_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """The archive verifier refuses a persisted manifest with a lost artifact.
+
+    This uses a completed snapshot produced by the live Qdrant server, then
+    removes that snapshot before re-running the verifier. Removing the
+    snapshot-file check makes the guard return successfully.
+    """
+    from qdrant_client import QdrantClient
+
+    from ...storage_manifest import snapshot_manifest_path
+    from ...storage_reclamation import _verify_completed_archive, archive_prefix
+
+    client = QdrantClient(url=ops_qdrant.url, timeout=30)
+    try:
+        root = tmp_path / "archive-artifact"
+        root.mkdir()
+        prefix = root_collection_prefix(root)
+        name = f"{prefix}vault_docs"
+        record_root(root, backend="server")
+        _make_collection(client, name)
+
+        archive_dir = tmp_path / "archive"
+        namespace_dir = archive_dir / prefix.rstrip("_")
+        artifacts = archive_prefix(
+            client,
+            prefix,
+            snapshots_dir=ops_qdrant.storage_dir.parent / "snapshots",
+            archive_dir=archive_dir,
+        )
+        manifest_path = snapshot_manifest_path(namespace_dir)
+        snapshot = next(path for path in artifacts if path != manifest_path)
+        snapshot.unlink()
+
+        with pytest.raises(RuntimeError, match="archived snapshot file not found"):
+            _verify_completed_archive(client, namespace_dir, manifest_path)
     finally:
         client.close()
 
