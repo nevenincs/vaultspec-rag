@@ -48,11 +48,11 @@ from ._cli_format import (
 )
 from ._process import _call_interruptibly
 from ._render import (
-    _address_line,
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
     _plain,
+    address_line,
 )
 
 if TYPE_CHECKING:
@@ -550,7 +550,7 @@ def _render_jobs_header(
 ) -> None:
     """Print the opening lines both the populated and empty views share."""
     _plain("Jobs")
-    _plain(_address_line(port))
+    _plain(address_line(port))
     _plain(f"Displayed: {shown_count}")
     _plain(f"Total: {_job_count_text(total)}")
     _plain(counts_line)
@@ -811,30 +811,28 @@ def _jobs_from_result(result: dict[str, object]) -> list[object]:
 
 
 def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
+    message = "No jobs have been reported by this service yet."
     if job_id:
-        return "No job matched that id."
-    raw_filters = result.get("filters")
-    if not isinstance(raw_filters, dict):
-        return "No jobs have been reported by this service yet."
-    filters = cast("dict[str, object]", raw_filters)
-    if filters.get("failed") is True:
-        return "There are no failed jobs."
-    state = filters.get("state")
-    if state == "active":
-        return "There are no active jobs."
-    if state == "waiting":
-        return "There are no waiting jobs."
-    phase = filters.get("phase")
-    if isinstance(phase, str) and phase.lower() == "running":
-        return "There are no active or waiting jobs."
-    active_filters = [
-        key
-        for key, value in filters.items()
-        if key != "limit" and value not in (None, "", False)
-    ]
-    if active_filters:
-        return "No jobs matched these filters."
-    return "No jobs have been reported by this service yet."
+        message = "No job matched that id."
+    elif isinstance(raw_filters := result.get("filters"), dict):
+        filters = cast("dict[str, object]", raw_filters)
+        if filters.get("failed") is True:
+            message = "There are no failed jobs."
+        elif filters.get("state") == "active":
+            message = "There are no active jobs."
+        elif filters.get("state") == "waiting":
+            message = "There are no waiting jobs."
+        elif (
+            isinstance(phase := filters.get("phase"), str)
+            and phase.lower() == "running"
+        ):
+            message = "There are no active or waiting jobs."
+        elif any(
+            key != "limit" and value not in (None, "", False)
+            for key, value in filters.items()
+        ):
+            message = "No jobs matched these filters."
+    return message
 
 
 def _render_job_progress_detail(job: dict[str, object]) -> None:
@@ -956,7 +954,7 @@ def _render_job_result_detail(job: dict[str, object]) -> None:
 
 def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> None:
     if port is not None:
-        _plain(_address_line(port))
+        _plain(address_line(port))
     _cli.console.print(f"Job {job.get('id', '')!s}")
     _cli.console.print(f"Operation: {_operation_label(job)}")
     _cli.console.print(f"Project: {_project_label(job)}")
