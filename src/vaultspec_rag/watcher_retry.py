@@ -404,19 +404,16 @@ class WatcherRetryPolicy:
     ) -> WatcherRetryDecision:
         """Commit a token published before asynchronous worker admission."""
         timestamp = _wall_time(now)
-        if attempt_token is None:
+        if attempt_token is None or not self._activate_admission_token(attempt_token):
             return _decision(
                 False,
                 self._state,
                 timestamp,
-                "convergence attempt already admitted",
-            )
-        if not self._activate_admission_token(attempt_token):
-            return _decision(
-                False,
-                self._state,
-                timestamp,
-                "admission cancelled by recovery handoff",
+                (
+                    "convergence attempt already admitted"
+                    if attempt_token is None
+                    else "admission cancelled by recovery handoff"
+                ),
             )
         try:
             with _locked_state(self._path):
