@@ -2225,3 +2225,53 @@ class TestNoTwoModulesGrewTheSameHelper:
             f"the same helper grew twice in modules that cannot see each "
             f"other: {offenders}; give it one home both can import"
         )
+
+
+class TestNoGuardedReturnRepeatsItsFallback:
+    """A guarded return whose value equals the fallback decides nothing.
+
+    ``_network_label`` took ``pid_alive`` and branched on it to the string its
+    fallback already returned, so the argument could not change the answer.
+    The reader of that code sees three outcomes; the operator gets two. Either
+    the branch was meant to say something and does not, or it is dead - and
+    both readings need the same edit.
+
+    Not the same defect as the structural scan's: that one compares two
+    FUNCTIONS. This compares two branches inside one, which no cross-function
+    comparison can reach.
+    """
+
+    def test_no_branch_returns_what_the_fallback_returns(self) -> None:
+        offenders: list[str] = []
+        for path in _production_sources():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for function in ast.walk(tree):
+                if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                body = function.body
+                for index, statement in enumerate(body[:-1]):
+                    following = body[index + 1]
+                    if not (
+                        isinstance(statement, ast.If)
+                        and not statement.orelse
+                        and len(statement.body) == 1
+                        and isinstance(statement.body[0], ast.Return)
+                        and isinstance(following, ast.Return)
+                    ):
+                        continue
+                    guarded = statement.body[0].value
+                    fallback = following.value
+                    if guarded is None or fallback is None:
+                        continue
+                    if ast.dump(guarded) == ast.dump(fallback):
+                        offenders.append(
+                            f"{path.name}:{statement.lineno} in {function.name}()"
+                        )
+        assert not offenders, (
+            f"a guarded return repeats its fallback at {offenders}; the "
+            "condition cannot change the answer, so either the branch owes a "
+            "different one or it and whatever it tests are dead"
+        )
