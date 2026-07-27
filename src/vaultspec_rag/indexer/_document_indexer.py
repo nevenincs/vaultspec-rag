@@ -216,6 +216,18 @@ class _DocumentRunCounts:
     preprocess_ok: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class _DocumentPublishRequest:
+    """Shared authority for publishing one document file."""
+
+    policy: ResolvedIndexPolicy
+    prep: PreprocessContext | None
+    budget: _DocumentResourceBudget
+    checkpoint: DocumentRunCheckpoint
+    reporter: ProgressReporter
+    run_control: RunControl
+
+
 class DocumentIndexer:
     """Index only paths explicitly admitted to the document domain."""
 
@@ -472,26 +484,21 @@ class DocumentIndexer:
         self,
         path: pathlib.Path,
         *,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
-        reporter: ProgressReporter,
-        run_control: RunControl,
+        request: _DocumentPublishRequest,
     ) -> tuple[DocumentFileMetadata | None, int, str | None]:
         """Chunk and publish one document, returning durable file evidence."""
         from ._run_policy import RunPolicy
 
-        run_control.checkpoint()
-        budget.checkpoint_runtime_resources(f"{path.name} before extraction")
-        extractor_policy = RunPolicy.from_config(run_control=run_control)
+        request.run_control.checkpoint()
+        request.budget.checkpoint_runtime_resources(f"{path.name} before extraction")
+        extractor_policy = RunPolicy.from_config(run_control=request.run_control)
         result = _chunk_worker.stream_document_and_hash_file(
             path,
             self.root_dir,
             _chunk_worker.DocumentChunkingOptions(
-                prep=prep,
-                execution_policy=self._execution_policy(policy),
-                run_control=run_control,
+                prep=request.prep,
+                execution_policy=self._execution_policy(request.policy),
+                run_control=request.run_control,
                 preprocess_checkpoint=lambda: extractor_policy.checkpoint(
                     "document extractor polling"
                 ),
@@ -499,7 +506,7 @@ class DocumentIndexer:
         )
         if result.preprocess_status == "skipped":
             reason = result.preprocess_reason or "document extraction skipped"
-            checkpoint.record_processing_failure(
+            request.checkpoint.record_processing_failure(
                 result.rel_path,
                 FileStateKind.EXTRACT_RETRYABLE,
                 reason,
@@ -514,10 +521,10 @@ class DocumentIndexer:
         weighted_slices = iter_weighted_document_slices(
             result.chunks,
             max_chunks=slice_size,
-            run_control=run_control,
+            run_control=request.run_control,
         )
         point_ids: list[str] = []
-        reporter.phase_start("embed + upsert document chunks", None)
+        request.reporter.phase_start("embed + upsert document chunks", None)
         writer = _SliceWriter(name="document-slice-writer")
         try:
             try:
@@ -525,10 +532,10 @@ class DocumentIndexer:
                 weighted = next(iterator, None)
                 ordinal = 0
                 while weighted is not None:
-                    run_control.checkpoint()
+                    request.run_control.checkpoint()
                     following = next(iterator, None)
                     selected = list(weighted.chunks)
-                    budget.reserve(
+                    request.budget.reserve(
                         len(selected),
                         weighted.estimated_bytes,
                         sum(
@@ -536,43 +543,43 @@ class DocumentIndexer:
                             for chunk in selected
                         ),
                     )
-                    budget.checkpoint_runtime_resources(
+                    request.budget.checkpoint_runtime_resources(
                         f"{result.rel_path} slice-{ordinal} before encode"
                     )
-                    unit = checkpoint.unit_for(
+                    unit = request.checkpoint.unit_for(
                         result.rel_path,
                         result.content_hash,
                         ordinal,
                         is_file_end=following is None,
                         point_ids=tuple(chunk.id for chunk in selected),
                     )
-                    if not checkpoint.slice_committed(unit):
+                    if not request.checkpoint.slice_committed(unit):
                         self._encode_slice_through_writer(
                             selected,
                             unit=unit,
                             ordinal=ordinal,
                             rel_path=result.rel_path,
-                            budget=budget,
-                            checkpoint=checkpoint,
+                            budget=request.budget,
+                            checkpoint=request.checkpoint,
                             writer=writer,
-                            run_control=run_control,
+                            run_control=request.run_control,
                             reuse=self._donor_reuse,
                             release_cache=(
                                 following is None or (ordinal + 1) % flush_slices == 0
                             ),
                         )
                     point_ids.extend(chunk.id for chunk in selected)
-                    reporter.advance(len(selected))
+                    request.reporter.advance(len(selected))
                     ordinal += 1
                     weighted = following
             except BaseException:
                 writer.abandon()
                 raise
-            writer.close(run_control=run_control)
+            writer.close(run_control=request.run_control)
         finally:
-            reporter.phase_end()
+            request.reporter.phase_end()
         if not point_ids:
-            checkpoint.record_processing_failure(
+            request.checkpoint.record_processing_failure(
                 result.rel_path,
                 FileStateKind.CHUNK_FAILED,
                 "document produced no decodable content",
@@ -795,12 +802,14 @@ class DocumentIndexer:
                 continue
             metadata, chunk_count, failure = self._publish_file(
                 path,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                checkpoint=checkpoint,
-                reporter=reporter,
-                run_control=run_control,
+                request=_DocumentPublishRequest(
+                    policy=policy,
+                    prep=prep,
+                    budget=budget,
+                    checkpoint=checkpoint,
+                    reporter=reporter,
+                    run_control=run_control,
+                ),
             )
             if failure is not None:
                 failures.append(failure)
@@ -901,12 +910,14 @@ class DocumentIndexer:
             old = current.get(rel)
             metadata, chunk_count, failure = self._publish_file(
                 path,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                checkpoint=checkpoint,
-                reporter=reporter,
-                run_control=run_control,
+                request=_DocumentPublishRequest(
+                    policy=policy,
+                    prep=prep,
+                    budget=budget,
+                    checkpoint=checkpoint,
+                    reporter=reporter,
+                    run_control=run_control,
+                ),
             )
             if failure is not None:
                 failures.append(failure)
