@@ -575,6 +575,8 @@ class EmbeddingModel:
         """Run the finite dense OOM ladder with an explicit output lifetime."""
         import torch
 
+        from .memory_probe import cuda_forward_peak_capture
+
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
 
@@ -701,8 +703,6 @@ class EmbeddingModel:
         """
         import torch
 
-        from .memory_probe import cuda_forward_peak_capture
-
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
         if batch_size <= 0:
@@ -741,8 +741,6 @@ class EmbeddingModel:
         gpu_lock: threading.Lock | None,
     ) -> list[SparseResult]:
         """Run one sparse forward, then move and convert it outside the GPU lock."""
-        import torch
-
         from .memory_probe import cuda_forward_peak_capture
 
         accelerator_tensor = None
@@ -751,7 +749,7 @@ class EmbeddingModel:
         try:
             if gpu_lock is None:
                 accelerator_tensor = cast(
-                    "torch.Tensor",
+                    "Tensor",
                     self._sparse_model.encode_document(
                         texts_batch,
                         batch_size=batch_size,
@@ -764,7 +762,7 @@ class EmbeddingModel:
             else:
                 with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
                     accelerator_tensor = cast(
-                        "torch.Tensor",
+                        "Tensor",
                         self._sparse_model.encode_document(
                             texts_batch,
                             batch_size=batch_size,
