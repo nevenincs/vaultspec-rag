@@ -1012,6 +1012,7 @@ class CodebaseIndexer:
     ) -> IndexResult:
         """Locked implementation of cooperative incremental indexing."""
         run_control.checkpoint()
+        full_rebuild_clean: bool | None = None
         if self._lifecycle.published_evidence_lost():
             # The predicate has already logged which branch fired and, for a
             # shortfall, both counts. Naming only the absent-collection case
@@ -1021,22 +1022,19 @@ class CodebaseIndexer:
                 "running a full failure-safe reconciliation instead of "
                 "trusting the carried evidence"
             )
+            full_rebuild_clean = False
+        else:
+            needs_embed_rebuild = self._needs_embed_rebuild()
+            run_control.checkpoint()
+            if needs_embed_rebuild:
+                logger.info(
+                    "Codebase embedding input format changed; rebuilding the code index "
+                    "into a new generation",
+                )
+                full_rebuild_clean = True
+        if full_rebuild_clean is not None:
             return self._full_index_locked(
-                clean=False,
-                policy=policy,
-                discovered_paths=discovered_paths,
-                reporter=reporter,
-                run_control=run_control,
-            )
-        needs_embed_rebuild = self._needs_embed_rebuild()
-        run_control.checkpoint()
-        if needs_embed_rebuild:
-            logger.info(
-                "Codebase embedding input format changed; rebuilding the code index "
-                "into a new generation",
-            )
-            return self._full_index_locked(
-                clean=True,
+                clean=full_rebuild_clean,
                 policy=policy,
                 discovered_paths=discovered_paths,
                 reporter=reporter,
@@ -1130,52 +1128,50 @@ class CodebaseIndexer:
             reporter=reporter,
             started_at=start,
         )
-        if resumed_publication is not None:
-            return resumed_publication
-        publication = self._incremental_commit.supersede_and_publish(
-            IncrementalPublicationRequest(
-                checkpoint=checkpoint,
-                hashes=current_hashes,
-                to_index=to_index,
-                paths_to_index=paths_to_index,
-                attempted_paths=attempted_paths,
-                reporter=reporter,
-                limits=limits,
-                run_control=run_control,
+        if resumed_publication is None:
+            publication = self._incremental_commit.supersede_and_publish(
+                IncrementalPublicationRequest(
+                    checkpoint=checkpoint,
+                    hashes=current_hashes,
+                    to_index=to_index,
+                    paths_to_index=paths_to_index,
+                    attempted_paths=attempted_paths,
+                    reporter=reporter,
+                    limits=limits,
+                    run_control=run_control,
+                )
             )
-        )
-        current_hashes.update(publication.published_hashes)
-        self._incremental_commit.commit_replacement(
-            IncrementalReplacementRequest(
-                policy=policy,
-                existing_ids=publication.existing_ids,
-                published_ids=publication.published_ids,
-                prior_ids_by_path=publication.prior_ids_by_path,
-                deleted_paths=deleted_files,
-                checkpoint=checkpoint,
-                metadata=current_hashes,
-                files_count=len(attempted_paths),
-                protect_replacement=bool(modified_files or deleted_files),
-                reporter=reporter,
-                run_control=run_control,
+            current_hashes.update(publication.published_hashes)
+            self._incremental_commit.commit_replacement(
+                IncrementalReplacementRequest(
+                    policy=policy,
+                    existing_ids=publication.existing_ids,
+                    published_ids=publication.published_ids,
+                    prior_ids_by_path=publication.prior_ids_by_path,
+                    deleted_paths=deleted_files,
+                    checkpoint=checkpoint,
+                    metadata=current_hashes,
+                    files_count=len(attempted_paths),
+                    protect_replacement=bool(modified_files or deleted_files),
+                    reporter=reporter,
+                    run_control=run_control,
+                )
             )
-        )
-        total = self.store.count_code()
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
-            total=total,
-            added=len(new_files),
-            updated=len(modified_files),
-            removed=len(deleted_files),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(to_index),
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
-        )
+            result = IndexResult(
+                total=self.store.count_code(),
+                added=len(new_files),
+                updated=len(modified_files),
+                removed=len(deleted_files),
+                duration_ms=int((time.time() - start) * 1000),
+                device=self.model.device,
+                files=len(to_index),
+                preprocess_ok=self._prep_ok,
+                preprocess_skipped=len(self._prep_skips),
+                preprocess_failures=list(self._prep_skips),
+                reuse=self._reuse_snapshot(),
+                drift=self._lifecycle.drift_snapshot(),
+            )
+        return resumed_publication if resumed_publication is not None else result
 
     def _scan_changed_paths(
         self,
