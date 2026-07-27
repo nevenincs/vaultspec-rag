@@ -90,9 +90,9 @@ def _code_budget(
     from ..indexer import CodebaseIndexer
 
     indexer = CodebaseIndexer(root, _model(uses_cuda), cast("Any", None))
-    indexer._support_limits = limits  # pyright: ignore[reportPrivateUsage]
-    indexer._begin_memory_budget()  # pyright: ignore[reportPrivateUsage]
-    budget = indexer._memory_budget  # pyright: ignore[reportPrivateUsage]
+    indexer._support_budget._support_limits = limits  # pyright: ignore[reportPrivateUsage]
+    indexer._support_budget.begin_memory_budget()  # pyright: ignore[reportPrivateUsage]
+    budget = indexer._support_budget._memory_budget  # pyright: ignore[reportPrivateUsage]
     assert budget is not None
     return budget
 
@@ -315,12 +315,12 @@ class TestAdmissionSamplesBeforeDispatch:
         from ..indexer import CodebaseIndexer
 
         indexer = CodebaseIndexer(tmp_path, _model(False), cast("Any", None))
-        indexer._support_limits = _limits(  # pyright: ignore[reportPrivateUsage]
+        indexer._support_budget._support_limits = _limits(  # pyright: ignore[reportPrivateUsage]
             rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB
         )
         assert indexer.memory_budget_snapshot is None
 
-        indexer._begin_memory_budget()  # pyright: ignore[reportPrivateUsage]
+        indexer._support_budget.begin_memory_budget()  # pyright: ignore[reportPrivateUsage]
 
         snapshot = indexer.memory_budget_snapshot
         assert snapshot is not None

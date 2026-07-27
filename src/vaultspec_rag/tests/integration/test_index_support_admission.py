@@ -60,8 +60,8 @@ def test_code_segment_measurement_rejects_before_overweight_segment_yields(
         cast("Any", None),
         cast("Any", None),
     )
-    indexer._support_measurement = SupportMeasurement(1, 64)
-    indexer._support_limits = SupportProfileLimits(
+    indexer._support_budget._support_measurement = SupportMeasurement(1, 64)
+    indexer._support_budget._support_limits = SupportProfileLimits(
         source_files=2,
         source_bytes=128,
         generated_chunks=1,
@@ -71,7 +71,7 @@ def test_code_segment_measurement_rejects_before_overweight_segment_yields(
         rss_bytes=128,
         cuda_bytes=128,
     )
-    indexer._support_profile_name = "test-boundary"
+    indexer._support_budget._support_profile_name = "test-boundary"
     chunk = CodeChunk(
         id="feature-0",
         path="src/feature.py",
@@ -89,7 +89,7 @@ def test_code_segment_measurement_rejects_before_overweight_segment_yields(
     )
 
     with pytest.raises(JobError) as raised:
-        next(iter(indexer._measure_code_segments((segment,))))
+        next(iter(indexer._support_budget.measure_code_segments((segment,))))
 
     assert raised.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
     assert indexer.support_measurement == SupportMeasurement(1, 64, 1, 33)
@@ -103,8 +103,10 @@ def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separat
         cast("Any", None),
         cast("Any", None),
     )
-    indexer._support_measurement = SupportMeasurement(1, 64, queue_bytes=16)
-    indexer._support_limits = SupportProfileLimits(
+    indexer._support_budget._support_measurement = SupportMeasurement(
+        1, 64, queue_bytes=16
+    )
+    indexer._support_budget._support_limits = SupportProfileLimits(
         source_files=2,
         source_bytes=128,
         generated_chunks=2,
@@ -114,10 +116,10 @@ def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separat
         rss_bytes=32,
         cuda_bytes=24,
     )
-    indexer._support_profile_name = "test-boundary"
+    indexer._support_budget._support_profile_name = "test-boundary"
 
-    indexer._record_extracted_bytes(17)
-    indexer._record_resource_measurement(rss_bytes=31, cuda_bytes=23)
+    indexer._support_budget.record_extracted_bytes(17)
+    indexer._support_budget._record_resource_measurement(rss_bytes=31, cuda_bytes=23)
     assert indexer.support_measurement == SupportMeasurement(
         1,
         64,
@@ -128,7 +130,9 @@ def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separat
     )
 
     with pytest.raises(JobError) as raised:
-        indexer._record_resource_measurement(rss_bytes=33, cuda_bytes=23)
+        indexer._support_budget._record_resource_measurement(
+            rss_bytes=33, cuda_bytes=23
+        )
 
     assert raised.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED
     assert "rss_bytes" in str(raised.value)
