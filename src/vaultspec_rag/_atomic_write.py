@@ -29,11 +29,13 @@ callers hold locks across it.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
+import pathlib
 import random
 import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ._backoff import jittered_backoff
 
@@ -41,7 +43,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-__all__ = ["NotDurableError", "replace_atomically", "replace_durably"]
+__all__ = [
+    "NotDurableError",
+    "replace_atomically",
+    "replace_durably",
+    "write_json_atomically",
+]
 
 #: Attempts and the jittered ladder between them. Exponential growth escapes a
 #: busy scan window quickly; the jitter decorrelates this writer's retries from
@@ -161,3 +168,60 @@ def _move_file_write_through(source: Path | str, destination: Path | str) -> Non
         _MOVEFILE_REPLACE_EXISTING | _MOVEFILE_WRITE_THROUGH,
     ):
         raise ctypes.WinError(ctypes.get_last_error())
+
+
+def write_json_atomically(
+    path: Path | str,
+    payload: Any,
+    *,
+    indent: int | None = None,
+    sort_keys: bool = False,
+    durable: bool = False,
+) -> None:
+    """Publish *payload* as JSON at *path*, atomically, leaving no temp behind.
+
+    Thirteen sites grew this: serialize, write a temp sibling, replace. Two of
+    them - the machine pointer and the streaming code sidecar - had learned
+    what the other eleven had not, and the difference is visible on disk:
+
+    - **The temp file must be cleaned up.** A failed write or a replace that
+      outlasts the sharing ladder leaves the temp behind forever. The careful
+      copies unlink theirs in a ``finally``; the naive ones simply leaked. The
+      suite already asserts no temp survives in several places, which is how
+      the two versions could sit side by side without the gap being obvious.
+    - **The temp name must not collide.** ``path.with_suffix(".tmp")`` gives
+      two writers of one file the same temp path, and gives an attacker a
+      predictable name to pre-plant a symlink at. The name here carries the
+      target, the pid and a random suffix, and is dot-prefixed so it does not
+      look like product data to anything listing the directory.
+
+    ``durable`` forces the bytes and the rename to disk, for a record that has
+    to survive a crash rather than merely a concurrent reader. It does both:
+    forcing only the rename, as one caller did, durably publishes contents the
+    kernel was never told to flush.
+
+    Raises:
+        OSError: The payload could not be written or the replace failed.
+        NotDurableError: Only under ``durable``, and only once the replace has
+            already landed - the data is published, its persistence is not.
+
+    """
+    target = pathlib.Path(path)
+    encoded = json.dumps(payload, indent=indent, sort_keys=sort_keys)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(
+        f".{target.name}.{os.getpid()}.{os.urandom(6).hex()}.tmp"
+    )
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(encoded)
+            if durable:
+                handle.flush()
+                os.fsync(handle.fileno())
+        if durable:
+            replace_durably(temporary, target)
+        else:
+            replace_atomically(temporary, target)
+    finally:
+        with contextlib.suppress(OSError):
+            temporary.unlink(missing_ok=True)

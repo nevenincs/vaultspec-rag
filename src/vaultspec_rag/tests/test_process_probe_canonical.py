@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import ast
 import sys
+import tempfile
 from pathlib import Path
 from typing import ClassVar
+from unittest.mock import patch
 
 import pytest
 
@@ -1213,3 +1215,92 @@ class TestNoCompatibilityAliases:
             f"allowlist entries with no alias behind them: {stale}; drop them "
             "so the scan covers those modules fully again"
         )
+
+
+class TestAtomicJsonPublishHasOneWriter:
+    """Publishing a JSON document goes through ``write_json_atomically``.
+
+    Thirteen sites wrote the sequence out: serialize, write a temp sibling,
+    replace. Two had learned to unlink the temp in a ``finally`` and to give
+    it a name two writers could not collide on; the other eleven had not, so a
+    failed write or a replace outlasting the sharing ladder left the temp on
+    disk forever. The suite already asserted no temp survives in several
+    places, which is exactly how the careful and naive versions sat side by
+    side without the gap being visible.
+    """
+
+    #: Streams its sidecar entry by entry and fsyncs the handle, so the whole
+    #: document is never held in memory. That is a different operation, not a
+    #: copy of this one: it exists because the code sidecar can be large.
+    STREAMING: ClassVar[str] = "_code_meta.py"
+
+    def test_no_module_hand_rolls_the_temp_write_and_replace(self) -> None:
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name in {"_atomic_write.py", self.STREAMING}:
+                continue
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for number, line in enumerate(lines, start=1):
+                if "json.dumps" not in line:
+                    continue
+                window = "\n".join(lines[max(0, number - 7) : number + 8])
+                if "replace_atomically" in window or "replace_durably" in window:
+                    offenders.append(f"{path.name}:{number}")
+        assert not offenders, (
+            f"hand-rolled atomic JSON publish at {offenders}; call "
+            "write_json_atomically so the temp file is named without collision "
+            "and removed when the write or the replace fails"
+        )
+
+    def test_the_temp_file_is_removed_when_the_replace_fails(self) -> None:
+        """The defect the eleven naive copies carried.
+
+        Proven able to fail: dropping the ``finally`` in
+        ``write_json_atomically`` fails this test on the leftovers assertion
+        below, not on a crash.
+        """
+        from unittest.mock import patch
+
+        from .. import _atomic_write
+
+        directory = Path(tempfile.mkdtemp())
+        target = directory / "sidecar.json"
+
+        def _refuse(*_args: object, **_kwargs: object) -> None:
+            raise OSError(28, "No space left on device")
+
+        with (
+            patch.object(_atomic_write, "replace_atomically", _refuse),
+            pytest.raises(OSError, match="No space left"),
+        ):
+            _atomic_write.write_json_atomically(target, {"a": 1})
+
+        leftovers = sorted(p.name for p in directory.iterdir())
+        assert leftovers == [], f"temp file survived a failed replace: {leftovers}"
+
+    def test_the_temp_name_cannot_collide_between_writers(self) -> None:
+        """Two writers of one target must not choose the same temp path.
+
+        ``path.with_suffix(".tmp")`` gave them the same name, and gave anyone
+        watching the directory a predictable one to pre-plant.
+
+        Proven able to fail: replacing the random component with a constant
+        fails this test on the distinctness assertion below.
+        """
+        from .. import _atomic_write
+
+        directory = Path(tempfile.mkdtemp())
+        target = directory / "sidecar.json"
+        seen: set[str] = set()
+        real_replace = _atomic_write.replace_atomically
+
+        def _capture(source: Path | str, destination: Path | str) -> None:
+            seen.add(Path(str(source)).name)
+            real_replace(source, destination)
+
+        with patch.object(_atomic_write, "replace_atomically", _capture):
+            for index in range(8):
+                _atomic_write.write_json_atomically(target, {"n": index})
+
+        assert len(seen) == 8, f"temp names repeated across writers: {sorted(seen)}"
+        assert all(name.startswith(".sidecar.json.") for name in seen), sorted(seen)

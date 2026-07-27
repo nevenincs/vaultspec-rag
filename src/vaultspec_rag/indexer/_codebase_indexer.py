@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import json
 import logging
 import pathlib
 import queue
@@ -17,7 +16,7 @@ import time
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
-from .._atomic_write import replace_atomically
+from .._atomic_write import write_json_atomically
 from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
 from .._job_errors import JobError, JobErrorKind
 from .._store_models import (
@@ -2414,8 +2413,6 @@ class CodebaseIndexer:
                 file cannot be written.
         """
         membership, content = self._compute_code_epochs(policy)
-        self._meta_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self._meta_path.with_suffix(".tmp")
         stamped = {**meta, EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA}
         stamped[MEMBERSHIP_EPOCH_KEY] = membership
         stamped[CONTENT_EPOCH_KEY] = content
@@ -2425,8 +2422,7 @@ class CodebaseIndexer:
         # produces is comparable rather than reading as "cannot tell".
         if published_files is not None:
             stamped[PUBLISHED_FILES_KEY] = str(published_files)
-        tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
-        replace_atomically(tmp_path, self._meta_path)
+        write_json_atomically(self._meta_path, stamped, indent=2)
 
     def _read_meta_raw(self) -> dict[str, str]:
         """Load the sidecar JSON verbatim, reserved keys included."""

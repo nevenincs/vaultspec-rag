@@ -17,7 +17,7 @@ import pathlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 
-from ._atomic_write import replace_atomically
+from ._atomic_write import write_json_atomically
 from ._domain import classify_domain
 
 logger = logging.getLogger(__name__)
@@ -491,11 +491,9 @@ def publish_served_code_collection(
     """
     if not collection:
         raise ValueError("collection must be a non-empty name")
-    path = served_code_pointer_path(root_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps({"collection": collection}), encoding="utf-8")
-    replace_atomically(tmp_path, path)
+    write_json_atomically(
+        served_code_pointer_path(root_dir), {"collection": collection}
+    )
 
 
 def generation_code_collection(derived_name: str, generation_id: str) -> str:

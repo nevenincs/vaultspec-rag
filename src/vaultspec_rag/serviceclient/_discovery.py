@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from .._atomic_write import replace_atomically
+from .._atomic_write import write_json_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
@@ -313,12 +313,7 @@ def _merge_service_status(
             fields,
             preserve_authoritative_identity=preserve_authoritative_identity,
         )
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
-        try:
-            tmp.write_text(json.dumps(data), encoding="utf-8")
-            replace_atomically(str(tmp), str(path))
-        finally:
-            tmp.unlink(missing_ok=True)
+        write_json_atomically(path, data)
         return data
 
 
@@ -342,19 +337,9 @@ def _replace_service_status(
         operation="replace the managed service status snapshot",
         targets=(path,),
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(fields)
-    encoded = json.dumps(data)
     with _status_write_lock(path, timeout=timeout):
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
-        try:
-            with tmp.open("w", encoding="utf-8") as handle:
-                handle.write(encoded)
-                handle.flush()
-                os.fsync(handle.fileno())
-            replace_atomically(tmp, path)
-        finally:
-            tmp.unlink(missing_ok=True)
+        write_json_atomically(path, data)
     return data
 
 

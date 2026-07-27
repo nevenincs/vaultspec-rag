@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import cast
 
 from . import store_schema
-from ._atomic_write import replace_atomically
+from ._atomic_write import write_json_atomically
 from ._store_models import root_collection_prefix
 
 __all__ = [
@@ -204,9 +204,7 @@ def write_snapshot_manifest(
         ],
         "metadata_files": list(manifest.metadata_files),
     }
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    replace_atomically(tmp, path)
+    write_json_atomically(path, payload, indent=2, sort_keys=True)
     return path
 
 
@@ -385,9 +383,7 @@ def _write_manifest(entries: dict[str, ManifestEntry]) -> Path:
             for entry in entries.values()
         },
     }
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    replace_atomically(tmp, path)
+    write_json_atomically(path, payload, indent=2, sort_keys=True)
     return path
 
 

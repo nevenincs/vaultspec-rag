@@ -22,7 +22,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, cast
 
-from ._atomic_write import replace_atomically
+from ._atomic_write import write_json_atomically
 
 if TYPE_CHECKING:
     import pathlib
@@ -72,8 +72,4 @@ def record_generation_stamps(stamps: Mapping[str, str]) -> None:
     leaves the previous map intact rather than a half-written one that would
     read as a set of restarted clocks.
     """
-    path = stamps_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(dict(stamps), indent=2), encoding="utf-8")
-    replace_atomically(tmp_path, path)
+    write_json_atomically(stamps_path(), dict(stamps), indent=2)

@@ -190,9 +190,8 @@ def _persist_active_snapshot() -> None:
     ``interrupted`` instead of letting them vanish. Never raises - jobs
     bookkeeping must not fail a job.
     """
-    import json as _json
 
-    from ._atomic_write import replace_durably
+    from ._atomic_write import write_json_atomically
 
     with _lock:
         active = [
@@ -212,11 +211,9 @@ def _persist_active_snapshot() -> None:
             if record.get("phase") == "running"
         ]
     try:
-        path = cast("Path", _active_snapshot_path())
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(_json.dumps({"active": active}), encoding="utf-8")
-        replace_durably(tmp, path)
+        write_json_atomically(
+            cast("Path", _active_snapshot_path()), {"active": active}, durable=True
+        )
     except OSError:
         logger.debug("could not persist active-jobs snapshot", exc_info=True)
 
