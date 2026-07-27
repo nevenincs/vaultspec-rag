@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from functools import partial
 from itertools import chain, pairwise
-from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from ..job_control import NO_RUN_CONTROL, timed_gpu_lock
 
@@ -39,8 +39,14 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CodeFileSegment",
+    "CodeFileSegmentRequest",
+    "CodeSliceRequest",
+    "CodebaseStreamRequest",
+    "DocumentSliceRequest",
+    "DocumentSliceStreamRequest",
     "StoreWriteTask",
     "UnsettledStoreWriterError",
+    "VaultStreamRequest",
     "WeightedCodeSlice",
     "WeightedDocumentSlice",
     "_SliceWriter",
@@ -89,20 +95,8 @@ class _CodeSegmentLimits:
     sparse_dimension: int
 
 
-class _VaultStreamArguments(TypedDict, total=False):
-    docs: list[VaultDocument]
-    slice_size: int
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    reporter: ProgressReporter
-    ingest_wait: bool
-    run_control: RunControl
-    reuse: DonorReuseContext | None
-
-
 @dataclass(frozen=True, slots=True)
-class _VaultStreamRequest:
+class VaultStreamRequest:
     docs: list[VaultDocument]
     slice_size: int
     model: EmbeddingModel
@@ -114,23 +108,8 @@ class _VaultStreamRequest:
     reuse: DonorReuseContext | None = None
 
 
-class _DocumentSliceArguments(TypedDict, total=False):
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    release_cache: bool
-    encode_batch_size: int | None
-    write_policy: StoreWritePolicy | None
-    on_storage_confirmed: Callable[[], None] | None
-    after_forward: Callable[[str], None] | None
-    on_cuda_oom: Callable[[BaseException], None] | None
-    run_control: RunControl
-    reuse: DonorReuseContext | None
-    writer: _SliceWriter | None
-
-
 @dataclass(frozen=True, slots=True)
-class _DocumentSliceRequest:
+class DocumentSliceRequest:
     chunks: list[DocumentChunk]
     model: EmbeddingModel
     store: VaultStore
@@ -146,17 +125,9 @@ class _DocumentSliceRequest:
     writer: _SliceWriter | None = None
 
 
-class _SegmentLimitArguments(TypedDict, total=False):
-    max_chunks: int | None
-    max_bytes: int | None
-    dense_dimension: int | None
-    sparse_enabled: bool | None
-    sparse_dimension: int | None
-    run_control: RunControl
-
-
 @dataclass(frozen=True, slots=True)
-class _SegmentLimitRequest:
+class DocumentSliceStreamRequest:
+    chunks: Iterable[DocumentChunk]
     max_chunks: int | None = None
     max_bytes: int | None = None
     dense_dimension: int | None = None
@@ -165,24 +136,19 @@ class _SegmentLimitRequest:
     run_control: RunControl = NO_RUN_CONTROL
 
 
-class _CodeSliceArguments(TypedDict, total=False):
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    release_cache: bool
-    encode_batch_size: int | None
-    write_policy: StoreWritePolicy | None
-    ingest_wait: bool
-    on_storage_confirmed: Callable[[], None] | None
-    after_forward: Callable[[str], None] | None
-    on_cuda_oom: Callable[[BaseException], None] | None
-    run_control: RunControl
-    reuse: DonorReuseContext | None
-    collection: str | None
+@dataclass(frozen=True, slots=True)
+class CodeFileSegmentRequest:
+    chunks: Iterable[CodeChunk]
+    max_chunks: int | None = None
+    max_bytes: int | None = None
+    dense_dimension: int | None = None
+    sparse_enabled: bool | None = None
+    sparse_dimension: int | None = None
+    run_control: RunControl = NO_RUN_CONTROL
 
 
 @dataclass(frozen=True, slots=True)
-class _CodeSliceRequest:
+class CodeSliceRequest:
     chunks: list[CodeChunk]
     model: EmbeddingModel
     store: VaultStore
@@ -199,19 +165,8 @@ class _CodeSliceRequest:
     collection: str | None = None
 
 
-class _CodebaseStreamArguments(TypedDict, total=False):
-    chunks: list[CodeChunk]
-    slice_size: int
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    reporter: ProgressReporter
-    run_control: RunControl
-    reuse: DonorReuseContext | None
-
-
 @dataclass(frozen=True, slots=True)
-class _CodebaseStreamRequest:
+class CodebaseStreamRequest:
     chunks: list[CodeChunk]
     slice_size: int
     model: EmbeddingModel
@@ -809,9 +764,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
             _release_cuda_cache()
 
 
-def _stream_encode_and_upsert_vault(
-    **arguments: Unpack[_VaultStreamArguments],
-) -> dict[str, int]:
+def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, int]:
     """Encode dense + sparse vectors and upsert per-slice.
 
     Streaming the pipeline slice-by-slice keeps peak memory bounded to
@@ -833,7 +786,6 @@ def _stream_encode_and_upsert_vault(
         so callers can purge stale tail chunks of documents that
         shrank since the previous run.
     """
-    request = _VaultStreamRequest(**arguments)
     from ..config import get_config
     from ..memory_probe import MemoryProbe
     from ._vault_prep import split_documents
@@ -947,10 +899,7 @@ def _document_embed_text(chunk: DocumentChunk) -> str:
     return _embed_text(context, payload.content)
 
 
-def encode_and_upsert_document_slice(
-    slice_chunks: list[DocumentChunk],
-    **arguments: Unpack[_DocumentSliceArguments],
-) -> None:
+def encode_and_upsert_document_slice(request: DocumentSliceRequest) -> None:
     """Encode and publish one bounded document-only slice.
 
     Without a ``writer`` the upsert and its confirmation callback run
@@ -960,7 +909,6 @@ def encode_and_upsert_document_slice(
     fields once the task settles, and any write failure re-raises on the
     encoding side at the next hand-off or at the writer's close.
     """
-    request = _DocumentSliceRequest(slice_chunks, **arguments)
     from ..config import get_config
 
     if not request.chunks:
@@ -1192,11 +1140,9 @@ def estimate_document_chunk_bytes(
 
 
 def iter_weighted_document_slices(
-    chunks: Iterable[DocumentChunk],
-    **arguments: Unpack[_SegmentLimitArguments],
+    request: DocumentSliceStreamRequest,
 ) -> Iterator[WeightedDocumentSlice]:
     """Yield document slices within the configured queue count and byte caps."""
-    request = _SegmentLimitRequest(**arguments)
     from ..config import get_config
 
     cfg = get_config()
@@ -1235,7 +1181,7 @@ def iter_weighted_document_slices(
 
     selected: list[DocumentChunk] = []
     selected_bytes = 0
-    for chunk in chunks:
+    for chunk in request.chunks:
         request.run_control.checkpoint()
         weight = estimate_document_chunk_bytes(
             chunk,
@@ -1367,8 +1313,7 @@ def _segment_would_overflow(
 
 
 def iter_code_file_segments(
-    chunks: Iterable[CodeChunk],
-    **arguments: Unpack[_SegmentLimitArguments],
+    request: CodeFileSegmentRequest,
 ) -> Iterator[CodeFileSegment]:
     """Yield ordered file-local segments within configured chunk/byte bounds.
 
@@ -1378,7 +1323,6 @@ def iter_code_file_segments(
     single overweight chunk is rejected because silently admitting it would
     make the configured memory ceiling non-enforceable.
     """
-    request = _SegmentLimitRequest(**arguments)
     request.run_control.checkpoint()
     limits = _resolve_code_segment_limits(
         max_chunks=request.max_chunks,
@@ -1387,7 +1331,7 @@ def iter_code_file_segments(
         sparse_enabled=request.sparse_enabled,
         sparse_dimension=request.sparse_dimension,
     )
-    chunk_iterator = iter(chunks)
+    chunk_iterator = iter(request.chunks)
     first_chunk = next(chunk_iterator, None)
     if first_chunk is None:
         return
@@ -1518,10 +1462,7 @@ def iter_weighted_code_slices(
         run_control.checkpoint()
 
 
-def encode_and_upsert_code_slice(
-    slice_chunks: list[CodeChunk],
-    **arguments: Unpack[_CodeSliceArguments],
-) -> None:
+def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
     Dense and sparse forwards use separate GPU-lock spans, and sparse transfer
@@ -1550,7 +1491,6 @@ def encode_and_upsert_code_slice(
         run_control: Cooperative control checked outside the GPU lock before
             and after this bounded slice.
     """
-    request = _CodeSliceRequest(slice_chunks, **arguments)
     from ..config import get_config
 
     cfg = get_config()
@@ -1590,11 +1530,8 @@ def encode_and_upsert_code_slice(
             _release_cuda_cache()
 
 
-def _stream_encode_and_upsert_codebase(
-    **arguments: Unpack[_CodebaseStreamArguments],
-) -> None:
+def _stream_encode_and_upsert_codebase(request: CodebaseStreamRequest) -> None:
     """Encode and publish an in-memory code chunk set in bounded slices."""
-    request = _CodebaseStreamRequest(**arguments)
     from ..config import get_config
     from ..memory_probe import MemoryProbe
 
@@ -1616,14 +1553,16 @@ def _stream_encode_and_upsert_codebase(
                 is_last = offset + request.slice_size >= len(sorted_chunks)
                 release = is_last or (slice_index + 1) % flush_slices == 0
                 encode_and_upsert_code_slice(
-                    slice_chunks,
-                    model=request.model,
-                    store=request.store,
-                    gpu_lock=request.gpu_lock,
-                    release_cache=release,
-                    encode_batch_size=encode_batch_size,
-                    run_control=request.run_control,
-                    reuse=request.reuse,
+                    CodeSliceRequest(
+                        chunks=slice_chunks,
+                        model=request.model,
+                        store=request.store,
+                        gpu_lock=request.gpu_lock,
+                        release_cache=release,
+                        encode_batch_size=encode_batch_size,
+                        run_control=request.run_control,
+                        reuse=request.reuse,
+                    )
                 )
                 probe.checkpoint(f"slice-{offset}-after-empty-cache")
                 request.reporter.advance(len(slice_chunks))

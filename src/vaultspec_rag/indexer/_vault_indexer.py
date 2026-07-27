@@ -26,7 +26,7 @@ from .._atomic_write import JsonWriteOptions, write_json_atomically
 from ..job_control import NO_RUN_CONTROL
 from . import _config_epoch
 from ._index_lifecycle import run_index_lifecycle
-from ._streaming import _stream_encode_and_upsert_vault
+from ._streaming import VaultStreamRequest, _stream_encode_and_upsert_vault
 from ._vault_meta import (
     VAULT_CONTENT_EPOCH_KEY,
     VAULT_POINT_SCHEMA,
@@ -325,15 +325,17 @@ class VaultIndexer:
 
             reuse_stats, donor_reuse = self._resolve_reuse()
             new_counts = _stream_encode_and_upsert_vault(
-                docs=docs,
-                slice_size=slice_size,
-                model=self.model,
-                store=self.store,
-                gpu_lock=self._gpu_lock,
-                reporter=reporter,
-                ingest_wait=False,
-                run_control=run_control,
-                reuse=donor_reuse,
+                VaultStreamRequest(
+                    docs=docs,
+                    slice_size=slice_size,
+                    model=self.model,
+                    store=self.store,
+                    gpu_lock=self._gpu_lock,
+                    reporter=reporter,
+                    ingest_wait=False,
+                    run_control=run_control,
+                    reuse=donor_reuse,
+                )
             )
             self._purge_shrunk_chunk_tails(
                 existing_counts,
@@ -695,14 +697,16 @@ class VaultIndexer:
             return None
         reuse_stats, donor_reuse = self._resolve_reuse()
         new_counts = _stream_encode_and_upsert_vault(
-            docs=work.docs,
-            slice_size=work.slice_size,
-            model=self.model,
-            store=self.store,
-            gpu_lock=self._gpu_lock,
-            reporter=work.reporter,
-            run_control=work.run_control,
-            reuse=donor_reuse,
+            VaultStreamRequest(
+                docs=work.docs,
+                slice_size=work.slice_size,
+                model=self.model,
+                store=self.store,
+                gpu_lock=self._gpu_lock,
+                reporter=work.reporter,
+                run_control=work.run_control,
+                reuse=donor_reuse,
+            )
         )
         self._purge_shrunk_chunk_tails(
             work.existing_counts,
