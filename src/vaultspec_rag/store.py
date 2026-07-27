@@ -1095,10 +1095,10 @@ class VaultStore(_VaultSearchMixin):
         points: list[Any] = []
         for doc in docs:
             vector: dict[str, Any] = {
-                "dense": doc.vector,
+                store_schema.DENSE_VECTOR_NAME: doc.vector,
             }
             if doc.sparse_indices:
-                vector["sparse"] = models.SparseVector(
+                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
                     indices=doc.sparse_indices,
                     values=doc.sparse_values,
                 )
@@ -1151,10 +1151,10 @@ class VaultStore(_VaultSearchMixin):
         points: list[Any] = []
         for chunk in chunks:
             vector: dict[str, Any] = {
-                "dense": chunk.vector,
+                store_schema.DENSE_VECTOR_NAME: chunk.vector,
             }
             if chunk.sparse_indices:
-                vector["sparse"] = models.SparseVector(
+                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
                     indices=chunk.sparse_indices,
                     values=chunk.sparse_values,
                 )
@@ -1206,10 +1206,10 @@ class VaultStore(_VaultSearchMixin):
         points: list[Any] = []
         for chunk in chunks:
             vector: dict[str, Any] = {
-                "dense": chunk.vector,
+                store_schema.DENSE_VECTOR_NAME: chunk.vector,
             }
             if chunk.sparse_indices:
-                vector["sparse"] = models.SparseVector(
+                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
                     indices=chunk.sparse_indices,
                     values=chunk.sparse_values,
                 )
@@ -1246,9 +1246,9 @@ class VaultStore(_VaultSearchMixin):
 
         points: list[Any] = []
         for chunk in chunks:
-            vector: dict[str, Any] = {"dense": chunk.vector}
+            vector: dict[str, Any] = {store_schema.DENSE_VECTOR_NAME: chunk.vector}
             if chunk.sparse_indices:
-                vector["sparse"] = models.SparseVector(
+                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
                     indices=chunk.sparse_indices,
                     values=chunk.sparse_values,
                 )
