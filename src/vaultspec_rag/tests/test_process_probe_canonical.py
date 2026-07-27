@@ -822,6 +822,7 @@ class TestNoSymbolKeptAliveForTests:
 
     def test_no_private_symbol_is_reachable_only_from_tests(self) -> None:
         import ast
+        import collections
         import re
 
         definitions: dict[str, list[str]] = {}
@@ -864,13 +865,21 @@ class TestNoSymbolKeptAliveForTests:
         )
         production_blob = "\n".join(production)
 
-        orphans: dict[str, list[str]] = {}
-        for name, sites in definitions.items():
-            word = rf"\b{re.escape(name)}\b"
+        # Count identifiers once per blob rather than scanning both blobs once
+        # per symbol. A `\b`-anchored search for an identifier matches exactly
+        # the `\w+` tokens equal to it, so the tally is the same one the
+        # per-symbol regex produced - but it is read off a dict instead of
+        # re-walking megabytes of source for every name. The old shape was
+        # quadratic in a way that grew with the codebase, and at ~1600 private
+        # symbols over ~7 MB of source it cost over two minutes on its own.
+        production_mentions = collections.Counter(re.findall(r"\w+", production_blob))
+        test_mentions = collections.Counter(re.findall(r"\w+", test_blob))
+        orphans = {
+            name: sites
+            for name, sites in definitions.items()
             # every production mention minus the definition lines themselves
-            used = len(re.findall(word, production_blob)) - len(sites)
-            if used == 0 and re.search(word, test_blob):
-                orphans[name] = sites
+            if production_mentions[name] - len(sites) == 0 and test_mentions[name]
+        }
 
         unexplained = {
             name: sites
