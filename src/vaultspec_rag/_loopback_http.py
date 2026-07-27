@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import socket
 import urllib.request
-from typing import Final, Literal
+from typing import Final, Literal, override
 
 __all__ = [
     "FAST_CONNECT_TIMEOUT_SECONDS",
@@ -96,6 +96,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     than as ready.
     """
 
+    @override
     def redirect_request(
         self,
         req: urllib.request.Request,
