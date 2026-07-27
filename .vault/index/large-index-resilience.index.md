@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#large-index-resilience'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-07-21-large-index-resilience-W01-P01-S01]]'
   - '[[2026-07-21-large-index-resilience-W01-P01-S02]]'
@@ -66,6 +66,7 @@ related:
   - '[[2026-07-21-large-index-resilience-W04-P13-S44]]'
   - '[[2026-07-21-large-index-resilience-W04-P13-S45]]'
   - '[[2026-07-21-large-index-resilience-W04-P13-S46]]'
+  - '[[2026-07-21-large-index-resilience-W04-P13-S47]]'
   - '[[2026-07-21-large-index-resilience-W05-P14-S48]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
@@ -173,6 +174,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W04-P13-S45` - Compare real-CUDA RSS and allocated and reserved high-water marks at N and two-N corpus sizes
 - `2026-07-21-large-index-resilience-W04-P13-S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses
 - `2026-07-21-large-index-resilience-W05-P14-S48` - Run focused indexer, watcher, storage-write, jobs, profile, restart, and GPU integration suites
+- `2026-07-21-large-index-resilience-W04-P13-S47` - Complete the 250872-chunk incident floor on the declared default managed-service profile
 
 ### plan
 
