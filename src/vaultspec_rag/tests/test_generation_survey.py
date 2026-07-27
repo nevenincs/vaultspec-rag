@@ -206,15 +206,17 @@ def _namespace_of(payload: dict[str, object], root: str | None) -> dict[str, obj
 
 def _shape(surveys: list[NamespaceSurvey]) -> dict[str, object]:
     """Shape *surveys* through the real route shaper, unfiltered."""
-    from ..server._routes_storage import _shape_survey_payload
+    from ..server._routes_storage import _SurveyPayloadRequest, _shape_survey_payload
 
     return _shape_survey_payload(
-        surveys,
-        None,
-        10,
-        None,
-        computed_at="2026-07-25T00:00:00+00:00",
-        source="fresh",
+        _SurveyPayloadRequest(
+            surveys=surveys,
+            status_filter=None,
+            limit=10,
+            root=None,
+            computed_at="2026-07-25T00:00:00+00:00",
+            source="fresh",
+        )
     )
 
 
