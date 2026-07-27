@@ -140,15 +140,7 @@ def _normalise_search_type(value: object) -> PublicSourceType | JSONResponse:
     try:
         return parse_source_type(value, allow_aliases=False)
     except SourceTypeParseError as exc:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": exc.error_kind,
-                "message": str(exc),
-                **exc.as_payload(),
-            },
-            status_code=400,
-        )
+        return JSONResponse(exc.as_error_envelope(), status_code=400)
 
 
 def _unsupported_search_feedback(
@@ -1751,15 +1743,7 @@ async def clean_route(request: Request) -> JSONResponse:
                 allow_aliases=False,
             )
         except SourceTypeParseError as exc:
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "error": exc.error_kind,
-                    "message": str(exc),
-                    **exc.as_payload(),
-                },
-                status_code=400,
-            )
+            return JSONResponse(exc.as_error_envelope(), status_code=400)
         raw_root = _job_string(payload, "project_root")
         root = _resolve_root(raw_root)
     except (ProjectRootRequiredError, ValueError, _InvalidJobRequestError) as exc:

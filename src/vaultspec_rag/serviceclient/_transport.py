@@ -512,12 +512,7 @@ def _try_http_reindex(
     try:
         source = parse_source_type(reindex_type, allow_aliases=True)
     except SourceTypeParseError as exc:
-        return {
-            "ok": False,
-            "error": exc.error_kind,
-            "message": str(exc),
-            **exc.as_payload(),
-        }
+        return exc.as_error_envelope()
     try:
         payload: dict[str, object] = {
             "type": source.value,
@@ -550,12 +545,7 @@ def _try_http_clean(
     try:
         source = parse_source_type(clean_type, allow_aliases=True)
     except SourceTypeParseError as exc:
-        return {
-            "ok": False,
-            "error": exc.error_kind,
-            "message": str(exc),
-            **exc.as_payload(),
-        }
+        return exc.as_error_envelope()
     try:
         result = _do_http_call(
             port,
@@ -1209,12 +1199,7 @@ def _try_http_search(
     try:
         source = parse_source_type(search_type, allow_aliases=True)
     except SourceTypeParseError as exc:
-        return {
-            "ok": False,
-            "error": exc.error_kind,
-            "message": str(exc),
-            **exc.as_payload(),
-        }
+        return exc.as_error_envelope()
 
     if source in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED} and (
         like_ids or unlike_ids
