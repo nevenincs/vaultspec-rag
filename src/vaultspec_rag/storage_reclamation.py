@@ -689,13 +689,15 @@ def _reclaim_generations_for_cycle(
             return True
 
     results, advanced = reclaim_superseded_generations(
-        client,
-        roots=roots,
-        stamps=load_generation_stamps(),
-        now=now,
-        grace_hours=policy.grace_hours_data,
-        reader_present=_reader_present,
-        dry_run=dry_run,
+        GenerationReclaimRequest(
+            client=client,
+            roots=roots,
+            stamps=load_generation_stamps(),
+            now=now,
+            grace_hours=policy.grace_hours_data,
+            reader_present=_reader_present,
+            dry_run=dry_run,
+        )
     )
     if not dry_run:
         record_generation_stamps(advanced)
@@ -923,15 +925,21 @@ def _drop_generation_collections(
     return results, dropped
 
 
+@dataclass(frozen=True)
+class GenerationReclaimRequest:
+    """All evidence and controls for one superseded-generation pass."""
+
+    client: QdrantClient
+    roots: Mapping[str, str]
+    stamps: Mapping[str, str]
+    now: datetime
+    grace_hours: float
+    reader_present: Callable[[str], bool]
+    dry_run: bool
+
+
 def reclaim_superseded_generations(
-    client: QdrantClient,
-    *,
-    roots: Mapping[str, str],
-    stamps: Mapping[str, str],
-    now: datetime,
-    grace_hours: float,
-    reader_present: Callable[[str], bool],
-    dry_run: bool,
+    request: GenerationReclaimRequest,
 ) -> tuple[list[DeleteResult], dict[str, str]]:
     """Drop code generations no root serves any more, and advance their clocks.
 
@@ -960,24 +968,24 @@ def reclaim_superseded_generations(
     """
     from .generation_survey import advance_generation_stamps, survey_generations
 
-    live = [c.name for c in client.get_collections().collections]
-    reports = survey_generations(roots, live)
+    live = [c.name for c in request.client.get_collections().collections]
+    reports = survey_generations(request.roots, live)
     results, droppable, held, unreferenced = _evaluate_generation_reports(
         reports,
-        stamps=stamps,
-        now=now,
-        grace_hours=grace_hours,
-        reader_present=reader_present,
+        stamps=request.stamps,
+        now=request.now,
+        grace_hours=request.grace_hours,
+        reader_present=request.reader_present,
     )
 
     # A root omitted from the report had an unreadable pointer, so any
     # generation of it that exists must have its clock reset rather than keep
     # accumulating a window it did not continuously earn.
     reported = {report.root for report in reports}
-    _hold_unreported_root_generations(roots, live, reported, held)
+    _hold_unreported_root_generations(request.roots, live, reported, held)
 
     drop_results, dropped = _drop_generation_collections(
-        client, droppable, held, dry_run=dry_run
+        request.client, droppable, held, dry_run=request.dry_run
     )
     results.extend(drop_results)
 
@@ -985,9 +993,9 @@ def reclaim_superseded_generations(
     # it would outlive it as debris that never expires. A failed drop is not
     # dropped, so it stays in the held set and its window restarts.
     advanced = advance_generation_stamps(
-        stamps,
+        request.stamps,
         unreferenced=(name for name in unreferenced if name not in dropped),
         held=[*held, *dropped],
-        now_iso=now.isoformat(),
+        now_iso=request.now.isoformat(),
     )
     return results, advanced
