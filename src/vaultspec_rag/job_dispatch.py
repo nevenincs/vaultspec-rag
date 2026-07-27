@@ -72,18 +72,10 @@ def bind_index_job(
             clean=clean,
             registry=registry,
         )
-    elif spec.source is JobSource.CODE:
-        runner = partial(
-            _run_code_attempt,
-            manager=manager,
-            job_id=job_id,
-            root=root,
-            clean=clean,
-            registry=registry,
-        )
     else:
         runner = partial(
-            _run_document_attempt,
+            _run_indexing_attempt,
+            source=spec.source,
             manager=manager,
             job_id=job_id,
             root=root,
@@ -148,97 +140,57 @@ def _run_vault_attempt(
     )
 
 
-def _run_code_attempt(
+def _run_indexing_attempt(
     context: JobAttemptContext,
     *,
+    source: JobSource,
     manager: JobManager,
     job_id: str,
     root: Path,
     clean: bool,
     registry: ServiceRegistry,
 ) -> JobExecutionResult:
-    """Run one code attempt through fresh execution authority."""
-    from .jobs import JobProgressReporter, validate_code_job_admission
+    """Run one code or document attempt through fresh execution authority.
 
-    context.control.checkpoint()
-    preflight = validate_code_job_admission(root)
-    context.set_resilience(_admitted_resilience(JobSource.CODE))
-    context.control.checkpoint()
-    registry.load_model()
-    try:
-        with registry.lease(root) as slot:
-            context.set_resources(project_lease_held=True)
-            try:
-                context.set_resources(
-                    writer_lock_held=True,
-                    pipeline_active=True,
-                )
-                reporter = JobProgressReporter(job_id, context=context)
-                snapshot = manager.get(job_id)
-                resumed = (
-                    snapshot is not None
-                    and snapshot.attempt.resumed_from_attempt is not None
-                )
-                try:
-                    if clean:
-                        result = slot.code_indexer.full_index(
-                            clean=not resumed,
-                            reporter=reporter,
-                            preflight=preflight,
-                            run_control=context.control,
-                        )
-                    else:
-                        result = slot.code_indexer.incremental_index(
-                            reporter=reporter,
-                            preflight=preflight,
-                            run_control=context.control,
-                        )
-                finally:
-                    _publish_resilience(
-                        context,
-                        lambda: _code_resilience(slot.code_indexer),
-                    )
-            finally:
-                context.set_resources(
-                    writer_lock_held=False,
-                    pipeline_active=False,
-                )
-    finally:
-        context.set_resources(project_lease_held=False)
-    skipped_suffix = (
-        f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
-    )
-    return JobExecutionResult(
-        summary=(
-            f"+{result.added} /{result.updated} "
-            f"-{result.removed} ({result.duration_ms}ms){skipped_suffix}"
-        ),
-        preprocess_ok=result.preprocess_ok,
-        preprocess_skipped=result.preprocess_skipped,
-        preprocess_failures=tuple(result.preprocess_failures),
-        reuse=result.reuse,
-        drift=result.drift,
+    The two were separate functions with identical bodies apart from four
+    things: which admission call validates the root, which ``JobSource`` the
+    resilience snapshot is taken for, which indexer the leased slot exposes,
+    and which reader turns that indexer into resilience evidence. Everything
+    else - the lease, the resource bookkeeping, the resumed check, the
+    clean/incremental branch, the teardown ordering, and the whole result -
+    was the same text twice.
+
+    Merging them matters beyond the repetition. ``load_model`` must be called
+    before ``lease``: the model load is the long, GPU-touching step, and doing
+    it while holding a project lease blocks every other root for its duration.
+    That ordering was guarded on the vault and code runners and NOT on the
+    document one, so a third of the paths could have reordered silently. One
+    runner means one ordering to guard.
+
+    The vault runner is deliberately not folded in. It takes no admission
+    preflight, publishes no resilience, holds no pipeline resource, invalidates
+    the graph cache, and returns a result without preprocess fields - it is a
+    different job, not this one with different nouns.
+    """
+    from .jobs import (
+        JobProgressReporter,
+        validate_code_job_admission,
+        validate_document_job_admission,
     )
 
-
-def _run_document_attempt(
-    context: JobAttemptContext,
-    *,
-    manager: JobManager,
-    job_id: str,
-    root: Path,
-    clean: bool,
-    registry: ServiceRegistry,
-) -> JobExecutionResult:
-    """Run one document attempt with independent policy and storage state."""
-    from .jobs import JobProgressReporter, validate_document_job_admission
-
+    # Held as two narrowed locals rather than one union: each indexer accepts
+    # only its own preflight type, and the type checker cannot see that the
+    # source picks both together. Narrowing keeps the pairing checkable.
+    code_preflight: CodeIndexPreflight | None = None
+    document_preflight: DocumentIndexPreflight | None = None
     context.control.checkpoint()
-    preflight = validate_document_job_admission(
-        root,
-        run_control=context.control,
-    )
-    context.set_resilience(_admitted_resilience(JobSource.DOCUMENT))
+    if source is JobSource.CODE:
+        code_preflight = validate_code_job_admission(root)
+    else:
+        document_preflight = validate_document_job_admission(
+            root, run_control=context.control
+        )
+    context.set_resilience(_admitted_resilience(source))
     context.control.checkpoint()
     registry.load_model()
     try:
@@ -253,23 +205,46 @@ def _run_document_attempt(
                     and snapshot.attempt.resumed_from_attempt is not None
                 )
                 try:
-                    if clean:
-                        result = slot.document_indexer.full_index(
-                            clean=not resumed,
-                            reporter=reporter,
-                            preflight=preflight,
-                            run_control=context.control,
+                    if code_preflight is not None:
+                        code_indexer = slot.code_indexer
+                        result = (
+                            code_indexer.full_index(
+                                clean=not resumed,
+                                reporter=reporter,
+                                preflight=code_preflight,
+                                run_control=context.control,
+                            )
+                            if clean
+                            else code_indexer.incremental_index(
+                                reporter=reporter,
+                                preflight=code_preflight,
+                                run_control=context.control,
+                            )
                         )
                     else:
-                        result = slot.document_indexer.incremental_index(
-                            reporter=reporter,
-                            preflight=preflight,
-                            run_control=context.control,
+                        document_indexer = slot.document_indexer
+                        result = (
+                            document_indexer.full_index(
+                                clean=not resumed,
+                                reporter=reporter,
+                                preflight=document_preflight,
+                                run_control=context.control,
+                            )
+                            if clean
+                            else document_indexer.incremental_index(
+                                reporter=reporter,
+                                preflight=document_preflight,
+                                run_control=context.control,
+                            )
                         )
                 finally:
                     _publish_resilience(
                         context,
-                        lambda: _document_resilience(slot.document_indexer),
+                        (
+                            (lambda: _code_resilience(slot.code_indexer))
+                            if code_preflight is not None
+                            else (lambda: _document_resilience(slot.document_indexer))
+                        ),
                     )
             finally:
                 context.set_resources(writer_lock_held=False, pipeline_active=False)
