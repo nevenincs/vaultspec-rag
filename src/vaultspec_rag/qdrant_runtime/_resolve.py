@@ -42,6 +42,11 @@ from .._process_probe import (
 )
 from ..config import EnvVar, get_config, managed_status_dir
 from ._constants import (
+    ASSET_LINUX_ARM_MUSL,
+    ASSET_LINUX_X86_GNU,
+    ASSET_MACOS_ARM,
+    ASSET_MACOS_X86,
+    ASSET_WINDOWS_X86,
     MANIFEST_FILENAME,
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
@@ -164,17 +169,17 @@ def asset_for_platform(
 
     asset: str | None = None
     if plat == "win32" and mach in _X86_MACHINES:
-        asset = "qdrant-x86_64-pc-windows-msvc.zip"
+        asset = ASSET_WINDOWS_X86
     elif plat == "darwin":
         if mach in _ARM_MACHINES:
-            asset = "qdrant-aarch64-apple-darwin.tar.gz"
+            asset = ASSET_MACOS_ARM
         elif mach in _X86_MACHINES:
-            asset = "qdrant-x86_64-apple-darwin.tar.gz"
+            asset = ASSET_MACOS_X86
     elif plat.startswith("linux"):
         if mach in _X86_MACHINES:
-            asset = "qdrant-x86_64-unknown-linux-gnu.tar.gz"
+            asset = ASSET_LINUX_X86_GNU
         elif mach in _ARM_MACHINES:
-            asset = "qdrant-aarch64-unknown-linux-musl.tar.gz"
+            asset = ASSET_LINUX_ARM_MUSL
 
     if asset is None:
         raise RuntimeError(
