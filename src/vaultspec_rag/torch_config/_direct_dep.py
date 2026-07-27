@@ -411,8 +411,28 @@ def ensure_direct_torch_dep(
 
     deps.append(DIRECT_TORCH_REQUIREMENT)
     _set_managed_direct_dep_marker(doc, location)
+    return _finish_direct_dep(
+        report, pyproject, doc, action="applied", location=location
+    )
+
+
+def _finish_direct_dep(
+    report: DirectTorchDepReport,
+    pyproject: Path,
+    doc: TOMLDocument,
+    *,
+    action: str,
+    location: str,
+) -> DirectTorchDepReport:
+    """Write the document and report the outcome, in that order.
+
+    Three exits wrote the file and then set the same two fields. The order
+    matters and is easy to get wrong in a copy: a report that names an
+    action the write did not perform is worse than no report, because a
+    caller trusts it.
+    """
     write_doc_preserving_shape(pyproject, doc)
-    report.action = "applied"
+    report.action = action
     report.location = location
     return report
 
@@ -458,13 +478,11 @@ def remove_managed_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
         if entry == DIRECT_TORCH_REQUIREMENT:
             deps.pop(index)  # pyright: ignore[reportUnknownMemberType]  # tomlkit list
             _clear_managed_direct_dep_marker(doc)
-            write_doc_preserving_shape(pyproject, doc)
-            report.action = "removed"
-            report.location = location
-            return report
+            return _finish_direct_dep(
+                report, pyproject, doc, action="removed", location=location
+            )
 
     _clear_managed_direct_dep_marker(doc)
-    write_doc_preserving_shape(pyproject, doc)
-    report.action = "absent"
-    report.location = location
-    return report
+    return _finish_direct_dep(
+        report, pyproject, doc, action="absent", location=location
+    )
