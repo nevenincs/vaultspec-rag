@@ -115,10 +115,10 @@ __all__ = [
     "_delete_service_status",
     "_discovery_timestamp",
     "_merge_service_status",
-    "_read_service_status",
     "_replace_service_status",
     "_status_dir",
     "_status_file",
+    "read_service_status",
     "resolve_machine_service",
 ]
 
@@ -376,7 +376,7 @@ def _delete_service_status(
     return True
 
 
-def _read_service_status() -> dict[str, Any] | None:
+def read_service_status() -> dict[str, Any] | None:
     """Read and parse the service status file.
 
     Returns:
@@ -560,17 +560,18 @@ def resolve_machine_service() -> MachineResolution:
             payload=payload,
         )
 
-    if not _discovery_pair_understood(payload):
-        return degraded(DISCOVERY_REASON_POINTER_INCOMPATIBLE)
-    if port is None:
-        return degraded(DISCOVERY_REASON_POINTER_INVALID)
-    # The publisher refuses to write a payload whose pid is not the lease
-    # owner's, so a pointer naming anyone but the live holder is a leftover
-    # from a previous incarnation rather than this owner's publication.
-    if pointer_pid is not None and pointer_pid != holder:
-        return degraded(DISCOVERY_REASON_POINTER_FOREIGN)
-    if age is not None and age > window:
-        return degraded(DISCOVERY_REASON_POINTER_STALE)
+    reason = _machine_pointer_degradation_reason(
+        _MachinePointerEvidence(
+            payload=payload,
+            port=port,
+            holder_pid=holder,
+            pointer_pid=pointer_pid,
+            heartbeat_age_s=age,
+            stale_after_s=window,
+        )
+    )
+    if reason is not None:
+        return degraded(reason)
 
     return MachineResolution(
         state=DISCOVERY_STATE_READY,
@@ -585,6 +586,42 @@ def resolve_machine_service() -> MachineResolution:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _MachinePointerEvidence:
+    """Pointer fields compared against the live machine-lock owner."""
+
+    payload: dict[str, Any]
+    port: int | None
+    holder_pid: int
+    pointer_pid: int | None
+    heartbeat_age_s: float | None
+    stale_after_s: float
+
+
+def _machine_pointer_degradation_reason(
+    evidence: _MachinePointerEvidence,
+) -> str | None:
+    """Return the sole failed ownership or freshness witness, if any."""
+    if not _discovery_pair_understood(evidence.payload):
+        return DISCOVERY_REASON_POINTER_INCOMPATIBLE
+    if evidence.port is None:
+        return DISCOVERY_REASON_POINTER_INVALID
+    # The publisher refuses to write a payload whose pid is not the lease
+    # owner's, so a pointer naming anyone but the live holder is a leftover
+    # from a previous incarnation rather than this owner's publication.
+    if (
+        evidence.pointer_pid is not None
+        and evidence.pointer_pid != evidence.holder_pid
+    ):
+        return DISCOVERY_REASON_POINTER_FOREIGN
+    if (
+        evidence.heartbeat_age_s is not None
+        and evidence.heartbeat_age_s > evidence.stale_after_s
+    ):
+        return DISCOVERY_REASON_POINTER_STALE
+    return None
+
+
 def _status_file_resolution() -> MachineResolution:
     """Resolve through the per-status-directory file (no singleton is held).
 
@@ -592,7 +629,7 @@ def _status_file_resolution() -> MachineResolution:
     owner's degraded publication.
     """
     try:
-        data = _read_service_status()
+        data = read_service_status()
     except Exception as exc:
         # Broad except: status reads must never block the command path.
         logger.debug("status read raised: %s", exc, exc_info=True)
