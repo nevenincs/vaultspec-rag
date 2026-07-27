@@ -25,4 +25,5 @@ related:
 Document-path budget builder now feeds the resident baseline into the absolute derivation while retaining its post-flush sampling order; both indexers sample free after the admission cache flush.
 
 ## Notes
+
 Template evidence: intro_commit=58d6eb6527001b03b92a32cbb22c8cb999d28007; template_commit=58d6eb6527001b03b92a32cbb22c8cb999d28007:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

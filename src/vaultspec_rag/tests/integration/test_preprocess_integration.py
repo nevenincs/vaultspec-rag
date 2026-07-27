@@ -588,6 +588,7 @@ class TestPreprocessEndToEnd:
             AdmissionReason,
             ContentKind,
         )
+
         setup = _prepare_off_hook_setup(rag_components, tmp_path)
         try:
             os.environ[setup.env_key] = "off"
@@ -628,8 +629,7 @@ class TestPreprocessEndToEnd:
             assert not setup.sentinel.exists()
             assert setup.store.get_all_code_ids() == setup.before_ids
             assert (
-                setup.store.get_code_ids_by_paths({"doc.pdf"})
-                == setup.before_path_ids
+                setup.store.get_code_ids_by_paths({"doc.pdf"}) == setup.before_path_ids
             )
             assert setup.metadata_path.read_bytes() == setup.before_metadata
             assert _file_tree_bytes(setup.cache_root) == setup.before_cache

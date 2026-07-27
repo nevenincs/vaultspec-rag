@@ -191,5 +191,7 @@ ship the contract.
 - **Open question for the ADR**: `dataclass` vs `TypedDict` for the payload definitions
   (hot-path construction cost vs. richer typing), and whether `/service-state` carries the
   bare `schema_version` echo or the descriptor lives on `/readiness` only.
+
 ## Sources
+
 - The analysis and source locations cited inline in this research record.

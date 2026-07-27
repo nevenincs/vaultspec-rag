@@ -8,6 +8,7 @@ step_id: 'S18'
 related:
   - "[[2026-07-25-service-release-compatibility-plan]]"
 ---
+
 # Stamp this install release into the discovered dead-service fixture
 
 ## Scope

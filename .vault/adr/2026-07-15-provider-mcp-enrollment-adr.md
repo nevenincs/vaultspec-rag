@@ -8,6 +8,7 @@ related:
   - "[[2026-07-15-provider-mcp-enrollment-research]]"
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
 ---
+
 # `provider-mcp-enrollment` adr: `Core-managed provider lifecycle with RAG-owned enrollment intent and placement` | (**status:** `accepted`)
 
 ## Problem Statement

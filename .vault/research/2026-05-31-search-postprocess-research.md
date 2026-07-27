@@ -175,5 +175,7 @@ files of signature changes.
 Defaults stay off — neither pass runs unless the user opts in
 with the flag. This avoids surprise reordering for existing
 consumers; the new behaviour is purely additive.
+
 ## Sources
+
 - Evidence cited inline: `tests/test_search_unit.py`, `tests/test_cli.py`.

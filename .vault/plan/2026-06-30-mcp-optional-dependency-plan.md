@@ -9,6 +9,7 @@ related:
   - '[[2026-06-30-mcp-optional-dependency-adr]]'
   - '[[2026-06-30-mcp-optional-dependency-research]]'
 ---
+
 # `mcp-optional-dependency` plan
 
 ## Description

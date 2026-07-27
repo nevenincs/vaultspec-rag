@@ -9,6 +9,7 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
   - '[[2026-07-13-storage-autoprune-safety-research]]'
 ---
+
 # `storage-autoprune-safety` plan
 
 ## Description

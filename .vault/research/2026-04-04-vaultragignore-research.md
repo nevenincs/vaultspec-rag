@@ -8,6 +8,7 @@ related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-04-04-vaultragignore-plan]]'
 ---
+
 # `vaultragignore` research: codebase indexer exclusion support
 
 ## Findings

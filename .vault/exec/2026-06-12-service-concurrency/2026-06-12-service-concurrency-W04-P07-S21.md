@@ -8,6 +8,7 @@ step_id: 'S21'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Move the cold ensure-watcher peek and log reads off the event loop
 
 ## Description
@@ -20,6 +21,7 @@ related:
   schedule watcher ensure as a background task that warms the project slot
   on a worker thread; explicit watcher-control routes keep the
   deterministic synchronous path.
+
 - Dispatch rotated-set service log reads off the event loop in both log
   routes.
 

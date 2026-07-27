@@ -8,6 +8,7 @@ step_id: 'S13'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Split the store client lock into a lifecycle lock plus per-collection point-operation locks, backend-aware so server mode runs lock-free
 
 ## Description
@@ -19,6 +20,7 @@ related:
 - Split the single store client RLock into a lifecycle lock (open/close,
   collection create/drop, ensure flags) plus one point-operation lock per
   collection; close() takes all locks in fixed order.
+
 - Server mode (qdrant_url) skips point-operation locking entirely - the
   remote server is concurrency-safe and client-side locking only caps
   throughput.

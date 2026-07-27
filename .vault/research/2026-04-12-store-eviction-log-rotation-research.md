@@ -9,6 +9,7 @@ related:
   - '[[2026-04-05-service-lifecycle-tests-adr]]'
   - '[[2026-04-05-service-lifecycle-tests-research]]'
 ---
+
 # `store-eviction-log-rotation` research: beta gates #45
 
 ## Findings

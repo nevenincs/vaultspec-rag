@@ -16,7 +16,9 @@ related:
 - `src/vaultspec_rag/mcp_server/_admin_tools.py`
 
 - Refactor `get_service_state` tool in `_admin_tools.py` to call the backend `get_service_state` facade.
+
 - Add `benchmark` tool to the MCP server calling the backend `run_benchmark` facade.
+
 - Add `quality` tool to the MCP server calling the backend `run_quality_probe` facade.
 
 ## Outcome

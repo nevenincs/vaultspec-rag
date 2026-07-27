@@ -114,12 +114,15 @@ def search_documents_timed(
     """Search documents and return canonical service timing fields."""
     from .search import SearchFilterOptions
 
-    validate_search_filters(PublicSourceType.DOCUMENT, SearchFilterOptions(
-        source_path=request.source_path,
-        extractor_id=request.extractor_id,
-        extractor_version=request.extractor_version,
-        locator_kind=request.locator_kind,
-    ))
+    validate_search_filters(
+        PublicSourceType.DOCUMENT,
+        SearchFilterOptions(
+            source_path=request.source_path,
+            extractor_id=request.extractor_id,
+            extractor_version=request.extractor_version,
+            locator_kind=request.locator_kind,
+        ),
+    )
     root = pathlib.Path(request.root_dir).resolve()
     registry = get_registry()
     indexed_count = registry.document_chunk_count(root)
@@ -231,28 +234,31 @@ def search_combined_timed(
     """Search all domains under one lease with explicit partial outcomes."""
     from .search import SearchFilterOptions
 
-    validate_search_filters(PublicSourceType.COMBINED, SearchFilterOptions(
-        language=request.code_filters.language,
-        path=request.code_filters.path,
-        node_type=request.code_filters.node_type,
-        function_name=request.code_filters.function_name,
-        class_name=request.code_filters.class_name,
-        doc_type=request.vault_filters.doc_type,
-        feature=request.vault_filters.feature,
-        date=request.vault_filters.date,
-        tag=request.vault_filters.tag,
-        include_paths=list(request.code_filters.include_paths) or None,
-        exclude_paths=list(request.code_filters.exclude_paths) or None,
-        dedup_locales=request.code_filters.dedup_locales,
-        prefer=request.code_filters.prefer,
-        exclude_domains=list(request.code_filters.exclude_domains) or None,
-        only_domains=list(request.code_filters.only_domains) or None,
-        include_domains=list(request.code_filters.include_domains) or None,
-        source_path=request.document_filters.source_path,
-        extractor_id=request.document_filters.extractor_id,
-        extractor_version=request.document_filters.extractor_version,
-        locator_kind=request.document_filters.locator_kind,
-    ))
+    validate_search_filters(
+        PublicSourceType.COMBINED,
+        SearchFilterOptions(
+            language=request.code_filters.language,
+            path=request.code_filters.path,
+            node_type=request.code_filters.node_type,
+            function_name=request.code_filters.function_name,
+            class_name=request.code_filters.class_name,
+            doc_type=request.vault_filters.doc_type,
+            feature=request.vault_filters.feature,
+            date=request.vault_filters.date,
+            tag=request.vault_filters.tag,
+            include_paths=list(request.code_filters.include_paths) or None,
+            exclude_paths=list(request.code_filters.exclude_paths) or None,
+            dedup_locales=request.code_filters.dedup_locales,
+            prefer=request.code_filters.prefer,
+            exclude_domains=list(request.code_filters.exclude_domains) or None,
+            only_domains=list(request.code_filters.only_domains) or None,
+            include_domains=list(request.code_filters.include_domains) or None,
+            source_path=request.document_filters.source_path,
+            extractor_id=request.document_filters.extractor_id,
+            extractor_version=request.document_filters.extractor_version,
+            locator_kind=request.document_filters.locator_kind,
+        ),
+    )
     root = pathlib.Path(request.root_dir).resolve()
     registry = get_registry()
     counts, count_failures, timings = _count_combined_domains(root)

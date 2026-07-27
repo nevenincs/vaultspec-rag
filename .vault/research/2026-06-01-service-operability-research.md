@@ -270,6 +270,8 @@ registry, `/metrics`) until the pattern is validated.
   config (prior ADRs deferred per-project overrides to "global-only for beta").
 - #144 scheduled rebuild: is it exempt from the standing "no background thread"
   constraint, or rejected outright?
+
 ## Sources
+
 - Evidence cited inline: `README.md`.
 - Related record identifiers: `2026-05-31-server-mcp-route-adr`, `2026-05-31-service-token-identity-adr`, `2026-05-30-service-lifecycle-adr`.

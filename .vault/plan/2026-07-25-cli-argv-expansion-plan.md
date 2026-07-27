@@ -9,6 +9,7 @@ related:
   - '[[2026-07-25-cli-argv-expansion-adr]]'
   - '[[2026-07-25-cli-argv-expansion-research]]'
 ---
+
 # `cli-argv-expansion` plan
 
 ## Description

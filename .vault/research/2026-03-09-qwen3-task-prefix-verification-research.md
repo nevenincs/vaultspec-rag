@@ -5,6 +5,7 @@ tags:
 date: '2026-03-09'
 modified: '2026-07-27'
 ---
+
 # Research Topic 21: Qwen3 Embedding Task Prefixes â€” Deep Verification
 
 ## Findings
@@ -21,10 +22,10 @@ ______________________________________________________________________
 
 The codebase implements custom `encode_documents()` and `encode_query()` wrapper methods in `EmbeddingModel`, correctly routing them to `SentenceTransformer.encode()` with/without `prompt_name` parameter:
 
-| Method               | Dense Call                               | Sparse Call                                       | Status      |
-| -------------------- | ---------------------------------------- | ------------------------------------------------- | ----------- |
+| Method               | Dense Call                                   | Sparse Call                                           | Status      |
+| -------------------- | -------------------------------------------- | ----------------------------------------------------- | ----------- |
 | `encode_documents()` | `encode(texts)` â€” **NO `prompt_name`** âœ“ | `encode_document(texts)` â€” uses document prompt âœ“ | **Correct** |
-| `encode_query()`     | `encode([query], prompt_name="query")` âœ“ | `encode_query(query)` â€” uses query prompt âœ“       | **Correct** |
+| `encode_query()`     | `encode([query], prompt_name="query")` âœ“   | `encode_query(query)` â€” uses query prompt âœ“       | **Correct** |
 
 The dense embedding call **NEVER applies `prompt_name` to documents**, which is correct by design (empty document prompt in model card).
 

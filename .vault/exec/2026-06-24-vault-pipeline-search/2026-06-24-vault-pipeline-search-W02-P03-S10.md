@@ -19,6 +19,7 @@ related:
 
 - Mapped `status` from the Qdrant row (`r.get("status", "")`) onto the vault `SearchResult`
   in `_search_vault_encoded`.
+
 - Mapped `related` defensively: coerced the payload value to a `list[str]` only when it is a
   list, else an empty list, so a missing or malformed field never raises.
 

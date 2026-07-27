@@ -19,6 +19,7 @@ related:
 
 - Ran the intent-ranking harness against a hermetic copy of the project vault on the real
   GPU (694 documents indexed) using the current bare-reranker ranking.
+
 - Computed per-query role-aware metrics and per-intent aggregates, and wrote them to
   `baseline.json` (ranking tag, per-intent aggregates, and the full per-query report).
 

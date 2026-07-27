@@ -8,6 +8,7 @@ step_id: 'S25'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Record the execution summary and prepare the review handoff
 
 ## Description

@@ -8,6 +8,7 @@ related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-server-bound-search-production-readiness-adr]]'
 ---
+
 # Wave 04 Slice 01 - Timeout Diagnostics And Coarse Timing
 
 ## Description

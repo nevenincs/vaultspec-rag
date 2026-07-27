@@ -6,6 +6,7 @@ date: '2026-05-03'
 modified: '2026-07-27'
 related: []
 ---
+
 # `project-hardening` research: `vaultspec-rag discoverability`
 
 ## Findings

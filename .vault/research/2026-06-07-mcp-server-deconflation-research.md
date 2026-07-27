@@ -6,6 +6,7 @@ date: '2026-06-07'
 modified: '2026-07-27'
 related: []
 ---
+
 # `mcp-server-deconflation` research: `Blast Radius of MCP and Server Conflation`
 
 ## Findings

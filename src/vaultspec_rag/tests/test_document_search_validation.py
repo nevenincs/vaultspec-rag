@@ -14,17 +14,23 @@ pytestmark = pytest.mark.unit
 
 
 def test_document_filters_are_native_only_to_document_and_combined() -> None:
-    validate_search_filters("document", SearchFilterOptions(
-        source_path="manuals/guide.bin",
-        extractor_id="extractor",
-        extractor_version="2",
-        locator_kind="page",
-    ))
-    validate_search_filters("combined", SearchFilterOptions(
-        language="python",
-        doc_type="adr",
-        source_path="manuals/guide.bin",
-    ))
+    validate_search_filters(
+        "document",
+        SearchFilterOptions(
+            source_path="manuals/guide.bin",
+            extractor_id="extractor",
+            extractor_version="2",
+            locator_kind="page",
+        ),
+    )
+    validate_search_filters(
+        "combined",
+        SearchFilterOptions(
+            language="python",
+            doc_type="adr",
+            source_path="manuals/guide.bin",
+        ),
+    )
     with pytest.raises(InvalidFilterForSearchTypeError) as captured:
         validate_search_filters("code", SearchFilterOptions(locator_kind="page"))
     assert captured.value.filter_kind == "document"

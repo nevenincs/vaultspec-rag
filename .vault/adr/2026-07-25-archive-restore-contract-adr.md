@@ -12,6 +12,7 @@ related:
   - '[[2026-07-21-storage-prealloc-reclaim-adr]]'
   - '[[2026-07-27-archive-restore-contract-research]]'
 ---
+
 # `archive-restore-contract` adr: `what a snapshot archive promises and who may read it back` | (**status:** `accepted`)
 
 ## Problem Statement

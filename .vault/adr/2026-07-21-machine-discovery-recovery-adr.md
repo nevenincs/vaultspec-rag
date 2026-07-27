@@ -14,6 +14,7 @@ related:
   - "[[2026-06-30-mcp-conformance-adr]]"
   - '[[2026-07-21-machine-discovery-recovery-s01-test-isolation-audit]]'
 ---
+
 # `machine-discovery-recovery` adr: `owner-authenticated, self-healing service discovery` | (**status:** `accepted`)
 
 ## Problem Statement

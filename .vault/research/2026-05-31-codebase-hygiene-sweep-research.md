@@ -86,5 +86,7 @@ Verification:
   returns zero matches.
 - 591+ unit tests still pass.
 - No new behaviour (purely log + comment changes).
+
 ## Sources
+
 - Evidence cited inline: `src/vaultspec_rag/`, `tests/test_cli.py`.

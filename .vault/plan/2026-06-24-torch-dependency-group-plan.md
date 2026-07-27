@@ -76,7 +76,7 @@ The plan is complete when every Step is closed and all of the following hold:
 
 - `vaultspec-rag install --torch-group <NAME>` writes `torch` under
   `[dependency-groups].<NAME>` and not `[project].dependencies`, with the cu130
-  ``tool.uv.index`` and `[tool.uv.sources]` block still written.
+  `tool.uv.index` and `[tool.uv.sources]` block still written.
 - The ownership marker records the written location; uninstall removes the managed dep from
   that surface only, and a legacy boolean-`true` marker still removes from
   `[project].dependencies`.

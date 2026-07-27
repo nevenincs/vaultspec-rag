@@ -8,6 +8,7 @@ related:
 superseded_by: '2026-07-27-body-schema-provenance-adr'
 modified: '2026-07-27'
 ---
+
 # `active-corpus-conformance` adr: `Archive non-conforming active vault documents` | (**status:** `superseded`)
 
 ## Problem Statement

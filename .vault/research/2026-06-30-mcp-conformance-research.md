@@ -173,5 +173,7 @@ now), `_require_port()` would raise "service not running" — not "service up wi
 That it returned the client means the MCP was spawned under a client-scoped status dir whose
 `service.json` named the live client service. Capturing the MCP server process's
 environment and that dir's `service.json` at failure time would confirm it directly.
+
 ## Sources
+
 - The analysis and source locations cited inline in this research record.

@@ -6,6 +6,7 @@ related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-search-freshness-and-empty-results-adr]]'
 ---
+
 # `cli-service-operability-hardening` W03.S01 - search empty-result diagnostics
 
 ## Description

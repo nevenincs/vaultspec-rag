@@ -19,9 +19,12 @@ related:
 
 - Added a `status: str = ""` field to `VaultDocument` and `VaultChunk` (placed after the
   non-default fields to satisfy dataclass ordering), with docstring entries.
+
 - Wrote `status` into the Qdrant payload on both the document and chunk upsert paths.
+
 - Wired `prepare_document` to call `_extract_status(body)` and pass `status`, and
   `split_document` to propagate `doc.status` onto every chunk.
+
 - Confirmed the search-return path passes the whole payload through
   (`row = dict(point.payload)`), so `status` (and the already-stored `related`) reach result
   rows with no further store change.

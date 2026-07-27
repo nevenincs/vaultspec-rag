@@ -109,6 +109,7 @@ needs a separate classification layer and a richer config surface
   qdrant-client release adds it) by replacing the fnmatch loop
   with a store-side filter and dropping the fetch_limit bump.
   The CLI/MCP surface stays stable across that change.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

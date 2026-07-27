@@ -20,6 +20,7 @@ related:
 - Added three env-overridable scalar knobs to `_RAG_DEFAULTS` and `EnvVar`/`_ENV_OVERRIDE_MAP`:
   `vault_intent_default` (orientation), `vault_intent_ranking_enabled` (True), and
   `vault_intent_type_cap` (4).
+
 - Added the `_INTENT_WEIGHT_PROFILES` ClassVar carrying the orientation and debug
   per-(type, status) multiplier matrices, with an `intent_weight_profiles` read-only
   property, so the weights are config-resident, inspectable, and sweepable.

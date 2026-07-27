@@ -134,5 +134,7 @@ Always wrap in `{"ok": bool, "command": str, "data" or "error"/"message"}`. Rati
 - `_display_mcp_error` and `_display_port_unreachable_error`
   gain `json_mode` paths that emit the envelope instead of
   prose.
+
 ## Sources
+
 - The analysis and source locations cited inline in this research record.

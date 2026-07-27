@@ -9,6 +9,7 @@ related:
 superseded_by: '2026-06-18-mcp-service-client-adr'
 modified: '2026-07-27'
 ---
+
 # `gpu-rag-stack` adr: `MCP tools use async def + anyio.to_thread.run_sync` | (**status:** `superseded`)
 
 ## Problem Statement

@@ -12,6 +12,7 @@ related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-adr]]"
   - "[[2026-07-21-service-job-control-reference]]"
 ---
+
 # `large-index-resilience` reference: `retry, checkpoint, and memory-control seams`
 
 ## Summary

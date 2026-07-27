@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-04-04-vaultragignore-research]]'
 ---
+
 # `vaultragignore` ADR: design decisions | (**status:** `proposed`)
 
 ## Problem Statement

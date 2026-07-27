@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-06-08-sparse-search-latency-plan]]'
 ---
+
 # `sparse-search-latency` `P04.S14` execution
 
 ## Description

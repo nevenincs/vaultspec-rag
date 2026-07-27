@@ -5,6 +5,7 @@ tags:
 date: '2026-03-07'
 modified: '2026-07-27'
 ---
+
 # Round 21 Audit -- search.py, cli.py, mcp_server.py
 
 ## Scope

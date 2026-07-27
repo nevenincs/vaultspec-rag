@@ -141,5 +141,7 @@ human-triggered `status` command expecting near-real-time truth.
   before rendering, then surfaces each as its own row and adds an
   explicit `Divergence` row when signals conflict. Heartbeat
   freshness gets its own row sourced from the new field.
+
 ## Sources
+
 - The analysis and source locations cited inline in this research record.

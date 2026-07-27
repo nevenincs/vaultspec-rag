@@ -5,6 +5,7 @@ tags:
 date: '2026-03-06'
 modified: '2026-07-27'
 ---
+
 # Audit: Embeddings GPU Pivot
 
 ## Scope

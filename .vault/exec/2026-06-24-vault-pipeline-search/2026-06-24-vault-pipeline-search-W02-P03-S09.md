@@ -19,6 +19,7 @@ related:
 
 - Added `status: str = ""` and `related: list[str]` (via `field(default_factory=list)`) to
   the `SearchResult` dataclass, importing `field`.
+
 - Documented both attributes, noting they are empty for codebase results and that `status`
   is empty for non-ADR and legacy headings.
 

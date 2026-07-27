@@ -92,6 +92,7 @@ function instead of a Starlette instance.
   with `follow_redirects=False`, confirm no `307` response.
   MCP client connects against both URLs without a redirect hop.
   Documented inline in this PR.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

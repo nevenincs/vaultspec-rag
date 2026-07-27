@@ -12,6 +12,7 @@ related:
   - '[[2026-07-25-index-resume-drift-race-research]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
 ---
+
 # `index-resume-drift-race` plan
 
 ## Description

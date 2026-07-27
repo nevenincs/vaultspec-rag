@@ -8,6 +8,7 @@ step_id: 'S22'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
+
 # Surface limiter depth and lock-wait telemetry through the existing bounded metrics plumbing
 
 ## Description

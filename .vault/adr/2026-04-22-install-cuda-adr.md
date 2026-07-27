@@ -9,6 +9,7 @@ related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
   - '[[2026-04-06-ecosystem-integration-adr]]'
 ---
+
 # install-cuda adr: patching consumer pyproject.toml for cu130 torch and actionable cpu-torch errors | (**status:** `proposed`)
 
 ## Problem Statement

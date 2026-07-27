@@ -9,6 +9,7 @@ related:
   - '[[2026-07-13-control-plane-affordances-adr]]'
   - '[[2026-07-13-control-plane-affordances-research]]'
 ---
+
 # `control-plane-affordances` plan
 
 ## Description

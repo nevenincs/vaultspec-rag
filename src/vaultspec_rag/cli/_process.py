@@ -1031,9 +1031,9 @@ def _owned_qdrant_identity(
         _QdrantValidationContext(
             service_pid=service_pid,
             deadline=deadline,
-            expected_storage=Path(
-                str(get_config().qdrant_storage_dir)
-            ).expanduser().resolve(),
+            expected_storage=Path(str(get_config().qdrant_storage_dir))
+            .expanduser()
+            .resolve(),
             expected_version=QDRANT_SERVER_VERSION,
             probe=probe_qdrant_endpoint,
         ),
@@ -1068,8 +1068,12 @@ def _is_owned_qdrant_identity(
         and recorded_storage == context.expected_storage
         and identity.version == context.expected_version
     )
-    if not identity_matches or remaining <= 0 or not pid_matches_start_time(
-        identity.owner_pid, identity.owner_start_time, timeout=remaining
+    if (
+        not identity_matches
+        or remaining <= 0
+        or not pid_matches_start_time(
+            identity.owner_pid, identity.owner_start_time, timeout=remaining
+        )
     ):
         return False
     return _qdrant_process_is_live(
@@ -1106,9 +1110,7 @@ def _qdrant_process_is_live(
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return False
-    result = probe(
-        identity.http_port, timeout=max(0.001, min(2.0, remaining / 2.0))
-    )
+    result = probe(identity.http_port, timeout=max(0.001, min(2.0, remaining / 2.0)))
     return bool(getattr(result, "ready", False)) and (
         getattr(result, "version", None) == expected_version
     )
@@ -1137,14 +1139,11 @@ def _reap_owned_qdrant(
     expected_storage = Path(str(get_config().qdrant_storage_dir)).expanduser().resolve()
     recorded_storage = Path(identity.storage_path).expanduser().resolve()
     remaining = deadline - time.monotonic()
-    is_valid = (
-        remaining > 0
-        and (
-            current == identity
-            and identity.qdrant_start_time > 0.0
-            and recorded_storage == expected_storage
-            and identity.version == QDRANT_SERVER_VERSION
-        )
+    is_valid = remaining > 0 and (
+        current == identity
+        and identity.qdrant_start_time > 0.0
+        and recorded_storage == expected_storage
+        and identity.version == QDRANT_SERVER_VERSION
     )
     is_valid = is_valid and pid_matches_start_time(
         qdrant_pid,
@@ -1152,14 +1151,20 @@ def _reap_owned_qdrant(
         timeout=remaining,
     )
     remaining = deadline - time.monotonic()
-    is_valid = is_valid and remaining > 0 and pid_image_matches(
-        qdrant_pid, "qdrant", timeout=remaining
+    is_valid = (
+        is_valid
+        and remaining > 0
+        and pid_image_matches(qdrant_pid, "qdrant", timeout=remaining)
     )
     remaining = deadline - time.monotonic()
-    is_valid = is_valid and remaining > 0 and pid_listens_on_loopback_port(
-        qdrant_pid,
-        identity.http_port,
-        timeout=remaining,
+    is_valid = (
+        is_valid
+        and remaining > 0
+        and pid_listens_on_loopback_port(
+            qdrant_pid,
+            identity.http_port,
+            timeout=remaining,
+        )
     )
     remaining = deadline - time.monotonic()
     probe = (

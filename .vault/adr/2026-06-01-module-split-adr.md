@@ -9,6 +9,7 @@ related:
   - "[[2026-06-01-module-split-audit]]"
   - '[[2026-07-27-module-split-production-length-gate-research]]'
 ---
+
 # `module-split` adr: direct-owner decomposition of overlength modules | (**status:** `accepted`)
 
 ## Problem Statement

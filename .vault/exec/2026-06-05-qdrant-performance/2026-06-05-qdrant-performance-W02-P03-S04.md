@@ -16,7 +16,9 @@ related:
 - `src/vaultspec_rag/store.py`
 
 - Read `qdrant_quantization` value from configuration settings.
+
 - Build corresponding quantization config objects for scalar (INT8), product (PQ, X16 compression ratio), or TurboQuant options.
+
 - Pass the constructed quantization configuration option to `create_collection` keyword arguments.
 
 ## Outcome

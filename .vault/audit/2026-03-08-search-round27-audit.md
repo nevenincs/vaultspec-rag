@@ -5,6 +5,7 @@ tags:
 date: '2026-03-08'
 modified: '2026-07-27'
 ---
+
 # Audit: search.py Round 27 — Correctness Deep Dive
 
 ## Scope

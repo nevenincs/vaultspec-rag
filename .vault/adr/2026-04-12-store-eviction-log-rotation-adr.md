@@ -923,6 +923,7 @@ is NOT retroactively trimmed, consistent with
 - `2026-04-05-service-lifecycle-tests-adr` — established the
   subprocess + ephemeral-port + `_service_env(tmp_path)` fixture
   pattern that the five new integration tests must reuse.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

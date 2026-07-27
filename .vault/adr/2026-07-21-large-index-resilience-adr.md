@@ -15,6 +15,7 @@ related:
   - "[[2026-07-21-service-job-control-adr]]"
   - '[[2026-07-21-large-index-resilience-s01-config-audit]]'
 ---
+
 # `large-index-resilience` adr: `durable resumable and resource-bounded indexing` | (**status:** `accepted`)
 
 ## Problem Statement

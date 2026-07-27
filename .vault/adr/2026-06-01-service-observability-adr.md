@@ -138,6 +138,7 @@ while still giving the CLI full reach.
   **Rule:** New HTTP routes on the resident service must be read-only and
   registered as Starlette routes on the inner app; all control flows through MCP
   (and the CLI-as-MCP-client seam), never a second HTTP control transport.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

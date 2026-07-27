@@ -8,6 +8,7 @@ step_id: 'S14'
 related:
   - "[[2026-07-27-maintainability-remediation-plan]]"
 ---
+
 ## Outcome
 
 Strengthened direct-owner import coverage for moved production seams. The guard now rejects retained legacy modules or package directories, direct imports of them, and imports of incidental module-level bindings from canonical owner modules. The canonical `job_manager` package remains permitted as an owner rather than being incorrectly classified as a deleted facade.

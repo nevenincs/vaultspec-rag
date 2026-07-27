@@ -102,6 +102,7 @@ output rich without polluting normal stdout / `--json` envelopes
 - Future PRs can rely on `ruff BLE001` to keep the no-swallow
   invariant enforced.
 - Tests do not regress (assertion: 591+ unit pass).
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

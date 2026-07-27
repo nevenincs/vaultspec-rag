@@ -87,14 +87,16 @@ def service_reconcile(
 
         from ..serviceclient._status import ReconcileRequest
 
-        outcome = reconcile_discovery(ReconcileRequest(
-            resolve=resolve_machine_service,
-            probe_liveness=_liveness_from_resolution,
-            probe_health=_try_http_health,
-            timeout_s=max(0.0, timeout),
-            interval_s=RECONCILE_INTERVAL_SECONDS,
-            on_attempt=_report,
-        ))
+        outcome = reconcile_discovery(
+            ReconcileRequest(
+                resolve=resolve_machine_service,
+                probe_liveness=_liveness_from_resolution,
+                probe_health=_try_http_health,
+                timeout_s=max(0.0, timeout),
+                interval_s=RECONCILE_INTERVAL_SECONDS,
+                on_attempt=_report,
+            )
+        )
     if json_mode:
         _emit_json(
             outcome.converged,

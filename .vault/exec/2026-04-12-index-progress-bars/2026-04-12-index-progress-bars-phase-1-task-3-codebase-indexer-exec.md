@@ -33,9 +33,12 @@ imports via grep; all Rich usage stays on the CLI side.
 
 Compile-verified by the unit suite; real phase invariants asserted in
 the phase-6 counting integration test.
+
 ## Notes
+
 - Scope and evidence remain those recorded in this execution record.
 - Related record identifiers: `2026-04-12-index-progress-bars-phase-1-plan`.
 
 ## Outcome
+
 - The existing execution summary is the authoritative result; no additional outcome is inferred here.

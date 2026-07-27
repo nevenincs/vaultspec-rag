@@ -144,5 +144,7 @@ would duplicate the token-write half across PRs.
 The Sonnet design report already documented in the prior
 session is the source of truth for line numbers; this research
 captures it in the vault per the no-adhoc rule.
+
 ## Sources
+
 - The analysis and source locations cited inline in this research record.

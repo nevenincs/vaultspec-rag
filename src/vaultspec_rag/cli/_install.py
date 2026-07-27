@@ -199,8 +199,7 @@ class _InstallCommand(TyperCommand):
                     default=False,
                     is_flag=True,
                     help=(
-                        "Skip the PyTorch provisioning step "
-                        "(finer than --local-only)."
+                        "Skip the PyTorch provisioning step (finer than --local-only)."
                     ),
                 ),
                 TyperOption(

@@ -9,6 +9,7 @@ related:
   - '[[2026-07-25-citation-gate-coverage-adr]]'
   - '[[2026-07-25-citation-gate-coverage-research]]'
 ---
+
 # `citation-gate-coverage` plan
 
 ## Description

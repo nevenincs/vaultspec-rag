@@ -18,8 +18,11 @@ related:
 - `src/vaultspec_rag/tests/test_process_probe_canonical.py`
 
 - Replaced the overlength collector with six behavior-domain guard modules.
+
 - Extracted one concrete source-scan helper module.
+
 - Recovered the bounded interrupted transfer without replacing the working file from Git.
+
 - Removed the duplicate collector after the audit verified all test identities moved.
 
 ## Outcome

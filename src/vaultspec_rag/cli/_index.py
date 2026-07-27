@@ -866,12 +866,15 @@ def _execute_source_indexing(
             None,
             None,
             None,
-            api.index_all(request.target, AllIndexOptions(
-                clean=request.rebuild,
-                reporter=reporter,
-                model_name=request.model,
-                extra_excludes=request.exclude,
-            )),
+            api.index_all(
+                request.target,
+                AllIndexOptions(
+                    clean=request.rebuild,
+                    reporter=reporter,
+                    model_name=request.model,
+                    extra_excludes=request.exclude,
+                ),
+            ),
         )
     if request.index_type is PublicSourceType.VAULT:
         return (
@@ -888,24 +891,30 @@ def _execute_source_indexing(
     if request.index_type is PublicSourceType.CODE:
         return (
             None,
-            api.index_codebase(request.target, CodeIndexOptions(
-                clean=request.rebuild,
-                reporter=reporter,
-                model_name=request.model,
-                extra_excludes=request.exclude,
-            )),
+            api.index_codebase(
+                request.target,
+                CodeIndexOptions(
+                    clean=request.rebuild,
+                    reporter=reporter,
+                    model_name=request.model,
+                    extra_excludes=request.exclude,
+                ),
+            ),
             None,
             None,
         )
     return (
         None,
         None,
-        api.index_documents(request.target, DocumentIndexOptions(
-            clean=request.rebuild,
-            reporter=reporter,
-            model_name=request.model,
-            extra_excludes=request.exclude,
-        )),
+        api.index_documents(
+            request.target,
+            DocumentIndexOptions(
+                clean=request.rebuild,
+                reporter=reporter,
+                model_name=request.model,
+                extra_excludes=request.exclude,
+            ),
+        ),
         None,
     )
 

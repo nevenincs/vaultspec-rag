@@ -14,8 +14,7 @@ related:
 
 The health report is the authoritative MI measurement: `report_maintainability`
 in `tools/health_report.py:209-224` invokes `mi_visit(source, multi=True)` for
-each path returned by `_python_files`. Use `uv run python
-tools/health_report.py --fast --top N` to verify it, because the Radon CLI's
+each path returned by `_python_files`. Use `uv run python tools/health_report.py --fast --top N` to verify it, because the Radon CLI's
 TOML configuration loading fails as documented at `tools/health_report.py:26-29`.
 
 The production seams should preserve single ownership without a package-root

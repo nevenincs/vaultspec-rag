@@ -265,6 +265,7 @@ above:
   **Rule:** Every file a preprocess rule skips or fails must both log a warning and
   increment a surfaced `IndexResult` counter that reaches `status`/`jobs`/CLI `--json`;
   silent index-coverage gaps are the failure mode this feature exists to remove.
+
 ## Considered options
 
 - **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.

@@ -7,6 +7,7 @@ modified: '2026-07-27'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
 ---
+
 # CodebaseIndexer Audit — 2026-03-06
 
 ## Scope

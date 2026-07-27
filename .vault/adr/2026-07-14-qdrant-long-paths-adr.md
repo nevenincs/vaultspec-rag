@@ -9,6 +9,7 @@ related:
   - "[[2026-07-13-storage-autoprune-safety-research]]"
   - '[[2026-07-27-qdrant-long-paths-grounding-research]]'
 ---
+
 # `qdrant-long-paths` adr: `verbatim storage paths make Windows path length a non-issue` | (**status:** `accepted`)
 
 ## Problem Statement

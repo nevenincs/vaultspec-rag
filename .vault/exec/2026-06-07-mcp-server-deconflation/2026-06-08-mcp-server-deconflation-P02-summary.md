@@ -29,4 +29,4 @@ The daemon is completely uncoupled from the MCP `FastMCP` framework logic. The C
 
 ## Description
 
-Retained summary evidence:  are listed in frontmatter; the summary title and existing sections are the available phase record. No implementation claim is added.
+Retained summary evidence: are listed in frontmatter; the summary title and existing sections are the available phase record. No implementation claim is added.

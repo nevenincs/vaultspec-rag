@@ -8,6 +8,7 @@ related:
   - '[[2026-03-06-codebase-indexer-tech-stack-research]]'
   - '[[2026-03-07-api-verification-research]]'
 ---
+
 # `gpu-rag-stack` adr: `Manual tree-sitter node walking over Query API for metadata extraction` | (**status:** `accepted`)
 
 ## Problem Statement
