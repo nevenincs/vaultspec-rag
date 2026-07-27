@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...indexer._code_meta import CONTENT_EPOCH_KEY, MEMBERSHIP_EPOCH_KEY
 from ...indexer._content_policy import (
     ContentKind,
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
     from ...indexer import CodebaseIndexer, IndexResult
     from ...indexer._preprocess_config import PreprocessRule
     from ...indexer._resolved_policy import ResolvedIndexPolicy
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
@@ -256,7 +257,8 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
     rag_components: RagComponentsWithManifest,
     tmp_path: Path,
 ) -> None:
-    from ... import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer
+    from ...store_runtime import VaultStore
 
     paths = _write_snapshot_project(tmp_path)
     with _snapshot_environment() as html_key:
@@ -265,10 +267,10 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
             tmp_path,
             rag_components["model"],
             store,
-            content_policy=RootContentPolicy(
+            options=CodebaseIndexer.Options(content_policy=RootContentPolicy(
                 SourceProfileVersion.CONVENTIONAL_V1,
                 (ContentRoute("z_markup.html", ContentKind.CODE),),
-            ),
+            )),
         )
         changed_paths = [paths.source, paths.html]
         preflight = indexer.preflight_changed_paths(changed_paths)

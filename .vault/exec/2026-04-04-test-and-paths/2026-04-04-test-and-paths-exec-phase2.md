@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#test-and-paths'
 date: '2026-04-04'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-04-test-and-paths-plan]]'
 ---
@@ -48,3 +48,9 @@ generator. Rewrote all test fixtures and conftest files. Migrated
   `TEST_VAULT`, `QDRANT_SUFFIX`, `GPU_FAST_CORPUS_STEMS`, bare
   `VAULTSPEC_` (without RAG\_)
 - `test-project/` directory deleted from repo
+## Notes
+- Scope and evidence remain those recorded in this execution record.
+- Related record identifiers: `2026-04-04-test-and-paths-plan`.
+
+## Outcome
+- The existing execution summary is the authoritative result; no additional outcome is inferred here.

@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -259,3 +259,5 @@ Proceed to `vaultspec-adr` to formalise the decisions above (config format, sche
 contract and versioning, payload/collection, execution-and-isolation model, cache key,
 failure/`on_error` semantics, watcher/extension-gate awareness, emitted-text size cap, and
 the two adjacent asks) into numbered ADR decisions, then a plan.
+## Sources
+- The analysis and source locations cited inline in this research record.

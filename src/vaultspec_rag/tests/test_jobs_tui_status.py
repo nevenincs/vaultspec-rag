@@ -140,6 +140,23 @@ vaultspec_rag_search_pool_waiting 0
 """
 
 
+def _status_answers(
+    health: dict[str, object] | None,
+    projects: dict[str, object] | None,
+    survey: dict[str, object] | None,
+    watcher: dict[str, object] | None,
+    metrics: str | None,
+) -> dict[str, object | None]:
+    """Return one service's route payloads, including its public health view."""
+    return {
+        "/health": health,
+        "/projects": projects,
+        "/storage/survey": survey,
+        "/watcher": watcher,
+        "/metrics": metrics,
+    }
+
+
 class _StatusService:
     """A real loopback service answering the header's four routes.
 
@@ -149,18 +166,16 @@ class _StatusService:
 
     def __init__(
         self,
+        answers: dict[str, object | None],
         *,
-        health: dict[str, object] | None,
-        projects: dict[str, object] | None,
-        survey: dict[str, object] | None,
-        watcher: dict[str, object] | None,
-        metrics: str | None,
         health_status: int = 200,
     ) -> None:
+        health = answers["/health"]
+        metrics = answers["/metrics"]
         routes: dict[str, dict[str, object] | None] = {
-            "/projects": projects,
-            "/storage/survey": survey,
-            "/watcher": watcher,
+            path: payload if isinstance(payload, dict) else None
+            for path, payload in answers.items()
+            if path in {"/projects", "/storage/survey", "/watcher"}
         }
 
         class _Handler(QuietHandler):
@@ -180,35 +195,39 @@ class _StatusService:
                 header = self.headers.get("Authorization") or ""
                 return header == f"Bearer {_TOKEN}"
 
-            def do_GET(self) -> None:
-                path = self.path.partition("?")[0]
-                if path == "/health":
-                    if health is None:
-                        self._json(health_status, {"ok": False})
-                        return
+            def _health(self) -> None:
+                if isinstance(health, dict):
                     self._json(health_status, health)
                     return
-                if not self._authorised():
-                    self._json(401, {"ok": False, "error": "unauthorized"})
-                    return
-                if path == "/metrics":
-                    if metrics is None:
-                        self._json(404, {"ok": False, "error": "not_found"})
-                        return
+                self._json(health_status, {"ok": False})
+
+            def _metrics(self) -> None:
+                if isinstance(metrics, str):
                     self._send(
                         200,
                         metrics.encode("utf-8"),
                         "text/plain; version=0.0.4",
                     )
                     return
-                if path in routes:
-                    payload = routes[path]
-                    if payload is None:
-                        self._json(404, {"ok": False, "error": "not_found"})
-                        return
+                self._json(404, {"ok": False, "error": "not_found"})
+
+            def _route(self, path: str) -> None:
+                payload = routes.get(path)
+                if payload is not None:
                     self._json(200, payload)
                     return
                 self._json(404, {"ok": False, "error": "not_found"})
+
+            def do_GET(self) -> None:
+                path = self.path.partition("?")[0]
+                if path == "/health":
+                    self._health()
+                elif not self._authorised():
+                    self._json(401, {"ok": False, "error": "unauthorized"})
+                elif path == "/metrics":
+                    self._metrics()
+                else:
+                    self._route(path)
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -234,11 +253,7 @@ def _service(
 ) -> _StatusService:
     """Stand up a fully-reporting service, minus whatever is overridden."""
     return _StatusService(
-        health=health,
-        projects=projects,
-        survey=survey,
-        watcher=watcher,
-        metrics=metrics,
+        _status_answers(health, projects, survey, watcher, metrics),
     )
 
 
@@ -253,9 +268,7 @@ def full_service() -> typing.Iterator[_StatusService]:
 
 def _closed_port() -> int:
     """Return a port nothing is listening on."""
-    server = _StatusService(
-        health=None, projects=None, survey=None, watcher=None, metrics=None
-    )
+    server = _StatusService(_status_answers(None, None, None, None, None))
     port = server.port
     server.close()
     return port
@@ -347,11 +360,13 @@ class TestDegradation:
 
     def test_a_payload_missing_every_optional_field_reads_as_absent(self) -> None:
         server = _StatusService(
-            health={"status": "ready", "service_token": _TOKEN},
-            projects=None,
-            survey=None,
-            watcher=None,
-            metrics=None,
+            _status_answers(
+                {"status": "ready", "service_token": _TOKEN},
+                None,
+                None,
+                None,
+                None,
+            )
         )
         try:
             status = fetch_service_status(server.port)
@@ -405,11 +420,7 @@ class TestDegradation:
 
     def test_a_sick_service_is_distinguished_from_an_absent_one(self) -> None:
         server = _StatusService(
-            health=None,
-            projects=None,
-            survey=None,
-            watcher=None,
-            metrics=None,
+            _status_answers(None, None, None, None, None),
             health_status=500,
         )
         try:
@@ -424,11 +435,13 @@ class TestDegradation:
 
     def test_the_fetch_never_raises_on_a_hostile_payload(self) -> None:
         server = _StatusService(
-            health={"status": 7, "uptime_s": "soon", "service_token": _TOKEN},
-            projects={"projects": "not a list", "max_projects": None},
-            survey={"totals": []},
-            watcher={"watching": 3},
-            metrics="vaultspec_rag_encode_pool_total_tokens not-a-number\n",
+            _status_answers(
+                {"status": 7, "uptime_s": "soon", "service_token": _TOKEN},
+                {"projects": "not a list", "max_projects": None},
+                {"totals": []},
+                {"watching": 3},
+                "vaultspec_rag_encode_pool_total_tokens not-a-number\n",
+            )
         )
         try:
             painted = _painted(fetch_service_status(server.port))

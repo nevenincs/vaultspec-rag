@@ -146,7 +146,7 @@ def _status_dir() -> Path:
         Path to the service status directory.
     """
 
-    from ..config import managed_status_dir
+    from ..config._settings import managed_status_dir
 
     d = managed_status_dir()
     from .._test_isolation import enforce_pytest_managed_singleton_containment
@@ -165,7 +165,7 @@ def _status_file() -> Path:
     Returns:
         Path to ``{status_dir}/service.json``.
     """
-    from ..config import SERVICE_STATUS_FILENAME
+    from ..config._paths import SERVICE_STATUS_FILENAME
 
     return _status_dir() / SERVICE_STATUS_FILENAME
 

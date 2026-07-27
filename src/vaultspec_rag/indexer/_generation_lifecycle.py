@@ -82,8 +82,7 @@ class CodeGenerationLifecycle:
 
     def __init__(
         self,
-        bindings: CodeGenerationBindings | None = None,
-        **legacy: object,
+        bindings: CodeGenerationBindings,
     ) -> None:
         """Bind the lifecycle to one root's ledger, storage, and metadata.
 
@@ -95,10 +94,6 @@ class CodeGenerationLifecycle:
             load_meta: Reader for the parsed sidecar, called at each use.
             read_meta_raw: Reader for the unparsed sidecar, called at each use.
         """
-        if bindings is None:
-            bindings = CodeGenerationBindings(**cast("dict[str, Any]", legacy))
-        elif legacy:
-            raise TypeError("use either CodeGenerationBindings or named inputs")
         self._root_dir = bindings.root_dir
         self._data_root = bindings.data_root
         self._meta_path = bindings.meta_path
@@ -146,7 +141,7 @@ class CodeGenerationLifecycle:
         **legacy: object,
     ) -> CodeRunCheckpoint:
         """Open one compatible storage-confirmed code generation."""
-        from ..config import get_config
+        from ..config._settings import get_config
 
         if request is None:
             request = CodeGenerationOpenRequest(**cast("dict[str, Any]", legacy))

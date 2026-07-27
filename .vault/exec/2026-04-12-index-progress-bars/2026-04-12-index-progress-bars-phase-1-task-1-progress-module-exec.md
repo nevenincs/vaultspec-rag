@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
 ---
@@ -54,3 +54,11 @@ Verification: `uv run --active ruff check src/vaultspec_rag/` passes,
 `uv run --active ruff format --check` passes, and
 `uv run --active pytest src/vaultspec_rag/tests/test_progress_unit.py -q`
 reports 12 passed.
+
+## Notes
+
+Evidence gap: the retained document body has no separately labelled Notes section.
+
+## Outcome
+
+Evidence gap: the retained document body has no separately labelled Outcome section.

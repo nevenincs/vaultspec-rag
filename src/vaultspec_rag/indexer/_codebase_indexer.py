@@ -51,7 +51,7 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
-from ._generation_lifecycle import CodeGenerationLifecycle
+from ._generation_lifecycle import CodeGenerationBindings, CodeGenerationLifecycle
 from ._incremental_commit import (
     CodeIncrementalCommit,
     IncrementalPublicationRequest,
@@ -159,7 +159,7 @@ class CodebaseIndexer:
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         self._data_root = root_dir / cfg.data_dir
@@ -197,12 +197,14 @@ class CodebaseIndexer:
         self._resolved_policy: ResolvedIndexPolicy | None = None
         self._support_budget = CodeSupportBudget(self.model)
         self._lifecycle = CodeGenerationLifecycle(
-            self.root_dir,
-            data_root=self._data_root,
-            meta_path=self._meta_path,
-            store=self.store,
-            load_meta=self._load_meta,
-            read_meta_raw=self._read_meta_raw,
+            CodeGenerationBindings(
+                root_dir=self.root_dir,
+                data_root=self._data_root,
+                meta_path=self._meta_path,
+                store=self.store,
+                load_meta=self._load_meta,
+                read_meta_raw=self._read_meta_raw,
+            )
         )
         self._consumer_pipeline = CodeConsumerPipeline(
             CodePipelineBindings(
@@ -1158,17 +1160,22 @@ class CodebaseIndexer:
             reporter=reporter,
             started_at=start,
         )
-        if resumed_publication is None:
+        result = resumed_publication
+        if result is None:
             publication = self._incremental_commit.supersede_and_publish(
                 IncrementalPublicationRequest(
-                    checkpoint=checkpoint,
                     hashes=current_hashes,
                     to_index=to_index,
                     paths_to_index=paths_to_index,
                     attempted_paths=attempted_paths,
-                    reporter=reporter,
-                    limits=limits,
-                    run_control=run_control,
+                    pipeline_run=CodePipelineRun(
+                        reporter=reporter,
+                        checkpoint=checkpoint,
+                        limits=limits,
+                        content_epoch=self._content_epoch,
+                        code_build_target=self._code_build_target,
+                        run_control=run_control,
+                    ),
                 )
             )
             current_hashes.update(publication.published_hashes)
@@ -1201,7 +1208,7 @@ class CodebaseIndexer:
                 reuse=self._reuse_snapshot(),
                 drift=self._lifecycle.drift_snapshot(),
             )
-        return resumed_publication if resumed_publication is not None else result
+        return result
 
     def _scan_changed_paths(
         self,
@@ -1360,14 +1367,18 @@ class CodebaseIndexer:
             return resumed_publication
         publication = self._incremental_commit.supersede_and_publish(
             IncrementalPublicationRequest(
-                checkpoint=checkpoint,
                 hashes=changed_hashes,
                 to_index=to_index,
                 paths_to_index=paths_to_index,
                 attempted_paths=attempted_paths,
-                reporter=reporter,
-                limits=limits,
-                run_control=run_control,
+                pipeline_run=CodePipelineRun(
+                    reporter=reporter,
+                    checkpoint=checkpoint,
+                    limits=limits,
+                    content_epoch=self._content_epoch,
+                    code_build_target=self._code_build_target,
+                    run_control=run_control,
+                ),
             )
         )
         new_metadata = dict(previous_metadata)

@@ -3,16 +3,21 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Pending Task Verification — 2026-03-07
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Verified each pending task description against current source code.
 
 ______________________________________________________________________
 
-## Task #82: [CRITICAL] get_code_file symlink traversal bypass (R21-C1)
+### Task #82: [CRITICAL] get_code_file symlink traversal bypass (R21-C1)
 
 **Task status:** pending
 
@@ -43,7 +48,7 @@ def get_code_file(path: str) -> str:
 
 ______________________________________________________________________
 
-## Task #83: [MEDIUM] get_comp() not thread-safe (R21-M7)
+### Task #83: [MEDIUM] get_comp() not thread-safe (R21-M7)
 
 **Task status:** pending
 
@@ -79,7 +84,7 @@ This is **exactly** the fix described in the task. `threading.Lock`, double-chec
 
 ______________________________________________________________________
 
-## Task #84: [MEDIUM] MCP async tools block event loop (R21-M6)
+### Task #84: [MEDIUM] MCP async tools block event loop (R21-M6)
 
 **Task status:** pending (blocked by #83)
 
@@ -101,7 +106,7 @@ The blocking calls are wrapped in `asyncio.to_thread()` exactly as the task desc
 
 ______________________________________________________________________
 
-## Reranker model references (team-lead asked specifically)
+### Reranker model references (team-lead asked specifically)
 
 The reranker model `cross-encoder/ms-marco-MiniLM-L6-v2` appears in:
 
@@ -122,7 +127,7 @@ The reranker model `cross-encoder/ms-marco-MiniLM-L6-v2` appears in:
 
 ______________________________________________________________________
 
-## hybrid_search sparse=None handling (team-lead asked specifically)
+### hybrid_search sparse=None handling (team-lead asked specifically)
 
 **Current implementation is correct.** Both `hybrid_search` (store.py:505-584) and `hybrid_search_codebase` (store.py:586-645) already handle `sparse_vector: SparseResult | None = None`:
 
@@ -133,10 +138,14 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | Task | Status in TaskList | Actual Status                                 | Action Needed             |
 | ---- | ------------------ | --------------------------------------------- | ------------------------- |
 | #82  | pending            | Edge case only, core check correct            | CLOSE or DOWNGRADE to low |
 | #83  | pending            | **ALREADY FIXED** in source                   | Mark COMPLETED            |
 | #84  | pending            | **ALREADY FIXED** in source (contradicts ADR) | Mark COMPLETED            |
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

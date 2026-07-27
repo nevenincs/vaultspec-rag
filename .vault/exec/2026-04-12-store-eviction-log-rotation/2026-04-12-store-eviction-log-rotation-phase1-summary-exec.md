@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
@@ -47,7 +47,7 @@ Complete. All 12 plan steps executed and committed on
 
 ## architecture delivered
 
-Per \[[2026-04-12-store-eviction-log-rotation-adr]\] (Accepted):
+Per `2026-04-12-store-eviction-log-rotation-adr` (Accepted):
 
 - **D1** `DaemonRotatingFileHandler` in `logging_config.py` with RLock-protected
   `doRollover` and post-rollover `os.dup2` of fds 1 and 2 onto the new stream.
@@ -127,3 +127,15 @@ Per \[[2026-04-12-store-eviction-log-rotation-adr]\] (Accepted):
   status flipped to Approved after fixes applied.
 - Execution review and code review remain pending and are tracked as
   follow-up tasks #8 and #9 in the supervisor's task list.
+
+## Description
+
+Retained summary evidence: 2026-04-12-store-eviction-log-rotation-phase1-plan, 2026-04-12-store-eviction-log-rotation-adr, 2026-04-12-store-eviction-log-rotation-research are listed in frontmatter; the summary title and existing sections are the available phase record. No implementation claim is added.
+
+## Outcome
+
+Retained-summary evidence: the status and test results sections state the recorded phase outcome. No additional outcome is asserted.
+
+## Notes
+
+Evidence gap: the retained summary body and complete git log --follow history state no separate notes. No note is asserted.

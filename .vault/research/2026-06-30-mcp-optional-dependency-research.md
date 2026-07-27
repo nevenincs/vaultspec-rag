@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#mcp-optional-dependency'
 date: '2026-06-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -75,3 +75,7 @@ the project's own dev/test environment imports `mcp` in tests, so the dev extra
 a one-line, clearly-messaged change. None of these reintroduce `pywin32` onto the
 CLI path, which is the goal. This fully resolves #182/#184 without an upstream
 dependency.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

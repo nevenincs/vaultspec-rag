@@ -9,7 +9,7 @@ import pytest
 from watchfiles import Change
 
 from ... import store_schema
-from ...config import get_config
+from ...config._settings import get_config
 from ...indexer._content_policy import (
     AdmissionDisposition,
     AdmissionReason,
@@ -33,12 +33,9 @@ from ...indexer._run_ledger_models import (
 from ...indexer._run_ledger_runtime import RunLedger
 from ...job_models import JobSource
 from ...service import ServiceRegistry
-from ...watcher_control import (
-    _record_watcher_changes,
-    _WatcherChangeRouting,
-    _WatcherConvergenceSlot,
-)
+from ...watcher_intake import _record_watcher_changes, _WatcherChangeRouting
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
+from ...watcher_runtime import _WatcherConvergenceSlot
 
 if TYPE_CHECKING:
     from pathlib import Path

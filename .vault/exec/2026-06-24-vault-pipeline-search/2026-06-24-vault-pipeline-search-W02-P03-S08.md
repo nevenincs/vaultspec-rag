@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S08'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Carry status on VaultDocument and VaultChunk and write it to the Qdrant payload
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/store.py`
-
-## Description
 
 - Added a `status: str = ""` field to `VaultDocument` and `VaultChunk` (placed after the
   non-default fields to satisfy dataclass ordering), with docstring entries.

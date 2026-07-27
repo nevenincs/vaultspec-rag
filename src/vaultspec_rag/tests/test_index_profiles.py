@@ -78,7 +78,11 @@ def test_document_profile_admits_within_every_declared_bound() -> None:
             rss_bytes=limits.rss_bytes,
             cuda_bytes=limits.cuda_bytes,
         ),
-        _environment("server", profile.minimum_ram_bytes, _volume(profile.minimum_free_disk_bytes)),
+        _environment(
+            "server",
+            profile.minimum_ram_bytes,
+            _volume(profile.minimum_free_disk_bytes),
+        ),
     )
     assert admitted is profile
 
@@ -112,7 +116,11 @@ def test_profile_rejects_corpus_dimensions_structurally(
             profile.name,
             IndexDomain.CODE,
             measurement,
-            _environment("server", profile.minimum_ram_bytes, _volume(profile.minimum_free_disk_bytes)),
+            _environment(
+                "server",
+                profile.minimum_ram_bytes,
+                _volume(profile.minimum_free_disk_bytes),
+            ),
         )
     assert raised.value.error_kind is kind
 
@@ -229,7 +237,11 @@ def test_ordered_ladder_offers_the_lower_floor_as_a_way_out() -> None:
             profile.name,
             IndexDomain.CODE,
             SupportMeasurement(1, 1),
-            _environment("server", profile.minimum_ram_bytes, _volume(profile.minimum_free_disk_bytes - 1)),
+            _environment(
+                "server",
+                profile.minimum_ram_bytes,
+                _volume(profile.minimum_free_disk_bytes - 1),
+            ),
         )
 
     detail = raised.value.detail
@@ -255,7 +267,11 @@ def test_the_lowest_profile_offers_no_switch() -> None:
             profile.name,
             IndexDomain.CODE,
             SupportMeasurement(1, 1),
-            _environment("local", profile.minimum_ram_bytes, _volume(profile.minimum_free_disk_bytes - 1)),
+            _environment(
+                "local",
+                profile.minimum_ram_bytes,
+                _volume(profile.minimum_free_disk_bytes - 1),
+            ),
         )
 
     assert "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE" not in raised.value.detail
@@ -360,7 +376,11 @@ def test_ram_refusal_reports_units_not_raw_bytes() -> None:
             profile.name,
             IndexDomain.CODE,
             SupportMeasurement(1, 1),
-            _environment("server", profile.minimum_ram_bytes - 1, _volume(profile.minimum_free_disk_bytes)),
+            _environment(
+                "server",
+                profile.minimum_ram_bytes - 1,
+                _volume(profile.minimum_free_disk_bytes),
+            ),
         )
 
     detail = raised.value.detail

@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#sparse-search-latency'
 date: '2026-06-08'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-08-sparse-search-latency-plan]]'
 ---
@@ -21,3 +21,7 @@ However, during execution (Step S04), it was discovered that Qdrant 1.18.0 nativ
 Because the foundational feature expected from Qdrant does not exist, the plan could not be implemented as designed. The code changes were aborted, the old `fnmatch` logic in Python remains, and the phase was skipped.
 
 Steps P02.S04, P02.S05, P02.S06, and P02.S07 have been checked off in the plan as completed/handled (by being skipped), and no codebase changes were committed.
+
+## Description
+
+Retained summary evidence: 2026-06-08-sparse-search-latency-plan are listed in frontmatter; the summary title and existing sections are the available phase record. No implementation claim is added.

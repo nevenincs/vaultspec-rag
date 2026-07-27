@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cli-backend-parity'
 date: '2026-05-28'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-05-28-cli-search-filters-plan]]'
   - '[[2026-05-28-cli-search-filters-adr]]'
@@ -145,3 +145,7 @@ Design-heavy items (`--json` mode, daemon-side silent death detection,
 status divergence cross-check, service.log crash entries, glob path
 filtering for #108) are deferred to Wave 2 and tracked as follow-up
 issues rather than implemented in this PR.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

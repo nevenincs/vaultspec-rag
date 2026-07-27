@@ -32,7 +32,8 @@ from ..._machine_lock import (
     machine_lock_path,
     release_machine_lock,
 )
-from ...config import EnvVar, get_config, reset_config
+from ...config._settings import get_config, reset_config
+from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from .._model_setup import (
     configured_service_model_ids,

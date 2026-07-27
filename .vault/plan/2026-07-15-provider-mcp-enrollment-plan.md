@@ -3,14 +3,23 @@ tags:
   - '#plan'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-22'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
 ---
-
 # `provider-mcp-enrollment` plan
+
+## Description
+
+Deliver project-scoped MCP parity for Claude Code and Codex without adding a RAG-owned
+provider renderer. The work adopts Core's typed lifecycle, makes the optional MCP
+dependency follow RAG's resolved install mode, turns `--no-mcp` into a true unenrolled
+state, proves ownership-safe migration and removal, and gates publication on the fixed
+Core release.
+
+## Steps
 
 ### Phase `P01` - adopt Core's typed provider lifecycle
 
@@ -95,16 +104,6 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S67` - Repeat every platform-aware release gate from zero after the model-aware service-startup correction and stop on the first failure; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; exact clean-candidate corpus and platform ledgers; S54 job deadlines; S56 bounded full-corpus model contract; S66 all-model preflight, cold online repair, offline daemon readiness, metadata-request exclusion, stage diagnostics, and cleanup; all runtime, static, package, public Core, installed Claude and Codex, idempotence, selective unenrollment, and uninstall gates`.
 - [x] `P03.S68` - Close every S67 review finding with strict shared deadlines, race-safe startup publication, and child-incarnation proof; `service environment, HTTP transport, service discovery, startup fixture, managed Qdrant identity and teardown, real Windows and POSIX regressions, focused gates, documentation, and formal review`.
 - [ ] `P03.S69` - Repeat every platform-aware release gate from zero after the S68 corrections and stop on the first failure; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; exact clean-candidate corpus and platform ledgers; every S54, S56, S66, and S68 contract; all runtime, static, package, public Core, installed Claude and Codex, idempotence, selective unenrollment, uninstall, and release gates`.
-
-## Description
-
-Deliver project-scoped MCP parity for Claude Code and Codex without adding a RAG-owned
-provider renderer. The work adopts Core's typed lifecycle, makes the optional MCP
-dependency follow RAG's resolved install mode, turns `--no-mcp` into a true unenrolled
-state, proves ownership-safe migration and removal, and gates publication on the fixed
-Core release.
-
-## Steps
 
 ## Parallelization
 

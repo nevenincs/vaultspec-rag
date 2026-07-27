@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#cli-index-default'
 date: '2026-05-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-05-30-cli-index-default-research]]'
 ---
@@ -117,3 +117,7 @@ the code collection, making the new guard's narrative dishonest.
 - The `clean` / `index` asymmetry is now explicitly documented as
   intentional. Future commands should look at destructiveness,
   not symmetry, when deciding whether to make flags required.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

@@ -28,6 +28,7 @@ _RESULT_RE = re.compile(
 # authoritative ``stalled`` flag; this constant only backs the fallback
 # for snapshots from an older service that lacks the flag.
 
+
 def _resource_at(job: dict[str, object], key: str) -> dict[str, object] | None:
     resources = job.get("resources")
     if not isinstance(resources, dict):
@@ -712,5 +713,3 @@ def _render_jobs_result(
     _render_jobs_feed(
         result, jobs, port=port, monitoring=monitoring, watch_text=watch_text
     )
-
-

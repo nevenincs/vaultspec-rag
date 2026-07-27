@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#vault-index-perf-memory'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-06-indexer-pipeline-audit]]'
 ---
@@ -857,3 +857,15 @@ Wake up once more to check whether codex responded to the
 iter 9 trigger; if so, address any new findings; otherwise
 the audit loop has reached a fixed point and the PR is ready
 for human review and merge.
+
+## Scope
+
+Retained audit evidence: 2026-03-06-indexer-pipeline-audit are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+
+## Findings
+
+Retained audit evidence: the detailed review entries in this document constitute the findings inventory.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

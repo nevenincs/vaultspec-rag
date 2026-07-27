@@ -6,7 +6,7 @@ tags:
   - '#research'
   - '#service-stress-watcher'
 date: '2026-06-05'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -34,3 +34,7 @@ To ensure robustness against concurrent reads and writes, we must introduce a st
 - Spawns multiple concurrent search tasks while simultaneously triggering codebase/vault re-indexes.
 - Asserts that in server mode, these operations run in parallel without raising database lock errors.
 - Verifies that the filesystem watcher correctly detects new source files on disk, runs the incremental indexer, and makes the new code blocks searchable.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

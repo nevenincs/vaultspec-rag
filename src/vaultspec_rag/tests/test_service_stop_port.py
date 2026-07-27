@@ -29,7 +29,7 @@ from ..cli._service_stop import (
     _service_pid_on_port,
     _stop_service_on_port,
 )
-from ..config import reset_config
+from ..config._settings import reset_config
 from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
@@ -213,7 +213,7 @@ def _spawn_lock_holding_daemon(port: int) -> subprocess.Popen[bytes]:
     """
     code = (
         "import time;"
-        "from vaultspec_rag.config import reset_config;"
+        "from vaultspec_rag.config._settings import reset_config;"
         "reset_config();"
         "from vaultspec_rag._machine_lock import acquire_machine_lock_lease;"
         "lease, holder = acquire_machine_lock_lease();"

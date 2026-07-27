@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#torch-dependency-group'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related:
   - "[[2026-06-24-torch-dependency-group-research]]"
 ---
@@ -124,3 +124,7 @@ no-mock tomlkit tests follow the existing install-test pattern.
 
   *(Candidate only - promoted after the constraint has held across at least one full execution
   cycle, per the codify discipline.)*
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

@@ -287,5 +287,3 @@ def _apply_client_state_filter(
     )
     filtered["filters"] = {**filter_dict, "state": state}
     return filtered
-
-

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .embeddings import EmbeddingModel
     from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from .search import VaultSearcher
-    from .store import VaultStore
+    from .store_runtime import VaultStore
 
 from .graph_cache import GraphCache
 from .job_control import QuiesceGate
@@ -135,7 +135,7 @@ class ServiceRegistry:
 
     def __init__(self) -> None:
         """Initialize the registry with empty model and project state."""
-        from .config import get_config
+        from .config._settings import get_config
 
         cfg = get_config()
         self._model: EmbeddingModel | None = None
@@ -217,7 +217,7 @@ class ServiceRegistry:
             model_name: Optional override for the dense embedding
                 model name.  When ``None``, uses the config default.
         """
-        from .config import hf_cache_only
+        from .config._types import hf_cache_only
         from .embeddings import EmbeddingModel
         from .memory_probe import sample_resident_cuda_baseline
 
@@ -282,7 +282,8 @@ class ServiceRegistry:
             from sentence_transformers import CrossEncoder
 
             from ._gpu import load_torch
-            from .config import get_config, hf_cache_only
+            from .config._settings import get_config
+            from .config._types import hf_cache_only
 
             torch = load_torch()
             cfg = get_config()
@@ -431,7 +432,7 @@ class ServiceRegistry:
                 self._release(slot)
             return
 
-        from .store import VaultStore
+        from .store_runtime import VaultStore
 
         try:
             store = VaultStore(resolved)
@@ -749,10 +750,10 @@ class ServiceRegistry:
         Returns:
             A fully wired ``ProjectSlot``.
         """
-        from .config import get_config
+        from .config._settings import get_config
         from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
         from .search import VaultSearcher
-        from .store import VaultStore
+        from .store_runtime import VaultStore
 
         model = self.model  # raises if not loaded
         cfg = get_config()

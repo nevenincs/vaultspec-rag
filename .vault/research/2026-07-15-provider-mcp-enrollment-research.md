@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -107,3 +107,7 @@ TOML collisions; provider-local drift and repair; byte-identical reinstall; real
 dry-run; ownership-safe uninstall; and real `claude mcp get vaultspec-rag` plus
 `codex mcp get vaultspec-rag --json`. The semantic index was unavailable for the new
 worktree, so discovery used the mandated exact-source fallback.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

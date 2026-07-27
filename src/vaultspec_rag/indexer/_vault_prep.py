@@ -1,7 +1,7 @@
 """Vault document preparation and the shared :class:`IndexResult` type.
 
 Reads markdown vault files, parses frontmatter via vaultspec-core, and
-builds :class:`~vaultspec_rag.store.VaultDocument` instances ready for
+builds :class:`~vaultspec_rag._store_models.VaultDocument` instances ready for
 embedding. Also defines the :class:`IndexResult` dataclass returned by
 both indexers.
 """
@@ -20,9 +20,8 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     parse_vault_metadata,
 )
 
-from .._store_models import VaultDocument
+from .._store_models import VaultChunk, VaultDocument
 from ..job_control import NO_RUN_CONTROL
-from ..store import VaultChunk
 from ._chunking import TextSplitter
 
 if TYPE_CHECKING:
@@ -244,7 +243,7 @@ def _plan_split_workers(docs: Sequence[VaultDocument]) -> int:
     outweighs the parallel split. An explicit positive value is honoured
     verbatim, clamped to the document count.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     configured = int(cfg.index_chunk_workers)
@@ -360,7 +359,7 @@ def prepare_document(
     if doc_type_enum is None:
         return None
 
-    from ..config import get_config
+    from ..config._settings import get_config
 
     docs_dir = root_dir / get_config().docs_dir
     try:

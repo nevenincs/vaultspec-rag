@@ -15,8 +15,9 @@ if TYPE_CHECKING:
     from pytest import TempPathFactory
     from sentence_transformers import CrossEncoder
 
-    from .. import CodebaseIndexer, EmbeddingModel, VaultIndexer, VaultStore
+    from .. import CodebaseIndexer, EmbeddingModel, VaultIndexer
     from ..indexer import IndexResult
+    from ..store_runtime import VaultStore
 
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config,
@@ -27,9 +28,10 @@ from .._test_isolation import (
     PYTEST_MANAGED_SINGLETON_ROOT_ENV,
     register_pytest_singleton_root,
 )
-from ..config import EnvVar, get_config
-from ..config import VaultSpecConfigWrapper as VaultSpecConfig
-from ..config import reset_config as reset_rag_config
+from ..config._settings import VaultSpecConfigWrapper as VaultSpecConfig
+from ..config._settings import get_config
+from ..config._settings import reset_config as reset_rag_config
+from ..config._types import EnvVar
 from ..progress import NullProgressReporter
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from .corpus import CorpusManifest, build_synthetic_vault
@@ -62,7 +64,7 @@ def isolated_machine_singleton_dirs(
     with their own isolated overrides.
     """
 
-    from ..config import EnvVar
+    from ..config._types import EnvVar
     from .integration._helpers import _mirror_managed_qdrant_binary
 
     raw_root = os.environ.get(PYTEST_MANAGED_SINGLETON_ROOT_ENV)
@@ -226,7 +228,8 @@ def _index_corpus(
     Uses config overrides to place Qdrant data inside the synthetic
     project's data dir - no suffix hacks needed.
     """
-    from .. import CodebaseIndexer, VaultIndexer, VaultStore
+    from .. import CodebaseIndexer, VaultIndexer
+    from ..store_runtime import VaultStore
 
     store = VaultStore(root)
     indexer = VaultIndexer(root, model, store)

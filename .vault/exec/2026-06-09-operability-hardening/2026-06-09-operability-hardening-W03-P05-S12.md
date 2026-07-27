@@ -3,15 +3,16 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S12'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
-
 # Flatten `server service` nesting — lift lifecycle commands to `server`
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/cli/_app.py`
 - `.vaultspec/rules/rules/vaultspec-rag.builtin.md`
@@ -25,8 +26,6 @@ related:
 - `src/vaultspec_rag/service.py` (docstring only)
 - `src/vaultspec_rag/server/_lifecycle.py` (comment only)
 - `src/vaultspec_rag/server/_state.py` (comment only)
-
-## Description
 
 **Wiring change (`_app.py`):**
 The `server_app` (previously the `"service"` sub-Typer under `server_root_app`) is now
@@ -68,3 +67,7 @@ Six `unit`-marked tests using Typer `CliRunner` verify the new routing:
 - `TestServerRoutingFlattened`: 6/6 pass.
 - `TestServerCommands` + `test_cli_watcher.py` (16 tests): 16/16 pass.
 - Combined 22-test run: 22 passed, 0 failed.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

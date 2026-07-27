@@ -3,24 +3,24 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-7
+## Description
 
-## goal
+### Goal
 
 Add `list_projects` and `evict_project` MCP tools per ADR D7.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/mcp_server.py`
 - `src/vaultspec_rag/tests/test_mcp_server.py`
 
-## what was done
+### What was done
 
 - `list_projects(project_root=None)` async MCP tool. Calls
   `_registry.snapshot()` inside `_run_in_thread`, derives a wall-
@@ -40,19 +40,23 @@ Add `list_projects` and `evict_project` MCP tools per ADR D7.
   and `test_expected_tools_registered` to account for the two
   new tools (6 -> 8).
 
-## test results
+## Outcome
+
+### Test results
 
 - `pytest src/vaultspec_rag/tests/test_mcp_server.py -m unit` -> 92 passed.
 - `ruff check` + `ty check src/vaultspec_rag` clean.
 
-## deviations
-
-None.
-
-## commit hash
+### Commit hash
 
 `31e4ff5 feat(mcp): add list_projects and evict_project admin tools`
 
-## time spent
+## Notes
+
+### Deviations
+
+None.
+
+### Time spent
 
 ~15 minutes.

@@ -21,9 +21,9 @@ from ._cli_helpers import (
     _search_records,
     _slow_search_contract_server,
     _sparse_search_output_contract_server,
-    _store_locked_by_another_process,
     app,
     runner,
+    store_locked_by_another_process,
 )
 
 if typing.TYPE_CHECKING:
@@ -346,7 +346,7 @@ class TestSearchSafetyContract:
         # Search is service-first: the local store is only opened under an
         # explicit local mandate, so --allow-fallback is required to reach the
         # in-process path that surfaces the locked-store message.
-        with _store_locked_by_another_process(tmp_path):
+        with store_locked_by_another_process(tmp_path):
             result = runner.invoke(
                 app,
                 [
@@ -393,7 +393,7 @@ class TestSearchSafetyContract:
         # Search is service-first: the local store is only opened under an
         # explicit local mandate, so --allow-fallback is required to reach the
         # in-process path that surfaces the locked-store message.
-        with _store_locked_by_another_process(tmp_path):
+        with store_locked_by_another_process(tmp_path):
             result = runner.invoke(
                 app,
                 [

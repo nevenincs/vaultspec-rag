@@ -24,13 +24,15 @@ start command's health poll still uses, and the fetch those views share.
 
 from __future__ import annotations
 
+import pathlib
 import threading
 import time
 
 import pytest
 from typer.testing import CliRunner
 
-from ..cli import _service_jobs as jobs
+from ..cli import _service_jobs_query as jobs_query
+from ..cli import _service_jobs_watch as jobs_watch
 from ..cli._process import _call_interruptibly
 
 pytestmark = [pytest.mark.unit]
@@ -101,6 +103,19 @@ def test_a_failed_refresh_is_reported_not_flattened_to_no_result() -> None:
     assert caught.value is boom
 
 
+def test_watch_delegates_refresh_to_the_interactive_interface() -> None:
+    """The split watch adapter gives terminal ownership to the jobs TUI."""
+    source = pathlib.Path(jobs_watch.__file__).read_text(encoding="utf-8").splitlines()
+    watch_loop = "\n".join(line for line in source if not line.lstrip().startswith("#"))
+
+    assert "from ._jobs_tui import run_jobs_tui" in watch_loop, (
+        "the watch adapter must load the interactive interface it delegates to"
+    )
+    assert "run_jobs_tui(watched_fetch" in watch_loop, (
+        "the adapter must hand its filtered fetch to the interactive interface"
+    )
+
+
 def test_the_watch_refresh_is_a_read_only_request() -> None:
     """Abandoning a refresh cannot modify service state, a job, or a lock.
 
@@ -116,7 +131,9 @@ def test_the_watch_refresh_is_a_read_only_request() -> None:
 
     server, thread, requests = _jobs_empty_contract_server()
     try:
-        jobs._fetch_jobs_result(jobs._JobsQuery(port=server.server_address[1], limit=5))
+        jobs_query.fetch_jobs_result(
+            jobs_query.JobsQuery(port=server.server_address[1], limit=5)
+        )
     finally:
         server.shutdown()
         server.server_close()

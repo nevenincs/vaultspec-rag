@@ -16,8 +16,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ... import VaultIndexer, VaultSearcher, VaultStore
+from ... import VaultIndexer, VaultSearcher
 from ...progress import NullProgressReporter
+from ...store_runtime import VaultStore
 from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:

@@ -3,12 +3,13 @@ tags:
   - '#research'
   - '#watcher-targeted-reindex'
 date: '2026-06-18'
-modified: '2026-06-18'
+modified: '2026-07-27'
 related:
   - '[[2026-06-02-watcher-targeted-reindex-plan]]'
 ---
-
 # `watcher-targeted-reindex` research: `stranded pending changes on quiet trees`
+
+## Findings
 
 The scoped-reindex feature added a pending-set carry-forward to the watcher so that
 changes suppressed by the per-source cooldown are not lost: a suppressed change stays in
@@ -19,7 +20,7 @@ only by a full rebuild. Reproduction (below) shows the store and the scoped inde
 correctly in both backends; the leak is in the watcher's event loop, and it strands any
 cooldown-suppressed change — most visibly a deletion — until the next filesystem event.
 
-## Reproduction and root cause
+### Reproduction and root cause
 
 Three real-backend reproductions were run (no mocks), each driving the actual store,
 indexer, and — where noted — the real `watchfiles`-based watcher:
@@ -55,7 +56,7 @@ event for that path ever arrives to re-pump the loop — so deleted content ling
 full rebuild. The defect is not delete-specific in mechanism, but deletion is the change
 type that reliably has no follow-on event.
 
-## External evidence on the fix options
+### External evidence on the fix options
 
 Evidence gathered against the `watchfiles` 1.2.0 source (tag `v1.2.0`, `watchfiles/main.py`),
 the official docs at watchfiles.helpmanual.io, the project's GitHub issues, and PEP 789.
@@ -125,7 +126,7 @@ neither indicates quiet-tree deletions go missing. The reproduced cooldown-suppr
 explains #192, so backend deletion reliability is not a required part of the fix.
 `force_polling` remains the documented defense-in-depth lever for network/edge filesystems.
 
-## Recommendation for the ADR
+### Recommendation for the ADR
 
 Adopt **Option A**: construct the watcher's `awatch` with `yield_on_timeout=True` and an
 explicit small `rust_timeout` (≈500 ms–1 s), and treat an empty yielded batch as a tick that

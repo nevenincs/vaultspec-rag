@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#search-freshness-and-empty-results'
 date: '2026-06-11'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
@@ -83,3 +83,7 @@ Search should become self-diagnosing:
 
 JSON output should remain stable and scriptable, with diagnostics under a predictable
 field rather than prose-only output.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

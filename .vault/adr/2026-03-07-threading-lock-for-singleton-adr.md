@@ -3,15 +3,16 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-07-mcp-sync-tools-adr]]'
   - '[[2026-03-08-fastmcp-lifespan-research]]'
 ---
-
 # `gpu-rag-stack` adr: `Use threading.Lock for get_comp() singleton` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 `get_comp()` in `mcp_server.py` lazily initializes GPU models and Qdrant
 connections. With sync `def` MCP tools (see ADR: mcp-sync-tools), this
@@ -19,7 +20,21 @@ function is called from worker threads spawned by `anyio.to_thread.run_sync()`.
 Two concurrent requests could trigger double model loading without
 synchronization.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Use `threading.Lock` with double-checked locking to protect `get_comp()`.
 

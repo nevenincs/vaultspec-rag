@@ -396,25 +396,31 @@ class TestFilterValidation:
         from ..search import SearchFilterOptions, validate_search_filters
 
         # Should not raise
-        validate_search_filters("vault", SearchFilterOptions(
-            doc_type="adr", feature="auth", date="2026-06-05", tag="test"
-        ))
+        validate_search_filters(
+            "vault",
+            SearchFilterOptions(
+                doc_type="adr", feature="auth", date="2026-06-05", tag="test"
+            ),
+        )
 
     def test_valid_code_filters(self):
         from ..search import SearchFilterOptions, validate_search_filters
 
         # Should not raise
-        validate_search_filters("code", SearchFilterOptions(
-            language="python",
-            path="src/api.py",
-            node_type="def",
-            function_name="search",
-            class_name="Engine",
-            include_paths=["src/*"],
-            exclude_paths=["tests/*"],
-            dedup_locales=True,
-            prefer="prod",
-        ))
+        validate_search_filters(
+            "code",
+            SearchFilterOptions(
+                language="python",
+                path="src/api.py",
+                node_type="def",
+                function_name="search",
+                class_name="Engine",
+                include_paths=["src/*"],
+                exclude_paths=["tests/*"],
+                dedup_locales=True,
+                prefer="prod",
+            ),
+        )
 
     def test_invalid_prefer_value(self):
         from ..search import (
@@ -424,7 +430,9 @@ class TestFilterValidation:
         )
 
         with pytest.raises(InvalidPreferValueError) as excinfo:
-            validate_search_filters("code", SearchFilterOptions(prefer="invalid_prefer"))
+            validate_search_filters(
+                "code", SearchFilterOptions(prefer="invalid_prefer")
+            )
         assert "invalid_prefer" in str(excinfo.value)
         assert excinfo.value.prefer_value == "invalid_prefer"
 
@@ -530,15 +538,11 @@ class TestInlinePathScopeToken:
 
     def test_an_explicit_exact_path_still_pushes_down(self) -> None:
         """--path keeps its exact-match pushdown; only the marker changed."""
-        from ..search._searcher import VaultSearcher
+        from ..search._searcher import CodebaseSearchOptions, VaultSearcher
 
         parsed = parse_query("lock ordering")
         store_filters = VaultSearcher._build_codebase_store_filters(  # pyright: ignore[reportPrivateUsage]  # asserting the pushdown contract
             parsed,
-            None,
-            "src/pkg/a.py",
-            None,
-            None,
-            None,
+            CodebaseSearchOptions(path="src/pkg/a.py"),
         )
         assert store_filters["path"] == "src/pkg/a.py"

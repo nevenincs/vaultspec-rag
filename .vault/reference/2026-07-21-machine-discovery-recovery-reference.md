@@ -3,21 +3,22 @@ tags:
   - '#reference'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 related:
   - "[[2026-06-11-service-status-convergence-adr]]"
   - "[[2026-06-24-service-discovery-schema-adr]]"
   - "[[2026-06-24-service-hardware-singleton-adr]]"
   - "[[2026-06-27-rag-broker-affordances-adr]]"
 ---
-
 # `machine-discovery-recovery` reference: `ownership, resolution, and recovery seams`
+
+## Summary
 
 This reference maps incident items B1 through B6 to the current dirty working tree. It
 is descriptive, not proof that the reported process history is correct. No daemon was
 started, storage was touched, or test was run during this trace.
 
-## Current authority model
+### Current authority model
 
 The accepted architecture makes the OS-held machine lock authoritative for the one live
 service and the machine discovery pointer the canonical address record. The
@@ -43,7 +44,7 @@ code only partially implements that separation:
   first and emits stopped when it is absent. It cannot render a live-holder discovery
   fault distinctly.
 
-## Safe implementation seams
+### Safe implementation seams
 
 ### Owner-checked publication
 
@@ -81,7 +82,7 @@ pointer is missing or foreign. The bounded initial behavior should wait for owne
 heartbeat repair and verify holder, pointer, and health coherence. Active repair needs
 new independently trustworthy lock metadata or another recovery channel.
 
-## B5 test isolation gap
+### B5 test isolation gap
 
 The suite has an isolation fixture, but it is conditional:
 
@@ -98,7 +99,7 @@ session-owned temporary root, restore ambient values only after the suite, reset
 configuration on every transition, and fail before any singleton write or termination
 if a test resolves the real managed root.
 
-## B6 process-boundary status
+### B6 process-boundary status
 
 Current static ordering already rejects a losing singleton before components:
 
@@ -115,7 +116,7 @@ Reproduce first with an isolated real lock holder and real HTTP subprocess. Requ
 bounded nonzero loser exit, no listener, no Qdrant child identity, no pointer overwrite,
 and no watcher or maintenance work. Only harden the process boundary if that test fails.
 
-## Real-behavior regression matrix
+### Real-behavior regression matrix
 
 - Delete only the isolated per-status file under a live real daemon; after a real
   heartbeat, both records must be coherent and health must remain ready.

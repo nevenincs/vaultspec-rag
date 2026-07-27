@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 related:
   - "[[2026-07-21-large-index-resilience-research]]"
   - "[[2026-07-21-large-index-resilience-reference]]"
@@ -13,8 +13,8 @@ related:
   - "[[2026-06-18-watcher-targeted-reindex-adr]]"
   - "[[2026-07-21-index-backpressure-storage-hygiene-adr]]"
   - "[[2026-07-21-service-job-control-adr]]"
+  - '[[2026-07-21-large-index-resilience-s01-config-audit]]'
 ---
-
 # `large-index-resilience` adr: `durable resumable and resource-bounded indexing` | (**status:** `accepted`)
 
 ## Problem Statement

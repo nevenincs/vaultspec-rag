@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#storage-schema-contract'
 date: '2026-06-26'
-modified: '2026-07-03'
+modified: '2026-07-27'
 related:
   - "[[2026-06-26-storage-schema-contract-research]]"
 ---
@@ -178,3 +178,7 @@ drop-and-recreate behavior and the project's scale.
   unversioned.
 
 (Holds one full execution cycle before promotion, per the `vaultspec-codify` discipline.)
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

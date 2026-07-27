@@ -1,33 +1,35 @@
-"""Interruptible refresh loop for the human ``server jobs --watch`` view."""
+"""Entry to the interactive jobs interface for ``server jobs --watch``.
+
+The live view is an application that owns the terminal, not a loop that
+reprints. A reprint loop cannot offer selection, per-row control, or a log
+pane, and it cannot host a live region on this project's shared console at
+all - so ``--watch`` hands the screen to the interface instead.
+"""
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
-from ._process import _call_interruptibly
 from ._render import _emit_json_error_and_exit, _plain
-from ._service_jobs_presentation import _render_jobs_result
-from ._service_jobs_query import _apply_client_state_filter, _exit_jobs_not_running
+from ._service_jobs_query import _apply_client_state_filter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+
 @dataclass(frozen=True, slots=True)
 class _JobsWatchRequest:
-    """The resolved query and display settings for a watched jobs view."""
+    """The resolved query and display settings for the interactive view."""
 
     fetch: Callable[[], dict[str, object] | None]
     job_id: str | None
     port: int
     interval: float
-    refresh_count: int | None
     client_state: str | None
+
 
 def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
     message = "--watch is human-only and --interval must be greater than zero."
@@ -39,53 +41,21 @@ def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
     raise typer.Exit(2)
 
 
-def _watch_status_text(refresh_number: int, refresh_count: int | None) -> str:
-    if refresh_count is None:
-        return "Watch: press Ctrl+C to stop."
-    return f"Watch: refresh {refresh_number} of {refresh_count}."
-
-
-def _stop_watching() -> NoReturn:
-    """Leave the refreshing view on an operator interrupt.
-
-    Watch only reads, so there is nothing to unwind. Exit on the conventional
-    interrupted status rather than reporting the success the operator never
-    got, and without a traceback they did not ask for.
-    """
-    _cli.console.print("\n[dim]Stopped watching jobs.[/]")
-    raise typer.Exit(130)
-
-
 def _watch_jobs(request: _JobsWatchRequest) -> None:
-    """Re-render *fetch*'s result on an interval until interrupted.
+    """Run the interactive interface until the operator leaves it.
 
-    Takes the bound fetch rather than the filter set so the query is spelled
-    once in the command and both the one-shot and watching paths are provably
-    reading the same thing.
+    The client-side state filter is applied to every fetch here rather than
+    inside the interface, so the interactive and one-shot paths are provably
+    asking the same question of the same service.
     """
-    refreshes = 0
-    while request.refresh_count is None or refreshes < request.refresh_count:
-        # The refresh is one instance of the general problem of keeping the
-        # main thread interruptible across a blocking call, so it shares the
-        # process module's helper rather than carrying a second copy of the
-        # same threading rationale. A divergence between two copies would be a
-        # Ctrl+C that works in one operator view and not the other.
-        result = _call_interruptibly(request.fetch)
+    # Imported here so the one-shot and structured paths never pay for the
+    # interface, and a terminal-less host can still read the plain feed.
+    from ._jobs_tui import run_jobs_tui
+
+    def watched_fetch() -> dict[str, object] | None:
+        result = request.fetch()
         if result is None:
-            _exit_jobs_not_running(False, request.port)
-        result = _apply_client_state_filter(result, request.client_state)
-        _cli.console.clear()
-        refresh_number = refreshes + 1
-        _render_jobs_result(
-            result,
-            job_id=request.job_id,
-            port=request.port,
-            monitoring=True,
-            watch_text=_watch_status_text(refresh_number, request.refresh_count),
-        )
-        refreshes += 1
-        if request.refresh_count is not None and refreshes >= request.refresh_count:
-            return
-        time.sleep(request.interval)
+            return None
+        return _apply_client_state_filter(result, request.client_state)
 
-
+    run_jobs_tui(watched_fetch, port=request.port, interval=request.interval)

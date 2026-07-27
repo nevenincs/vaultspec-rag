@@ -40,22 +40,28 @@ _NARROW = (80, 24)
 
 def _job(
     job_id: str,
-    *,
-    phase: str = "running",
-    state: str = "running",
-    desired: str | None = None,
-    root: str = "/repos/example-worktrees/main",
-    completed: int = 300,
-    total: int | None = 1000,
-    remaining: float | None = 140.0,
-    rate: float | None = 5.0,
-    capabilities: dict[str, bool] | None = None,
+    **overrides: object,
 ) -> dict[str, object]:
     """Build one job resource in the shape the service publishes."""
+    defaults: dict[str, object] = {
+        "phase": "running",
+        "state": "running",
+        "desired": None,
+        "root": "/repos/example-worktrees/main",
+        "completed": 300,
+        "total": 1000,
+        "remaining": 140.0,
+        "rate": 5.0,
+        "capabilities": None,
+    }
+    details = defaults | overrides
+    state = str(details["state"])
+    desired = details["desired"]
+    capabilities = details["capabilities"]
     return {
         "id": job_id,
         "revision": 3,
-        "phase": phase,
+        "phase": details["phase"],
         "state": state,
         "desired_state": desired if desired is not None else state,
         "source": "code",
@@ -66,18 +72,18 @@ def _job(
         "runtime_seconds": 75.0,
         "last_progress_age_seconds": 1.0,
         "stalled": False,
-        "progress_rate_per_second": rate,
-        "estimated_remaining_seconds": remaining,
+        "progress_rate_per_second": details["rate"],
+        "estimated_remaining_seconds": details["remaining"],
         "progress": {
             "step": "embed + upsert chunks",
-            "completed": completed,
-            "total": total,
+            "completed": details["completed"],
+            "total": details["total"],
             "last_updated": 1070.0,
         },
         "initiator": {
             "kind": "tool",
             "command": "reindex_codebase",
-            "project_root": root,
+            "project_root": details["root"],
         },
         "capabilities": capabilities
         if capabilities is not None

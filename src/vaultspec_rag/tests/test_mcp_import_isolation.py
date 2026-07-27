@@ -42,7 +42,7 @@ _TOP_PKG = "vaultspec_rag"
 # service through the import-light ``serviceclient`` layer instead.
 _FORBIDDEN_SUBMODULES = {
     "server",
-    "store",
+    "store_runtime",
     "service",
     "registry",
     "cli",
@@ -104,6 +104,40 @@ def _collect_mcp_py_files() -> list[Path]:
     return sorted(_MCP_DIR.glob("**/*.py"))
 
 
+def _import_violation(node: ast.Import) -> list[str]:
+    """Describe forbidden absolute imports in one AST node."""
+    return [
+        f"line {node.lineno}: import {alias.name}"
+        for alias in node.names
+        if _absolute_name_is_forbidden(alias.name)
+    ]
+
+
+def _from_import_violation(node: ast.ImportFrom, file_pkg: str) -> list[str]:
+    """Describe a forbidden absolute or relative from-import, if present."""
+    module = node.module or ""
+    absolute = node.level == 0 and bool(module)
+    relative = node.level > 0 and _relative_name_is_forbidden(node, file_pkg)
+    if not ((absolute and _absolute_name_is_forbidden(module)) or relative):
+        return []
+    names = ", ".join(alias.name for alias in node.names)
+    if absolute:
+        return [f"line {node.lineno}: from {module} import {names}"]
+    dots = "." * node.level
+    return [f"line {node.lineno}: from {dots}{module} import {names}"]
+
+
+def _forbidden_import_violations(tree: ast.Module, file_pkg: str) -> list[str]:
+    """Collect every forbidden import edge in one MCP module."""
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            violations.extend(_import_violation(node))
+        if isinstance(node, ast.ImportFrom):
+            violations.extend(_from_import_violation(node, file_pkg))
+    return violations
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize("src_file", _collect_mcp_py_files(), ids=lambda p: p.name)
 def test_mcp_file_does_not_import_server_internals(src_file: Path) -> None:
@@ -115,29 +149,7 @@ def test_mcp_file_does_not_import_server_internals(src_file: Path) -> None:
     rel = src_file.relative_to(_PKG_ROOT)
     file_pkg = ".".join([_TOP_PKG, *list(rel.parent.parts)])
 
-    violations: list[str] = []
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if _absolute_name_is_forbidden(alias.name):
-                    violations.append(f"line {node.lineno}: import {alias.name}")
-        elif isinstance(node, ast.ImportFrom):
-            # Absolute import: ``from vaultspec_rag[.]server import X``
-            if node.level == 0 and node.module is not None:
-                if _absolute_name_is_forbidden(node.module):
-                    names = ", ".join(a.name for a in node.names)
-                    violations.append(
-                        f"line {node.lineno}: from {node.module} import {names}"
-                    )
-            # Relative import: ``from ..server import X``
-            elif node.level > 0 and _relative_name_is_forbidden(node, file_pkg):
-                names = ", ".join(a.name for a in node.names)
-                dots = "." * node.level
-                mod = node.module or ""
-                violations.append(
-                    f"line {node.lineno}: from {dots}{mod} import {names}"
-                )
+    violations = _forbidden_import_violations(tree, file_pkg)
 
     assert not violations, (
         f"{src_file.relative_to(_PKG_ROOT)} imports forbidden server internals:\n"

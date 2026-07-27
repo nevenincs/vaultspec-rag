@@ -54,7 +54,7 @@ from .._source_types import (
     parse_source_type,
     unsupported_feedback_envelope,
 )
-from ..config import get_config, rag_default
+from ..config._settings import get_config, rag_default
 
 if TYPE_CHECKING:
     # The job-source vocabulary has one declaration, the canonical enum.

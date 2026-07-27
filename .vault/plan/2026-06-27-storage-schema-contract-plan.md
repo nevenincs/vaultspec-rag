@@ -3,14 +3,32 @@ tags:
   - '#plan'
   - '#storage-schema-contract'
 date: '2026-06-27'
-modified: '2026-07-03'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-26-storage-schema-contract-adr]]'
   - '[[2026-06-26-storage-schema-contract-research]]'
 ---
-
 # `storage-schema-contract` plan
+
+## Description
+
+Codify the Qdrant data shape into a single versioned, typed, runtime-advertised contract,
+per the accepted ADR. Phase P01 builds one neutral torch-free schema leaf that is the sole
+source of truth: the `STORAGE_SCHEMA_VERSION` integer, the dense and sparse vector
+constants, the TypedDict payload shapes, the canonical payload-index tuples, a
+config-derived effective descriptor, and the consumer compatibility helper. Phase P02
+routes the store through that leaf, replacing the inline upsert dicts and inline index
+lists, guarded by a reindex-parity check that proves the refactor is shape-preserving.
+Phase P03 advertises the contract at runtime - the full descriptor on the read-only
+torch-free readiness report, and the bare version on the raw health endpoint and the
+service-state snapshot for a cheap pre-read gate. Phase P04 publishes the human-facing
+reference and adds the drift test that fails CI when an inline shape diverges from the
+typed definition. The work is grounded in the storage-schema-contract ADR and research;
+the priority consumer is the dashboard engine's direct-Qdrant embedding read, which today
+assumes the shape with no version signal.
+
+## Steps
 
 Codify rag's Qdrant collection, vector, and payload layout as a single versioned, typed, runtime-advertised schema contract so consumers can assert compatibility before reading.
 
@@ -49,25 +67,6 @@ Author the reference doc and add the drift and propagation tests that fail when 
 
 - [x] `P04.S15` - Author the storage-schema reference document with the field tables, version-bump policy, and consumer compatibility recipe; `.vault/reference/2026-06-27-storage-schema-contract-reference.md`.
 - [x] `P04.S16` - Add a real-store drift test asserting the live collection vector config and indexed payload fields equal the declared schema; `src/vaultspec_rag/tests/integration/test_store_schema_drift.py`.
-
-## Description
-
-Codify the Qdrant data shape into a single versioned, typed, runtime-advertised contract,
-per the accepted ADR. Phase P01 builds one neutral torch-free schema leaf that is the sole
-source of truth: the `STORAGE_SCHEMA_VERSION` integer, the dense and sparse vector
-constants, the TypedDict payload shapes, the canonical payload-index tuples, a
-config-derived effective descriptor, and the consumer compatibility helper. Phase P02
-routes the store through that leaf, replacing the inline upsert dicts and inline index
-lists, guarded by a reindex-parity check that proves the refactor is shape-preserving.
-Phase P03 advertises the contract at runtime - the full descriptor on the read-only
-torch-free readiness report, and the bare version on the raw health endpoint and the
-service-state snapshot for a cheap pre-read gate. Phase P04 publishes the human-facing
-reference and adds the drift test that fails CI when an inline shape diverges from the
-typed definition. The work is grounded in the storage-schema-contract ADR and research;
-the priority consumer is the dashboard engine's direct-Qdrant embedding read, which today
-assumes the shape with no version signal.
-
-## Steps
 
 ## Parallelization
 

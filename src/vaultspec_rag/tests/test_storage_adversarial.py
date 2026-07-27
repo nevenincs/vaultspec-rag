@@ -87,7 +87,7 @@ class TestReconcileRendering:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._service_storage import _render_reconcile
-        from ..storage_ops import ReconcileBatch
+        from ..storage_reconciliation import ReconcileBatch
 
         _render_reconcile(
             ReconcileBatch(
@@ -105,7 +105,7 @@ class TestReconcileRendering:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._service_storage import _render_reconcile
-        from ..storage_ops import ReconcileBatch, ReconcileResult
+        from ..storage_reconciliation import ReconcileBatch, ReconcileResult
 
         _render_reconcile(
             ReconcileBatch(
@@ -135,7 +135,7 @@ class TestReconcileRendering:
     ) -> None:
         """A broker keys on `status`; a preview changed nothing."""
         from ..cli._service_storage import _render_reconcile
-        from ..storage_ops import ReconcileBatch, ReconcileResult
+        from ..storage_reconciliation import ReconcileBatch, ReconcileResult
 
         _render_reconcile(
             ReconcileBatch(
@@ -163,7 +163,7 @@ class TestReconcileRendering:
     ) -> None:
         """Nothing converged, so nothing was reclaimed to claim."""
         from ..cli._service_storage import _render_reconcile
-        from ..storage_ops import ReconcileBatch, ReconcileResult
+        from ..storage_reconciliation import ReconcileBatch, ReconcileResult
 
         _render_reconcile(
             ReconcileBatch(
@@ -189,7 +189,7 @@ class TestReconcileRendering:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._service_storage import _render_reconcile
-        from ..storage_ops import ReconcileBatch, ReconcileResult
+        from ..storage_reconciliation import ReconcileBatch, ReconcileResult
 
         _render_reconcile(
             ReconcileBatch(
@@ -217,7 +217,7 @@ class TestReconcileRendering:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._service_storage import _render_reconcile
-        from ..storage_ops import ReconcileBatch
+        from ..storage_reconciliation import ReconcileBatch
 
         _render_reconcile(
             ReconcileBatch(
@@ -267,7 +267,7 @@ class TestUnreachableStorageStillAnswers:
         # attempt and raises its real transport exception. Nothing is stubbed.
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_PORT", "59997")
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", "http://127.0.0.1:59997")
-        from ..config import reset_config
+        from ..config._settings import reset_config
 
         reset_config()
 

@@ -476,7 +476,7 @@ class TestQdrantProvisionProgress:
     def test_json_install_emits_exactly_one_envelope(self, tmp_path: Path):
         """``--json`` keeps the reporter silent so the envelope stands alone."""
         from ..cli import app
-        from ..config import EnvVar
+        from ..config._types import EnvVar
         from .conftest import managed_env
 
         with managed_env(
@@ -703,18 +703,22 @@ class TestReconcileProgress:
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=False)
         with reporter:
-            outcome = reconcile_discovery(ReconcileRequest(
-                resolve=lambda: unpublished,
-                probe_liveness=lambda _resolution: LivenessSignals(pid=4321, pid_alive=True),
-                probe_health=lambda _port: None,
-                timeout_s=3.0,
-                interval_s=1.0,
-                sleep=_tick,
-                monotonic=clock,
-                on_attempt=lambda attempt, verdict: reporter.heartbeat(
-                    f"Waiting for discovery: {verdict.label} (poll {attempt})"
-                ),
-            ))
+            outcome = reconcile_discovery(
+                ReconcileRequest(
+                    resolve=lambda: unpublished,
+                    probe_liveness=lambda _resolution: LivenessSignals(
+                        pid=4321, pid_alive=True
+                    ),
+                    probe_health=lambda _port: None,
+                    timeout_s=3.0,
+                    interval_s=1.0,
+                    sleep=_tick,
+                    monotonic=clock,
+                    on_attempt=lambda attempt, verdict: reporter.heartbeat(
+                        f"Waiting for discovery: {verdict.label} (poll {attempt})"
+                    ),
+                )
+            )
 
         assert not outcome.converged
         assert outcome.attempts > 1, "premise: the wait must actually loop"
@@ -880,7 +884,7 @@ class TestStorageProgress:
         envelope, because it is emitted while the block is open.
         """
         from ..cli import app
-        from ..config import EnvVar
+        from ..config._types import EnvVar
         from .conftest import managed_env
 
         del isolated_singleton_dirs

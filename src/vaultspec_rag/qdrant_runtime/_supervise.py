@@ -42,7 +42,7 @@ from .._win32 import (
     assign_process_to_job,
     create_kill_on_close_job,
 )
-from ..config import managed_status_dir
+from ..config._settings import managed_status_dir
 from ._constants import (
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
@@ -233,7 +233,7 @@ def _ready_timeout_seconds() -> float:
     non-positive value, falls back to the default rather than failing
     startup on an operator typo.
     """
-    from ..config import get_config, rag_default
+    from ..config._settings import get_config, rag_default
 
     default = float(rag_default("qdrant_ready_timeout_seconds"))
     try:
@@ -971,7 +971,7 @@ def _reap_orphan_before_spawn(
             "pid. Stop the holder manually, then retry; or run local-only: "
             f"{server_start_command(local_only=True)}"
         )
-    from ..config import get_config
+    from ..config._settings import get_config
 
     expected_storage = Path(str(get_config().qdrant_storage_dir)).expanduser().resolve()
     recorded_storage = Path(identity.storage_path).expanduser().resolve()
@@ -1047,7 +1047,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
     """
     from pathlib import Path
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ._provision import file_sha256
     from ._resolve import (
         decide_qdrant_action,
@@ -1124,7 +1124,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
         # UNVERIFIED. Make the bypass loud (it is otherwise silent), and call
         # out when it is shadowing a verified provisioned install - the case a
         # PATH/env plant would exploit.
-        from ..config import EnvVar
+        from ..config._types import EnvVar
         from ._resolve import has_provisioned_binary
 
         shadowed = has_provisioned_binary(QDRANT_SERVER_VERSION)
@@ -1239,7 +1239,7 @@ def runtime_state() -> QdrantRuntimeState:
     if supervisor is not None:
         return supervisor.state()
 
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     url = str(cfg.qdrant_url or "")

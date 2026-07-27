@@ -20,7 +20,8 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..qdrant_runtime._supervise import (
     _MAX_QUARANTINES_PER_START,  # pyright: ignore[reportPrivateUsage]
     QdrantSupervisor,

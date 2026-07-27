@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#index-gpu-pipeline'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-02-index-gpu-pipeline-adr]]'
@@ -39,6 +39,8 @@ stale-purge, byte-gate serial path, BrokenProcessPool fallback) is a hard constr
 Tokenise-in-workers and length-bucketed batching are deferred fast-follows named in the ADR.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

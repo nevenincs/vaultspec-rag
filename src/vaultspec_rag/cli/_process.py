@@ -46,7 +46,7 @@ from .._win32 import (
     WIN_CREATE_NO_WINDOW,
     WIN_DETACHED_PROCESS,
 )
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
 from ._service_status import read_service_status
@@ -492,16 +492,18 @@ def _spawn_service(
     **options: Unpack[_ServiceSpawnOptions],
 ) -> int:
     """Spawn the RAG service as a detached background process."""
-    child_options = {
-        name: value
-        for name, value in options.items()
-        if name in _ServiceChildEnvOptions.__annotations__
-    }
     return _spawn_service_request(
         _ServiceSpawnRequest(
             port,
             log_path,
-            _ServiceChildEnvRequest(**child_options),
+            _ServiceChildEnvRequest(
+                watch=options.get("watch"),
+                watch_debounce_ms=options.get("watch_debounce_ms"),
+                watch_cooldown_s=options.get("watch_cooldown_s"),
+                qdrant=options.get("qdrant"),
+                local_only=options.get("local_only"),
+                preprocess_mode=options.get("preprocess_mode"),
+            ),
             options.get("timeout"),
             float(options.get("cleanup_timeout", 15.0)),
         )
@@ -1016,7 +1018,7 @@ def _owned_qdrant_identity(
     """Capture the exact validated managed child owned by this service."""
     from pathlib import Path
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
         probe_qdrant_endpoint,
@@ -1122,7 +1124,7 @@ def _reap_owned_qdrant(
         return
     from pathlib import Path
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
         probe_qdrant_endpoint,

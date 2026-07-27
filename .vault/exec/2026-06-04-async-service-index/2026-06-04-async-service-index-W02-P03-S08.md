@@ -3,20 +3,24 @@ tags:
   - '#exec'
   - '#async-service-index'
 date: '2026-06-04'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S08'
 related:
   - "[[2026-06-04-async-service-index-plan]]"
 ---
 
-# catch VaultStoreLockedError and surface actionable diagnostics with port/service remedy
+## Description
 
-## Scope
+### Scope
 
 - `src/vaultspec_rag/cli/_search.py`
 
-## Description
+No separate description is recorded in the retained prior execution record. Source: retained prior execution record body.
 
 ## Outcome
 
+No separate outcome is recorded in the retained prior execution record. Source: retained prior execution record body.
+
 ## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.

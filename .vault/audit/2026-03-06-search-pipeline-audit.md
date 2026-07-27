@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: Search Pipeline
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Feature: search.py query parsing, hybrid search, graph re-ranking
 
-## 2026-03-06 -- Review (Passes 18-25)
+### 2026-03-06 -- Review (Passes 18-25)
 
 ### Architecture: SOLID
 
@@ -28,7 +33,7 @@ Feature: search.py query parsing, hybrid search, graph re-ranking
 
 ### No Issues Found
 
-## Pass 27 — Cross-encoder readiness check
+### Pass 27 — Cross-encoder readiness check
 
 Task #42 (cross-encoder reranker) is `in_progress` but no code has landed. Current pipeline:
 
@@ -37,3 +42,7 @@ Qdrant hybrid search (RRF) -> rerank_with_graph() -> return top_k
 ```
 
 Integration point for cross-encoder: between RRF results (line 196) and graph reranking (line 216), or as a replacement for graph reranking. Will audit when code appears.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

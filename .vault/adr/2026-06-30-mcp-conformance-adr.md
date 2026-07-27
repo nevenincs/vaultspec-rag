@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#mcp-conformance'
 date: '2026-06-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-30-mcp-conformance-research]]"
   - "[[2026-06-30-mcp-conformance-reference]]"
@@ -160,3 +160,7 @@ ADR's surviving tools stand on; the two are approved together or not at all.
   holder and the heartbeat staleness window, never trusting a per-status-directory
   `service.json` that names a stale or dead service; when no live service resolves, fail
   fast with the start-the-service remediation rather than falling back silently.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

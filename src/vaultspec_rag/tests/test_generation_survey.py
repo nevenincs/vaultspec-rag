@@ -206,7 +206,7 @@ def _namespace_of(payload: dict[str, object], root: str | None) -> dict[str, obj
 
 def _shape(surveys: list[NamespaceSurvey]) -> dict[str, object]:
     """Shape *surveys* through the real route shaper, unfiltered."""
-    from ..server._routes_storage import _SurveyPayloadRequest, _shape_survey_payload
+    from ..server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
 
     return _shape_survey_payload(
         _SurveyPayloadRequest(
@@ -302,7 +302,10 @@ class TestGenerationReclaimGates:
     _LONG_AGO = "2026-07-01T00:00:00+00:00"
 
     def _decide(self, **overrides: object) -> GenerationReclaim:
-        from ..generation_survey import GenerationReclaimContext, decide_generation_reclaim
+        from ..generation_survey import (
+            GenerationReclaimContext,
+            decide_generation_reclaim,
+        )
 
         kwargs: dict[str, object] = {
             "stamps": {"c_gold": self._LONG_AGO},
@@ -361,7 +364,10 @@ class TestGenerationReclaimGates:
         assert decision.reason == "grace_started"
 
     def test_an_unelapsed_window_reports_what_remains(self) -> None:
-        from ..generation_survey import GenerationReclaimContext, decide_generation_reclaim
+        from ..generation_survey import (
+            GenerationReclaimContext,
+            decide_generation_reclaim,
+        )
 
         decision = decide_generation_reclaim("c_gold", GenerationReclaimContext(
             stamps={"c_gold": "2026-07-26T11:00:00+00:00"},

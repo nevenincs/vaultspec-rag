@@ -3,11 +3,12 @@ tags:
   - '#adr'
   - '#document-index-drift-parity'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - "[[2026-07-25-index-resume-drift-race-adr]]"
   - "[[2026-07-25-index-resume-drift-race-research]]"
   - '[[2026-07-25-index-drift-circuit-accounting-adr]]'
+  - '[[2026-07-27-document-index-drift-parity-grounding-research]]'
 ---
 
 # `document-index-drift-parity` adr: `the document index keeps its resume semantics and does not adopt the drift signal` | (**status:** `accepted`)

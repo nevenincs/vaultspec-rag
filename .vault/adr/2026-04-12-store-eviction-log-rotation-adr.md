@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-research]]'
   - '[[2026-04-02-service-graph-adr]]'
@@ -923,3 +923,7 @@ is NOT retroactively trimmed, consistent with
 - `2026-04-05-service-lifecycle-tests-adr` — established the
   subprocess + ephemeral-port + `_service_env(tmp_path)` fixture
   pattern that the five new integration tests must reuse.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

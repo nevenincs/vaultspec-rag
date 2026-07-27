@@ -441,7 +441,7 @@ def provision_models(
             detail="huggingface_hub is not installed; cannot ensure models",
         )
 
-    from ..config import configured_model_repos
+    from ..config._settings import configured_model_repos
 
     repos = [repo for _label, repo in configured_model_repos()]
 

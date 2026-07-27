@@ -21,7 +21,7 @@ from ...indexer._content_policy import (
     SourceProfileVersion,
 )
 from ...progress import NullProgressReporter
-from ...watcher import _is_code_change
+from ...watcher_policy import is_code_change
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -91,9 +91,11 @@ async def test_added_and_modified_events_match_discovery_admission(
         tmp_path,
         cast("Any", None),
         cast("Any", None),
-        content_policy=RootContentPolicy(
-            SourceProfileVersion.CONVENTIONAL_V1,
-            (ContentRoute("incoming/report.pdf", ContentKind.DOCUMENT),),
+        options=CodebaseIndexer.Options(
+            content_policy=RootContentPolicy(
+                SourceProfileVersion.CONVENTIONAL_V1,
+                (ContentRoute("incoming/report.pdf", ContentKind.DOCUMENT),),
+            )
         ),
     )
     policy = indexer.resolve_policy_snapshot()
@@ -147,7 +149,7 @@ async def test_added_and_modified_events_match_discovery_admission(
         watcher_admitted = {
             path.relative_to(tmp_path).as_posix()
             for path in event_paths
-            if _is_code_change(path, tmp_path, vault_dir, policy)
+            if is_code_change(path, tmp_path, vault_dir, policy)
         }
         assert watcher_admitted == full_admitted == set(scoped)
 

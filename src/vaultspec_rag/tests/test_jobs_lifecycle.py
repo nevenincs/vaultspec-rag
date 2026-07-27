@@ -17,7 +17,7 @@ from ..job_models import (
     JobSpec,
 )
 from ..jobs import (
-    _FinishDetails,
+    FinishDetails,
     index_job_status,
     record_finish,
     record_start,
@@ -83,7 +83,7 @@ class TestJobsLifecycle:
         record_finish(
             job_id,
             result="+0 /0 -0 (5ms) ~2",
-            details=_FinishDetails(
+            details=FinishDetails(
                 preprocess_ok=3,
                 preprocess_skipped=2,
                 preprocess_failures=failures,
@@ -97,7 +97,7 @@ class TestJobsLifecycle:
     def test_serialized_preprocess_failures_are_copied(self) -> None:
         job_id = record_start(JobSource.CODE, "tool")
         failures = ["docs/a.pdf: timeout"]
-        record_finish(job_id, details=_FinishDetails(preprocess_failures=failures))
+        record_finish(job_id, details=FinishDetails(preprocess_failures=failures))
         serialized = {r["id"]: r for r in snapshot()}[job_id]
         surfaced = serialized["preprocess_failures"]
         assert surfaced == failures
@@ -461,7 +461,7 @@ class TestJobsHumanSummarySignpost:
     def test_summary_carries_the_json_signpost(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from ..cli._service_jobs import _render_jobs_feed
+        from ..cli._service_jobs_presentation import _render_jobs_feed
 
         _render_jobs_feed({"total": 0, "returned": 0}, [], port=8766)
         out = capsys.readouterr().out
@@ -478,15 +478,23 @@ class TestJobsHumanSummarySignpost:
         # edit landing mid-run, because `inspect.getsource` goes through
         # `linecache`. The declared metadata is what Typer renders, which is
         # the contract this test exists to defend.
+        from typer._click import Context as ClickContext
+        from typer.core import TyperGroup, TyperOption
         from typer.main import get_command
 
-        from ..cli._app import app
+        from ..cli._app import _LiteralArgvGroup, app
 
-        server = get_command(app).get_command(None, "server")
-        assert server is not None
-        jobs = server.get_command(None, "jobs")
+        root = get_command(app)
+        assert isinstance(root, _LiteralArgvGroup)
+        server = root.get_command(ClickContext(root), "server")
+        assert isinstance(server, TyperGroup)
+        jobs = server.get_command(ClickContext(server), "jobs")
         assert jobs is not None
-        option = next(parameter for parameter in jobs.params if parameter.name == "json")
+        option = next(
+            parameter
+            for parameter in jobs.params
+            if isinstance(parameter, TyperOption) and parameter.name == "json"
+        )
         assert "scripted waits" in (option.help or "")
 
 
@@ -499,7 +507,7 @@ class TestInterruptedJobRestore:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> Iterator[None]:
-        from ..config import reset_config
+        from ..config._settings import reset_config
 
         monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
         reset_config()
@@ -576,7 +584,7 @@ class TestSuiteIsolationGuard:
         import os
         from pathlib import Path
 
-        from ..config import EnvVar
+        from ..config._types import EnvVar
 
         machine_default = Path("~/.vaultspec-rag").expanduser()
         status = os.environ.get(EnvVar.STATUS_DIR.value)

@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#rag-broker-affordances'
 date: '2026-06-27'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-27-rag-broker-affordances-adr]]'
@@ -50,6 +50,8 @@ ADR; closes the audit's C1 (exit-1 flattening, at the source) and C3 (STATUS_DIR
 discovery) on the rag side.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

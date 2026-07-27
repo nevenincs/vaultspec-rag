@@ -12,7 +12,7 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 )
 
 from .. import IndexResult, prepare_document
-from ..config import reset_config as reset_rag_config
+from ..config._settings import reset_config as reset_rag_config
 from ..indexer import LANGUAGE_MAP, SUPPORTED_EXTENSIONS, ASTChunker
 from ..indexer._chunking import (
     _CLASS_LIKE_NODES,
@@ -1263,7 +1263,7 @@ class TestVaultragignore:
             tmp_path,
             cast("Any", None),
             cast("Any", None),
-            extra_excludes=["temp.py"],
+            options=CodebaseIndexer.Options(extra_excludes=["temp.py"]),
         )
 
         files = indexer.scan_files()
@@ -1452,7 +1452,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
         existence check: the collection exists and is non-empty, so an
         existence-only guard returns False here and the truncation survives.
         """
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -1473,7 +1473,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
 
     def test_intact_collection_is_trusted(self, tmp_path: Path) -> None:
         """A collection holding everything it published is not escalated."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -1498,7 +1498,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
         Escalating here would rebuild every root written before the count was
         recorded, so the absent key has to read as "cannot tell".
         """
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -1516,7 +1516,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
 
     def test_absent_collection_is_still_rejected(self, tmp_path: Path) -> None:
         """The total-destruction case the check already covered must survive."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:
@@ -1534,7 +1534,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
 
     def test_empty_sidecar_is_never_a_shortfall(self, tmp_path: Path) -> None:
         """With no carried file evidence there is nothing to be lost."""
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         store = VaultStore(tmp_path)
         try:

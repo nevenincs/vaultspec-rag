@@ -35,7 +35,8 @@ from ..cli._search import (
     _local_search_deadline,
     _local_search_mandated,
 )
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ._ports import free_loopback_port
 from .conftest import managed_env
@@ -113,7 +114,7 @@ class TestLocalSearchMandate:
         outright rather than silently read as false. A divergent denylist here
         would grant or withhold a mandate the config never agreed to.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         assert not (isolated_status_dir / "local-only.json").exists()
         os.environ[EnvVar.LOCAL_ONLY.value] = "on"

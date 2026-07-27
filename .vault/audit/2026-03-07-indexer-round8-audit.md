@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 8 Audit -- indexer.py (deep dive)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/indexer.py` (1219 lines)
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Check 1: blake2b Consistency
+### Check 1: blake2b Consistency
 
 All 6 hash sites use `hashlib.blake2b` or `hashlib.file_digest(f, "blake2b")` consistently:
 
@@ -31,7 +36,7 @@ All 6 hash sites use `hashlib.blake2b` or `hashlib.file_digest(f, "blake2b")` co
 
 ______________________________________________________________________
 
-## Check 2: os.walk Directory Pruning
+### Check 2: os.walk Directory Pruning
 
 **File:** `_scan_codebase()` lines 913-923
 
@@ -54,7 +59,7 @@ Line 888: `self.root_dir.rglob(".gitignore")` will traverse into `.venv/`, `node
 
 ______________________________________________________________________
 
-## Check 3: Incremental Hash Comparison (Deleted File Handling)
+### Check 3: Incremental Hash Comparison (Deleted File Handling)
 
 ### VaultIndexer.incremental_index (lines 740-807)
 
@@ -77,7 +82,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Check 4: Path-Based Document IDs
+### Check 4: Path-Based Document IDs
 
 ### VaultIndexer — `prepare_document()` (lines 549-606)
 
@@ -105,7 +110,7 @@ Uses `str(p.relative_to(self.root_dir)).replace("\\", "/")` for rel paths. Chunk
 
 ______________________________________________________________________
 
-## Check 5: `_chunk_with_splitter()` Line Tracking
+### Check 5: `_chunk_with_splitter()` Line Tracking
 
 **File:** lines 1022-1030
 
@@ -131,7 +136,7 @@ When `find()` returns -1, `search_offset` is NOT advanced. All subsequent chunks
 
 ______________________________________________________________________
 
-## Check 6: `_chunk_with_ast()` Error Handling
+### Check 6: `_chunk_with_ast()` Error Handling
 
 **File:** lines 974-983
 
@@ -151,7 +156,7 @@ except Exception:
 
 ______________________________________________________________________
 
-## Check 7: `_scan_codebase()` Symlink Handling
+### Check 7: `_scan_codebase()` Symlink Handling
 
 **File:** line 913
 
@@ -169,7 +174,7 @@ for dirpath, dirs, files in os.walk(self.root_dir, topdown=True):
 
 ______________________________________________________________________
 
-## Check 8: File Hashing (No Dedicated Method)
+### Check 8: File Hashing (No Dedicated Method)
 
 There is no `_compute_file_hash()` method. Hashing is performed inline at each call site using the same pattern:
 
@@ -182,7 +187,7 @@ with open(path, "rb") as f:
 
 ______________________________________________________________________
 
-## Check 9: Thread Safety
+### Check 9: Thread Safety
 
 ### VaultIndexer.full_index (lines 648-657)
 
@@ -228,7 +233,7 @@ Line 577: `prepare_document()` calls `from .config import get_config` and `get_c
 
 ______________________________________________________________________
 
-## Check 10: `except Exception` Catches
+### Check 10: `except Exception` Catches
 
 | Line | Context                               | Caught                            | Assessment                                                                                                                            |
 | ---- | ------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -243,7 +248,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | ID    | Severity | Finding                                                                                         |
 | ----- | -------- | ----------------------------------------------------------------------------------------------- |
@@ -252,3 +257,7 @@ ______________________________________________________________________
 | R8-m3 | MINOR    | `prepare_document` calls `get_config()` inside ThreadPoolExecutor (low-risk race on first init) |
 
 **No HIGH or MEDIUM findings.** All 10 check items pass. The code is well-structured with consistent hashing, correct directory pruning, proper fallback chains, and safe threading patterns.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

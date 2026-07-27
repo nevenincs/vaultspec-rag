@@ -21,7 +21,7 @@ import os
 import sys
 from typing import TypedDict
 
-from .config import EnvVar
+from .config._types import EnvVar
 
 __all__ = [
     "InterpreterFields",

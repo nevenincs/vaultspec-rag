@@ -3,16 +3,21 @@ tags:
   - '#plan'
   - '#worktree-index-reuse'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-07-24-worktree-index-reuse-research]]'
   - '[[2026-07-24-worktree-index-reuse-adr]]'
 ---
-
 # `worktree-index-reuse` plan
 
-## Wave `W01` - measure at the seam
+## Description
+
+Execute the accepted decision in the related ADR: encode-seam read-through vector reuse by deterministic point id, so a new worktree fork reuses byte-identical vectors from sibling donor namespaces instead of recomputing every embedding on the GPU. Wave W01 locks the decision-grade numbers with a flagged throwaway prototype; Wave W02 builds the production donor-candidacy module and the seam read-through with off-switch and telemetry; Wave W03 proves the guards by mutation, validates end to end, documents, and lands. All steps are governed by the single ADR in the related frontmatter, grounded by the research document's spikes.
+
+## Steps
+
+### Wave `W01` - measure at the seam
 
 Lock the decision-grade numbers with a flagged throwaway prototype at the encode seam before any production code: real fork wall-clock old vs new, reuse hit rate, and the unmeasured fresh-namespace upsert plus prealloc wall-time. Wave W02 depends on these numbers to size batching and candidate caps; authorized by the accepted ADR and the research spikes in related frontmatter.
 
@@ -24,7 +29,7 @@ A roughly 100-line throwaway patch behind an env flag at the encode-seam caller 
 - [x] `W01.P01.S02` - run a real fork index of this repo into a scratch namespace with the prototype off then on; `record old-vs-new wall-clock, reuse hit rate, and fresh-namespace upsert plus prealloc wall-time;`scratch namespace run; numbers into the Step Record\`.
 - [x] `W01.P01.S03` - fold the measured numbers into the ADR consequences section and revert the prototype patch to a clean tree; `.vault/adr/2026-07-24-worktree-index-reuse-adr.md`; working tree\`.
 
-## Wave `W02` - production read-through reuse
+### Wave `W02` - production read-through reuse
 
 Build the production mechanism the ADR decides: donor-candidate selection from the storage manifest with the full eligibility gate, then the encode-seam read-through (retrieve-by-id, per-point content verify, vector adoption, miss encode) with the off-switch flag and telemetry counters. Depends on W01 numbers; Wave W03 verifies and ships it.
 
@@ -46,7 +51,7 @@ The production reuse mechanism at the single encode seam: batch retrieve-by-id w
 - [x] `W02.P03.S10` - add per-job reuse telemetry (hit count, hit rate, GPU-seconds-saved estimate, donor-absent rate) surfaced through the existing job status envelope; `indexer job accounting; server jobs surface`.
 - [x] `W02.P03.S11` - add unit tests for the read-through: verified hit adopts vectors and skips encode, miss encodes, flag off restores baseline behavior exactly; `src/vaultspec_rag/tests/test_index_reuse.py` (new)\`.
 
-## Wave `W03` - prove, document, ship
+### Wave `W03` - prove, document, ship
 
 Prove the eligibility gates with mutation-verified guard tests (each gate broken must turn its test red on the intended assertion, then green on restore, both directions recorded), run the full quality gates, capture end-to-end telemetry on a real fork, update user docs, and land the work committed and pushed. Terminal wave; depends on W02.
 
@@ -68,12 +73,6 @@ Real-fork end-to-end telemetry capture with the flag on and off, user-facing doc
 - [x] `W03.P05.S18` - document the reuse behavior, the off-switch, and the telemetry fields in the user-facing docs; `docs/`.
 - [x] `W03.P05.S19` - commit the feature with a why-focused message and push to origin main; `git`.
 - [x] `W03.P05.S20` - fix or explicitly file the rebuild-replays-deleted-collections defect: storage delete leaves the resume ledger, so a rebuild replays committed vectors instead of rebuilding; ``` repro plus fix plus guard test, escalating if the ledger delete contract must change; ``src/vaultspec_rag/indexer/_run_checkpoint.py ```; storage delete surface; tests\`.
-
-## Description
-
-Execute the accepted decision in the related ADR: encode-seam read-through vector reuse by deterministic point id, so a new worktree fork reuses byte-identical vectors from sibling donor namespaces instead of recomputing every embedding on the GPU. Wave W01 locks the decision-grade numbers with a flagged throwaway prototype; Wave W02 builds the production donor-candidacy module and the seam read-through with off-switch and telemetry; Wave W03 proves the guards by mutation, validates end to end, documents, and lands. All steps are governed by the single ADR in the related frontmatter, grounded by the research document's spikes.
-
-## Steps
 
 ## Parallelization
 

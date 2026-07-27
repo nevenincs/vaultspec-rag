@@ -80,7 +80,7 @@ class _PoolDrainPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class _SingleProductionOptions:
+class SingleProductionOptions:
     """Caller-owned collaborators for one ordinary-file production pass."""
 
     publish_result: Callable[[FileChunkResult], bool]
@@ -91,7 +91,7 @@ class _SingleProductionOptions:
 
 
 @dataclass(frozen=True, slots=True)
-class _SegmentSubmission:
+class SegmentSubmission:
     """Queue and liveness ownership for segment publication."""
 
     segment_queue: WeightedCodeSegmentQueue
@@ -99,6 +99,7 @@ class _SegmentSubmission:
     consumer_exceptions: list[BaseException]
     on_wait: Callable[[str], object]
     run_control: RunControl
+
 
 # Polling bound for cooperative control while the parent waits on CPU workers
 # or either pipeline side waits on the bounded producer/consumer queue.
@@ -283,7 +284,7 @@ class CodeChunkProducer:
         Returns:
             Worker count, at least 1.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         configured = int(get_config().index_chunk_workers)
         workers = configured if configured > 0 else (os.process_cpu_count() or 1)
@@ -305,7 +306,7 @@ class CodeChunkProducer:
         Returns:
             Worker count; ``1`` means run the serial in-process path.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         workers = self.resolve_workers(len(paths))
@@ -693,7 +694,7 @@ class CodeChunkProducer:
     def produce_singles(
         self,
         singles: list[pathlib.Path],
-        options: _SingleProductionOptions,
+        options: SingleProductionOptions,
     ) -> int:
         """Produce ordinary files serially or through the CPU pool."""
         workers = self.plan_workers(singles)
@@ -744,7 +745,7 @@ class CodeChunkProducer:
     def enqueue_segment(
         self,
         segment: CodeFileSegment,
-        submission: _SegmentSubmission,
+        submission: SegmentSubmission,
     ) -> bool:
         """Place one segment on the bounded queue while the consumer is live.
 
@@ -765,7 +766,7 @@ class CodeChunkProducer:
     def submit_segments(
         self,
         segments: Iterable[CodeFileSegment],
-        submission: _SegmentSubmission,
+        submission: SegmentSubmission,
     ) -> bool:
         """Submit every segment, stopping as soon as the consumer is gone."""
         return all(self.enqueue_segment(segment, submission) for segment in segments)

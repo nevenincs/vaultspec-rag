@@ -42,7 +42,7 @@ logger = logging.getLogger("vaultspec_rag.jobs")
 
 
 @dataclass(frozen=True, slots=True)
-class _AttemptTerminal:
+class AttemptTerminal:
     attempt: int
     task: asyncio.Task[Any]
     state: JobState
@@ -495,7 +495,7 @@ class JobManagerControl(JobManagerState):
     def finish_attempt(
         self,
         job_id: str,
-        terminal: _AttemptTerminal,
+        terminal: AttemptTerminal,
     ) -> JobOutcome:
         """Commit one attempt's terminal outcome with first-writer-wins semantics."""
         command = "finish_attempt"
@@ -504,14 +504,14 @@ class JobManagerControl(JobManagerState):
         with self._lock:
             managed = self._active.get(job_id)
             if managed is None:
-                terminal = self._get_terminal_locked(job_id)
-                if terminal is not None:
+                archived_terminal = self._get_terminal_locked(job_id)
+                if archived_terminal is not None:
                     return JobOutcome(
                         command=command,
                         status=JobOutcomeStatus.OK,
                         code="terminal_state_preserved",
                         message="The first terminal outcome was preserved.",
-                        job=self._snapshot_locked(terminal),
+                        job=self._snapshot_locked(archived_terminal),
                     )
                 return self._error(command, "job_not_found", "The job was not found.")
             if (

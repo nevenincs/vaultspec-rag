@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-discovery-schema'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 related:
   - "[[2026-06-24-service-discovery-schema-research]]"
 ---
@@ -116,3 +116,7 @@ and human-legible; the load-bearing property is "declared and identical", which 
 
   *(Candidate only - promoted to a rule after the constraint has held across at least one full
   execution cycle, per the codify discipline.)*
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

@@ -24,7 +24,7 @@ import pytest
 
 from ... import jobs
 from ...concurrency import reset_limiters
-from ...config import get_config, reset_config
+from ...config._settings import get_config, reset_config
 from ...job_models import JobState
 from ...registry import get_registry, reset_registry
 from ...server._routes import _service_job_snapshot
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
-    from ...job_manager import JobManager
+    from ...job_manager.manager import JobManager
     from ...qdrant_runtime._supervise import QdrantSupervisor
     from ...service import ServiceRegistry
 

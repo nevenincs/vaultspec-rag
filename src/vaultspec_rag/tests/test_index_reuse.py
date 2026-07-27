@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._store_models import CodeChunk, VaultChunk
-from ..config import reset_config
+from ..config._settings import reset_config
 from ..indexer._donor_candidates import CollectionKind
 from ..indexer._reuse import (
     FALLBACK_ENCODE_SECONDS_PER_CHUNK,
@@ -32,11 +32,12 @@ from ..indexer._reuse import (
     ReuseStats,
     resolve_donor_reuse,
 )
-from ..indexer._streaming import _code_embed_text, encode_and_upsert_code_slice
-from ..store import (
-    DonorPoint,
-    VaultStore,
+from ..indexer._streaming import (
+    CodeSliceRequest,
+    _code_embed_text,
+    encode_and_upsert_code_slice,
 )
+from ..store_runtime import DonorPoint, VaultStore
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -202,11 +203,13 @@ class TestAllHitsAdoptWithoutEncoding:
         # _ExplodingModel raises on any forward, so completing this call IS
         # the zero-encode proof; no interaction bookkeeping can pass vacuously.
         encode_and_upsert_code_slice(
-            fresh,
-            model=_as_model(_ExplodingModel()),
-            store=store,
-            gpu_lock=None,
-            reuse=context,
+            CodeSliceRequest(
+                chunks=fresh,
+                model=_as_model(_ExplodingModel()),
+                store=store,
+                gpu_lock=None,
+                reuse=context,
+            )
         )
 
         stored = store.retrieve_donor_points(
@@ -239,11 +242,13 @@ class TestContentVerification:
         model = _RecordingModel()
 
         encode_and_upsert_code_slice(
-            [changed],
-            model=_as_model(model),
-            store=store,
-            gpu_lock=None,
-            reuse=context,
+            CodeSliceRequest(
+                chunks=[changed],
+                model=_as_model(model),
+                store=store,
+                gpu_lock=None,
+                reuse=context,
+            )
         )
 
         # The specific rejection: the donor stores DIFFERENT bytes under the
@@ -269,11 +274,13 @@ class TestContentVerification:
         model = _RecordingModel()
 
         encode_and_upsert_code_slice(
-            [same],
-            model=_as_model(model),
-            store=store,
-            gpu_lock=None,
-            reuse=context,
+            CodeSliceRequest(
+                chunks=[same],
+                model=_as_model(model),
+                store=store,
+                gpu_lock=None,
+                reuse=context,
+            )
         )
 
         assert context.stats.reuse_hits == 1
@@ -327,11 +334,13 @@ class TestFlagOffBaseline:
             # the overridden donor read is the tripwire proving the baseline
             # path never reaches it.
             encode_and_upsert_code_slice(
-                chunks,
-                model=_as_model(model),
-                store=tripwire,
-                gpu_lock=None,
-                reuse=None,
+                CodeSliceRequest(
+                    chunks=chunks,
+                    model=_as_model(model),
+                    store=tripwire,
+                    gpu_lock=None,
+                    reuse=None,
+                )
             )
 
             assert model.encoded_texts == [_code_embed_text(chunk) for chunk in chunks]
@@ -363,11 +372,13 @@ class TestMixedSliceAlignment:
         model = _RecordingModel()
 
         encode_and_upsert_code_slice(
-            list(chunks),
-            model=_as_model(model),
-            store=store,
-            gpu_lock=None,
-            reuse=context,
+            CodeSliceRequest(
+                chunks=list(chunks),
+                model=_as_model(model),
+                store=store,
+                gpu_lock=None,
+                reuse=context,
+            )
         )
 
         # Only the misses reach the encoder, in their original slice order.
@@ -425,11 +436,13 @@ class TestDonorFailureDegradesToEncode:
             model = _RecordingModel()
 
             encode_and_upsert_code_slice(
-                chunks,
-                model=_as_model(model),
-                store=failing,
-                gpu_lock=None,
-                reuse=context,
+                CodeSliceRequest(
+                    chunks=chunks,
+                    model=_as_model(model),
+                    store=failing,
+                    gpu_lock=None,
+                    reuse=context,
+                )
             )
 
             assert model.encoded_texts == [_code_embed_text(chunk) for chunk in chunks]

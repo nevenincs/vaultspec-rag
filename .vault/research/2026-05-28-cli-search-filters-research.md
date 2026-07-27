@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cli-search-filters'
 date: '2026-05-28'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -58,3 +58,7 @@ non-None values into the payload when `search_type == "code"`. Reject
 filter + non-code search-type combinations on both paths so the contract
 is uniform (today the in-process path also silently ignores them on
 `--type vault`). Add unit tests asserting the new contract.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#gpu-rag-stack'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-03-06-cli-api-audit]]'
   - '[[2026-03-06-cli-mcp-audit]]'
@@ -92,7 +92,7 @@ Auto-generated index of all documents tagged with `#gpu-rag-stack`.
 
 ### adr
 
-- `2026-03-06-gpu-only-rag-stack-adr` - `gpu-rag-stack` adr: `GPU-Only RAG Stack — sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
+- `2026-03-06-gpu-only-rag-stack-adr` - `gpu-rag-stack` adr: `GPU-Only RAG Stack â€” sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
 - `2026-03-07-blake2b-file-hashing-adr` - `gpu-rag-stack` adr: `Use blake2b via file_digest() for file change detection` | (**status:** `accepted`)
 - `2026-03-07-manual-node-walking-adr` - `gpu-rag-stack` adr: `Manual tree-sitter node walking over Query API for metadata extraction` | (**status:** `accepted`)
 - `2026-03-07-mcp-sync-tools-adr` - `gpu-rag-stack` adr: `MCP tools use async def + anyio.to_thread.run_sync` | (**status:** `superseded`)
@@ -164,13 +164,13 @@ Auto-generated index of all documents tagged with `#gpu-rag-stack`.
 
 ### research
 
-- `2026-03-06-codebase-indexer-tech-stack-research` - Research: CodebaseIndexer Tech Stack — 2026 GPU-First
+- `2026-03-06-codebase-indexer-tech-stack-research` - Research: CodebaseIndexer Tech Stack â€” 2026 GPU-First
 - `2026-03-06-gpu-rag-architecture-research` - GPU-Only RAG Architecture: Grounding Report
 - `2026-03-06-gpu-vector-search-deep-dive-research` - GPU Vector Search Deep Dive
-- `2026-03-07-api-verification-research` - API Verification Report — 2026-03-07
-- `2026-03-07-continuous-research` - Continuous Research Loop Findings — 2026-03-07
+- `2026-03-07-api-verification-research` - API Verification Report â€” 2026-03-07
+- `2026-03-07-continuous-research` - Continuous Research Loop Findings â€” 2026-03-07
 - `2026-03-07-libdoc-verification-research` - Library Documentation Verification Audit
 - `2026-03-08-fastmcp-lifespan-research` - FastMCP Lifespan Context Research for Task #25
 - `2026-03-08-qdrant-filter-verification-research` - Qdrant Filter API Correctness Audit
 - `2026-03-08-qdrant-hybrid-search-patterns-research` - Qdrant Hybrid Search Patterns (Verified)
-- `2026-03-09-qwen3-task-prefix-verification-research` - Research Topic 21: Qwen3 Embedding Task Prefixes — Deep Verification
+- `2026-03-09-qwen3-task-prefix-verification-research` - Research Topic 21: Qwen3 Embedding Task Prefixes â€” Deep Verification

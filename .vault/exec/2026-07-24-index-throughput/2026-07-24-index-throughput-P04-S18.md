@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-throughput'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-27'
 step_id: 'S18'
 related:
   - "[[2026-07-24-index-throughput-plan]]"
@@ -27,3 +27,4 @@ related:
 Fresh environments can no longer resolve onto 3.14 and fail at import time; the constraint now lives in metadata where resolvers see it.
 
 ## Notes
+Template evidence: intro_commit=3550d814d30e54ae7fc5b1012b7c11c6b6ab67ae; template_commit=3550d814d30e54ae7fc5b1012b7c11c6b6ab67ae:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

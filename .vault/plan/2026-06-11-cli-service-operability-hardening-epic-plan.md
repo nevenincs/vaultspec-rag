@@ -4,7 +4,7 @@ tags:
   - '#cli-service-operability-hardening'
 date: '2026-06-11'
 tier: L3
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
   - '[[2026-06-11-service-status-convergence-adr]]'
@@ -1148,3 +1148,19 @@ implemented and is checked accordingly.
 
 The per-phase manual-acceptance gate was satisfied by operator review of this
 verification pass.
+
+## Description
+
+Retained-plan evidence: the Purpose, Operating Constraints, and Referenced ADRs sections state this epic plan's scope.
+
+## Steps
+
+Retained-plan evidence: the Wave sections are this epic plan's execution inventory.
+
+## Parallelization
+
+Retained-plan evidence: Initial Execution Order states this epic plan's sequencing.
+
+## Verification
+
+Retained-plan evidence: Epic Done Criteria states this epic plan's verification criteria.

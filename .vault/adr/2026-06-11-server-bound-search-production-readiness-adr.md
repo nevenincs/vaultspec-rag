@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#server-bound-search-production-readiness'
 date: '2026-06-11'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-server-bound-search-production-readiness-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
@@ -74,3 +74,7 @@ will need coordinated changes. The work may expose deeper Qdrant local-mode limi
 - **Rule slug:** `latency-claims-need-phase-attribution`.
   **Rule:** Production-readiness latency work must attribute time to queue, embedding,
   vector search, rerank, and response phases before declaring improvement.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

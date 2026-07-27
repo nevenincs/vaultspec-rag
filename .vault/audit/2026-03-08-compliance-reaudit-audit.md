@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Test Mandate Compliance Re-audit — 2026-03-08 (Post-Task #19, #41, #42)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Audit Scope:** All test files under `src/vaultspec_rag/tests/` after recent feature additions
 **Mandate:** CLAUDE.md testing standards (absolute prohibitions)
@@ -15,7 +20,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Executive Summary
+### Executive Summary
 
 After the addition of three tasks:
 
@@ -35,7 +40,7 @@ After the addition of three tasks:
 
 ______________________________________________________________________
 
-## 1. New Code Coverage Assessment
+### 1. New Code Coverage Assessment
 
 ### Task #19: CLI-as-MCP-client fast path
 
@@ -87,7 +92,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 2. Full Compliance Scan (All 27 Test Files)
+### 2. Full Compliance Scan (All 27 Test Files)
 
 ### Banned Pattern Scan Results
 
@@ -111,7 +116,7 @@ Result: No matches across all 27 test files
 
 ______________________________________________________________________
 
-## 3. Test Markers Verification
+### 3. Test Markers Verification
 
 All 27 test files are properly marked with exactly one marker:
 
@@ -128,7 +133,7 @@ All 27 test files are properly marked with exactly one marker:
 
 ______________________________________________________________________
 
-## 4. Test Gaps Identified
+### 4. Test Gaps Identified
 
 ### Gap #1: CLI Fast-Path (`--port` flag) — MODERATE PRIORITY
 
@@ -186,7 +191,7 @@ def test_chunk_with_splitter_handles_missing_marker():
 
 ______________________________________________________________________
 
-## 5. Live Integration Tests — Verification
+### 5. Live Integration Tests — Verification
 
 All integration tests use real hardware and models:
 
@@ -200,7 +205,7 @@ No fakes, in-memory stores, or synthetic data anywhere.
 
 ______________________________________________________________________
 
-## 6. Audit Methodology
+### 6. Audit Methodology
 
 1. **Banned pattern scan:** Grep for all CLAUDE.md prohibited patterns across 27 test files
 
@@ -225,7 +230,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 7. Compliance Checklist
+### 7. Compliance Checklist
 
 - [x] No mocks, patches, fakes, stubs, monkeypatches
 - [x] No unittest imports
@@ -239,7 +244,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 8. Summary for Orchestrator
+### 8. Summary for Orchestrator
 
 ✅ **FULL COMPLIANCE MAINTAINED:** All 27 test files remain 100% compliant with CLAUDE.md mandates. Tasks #19, #41, #42 introduced no violations (no mocks, patches, or banned patterns).
 
@@ -258,3 +263,7 @@ ______________________________________________________________________
 **Violations Found:** 0
 **Test Gaps Found:** 2 (both moderate/low priority, no mandate violations)
 **Compliance Score:** 100% (mandate adherence)
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

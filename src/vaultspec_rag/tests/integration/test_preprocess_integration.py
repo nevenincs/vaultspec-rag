@@ -28,7 +28,8 @@ from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 import pytest
 
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -99,6 +100,7 @@ class _PreprocProject(TypedDict):
     store: VaultStore
     model: EmbeddingModel
     reranker: CrossEncoder
+    root: Path
 
 
 class _OffHookSetup(NamedTuple):
@@ -164,7 +166,7 @@ def _prepare_off_hook_setup(
 ) -> _OffHookSetup:
     """Index one extracted binary and snapshot the state the kill switch retains."""
     from ... import CodebaseIndexer
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...indexer._preprocess_cache import preprocess_cache_dir
     from ...store_runtime import VaultStore
 
@@ -226,6 +228,7 @@ def _prepare_off_hook_setup(
         before_path_ids,
         before_metadata,
         before_cache,
+        tmp_path,
     )
 
 
@@ -668,7 +671,7 @@ class TestPreprocessEndToEnd:
     ) -> None:
         from ... import CodebaseIndexer
         from ..._job_errors import JobError, JobErrorKind
-        from ...config import get_config
+        from ...config._settings import get_config
         from ...indexer._content_policy import ContentKind
         from ...indexer._file_state import FileStateKind
         from ...indexer._run_ledger_models import (

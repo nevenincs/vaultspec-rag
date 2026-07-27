@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-12-serving-runtime-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"
@@ -161,3 +161,7 @@ Retrieved 2026-06-12:
   no maintained binary-bundling package.
 - In-repo: the serving-runtime research; the store server-mode seam; the CUDA torch
   pinning package; the daemon process helpers; the locked qdrant-client version.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

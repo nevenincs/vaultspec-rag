@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..progress import ProgressReporter
     from ..store_runtime import VaultStore
-    from ._consumer_pipeline import CodePipelineLimits
+    from ._consumer_pipeline import CodePipelineRun
     from ._generation_lifecycle import CodeGenerationLifecycle
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_checkpoint import CodeRunCheckpoint
@@ -55,14 +55,11 @@ class IncrementalPublication(NamedTuple):
 class IncrementalPublicationRequest:
     """Inputs for one supersede-and-stream publication attempt."""
 
-    checkpoint: CodeRunCheckpoint
     hashes: dict[str, str]
     to_index: set[str]
     paths_to_index: list[pathlib.Path]
     attempted_paths: set[str]
-    reporter: ProgressReporter
-    limits: CodePipelineLimits
-    run_control: RunControl = NO_RUN_CONTROL
+    pipeline_run: CodePipelineRun
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,10 +86,7 @@ class PathPublicationRequest:
     paths: list[pathlib.Path]
     attempted_paths: set[str]
     existing_ids: set[str]
-    reporter: ProgressReporter
-    checkpoint: CodeRunCheckpoint
-    limits: CodePipelineLimits
-    run_control: RunControl = NO_RUN_CONTROL
+    pipeline_run: CodePipelineRun
 
 
 class CodeIncrementalCommit:
@@ -103,7 +97,9 @@ class CodeIncrementalCommit:
         store: VaultStore,
         lifecycle: CodeGenerationLifecycle,
         meta_path: pathlib.Path,
-        chunk_and_embed: Callable[..., tuple[set[str], int, dict[str, str]]],
+        chunk_and_embed: Callable[
+            [list[pathlib.Path], CodePipelineRun], tuple[set[str], int, dict[str, str]]
+        ],
         write_meta: Callable[..., None],
     ) -> None:
         """Bind the commit sequence to the storage and metadata it publishes.
@@ -137,29 +133,26 @@ class CodeIncrementalCommit:
         mapping passed here decides what stays addressable. A second copy of
         that scoping rule is the kind that loses points rather than raising.
         """
-        request.run_control.checkpoint()
+        request.pipeline_run.run_control.checkpoint()
         self._lifecycle.drift_owner.supersede_snapshot(
             {rel: request.hashes[rel] for rel in request.to_index}
         )
-        request.run_control.checkpoint()
+        request.pipeline_run.run_control.checkpoint()
         prior_ids_by_path = self._prior_ids_by_path(
-            request.checkpoint, request.attempted_paths
+            request.pipeline_run.checkpoint, request.attempted_paths
         )
         existing_ids: set[str] = (
             set(self._store.get_code_ids_by_paths(request.attempted_paths))
             if request.attempted_paths
             else set()
         )
-        request.run_control.checkpoint()
+        request.pipeline_run.run_control.checkpoint()
         published_ids, published_hashes = self._publish_paths(
             PathPublicationRequest(
                 paths=request.paths_to_index,
                 attempted_paths=request.attempted_paths,
                 existing_ids=existing_ids,
-                reporter=request.reporter,
-                checkpoint=request.checkpoint,
-                limits=request.limits,
-                run_control=request.run_control,
+                pipeline_run=request.pipeline_run,
             )
         )
         return IncrementalPublication(
@@ -177,10 +170,7 @@ class CodeIncrementalCommit:
         try:
             published_ids, _total, published_hashes = self._chunk_and_embed(
                 request.paths,
-                reporter=request.reporter,
-                checkpoint=request.checkpoint,
-                limits=request.limits,
-                run_control=request.run_control,
+                request.pipeline_run,
             )
         except UnsettledCodeConsumerError:
             raise
@@ -189,8 +179,8 @@ class CodeIncrementalCommit:
                 attempted_paths=request.attempted_paths,
                 existing_ids=request.existing_ids,
                 protected_ids=set(
-                    request.checkpoint.ledger.iter_point_ids(
-                        request.checkpoint.generation_id
+                    request.pipeline_run.checkpoint.ledger.iter_point_ids(
+                        request.pipeline_run.checkpoint.generation_id
                     )
                 ),
             )

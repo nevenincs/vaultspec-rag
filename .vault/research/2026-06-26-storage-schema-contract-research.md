@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#storage-schema-contract'
 date: '2026-06-26'
-modified: '2026-07-03'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -191,3 +191,5 @@ ship the contract.
 - **Open question for the ADR**: `dataclass` vs `TypedDict` for the payload definitions
   (hot-path construction cost vs. richer typing), and whether `/service-state` carries the
   bare `schema_version` echo or the descriptor lives on `/readiness` only.
+## Sources
+- The analysis and source locations cited inline in this research record.

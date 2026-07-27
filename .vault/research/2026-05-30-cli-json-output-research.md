@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cli-json-output'
 date: '2026-05-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -134,3 +134,5 @@ Always wrap in `{"ok": bool, "command": str, "data" or "error"/"message"}`. Rati
 - `_display_mcp_error` and `_display_port_unreachable_error`
   gain `json_mode` paths that emit the envelope instead of
   prose.
+## Sources
+- The analysis and source locations cited inline in this research record.

@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-research]]'
@@ -230,3 +230,12 @@ M4 and M5 can run in parallel after M3 completes.
 See the summary above.
 
 ## Steps
+Retained-plan evidence: the milestone and wave sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
+
+## Parallelization
+
+Evidence gap: the retained plan body and manifest provenance state no explicit parallelization policy. No concurrency rule is asserted.
+
+## Verification
+
+Evidence gap: the retained plan body and manifest provenance state no standalone verification criteria. No verification result is asserted.

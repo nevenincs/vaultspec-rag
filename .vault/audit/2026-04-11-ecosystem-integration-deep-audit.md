@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#ecosystem-integration'
 date: '2026-04-11'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'
   - '[[2026-04-06-ecosystem-integration-plan]]'
@@ -100,3 +100,15 @@ RULE-4 | PASS | Synced copy body content identical to source
 - core#51 (CLOSED): `.vaultspec/` tracking mode — merged into #50
 - core#54 (OPEN): `sync all` CLI crash — `resource_labels` missing `mcps`
 - RAG #59 (OPEN): `workspace.py` re-implementation — import core instead
+
+## Scope
+
+Retained audit evidence: 2026-04-06-ecosystem-integration-adr, 2026-04-06-ecosystem-integration-plan, 2026-04-11-ecosystem-integration-review-audit are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+
+## Findings
+
+Retained audit evidence: the detailed review entries in this document constitute the findings inventory.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

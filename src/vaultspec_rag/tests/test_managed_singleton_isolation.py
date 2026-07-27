@@ -34,8 +34,8 @@ from .._test_isolation import (
     register_pytest_singleton_root,
 )
 from ..cli._process import _spawn_service, _terminate_pid
-from ..config import EnvVar
-from ..config import reset_config as reset_rag_config
+from ..config._settings import reset_config as reset_rag_config
+from ..config._types import EnvVar
 from ..qdrant_runtime._resolve import (
     qdrant_identity_path,
     reap_qdrant_orphan,

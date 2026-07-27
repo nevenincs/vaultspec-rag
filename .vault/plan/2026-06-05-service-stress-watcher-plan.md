@@ -6,7 +6,7 @@ tags:
   - '#plan'
   - '#service-stress-watcher'
 date: '2026-06-05'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-05-service-stress-watcher-adr]]'
@@ -22,6 +22,8 @@ This plan implements a robust stress-testing suite and validates the filesystem 
 This plan establishes a new integration test file to verify concurrency handling, database lock safety, and automatic filesystem change detection. It implements real filesystem writes to test the watcher loop and registers concurrent stress tests, conforming to the authorizing ADR.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Wave `W01` - Stress Testing and Watcher Verification Integration
 

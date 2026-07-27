@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S03'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Enrich the synthetic corpus generator with status markers and pipeline-role edges
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/synthetic.py`
-
-## Description
 
 - Added a `status` field to `GeneratedDoc` and a `statuses` map to `CorpusManifest`
   (both additive; the existing public API and fields are unchanged).

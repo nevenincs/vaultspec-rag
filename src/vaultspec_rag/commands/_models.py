@@ -28,7 +28,7 @@ __all__ = [
     "UninstallReport",
 ]
 
-_SYNC_COUNTERS = (
+SYNC_COUNTERS = (
     "added",
     "updated",
     "unchanged",
@@ -40,7 +40,7 @@ _SYNC_COUNTERS = (
 
 def _empty_provider_outcome() -> dict[str, Any]:
     return {
-        **dict.fromkeys(_SYNC_COUNTERS, 0),
+        **dict.fromkeys(SYNC_COUNTERS, 0),
         "errors": [],
         "warnings": [],
         "items": [],
@@ -70,7 +70,7 @@ def _sync_items(value: object) -> list[list[str]]:
 
 
 def _merge_provider_outcome(outcome: dict[str, Any], provider_result: object) -> None:
-    for counter in _SYNC_COUNTERS:
+    for counter in SYNC_COUNTERS:
         value = getattr(provider_result, counter, 0)
         if isinstance(value, int):
             outcome[counter] += value

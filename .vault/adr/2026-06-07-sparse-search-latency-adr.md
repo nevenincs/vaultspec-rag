@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#sparse-search-latency'
 date: '2026-06-07'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-07-sparse-search-latency-research]]"
   - '[[2026-06-09-sparse-search-latency-research]]'
@@ -56,3 +56,7 @@ Pushing metadata filters to Qdrant allows the local engine to dramatically reduc
 
 - **Rule slug:** `zero-business-logic-wrappers`.
   **Rule:** All entry points in CLI and MCP layers must act purely as data mappers and delegates; they must never import internal orchestration or business logic modules directly, but strictly route through the top-level public API.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

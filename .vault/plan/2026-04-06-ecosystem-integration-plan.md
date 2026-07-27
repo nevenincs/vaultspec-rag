@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#ecosystem-integration'
 date: '2026-04-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 revised: 2026-04-11
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'
@@ -112,3 +112,7 @@ for `<vaultspec>` tags in core-generated `CLAUDE.md`.
 - MCP definition file exists at `.vaultspec/rules/mcps/vaultspec-rag.builtin.json`
 - All pre-commit hooks pass
 - Upstream bugs filed: core#54 (sync crash), RAG #59 (workspace.py)
+
+## Parallelization
+
+Evidence gap: the retained plan prose and complete git log --follow history state no explicit parallelization policy. No concurrency rule is asserted.

@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#index-perf-hardening'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-02-index-perf-hardening-adr]]'
@@ -57,6 +57,8 @@ line tracking, stale-purge, and the failure-safe rebuild from the `#68` work) is
 constraint throughout.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

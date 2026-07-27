@@ -6,7 +6,7 @@ tags:
   - '#adr'
   - '#service-stress-watcher'
 date: '2026-06-05'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-05-service-stress-watcher-research]]'
 ---
@@ -51,3 +51,7 @@ Grounded in findings from `2026-06-05-service-stress-watcher-research`, we need 
 
 - **Rule slug:** `watcher-integration-testing`.
   **Rule:** Any auto-indexing or filesystem-watcher feature must carry an integration test that performs physical disk writes and verifies subsequent search retrieval.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

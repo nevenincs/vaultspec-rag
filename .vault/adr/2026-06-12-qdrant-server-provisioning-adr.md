@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-12-qdrant-server-provisioning-research]]"
   - "[[2026-06-12-serving-runtime-research]]"
@@ -135,3 +135,7 @@ inventing a new one.
   **Rule:** Any externally fetched executable must be pinned to a committed version
   and SHA256 constant, verified before extraction and before first execution, with
   checksum mismatch deleting the partial artifact and failing hard.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

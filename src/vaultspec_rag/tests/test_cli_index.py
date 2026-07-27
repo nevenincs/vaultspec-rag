@@ -81,8 +81,8 @@ class TestCleanCommand:
         assert "Aborted!" not in result.output
 
     def test_clean_all_clears_collections_and_metadata(self, tmp_path: Path):
-        from ..config import get_config
-        from ..store import VaultStore
+        from ..config._settings import get_config
+        from ..store_runtime import VaultStore
 
         root = make_workspace(tmp_path)
         cfg = get_config()
@@ -627,7 +627,7 @@ os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(status_dir)
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(storage_dir)
 os.environ.pop("VAULTSPEC_RAG_LOCAL_ONLY", None)
 
-from vaultspec_rag.config import reset_config  # absolute-import-ok
+from vaultspec_rag.config._settings import reset_config  # absolute-import-ok
 
 reset_config()
 

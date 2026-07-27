@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
 
 # Qdrant Filter API Correctness Audit
@@ -197,3 +197,8 @@ ______________________________________________________________________
 **Verified Against:** qdrant-client installed (version unknown)
 **Inspection Method:** Python introspection of `qdrant_client.models` via `inspect` module
 **Test Files:** None (API verification only)
+## Findings
+- The verification results recorded above support the conclusion of this research.
+
+## Sources
+- Evidence cited inline: `src/vaultspec_rag/store.py`.

@@ -24,7 +24,8 @@ from .._machine_lock import machine_lock_live_holder
 from ..cli._service_stop import (  # pyright: ignore[reportPrivateUsage]  # unit under test
     _reclaim_machine_singleton,
 )
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -38,7 +39,7 @@ _HOLDER_SRC = """
 import os, sys, time
 
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = sys.argv[1]
-from vaultspec_rag.config import reset_config  # absolute-import-ok
+from vaultspec_rag.config._settings import reset_config  # absolute-import-ok
 
 reset_config()
 from vaultspec_rag._machine_lock import acquire_machine_lock  # absolute-import-ok

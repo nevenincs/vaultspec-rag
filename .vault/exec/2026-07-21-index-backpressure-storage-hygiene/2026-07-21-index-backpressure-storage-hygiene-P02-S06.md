@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#index-backpressure-storage-hygiene'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 step_id: 'S06'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-plan]]"
 ---
-
 # surface error_kind and stalled through the /jobs route, the server status summary, and /health
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/server/`
-
-## Description
 
 `/jobs` shaping gains `_job_stalled` (running, non-waiting, progress age past
 the shared threshold) exposed as a `stalled` field per record and a `stalled`
@@ -29,3 +28,5 @@ Committed as `feat(server): service-domain stalled flag on /jobs and bounded job
 `TestHealthJobsRollup`.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

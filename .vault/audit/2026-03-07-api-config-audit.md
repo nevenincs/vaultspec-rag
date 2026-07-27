@@ -3,12 +3,17 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 24 Audit -- api.py, config.py
 
-## api.py
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### api.py
 
 ### R24-M1: `get_engine` leaks old Qdrant client when root_dir changes (Major)
 
@@ -91,7 +96,7 @@ Line 164: `graph = VaultGraph(root_dir)` constructs a new graph every time `get_
 
 **File:** `api.py:164`
 
-## config.py
+### config.py
 
 ### R24-M4: `__getattr__` returns `Any` -- no type safety for config values (Major)
 
@@ -143,3 +148,7 @@ Line 24: `"qdrant_dir": ".qdrant"`. If the base config overrides this to somethi
 Lines 46-52: `VaultSpecConfigWrapper.from_environment()` is defined but not used anywhere in the codebase. All callers use `get_config()` instead. This is dead code.
 
 **File:** `config.py:46-52`
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

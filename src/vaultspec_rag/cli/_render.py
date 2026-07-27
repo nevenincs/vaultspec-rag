@@ -24,7 +24,7 @@ from .._operator_commands import (
     server_start_command,
     server_status_command,
 )
-from ..commands._models import _SYNC_COUNTERS
+from ..commands._models import SYNC_COUNTERS
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
@@ -132,7 +132,7 @@ def _emit_json_error_and_exit(
     raise typer.Exit(code=code)
 
 
-def _address_line(port: object) -> str:
+def address_line(port: object) -> str:
     """Return the operator's "Address:" line for a loopback service port.
 
     One template with sixteen callers. Eight of them used to build the string
@@ -144,7 +144,7 @@ def _address_line(port: object) -> str:
 
 def _display_service_not_running(port: int | None = None) -> None:
     if port is not None:
-        _plain(_address_line(port))
+        _plain(address_line(port))
     _plain(SERVICE_NOT_RUNNING_MESSAGE)
 
 
@@ -577,7 +577,7 @@ def _render_sync_summary(added: int, updated: int, removed: int) -> None:
 def _render_provider_outcome(provider: str, outcome: dict[str, object]) -> None:
     parts = [
         f"{label} {outcome[label]}"
-        for label in _SYNC_COUNTERS
+        for label in SYNC_COUNTERS
         if isinstance(outcome.get(label), int) and outcome[label]
     ]
     summary = ", ".join(parts) if parts else "no changes"

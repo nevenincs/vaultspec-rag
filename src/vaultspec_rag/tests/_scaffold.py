@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..config import EnvVar
+    from ..config._types import EnvVar
 
 
 def make_workspace(root: Path) -> Path:

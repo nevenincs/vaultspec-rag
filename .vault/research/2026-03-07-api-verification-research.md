@@ -3,17 +3,20 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
+# API Verification Report â€” 2026-03-07
 
-# API Verification Report — 2026-03-07
+## Findings
+
+### Retained preamble
 
 Verified against live library docs + runtime tests on the actual installed
 packages in this project's venv.
 
 ______________________________________________________________________
 
-## 1. tree-sitter-language-pack
+### 1. tree-sitter-language-pack
 
 **Installed:** tree-sitter-language-pack 0.13.0 (requires tree-sitter >= 0.23)
 **tree-sitter:** 0.25.2
@@ -55,15 +58,15 @@ All verified via runtime test:
 | `node.children`               | `list[Node]`         | OK                                       |
 | `child_by_field_name("name")` | `Node \| None`       | OK                                       |
 
-The indexer uses `node.start_point[0]` (line 295-296) — this works because
+The indexer uses `node.start_point[0]` (line 295-296) â€” this works because
 `Point` is a namedtuple supporting index access. `.row` also works.
 
-The indexer uses `source[node.start_byte:node.end_byte]` (line 290) — this
+The indexer uses `source[node.start_byte:node.end_byte]` (line 290) â€” this
 correctly slices the Python `str` by byte offset. **However**, this is only
 correct when the source is pure ASCII or the byte offsets align with character
 offsets. For UTF-8 source with multi-byte chars, `start_byte`/`end_byte` are
 byte offsets into the `bytes` object, not character offsets into the `str`.
-The indexer passes `source` as a `str` and slices by byte offset — this could
+The indexer passes `source` as a `str` and slices by byte offset â€” this could
 produce wrong text for files with non-ASCII content. **MINOR** issue since most
 source code is ASCII, but worth noting for future hardening.
 
@@ -84,7 +87,7 @@ Runtime test results:
 | `java`       | OK                                                         |
 | `c`          | OK                                                         |
 | `cpp`        | OK                                                         |
-| `c_sharp`    | **FAILED** — `Could not find language library for c_sharp` |
+| `c_sharp`    | **FAILED** â€” `Could not find language library for c_sharp` |
 | `csharp`     | OK                                                         |
 | `ruby`       | OK                                                         |
 | `bash`       | OK                                                         |
@@ -94,18 +97,18 @@ Runtime test results:
 
 This bug exists in two places in `src/vaultspec_rag/indexer.py`:
 
-1. **Line 172:** `".cs": ("csharp", "c_sharp")` — the second element (grammar
+1. **Line 172:** `".cs": ("csharp", "c_sharp")` â€” the second element (grammar
    name) must be `"csharp"`, not `"c_sharp"`.
 1. **Line 218:** `_TOP_LEVEL_NODES` dict uses `"c_sharp"` as the key. This key
    must also be `"csharp"` to match the corrected grammar name.
 
 **Impact:** Any `.cs` file will trigger a `get_parser("c_sharp")` call which
 raises an exception. The `_chunk_with_ast` method catches this and falls back
-to `TextSplitter`, so it doesn't crash — but C# files get no AST chunking.
+to `TextSplitter`, so it doesn't crash â€” but C# files get no AST chunking.
 
 ______________________________________________________________________
 
-## 2. pathspec
+### 2. pathspec
 
 **Installed:** pathspec 1.0.4 (Jan 2026)
 
@@ -113,12 +116,12 @@ ______________________________________________________________________
 
 **VERIFIED OK.** `GitIgnoreSpec` exists. `from_lines()` accepts:
 
-- `from_lines(lines)` — list of pattern strings (most common usage)
-- `from_lines(pattern_factory, lines)` — with explicit factory (not needed)
+- `from_lines(lines)` â€” list of pattern strings (most common usage)
+- `from_lines(pattern_factory, lines)` â€” with explicit factory (not needed)
 
 The `pattern_factory` defaults to `GitIgnoreSpecPattern` for `GitIgnoreSpec`,
 so passing just `lines` is correct. The indexer uses
-`pathspec.GitIgnoreSpec.from_lines(patterns)` at line 759 — **correct**.
+`pathspec.GitIgnoreSpec.from_lines(patterns)` at line 759 â€” **correct**.
 
 ### `spec.match_file(rel_path_string)` -> bool
 
@@ -150,11 +153,11 @@ Runtime test confirmed:
 
 `match_file()` does NOT have a `negate` parameter. Only the plural methods
 (`match_files()`, `match_tree_files()`) support `negate`. The indexer doesn't
-use `negate` — correct.
+use `negate` â€” correct.
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | API Call                                           | Status           | Notes                                     |
 | -------------------------------------------------- | ---------------- | ----------------------------------------- |
@@ -174,5 +177,9 @@ ______________________________________________________________________
 
 1. **CRITICAL:** `indexer.py` line 172: change `"c_sharp"` to `"csharp"`
 1. **CRITICAL:** `indexer.py` line 218: change `"c_sharp"` key to `"csharp"`
-1. **MINOR:** `_collect_chunks` slices `str` by byte offset — works for ASCII
+1. **MINOR:** `_collect_chunks` slices `str` by byte offset â€” works for ASCII
    source but technically incorrect for multi-byte UTF-8. Low priority.
+
+## Sources
+
+No separate sources is recorded in the retained prior research body. Source: retained prior research body.

@@ -19,9 +19,10 @@ from typer.testing import CliRunner
 from ... import jobs, server
 from ...cli import app
 from ...concurrency import limiter_stats, reset_limiters
-from ...config import EnvVar, get_config, reset_config
+from ...config._settings import get_config, reset_config
+from ...config._types import EnvVar
 from ...indexer._vault_prep import prepare_document
-from ...job_manager import JobManager
+from ...job_manager.manager import JobManager
 from ...job_models import (
     DesiredJobState,
     JobInitiator,

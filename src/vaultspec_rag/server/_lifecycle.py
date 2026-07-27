@@ -45,7 +45,8 @@ __all__ = [
 import vaultspec_rag.server as _m
 
 from .._runtime_identity import interpreter_fields
-from ..config import SERVICE_STATUS_FILENAME, managed_status_dir
+from ..config._paths import SERVICE_STATUS_FILENAME
+from ..config._settings import managed_status_dir
 from ..job_models import JobSource
 from ..logging_config import log_event
 from ..serviceclient._discovery import (
@@ -75,7 +76,7 @@ def _resolve_log_path() -> Path:
     Mirrors the parent CLI's ``_log_file()`` resolution so the
     daemon writes to the same file the parent created on spawn.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     status_dir = managed_status_dir()
@@ -517,7 +518,7 @@ def _maintenance_paths() -> tuple[Path, Path, Path] | None:
     operates on exactly the tree the supervised server owns. ``None``
     when the storage dir is not configured (nothing to maintain).
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     raw = getattr(get_config(), "qdrant_storage_dir", None)
     if not raw:
@@ -538,7 +539,7 @@ def _build_reclaim_policy() -> ReclaimPolicy:
     simply never act, so an operator who turns destruction off keeps the
     survey and the non-destructive reconcile.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..storage_reclamation import ReclaimPolicy
 
     cfg = get_config()
@@ -688,7 +689,7 @@ def _storage_maintenance_tick_sync() -> None:
 
     from qdrant_client import QdrantClient
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..storage_reclamation import MaintenanceCycleRequest, run_maintenance_cycle
 
     cfg = get_config()
@@ -783,7 +784,7 @@ def _storage_survey_warm_sync() -> None:
     """
     from qdrant_client import QdrantClient
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..storage_survey_ops import gather_survey, server_storage_collections_dir
 
     cfg = get_config()
@@ -839,7 +840,7 @@ async def _maintenance_loop() -> None:
     sweeps) and no exception may escape - a failed cycle logs and the
     next tick retries.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     while True:
         try:

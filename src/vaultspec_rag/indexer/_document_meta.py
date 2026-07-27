@@ -137,7 +137,7 @@ class DocumentIndexMetadata:
 
 def document_metadata_path(root_dir: Path) -> Path:
     """Return the independently named document sidecar path for one root."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     return root_dir.resolve() / get_config().data_dir / DOCUMENT_META_FILENAME
 

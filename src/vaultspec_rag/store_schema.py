@@ -312,7 +312,7 @@ _DOCUMENT_CHUNK_FIELDS: tuple[str, ...] = tuple(DocumentChunkPayload.__annotatio
 
 def _effective_models() -> dict[str, Any]:
     """Read the effective model identity from config (no model load)."""
-    from .config import get_config
+    from .config._settings import get_config
 
     cfg = get_config()
     return {
@@ -329,7 +329,7 @@ def effective_dense_dim() -> int:
     equals the one the live collection is built with - never the constant under
     a config override.
     """
-    from .config import get_config
+    from .config._settings import get_config
 
     cfg = get_config()
     try:
@@ -363,7 +363,7 @@ def effective_sparse_dim(model: object) -> int:
             ``True`` would otherwise be read as a width of one and produce a
             collection that accepts exactly one sparse term.
     """
-    from .config import get_config
+    from .config._settings import get_config
 
     if not bool(get_config().sparse_enabled):
         return 1

@@ -3,21 +3,36 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-06-gpu-rag-architecture-research]]'
   - '[[2026-03-06-gpu-vector-search-deep-dive-research]]'
 ---
+# `gpu-rag-stack` adr: `GPU-Only RAG Stack â€” sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
 
-# `gpu-rag-stack` adr: `GPU-Only RAG Stack — sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
+## Problem Statement
 
-## Context
+### Context
 
 Supersedes the prior sentence-transformers/torch/lancedb-to-fastembed/ONNX/qdrant-client migration. The previous ADR migrated from sentence-transformers/torch/lancedb to fastembed/ONNX/qdrant-client with a CPU-first design. This created a new problem: **all embedding inference runs on CPU via ONNX Runtime**, which is significantly slower than GPU inference for batch indexing and leaves available GPU hardware idle.
 
 The user mandates GPU-only inference. No CPU fallback. No fastembed. No ONNX.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Rewrite the embedding pipeline for GPU-only inference. Seven decisions follow.
 
@@ -105,6 +120,10 @@ The only schema change: dense vector dimension increases from 768 to 1024.
 | `sparse_model`        | `"Qdrant/bm42-all-minilm-l6-v2-attentions"` | `"naver/splade-v3"`           |
 | `qdrant_dir`          | `".qdrant"`                                 | Unchanged                     |
 | `lance_dir`           | `".lance"`                                  | Removed (LanceDB is gone)     |
+
+## Rationale
+
+No separate rationale is recorded in the retained prior ADR body. Source: retained prior ADR body.
 
 ## Consequences
 

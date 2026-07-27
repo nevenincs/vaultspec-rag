@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
 ---
-
 # CodebaseIndexer Audit — 2026-03-06
 
-## Round 1: Core Implementation
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### Round 1: Core Implementation
 
 Audited files:
 
@@ -93,7 +98,7 @@ The `__exit__` method returns `False` (don't suppress exceptions). The type anno
 
 ______________________________________________________________________
 
-## Round 2: Test Coverage
+### Round 2: Test Coverage
 
 Audited files:
 
@@ -171,7 +176,7 @@ This test creates a `SearchResult` with `score=0.5` and `snippet="Some content a
 
 ______________________________________________________________________
 
-## Round 3: Gap Analysis vs Research & Prior Audit
+### Round 3: Gap Analysis vs Research & Prior Audit
 
 ### Prior Audit Discrepancy
 
@@ -215,7 +220,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Round 4: MCP Server, CLI, and Cross-Cutting Issues
+### Round 4: MCP Server, CLI, and Cross-Cutting Issues
 
 Audited files:
 
@@ -265,7 +270,7 @@ The `status` command imports `torch` even if the user just wants to see the stor
 
 ______________________________________________________________________
 
-## Round 5: Public API, Workspace, and Cross-Module Analysis
+### Round 5: Public API, Workspace, and Cross-Module Analysis
 
 Audited files:
 
@@ -305,7 +310,7 @@ When `VaultGraph(root_dir)` raises an exception, `get_related()` returns `{"doc_
 
 ______________________________________________________________________
 
-## Round 6: pyproject.toml, Dependencies, and Configuration Audit
+### Round 6: pyproject.toml, Dependencies, and Configuration Audit
 
 Audited files:
 
@@ -344,7 +349,7 @@ PEP 561 requires a `py.typed` marker file for type-checker support. The package 
 
 ______________________________________________________________________
 
-## Round 7: Integration Test Quality and Remaining Test Files
+### Round 7: Integration Test Quality and Remaining Test Files
 
 Audited files:
 
@@ -393,7 +398,7 @@ The test asserts `max_score < 0.10` for nonsense queries. But when the CrossEnco
 
 ______________________________________________________________________
 
-## Round 8: ADR Consistency and Documentation Cross-Reference
+### Round 8: ADR Consistency and Documentation Cross-Reference
 
 Audited files:
 
@@ -419,7 +424,7 @@ Quote: "CI/CD must have GPU runners or mock the embedding layer for tests." But 
 
 ______________________________________________________________________
 
-## Round 9: New Code Audit — ASTChunker, pathspec scan, incremental_index
+### Round 9: New Code Audit — ASTChunker, pathspec scan, incremental_index
 
 Audited files (new/rewritten code):
 
@@ -532,7 +537,7 @@ Both `delete_code_chunks()` (store.py:303) and `get_all_code_ids()` (store.py:32
 
 ______________________________________________________________________
 
-## Round 10: Post-Fix Verification and Metadata Propagation Audit
+### Round 10: Post-Fix Verification and Metadata Propagation Audit
 
 Audited files (current versions):
 
@@ -641,7 +646,7 @@ All buffer flush entries have `function_name=None`. If a small function fits ent
 
 ______________________________________________________________________
 
-## Round 11: Task #13 Fix Verification and Test Quality Audit
+### Round 11: Task #13 Fix Verification and Test Quality Audit
 
 Audited files (current versions):
 
@@ -723,7 +728,7 @@ When two chunks from different functions are merged, `prev[4] or chunk[4]` keeps
 
 ______________________________________________________________________
 
-## Round 12: Task #19 Fix Verification and Remaining Byte-Offset Audit
+### Round 12: Task #19 Fix Verification and Remaining Byte-Offset Audit
 
 Audited files (current versions):
 
@@ -794,7 +799,7 @@ Previously flagged as R10-m4. Still created inside `_collect_chunks()` on every 
 
 ______________________________________________________________________
 
-## Round 13: Search Pipeline, MCP Server, and Metadata Filter Gaps
+### Round 13: Search Pipeline, MCP Server, and Metadata Filter Gaps
 
 Audited files:
 
@@ -886,7 +891,7 @@ Previously flagged as R7-M1, T-C1. There are zero integration tests that:
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 ### Issue Totals (19 Rounds)
 
@@ -947,7 +952,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Round 14 — Cross-Module Audit: api.py, config.py, embeddings.py, cli.py, workspace.py, **init**.py
+### Round 14 — Cross-Module Audit: api.py, config.py, embeddings.py, cli.py, workspace.py, **init**.py
 
 **Focus:** Audit remaining modules not yet deeply covered. Look for public API gaps,
 config inconsistencies, embeddings edge cases, CLI bugs, and export mismatches.
@@ -1029,7 +1034,7 @@ but the interaction between two reranking stages is non-obvious.
 
 ______________________________________________________________________
 
-## Round 15 — Test Coverage Audit + Task #18 Verification
+### Round 15 — Test Coverage Audit + Task #18 Verification
 
 **Focus:** Audit all test files for coverage gaps, duplicate tests, missing markers, and
 compliance with CLAUDE.md. Verify Task #18 (incremental codebase indexing in CLI/MCP).
@@ -1105,7 +1110,7 @@ multiple branches (worktree detection, `.gt` container, UNC path stripping) and 
 
 ______________________________________________________________________
 
-## Round 16 — Re-audit indexer.py after coder changes (+666 lines diff)
+### Round 16 — Re-audit indexer.py after coder changes (+666 lines diff)
 
 **Focus:** Re-read indexer.py after significant coder changes. Verify previously flagged
 fixes and identify any new issues or regressions.
@@ -1176,7 +1181,7 @@ Issues confirmed fixed across all rounds:
 
 ______________________________________________________________________
 
-## Round 17 — Deep Audit: embeddings.py, config.py, \_stable_id(), byte offsets
+### Round 17 — Deep Audit: embeddings.py, config.py, \_stable_id(), byte offsets
 
 **Focus:** Deep-dive into embedding pipeline, config validation, `_stable_id()` collision
 math, and exhaustive byte/char offset analysis.
@@ -1294,7 +1299,7 @@ non-empty string for model names) would catch misconfigurations early.
 
 ______________________________________________________________________
 
-## Round 18 — Tag Filter Root Cause Trace, Task #21 Verification, workspace.py, CLI errors
+### Round 18 — Tag Filter Root Cause Trace, Task #21 Verification, workspace.py, CLI errors
 
 **Focus:** End-to-end tag filter trace, verify Task #21 (tautological tests), audit
 workspace.py `.gt` convention, and CLI error message quality.
@@ -1416,7 +1421,7 @@ installed, the user gets a raw `ModuleNotFoundError` traceback instead of a help
 
 ______________________________________________________________________
 
-## Round 19 — MCP Server Tool Schema Audit
+### Round 19 — MCP Server Tool Schema Audit
 
 **Focus:** Verify input/output types, consistency, and correctness of all MCP tool schemas.
 
@@ -1487,7 +1492,7 @@ The workspace module has `_strip_unc()` but it's not used here.
 
 ______________________________________________________________________
 
-## Round 20: Integration Test Suite Deep Audit
+### Round 20: Integration Test Suite Deep Audit
 
 Audited all 7 integration test files, 3 conftest files, 8 unit test files.
 Goal: identify coverage gaps, disguised unit tests, fixture issues, and missing scenarios.
@@ -1626,3 +1631,7 @@ combined results are correctly ranked (known issue R1-M8: different score scales
 | MINOR    | 8     | R20-m1 to R20-m8 |
 
 **Running totals: 3C, 70M, 98m = 171 issues across 20 rounds**
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

@@ -9,7 +9,7 @@ import pathspec
 import pytest
 
 from .._job_errors import JobErrorKind, classify_error_text
-from ..config import ContentRouteConfig, RootContentPolicyConfig
+from ..config._types import ContentRouteConfig, RootContentPolicyConfig
 from ..indexer._content_policy import (
     AdmissionPolicyError,
     AdmissionReason,

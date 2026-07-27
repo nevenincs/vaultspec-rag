@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: Test Infrastructure
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Feature: conftest.py, constants.py, HAS_RAG guards, test fixtures
 
-## 2026-03-06 -- Review (Passes 17-26)
+### 2026-03-06 -- Review (Passes 17-26)
 
 ### HAS_RAG Guards: ALL UPDATED
 
@@ -36,3 +41,7 @@ Files with no guard: test_query, test_search_unit, test_indexer_unit (correct --
 ### bench_rag.py: FIXED (Task #44)
 
 Import path and LanceDB references corrected. Uses `vaultspec_rag` and `.qdrant`.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

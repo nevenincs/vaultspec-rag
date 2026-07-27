@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 34 Audit: Graph Cache Integrity and CrossEncoder Reranker Safety
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-09
 **Auditor:** Claude Code (agent-mode)
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Investigation 1: Watcher → Graph Cache Invalidation Gap
+### Investigation 1: Watcher → Graph Cache Invalidation Gap
 
 **FINDING SEVERITY:** CRITICAL
 
@@ -49,7 +54,7 @@ The watcher bypasses the MCP reindex tools, which are the only places that inval
 
 ______________________________________________________________________
 
-## Investigation 2: CrossEncoder Reranker — No OOM Backoff
+### Investigation 2: CrossEncoder Reranker — No OOM Backoff
 
 **FINDING SEVERITY:** HIGH
 
@@ -122,7 +127,7 @@ reranker has no equivalent fallback.
 
 ______________________________________________________________________
 
-## Investigation 3: Graph Cache Thread Safety
+### Investigation 3: Graph Cache Thread Safety
 
 **FINDING SEVERITY:** MEDIUM
 
@@ -183,7 +188,7 @@ No lock is needed for `_cached_graph` assignment because:
 
 ______________________________________________________________________
 
-## Investigation 4: Watcher Does NOT Invalidate Graph Cache (Deeper Check)
+### Investigation 4: Watcher Does NOT Invalidate Graph Cache (Deeper Check)
 
 **FINDING SEVERITY:** CRITICAL (confirmed)
 
@@ -221,7 +226,7 @@ def _run() -> IndexResponse:
 
 ______________________________________________________________________
 
-## Summary of Findings
+### Summary of Findings
 
 | Investigation                         | Severity | Status           | Issue                                                                                                                       |
 | ------------------------------------- | -------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -231,6 +236,21 @@ ______________________________________________________________________
 | **I4: Watcher invalidation (deeper)** | CRITICAL | **CONFIRMED**    | Reindex tools (mcp_server.py) set_graph_built_at=0.0 after index; watcher path does not                                     |
 
 ______________________________________________________________________
+
+### Affected Code
+
+- **watcher.py**: Lines 118–142 (vault reindex), lines 144–168 (code reindex)
+- **search.py**: Lines 239–251 (\_get_graph), lines 222–237 (\_rerank)
+- **mcp_server.py**: Lines 365 (explicit invalidation), lines 207/255/280 (gpu_sem usage)
+- **config.py**: Lines 18–29 (no reranker_batch_size config)
+
+______________________________________________________________________
+
+### Verification Notes
+
+- All watcher exception handlers are correct (lines 128–142, 154–168): GPU semaphore is released even on exception
+- Engine cache double-check locking in api.py is correct (per MEMORY.md Task #25)
+- SearchResult dataclass is properly defined and validated across MCP serialization
 
 ## Recommendations
 
@@ -271,18 +291,3 @@ Add docstring to `_get_graph()` and `VaultSearcher.__init__()` clarifying:
 - Direct calls to `_get_graph()` should acquire semaphore if concurrent
 
 ______________________________________________________________________
-
-## Affected Code
-
-- **watcher.py**: Lines 118–142 (vault reindex), lines 144–168 (code reindex)
-- **search.py**: Lines 239–251 (\_get_graph), lines 222–237 (\_rerank)
-- **mcp_server.py**: Lines 365 (explicit invalidation), lines 207/255/280 (gpu_sem usage)
-- **config.py**: Lines 18–29 (no reranker_batch_size config)
-
-______________________________________________________________________
-
-## Verification Notes
-
-- All watcher exception handlers are correct (lines 128–142, 154–168): GPU semaphore is released even on exception
-- Engine cache double-check locking in api.py is correct (per MEMORY.md Task #25)
-- SearchResult dataclass is properly defined and validated across MCP serialization

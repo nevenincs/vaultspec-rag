@@ -276,7 +276,7 @@ class TestFilterOnPrefetch:
     def test_hybrid_search_uses_prefetch_filter(self):
         import inspect
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         source = inspect.getsource(VaultStore._build_prefetch)
         # Filter must appear in Prefetch constructor, not as query_filter kwarg
@@ -302,7 +302,7 @@ class TestRerankerModelName:
     """ADR: gpu-only-rag-stack - reranker model must be bge-reranker-v2-m3."""
 
     def test_config_default_reranker_model(self):
-        from ..config import get_config, reset_config
+        from ..config._settings import get_config, reset_config
 
         reset_config()
         cfg = get_config()
@@ -318,7 +318,7 @@ class TestRrfKParameter:
         import inspect
         import linecache
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         linecache.clearcache()
         src = inspect.getsource(VaultStore._execute_hybrid_query)
@@ -331,7 +331,7 @@ class TestRrfKParameter:
         import inspect
         import linecache
 
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         linecache.clearcache()
         src = inspect.getsource(VaultStore._execute_hybrid_query)
@@ -399,17 +399,19 @@ class TestWatcherGraphInvalidation:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_watch_and_reindex_requires_graph_cache(self):
+    def test_watcher_configuration_requires_graph_cache(self):
         import inspect
 
-        from ..watcher import watch_and_reindex
+        from ..watcher_intake import watch_and_reindex
+        from ..watcher_runtime import WatcherConfiguration
 
-        signature = inspect.signature(watch_and_reindex)
-        assert "graph_cache" in signature.parameters, (
-            "watch_and_reindex must accept the project GraphCache so the watcher "
+        configuration_signature = inspect.signature(WatcherConfiguration)
+        assert "graph_cache" in configuration_signature.parameters, (
+            "WatcherConfiguration must carry the project GraphCache so the watcher "
             "can invalidate graph data after vault reindex"
         )
-        assert "searcher" not in signature.parameters, (
+        watcher_signature = inspect.signature(watch_and_reindex)
+        assert "searcher" not in watcher_signature.parameters, (
             "watch_and_reindex must not retain the old private searcher "
             "invalidation path"
         )
@@ -468,7 +470,9 @@ class TestStorageMaintenanceIsLifecycleInert:
 import sys
 
 import vaultspec_rag.storage_manifest  # noqa: F401
-import vaultspec_rag.storage_ops  # noqa: F401
+import vaultspec_rag.storage_reclamation  # noqa: F401
+import vaultspec_rag.storage_reconciliation  # noqa: F401
+import vaultspec_rag.storage_survey_ops  # noqa: F401
 import vaultspec_rag.server._lifecycle  # noqa: F401
 
 loaded = sorted(
@@ -484,7 +488,7 @@ assert not loaded, loaded
     def test_maintenance_sources_never_name_terminate_helpers(self):
         import inspect
 
-        from .. import storage_manifest, storage_ops
+        from .. import storage_manifest, storage_reclamation, storage_survey_ops
         from ..server import _lifecycle
 
         forbidden = (
@@ -493,7 +497,12 @@ assert not loaded, loaded
             "_stop_service_on_port",
             "_terminate_pid",
         )
-        for module in (storage_ops, storage_manifest, _lifecycle):
+        for module in (
+            storage_reclamation,
+            storage_survey_ops,
+            storage_manifest,
+            _lifecycle,
+        ):
             src = inspect.getsource(module)
             hits = [name for name in forbidden if name in src]
             assert not hits, (
@@ -518,7 +527,7 @@ class TestGeometryReconcileIsNonDestructive:
     def test_reconcile_sources_never_name_destructive_helpers(self):
         import inspect
 
-        from .. import storage_ops
+        from .. import storage_reconciliation
 
         forbidden = (
             "delete_collection",
@@ -528,11 +537,11 @@ class TestGeometryReconcileIsNonDestructive:
             "delete_points",
         )
         for fn in (
-            storage_ops.reconcile_collection,
-            storage_ops.reconcile_collections,
-            storage_ops.read_geometry,
-            storage_ops.plan_reconcile,
-            storage_ops._await_convergence,
+            storage_reconciliation.reconcile_collection,
+            storage_reconciliation.reconcile_collections,
+            storage_reconciliation.read_geometry,
+            storage_reconciliation.plan_reconcile,
+            storage_reconciliation.await_convergence,
         ):
             src = inspect.getsource(fn)
             hits = [name for name in forbidden if name in src]
@@ -550,9 +559,9 @@ class TestGeometryReconcileIsNonDestructive:
         """
         import inspect
 
-        from .. import store, store_schema
+        from .. import store_runtime, store_schema
 
-        src = inspect.getsource(store.VaultStore._ensure_collection)
+        src = inspect.getsource(store_runtime.VaultStore._ensure_collection)
         assert "store_schema.SERVER_SEGMENT_NUMBER" in src
         assert "store_schema.SERVER_WAL_CAPACITY_MB" in src
         assert store_schema.SERVER_SEGMENT_NUMBER == 2

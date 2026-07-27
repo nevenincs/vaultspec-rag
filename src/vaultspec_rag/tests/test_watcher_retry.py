@@ -12,12 +12,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
-from ..watcher_control import (
+from ..watcher_durability import (
     _STATE_TRANSACTION_WORKER_SLOTS,
-    _ObservedSource,
-    _admit_watcher_attempt,
-    _persist_observed_sources,
-    _run_durable_retry_transaction,
+    admit_watcher_attempt,
+    persist_observed_sources,
+    run_durable_retry_transaction,
 )
 from ..watcher_retry import (
     WatcherCircuitState,
@@ -27,6 +26,7 @@ from ..watcher_retry import (
     WatcherSource,
     _WatcherRetryOptions,
 )
+from ..watcher_runtime import ObservedSource
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -329,7 +329,7 @@ async def test_cancelled_contended_admission_settles_committed_claim(
         assert ready_path.exists()
 
         admission = asyncio.create_task(
-            _admit_watcher_attempt(
+            admit_watcher_attempt(
                 policy,
                 source=WatcherSource.CODE,
                 root_dir=tmp_path,
@@ -376,7 +376,7 @@ async def test_detached_admission_consumes_its_fenced_handoff(
         assert ready_path.exists()
 
         admission = asyncio.create_task(
-            _admit_watcher_attempt(
+            admit_watcher_attempt(
                 policy,
                 source=WatcherSource.CODE,
                 root_dir=tmp_path,
@@ -458,7 +458,7 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
             acquired_slots += 1
 
         persistence = asyncio.create_task(
-            _run_durable_retry_transaction(
+            run_durable_retry_transaction(
                 policy.mark_convergence_pending,
                 source=WatcherSource.CODE,
                 root_dir=tmp_path,
@@ -557,7 +557,7 @@ async def test_permanent_state_path_error_fails_without_retrying(
     started = asyncio.get_running_loop().time()
 
     with pytest.raises(WatcherRetryStateError, match="prepare failed"):
-        await _run_durable_retry_transaction(
+        await run_durable_retry_transaction(
             lambda: _policy(blocker / "code.json", tmp_path),
             source=WatcherSource.CODE,
             root_dir=tmp_path,
@@ -579,7 +579,7 @@ async def test_permanent_lock_file_error_fails_without_retrying(
     started = asyncio.get_running_loop().time()
 
     with pytest.raises(WatcherRetryStateError, match="lock failed"):
-        await _run_durable_retry_transaction(
+        await run_durable_retry_transaction(
             policy.refresh,
             source=WatcherSource.CODE,
             root_dir=tmp_path,
@@ -719,10 +719,10 @@ async def test_mixed_batch_cancellation_hands_off_both_sources(
         assert code_ready.exists()
 
         persistence = asyncio.create_task(
-            _persist_observed_sources(
+            persist_observed_sources(
                 (
-                    _ObservedSource(True, WatcherSource.VAULT, vault),
-                    _ObservedSource(True, WatcherSource.CODE, code),
+                    ObservedSource(True, WatcherSource.VAULT, vault),
+                    ObservedSource(True, WatcherSource.CODE, code),
                 ),
                 root_dir=tmp_path,
             )
@@ -770,7 +770,7 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
         assert ready_path.exists()
 
         refresh = asyncio.create_task(
-            _run_durable_retry_transaction(
+            run_durable_retry_transaction(
                 policy.refresh,
                 source=WatcherSource.CODE,
                 root_dir=tmp_path,

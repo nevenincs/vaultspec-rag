@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 26 Audit -- Integration Tests Coverage
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Scope: all 9 test files in `src/vaultspec_rag/tests/integration/` plus `integration/conftest.py` and parent `tests/conftest.py` fixtures.
 
-## Happy-Path Coverage Assessment
+### Happy-Path Coverage Assessment
 
 ### 6 Critical Scenarios
 
@@ -23,7 +28,7 @@ Scope: all 9 test files in `src/vaultspec_rag/tests/integration/` plus `integrat
 | Incremental update    | PARTIAL  | `test_indexer_integration.py:31-45`, `test_codebase_integration.py:105-130` | Vault incremental tested but only no-change case. Codebase incremental tests add-file case. Neither tests modify-existing-file or delete-file case |
 | Delete documents      | NO       | (missing)                                                                   | `store.delete_documents` has ZERO tests anywhere. `delete_code_chunks` tested only in `test_store_codebase.py` (unit-level, outside integration/)  |
 
-## Fixture Issues
+### Fixture Issues
 
 ### R26-M1: Session-scoped `rag_components` fixtures never call `store.close()` (Major)
 
@@ -55,7 +60,7 @@ This works but is wasteful and leaves an empty `.qdrant/` directory behind. A cl
 
 **File:** `integration/conftest.py:14-29`
 
-## Coverage Gaps
+### Coverage Gaps
 
 ### R26-M3: No integration test for `store.delete_documents` (Major)
 
@@ -108,7 +113,7 @@ No test removes a source file and verifies that `incremental_index()` correctly 
 
 **File:** Missing from `test_codebase_integration.py`
 
-## Setup/Teardown Issues
+### Setup/Teardown Issues
 
 ### R26-M6: `_vault_snapshot_reset` runs `git checkout` but does not verify success (Major)
 
@@ -128,7 +133,7 @@ No test removes a source file and verifies that `incremental_index()` correctly 
 
 **File:** `test_store_integration.py:66-79`
 
-## Test Quality Issues
+### Test Quality Issues
 
 ### R26-m7: `test_api_integration.py:165-175` tests engine singleton but not engine replacement (Minor)
 
@@ -142,7 +147,7 @@ No test removes a source file and verifies that `incremental_index()` correctly 
 
 **File:** `test_search_integration.py:92-109`
 
-## Summary
+### Summary
 
 | Severity | Count | IDs                   |
 | -------- | ----- | --------------------- |
@@ -156,3 +161,7 @@ No test removes a source file and verifies that `incremental_index()` correctly 
 1. **Fixture teardown** (M1, M6, m5, m6): Session fixtures skip `store.close()`, risking `PermissionError` on Windows. Git checkout runs unchecked.
 1. **Hybrid search undertested** (M5, m2): Store-level hybrid search tested only with dense vector, not true dense+sparse fusion.
 1. **Previously-identified gaps confirmed** (m7, m8): Engine leak test and search_all mixed-source test still missing (cross-ref R25-M6, R25-m8).
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

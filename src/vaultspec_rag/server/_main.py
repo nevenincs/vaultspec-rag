@@ -95,7 +95,7 @@ def _run_http_daemon(port: int) -> None:
     from starlette.applications import Starlette
     from starlette.routing import Route
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..logging_config import configure_logging, install_daemon_log_capture
 
     # Install ordering (CRITICAL): argparse → configure_logging → capture → uvicorn.

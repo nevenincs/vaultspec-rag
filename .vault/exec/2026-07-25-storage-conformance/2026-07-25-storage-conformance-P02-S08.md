@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 step_id: 'S08'
 related:
   - "[[2026-07-25-storage-conformance-plan]]"
@@ -16,6 +16,8 @@ related:
 - `src/vaultspec_rag/store.py`
 
 ## Description
+
+Plan evidence: `2026-07-25-storage-conformance-plan` marks `P02.S08` closed for Refuse a dense width, distance, or vector-name disagreement at the ensure step with a message naming expected and actual.
 
 ## Outcome
 
@@ -34,3 +36,4 @@ rather than caching a fatal - a store that is repaired underneath recovers
 without a reopen.
 
 ## Notes
+Template evidence: intro_commit=1c1b0441e97f7423e71cd4e4fc0e3096126888bb; template_commit=1c1b0441e97f7423e71cd4e4fc0e3096126888bb:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

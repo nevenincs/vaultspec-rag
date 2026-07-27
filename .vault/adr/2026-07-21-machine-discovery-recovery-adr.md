@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 related:
   - "[[2026-07-21-machine-discovery-recovery-research]]"
   - "[[2026-07-21-machine-discovery-recovery-reference]]"
@@ -12,8 +12,8 @@ related:
   - "[[2026-06-24-service-hardware-singleton-adr]]"
   - "[[2026-06-27-rag-broker-affordances-adr]]"
   - "[[2026-06-30-mcp-conformance-adr]]"
+  - '[[2026-07-21-machine-discovery-recovery-s01-test-isolation-audit]]'
 ---
-
 # `machine-discovery-recovery` adr: `owner-authenticated, self-healing service discovery` | (**status:** `accepted`)
 
 ## Problem Statement

@@ -148,7 +148,7 @@ class ReadinessReport:
         no-GPU readiness contract.
         """
         from . import store_schema
-        from .config import get_config
+        from .config._settings import get_config
         from .index_profiles import index_support_profile_status
         from .serviceclient._compat import (
             SERVICE_VERSION_FIELD,
@@ -185,7 +185,7 @@ def compute_readiness() -> ReadinessReport:
         A :class:`ReadinessReport` with one node per known dependency
         (torch, models, qdrant), in that order.
     """
-    from .config import get_config
+    from .config._settings import get_config
 
     cfg = get_config()
     server_mode = bool(cfg.effective_server_mode())
@@ -285,7 +285,7 @@ def _models_readiness() -> DependencyReadiness:
             info={"repos": {}},
         )
 
-    from .config import configured_model_repos
+    from .config._settings import configured_model_repos
 
     repos = [repo for _label, repo in configured_model_repos()]
 

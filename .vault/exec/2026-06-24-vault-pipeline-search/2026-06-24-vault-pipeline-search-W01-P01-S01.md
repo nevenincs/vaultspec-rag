@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S01'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Author the graded-relevance rubric table keyed on intent x doc_type x status
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/quality/rubric.py`
-
-## Description
 
 - Created the `tests/quality` evaluation-support package with a package docstring
   distinguishing it from test modules.

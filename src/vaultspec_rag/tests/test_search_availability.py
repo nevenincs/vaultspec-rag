@@ -10,7 +10,7 @@ import pytest
 from httpx import Headers
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from ..job_manager import JobManager
+from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
     JobMode,

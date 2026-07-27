@@ -3,15 +3,15 @@ tags:
   - '#adr'
   - '#archive-restore-contract'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-07-25-archive-restore-contract-archive-path-reference]]'
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
   - '[[2026-07-25-storage-conformance-adr]]'
   - '[[2026-07-14-storage-namespace-hygiene-adr]]'
   - '[[2026-07-21-storage-prealloc-reclaim-adr]]'
+  - '[[2026-07-27-archive-restore-contract-research]]'
 ---
-
 # `archive-restore-contract` adr: `what a snapshot archive promises and who may read it back` | (**status:** `accepted`)
 
 ## Problem Statement

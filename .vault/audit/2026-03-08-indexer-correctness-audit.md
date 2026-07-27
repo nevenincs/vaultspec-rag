@@ -3,16 +3,21 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Deep Audit: indexer.py Pipeline Correctness
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-08
 **Scope:** Incremental indexing pipeline, deleted file handling, line tracking, doc ID uniqueness, hashing strategy
 **Baseline:** Round 23 audit (2026-03-07-indexer-round23.md), current code state as of commit fcd734e
 
-## Status Summary
+### Status Summary
 
 - **CRITICAL:** 1 new issue
 - **HIGH:** 3 previously-reported issues partially/fully addressed; 2 issues remain active
@@ -22,7 +27,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Critical Issues
+### Critical Issues
 
 ### C1: VaultIndexer.incremental_index — Deleted files not removed from metadata (CRITICAL)
 
@@ -60,7 +65,7 @@ The metadata should record the *union* of current files and previous files (with
 
 ______________________________________________________________________
 
-## High Issues (Previously Reported, Status Update)
+### High Issues (Previously Reported, Status Update)
 
 ### H1: R23-M2 — mtime comparison unreliable on Windows (FIXED)
 
@@ -200,7 +205,7 @@ The tail of the current chunk (up to `chunk_overlap` bytes) is prepended to the 
 
 ______________________________________________________________________
 
-## Medium Issues (Previously Reported, Still Active)
+### Medium Issues (Previously Reported, Still Active)
 
 ### M1: R23-m1 — Nested gitignore pattern scoping is narrower than git (ACTIVE)
 
@@ -331,7 +336,7 @@ if all_new_chunks:
 
 ______________________________________________________________________
 
-## Low Issues (Previously Reported, Still Active)
+### Low Issues (Previously Reported, Still Active)
 
 ### L1: R23-m5 — Symlink loops in os.walk (ACTIVE)
 
@@ -371,7 +376,7 @@ Default `ThreadPoolExecutor()` without `max_workers` creates up to 20 threads on
 
 ______________________________________________________________________
 
-## Summary Table
+### Summary Table
 
 | Issue ID | Category      | Severity | Status | File       | Lines          |
 | -------- | ------------- | -------- | ------ | ---------- | -------------- |
@@ -391,7 +396,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Actionable Fixes (Priority Order)
+### Actionable Fixes (Priority Order)
 
 ### 1. CRITICAL: Fix metadata handling for deleted documents (C1)
 
@@ -471,8 +476,12 @@ if files_to_remove:
 
 ______________________________________________________________________
 
-## Conclusion
+### Conclusion
 
 The incremental indexing pipeline has **1 critical correctness issue** (deleted metadata) and **2 high issues** (line tracking, overlap duplication) that affect result accuracy. Three previously-reported major issues are now fixed (mtime→blake2b, stem→path, rglob→os.walk).
 
 The codebase is largely correct for the happy path (new/modified documents) but has edge-case issues with deleted documents and overlapping chunks. Recommend addressing C1 immediately before further vault modifications.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

@@ -39,15 +39,15 @@ from ._jobs_tui_status import (
     ServiceStatusHeader,
     fetch_service_status,
 )
-from ._service_jobs import (
-    _human_progress,
-    _job_is_waiting,
-    _operation_label,
+from ._service_jobs_presentation import (
     _phase_label,
-    _project_label,
     _project_root,
-    _stale_progress_label,
+    human_progress,
+    operation_label,
+    project_label,
+    stale_progress_label,
 )
+from ._service_jobs_query import job_is_waiting
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -264,8 +264,8 @@ def _row_animates(job: dict[str, object]) -> bool:
     """
     return (
         str(job.get("phase", "")) == "running"
-        and not _job_is_waiting(job)
-        and not _stale_progress_label(job)
+        and not job_is_waiting(job)
+        and not stale_progress_label(job)
     )
 
 
@@ -373,7 +373,7 @@ def _job_cell(job: dict[str, object], cells: int) -> Text:
     if isinstance(initiator, dict):
         kind = str(cast("dict[str, object]", initiator).get("kind") or "")
     subtitle = f"{_short_id(job)} · {kind}" if kind else _short_id(job)
-    return _two_line(_operation_label(job), subtitle, cells, top_style="bold")
+    return _two_line(operation_label(job), subtitle, cells, top_style="bold")
 
 
 def _elide_left(value: str, cells: int) -> str:
@@ -393,13 +393,13 @@ def _path_cell(job: dict[str, object], cells: int) -> Text:
     """Render the project and its root, tail-first when the root is long."""
     root = _project_root(job)
     shown = _elide_left(root, cells) if root else "path not reported"
-    return _two_line(_project_label(job), shown, cells)
+    return _two_line(project_label(job), shown, cells)
 
 
 def _progress_cell(job: dict[str, object], cells: int, bar_cells: int) -> Text:
     """Render the progress cell, sizing the bar to the column it lands in."""
-    detail = _human_progress(job) or "—"
-    stale = _stale_progress_label(job)
+    detail = human_progress(job) or "—"
+    stale = stale_progress_label(job)
     if stale:
         return _two_line(detail, stale, cells, bottom_style="bold red")
     progress = job.get("progress")

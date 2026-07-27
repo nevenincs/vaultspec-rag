@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#index-gpu-pipeline'
 date: '2026-06-02'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related:
   - "[[2026-06-02-index-gpu-pipeline-research]]"
   - "[[2026-06-02-index-perf-hardening-adr]]"
@@ -118,3 +118,7 @@ thread is a pure forward-pass loop amenable to further batching work.
   parallelise compute on the single device (they serialise on the SMs and the GIL), and
   never run the encode inline on the pool-draining thread (it idles the GPU during
   bookkeeping).
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

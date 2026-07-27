@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-26'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -13,9 +13,6 @@ related:
   - '[[2026-07-21-service-job-control-plan]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-plan]]'
 ---
-
-<!-- RETIRED: S04 -->
-
 # `large-index-resilience` plan
 
 ## Description
@@ -36,7 +33,7 @@ service and its Qdrant child remain untouched until that gate is explicitly sati
 
 ## Steps
 
-## Wave `W01` - safety gates and bounded execution
+### Wave `W01` - safety gates and bounded execution
 
 Add enforceable resource, retry, and streaming limits first; downstream resume work depends on these bounds, and the large-root daemon must not restart after only this wave.
 
@@ -86,7 +83,7 @@ Prove low ceilings, bounded queue shutdown, and circuit behavior through product
 - [x] `W01.P04.S18` - Verify low RSS and CUDA ceilings stop production with typed outcomes and bounded cleanup; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 - [x] `W01.P04.S19` - Verify a blocked store consumer cannot trap producer queue waits or hold the writer lock beyond the deadline; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 
-## Wave `W02` - durable checkpoint and recovery
+### Wave `W02` - durable checkpoint and recovery
 
 Persist storage-confirmed generations and integrate resumable full and incremental finalization; completion of this wave is the minimum gate before any large-root restart.
 
@@ -122,7 +119,7 @@ Interrupt real work and prove one-unit replay, exact final state, and safe signa
 - [x] `W02.P08.S30` - Invalidate incompatible checkpoints on model, schema, content, membership, preprocessing, and configuration drift; `src/vaultspec_rag/tests/test_config_epoch.py`.
 - [x] `W02.P08.S31` - Interrupt each finalization phase and prove restart converges to exact point IDs and metadata; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 
-## Wave `W03` - service operability and control integration
+### Wave `W03` - service operability and control integration
 
 Expose checkpoint and safety state through the service domain and coordinate the accepted job-control plan against the completed ledger contract.
 
@@ -149,7 +146,7 @@ Prove jobs, health, status, and logs expose the same resilience state and remedi
 
 - [x] `W03.P11.S39` - Verify controlled, interrupted, memory-limited, timed-out, and circuit-open jobs converge on one operator snapshot; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
 
-## Wave `W04` - support profiles and corpus acceptance
+### Wave `W04` - support profiles and corpus acceptance
 
 Define honest backend and hardware admission and prove the accepted incident corpus on the declared managed-service profile.
 
@@ -171,7 +168,7 @@ Measure bounded growth, concurrent search headroom, and completion at the incide
 - [x] `W04.P13.S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 - [x] `W04.P13.S47` - Complete the 250872-chunk incident floor on the declared default managed-service profile; `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`.
 
-## Wave `W05` - system verification and review
+### Wave `W05` - system verification and review
 
 Run the complete resilience, concurrency, restart, and operability verification matrix and close with mandatory code review.
 

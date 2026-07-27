@@ -9,7 +9,7 @@ import pytest
 from ... import store_schema
 from ..._store_models import root_collection_prefix
 from ...cli._service_storage import _migrate_name_map
-from ...server._routes_storage import _SurveyPayloadRequest, _shape_survey_payload
+from ...server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
 from ...storage_manifest import record_root
 from ...storage_migration import migrate_collections
 from ...storage_survey_ops import debris_surveys, gather_survey, prune_orphaned

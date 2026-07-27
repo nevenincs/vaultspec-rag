@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-cuda-shared-device'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-27'
 step_id: 'S03'
 related:
   - "[[2026-07-24-index-cuda-shared-device-plan]]"
@@ -25,3 +25,4 @@ related:
 Code-path budget builder samples free post-flush and derives the absolute ceiling from the same resident baseline enforcement nets out.
 
 ## Notes
+Template evidence: intro_commit=58d6eb6527001b03b92a32cbb22c8cb999d28007; template_commit=58d6eb6527001b03b92a32cbb22c8cb999d28007:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

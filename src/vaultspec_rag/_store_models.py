@@ -1,6 +1,6 @@
 """Point schemas and payload builders for the Qdrant vault store.
 
-Split out of ``store.py`` to keep the store module focused on collection and
+Split out of ``store_runtime.py`` to keep the store runtime focused on collection and
 point operations. These dataclasses and typed payload builders are the shape
 contract between the indexer and the on-disk points; they stay light
 (stdlib + ``store_schema`` + the pure ``_domain`` classifier, no qdrant or
@@ -428,7 +428,7 @@ SERVED_CODE_POINTER_FILE = "code_served_collection.json"
 
 def served_code_pointer_path(root_dir: pathlib.Path | str) -> pathlib.Path:
     """Return the path of *root_dir*'s served-collection pointer."""
-    from .config import get_config
+    from .config._settings import get_config
 
     cfg = get_config()
     return pathlib.Path(root_dir) / cfg.data_dir / SERVED_CODE_POINTER_FILE

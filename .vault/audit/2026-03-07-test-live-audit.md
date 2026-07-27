@@ -3,16 +3,21 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Comprehensive Test Suite Audit
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-07
 **Auditor:** docs-researcher-2-2
 **Scope:** All 24 test files in `src/vaultspec_rag/tests/`
 
-## Files Audited
+### Files Audited
 
 | #   | File                                       | Lines | Tests | Marker             |
 | --- | ------------------------------------------ | ----- | ----- | ------------------ |
@@ -43,7 +48,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## 1. Tautological Tests
+### 1. Tautological Tests
 
 ### MEDIUM: `test_store.py:130-145` — `TestPackageExports` tests only assert `is not None` or `callable()`
 
@@ -90,7 +95,7 @@ def test_is_dataclass(self):
 
 ______________________________________________________________________
 
-## 2. Mocks / Patches / Stubs / Fakes
+### 2. Mocks / Patches / Stubs / Fakes
 
 ### CLEAR: No violations found
 
@@ -100,7 +105,7 @@ No files contain `unittest.mock`, `MagicMock`, `@patch`, `monkeypatch`, `mocker`
 
 ______________________________________________________________________
 
-## 3. Skips
+### 3. Skips
 
 ### CLEAR: No violations found
 
@@ -108,7 +113,7 @@ No files contain `pytest.skip`, `@pytest.mark.skip`, `skipif`, `skipUnless`, or 
 
 ______________________________________________________________________
 
-## 4. Marker Violations
+### 4. Marker Violations
 
 ### MEDIUM: `benchmarks/bench_rag.py:35-152` — Tests use `@pytest.mark.performance` but also accept parameters and return dicts
 
@@ -125,7 +130,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 5. Missing Integration Coverage
+### 5. Missing Integration Coverage
 
 ### HIGH: No test for `vaultspec-rag index --type code` CLI command
 
@@ -164,7 +169,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 6. Missing CLI Coverage
+### 6. Missing CLI Coverage
 
 ### Covered (integration/test_cli_integration.py)
 
@@ -191,7 +196,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 7. Other Issues
+### 7. Other Issues
 
 ### MEDIUM: `benchmarks/bench_rag.py:234-237` — `main()` cleanup doesn't call `store.close()` before `shutil.rmtree()`
 
@@ -225,7 +230,7 @@ def require_gpu_corpus(rag_components):
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | Category                     | HIGH  | MEDIUM | LOW    | CLEAR       |
 | ---------------------------- | ----- | ------ | ------ | ----------- |
@@ -246,3 +251,7 @@ ______________________________________________________________________
 1. **MEDIUM:** Fix `bench_rag.py` `main()` to call `store.close()` before cleanup
 1. **MEDIUM:** Delete or replace tautological `TestPackageExports` tests
 1. **MEDIUM:** Fix benchmark dual-use design (return values, non-fixture params)
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

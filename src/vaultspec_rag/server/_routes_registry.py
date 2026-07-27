@@ -64,7 +64,7 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     if denied is not None:
         return denied
     project_root = request.query_params.get("project_root")
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     with _m._watcher_lock:
@@ -100,7 +100,7 @@ async def start_watcher_route(request: Request) -> JSONResponse:
     root = payload.get("root")
     from pathlib import Path
 
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     target = Path(root).resolve()
@@ -147,7 +147,7 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
     cooldown_s = payload.get("cooldown_s")
     from pathlib import Path
 
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     target = Path(root).resolve()

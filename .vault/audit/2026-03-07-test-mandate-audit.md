@@ -3,9 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Test Mandate Compliance Audit — 2026-03-07
 
 ## Scope
@@ -19,7 +18,9 @@ Exhaustive review of all test files against CLAUDE.md testing mandates:
 1. No synthetic embeddings
 1. Every test must have exactly one marker
 
-## Banned Pattern Scan
+## Findings
+
+### Banned Pattern Scan
 
 Grep for: `unittest`, `MagicMock`, `@patch`, `monkeypatch`, `pytest.skip`, `Mock(`, `responses`, `httpretty`, `pytest.mark.skip`, `[0.1]*`, `np.zeros`, `np.ones`, `torch.rand`, `fake`, `synthetic`, `dummy`
 
@@ -27,7 +28,7 @@ Grep for: `unittest`, `MagicMock`, `@patch`, `monkeypatch`, `pytest.skip`, `Mock
 
 ______________________________________________________________________
 
-## Violations Found
+### Violations Found
 
 ### V1: TAUTOLOGICAL — `inspect.getsource` structural assertions
 
@@ -98,7 +99,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Clean Files (no violations)
+### Clean Files (no violations)
 
 All other test files pass the mandate audit:
 
@@ -121,7 +122,7 @@ All other test files pass the mandate audit:
 - `src/vaultspec_rag/tests/integration/test_api_integration.py` — clean
 - `src/vaultspec_rag/tests/integration/test_codebase_integration.py` — clean
 
-## Summary
+### Summary
 
 | Category                               | Count                                            | Severity                  |
 | -------------------------------------- | ------------------------------------------------ | ------------------------- |
@@ -132,3 +133,7 @@ All other test files pass the mandate audit:
 | Undefined marker (`benchmark`)         | 5                                                | LOW — register or replace |
 
 **Overall:** The test suite is largely compliant. The mock/skip/unittest purge (Tasks #54, #55, #60, #61) and synthetic vector fix (Task #64) were effective. Remaining violations are 2 tautological `inspect.getsource` tests and marker hygiene issues.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

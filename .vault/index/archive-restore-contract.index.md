@@ -3,12 +3,13 @@ generated: true
 tags:
   - '#index'
   - '#archive-restore-contract'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-07-25-archive-restore-contract-adr]]'
   - '[[2026-07-25-archive-restore-contract-archive-path-reference]]'
   - '[[2026-07-25-archive-restore-contract-plan]]'
+  - '[[2026-07-27-archive-restore-contract-research]]'
 ---
 
 # `archive-restore-contract` feature index
@@ -28,3 +29,7 @@ Auto-generated index of all documents tagged with `#archive-restore-contract`.
 ### reference
 
 - `2026-07-25-archive-restore-contract-archive-path-reference` - `archive-restore-contract` reference: `what the archive path writes, keeps, and offers a reader today`
+
+### research
+
+- `2026-07-27-archive-restore-contract-research` - `archive-restore-contract` research: `Archive restore evidence`

@@ -18,17 +18,13 @@ import pytest
 
 from ..._store_models import root_collection_prefix
 from ..._sync_vocabulary import ProvisionAction
-from ...config import reset_config
+from ...config._settings import reset_config
 from ...qdrant_runtime._provision import provision
 from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
 from ...storage_manifest import record_root
-from ...storage_ops import (
-    delete_prefix,
-    gather_survey,
-    migrate_collections,
-    prune_orphaned,
-)
+from ...storage_migration import migrate_collections
+from ...storage_survey_ops import delete_prefix, gather_survey, prune_orphaned
 from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
@@ -217,9 +213,10 @@ def test_ensure_table_records_manifest_and_survey_shows_live(
     from qdrant_client import QdrantClient
 
     from ..._store_models import root_collection_prefix
-    from ...config import EnvVar, reset_config
+    from ...config._settings import reset_config
+    from ...config._types import EnvVar
     from ...storage_manifest import load_manifest
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
     root = tmp_path / "live-project"
     root.mkdir()
@@ -523,7 +520,7 @@ def test_reconcile_reclaims_bytes_and_preserves_data(
     """The whole value proposition, proven against the real optimizer."""
     from qdrant_client import QdrantClient
 
-    from ...storage_ops import reconcile_collections
+    from ...storage_reconciliation import reconcile_collections
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
@@ -565,7 +562,7 @@ def test_reconcile_is_idempotent_on_a_converged_backend(
     """A converged backend selects nothing, so the cycle stops doing work."""
     from qdrant_client import QdrantClient
 
-    from ...storage_ops import reconcile_collections
+    from ...storage_reconciliation import reconcile_collections
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
@@ -606,7 +603,7 @@ def test_unwaited_reconcile_never_reports_a_reclaim_figure(
 
     from qdrant_client import QdrantClient
 
-    from ...storage_ops import reconcile_collections
+    from ...storage_reconciliation import reconcile_collections
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
@@ -648,7 +645,7 @@ def test_unwaited_reconcile_never_reports_a_reclaim_figure(
 def test_reconcile_dry_run_changes_nothing(ops_qdrant: QdrantSupervisor) -> None:
     from qdrant_client import QdrantClient
 
-    from ...storage_ops import read_geometry, reconcile_collections
+    from ...storage_reconciliation import read_geometry, reconcile_collections
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
@@ -675,7 +672,7 @@ def test_reconcile_cap_defers_remaining_collections(
 ) -> None:
     from qdrant_client import QdrantClient
 
-    from ...storage_ops import reconcile_collections
+    from ...storage_reconciliation import reconcile_collections
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
@@ -713,7 +710,7 @@ def test_archive_manifest_carries_identity_from_the_real_manifest(
     from qdrant_client import QdrantClient
 
     from ...storage_manifest import record_collection_identity, snapshot_manifest_path
-    from ...storage_ops import archive_prefix
+    from ...storage_reclamation import archive_prefix
     from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
     client = QdrantClient(url=ops_qdrant.url)
@@ -760,6 +757,8 @@ def test_archive_manifest_carries_identity_from_the_real_manifest(
         assert entry["identity"]["sparse_model"] is None
     finally:
         client.close()
+
+
 @pytest.mark.usefixtures("isolated_status_dir")
 def test_archive_rejects_a_real_write_after_its_first_snapshot(
     ops_qdrant: QdrantSupervisor,
@@ -837,8 +836,6 @@ def test_archive_rejects_a_real_write_after_its_first_snapshot(
     assert write_landed.is_set()
 
 
-
-
 @pytest.mark.usefixtures("isolated_status_dir")
 def test_completed_archive_rejects_a_missing_real_snapshot(
     ops_qdrant: QdrantSupervisor,
@@ -898,7 +895,7 @@ def test_real_migrate_then_carry_stamps_the_remapped_target(
     from qdrant_client import QdrantClient
 
     from ...storage_identity import load_identity, record_identity
-    from ...storage_ops import carry_migrated_identity
+    from ...storage_migration import carry_migrated_identity
     from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
     client = QdrantClient(url=ops_qdrant.url)

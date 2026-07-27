@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#async-service-index'
 date: '2026-06-04'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -35,3 +35,7 @@ This research covers the implementation of asynchronous index/reindex tool execu
   - Enforce a strict connection and read timeout on HTTP client requests in `_try_mcp_search` (e.g., using `httpx` timeouts or a custom async timeout).
   - Surface `local_store_locked` errors in the CLI search command with a clear, typed diagnostic advising the user to check/start the resident service on the designated port.
   - Ensure background job progress and service lifecycle checks return cleanly rather than hanging.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

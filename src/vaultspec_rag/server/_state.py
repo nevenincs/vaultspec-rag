@@ -32,7 +32,7 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..config import SERVICE_STATUS_FILENAME
+from ..config._paths import SERVICE_STATUS_FILENAME
 
 __all__ = [
     "_HEARTBEAT_INTERVAL_SECONDS",

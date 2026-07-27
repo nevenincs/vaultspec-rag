@@ -1,6 +1,6 @@
 """Unit tests for watcher code-change classification.
 
-``_is_code_change`` rejects vault-contained and out-of-root paths, treats the
+``is_code_change`` rejects vault-contained and out-of-root paths, treats the
 three index-shaping control filenames as reconciliation triggers, and otherwise
 fails closed without a ``ResolvedIndexPolicy`` snapshot. With a snapshot, only
 an admitted classification whose content kind is ``CODE`` is code-owned. Each
@@ -30,7 +30,7 @@ from ..indexer._resolved_policy import (
     ResolvedIndexPolicy,
     resolve_index_policy,
 )
-from ..watcher_policy import _is_code_change, _is_vault_change
+from ..watcher_policy import is_code_change, is_vault_change
 
 pytestmark = [pytest.mark.unit]
 
@@ -57,13 +57,13 @@ def code_policy(project: tuple[Path, Path]) -> ResolvedIndexPolicy:
 def test_root_control_files_are_admitted(project: tuple[Path, Path]) -> None:
     root, vault = project
     for name in (".gitignore", ".vaultragignore", ".vaultragpreprocess.toml"):
-        assert _is_code_change(root / name, root, vault, None) is True
+        assert is_code_change(root / name, root, vault, None) is True
 
 
 def test_nested_gitignore_is_admitted(project: tuple[Path, Path]) -> None:
     root, vault = project
     assert (
-        _is_code_change(root / "pkg" / "sub" / ".gitignore", root, vault, None) is True
+        is_code_change(root / "pkg" / "sub" / ".gitignore", root, vault, None) is True
     )
 
 
@@ -72,10 +72,8 @@ def test_markdown_outside_vault_is_not_conventional_code(
     code_policy: ResolvedIndexPolicy,
 ) -> None:
     root, vault = project
-    assert _is_code_change(root / "README.md", root, vault, code_policy) is False
-    assert (
-        _is_code_change(root / "docs" / "guide.md", root, vault, code_policy) is False
-    )
+    assert is_code_change(root / "README.md", root, vault, code_policy) is False
+    assert is_code_change(root / "docs" / "guide.md", root, vault, code_policy) is False
 
 
 def test_markdown_inside_vault_stays_vault_classified(
@@ -83,8 +81,8 @@ def test_markdown_inside_vault_stays_vault_classified(
 ) -> None:
     root, vault = project
     doc = vault / "adr" / "2026-01-01-x-adr.md"
-    assert _is_vault_change(doc, vault) is True
-    assert _is_code_change(doc, root, vault, None) is False
+    assert is_vault_change(doc, vault) is True
+    assert is_code_change(doc, root, vault, None) is False
 
 
 def test_path_outside_root_is_rejected(
@@ -92,10 +90,10 @@ def test_path_outside_root_is_rejected(
 ) -> None:
     root, vault = project
     assert (
-        _is_code_change(tmp_path / "elsewhere" / ".gitignore", root, vault, None)
+        is_code_change(tmp_path / "elsewhere" / ".gitignore", root, vault, None)
         is False
     )
-    assert _is_code_change(tmp_path / "elsewhere" / "a.py", root, vault, None) is False
+    assert is_code_change(tmp_path / "elsewhere" / "a.py", root, vault, None) is False
 
 
 def test_unrelated_extension_still_rejected(
@@ -103,7 +101,7 @@ def test_unrelated_extension_still_rejected(
     code_policy: ResolvedIndexPolicy,
 ) -> None:
     root, vault = project
-    assert _is_code_change(root / "photo.jpg", root, vault, code_policy) is False
+    assert is_code_change(root / "photo.jpg", root, vault, code_policy) is False
 
 
 def test_watcher_uses_every_conventional_source_extension(
@@ -113,7 +111,7 @@ def test_watcher_uses_every_conventional_source_extension(
     root, vault = project
     for extension in CONVENTIONAL_SOURCE_EXTENSIONS:
         assert (
-            _is_code_change(root / f"source{extension}", root, vault, code_policy)
+            is_code_change(root / f"source{extension}", root, vault, code_policy)
             is True
         )
 
@@ -123,10 +121,10 @@ def test_watcher_normalizes_suffix_case(
     code_policy: ResolvedIndexPolicy,
 ) -> None:
     root, vault = project
-    assert _is_code_change(root / "MODULE.PY", root, vault, code_policy) is True
-    assert _is_code_change(root / "CONFIG.JSON", root, vault, code_policy) is False
-    assert _is_code_change(root / "README.MD", root, vault, code_policy) is False
-    assert _is_vault_change(vault / "DECISION.MD", vault) is True
+    assert is_code_change(root / "MODULE.PY", root, vault, code_policy) is True
+    assert is_code_change(root / "CONFIG.JSON", root, vault, code_policy) is False
+    assert is_code_change(root / "README.MD", root, vault, code_policy) is False
+    assert is_vault_change(vault / "DECISION.MD", vault) is True
 
 
 def test_watcher_rejects_extensions_absent_from_indexer(
@@ -137,7 +135,7 @@ def test_watcher_rejects_extensions_absent_from_indexer(
     for extension in (".lua", ".swift", ".zig"):
         assert extension not in CONVENTIONAL_SOURCE_EXTENSIONS
         assert (
-            _is_code_change(root / f"source{extension}", root, vault, code_policy)
+            is_code_change(root / f"source{extension}", root, vault, code_policy)
             is False
         )
 
@@ -172,5 +170,5 @@ def test_explicit_code_target_admits_unconventional_source(
     )
 
     watched_pdf = root / "docs" / "report.pdf"
-    assert _is_code_change(watched_pdf, root, vault, policy) is True
-    assert _is_code_change(watched_pdf, root, vault, None) is False
+    assert is_code_change(watched_pdf, root, vault, policy) is True
+    assert is_code_change(watched_pdf, root, vault, None) is False

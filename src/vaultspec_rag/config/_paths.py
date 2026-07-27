@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from .._atomic_write import write_json_atomically
-from ._types import EnvVar
+from ._types import STATUS_DIR_DEFAULT, EnvVar
 
 logger = logging.getLogger(__name__)
 # Name of the persisted local-only marker inside the managed service
@@ -20,12 +20,6 @@ logger = logging.getLogger(__name__)
 # test-isolatable home for runtime selections - never the project tree, so
 # the pure-Python wheel and the repository stay untouched.
 _LOCAL_ONLY_MARKER_FILENAME = "local-only.json"
-
-# Default managed service directory. Kept in lock-step with the
-# ``status_dir`` entry in ``_RAG_DEFAULTS`` below (asserted at import) so
-# the persistence helpers resolve the same directory the config does
-# without importing the class they feed.
-_STATUS_DIR_DEFAULT = "~/.vaultspec-rag"
 
 #: Name of the service discovery file, in the managed status directory and
 #: beside the machine lock. It is one fact with several readers - the client
@@ -45,7 +39,7 @@ def _status_dir_path() -> Path:
     the env directly (rather than via the cached config) keeps the
     persistence layer free of the config singleton it feeds.
     """
-    raw = os.environ.get(EnvVar.STATUS_DIR.value) or _STATUS_DIR_DEFAULT
+    raw = os.environ.get(EnvVar.STATUS_DIR.value) or STATUS_DIR_DEFAULT
     return Path(raw).expanduser()
 
 

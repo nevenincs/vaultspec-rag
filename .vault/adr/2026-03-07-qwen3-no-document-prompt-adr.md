@@ -3,22 +3,37 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
   - '[[2026-03-09-qwen3-task-prefix-verification-research]]'
 ---
-
 # `gpu-rag-stack` adr: `Qwen3-Embedding encodes documents without prompt, queries with prompt_name="query"` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 Qwen/Qwen3-Embedding-0.6B supports asymmetric retrieval with different
 encoding for queries vs documents. The model ships with predefined prompts
 in `model.prompts`. Incorrect prompt usage can degrade retrieval performance
 by 1-5% (per the Qwen3 model card).
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 - **Queries**: `model.encode(texts, prompt_name="query")` -- prepends the
   built-in instruction prefix.

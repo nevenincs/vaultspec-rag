@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#search-freshness-and-empty-results'
 date: '2026-06-11'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-search-freshness-and-empty-results-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
@@ -73,3 +73,7 @@ stale, fresh-but-empty, and target-mismatch cases.
 - **Rule slug:** `empty-agent-responses-include-state`.
   **Rule:** Agent-facing CLI commands that return empty data must include state metadata
   and recovery guidance when operational state affects interpretation.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

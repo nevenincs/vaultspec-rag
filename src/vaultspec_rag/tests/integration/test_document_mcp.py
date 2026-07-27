@@ -103,80 +103,146 @@ async def _exercise_document_tools(
     ):
         await asyncio.wait_for(session.initialize(), timeout=60)
         tools = await asyncio.wait_for(session.list_tools(), timeout=60)
-        names = {tool.name for tool in tools.tools}
-        assert {
-            "search_documents",
-            "search_combined",
-            "reindex_documents",
-            "reindex_all",
-            "clean_documents",
-            "clean_all",
-            "get_index_status",
-        } <= names
+        _assert_document_tool_catalog(tools.tools)
+        await _assert_mcp_searches(session, root, source_path, phrase)
+        await _assert_mcp_read_tools(session, root)
+        await _assert_empty_document_status(session, root)
+        await _request_mcp_reindexes(session, root)
 
-        tools_by_name = {tool.name: tool for tool in tools.tools}
-        for tool_name in ("search_documents", "search_combined"):
-            properties = tools_by_name[tool_name].inputSchema["properties"]
-            assert "like_ids" not in properties
-            assert "unlike_ids" not in properties
-            assert "source_path" in properties
 
-        for name in ("search_documents", "search_combined"):
-            result = await asyncio.wait_for(
-                session.call_tool(
-                    name,
-                    arguments={
-                        "query": phrase,
-                        "project_root": str(root),
-                        "source_path": source_path,
-                    },
-                    read_timeout_seconds=timedelta(seconds=60),
-                ),
-                timeout=70,
-            )
-            assert result.isError is not True, (name, result)
-            payload = cast("dict[str, Any]", result.structuredContent)
-            results = cast("list[dict[str, Any]]", payload["results"])
-            assert results, (name, payload)
-            assert {item["path"] for item in results} == {source_path}
+def _assert_document_tool_catalog(tools: list[Any]) -> None:
+    names = {tool.name for tool in tools}
+    assert {
+        "search_documents",
+        "search_combined",
+        "reindex_documents",
+        "reindex_all",
+        "clean_documents",
+        "clean_all",
+        "get_index_status",
+    } <= names
+    tools_by_name = {tool.name: tool for tool in tools}
+    for tool_name in ("search_documents", "search_combined"):
+        properties = tools_by_name[tool_name].inputSchema["properties"]
+        assert "like_ids" not in properties
+        assert "unlike_ids" not in properties
+        assert "source_path" in properties
 
-        for name, arguments in (
-            ("clean_documents", {"project_root": str(root)}),
-            ("clean_all", {"project_root": str(root)}),
-            ("get_index_status", {"project_root": str(root)}),
-        ):
-            result = await asyncio.wait_for(
-                session.call_tool(
-                    name,
-                    arguments=arguments,
-                    read_timeout_seconds=timedelta(seconds=60),
-                ),
-                timeout=70,
-            )
-            assert result.isError is not True, (name, result)
-            assert isinstance(result.structuredContent, dict), (name, result)
 
-        status = await session.call_tool(
-            "get_index_status",
-            arguments={"project_root": str(root)},
-            read_timeout_seconds=timedelta(seconds=60),
+async def _call_mcp_tool(
+    session: ClientSession, name: str, arguments: dict[str, Any]
+) -> Any:
+    result = await asyncio.wait_for(
+        session.call_tool(
+            name, arguments=arguments, read_timeout_seconds=timedelta(seconds=60)
+        ),
+        timeout=70,
+    )
+    assert result.isError is not True, (name, result)
+    return result
+
+
+async def _assert_mcp_searches(
+    session: ClientSession, root: Path, source_path: str, phrase: str
+) -> None:
+    for name in ("search_documents", "search_combined"):
+        result = await _call_mcp_tool(
+            session,
+            name,
+            {
+                "query": phrase,
+                "project_root": str(root),
+                "source_path": source_path,
+            },
         )
-        status_payload = cast("dict[str, Any]", status.structuredContent)
-        index = cast("dict[str, Any]", status_payload["index"])
-        assert index["document_chunks"] == 0
-        assert set(index["support_profile"]["domains"]) == {"code", "document"}
+        payload = cast("dict[str, Any]", result.structuredContent)
+        results = cast("list[dict[str, Any]]", payload["results"])
+        assert results, (name, payload)
+        assert {item["path"] for item in results} == {source_path}
 
-        for name in ("reindex_documents", "reindex_all"):
-            result = await asyncio.wait_for(
-                session.call_tool(
-                    name,
-                    arguments={"project_root": str(root)},
-                    read_timeout_seconds=timedelta(seconds=60),
-                ),
-                timeout=70,
-            )
-            assert result.isError is not True, (name, result)
-            assert isinstance(result.structuredContent, dict), (name, result)
+
+async def _assert_mcp_read_tools(session: ClientSession, root: Path) -> None:
+    for name in ("clean_documents", "clean_all", "get_index_status"):
+        result = await _call_mcp_tool(session, name, {"project_root": str(root)})
+        assert isinstance(result.structuredContent, dict), (name, result)
+
+
+async def _assert_empty_document_status(session: ClientSession, root: Path) -> None:
+    result = await _call_mcp_tool(
+        session, "get_index_status", {"project_root": str(root)}
+    )
+    index = cast(
+        "dict[str, Any]", cast("dict[str, Any]", result.structuredContent)["index"]
+    )
+    assert index["document_chunks"] == 0
+    assert set(index["support_profile"]["domains"]) == {"code", "document"}
+
+
+async def _request_mcp_reindexes(session: ClientSession, root: Path) -> None:
+    for name in ("reindex_documents", "reindex_all"):
+        result = await _call_mcp_tool(session, name, {"project_root": str(root)})
+        assert isinstance(result.structuredContent, dict), (name, result)
+
+
+def _assert_partial_reindex(partial: dict[str, Any], port: int) -> None:
+    assert partial["ok"] is False
+    assert partial["partial"] is True, partial
+    domains = cast("dict[str, dict[str, Any]]", partial["domains"])
+    assert domains["vault"]["ok"] is True
+    assert any(not domain["ok"] for domain in domains.values())
+    _wait_for_succeeded_job(port, cast("str", domains["vault"]["job_id"]))
+
+
+def _assert_service_searches(
+    port: int, root: Path, source_path: str, phrase: str
+) -> None:
+    for search_type in ("document", "combined"):
+        response = _try_http_search(
+            phrase,
+            search_type,
+            5,
+            port,
+            str(root),
+            timeout=600.0,
+            document_filters={"source_path": source_path},
+        )
+        assert response is not None
+        assert response.get("ok", True) is True, response
+        assert "error" not in response, response
+        results = cast("list[dict[str, Any]]", response["results"])
+        assert results
+        assert {item["path"] for item in results} == {source_path}
+
+
+def _assert_unsupported_feedback_is_rejected(
+    port: int, root: Path, phrase: str
+) -> None:
+    rejected_feedback = _try_http_search(
+        phrase,
+        "combined",
+        5,
+        port,
+        str(root),
+        like_ids=["unsupported-point"],
+    )
+    assert rejected_feedback is not None
+    assert rejected_feedback["ok"] is False
+    assert rejected_feedback["error"] == "unsupported_feedback_for_search_type"
+    direct_rejection = _do_http_call(
+        port,
+        "/search",
+        {
+            "query": phrase,
+            "type": "combined",
+            "top_k": 5,
+            "project_root": str(root),
+            "like_ids": ["unsupported-point"],
+        },
+        timeout=30.0,
+    )
+    assert direct_rejection is not None
+    assert direct_rejection["ok"] is False
+    assert direct_rejection["error"] == "unsupported_feedback_for_search_type"
 
 
 def test_document_tools_through_real_mcp_session(
@@ -197,12 +263,7 @@ def test_document_tools_through_real_mcp_session(
         initiator_kind="mcp",
     )
     assert partial is not None
-    assert partial["ok"] is False
-    assert partial["partial"] is True, partial
-    domains = cast("dict[str, dict[str, Any]]", partial["domains"])
-    assert domains["vault"]["ok"] is True
-    assert any(not domain["ok"] for domain in domains.values())
-    _wait_for_succeeded_job(port, cast("str", domains["vault"]["job_id"]))
+    _assert_partial_reindex(partial, port)
 
     source_path, phrase = _write_indexed_document_fixture(root)
     created = _try_http_reindex(
@@ -217,49 +278,7 @@ def test_document_tools_through_real_mcp_session(
     job_id = cast("str", created["job_id"])
     _wait_for_succeeded_job(port, job_id)
 
-    for search_type in ("document", "combined"):
-        response = _try_http_search(
-            phrase,
-            search_type,
-            5,
-            port,
-            str(root),
-            timeout=600.0,
-            document_filters={"source_path": source_path},
-        )
-        assert response is not None
-        assert response.get("ok", True) is True, response
-        assert "error" not in response, response
-        results = cast("list[dict[str, Any]]", response["results"])
-        assert results
-        assert {item["path"] for item in results} == {source_path}
-
-    rejected_feedback = _try_http_search(
-        phrase,
-        "combined",
-        5,
-        port,
-        str(root),
-        like_ids=["unsupported-point"],
-    )
-    assert rejected_feedback is not None
-    assert rejected_feedback["ok"] is False
-    assert rejected_feedback["error"] == "unsupported_feedback_for_search_type"
-
-    direct_rejection = _do_http_call(
-        port,
-        "/search",
-        {
-            "query": phrase,
-            "type": "combined",
-            "top_k": 5,
-            "project_root": str(root),
-            "like_ids": ["unsupported-point"],
-        },
-        timeout=30.0,
-    )
-    assert direct_rejection is not None
-    assert direct_rejection["ok"] is False
-    assert direct_rejection["error"] == "unsupported_feedback_for_search_type"
+    _assert_service_searches(port, root, source_path, phrase)
+    _assert_unsupported_feedback_is_rejected(port, root, phrase)
 
     asyncio.run(_exercise_document_tools(port, root, source_path, phrase))

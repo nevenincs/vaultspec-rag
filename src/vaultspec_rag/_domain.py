@@ -22,7 +22,10 @@ from __future__ import annotations
 import fnmatch
 import re
 from itertools import pairwise
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 __all__ = [
     "DOMAINS",
@@ -154,6 +157,28 @@ def _is_docs(dir_segments: list[str], basename: str) -> bool:
     return ext in _DOCS_FILE_EXTS
 
 
+def _matching_domains(
+    segments: list[str], dir_segments: list[str], basename: str
+) -> Iterator[Domain]:
+    """Yield matching domains in their precedence order."""
+    if _is_worktree(segments):
+        yield "worktree"
+    if any(seg in _VENDOR_DIR_NAMES for seg in dir_segments):
+        yield "vendored"
+    if any(seg in _GENERATED_DIR_NAMES for seg in dir_segments):
+        yield "generated"
+    if any(fnmatch.fnmatch(basename, pat) for pat in _GENERATED_BASENAME_PATTERNS):
+        yield "generated"
+    if any(seg in _TESTS_DIR_NAMES for seg in dir_segments):
+        yield "tests"
+    if any(fnmatch.fnmatch(basename, pat) for pat in _TESTS_BASENAME_PATTERNS):
+        yield "tests"
+    if _is_locale(dir_segments, basename):
+        yield "locale"
+    if _is_docs(dir_segments, basename):
+        yield "docs"
+
+
 def classify_domain(path: str) -> Domain:
     """Classify a project-relative ``path`` into one coarse noise domain.
 
@@ -171,20 +196,5 @@ def classify_domain(path: str) -> Domain:
     dir_segments = segments[:-1]
     basename = segments[-1].lower() if segments else ""
 
-    if _is_worktree(segments):
-        return "worktree"
-    if any(seg in _VENDOR_DIR_NAMES for seg in dir_segments):
-        return "vendored"
-    if any(seg in _GENERATED_DIR_NAMES for seg in dir_segments):
-        return "generated"
-    if any(fnmatch.fnmatch(basename, pat) for pat in _GENERATED_BASENAME_PATTERNS):
-        return "generated"
-    if any(seg in _TESTS_DIR_NAMES for seg in dir_segments):
-        return "tests"
-    if any(fnmatch.fnmatch(basename, pat) for pat in _TESTS_BASENAME_PATTERNS):
-        return "tests"
-    if _is_locale(dir_segments, basename):
-        return "locale"
-    if _is_docs(dir_segments, basename):
-        return "docs"
-    return "prod"
+    matched = next(_matching_domains(segments, dir_segments, basename), None)
+    return "prod" if matched is None else matched

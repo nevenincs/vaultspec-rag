@@ -3,13 +3,13 @@ tags:
   - '#plan'
   - '#service-release-compatibility'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-25-service-release-compatibility-adr]]'
   - '[[2026-07-25-service-release-compatibility-reference]]'
+  - '[[2026-07-27-service-release-compatibility-research]]'
 ---
-
 # `service-release-compatibility` plan
 
 ### Phase `P01` - publication and classification
@@ -43,7 +43,7 @@ Prove the three verdict states and the refusal sites can fail, reconcile the fix
 
 - [x] `P03.S16` - Cover the three verdict states, the four publication sites, the enforced discriminator, and every refusal site, mutation-proving each guard fails on the assertion it names; `src/vaultspec_rag/tests/test_service_version_compatibility.py`.
 - [x] `P03.S17` - Reconcile the exact-key-set assertion the new readiness field grows, keeping readiness a bounded snapshot; `src/vaultspec_rag/tests/test_readiness.py`.
-- [ ] `P03.S18` - Stamp this install's release into the discovered-but-dead-service fixture so that case reaches the unreachability assertion it names instead of being refused earlier by the release gate; `src/vaultspec_rag/tests/test_search_service_first.py`.
+- [x] `P03.S18` - Stamp this install's release into the discovered-but-dead-service fixture so that case reaches the unreachability assertion it names instead of being refused earlier by the release gate; `src/vaultspec_rag/tests/test_search_service_first.py`.
 - [x] `P03.S19` - Document the published release field, its distinction from the schema pair, and the enforced pin on the discovery surface; `docs/service-discovery.md`.
 
 ## Description
@@ -135,6 +135,8 @@ is release-compatibility work after all, `P03` is where the Step lands, added th
 plan verbs; until then this plan claims only the first.
 
 ## Steps
+
+Evidence gap: the retained document body has no authored Steps content beyond scaffold comments or placeholders.
 
 ## Parallelization
 

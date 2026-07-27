@@ -42,7 +42,7 @@ class GraphCache:
                 config (300s).
         """
         if ttl_seconds is None:
-            from .config import get_config
+            from .config._settings import get_config
 
             ttl_seconds = float(get_config().graph_ttl_seconds)
         self._ttl_seconds: float = ttl_seconds

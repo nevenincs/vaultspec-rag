@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#search-index-availability'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related:
   - "[[2026-06-11-search-freshness-and-empty-results-adr]]"
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
@@ -124,3 +124,7 @@ campaign publishes destructive-generation state. That future evidence extends th
 only for otherwise-empty responses. Useful nonempty results remain HTTP 200 unless a later
 architectural decision changes that policy. This dependency is explicit rather than hidden
 behind counts or job heuristics.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

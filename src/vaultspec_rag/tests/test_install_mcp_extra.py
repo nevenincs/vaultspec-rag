@@ -105,13 +105,21 @@ class TestInstallEnsuresMcpExtra:
 
 def test_cli_install_flag_defaults_mcp_on() -> None:
     """The `vaultspec-rag install` --mcp/--no-mcp flag defaults to on."""
+    from typer._click import Context as ClickContext
+    from typer.core import TyperOption
     from typer.main import get_command
 
-    from ..cli._app import app
+    from ..cli._app import _LiteralArgvGroup, app
 
-    install = get_command(app).get_command(None, "install")
+    root = get_command(app)
+    assert isinstance(root, _LiteralArgvGroup)
+    install = root.get_command(ClickContext(root), "install")
     assert install is not None
-    mcp_option = next(option for option in install.params if option.name == "mcp")
+    mcp_option = next(
+        option
+        for option in install.params
+        if isinstance(option, TyperOption) and option.name == "mcp"
+    )
     assert mcp_option.default is True
 
 

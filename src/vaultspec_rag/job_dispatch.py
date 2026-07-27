@@ -283,7 +283,7 @@ def _run_indexing_attempt(
 
 def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
     """Freeze the selected profile and domain ceilings before model loading."""
-    from .config import get_config
+    from .config._settings import get_config
     from .index_profiles import IndexDomain, get_index_support_profile
 
     config = get_config()

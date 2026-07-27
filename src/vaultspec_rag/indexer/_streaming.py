@@ -786,7 +786,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
         so callers can purge stale tail chunks of documents that
         shrank since the previous run.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..memory_probe import MemoryProbe
     from ._vault_prep import split_documents
 
@@ -909,7 +909,7 @@ def encode_and_upsert_document_slice(request: DocumentSliceRequest) -> None:
     fields once the task settles, and any write failure re-raises on the
     encoding side at the next hand-off or at the writer's close.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     if not request.chunks:
         return
@@ -1143,7 +1143,7 @@ def iter_weighted_document_slices(
     request: DocumentSliceStreamRequest,
 ) -> Iterator[WeightedDocumentSlice]:
     """Yield document slices within the configured queue count and byte caps."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     chunk_limit = _positive_limit(
@@ -1229,7 +1229,7 @@ def _resolve_code_segment_limits(
     sparse_dimension: int | None,
 ) -> _CodeSegmentLimits:
     """Resolve and validate one file-segment policy."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     chunk_limit = _selected_int(
         max_chunks,
@@ -1395,7 +1395,7 @@ def iter_weighted_code_slices(
     files may share an encode slice, retaining batching throughput without
     losing their resumability boundaries.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     run_control.checkpoint()
     configured_chunks = _selected_int(
@@ -1491,7 +1491,7 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
         run_control: Cooperative control checked outside the GPU lock before
             and after this bounded slice.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
 
@@ -1532,7 +1532,7 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
 
 def _stream_encode_and_upsert_codebase(request: CodebaseStreamRequest) -> None:
     """Encode and publish an in-memory code chunk set in bounded slices."""
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..memory_probe import MemoryProbe
 
     cfg = get_config()

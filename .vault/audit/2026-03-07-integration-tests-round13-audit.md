@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 13 Audit -- Integration Tests and Benchmarks
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Auditor:** docs-researcher-2-2
 **Files:**
@@ -20,7 +25,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Check 1: Test Correctness -- Full Pipeline Exercise
+### Check 1: Test Correctness -- Full Pipeline Exercise
 
 ### `test_indexer_integration.py`
 
@@ -43,7 +48,7 @@ Tests exercise real pipeline stages:
 
 ______________________________________________________________________
 
-## Check 2: Fixture Teardown -- `store.close()` Before `rmtree`
+### Check 2: Fixture Teardown -- `store.close()` Before `rmtree`
 
 ### `integration/conftest.py` (lines 25-30)
 
@@ -63,7 +68,7 @@ Same pattern: `store.close()` then `shutil.rmtree(db_dir)`.
 
 ______________________________________________________________________
 
-## Check 3: Git Reset Safety
+### Check 3: Git Reset Safety
 
 ### `_vault_snapshot_reset` fixture (conftest.py lines 190-198)
 
@@ -86,7 +91,7 @@ If `git checkout` fails (e.g., detached HEAD, missing `.vault/`, git not in PATH
 
 ______________________________________________________________________
 
-## Check 4: Real Data Assertions
+### Check 4: Real Data Assertions
 
 ### `test_prepare_all_documents` (lines 71-86)
 
@@ -127,7 +132,7 @@ Most other tests use meaningful assertions:
 
 ______________________________________________________________________
 
-## Check 5: Marker Compliance
+### Check 5: Marker Compliance
 
 ### `test_indexer_integration.py`
 
@@ -157,7 +162,7 @@ Note: Each benchmark already has `@pytest.mark.quality` which IS approved. But `
 
 ______________________________________________________________________
 
-## Check 6: Timeout Markers
+### Check 6: Timeout Markers
 
 ### `test_indexer_integration.py`
 
@@ -182,7 +187,7 @@ No timeout markers on any benchmark. Since benchmarks are long-running by nature
 
 ______________________________________________________________________
 
-## Check 7: Benchmark Structure
+### Check 7: Benchmark Structure
 
 ### `bench_rag.py`
 
@@ -214,7 +219,7 @@ These benchmarks can only work when called from the `main()` function (lines 160
 
 ______________________________________________________________________
 
-## Check 8: Banned Imports (unittest, mocks, skips)
+### Check 8: Banned Imports (unittest, mocks, skips)
 
 ### `test_indexer_integration.py`
 
@@ -236,7 +241,7 @@ Imports: `shutil`, `subprocess`, `time`, `pytest`, `vaultspec.config`, `vaultspe
 
 ______________________________________________________________________
 
-## Check 9: Conftest Fixture Scoping
+### Check 9: Conftest Fixture Scoping
 
 | Fixture                        | Scope                     | File                    | Assessment                                                       |
 | ------------------------------ | ------------------------- | ----------------------- | ---------------------------------------------------------------- |
@@ -259,7 +264,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Check 10: Hardcoded Paths
+### Check 10: Hardcoded Paths
 
 ### `constants.py`
 
@@ -294,7 +299,7 @@ Uses `PROJECT_ROOT` (derived from `__file__`) as cwd. The `"test-project/.vault/
 
 ______________________________________________________________________
 
-## Additional Observations
+### Additional Observations
 
 ### `bench_rag.py` main() cleanup does not call `store.close()` (line 240-242)
 
@@ -312,7 +317,7 @@ The `store` created at line 192 is never closed before `shutil.rmtree()`. On Win
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | ID     | Severity | Finding                                                                                          |
 | ------ | -------- | ------------------------------------------------------------------------------------------------ |
@@ -325,3 +330,7 @@ ______________________________________________________________________
 | R13-m3 | MINOR    | `bench_rag.py` main() does not close store before rmtree (Windows PermissionError)               |
 
 **1 HIGH, 3 MEDIUM, 3 MINOR findings.**
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

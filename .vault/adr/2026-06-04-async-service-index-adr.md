@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#async-service-index'
 date: '2026-06-04'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-04-async-service-index-research]]"
 ---
@@ -56,3 +56,7 @@ Decoupling the client CLI wait state from service execution prevents lock conten
 
 - **Rule slug:** `mcp-tools-background-tasks`.
   **Rule:** Every MCP tool that launches a background task must retain a strong reference to the Task in a global collection to prevent Python garbage collection.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

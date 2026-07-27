@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
 ---
@@ -34,3 +34,11 @@ The Protocol import lives in the `TYPE_CHECKING` block, keeping
 
 Compile-verified by the unit suite. Real per-phase validation lands in
 phase 6 with the counting integration test.
+
+## Notes
+
+Evidence gap: the retained document body has no separately labelled Notes section.
+
+## Outcome
+
+Evidence gap: the retained document body has no separately labelled Outcome section.

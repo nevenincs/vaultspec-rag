@@ -68,11 +68,7 @@ def _literal_enum_offenders(vocabularies: dict[str, frozenset[str]]) -> list[str
 
 
 def _literal_subscript(node: ast.Subscript) -> bool:
-    return (
-        isinstance(node, ast.Subscript)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "Literal"
-    )
+    return isinstance(node.value, ast.Name) and node.value.id == "Literal"
 
 
 def _literal_strings(node: ast.expr) -> frozenset[str]:

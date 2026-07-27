@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..mcp._roots import _resolve_project_root
 
 if TYPE_CHECKING:

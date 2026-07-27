@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 9 Audit -- store.py (deep dive, post-fix verification)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Auditor:** docs-researcher-2-2
 **File:** `src/vaultspec_rag/store.py` (746 lines)
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Check 1: Boolean Cache on `ensure_table` / `ensure_code_table`
+### Check 1: Boolean Cache on `ensure_table` / `ensure_code_table`
 
 ### `ensure_table()` (lines 185-204)
 
@@ -41,7 +46,7 @@ Same pattern with `self._code_ensured` (initialized `False` at line 142). Set `T
 
 ______________________________________________________________________
 
-## Check 2: Payload Indexes
+### Check 2: Payload Indexes
 
 ### `ensure_table()` (lines 198-203)
 
@@ -81,7 +86,7 @@ self._client.create_payload_index(
 
 ______________________________________________________________________
 
-## Check 3: Date Filter -- `MatchValue` not `MatchText`
+### Check 3: Date Filter -- `MatchValue` not `MatchText`
 
 ### `_build_filter()` (lines 686-692)
 
@@ -99,7 +104,7 @@ if key == "date":
 
 ______________________________________________________________________
 
-## Check 4: Tag Filter
+### Check 4: Tag Filter
 
 ### `_build_filter()` (lines 693-699)
 
@@ -119,7 +124,7 @@ Note: `MatchAny(any=[value])` with a single-element list is functionally equival
 
 ______________________________________________________________________
 
-## Check 5: `hybrid_search` / `hybrid_search_codebase` -- Count Guard and Prefetch Filter
+### Check 5: `hybrid_search` / `hybrid_search_codebase` -- Count Guard and Prefetch Filter
 
 ### Count guard removed
 
@@ -140,7 +145,7 @@ Dense-only fallback (lines 580-586, 653-658) uses `query_filter=query_filter` on
 
 ______________________________________________________________________
 
-## Check 6: Sparse=None Guard
+### Check 6: Sparse=None Guard
 
 ### `hybrid_search` (lines 553-564)
 
@@ -163,7 +168,7 @@ Same pattern.
 
 ______________________________________________________________________
 
-## Check 7: `_stable_id` hashlib Import
+### Check 7: `_stable_id` hashlib Import
 
 ### `_stable_id()` (lines 735-745)
 
@@ -188,7 +193,7 @@ This was flagged as R22b-m2 and the recommendation was to move it to module leve
 
 ______________________________________________________________________
 
-## Check 8: `_build_filter` Unknown Keys
+### Check 8: `_build_filter` Unknown Keys
 
 ### `_build_filter()` (lines 676-709)
 
@@ -220,7 +225,7 @@ Same pattern -- unknown keys silently dropped.
 
 ______________________________________________________________________
 
-## Check 9: `_build_filter` Empty String Values
+### Check 9: `_build_filter` Empty String Values
 
 ### `_build_filter()` (lines 685-706)
 
@@ -239,7 +244,7 @@ This was flagged as R22b-m5 and has not been addressed.
 
 ______________________________________________________________________
 
-## Check 10: `upsert_documents` / `upsert_code_chunks` Batching
+### Check 10: `upsert_documents` / `upsert_code_chunks` Batching
 
 ### `upsert_documents()` (lines 232-277)
 
@@ -268,7 +273,7 @@ This was flagged as R22b-m3 and has not been addressed.
 
 ______________________________________________________________________
 
-## Check 11: `_points_to_dicts` Fallback ID
+### Check 11: `_points_to_dicts` Fallback ID
 
 ### `_points_to_dicts()` (lines 664-673)
 
@@ -296,7 +301,7 @@ This was flagged as R22b-m8 and has not been addressed.
 
 ______________________________________________________________________
 
-## Additional Observations
+### Additional Observations
 
 ### Hybrid search exception handling (lines 574-578, 644-648)
 
@@ -324,7 +329,7 @@ Same `str(point.id)` fallback pattern as `_points_to_dicts`. Same minor concern 
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | ID    | Severity | Finding                                                                             | Status                 |
 | ----- | -------- | ----------------------------------------------------------------------------------- | ---------------------- |
@@ -345,3 +350,7 @@ ______________________________________________________________________
 | R22b-m6: `except Exception` swallows all errors      | **FIXED** -- narrowed to 3 specific types |
 
 **1 MEDIUM finding (R9-M1). 5 MINOR findings (all unfixed carryovers from R22b).**
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

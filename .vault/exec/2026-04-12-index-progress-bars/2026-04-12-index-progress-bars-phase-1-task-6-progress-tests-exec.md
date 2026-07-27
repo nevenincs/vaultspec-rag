@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
 ---
@@ -42,3 +42,11 @@ No mocks, no skips. GPU fixtures reuse the session-scoped
 Unit tests green (12 passing in `test_progress_unit.py`). Integration
 tests are GPU-bound and gated on `HF_TOKEN`; they exercise real GPU and
 real Qdrant, compatible with the existing test mandate.
+
+## Notes
+
+Evidence gap: the retained document body has no separately labelled Notes section.
+
+## Outcome
+
+Evidence gap: the retained document body has no separately labelled Outcome section.

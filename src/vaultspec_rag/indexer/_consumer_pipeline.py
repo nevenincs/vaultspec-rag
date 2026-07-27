@@ -25,9 +25,9 @@ from .._job_errors import JobError, JobErrorKind
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from ._chunk_producer import (
     CONTROL_POLL_SECONDS,
+    SegmentSubmission,
+    SingleProductionOptions,
     WeightedCodeSegmentQueue,
-    _SegmentSubmission,
-    _SingleProductionOptions,
     drain_code_chunks,
 )
 from ._file_state import FileStateKind
@@ -226,7 +226,7 @@ class CodeConsumerPipeline:
 
     def resolve_limits(self) -> CodePipelineLimits:
         """Freeze code segment, queue, slice, and model limits."""
-        from ..config import get_config
+        from ..config._settings import get_config
         from ..store_schema import effective_sparse_dim
 
         config = get_config()
@@ -335,7 +335,7 @@ class CodeConsumerPipeline:
                 if singles:
                     self._producer.produce_singles(
                         singles,
-                        _SingleProductionOptions(
+                        SingleProductionOptions(
                             publish_result=_publish_result,
                             consumer_failed=lambda: (
                                 bool(consumer_exceptions) or not consumer.is_alive()
@@ -483,7 +483,7 @@ class CodeConsumerPipeline:
         )
         return self._producer.submit_segments(
             pending_segments,
-            _SegmentSubmission(
+            SegmentSubmission(
                 segment_queue=consumer_run.segment_queue,
                 consumer=consumer,
                 consumer_exceptions=consumer_run.consumer_exceptions,

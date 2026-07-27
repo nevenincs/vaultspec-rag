@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#rag-broker-affordances'
 date: '2026-06-27'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-27-rag-broker-affordances-research]]"
 ---
@@ -139,3 +139,7 @@ convenience for finding the service, never a second gate on starting one.
 (Holds one full execution cycle before promotion, per the codify discipline. Complements
 `service-domain-owns-operability` and the dashboard-side
 `brokered-destructive-verbs-validate-args-and-default-to-preview`.)
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

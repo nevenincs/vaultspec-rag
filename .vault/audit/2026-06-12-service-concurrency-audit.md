@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-12-service-concurrency-adr]]"
   - "[[2026-06-12-service-concurrency-plan]]"
@@ -129,3 +129,15 @@ PASS. The lock split has a consistent global acquisition order; the migration
 markers, shrunk-tail purge, and clean rebuilds all run under the writer lock; the
 cache, nudges, and transport changes are safe. The four MEDIUM items above were
 fixed and re-tested in-branch the same day.
+
+## Scope
+
+Retained audit evidence:  are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+
+## Findings
+
+Retained audit evidence: the detailed review entries in this document constitute the findings inventory.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.
