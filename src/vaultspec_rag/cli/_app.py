@@ -347,14 +347,12 @@ def main(
     named_target = target if target is not None else env_named_root()
 
     if ctx.invoked_subcommand in (
-        "test",
-        "quality",
         "server",
         "install",
         "uninstall",
     ):
         # These subcommands either operate without a resolved
-        # workspace (test/quality/server) or resolve their own via
+        # workspace (server) or resolve their own via
         # core's resolver (install/uninstall). Even so, stash the
         # named root (if any) on ctx.obj so the install / uninstall
         # handlers can read it. Click consumes group options before

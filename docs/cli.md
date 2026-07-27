@@ -250,22 +250,6 @@ Options:
 
 Exit/JSON: `0` on success; `1` on uninstall failure. With `--json`, the result is one envelope on stdout.
 
-## test
-
-`vaultspec-rag test [PYTEST_ARGS...]`
-
-Run pytest over the test tree.
-
-Arguments:
-
-| Name          | Required | Description                                         |
-| ------------- | -------- | --------------------------------------------------- |
-| `pytest_args` | no       | Additional arguments forwarded to pytest unchanged. |
-
-Options: run `vaultspec-rag test --help` for the full list. Most arguments pass straight through to pytest.
-
-Exit/JSON: pytest's own exit code is propagated.
-
 ## server start
 
 `vaultspec-rag server start`
