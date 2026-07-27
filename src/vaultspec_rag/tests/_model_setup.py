@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, cast
 from urllib.parse import quote
@@ -129,15 +130,18 @@ def models_are_cached(
     return not _missing_model_ids(model_ids, cache_dir=cache_dir)
 
 
+@dataclass(frozen=True, slots=True)
+class _TerminationRequest:
+    deadline: float
+    operation: str
+    timeout_seconds: float
+    termination_grace: float
+    context: str
+    output: str
+
+
 def _terminate_kill_and_raise(
-    process: subprocess.Popen[str],
-    *,
-    deadline: float,
-    operation: str,
-    timeout_seconds: float,
-    termination_grace: float,
-    context: str,
-    output: str,
+    process: subprocess.Popen[str], request: _TerminationRequest
 ) -> NoReturn:
     """Escalate a deadline miss to terminate then hard-kill, then raise.
 
@@ -146,6 +150,12 @@ def _terminate_kill_and_raise(
     no remaining budget - so the outcome (the worker had to be killed) is what
     is reported, not which wall-clock check tripped.
     """
+    deadline = request.deadline
+    operation = request.operation
+    timeout_seconds = request.timeout_seconds
+    termination_grace = request.termination_grace
+    context = request.context
+    output = request.output
     process.terminate()
     try:
         trailing, _ = process.communicate(
@@ -214,12 +224,14 @@ def run_bounded_process(
     except subprocess.TimeoutExpired as exc:
         _terminate_kill_and_raise(
             process,
-            deadline=deadline,
-            operation=operation,
-            timeout_seconds=timeout_seconds,
-            termination_grace=termination_grace,
-            context=context,
-            output=_coerce_output(exc.output),
+            _TerminationRequest(
+                deadline=deadline,
+                operation=operation,
+                timeout_seconds=timeout_seconds,
+                termination_grace=termination_grace,
+                context=context,
+                output=_coerce_output(exc.output),
+            ),
         )
 
     if process.returncode != 0:
