@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._job_errors import JobError, JobErrorKind
-from ..watcher import (
+from ..watcher_control import (
     _STATE_TRANSACTION_WORKER_SLOTS,
     _admit_watcher_attempt,
     _persist_observed_sources,
@@ -24,6 +24,7 @@ from ..watcher_retry import (
     WatcherRetryState,
     WatcherRetryStateError,
     WatcherSource,
+    _WatcherRetryOptions,
 )
 
 if TYPE_CHECKING:
@@ -42,13 +43,15 @@ def _policy(
 ) -> WatcherRetryPolicy:
     return WatcherRetryPolicy(
         path,
-        canonical_root=os.path.normcase(str(root.resolve())),
-        source=source,
-        base_seconds=10.0,
-        max_seconds=25.0,
-        jitter_fraction=jitter_fraction,
-        failure_threshold=3,
-        now=now,
+        _WatcherRetryOptions(
+            canonical_root=os.path.normcase(str(root.resolve())),
+            source=source,
+            base_seconds=10.0,
+            max_seconds=25.0,
+            jitter_fraction=jitter_fraction,
+            failure_threshold=3,
+            now=now,
+        ),
     )
 
 
@@ -245,15 +248,15 @@ def test_restart_reopens_unsettled_attempt_with_delay(tmp_path: Path) -> None:
             "from pathlib import Path",
             (
                 "from vaultspec_rag.watcher_retry import "
-                "WatcherRetryPolicy, WatcherSource"
+                "WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions"
             ),
             "path, root = Path(sys.argv[1]), Path(sys.argv[2]).resolve()",
             (
-                "policy = WatcherRetryPolicy(path, "
+                "policy = WatcherRetryPolicy(path, _WatcherRetryOptions("
                 "canonical_root=os.path.normcase(str(root)), "
                 "source=WatcherSource.CODE, base_seconds=10.0, "
                 "max_seconds=25.0, jitter_fraction=0.0, "
-                "failure_threshold=3, now=0.0)"
+                "failure_threshold=3, now=0.0))"
             ),
             "policy.mark_convergence_pending(now=0.0)",
             "first = policy.admit(now=0.0)",
@@ -532,13 +535,15 @@ def test_authority_mismatch_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(WatcherRetryStateError, match="root/source authority"):
         WatcherRetryPolicy(
             state_path,
-            canonical_root=os.path.normcase(str((tmp_path / "other").resolve())),
-            source=WatcherSource.CODE,
-            base_seconds=10.0,
-            max_seconds=25.0,
-            jitter_fraction=0.2,
-            failure_threshold=3,
-            now=1.0,
+            _WatcherRetryOptions(
+                canonical_root=os.path.normcase(str((tmp_path / "other").resolve())),
+                source=WatcherSource.CODE,
+                base_seconds=10.0,
+                max_seconds=25.0,
+                jitter_fraction=0.2,
+                failure_threshold=3,
+                now=1.0,
+            ),
         )
 
 

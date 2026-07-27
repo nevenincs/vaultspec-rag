@@ -146,6 +146,19 @@ class _RecoveryMarker:
     created_at: float
 
 
+@dataclass(frozen=True, slots=True)
+class _WatcherRetryOptions:
+    """Explicit retry-policy authority supplied by one caller."""
+
+    canonical_root: str
+    source: WatcherSource
+    base_seconds: float
+    max_seconds: float
+    jitter_fraction: float
+    failure_threshold: int
+    now: float | None = None
+
+
 class WatcherRetryPolicy:
     """Atomic per-root/source retry and circuit authority."""
 
@@ -166,34 +179,27 @@ class WatcherRetryPolicy:
     def __init__(
         self,
         path: Path,
-        *,
-        canonical_root: str,
-        source: WatcherSource,
-        base_seconds: float,
-        max_seconds: float,
-        jitter_fraction: float,
-        failure_threshold: int,
-        now: float | None = None,
+        options: _WatcherRetryOptions,
     ) -> None:
         """Load or create a policy using explicit validated retry limits."""
         self._path = path
-        self._base_seconds = _finite_positive("base_seconds", base_seconds)
-        self._max_seconds = _finite_positive("max_seconds", max_seconds)
+        self._base_seconds = _finite_positive("base_seconds", options.base_seconds)
+        self._max_seconds = _finite_positive("max_seconds", options.max_seconds)
         if self._max_seconds < self._base_seconds:
             raise ValueError(
                 "max_seconds must be greater than or equal to base_seconds"
             )
-        self._jitter_fraction = _unit_interval("jitter_fraction", jitter_fraction)
-        if type(failure_threshold) is not int or failure_threshold <= 0:
+        self._jitter_fraction = _unit_interval("jitter_fraction", options.jitter_fraction)
+        if type(options.failure_threshold) is not int or options.failure_threshold <= 0:
             raise ValueError("failure_threshold must be a positive integer")
-        self._failure_threshold = failure_threshold
-        self._root = canonical_root
+        self._failure_threshold = options.failure_threshold
+        self._root = options.canonical_root
         self._admission_handoff_started = False
         self._owned_attempt_token: str | None = None
         self._scoped_generation: int | None = None
-        self._source = source
+        self._source = options.source
 
-        timestamp = _wall_time(now)
+        timestamp = _wall_time(options.now)
         with _locked_state(path):
             try:
                 loaded = _read_state(path) if path.exists() else None
@@ -206,8 +212,8 @@ class WatcherRetryPolicy:
             if loaded is None:
                 loaded = WatcherRetryState(
                     schema_version=_SCHEMA_VERSION,
-                    canonical_root=canonical_root,
-                    source=source,
+                    canonical_root=options.canonical_root,
+                    source=options.source,
                     consecutive_failures=0,
                     last_error_kind=None,
                     last_error_detail=None,
@@ -289,13 +295,15 @@ class WatcherRetryPolicy:
         path = resolved_root / cfg.data_dir / _STATE_DIRECTORY / f"{source.value}.json"
         return cls(
             path,
-            canonical_root=canonical_root,
-            source=source,
-            base_seconds=cfg.watch_retry_base_seconds,
-            max_seconds=cfg.watch_retry_max_seconds,
-            jitter_fraction=cfg.watch_retry_jitter_fraction,
-            failure_threshold=cfg.watch_circuit_failure_threshold,
-            now=now,
+            _WatcherRetryOptions(
+                canonical_root=canonical_root,
+                source=source,
+                base_seconds=cfg.watch_retry_base_seconds,
+                max_seconds=cfg.watch_retry_max_seconds,
+                jitter_fraction=cfg.watch_retry_jitter_fraction,
+                failure_threshold=cfg.watch_circuit_failure_threshold,
+                now=now,
+            ),
         )
 
     @property
