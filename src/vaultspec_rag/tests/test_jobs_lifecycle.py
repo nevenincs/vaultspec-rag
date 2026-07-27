@@ -478,16 +478,15 @@ class TestJobsHumanSummarySignpost:
         # edit landing mid-run, because `inspect.getsource` goes through
         # `linecache`. The declared metadata is what Typer renders, which is
         # the contract this test exists to defend.
-        from typing import get_args, get_type_hints
+        from typer.main import get_command
 
-        from typer.models import OptionInfo
+        from ..cli._app import app
 
-        from ..cli._service_jobs import service_jobs
-
-        annotation = get_type_hints(service_jobs, include_extras=True)["json_mode"]
-        option = next(
-            meta for meta in get_args(annotation)[1:] if isinstance(meta, OptionInfo)
-        )
+        server = get_command(app).get_command(None, "server")
+        assert server is not None
+        jobs = server.get_command(None, "jobs")
+        assert jobs is not None
+        option = next(parameter for parameter in jobs.params if parameter.name == "json")
         assert "scripted waits" in (option.help or "")
 
 
