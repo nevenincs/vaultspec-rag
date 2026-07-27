@@ -23,6 +23,8 @@ from ..corpus import build_synthetic_vault
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from sentence_transformers import CrossEncoder
+
     from ...embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.integration]
@@ -39,6 +41,7 @@ class TestMultiRepoConcurrentLoad:
     def test_concurrent_searches_and_reindex_across_two_repos_hold(
         self,
         embedding_model: EmbeddingModel,
+        shared_reranker: CrossEncoder,
         tmp_path: Path,
     ) -> None:
         # One shared GPU lock serialises every GPU-bound operation across both
@@ -57,7 +60,13 @@ class TestMultiRepoConcurrentLoad:
             )
             repos.append((root, store))
             searchers.append(
-                VaultSearcher(root, embedding_model, store, gpu_lock=gpu_lock)
+                VaultSearcher(
+                    root,
+                    embedding_model,
+                    store,
+                    gpu_lock=gpu_lock,
+                    reranker=shared_reranker,
+                )
             )
 
         def do_search(task: int) -> int:

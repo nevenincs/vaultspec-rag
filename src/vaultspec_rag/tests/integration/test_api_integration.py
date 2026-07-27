@@ -41,7 +41,9 @@ class TestRAGAPI:
         root = rag_components["root"]
 
         # Test the search pipeline (same as the API facade does internally)
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("architecture")
         assert len(results) > 0
         assert hasattr(results[0], "id")
@@ -55,7 +57,9 @@ class TestRAGAPI:
         store = rag_components["store"]
         root = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         results = searcher.search_vault("type:adr architecture", top_k=5)
         for r in results:
             assert r.doc_type == "adr"
