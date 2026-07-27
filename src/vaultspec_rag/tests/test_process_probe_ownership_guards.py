@@ -40,7 +40,7 @@ class TestFinalizationPhaseWalkHasOneCopy:
         # Keys on STALE_RECONCILED: it appears only in the walk that advances
         # through it, so a second mention means a second copy of the durable
         # transition. Reading the phase elsewhere is fine and stays uncaught.
-        offenders = [
+        find_offenders = [
             f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
             for path in _production_sources()
             if path.name != "_checkpoint_common.py"
@@ -49,8 +49,8 @@ class TestFinalizationPhaseWalkHasOneCopy:
             )
             if "FinalizationPhase.STALE_RECONCILED" in line
         ]
-        assert not offenders, (
-            f"the finalization phase walk is duplicated at {offenders}; call "
+        assert not find_offenders, (
+            f"the finalization phase walk is duplicated at {find_offenders}; call "
             "RunCheckpointBase.publish_metadata_transition so the durable "
             "transition has one definition"
         )
@@ -88,7 +88,7 @@ class TestShortfallProseHasOneHome:
     def test_only_the_breadth_module_spells_the_consequence(self) -> None:
         from .._index_breadth import SHORTFALL_CONSEQUENCE
 
-        offenders = [
+        find_offenders = [
             f"{path.name}:{number}"
             for path in _production_sources()
             if path.name != "_index_breadth.py"
@@ -97,8 +97,8 @@ class TestShortfallProseHasOneHome:
             )
             if "not evidence that no such" in line
         ]
-        assert not offenders, (
-            f"the shortfall consequence is spelled again at {offenders}; import "
+        assert not find_offenders, (
+            f"the shortfall consequence is spelled again at {find_offenders}; import "
             f"SHORTFALL_CONSEQUENCE ({SHORTFALL_CONSEQUENCE!r}) so both surfaces "
             "cannot describe one deficit differently"
         )
@@ -106,7 +106,7 @@ class TestShortfallProseHasOneHome:
     def test_only_the_breadth_module_spells_the_remediation(self) -> None:
         from .._index_breadth import SHORTFALL_REMEDIATION
 
-        offenders = [
+        find_offenders = [
             f"{path.name}:{number}"
             for path in _production_sources()
             if path.name != "_index_breadth.py"
@@ -115,8 +115,8 @@ class TestShortfallProseHasOneHome:
             )
             if SHORTFALL_REMEDIATION in line
         ]
-        assert not offenders, (
-            f"the shortfall remediation is spelled again at {offenders}; import "
+        assert not find_offenders, (
+            f"the shortfall remediation is spelled again at {find_offenders}; import "
             "SHORTFALL_REMEDIATION so an operator is never sent to a command a "
             "rename removed from one copy"
         )
@@ -152,7 +152,7 @@ class TestBackoffMathHasOneHome:
 
     def test_only_the_backoff_module_raises_two_to_a_power(self) -> None:
         """A new capped exponential anywhere else is a new copy."""
-        offenders: list[str] = []
+        find_offenders: list[str] = []
         for path in _production_sources():
             if path.name == "_backoff.py":
                 continue
@@ -160,7 +160,7 @@ class TestBackoffMathHasOneHome:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except SyntaxError:  # pragma: no cover - parsed elsewhere
                 continue
-            offenders.extend(
+            find_offenders.extend(
                 f"{path.name}:{node.lineno}"
                 for node in ast.walk(tree)
                 if isinstance(node, ast.BinOp)
@@ -168,8 +168,8 @@ class TestBackoffMathHasOneHome:
                 and isinstance(node.left, ast.Constant)
                 and node.left.value in (2, 2.0)
             )
-        assert not offenders, (
-            f"base-2 exponentiation outside the backoff module at {offenders}; "
+        assert not find_offenders, (
+            f"base-2 exponentiation outside the backoff module at {find_offenders}; "
             "call capped_exponential or jittered_backoff so the exponent clamp "
             "cannot be present in one copy and absent in the next"
         )
@@ -278,7 +278,7 @@ class TestNoCompatibilityAliases:
         )
 
     def test_no_module_rebinds_an_imported_name(self) -> None:
-        offenders: list[str] = []
+        find_offenders: list[str] = []
         for path in _production_sources():
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -297,11 +297,11 @@ class TestNoCompatibilityAliases:
                     continue
                 if (path.name, target) in self.KNOWN:
                     continue
-                offenders.append(
+                find_offenders.append(
                     f"{path.name}:{node.lineno} {target} = {ast.unparse(node.value)}"
                 )
-        assert not offenders, (
-            f"compatibility aliases at {offenders}; import the canonical name "
+        assert not find_offenders, (
+            f"compatibility aliases at {find_offenders}; import the canonical name "
             "and use it, rather than giving one fact a second name in a module "
             "that does not own it"
         )
@@ -406,7 +406,7 @@ class TestAtomicJsonPublishHasOneWriter:
         spelling.
         """
         excluded = {"_atomic_write.py", self.STREAMING, self.NAMED_TEMP_CONTRACT}
-        offenders = [
+        find_offenders = [
             f"{path.name}:{node.lineno} {node.name}"
             for path, tree in parsed_production_sources(
                 _production_sources(), excluded
@@ -415,8 +415,8 @@ class TestAtomicJsonPublishHasOneWriter:
             if {"json.dump", "json.dumps"} & self._call_names(node)
             and {"replace_atomically", "replace_durably"} & self._call_names(node)
         ]
-        assert not offenders, (
-            f"hand-rolled atomic JSON publish at {offenders}; call "
+        assert not find_offenders, (
+            f"hand-rolled atomic JSON publish at {find_offenders}; call "
             "write_json_atomically so the temp file is named without collision "
             "and removed when the write or the replace fails"
         )
@@ -439,15 +439,15 @@ class TestAtomicJsonPublishHasOneWriter:
         descriptor fsync.
         """
 
-        offenders = [
+        find_offenders = [
             f"{path.name}:{node.lineno} {node.name}"
             for path, tree in parsed_production_sources(
                 _production_sources(), {"_atomic_write.py"}
             )
             for node in self._directory_fsync_functions(tree)
         ]
-        assert not offenders, (
-            f"a directory fsync outside _atomic_write at {offenders}; call "
+        assert not find_offenders, (
+            f"a directory fsync outside _atomic_write at {find_offenders}; call "
             "fsync_directory, which replace_durably also uses, so the Windows "
             "no-op and the POSIX sync are decided in one place"
         )
@@ -523,7 +523,7 @@ class TestOperatorCommandsHaveOneSpelling:
         Proven able to fail: reintroducing the inline conditional in any
         module fails this test on the offender list below.
         """
-        offenders = [
+        find_offenders = [
             f"{path.name}:{number}"
             for path in _production_sources()
             if path.name != "_operator_commands.py"
@@ -532,14 +532,14 @@ class TestOperatorCommandsHaveOneSpelling:
             )
             if '" --port {' in line or '" --port %' in line
         ]
-        assert not offenders, (
-            f"a hand-built --port option at {offenders}; call port_option so "
+        assert not find_offenders, (
+            f"a hand-built --port option at {find_offenders}; call port_option so "
             "one rule decides when a port is known enough to name"
         )
 
     def test_no_module_spells_the_jobs_command(self) -> None:
         """Its flags are the ones with a demonstrated history of changing."""
-        offenders = [
+        find_offenders = [
             f"{path.name}:{number}"
             for path in _production_sources()
             if path.name != "_operator_commands.py"
@@ -548,8 +548,8 @@ class TestOperatorCommandsHaveOneSpelling:
             )
             if "vaultspec-rag server jobs " in line
         ]
-        assert not offenders, (
-            f"a hand-spelled server-jobs command at {offenders}; call "
+        assert not find_offenders, (
+            f"a hand-spelled server-jobs command at {find_offenders}; call "
             "server_jobs_command so a renamed flag changes in one place"
         )
 
@@ -561,7 +561,7 @@ class TestOperatorCommandsHaveOneSpelling:
         prose and keeps its own words; the sites that hand an operator
         something to run do not.
         """
-        offenders: list[str] = []
+        find_offenders: list[str] = []
         for path in _production_sources():
             if path.name == "_operator_commands.py":
                 continue
@@ -576,9 +576,9 @@ class TestOperatorCommandsHaveOneSpelling:
                 if text.startswith(
                     ("vaultspec-rag server status", "vaultspec-rag server start")
                 ):
-                    offenders.append(f"{path.name}:{node.lineno} {text!r}")
-        assert not offenders, (
-            f"a hand-spelled status/start command at {offenders}; call "
+                    find_offenders.append(f"{path.name}:{node.lineno} {text!r}")
+        assert not find_offenders, (
+            f"a hand-spelled status/start command at {find_offenders}; call "
             "server_status_command or server_start_command so a renamed flag "
             "changes in one place"
         )
@@ -589,7 +589,7 @@ class TestOperatorCommandsHaveOneSpelling:
         An operator meeting it from two different verbs must not be told two
         different things, and the command inside it has to survive a rename.
         """
-        offenders = [
+        find_offenders = [
             f"{path.name}:{number}"
             for path in _production_sources()
             if path.name != "_operator_commands.py"
@@ -598,8 +598,8 @@ class TestOperatorCommandsHaveOneSpelling:
             )
             if "Service is not running. Start it with" in line
         ]
-        assert not offenders, (
-            f"the service-not-running sentence is spelled again at {offenders}; "
+        assert not find_offenders, (
+            f"the service-not-running sentence is spelled again at {find_offenders}; "
             "import SERVICE_NOT_RUNNING_MESSAGE"
         )
 
@@ -611,7 +611,7 @@ class TestOperatorCommandsHaveOneSpelling:
         the VOCABULARY: the verb, its flag names and their order, and which
         source spellings exist.
         """
-        offenders = [
+        find_offenders = [
             f"{path.name}:{number}"
             for path in _production_sources()
             if path.name != "_operator_commands.py"
@@ -620,8 +620,8 @@ class TestOperatorCommandsHaveOneSpelling:
             )
             if "vaultspec-rag index" in line
         ]
-        assert not offenders, (
-            f"a hand-spelled index command at {offenders}; call index_command "
+        assert not find_offenders, (
+            f"a hand-spelled index command at {find_offenders}; call index_command "
             "so a renamed flag changes in one place"
         )
 
