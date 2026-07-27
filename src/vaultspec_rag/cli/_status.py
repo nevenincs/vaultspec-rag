@@ -7,6 +7,7 @@ from typing import Annotated, Any, cast
 
 import typer
 
+from .._operator_commands import server_status_command
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, app
@@ -339,7 +340,7 @@ def handle_status(
                 1,
                 db_path=str(exc.db_path),
                 remediation=[
-                    "vaultspec-rag server status",
+                    server_status_command(),
                     "Retry after the current index operation finishes.",
                 ],
             )

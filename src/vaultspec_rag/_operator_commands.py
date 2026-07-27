@@ -15,7 +15,13 @@ module's business.
 
 from __future__ import annotations
 
-__all__ = ["port_option", "server_jobs_command"]
+__all__ = [
+    "SERVICE_NOT_RUNNING_MESSAGE",
+    "port_option",
+    "server_jobs_command",
+    "server_start_command",
+    "server_status_command",
+]
 
 
 def port_option(port: object | None) -> str:
@@ -60,3 +66,58 @@ def server_jobs_command(
     if index is not None:
         command += f" --index {index}"
     return command + port_option(port)
+
+
+def server_status_command(
+    port: object | None = None,
+    *,
+    verbose: bool = False,
+) -> str:
+    """Return the ``server status`` invocation an operator should run.
+
+    Thirty-seven sites spelled this, and they had already reached two
+    different flag orders for the same command - three sites emitting
+    ``--port N --verbose`` and one ``--verbose --port N``. Neither is wrong to
+    a shell, which is exactly why the divergence survived: nothing fails, the
+    operator just sees the tool describe itself inconsistently. The majority
+    order is kept.
+    """
+    return f"vaultspec-rag server status{port_option(port)}" + (
+        " --verbose" if verbose else ""
+    )
+
+
+def server_start_command(
+    port: object | None = None,
+    *,
+    local_only: bool = False,
+    qdrant: bool = False,
+    updates: bool = False,
+) -> str:
+    """Return the ``server start`` invocation an operator should run.
+
+    ``local_only`` names the on-disk backend, which is the escape hatch every
+    qdrant failure path offers. It was offered in five different sentences
+    across the supervisor alone; the command inside them is one thing.
+
+    ``port`` is rendered verbatim, so a caller with no concrete port to offer
+    passes the placeholder it wants an operator to substitute.
+    """
+    command = "vaultspec-rag server start"
+    if local_only:
+        command += " --local-only"
+    if qdrant:
+        command += " --qdrant"
+    if updates:
+        command += " --updates"
+    return command + port_option(port)
+
+
+#: The message every verb prints when it finds no service to talk to. Ten
+#: modules carried this sentence verbatim, which is one sentence too many to
+#: reword safely: an operator meeting it from two different verbs should not
+#: be told two different things, and the command inside it is built here so a
+#: rename cannot leave nine copies pointing at a verb that no longer exists.
+SERVICE_NOT_RUNNING_MESSAGE = (
+    f"Service is not running. Start it with `{server_start_command()}`."
+)

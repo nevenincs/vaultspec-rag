@@ -23,6 +23,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._operator_commands import server_status_command
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
@@ -731,7 +732,7 @@ def _try_in_process_indexing(
                     db_path=str(exc.db_path),
                     index_type=index_type.value,
                     remediation=[
-                        "vaultspec-rag server status",
+                        server_status_command(),
                         "Use --port with a running service for concurrent work.",
                         "Retry after the current index operation finishes.",
                     ],
@@ -988,7 +989,7 @@ def handle_clean(
                 db_path=str(exc.db_path),
                 clean_type=source.value,
                 remediation=[
-                    "vaultspec-rag server status",
+                    server_status_command(),
                     "Stop the service if you need exclusive cleanup.",
                     "Retry after the current index operation finishes.",
                 ],

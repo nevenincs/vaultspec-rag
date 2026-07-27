@@ -19,6 +19,11 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._operator_commands import (
+    SERVICE_NOT_RUNNING_MESSAGE,
+    server_start_command,
+    server_status_command,
+)
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
@@ -139,7 +144,7 @@ def _address_line(port: object) -> str:
 def _display_service_not_running(port: int | None = None) -> None:
     if port is not None:
         _plain(_address_line(port))
-    _plain("Service is not running. Start it with `vaultspec-rag server start`.")
+    _plain(SERVICE_NOT_RUNNING_MESSAGE)
 
 
 def _format_local_index_busy_message(action: str) -> str:
@@ -474,8 +479,8 @@ def _display_port_unreachable_error(
             1,
             port=port,
             remediation=[
-                "vaultspec-rag server status",
-                "vaultspec-rag server start",
+                server_status_command(),
+                server_start_command(),
                 "rerun with --allow-fallback (one user only)",
             ],
         )
@@ -512,7 +517,7 @@ def _display_service_version_error(
     """
     remediation = [
         *verdict.remediation(),
-        "vaultspec-rag server status",
+        server_status_command(),
     ]
     if json_mode:
         _emit_json_error_and_exit(

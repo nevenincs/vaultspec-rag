@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, cast
 
 from .._loopback_http import LOOPBACK_OPENER
 from .._managed_log_sink import RawRotatingLogSink
+from .._operator_commands import server_start_command
 from .._win32 import (
     WIN_CREATE_NEW_PROCESS_GROUP,
     WIN_CREATE_NO_WINDOW,
@@ -935,7 +936,7 @@ def _reap_orphan_before_spawn(
             f"qdrant orphan on port {qport}: recorded child pid {target} has "
             "no matching process-start witness; refusing to signal a reusable "
             "pid. Stop the holder manually, then retry; or run local-only: "
-            "vaultspec-rag server start --local-only"
+            f"{server_start_command(local_only=True)}"
         )
     from ..config import get_config
 
@@ -989,7 +990,7 @@ def _reap_orphan_before_spawn(
             f"qdrant orphan on port {qport} was reaped but the port did not "
             "free in time; the prior child's socket or storage handle is "
             "still held. Retry shortly; or run local-only: "
-            "vaultspec-rag server start --local-only"
+            f"{server_start_command(local_only=True)}"
         )
     logger.info("Reaped qdrant orphan pid %d; proceeding to spawn", target)
 
@@ -1062,7 +1063,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
         raise RuntimeError(
             f"refusing to start qdrant on port {qport}: {reason}. Stop or fix "
             "the process holding the port, then retry; or run local-only: "
-            "vaultspec-rag server start --local-only"
+            f"{server_start_command(local_only=True)}"
         )
     if action == "reap_then_spawn":
         _reap_orphan_before_spawn(qport, identity, reason)

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-from .._operator_commands import server_jobs_command
+from .._operator_commands import server_jobs_command, server_status_command
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 if TYPE_CHECKING:
@@ -475,7 +475,7 @@ def _store_format_finding(
             "forward by the version now running; the migration is irreversible, "
             "so keep a copy before attempting to go back to the older binary"
         ),
-        command="vaultspec-rag server status",
+        command=server_status_command(),
         family=STORE_FORMAT_FAMILY,
     )
 

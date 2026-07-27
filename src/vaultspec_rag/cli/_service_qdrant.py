@@ -12,6 +12,7 @@ from typing import Annotated, Any, NoReturn, cast
 
 import typer
 
+from .._operator_commands import server_start_command
 from ..config import get_config
 from ..qdrant_runtime._constants import (
     QDRANT_SERVER_VERSION,
@@ -181,7 +182,7 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
         return
     _plain_line("Connection: not accepting requests")
     if isinstance(active, dict):
-        _print_next_action("vaultspec-rag server start --qdrant")
+        _print_next_action(server_start_command(qdrant=True))
 
 
 def _print_qdrant_process(service: object) -> None:

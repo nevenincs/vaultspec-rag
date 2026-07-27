@@ -17,7 +17,12 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from .._operator_commands import port_option, server_jobs_command
+from .._operator_commands import (
+    port_option,
+    server_jobs_command,
+    server_start_command,
+    server_status_command,
+)
 from .._process_probe import pid_alive as _pid_alive
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
@@ -645,9 +650,9 @@ def _status_next_action(
 ) -> str:
     port_arg = port_option(port)
     if state == "stopped":
-        return f"vaultspec-rag server start{port_arg}"
+        return server_start_command(port)
     if state == "warming":
-        return f"vaultspec-rag server status{port_arg}  (models loading; retry shortly)"
+        return f"{server_status_command(port)}  (models loading; retry shortly)"
     if state != "running":
         return f"vaultspec-rag server logs --limit 80{port_arg}"
     return _running_service_next_action(
@@ -677,7 +682,7 @@ def _running_service_next_action(
         # a sharper move than re-running status with more rows.
         if findings:
             return f"vaultspec-rag server logs --limit 80{port_arg}"
-        return f"vaultspec-rag server status --verbose{port_arg}"
+        return server_status_command(port, verbose=True)
     running_jobs = jobs.get("running")
     if isinstance(running_jobs, int) and running_jobs > 0:
         return server_jobs_command(port)

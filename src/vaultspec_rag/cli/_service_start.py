@@ -18,7 +18,11 @@ from typing import Annotated, Literal, cast
 
 import typer
 
-from .._operator_commands import server_jobs_command
+from .._operator_commands import (
+    server_jobs_command,
+    server_start_command,
+    server_status_command,
+)
 from .._process_probe import pid_alive
 from ..config import EnvVar, get_config
 from ..serviceclient._compat import (
@@ -402,9 +406,9 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
                 "Another process is already using this service address.",
             ),
             next_actions=(
-                f"vaultspec-rag server status --port {port}",
+                server_status_command(port),
                 server_jobs_command(port),
-                "vaultspec-rag server start --port <free-port>",
+                server_start_command("<free-port>"),
             ),
             port=port,
         )
@@ -432,7 +436,7 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
                 "resident service is not supported.",
             ),
             next_actions=(
-                "vaultspec-rag server status",
+                server_status_command(),
                 "vaultspec-rag server stop",
             ),
             holder_pid=machine_holder,
@@ -1092,7 +1096,7 @@ def _await_service_ready(
                 "The detached daemon continues starting in the background.",
                 f"Log: {log_path}",
             ),
-            next_actions=("vaultspec-rag server status",),
+            next_actions=(server_status_command(),),
             pid=pid,
             log=str(log_path),
         ) from None

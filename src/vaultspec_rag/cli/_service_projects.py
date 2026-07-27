@@ -8,6 +8,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE, server_status_command
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import server_projects_app
@@ -75,7 +76,7 @@ def _handle_list_not_running(json_mode: bool, port: int | None = None) -> NoRetu
         _emit_json_error_and_exit(
             "service.projects.list",
             "service_not_running",
-            "Service is not running. Start it with `vaultspec-rag server start`.",
+            SERVICE_NOT_RUNNING_MESSAGE,
             3,
         )
     _display_service_not_running(port)
@@ -190,7 +191,7 @@ def _handle_unload_not_running(
         _emit_json_error_and_exit(
             "service.projects.unload",
             "service_not_running",
-            "Service is not running. Start it with `vaultspec-rag server start`.",
+            SERVICE_NOT_RUNNING_MESSAGE,
             3,
             root=root,
         )
@@ -304,6 +305,6 @@ def service_projects_unload(
         port=resolved_port,
         project=project,
         status="service could not confirm unload",
-        next_action=f"vaultspec-rag server status --port {resolved_port}",
+        next_action=server_status_command(resolved_port),
     )
     raise typer.Exit(1)

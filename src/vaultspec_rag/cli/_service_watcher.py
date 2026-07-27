@@ -9,6 +9,11 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._operator_commands import (
+    SERVICE_NOT_RUNNING_MESSAGE,
+    server_start_command,
+    server_status_command,
+)
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import server_watcher_app
@@ -99,7 +104,7 @@ def _watcher_service_unreachable(
         _emit_json_error_and_exit(
             command,
             "service_not_running",
-            "Service is not running. Start it with `vaultspec-rag server start`.",
+            SERVICE_NOT_RUNNING_MESSAGE,
             3,
             **extra,
         )
@@ -157,11 +162,11 @@ _UPDATES_STATE_ERRORS = {
 def _updates_next_actions(status: str, port: int) -> list[str]:
     """Return the remediation a caller can act on for one unachieved state."""
     if status == "disabled":
-        return ["vaultspec-rag server start --updates"]
+        return [server_start_command(updates=True)]
     if status in ("pending", "queued_behind_drain"):
         return [f"vaultspec-rag server updates status --port {port}"]
     return [
-        f"vaultspec-rag server status --port {port}",
+        server_status_command(port),
         f"vaultspec-rag server logs --limit 200 --port {port}",
     ]
 

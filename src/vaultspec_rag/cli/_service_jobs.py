@@ -22,6 +22,7 @@ from .._job_errors import (
     classify_error_text,
     remediation,
 )
+from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import (
     _try_http_admin,
@@ -790,7 +791,7 @@ def _jobs_args(spec: _JobsQuery) -> dict[str, object]:
 
 
 def _exit_jobs_not_running(json_mode: bool, port: int | None = None) -> NoReturn:
-    message = "Service is not running. Start it with `vaultspec-rag server start`."
+    message = SERVICE_NOT_RUNNING_MESSAGE
     if json_mode:
         _emit_json_error_and_exit("service.jobs", "service_not_running", message, 3)
     _display_service_not_running(port)
@@ -1143,7 +1144,7 @@ def _job_control_port(
         _job_control_failure(
             command,
             "service_not_running",
-            "Service is not running. Start it with `vaultspec-rag server start`.",
+            SERVICE_NOT_RUNNING_MESSAGE,
             json_mode=json_mode,
             exit_code=3,
         )
@@ -1185,7 +1186,7 @@ def _human_exact_job_id(
         _job_control_failure(
             command,
             "service_not_running",
-            "Service is not running. Start it with `vaultspec-rag server start`.",
+            SERVICE_NOT_RUNNING_MESSAGE,
             json_mode=False,
             exit_code=3,
         )
@@ -1247,7 +1248,7 @@ def _exact_job_for_control(
         _job_control_failure(
             command,
             "service_not_running",
-            "Service is not running. Start it with `vaultspec-rag server start`.",
+            SERVICE_NOT_RUNNING_MESSAGE,
             json_mode=json_mode,
             exit_code=3,
         )
@@ -1318,7 +1319,7 @@ def _complete_job_control(
         _job_control_failure(
             command,
             "service_not_running",
-            "Service is not running. Start it with `vaultspec-rag server start`.",
+            SERVICE_NOT_RUNNING_MESSAGE,
             json_mode=json_mode,
             exit_code=3,
         )
