@@ -418,7 +418,7 @@ def validate_acceptance_admission(
     spec: CorpusSpec,
 ) -> CodeIndexPreflight:
     """Require managed-service admission before model or mutable GPU work."""
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...jobs import validate_code_job_admission
 
     cfg = get_config()
@@ -450,7 +450,7 @@ class AcceptanceRequest:
 def run_acceptance(request: AcceptanceRequest) -> AcceptanceReport:
     """Run profile admission and the real production code-index pipeline."""
     from ... import CodebaseIndexer, EmbeddingModel
-    from ...config import get_config
+    from ...config._settings import get_config
     from ...store_runtime import VaultStore
 
     resolved = request.root.resolve()
@@ -562,7 +562,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "corpus": {**asdict(spec), **asdict(preparation)},
         }
         if args.admission_only:
-            from ...config import get_config
+            from ...config._settings import get_config
 
             preflight = validate_acceptance_admission(args.root, spec)
             payload.update(

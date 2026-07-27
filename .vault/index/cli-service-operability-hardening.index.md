@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-service-operability-hardening'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-W00-S01]]'
   - '[[2026-06-11-cli-service-operability-hardening-W01-S01]]'
@@ -16,6 +16,8 @@ related:
   - '[[2026-06-12-cli-service-operability-hardening-W03-S01]]'
   - '[[2026-06-12-cli-service-operability-hardening-W04-S01]]'
   - '[[2026-06-12-cli-service-operability-hardening-w05-summary-exec]]'
+  - '[[2026-07-27-cli-service-operability-hardening-adr]]'
+  - '[[2026-07-27-cli-service-operability-hardening-grounding-research]]'
 ---
 
 # `cli-service-operability-hardening` feature index
@@ -23,6 +25,10 @@ related:
 Auto-generated index of all documents tagged with `#cli-service-operability-hardening`.
 
 ## Documents
+
+### adr
+
+- `2026-07-27-cli-service-operability-hardening-adr` - `cli-service-operability-hardening` adr: `Preserve CLI and service operability guarantees` | (**status:** `accepted`)
 
 ### audit
 
@@ -42,3 +48,7 @@ Auto-generated index of all documents tagged with `#cli-service-operability-hard
 ### plan
 
 - `2026-06-11-cli-service-operability-hardening-epic-plan` - `cli-service-operability-hardening` epic plan
+
+### research
+
+- `2026-07-27-cli-service-operability-hardening-grounding-research` - `cli-service-operability-hardening` research: `Grounding`

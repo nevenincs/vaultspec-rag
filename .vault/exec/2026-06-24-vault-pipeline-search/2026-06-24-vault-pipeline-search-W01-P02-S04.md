@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S04'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Implement role-aware NDCG, Authoritative-at-k, MRR, and role-precision metrics
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/quality/metrics.py`
-
-## Description
 
 - Authored `metrics.py` with pure role-aware ranking metrics over a ranked doc_id list
   and a graded gold mapping: `ndcg_at_k` (gain = grade, the headline), `rank_of_first_grade`,

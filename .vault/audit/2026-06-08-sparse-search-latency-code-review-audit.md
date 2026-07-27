@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#sparse-search-latency'
 date: '2026-06-08'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-08-sparse-search-latency-plan]]'
 ---
@@ -25,3 +25,15 @@ The implemented test `test_encode_query_respects_sparse_enabled` in `src/vaultsp
 Because the integration tests do not execute the entire search pipeline with `sparse_enabled=False`, the exception-loop failure mode in `VaultStore` went undetected.
 
 **Recommendation**: Add tests that instantiate `VaultSearcher` with `sparse_enabled=False` and execute `search_vault` and `search_codebase` end-to-end to ensure the full pipeline correctly handles the missing sparse vector.
+
+## Scope
+
+Retained audit evidence: 2026-06-08-sparse-search-latency-plan are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+
+## Findings
+
+Retained audit evidence: the detailed review entries in this document constitute the findings inventory.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

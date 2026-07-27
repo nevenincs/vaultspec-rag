@@ -360,7 +360,7 @@ def enforce_pytest_managed_singleton_containment(
     if not pytest_singleton_containment_active():
         return
 
-    from .config import get_config
+    from .config._settings import get_config
 
     cfg = get_config()
     configured_targets: tuple[str | PathLike[str], ...] = (

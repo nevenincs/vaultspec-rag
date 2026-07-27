@@ -3,14 +3,34 @@ tags:
   - '#plan'
   - '#preprocess-sandbox'
 date: '2026-07-13'
-modified: '2026-07-14'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-13-preprocess-sandbox-adr]]'
   - '[[2026-07-13-preprocess-sandbox-research]]'
 ---
-
 # `preprocess-sandbox` plan
+
+## Description
+
+Implements the accepted `preprocess-sandbox` ADR (D1-D9). The RAG server's clients
+are non-interactive, so consent cannot gate hook execution; containment replaces it.
+P01 removes the trust-on-first-use surface entirely (the store, its verbs, and the
+loader gate) so rules resolve for any root, leaving only the `off` kill switch and an
+opt-in unsandboxed escape hatch. P02 introduces a `HookSandbox` abstraction at the
+single runner launch seam - staged input, curated env, scratch cwd, and pluggable
+OS-level backends (Windows AppContainer wrapped in a kill-on-close Job Object as the
+primary boundary; bubblewrap/Landlock on Linux; seatbelt on macOS) - and is
+fail-closed in server mode: no working backend means hooks are refused, never run
+unconfined. P03 fixes the three server-path defects that would otherwise leave hooks
+silently ineffective or their failures invisible (the watcher's trust-gated change
+filter, the dropped `preprocess_failures` on `/jobs`, and the missing `/reindex`
+pre-flight signal). P04 proves end-to-end that a contained hook cannot escape the
+staged directory or open a socket and that a real worktree's hooks index through the
+service with no interaction, and documents the model. Grounded in the research's
+threat model and containment analysis.
+
+## Steps
 
 ### Phase `P01` - Remove TOFU, resolve rules for every root
 
@@ -46,27 +66,6 @@ Prove a contained hook cannot escape and that a real worktree's hooks index thro
 
 - [x] `P04.S14` - Prove end-to-end against real backends that a contained hook cannot read outside the staged dir nor open a socket, and that a worktree shipping a hook indexes its corpus through the service with no interaction; `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
 - [x] `P04.S15` - Document the sandbox model, the tri-state control, fail-closed behavior, and the removed trust surface across the README and preprocessing docs; `README.md`.
-
-## Description
-
-Implements the accepted `preprocess-sandbox` ADR (D1-D9). The RAG server's clients
-are non-interactive, so consent cannot gate hook execution; containment replaces it.
-P01 removes the trust-on-first-use surface entirely (the store, its verbs, and the
-loader gate) so rules resolve for any root, leaving only the `off` kill switch and an
-opt-in unsandboxed escape hatch. P02 introduces a `HookSandbox` abstraction at the
-single runner launch seam - staged input, curated env, scratch cwd, and pluggable
-OS-level backends (Windows AppContainer wrapped in a kill-on-close Job Object as the
-primary boundary; bubblewrap/Landlock on Linux; seatbelt on macOS) - and is
-fail-closed in server mode: no working backend means hooks are refused, never run
-unconfined. P03 fixes the three server-path defects that would otherwise leave hooks
-silently ineffective or their failures invisible (the watcher's trust-gated change
-filter, the dropped `preprocess_failures` on `/jobs`, and the missing `/reindex`
-pre-flight signal). P04 proves end-to-end that a contained hook cannot escape the
-staged directory or open a socket and that a real worktree's hooks index through the
-service with no interaction, and documents the model. Grounded in the research's
-threat model and containment analysis.
-
-## Steps
 
 ## Parallelization
 

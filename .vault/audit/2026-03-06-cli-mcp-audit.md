@@ -3,16 +3,21 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # CLI and MCP Server Audit Report
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Initial audit: 2026-03-06
 
 ______________________________________________________________________
 
-## CLI Gaps
+### CLI Gaps
 
 ### GAP-CLI-1: `test` command does not pass arbitrary pytest args (CRITICAL)
 
@@ -50,7 +55,7 @@ is a callable. Currently functional, no action needed.
 
 ______________________________________________________________________
 
-## MCP Server Gaps
+### MCP Server Gaps
 
 ### GAP-MCP-1: `RagComponents` uses bare class attributes, not `__init__`
 
@@ -80,7 +85,7 @@ exposed as tools.
 
 ______________________________________________________________________
 
-## Test Coverage Gaps
+### Test Coverage Gaps
 
 ### GAP-TEST-1: No CLI test file exists (CRITICAL)
 
@@ -126,7 +131,7 @@ No tests for: cli.py, mcp_server.py, config.py, workspace.py, logging_config.py
 
 ______________________________________________________________________
 
-## CLAUDE.md Violations
+### CLAUDE.md Violations
 
 ### VIOLATION-1: `test` command does not pass all pytest args through
 
@@ -146,7 +151,7 @@ All test files are in `src/vaultspec_rag/tests/` as required.
 
 ______________________________________________________________________
 
-## Priority Summary
+### Priority Summary
 
 | Priority | Issue                                   | Task                   |
 | -------- | --------------------------------------- | ---------------------- |
@@ -161,7 +166,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Audit Round 1 — 2026-03-06T16:45
+### Audit Round 1 — 2026-03-06T16:45
 
 ### Changes detected
 
@@ -182,7 +187,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Audit Round 2 — 2026-03-06T16:48
+### Audit Round 2 — 2026-03-06T16:48
 
 ### CLI changes detected
 
@@ -228,7 +233,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Audit Round 3 — 2026-03-06T16:50
+### Audit Round 3 — 2026-03-06T16:50
 
 ### Changes detected
 
@@ -258,7 +263,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Audit Round 4 — 2026-03-06T16:52
+### Audit Round 4 — 2026-03-06T16:52
 
 ### Changes detected
 
@@ -281,7 +286,7 @@ All original gaps (GAP-CLI-1 through GAP-CLI-4, GAP-MCP-1 through GAP-MCP-4) are
 
 ______________________________________________________________________
 
-## Audit Round 5 — 2026-03-06T16:53
+### Audit Round 5 — 2026-03-06T16:53
 
 ### Changes detected
 
@@ -311,7 +316,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Audit Round 6 — 2026-03-06T16:55
+### Audit Round 6 — 2026-03-06T16:55
 
 ### Changes detected
 
@@ -327,7 +332,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Audit Round 7 — 2026-03-06T16:57
+### Audit Round 7 — 2026-03-06T16:57
 
 ### Changes detected
 
@@ -339,7 +344,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Audit Round 8 — 2026-03-06T16:59
+### Audit Round 8 — 2026-03-06T16:59
 
 ### Changes detected
 
@@ -370,3 +375,7 @@ ______________________________________________________________________
 ### Final status
 
 All original gaps (GAP-CLI-1 through GAP-CLI-4, GAP-MCP-1 through GAP-MCP-4, GAP-TEST-1 through GAP-TEST-3) and all new issues (NEW-1 through NEW-3) are resolved. The CLI and MCP server are fully implemented with rich output, all CLAUDE.md requirements are met, and both have unit test coverage.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#managed-log-contract'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 related:
   - "[[2026-07-21-managed-log-contract-reference]]"
   - "[[2026-04-12-store-eviction-log-rotation-research]]"
@@ -128,3 +128,7 @@ without pretending their records share one format.
   decision.
 - It defers relocation of Qdrant history into the machine-global singleton directory. The
   managed sources remain under the configured status directory in this change.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

@@ -3,19 +3,17 @@ tags:
   - '#exec'
   - '#qdrant-performance'
 date: '2026-06-06'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S02'
 related:
   - '[[2026-06-05-qdrant-performance-plan]]'
 ---
 
-# Refactor VaultStore client initialization to bypass FileLock and connect to url
+## Description
 
-## Scope
+### Scope
 
 - `src/vaultspec_rag/store.py`
-
-## Description
 
 - Refactor `__init__` in `VaultStore` to read `qdrant_url` and `qdrant_api_key` from configuration wrapper.
 - Bypass `FileLock` instantiation and acquisition if `qdrant_url` is configured.
@@ -25,3 +23,7 @@ related:
 ## Outcome
 
 - The client can connect to an external or local Qdrant server without holding local filesystem lock files, resolving lock conflicts for concurrent instances.
+
+## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.

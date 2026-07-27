@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#vaultragignore'
 date: '2026-04-04'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-04-04-vaultragignore-research]]'
@@ -242,3 +242,4 @@ depend on both Phase 1 and Phase 2.
 See the summary above.
 
 ## Steps
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.

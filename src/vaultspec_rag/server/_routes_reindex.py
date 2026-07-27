@@ -66,7 +66,7 @@ def _preprocess_preflight(
             "hooks_will_run": scan.hooks_will_run,
         }
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..indexer._preprocess_config import (
         PreprocessConfigError,
         load_preprocess_rules,
@@ -125,7 +125,7 @@ async def _validate_reindex_domains(
     clean: bool,
 ) -> tuple[list[tuple[PublicSourceType, Any]], dict[str, dict[str, object]]]:
     """Validate every requested domain without collapsing combined admission."""
-    from ._routes import _InvalidJobRequestError, _validated_index_request
+    from ._routes import InvalidJobRequestError, validated_index_request
 
     validated: list[tuple[PublicSourceType, Any]] = []
     failures: dict[str, dict[str, object]] = {}
@@ -138,14 +138,14 @@ async def _validate_reindex_domains(
             "start_paused": False,
         }
         try:
-            request_parts = await _validated_index_request(
+            request_parts = await validated_index_request(
                 request,
                 canonical_payload,
                 idempotency_suffix=(
                     source.value if source_type is PublicSourceType.COMBINED else None
                 ),
             )
-        except _InvalidJobRequestError as exc:
+        except InvalidJobRequestError as exc:
             if source_type is not PublicSourceType.COMBINED:
                 raise
             failures[source.value] = _reindex_failure(
@@ -165,7 +165,7 @@ async def _create_reindex_domains(
     """Create independently validated jobs and retain per-domain failures."""
     from ..job_models import JobOutcomeStatus
     from ..jobs import get_job_manager
-    from ._routes import _activate_index_job, _index_admission_preflight
+    from ._routes import activate_index_job, index_admission_preflight
 
     manager = get_job_manager()
     first_root: Path | None = None
@@ -182,7 +182,7 @@ async def _create_reindex_domains(
                     idempotency_key=idempotency_key,
                 )
             )
-            outcome = await _activate_index_job(outcome, admission)
+            outcome = await activate_index_job(outcome, admission)
         except Exception as exc:
             if source_type is not PublicSourceType.COMBINED:
                 raise
@@ -201,7 +201,7 @@ async def _create_reindex_domains(
             "outcome": outcome.to_dict(),
         }
         if admission is not None:
-            domain["admission"] = _index_admission_preflight(admission)
+            domain["admission"] = index_admission_preflight(admission)
         domain_responses[source.value] = domain
         if outcome.job is not None:
             first_root = Path(str(outcome.job.spec.project_root))
@@ -217,24 +217,24 @@ async def _create_reindex_domains(
 async def reindex_route(request: Request) -> JSONResponse:
     """Validated compatibility adapter over canonical ``POST /jobs`` creation."""
     from ._routes import (
-        _InvalidJobRequestError,
-        _job_error,
-        _job_outcome_status,
-        _job_payload,
+        InvalidJobRequestError,
+        job_error,
+        job_outcome_status,
+        job_payload,
     )
 
     denied = require_token(request)
     if denied is not None:
         return denied
     try:
-        payload = await _job_payload(request, required=True)
+        payload = await job_payload(request, required=True)
         try:
             source_type = parse_source_type(
                 payload.get("type", PublicSourceType.VAULT.value),
                 allow_aliases=False,
             )
         except SourceTypeParseError as exc:
-            return _job_error(
+            return job_error(
                 "create",
                 "invalid_job_spec",
                 str(exc),
@@ -242,7 +242,7 @@ async def reindex_route(request: Request) -> JSONResponse:
             )
         clean = payload.get("clean", False)
         if type(clean) is not bool:
-            raise _InvalidJobRequestError(
+            raise InvalidJobRequestError(
                 "invalid_job_spec",
                 "clean must be a boolean when provided.",
             )
@@ -252,8 +252,8 @@ async def reindex_route(request: Request) -> JSONResponse:
             source_type,
             clean=clean,
         )
-    except _InvalidJobRequestError as exc:
-        return _job_error("create", exc.code, str(exc))
+    except InvalidJobRequestError as exc:
+        return job_error("create", exc.code, str(exc))
 
     first_root, first_admission = await _create_reindex_domains(
         validated,
@@ -286,7 +286,7 @@ async def reindex_route(request: Request) -> JSONResponse:
         outcome_payload = cast("dict[str, object]", domain["outcome"])
         return JSONResponse(
             {**outcome_payload, "ok": False, "error": domain["error_kind"]},
-            status_code=_job_outcome_status(str(domain["error_kind"])),
+            status_code=job_outcome_status(str(domain["error_kind"])),
         )
     assert first_root is not None
     response: dict[str, object] = {
@@ -303,13 +303,13 @@ async def reindex_route(request: Request) -> JSONResponse:
 
 async def clean_route(request: Request) -> JSONResponse:
     """Clean one canonical index domain or all domains independently."""
-    from ._routes import _InvalidJobRequestError, _job_payload, _job_string
+    from ._routes import InvalidJobRequestError, job_payload, job_string
 
     denied = require_token(request)
     if denied is not None:
         return denied
     try:
-        payload = await _job_payload(request, required=True)
+        payload = await job_payload(request, required=True)
         try:
             source_type = parse_source_type(
                 payload.get("type", PublicSourceType.COMBINED.value),
@@ -317,9 +317,9 @@ async def clean_route(request: Request) -> JSONResponse:
             )
         except SourceTypeParseError as exc:
             return JSONResponse(exc.as_error_envelope(), status_code=400)
-        raw_root = _job_string(payload, "project_root")
+        raw_root = job_string(payload, "project_root")
         root = _resolve_root(raw_root)
-    except (ProjectRootRequiredError, ValueError, _InvalidJobRequestError) as exc:
+    except (ProjectRootRequiredError, ValueError, InvalidJobRequestError) as exc:
         return JSONResponse(
             {"ok": False, "error": "invalid_clean_request", "message": str(exc)},
             status_code=400,

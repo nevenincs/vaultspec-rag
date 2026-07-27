@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ..qdrant_runtime._resolve import binary_filename
 

@@ -97,7 +97,7 @@ uv run vaultspec-rag search "store" --type code --class-name VaultStore
 Target one exact project-relative path with `--path`. Unlike `--include-path`, it matches that one file and nothing under it:
 
 ```
-uv run vaultspec-rag search "lock" --type code --path src/vaultspec_rag/store.py
+uv run vaultspec-rag search "lock" --type code --path src/vaultspec_rag/store_runtime.py
 ```
 
 ## Narrow vault results

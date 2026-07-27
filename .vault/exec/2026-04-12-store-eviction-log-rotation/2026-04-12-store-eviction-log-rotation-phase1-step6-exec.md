@@ -3,34 +3,34 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-6
+## Description
 
-## goal
+### Goal
 
 Migrate every MCP tool handler from `_registry.get_project(...)` to
 `with _registry.lease(...)`, surface `RegistryFullError` as a
 structured dict, and remove the temporary `get_project` alias.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/mcp_server.py`
 - `src/vaultspec_rag/service.py` (alias removal)
 - `src/vaultspec_rag/tests/test_service_registry.py`
 - `src/vaultspec_rag/tests/test_mcp_server.py`
 
-## what was done
+### What was done
 
 - Added `_registry_full_error_dict(exc)` helper returning the exact
   ADR D4 error shape (`ok`, `error`, `message`, `max_projects`,
   `busy_projects`).
 - `_ensure_watcher` now calls `_registry.peek_project` (no refcount
-  bump — watcher wiring is non-request-path).
+  bump â€” watcher wiring is non-request-path).
 - Wrapped `search_vault`, `search_codebase`, `get_index_status`,
   `reindex_vault`, `reindex_codebase`, and the stdio-only
   `get_vault_document` in `with _registry.lease(root) as slot: ...`,
@@ -48,7 +48,23 @@ structured dict, and remove the temporary `get_project` alias.
   (via `inspect.getsource`) that `_ensure_watcher` uses
   `peek_project` and NOT `get_project`.
 
-## deviations from plan
+## Outcome
+
+### Test results
+
+- `pytest src/vaultspec_rag/tests/test_mcp_server.py -m unit` ->
+  89 passed (includes 2 new tests).
+- `ruff check src/vaultspec_rag/` + `ty check src/vaultspec_rag`
+  clean.
+- Grep verification: `_registry\.get_project` returns zero matches.
+
+### Commit hash
+
+`e157a2f feat(mcp): route tool handlers through ServiceRegistry.lease`
+
+## Notes
+
+### Deviations from plan
 
 - The plan lists `get_code_file` among the handlers to wrap.
   `get_code_file` never touched `_registry` even in the pre-step-6
@@ -60,18 +76,6 @@ structured dict, and remove the temporary `get_project` alias.
   `_ensure_watcher` on error-dict returns (rather than letting it
   fire against a project root that just hit `RegistryFullError`).
 
-## test results
-
-- `pytest src/vaultspec_rag/tests/test_mcp_server.py -m unit` ->
-  89 passed (includes 2 new tests).
-- `ruff check src/vaultspec_rag/` + `ty check src/vaultspec_rag`
-  clean.
-- Grep verification: `_registry\.get_project` returns zero matches.
-
-## commit hash
-
-`e157a2f feat(mcp): route tool handlers through ServiceRegistry.lease`
-
-## time spent
+### Time spent
 
 ~25 minutes.

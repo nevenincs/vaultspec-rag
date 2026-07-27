@@ -136,7 +136,7 @@ def real_vault_evidence(
     production indexing, and every production search run under one deadline; the
     parent consumes the worker's JSON evidence for normal assertions.
     """
-    from ...config import get_config
+    from ...config._settings import get_config
 
     output_path = tmp_path_factory.mktemp("intent-ranking") / "evidence.json"
     cfg = get_config()

@@ -40,7 +40,8 @@ from .._process_probe import (
     reap_if_child,
     send_signal,
 )
-from ..config import EnvVar, get_config, managed_status_dir
+from ..config._settings import get_config, managed_status_dir
+from ..config._types import EnvVar
 from ._constants import (
     ASSET_LINUX_ARM_MUSL,
     ASSET_LINUX_X86_GNU,

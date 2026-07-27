@@ -3,14 +3,26 @@ tags:
   - '#plan'
   - '#storage-autoprune-safety'
 date: '2026-07-14'
-modified: '2026-07-14'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
   - '[[2026-07-13-storage-autoprune-safety-research]]'
 ---
-
 # `storage-autoprune-safety` plan
+
+## Description
+
+Implements the accepted storage-autoprune-safety ADR: an hourly in-daemon
+maintenance loop that reclaims time-confirmed dangling namespaces under a
+stacked safety-gate contract (manifest attribution, orphaned classification,
+persisted grace windows, empty-vs-data tiering with snapshot archives,
+per-cycle caps), reports every cycle through the jobs registry, folds a
+disk/health rollup into the same tick, and adds initiator attribution to
+service shutdown events. Grounded in the linked research (the 2026-07-13
+prune trace and waste-profile findings).
+
+## Steps
 
 ### Phase `P01` - Grace bookkeeping and reclamation policy
 
@@ -37,19 +49,6 @@ Make every service termination answerable from one log line by carrying initiato
 
 - [x] `P03.S10` - Carry initiator identity (pid, argv command line, cwd) on the cli_terminate audit event and in the stop and stop-port envelope data; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `P03.S11` - Assert the attribution fields appear in the shutdown log line and the stop --json envelopes across the stop exit paths; `src/vaultspec_rag/tests/test_cli_server_stop.py`.
-
-## Description
-
-Implements the accepted storage-autoprune-safety ADR: an hourly in-daemon
-maintenance loop that reclaims time-confirmed dangling namespaces under a
-stacked safety-gate contract (manifest attribution, orphaned classification,
-persisted grace windows, empty-vs-data tiering with snapshot archives,
-per-cycle caps), reports every cycle through the jobs registry, folds a
-disk/health rollup into the same tick, and adds initiator attribution to
-service shutdown events. Grounded in the linked research (the 2026-07-13
-prune trace and waste-profile findings).
-
-## Steps
 
 ## Parallelization
 

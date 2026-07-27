@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#torch-dependency-group'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-06-24-torch-dependency-group-P01-S01]]'
   - '[[2026-06-24-torch-dependency-group-P01-S02]]'

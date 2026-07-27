@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#adr-plan-coverage-triage'
 date: '2026-07-25'
-modified: '2026-07-26'
+modified: '2026-07-27'
 related:
   - "[[2026-07-25-index-drift-circuit-accounting-adr]]"
   - "[[2026-07-25-document-index-drift-parity-adr]]"

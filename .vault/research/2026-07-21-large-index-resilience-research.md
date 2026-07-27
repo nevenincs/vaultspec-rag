@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-23'
+modified: '2026-07-27'
 related:
   - "[[2026-07-21-large-index-resilience-reference]]"
   - "[[2026-06-02-index-gpu-pipeline-adr]]"
@@ -155,3 +155,7 @@ cooperative stop and boundedly join indexing before store teardown.
 - The retry taxonomy for each Qdrant transport and schema failure.
 - Whether local Qdrant can meet the accepted floor after memory bounding, or the profile
   must require server mode.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

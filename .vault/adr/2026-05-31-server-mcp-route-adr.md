@@ -6,7 +6,7 @@ date: '2026-05-31'
 related:
   - "[[2026-05-31-server-mcp-route-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-06-30'
+modified: '2026-07-27'
 ---
 
 # `server-mcp-route` adr: `asgi path-rewrite middleware to skip starlette mount redirect` | (**status:** `superseded`)
@@ -92,3 +92,7 @@ function instead of a Starlette instance.
   with `follow_redirects=False`, confirm no `307` response.
   MCP client connects against both URLs without a redirect hop.
   Documented inline in this PR.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

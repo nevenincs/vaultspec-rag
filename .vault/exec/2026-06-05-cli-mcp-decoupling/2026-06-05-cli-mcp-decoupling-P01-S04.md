@@ -3,19 +3,17 @@ tags:
   - '#exec'
   - '#cli-mcp-decoupling'
 date: '2026-06-05'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S04'
 related:
   - "[[2026-06-05-cli-mcp-decoupling-plan]]"
 ---
 
-# Refactor CLI quality command to call run_quality_probe and print the results
+## Description
 
-## Scope
+### Scope
 
 - `src/vaultspec_rag/cli/_quality.py`
-
-## Description
 
 - Clean up `handle_quality` to remove temporary directories, synthetic corpus creation, indexing, search, and precision loop logic.
 - Delegate quality tests to backend API `run_quality_probe`.
@@ -27,3 +25,5 @@ related:
 - The CLI quality command is now a thin transport/formatting wrapper delegating to the backend.
 
 ## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.

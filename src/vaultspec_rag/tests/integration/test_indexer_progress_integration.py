@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...indexer import CodebaseIndexer, VaultIndexer
-from ...store import VaultStore
+from ...store_runtime import VaultStore
 from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:

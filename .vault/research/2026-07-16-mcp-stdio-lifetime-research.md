@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#mcp-stdio-lifetime'
 date: '2026-07-16'
-modified: '2026-07-17'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -240,3 +240,7 @@ one. Per S2, the watchdog's trigger action must be `os._exit`, not a
 graceful loop shutdown.
 
 Source: synthesis of L2-L5 and S1-S6.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

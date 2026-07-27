@@ -25,7 +25,8 @@ import vaultspec_rag.server as _m
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._machine_lock import acquire_machine_lock_lease, release_machine_lock_lease
 from ..cli._service_status import _write_service_status
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..server._lifecycle import _DiscoveryPublisher
 from ..server._state import (
     _HEARTBEAT_INTERVAL_SECONDS,

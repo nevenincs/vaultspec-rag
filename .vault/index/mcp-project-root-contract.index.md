@@ -12,6 +12,7 @@ related:
   - '[[2026-07-25-mcp-project-root-contract-adr]]'
   - '[[2026-07-25-mcp-project-root-contract-plan]]'
   - '[[2026-07-25-mcp-project-root-contract-research]]'
+  - '[[2026-07-27-mcp-project-root-contract-s03-root-wire-review-audit]]'
 ---
 
 # `mcp-project-root-contract` feature index
@@ -23,6 +24,10 @@ Auto-generated index of all documents tagged with `#mcp-project-root-contract`.
 ### adr
 
 - `2026-07-25-mcp-project-root-contract-adr` - `mcp-project-root-contract` adr: `the mcp surface resolves the root the daemon must never guess` | (**status:** `accepted`)
+
+### audit
+
+- `2026-07-27-mcp-project-root-contract-s03-root-wire-review-audit` - `mcp-project-root-contract` audit: `s03 root wire review`
 
 ### exec
 

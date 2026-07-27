@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 25 Audit -- Full Test Suite
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Scope: all 14 test files in `src/vaultspec_rag/tests/` plus 2 conftest files and 1 constants file.
 
-## Test Correctness
+### Test Correctness
 
 ### R25-M1: `test_incremental_index_no_changes` has dual markers -- `@pytest.mark.quality` on integration-marked module (Major)
 
@@ -51,7 +56,7 @@ Also `test_store_codebase.py:55` (`test_build_code_filter`) has no marker but it
 
 **File:** `test_indexer_unit.py:507, 967-985, 991, 1001, 1033, 1057, 1071`
 
-## Structural Issues
+### Structural Issues
 
 ### R25-M5: `inspect.getsource()` tests are fragile structural assertions (Major)
 
@@ -87,7 +92,7 @@ Neither test calls any production code -- they test Python's `hashlib.sha256` in
 
 **File:** `test_indexer_unit.py:403-412`
 
-## Missing Test Coverage
+### Missing Test Coverage
 
 ### R25-M6: No tests for `api.py` `get_engine` resource leak on root_dir change (Major)
 
@@ -119,7 +124,7 @@ R21-M1 identified that `search_all` mixes incomparable scores from vault and cod
 
 **File:** `test_search_integration.py:92-109`
 
-## Banned Pattern Compliance
+### Banned Pattern Compliance
 
 ### R25-PASS: No banned patterns found
 
@@ -130,7 +135,7 @@ All 14 test files were checked for:
 - `pytest.skip()`, `@pytest.mark.skip`, `skipIf`, `skipUnless` -- **NONE FOUND**
 - Synthetic/fake embeddings (e.g., `[0.1]*1024`) -- **NONE FOUND** (test_store_codebase.py correctly uses real model output)
 
-## Summary
+### Summary
 
 | Severity | Count | IDs                   |
 | -------- | ----- | --------------------- |
@@ -143,3 +148,7 @@ All 14 test files were checked for:
 1. **Fragile/tautological tests** (M5, m3, m4): Tests that verify source code strings or test hashlib instead of production behavior.
 1. **Missing coverage** (M6, m5-m8): Known bugs from prior audits have no regression tests.
 1. **Banned patterns**: Clean -- no mocks, skips, or synthetic data remain.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

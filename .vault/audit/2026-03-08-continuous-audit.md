@@ -3,12 +3,17 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Continuous Audit Log — 2026-03-08
 
-## [08:37] Audit: --target flag propagation
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
+
+### [08:37] Audit: --target flag propagation
 
 **Status**: PASS with 1 MEDIUM issue
 
@@ -27,7 +32,7 @@ See full report: `docs/audit/2026-03-08-target-flag-propagation.md`
 - VaultIndexer/CodebaseIndexer/VaultSearcher all use the same root_dir
 - API facade resolves via `Path.resolve()` with singleton caching — correct
 
-## [08:55] Audit: Test corpus size — why 415 files?
+### [08:55] Audit: Test corpus size — why 415 files?
 
 **Status**: PASS with 2 MAJOR observations
 
@@ -76,7 +81,7 @@ The `.jsonl` log files (75 files) are NOT scanned by `scan_vault()` because it o
 - Test isolation via qdrant suffixes (`.qdrant-fast/`, `.qdrant-full/`) — correct
 - `_vault_snapshot_reset` runs as session-scoped autouse — correct scope
 
-## [09:05] Audit: Model loading lifecycle
+### [09:05] Audit: Model loading lifecycle
 
 **Status**: FAIL — 2 MAJOR issues
 
@@ -120,7 +125,7 @@ The `.jsonl` log files (75 files) are NOT scanned by `scan_vault()` because it o
 - Dense model uses `prompt_name="query"` for queries, omits for documents — correct
 - flash_attention_2 probe before loading prevents double model load — correct
 
-## [09:15] Audit: GPU test isolation and parallel execution config
+### [09:15] Audit: GPU test isolation and parallel execution config
 
 **Status**: PASS with 2 MEDIUM concerns
 
@@ -175,7 +180,7 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 - `timeout = 300` is generous enough for GPU tests — correct
 - `timeout_func_only = true` avoids timing out during fixture setup (model loading) — correct and important
 
-## [09:25] Audit: CLI \<-> MCP shape consistency
+### [09:25] Audit: CLI \<-> MCP shape consistency
 
 **Status**: PASS with 3 MINOR mismatches
 
@@ -247,7 +252,7 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 - MCP tools use `anyio.to_thread.run_sync()` for all sync operations — correct for async MCP server
 - `analyze_feature` prompt is MCP-only, which is fine (not a CLI concern)
 
-## [09:35] Audit: Auto-setup / health check — cold start behavior
+### [09:35] Audit: Auto-setup / health check — cold start behavior
 
 **Status**: PASS — clean cold start behavior, 1 MINOR UX gap
 
@@ -293,7 +298,7 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 - CLI GPU error handling is user-friendly with actionable messages
 - Missing `.vault/` handled gracefully by `scan_vault()`
 
-## [09:50] Audit: Coder implementations review — Task #16 (GPU semaphore) and Task #18 (xdist hook)
+### [09:50] Audit: Coder implementations review — Task #16 (GPU semaphore) and Task #18 (xdist hook)
 
 ### Task #16: GPU semaphore in mcp_server.py
 
@@ -358,3 +363,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 - Watcher shares the same semaphore for re-index GPU access
 - xdist_group hook covers all GPU markers, is a no-op without xdist
 - Both implementations are minimal and correct
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

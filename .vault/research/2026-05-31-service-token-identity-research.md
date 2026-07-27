@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-token-identity'
 date: '2026-05-31'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -144,3 +144,5 @@ would duplicate the token-write half across PRs.
 The Sonnet design report already documented in the prior
 session is the source of truth for line numbers; this research
 captures it in the vault per the no-adhoc rule.
+## Sources
+- The analysis and source locations cited inline in this research record.

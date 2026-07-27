@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-discovery-schema'
 date: '2026-06-24'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-24-service-discovery-schema-adr]]'
@@ -49,6 +49,8 @@ heartbeat tick, with no mocks. Grounded in the ADR and its research; this is the
 artifact only, and the ADR awaits user sign-off before execution.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-first-search-fallback'
 date: '2026-06-21'
-modified: '2026-06-21'
+modified: '2026-07-27'
 tier: L1
 related:
   - '[[2026-06-21-service-first-search-fallback-adr]]'
@@ -24,6 +24,8 @@ related:
 Implements the accepted ADR for #202. The CLI search router in `src/vaultspec_rag/cli/_search.py` currently degrades to the unbounded in-process local search in two silent ways - it force-enables the fallback flag whenever it discovers a service port, and it runs local directly when no service is configured - and applies `--timeout` only to the HTTP path, so a mandated local run is deadline-free. This plan removes the silent local-execution paths (service-first; local only on explicit mandate from `--allow-fallback` or configured local-only mode), and wraps any mandated local run in a wall-clock deadline that releases the store lock and exits non-zero on expiry. A regression harness simulates a dead and a wedged service to assert bounded return and no held lock. Grounding: the research and ADR carried in `related:`.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

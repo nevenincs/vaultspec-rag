@@ -6,7 +6,7 @@ date: '2026-06-10'
 related:
   - "[[2026-06-10-install-mcp-dependency-fix-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-06-30'
+modified: '2026-07-27'
 ---
 
 # `install-mcp-dependency-fix` adr: `declare mcp as a core dependency; reject pywin32 dll shim` | (**status:** `superseded`)
@@ -136,3 +136,7 @@ correct layer the moment upstream makes it available.
   `os.add_dll_directory` shim for `pywin32`); fix the symptom at the layer the
   project controls — its own metadata, a guarded import with an actionable
   error, or a version floor that tracks the upstream fix.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

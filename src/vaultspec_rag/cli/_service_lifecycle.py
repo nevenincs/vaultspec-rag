@@ -18,7 +18,8 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from ..config import EnvVar, configured_model_repos, get_config
+from ..config._settings import configured_model_repos, get_config
+from ..config._types import EnvVar
 from ._app import server_app
 from ._gpu_errors import _handle_gpu_error
 from ._progress import StartupStatusReporter

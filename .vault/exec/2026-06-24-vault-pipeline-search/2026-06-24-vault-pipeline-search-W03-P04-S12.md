@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S12'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Add orientation and debug intent weight profiles and the per-type cap to config
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/config.py`
-
-## Description
 
 - Added three env-overridable scalar knobs to `_RAG_DEFAULTS` and `EnvVar`/`_ENV_OVERRIDE_MAP`:
   `vault_intent_default` (orientation), `vault_intent_ranking_enabled` (True), and

@@ -14,7 +14,8 @@ import os
 
 import pytest
 
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 
 
 @pytest.mark.integration

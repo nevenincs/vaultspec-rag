@@ -17,7 +17,7 @@ from ..._store_models import (
     DocumentLocator,
     DocumentPayload,
 )
-from ...config import get_config
+from ...config._settings import get_config
 from ...indexer._content_policy import (
     ContentKind,
     ContentRoute,
@@ -41,7 +41,7 @@ from ...indexer._route_migration import (
     reconcile_origin_after_destination,
     resume_pending_migrations,
 )
-from ...indexer._run_ledger import RunOperation
+from ...indexer._run_ledger_models import RunOperation
 from ...indexer._run_policy import RunPolicy
 from ...job_control import CancelRequested, RunControlToken
 from ...store_runtime import VaultStore
@@ -62,7 +62,9 @@ def _resolved_policy(root: Path):
             ContentRoute("guide.txt", ContentKind.DOCUMENT),
         ),
     )
-    return resolve_index_policy(root, IndexPolicyResolutionOptions(content_policy=policy))
+    return resolve_index_policy(
+        root, IndexPolicyResolutionOptions(content_policy=policy)
+    )
 
 
 def _document_chunk(source_path: str, text: str) -> DocumentChunk:
@@ -537,7 +539,7 @@ def test_real_indexers_flip_ownership_destination_first(
             tmp_path,
             embedding_model,
             store,
-            content_policy=code_policy,
+            options=CodebaseIndexer.Options(content_policy=code_policy),
         )
         code.full_index(
             reporter=NullProgressReporter(),
@@ -563,7 +565,7 @@ def test_real_indexers_flip_ownership_destination_first(
             tmp_path,
             embedding_model,
             store,
-            content_policy=code_policy,
+            options=CodebaseIndexer.Options(content_policy=code_policy),
         )
         code.full_index(
             reporter=NullProgressReporter(),

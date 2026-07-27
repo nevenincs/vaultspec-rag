@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
   - '[[2026-04-12-index-progress-bars-adr]]'
@@ -77,3 +77,11 @@ override key later if UX tuning demands it.
   `reporter._lock` / `_phase_count`. Accessing protected state is
   unusual but the test is exercising real concurrent behaviour (1000
   worker submissions, joined before the assertion), not a tautology.
+
+## Scope
+
+Retained audit evidence: 2026-04-12-index-progress-bars-phase-1-plan, 2026-04-12-index-progress-bars-adr, 2026-04-12-index-progress-bars-reference are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

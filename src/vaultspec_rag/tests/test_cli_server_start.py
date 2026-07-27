@@ -23,7 +23,7 @@ from ..cli._service_start import (
     _fail_start,
     _start_success,
 )
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..serviceclient._compat import local_package_version
 from ._http_stubs import QuietHandler
 
@@ -223,9 +223,9 @@ class TestStartReorderAndGuards:
         # stand-in carrying the daemon's witness rather than this interpreter.
         from ..cli._service_status import _write_service_status
         from ..serviceclient._discovery import _status_file
-        from ._cli_helpers import _process_the_identity_check_recognises
+        from ._cli_helpers import process_the_identity_check_recognises
 
-        with _process_the_identity_check_recognises() as daemon_pid:
+        with process_the_identity_check_recognises() as daemon_pid:
             _write_service_status(daemon_pid, 1)
             sf = _status_file()
             doc = json.loads(sf.read_text(encoding="utf-8"))

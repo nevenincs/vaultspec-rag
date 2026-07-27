@@ -14,7 +14,8 @@ import vaultspec_rag.server as server_package
 
 from ..._job_errors import JobError, JobErrorKind
 from ..._store_models import CodeChunk
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...index_profiles import SupportMeasurement, SupportProfileLimits
 from ...indexer import CodebaseIndexer
 from ...indexer._streaming import CodeFileSegment

@@ -6,6 +6,7 @@ import asyncio
 import os
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 import pytest
 from starlette.applications import Starlette
 
@@ -16,6 +17,14 @@ from vaultspec_rag.server._routes import ROUTES
 if TYPE_CHECKING:
     from collections.abc import Coroutine
     from pathlib import Path
+
+
+def _make_vault_roots(tmp_path: Path) -> tuple[Path, Path]:
+    """Create the large-registry and target workspace roots under *tmp_path*."""
+    large_root, target_root = tmp_path / "large-registry-entry", tmp_path / "target"
+    for root in (large_root, target_root):
+        (root / ".vault").mkdir(parents=True)
+    return large_root, target_root
 
 
 def _seed_persistence_backpressure(manager: Any, root: Path) -> None:
@@ -43,15 +52,31 @@ def _seed_persistence_backpressure(manager: Any, root: Path) -> None:
     assert failed.code == "job_failed_before_dispatch"
 
 
+async def _assert_mutation_overlaps_auth_probe(
+    client: httpx.AsyncClient,
+    request: Coroutine[Any, Any, httpx.Response],
+) -> httpx.Response:
+    """Require a real durable mutation to yield to an ASGI auth request."""
+    mutation = asyncio.create_task(request)
+    await asyncio.sleep(0)
+    probe = await client.get("/jobs")
+    overlapped = not mutation.done()
+    response = await mutation
+    assert probe.status_code == 401
+    assert overlapped, (
+        "the durable mutation completed before an independent ASGI "
+        "auth response could run"
+    )
+    return response
+
+
 @pytest.mark.unit
 async def test_job_mutations_keep_real_asgi_loop_responsive(
     tmp_path: Path,
 ) -> None:
     """Real durable CRUD writes must overlap an immediate ASGI auth response."""
-
-    import httpx
-
-    from ...config import EnvVar, reset_config
+    from ...config._settings import reset_config
+    from ...config._types import EnvVar
     from ...jobs import get_job_manager, reset
 
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
@@ -63,12 +88,7 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
     token = "test-token-responsive-job-writes"
     _m._SERVICE_TOKEN = token
     headers = {"Authorization": f"Bearer {token}"}
-    large_root, target_root = (
-        tmp_path / "large-registry-entry",
-        tmp_path / "target",
-    )
-    for root in (large_root, target_root):
-        (root / ".vault").mkdir(parents=True)
+    large_root, target_root = _make_vault_roots(tmp_path)
 
     try:
         manager = get_job_manager()
@@ -80,23 +100,8 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
             transport=transport,
             base_url="http://testserver",
         ) as client:
-
-            async def assert_overlaps_auth_probe(
-                request: Coroutine[Any, Any, httpx.Response],
-            ) -> httpx.Response:
-                mutation = asyncio.create_task(request)
-                await asyncio.sleep(0)
-                probe = await client.get("/jobs")
-                overlapped = not mutation.done()
-                response = await mutation
-                assert probe.status_code == 401
-                assert overlapped, (
-                    "the durable mutation completed before an independent ASGI "
-                    "auth response could run"
-                )
-                return response
-
-            created = await assert_overlaps_auth_probe(
+            created = await _assert_mutation_overlaps_auth_probe(
+                client,
                 client.post(
                     "/jobs",
                     headers=headers,
@@ -113,7 +118,8 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
             job = cast("dict[str, Any]", created.json()["job"])
             job_id = str(job["id"])
 
-            cancelled = await assert_overlaps_auth_probe(
+            cancelled = await _assert_mutation_overlaps_auth_probe(
+                client,
                 client.put(
                     f"/jobs/{job_id}/desired-state",
                     headers=headers,
@@ -126,12 +132,14 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
             assert cancelled.status_code == 200, cancelled.text
 
             manager.begin_shutdown()
-            retried = await assert_overlaps_auth_probe(
+            retried = await _assert_mutation_overlaps_auth_probe(
+                client,
                 client.post(f"/jobs/{job_id}/retry", headers=headers)
             )
             assert retried.status_code == 202, retried.text
 
-            deleted = await assert_overlaps_auth_probe(
+            deleted = await _assert_mutation_overlaps_auth_probe(
+                client,
                 client.delete(f"/jobs/{job_id}", headers=headers)
             )
             assert deleted.status_code == 200, deleted.text

@@ -3,17 +3,20 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
+# Research: CodebaseIndexer Tech Stack â€” 2026 GPU-First
 
-# Research: CodebaseIndexer Tech Stack — 2026 GPU-First
+## Findings
+
+### Retained preamble
 
 Date: 2026-03-06
 Sources: PyPI, GitHub, arXiv, library docs, web research.
 
 ______________________________________________________________________
 
-## 1. AST-Based Code Chunking (replacing TextSplitter)
+### 1. AST-Based Code Chunking (replacing TextSplitter)
 
 ### Why AST chunking
 
@@ -82,7 +85,7 @@ compilation step needed).
 
 ### NOT recommended: tree-sitter-languages
 
-`tree-sitter-languages` (Grant Jenks) is **unmaintained** — last release
+`tree-sitter-languages` (Grant Jenks) is **unmaintained** â€” last release
 predates tree-sitter 0.23 ABI changes. Use `tree-sitter-language-pack` instead.
 Same API (`get_language`, `get_parser`), actively maintained fork.
 
@@ -94,7 +97,7 @@ is simple enough to implement directly (~100 lines) with tree-sitter.
 
 ______________________________________________________________________
 
-## 2. Gitignore-Compliant File Scanning (replacing git ls-files fallback)
+### 2. Gitignore-Compliant File Scanning (replacing git ls-files fallback)
 
 ### Problem
 
@@ -153,7 +156,7 @@ def _load_gitignore_specs(root: Path) -> list[pathspec.GitIgnoreSpec]:
 
 ______________________________________________________________________
 
-## 3. Incremental Indexing via Content Hashing
+### 3. Incremental Indexing via Content Hashing
 
 ### Problem
 
@@ -187,15 +190,15 @@ On incremental run:
 - Deterministic: same content = same hash regardless of filesystem metadata
 - Git-proof: `git checkout` changes mtime but not content
 - Copy-proof: copying a file changes mtime but not content
-- SHA256 of a 10MB file takes \<10ms — negligible vs embedding cost
+- SHA256 of a 10MB file takes \<10ms â€” negligible vs embedding cost
 
 ______________________________________________________________________
 
-## 4. Chunk ID Strategy
+### 4. Chunk ID Strategy
 
 ### Problem
 
-Current: `id = f"{rel_path}:{line_start}-{line_end}"` — collides when
+Current: `id = f"{rel_path}:{line_start}-{line_end}"` â€” collides when
 duplicate code exists at different locations (content.find() returns first
 occurrence).
 
@@ -213,7 +216,7 @@ overlap.
 
 ______________________________________________________________________
 
-## 5. File Safety Guards
+### 5. File Safety Guards
 
 ### Binary file detection
 
@@ -237,7 +240,7 @@ def _is_too_large(path: Path) -> bool:
 
 ______________________________________________________________________
 
-## 6. Extended Language Support
+### 6. Extended Language Support
 
 ### Current (7 extensions)
 
@@ -267,11 +270,11 @@ ______________________________________________________________________
 | `.kt`                 | Kotlin     | kotlin              |
 
 For config/data formats (YAML, TOML, JSON, HTML, CSS), AST chunking adds
-minimal value — use character-based splitting as fallback.
+minimal value â€” use character-based splitting as fallback.
 
 ______________________________________________________________________
 
-## 7. Dependency Changes for pyproject.toml
+### 7. Dependency Changes for pyproject.toml
 
 ```toml
 dependencies = [
@@ -287,7 +290,7 @@ compilation step on Windows/Linux/macOS.
 
 ______________________________________________________________________
 
-## 8. Implementation Plan
+### 8. Implementation Plan
 
 ### Task #3: Critical bug fixes (no new deps)
 
@@ -307,7 +310,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 9. Tree-Sitter API Deep Dive
+### 9. Tree-Sitter API Deep Dive
 
 ### Parser setup (py-tree-sitter >= 0.23 + tree-sitter-language-pack)
 
@@ -345,10 +348,10 @@ Every `Node` exposes:
 
 Key methods:
 
-- `child_by_field_name("name")` — get child by grammar field (e.g., function name)
-- `children_by_field_name("body")` — get multiple children by field
-- `next_named_sibling` / `prev_named_sibling` — sibling navigation
-- `sexp()` — S-expression string for debugging
+- `child_by_field_name("name")` â€” get child by grammar field (e.g., function name)
+- `children_by_field_name("body")` â€” get multiple children by field
+- `next_named_sibling` / `prev_named_sibling` â€” sibling navigation
+- `sexp()` â€” S-expression string for debugging
 
 ### TreeCursor (efficient traversal for large files)
 
@@ -447,7 +450,7 @@ def extract_chunk_metadata(node) -> dict[str, str | None]:
 
 ______________________________________________________________________
 
-## 10. Code Embedding Models — 2026 Landscape
+### 10. Code Embedding Models â€” 2026 Landscape
 
 ### Qwen3-Embedding-0.6B (current stack)
 
@@ -495,14 +498,14 @@ API fallback path in the future.
 1. Already integrated and working
 1. Local GPU inference (no API dependency, no latency, no cost)
 1. Hybrid search (dense + SPLADE + reranker) compensates for model size
-1. Apache 2.0 license — no vendor lock-in
+1. Apache 2.0 license â€” no vendor lock-in
 1. 32K context handles large code files
 1. If code retrieval quality is insufficient, upgrade path is Qwen3-Embedding-4B
    (same API, still fits on RTX 4080 SUPER 16GB)
 
 ______________________________________________________________________
 
-## 11. Qdrant Payload Filtering for Code Metadata
+### 11. Qdrant Payload Filtering for Code Metadata
 
 ### Storing code metadata as Qdrant payload
 
@@ -628,7 +631,9 @@ Nested key access via dot notation: `metadata.author.name`.
 
 ______________________________________________________________________
 
-## References
+## Sources
+
+### References
 
 - cAST paper: <https://arxiv.org/abs/2506.15655>
 - tree-sitter-language-pack: <https://pypi.org/project/tree-sitter-language-pack/>

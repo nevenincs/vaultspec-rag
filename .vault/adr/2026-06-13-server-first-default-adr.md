@@ -3,11 +3,12 @@ tags:
   - '#adr'
   - '#server-first-default'
 date: '2026-06-13'
-modified: '2026-06-13'
+modified: '2026-07-27'
 related:
   - "[[2026-06-12-serving-runtime-research]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
   - "[[2026-06-12-service-concurrency-adr]]"
+  - '[[2026-07-27-server-first-default-grounding-research]]'
 ---
 
 # `server-first-default` adr: `server mode is the default rag backend` | (**status:** `accepted`)
@@ -128,3 +129,7 @@ has served its purpose and is reframed, not removed.
   **Rule:** Server mode is the assumed RAG backend; local mode is a first-class
   explicit opt-out (`--local-only`), never removed and never the default - and the
   default flip must never bundle the server binary into the pure-Python wheel.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

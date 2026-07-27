@@ -11,7 +11,8 @@ import os
 
 import pytest
 
-from ..config import EnvVar, rag_default
+from ..config._settings import rag_default
+from ..config._types import EnvVar
 from ..qdrant_runtime._supervise import _ready_timeout_seconds
 
 #: Read from the settings object, which is where this timeout's name and

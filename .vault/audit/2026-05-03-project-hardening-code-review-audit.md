@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#project-hardening'
 date: '2026-05-03'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -32,3 +32,15 @@ Reviewed the concurrency-contract documentation and the runtime surfaces added i
 LOCAL-004 | MEDIUM | GitHub Actions workflows still used Node 20 action majors
 
 The successful 0.2.7 publish run emitted GitHub Actions warnings that `actions/checkout@v4`, `actions/upload-artifact@v4`, and `actions/download-artifact@v4` run on Node 20 and will be forced forward by GitHub in 2026. Fixed in `.github/workflows/ci.yml`, `.github/workflows/claude.yml`, `.github/workflows/gpu-integration.yml`, `.github/workflows/publish.yml`, and `.github/workflows/release-please.yml` by replacing checkout with `actions/checkout@v6.0.2`, upload-artifact with `actions/upload-artifact@v7.0.1`, and download-artifact with `actions/download-artifact@v8.0.1`. Verified the current action releases through the GitHub API and ran `actionlint`.
+
+## Scope
+
+Retained audit evidence:  are listed in frontmatter; the audit title and retained sections define the reviewed subject.
+
+## Findings
+
+Retained audit evidence: the detailed review entries in this document constitute the findings inventory.
+
+## Recommendations
+
+Evidence gap: the retained audit body and complete git log --follow history state no separate recommendations. No recommendation is asserted.

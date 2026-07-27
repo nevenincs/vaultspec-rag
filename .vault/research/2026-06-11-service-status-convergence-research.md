@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#service-status-convergence'
 date: '2026-06-11'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
@@ -85,3 +85,7 @@ Define a service-domain status contract and make all adapters use it:
 
 The ADR should supersede the status/health/jobs/logs parity shape from
 `service-observability` while preserving the loopback and token-gating constraints.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

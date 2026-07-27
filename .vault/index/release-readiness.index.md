@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#release-readiness'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-release-readiness-audit]]'
 ---

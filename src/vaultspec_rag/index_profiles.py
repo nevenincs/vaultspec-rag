@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from ._store_writes import VolumeReading
 
 __all__ = [
-    "IndexDomain",
     "AdmissionEnvironment",
+    "IndexDomain",
     "IndexSupportProfile",
     "SupportMeasurement",
     "SupportProfileLimits",
@@ -315,7 +315,7 @@ def _store_disk_refusal(
     directory, drive, and role is what stops the refusal reading as a flat
     contradiction of what the operator's file manager shows.
     """
-    from .config import EnvVar
+    from .config._types import EnvVar
 
     smaller = _smaller_disk_profile(profile, backend, _PROFILES.values())
     lines = [
@@ -427,14 +427,15 @@ def validate_profile_admission(
     if environment.backend not in profile.accepted_backends:
         raise JobError(
             JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET,
-            f"profile {profile.name!r} does not support backend {environment.backend!r}",
+            f"profile {profile.name!r} does not support "
+            f"backend {environment.backend!r}",
         )
     if environment.available_ram_bytes < profile.minimum_ram_bytes:
         raise JobError(
             JobErrorKind.PROFILE_REQUIREMENTS_NOT_MET,
             f"profile {profile.name!r} requires "
             f"{human_bytes(profile.minimum_ram_bytes)} RAM; host reports "
-                f"{human_bytes(environment.available_ram_bytes)}",
+            f"{human_bytes(environment.available_ram_bytes)}",
         )
     store_free = environment.store_volume.free_bytes
     if store_free is not None and store_free < profile.minimum_free_disk_bytes:

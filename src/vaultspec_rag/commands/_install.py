@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from contextvars import Context
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
     sync_provider,
@@ -776,7 +776,12 @@ class _ModeMigrationRequest:
 
 def _run_mode_migration(request: _ModeMigrationRequest) -> None:
     """Repair only RAG's managed native entry after a real mode flip."""
-    if not request.mode_flipped or request.force or request.dry_run or {"core", "mcp"} & request.skip:
+    if (
+        not request.mode_flipped
+        or request.force
+        or request.dry_run
+        or {"core", "mcp"} & request.skip
+    ):
         return
     migration = migrate_rag_mcp_entry(request.mode)
     request.report.sync_results.append(migration)
@@ -802,7 +807,26 @@ class _InstallRunRequest:
     mode: InstallMode | None = None
 
 
-def install_run(path: Path | None = None, **options: object) -> InstallReport:
+class _InstallRunOptions(TypedDict, total=False):
+    upgrade: bool
+    dry_run: bool
+    force: bool
+    skip: set[str] | None
+    configure_torch: bool
+    assume_yes: bool
+    sync_after: bool
+    confirm: ConfirmFn | None
+    provision: bool
+    local_only: bool
+    provision_skip: set[str] | None
+    torch_group: str | None
+    install_mcp: bool
+    mode: InstallMode | None
+
+
+def install_run(
+    path: Path | None = None, **options: Unpack[_InstallRunOptions]
+) -> InstallReport:
     """Run install behind one required-node topology transaction."""
     return _install_run(_InstallRunRequest(path=path, **options))
 
@@ -814,7 +838,9 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         return _install_run_unchecked(replace(request, skip=skip_tokens))
 
     target = _resolve_target(request.path, bootstrap=False)
-    action = "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
+    action = (
+        "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
+    )
     failure = InstallReport(action=action, target=target)
     try:
         topology = inspect_required_mcp_topology(target)
@@ -1164,7 +1190,7 @@ def _persist_runtime_selection(report: InstallReport, local_only: bool) -> None:
     write is logged and surfaced as a recoverable warning naming the
     runtime escape hatches, rather than raised.
     """
-    from ..config import persist_local_only
+    from ..config._paths import persist_local_only
 
     try:
         persist_local_only(local_only)

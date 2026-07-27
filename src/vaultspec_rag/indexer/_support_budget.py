@@ -101,7 +101,7 @@ class CodeSupportBudget:
         paths: Iterable[pathlib.Path],
     ) -> None:
         """Measure source dimensions by streaming path metadata only."""
-        from ..config import get_config
+        from ..config._settings import get_config
 
         source_files = 0
         source_bytes = 0

@@ -16,7 +16,7 @@ import pytest
 import vaultspec_rag.mcp._admin_client as admin
 
 from ... import server
-from ...config import reset_config
+from ...config._settings import reset_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

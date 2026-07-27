@@ -3,14 +3,15 @@ tags:
   - '#research'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-05-service-lifecycle-tests-adr]]'
   - '[[2026-04-05-service-lifecycle-tests-research]]'
 ---
-
 # `store-eviction-log-rotation` research: beta gates #45
+
+## Findings
 
 Phase-1 research for issue #45. The service-graph ADR explicitly deferred two
 concerns to beta: (a) unbounded `ServiceRegistry._projects` growth — no idle
@@ -19,7 +20,7 @@ TTL, no LRU cap, manual `service stop` is the only reset — and (b) unbounded
 document gathers options, spells out the Windows FD gotcha for rotation, and
 recommends a concrete direction for the upcoming ADR.
 
-## Context & problem statement
+### Context & problem statement
 
 Grounded in the current code (`src/vaultspec_rag/service.py`,
 `src/vaultspec_rag/cli.py:1221-1260`, `src/vaultspec_rag/mcp_server.py:93-145`):
@@ -56,7 +57,7 @@ Grounded in the current code (`src/vaultspec_rag/service.py`,
   rotation for service.log (beta) ... Store idle timeout / eviction."*
   Both are exactly what #45 must now decide.
 
-## Prior art
+### Prior art
 
 - **Service graph ADR (2026-04-02)** established `ServiceRegistry`, global
   `_lock`, per-root locks, `get_project` / `close_project` / `close_all`,
@@ -76,7 +77,7 @@ Grounded in the current code (`src/vaultspec_rag/service.py`,
   graph cache using `threading.Lock` + double-check. The same discipline
   applies here: eviction decisions MUST be atomic under `_lock`.
 
-## Option analysis — log rotation
+### Option analysis — log rotation
 
 Three options, grounded in how `_spawn_service` currently redirects FDs.
 
@@ -169,7 +170,7 @@ its consumers (CLI commands, tests) should not pay the cost of a
 rotating file handler. A future core enhancement — optional file
 handler with rotation knobs — would be welcome but must not block #45.
 
-## Option analysis — eviction synchronization
+### Option analysis — eviction synchronization
 
 Current state recap: `_projects: dict[Path, ProjectSlot]` under `_lock`;
 per-root locks in `_root_locks`; every request path in `mcp_server.py`
@@ -302,7 +303,7 @@ Two schools:
 The knobs remain configurable, and `service_idle_ttl_seconds=0` is
 honored as "disabled" for users who want the old behavior.
 
-## Option analysis — CLI `service projects` transport
+### Option analysis — CLI `service projects` transport
 
 `service projects list` and `service projects evict <root>` must talk to
 a running service.
@@ -366,7 +367,7 @@ Corresponding CLI:
   `evict_project`. Exit code 0 on success, non-zero on busy/not_found
   with a clear message.
 
-## Config keys
+### Config keys
 
 Four new keys in `_RAG_DEFAULTS` on `VaultSpecConfigWrapper`
 (`config.py:73-91`) with matching `EnvVar` enum entries and
@@ -382,7 +383,7 @@ Four new keys in `_RAG_DEFAULTS` on `VaultSpecConfigWrapper`
 All four belong in rag, not core, because the service daemon is a
 rag concept. Core remains project-agnostic.
 
-## Testing strategy
+### Testing strategy
 
 Must follow the existing integration pattern in
 `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`:
@@ -440,7 +441,7 @@ handler explicitly after each search, use a very small `max_bytes` so
 buffering never holds a full generation, and poll the filesystem for
 rotated files with a 2s deadline rather than asserting immediately.
 
-## Recommended direction (summary)
+### Recommended direction (summary)
 
 - **Rotation**: child-side `DaemonRotatingFileHandler` subclass that
   overrides `doRollover` to re-`os.dup2` FDs 1 and 2 onto the fresh
@@ -459,7 +460,7 @@ rotated files with a 2s deadline rather than asserting immediately.
 - **Tests**: five subprocess_gpu integration tests covering idle TTL,
   LRU cap, in-flight safety, rotation, and Windows FD re-dup.
 
-## Open questions for the ADR phase
+### Open questions for the ADR phase
 
 - **Lease API shape.** Does `get_project` return a raw `ProjectSlot` (and
   every caller must remember `release_project(root)`), or does it return
@@ -487,7 +488,7 @@ rotated files with a 2s deadline rather than asserting immediately.
   a lock-and-flush dance (acquire root logger lock across `dup2`)?
   Recommend accept; flag it as a known edge in the ADR consequences.
 
-## Unexpected findings from the source grounding
+### Unexpected findings from the source grounding
 
 - `get_project()` has a lock-free fast path (`service.py:189-191`) that
   reads `_projects.get(root)` without taking `_lock`. Adding timestamp +
@@ -521,3 +522,7 @@ rotated files with a 2s deadline rather than asserting immediately.
   before installing the handler, all log output before that crash is
   lost — consider a tiny early write of "service startup" before the
   handler install to prove the FDs are live.
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

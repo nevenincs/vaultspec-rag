@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#preprocess-batch-hooks'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -72,3 +72,7 @@ parse) the spawn constant matters less, but batching never hurts.
 
 Adopt direction 1 (opt-in batch manifest) now; leave direction 2 as a future
 escalation if batch spawns remain hot. Decision details belong to the ADR.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel
     from ...indexer import VaultIndexer
     from ...search import VaultSearcher
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
     from ..conftest import RagComponentsWithManifest
 
 from ..conftest import _index_corpus

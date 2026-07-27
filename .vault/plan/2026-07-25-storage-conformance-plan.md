@@ -3,14 +3,40 @@ tags:
   - '#plan'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-25-storage-conformance-adr]]'
   - '[[2026-07-25-storage-conformance-research]]'
 ---
-
 # `storage-conformance` plan
+
+## Description
+
+Implements `2026-07-25-storage-conformance-adr` end to end, grounded in
+`2026-07-25-storage-conformance-research`. The plan gives the service a durable
+record of what produced each collection, verifies it where every read and write
+already passes, and makes a non-conforming namespace visible to an operator with a
+remedy attached.
+
+The ordering is forced by one dependency: nothing can be verified until something
+is stamped, and nothing stays stamped while the manifest overwrites itself. `P01`
+therefore establishes the durable record and stops the self-relabelling before
+`P02` adds any comparison. `P03` surfaces the verdict, and `P04` closes the
+propagation holes that would let a namespace inherit conformance it never earned.
+
+A hard boundary applies throughout. The code indexer, the run ledger, and the run
+checkpoint are mid-refactor under a separate in-flight plan and are out of bounds;
+the ADR's constraint section commits this work to the store, the manifest, the
+health author, and the status renderer. Any step that appears to need one of those
+modules is a signal to stop and re-scope, not to edit across the boundary.
+
+This feature is almost entirely guards and negative assertions, so the project's
+guard-test obligation governs every step that adds one: the guard is observed
+failing for its intended reason before it is trusted, and both directions are
+recorded in that step's record.
+
+## Steps
 
 ### Phase `P01` - establish the durable identity record
 
@@ -60,33 +86,6 @@ Proves the whole surface green, records the guard failure proofs, and reviews th
 
 - [x] `P05.S21` - Run the full suite, lint, type, and citation gates and reconcile the result against the recorded baseline; `src/vaultspec_rag/`.
 - [x] `P05.S22` - Review the delivered feature against the authorizing decision and record the audit; `src/vaultspec_rag/`.
-
-## Description
-
-Implements `2026-07-25-storage-conformance-adr` end to end, grounded in
-`2026-07-25-storage-conformance-research`. The plan gives the service a durable
-record of what produced each collection, verifies it where every read and write
-already passes, and makes a non-conforming namespace visible to an operator with a
-remedy attached.
-
-The ordering is forced by one dependency: nothing can be verified until something
-is stamped, and nothing stays stamped while the manifest overwrites itself. `P01`
-therefore establishes the durable record and stops the self-relabelling before
-`P02` adds any comparison. `P03` surfaces the verdict, and `P04` closes the
-propagation holes that would let a namespace inherit conformance it never earned.
-
-A hard boundary applies throughout. The code indexer, the run ledger, and the run
-checkpoint are mid-refactor under a separate in-flight plan and are out of bounds;
-the ADR's constraint section commits this work to the store, the manifest, the
-health author, and the status renderer. Any step that appears to need one of those
-modules is a signal to stop and re-scope, not to edit across the boundary.
-
-This feature is almost entirely guards and negative assertions, so the project's
-guard-test obligation governs every step that adds one: the guard is observed
-failing for its intended reason before it is trusted, and both directions are
-recorded in that step's record.
-
-## Steps
 
 ## Parallelization
 

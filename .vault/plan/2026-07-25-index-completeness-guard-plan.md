@@ -3,14 +3,19 @@ tags:
   - '#plan'
   - '#index-completeness-guard'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-25-index-completeness-guard-adr]]'
   - '[[2026-07-25-index-completeness-guard-research]]'
 ---
-
 # `index-completeness-guard` plan
+
+## Description
+
+No separate description is recorded in the retained prior plan body. Source: retained prior plan body.
+
+## Steps
 
 ### Phase `P01` - publish breadth and make the predicate quantitative
 
@@ -35,10 +40,10 @@ Prove both guards can fail for their intended reason, run every gate on real Qdr
 - [x] `P03.S07` - Run the lint, type, citation, complexity, and full test gates and record actual output rather than asserting success; `gates only, no source changes`.
 - [x] `P03.S08` - Review the landed change against the decision and record the closing audit; `.vault/audit/`.
 
-## Description
-
-## Steps
-
 ## Parallelization
 
+No separate parallelization is recorded in the retained prior plan body. Source: retained prior plan body.
+
 ## Verification
+
+No separate verification is recorded in the retained prior plan body. Source: retained prior plan body.

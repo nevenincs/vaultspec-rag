@@ -22,7 +22,7 @@ import vaultspec_rag.cli as _cli
 from .._loopback_http import probe_loopback_connect
 from .._operator_commands import server_status_command
 from .._process_probe import iter_process_info, pid_alive, pid_is_zombie
-from ..serviceclient._discovery import _delete_service_status, _read_service_status
+from ..serviceclient._discovery import _delete_service_status, read_service_status
 from ..serviceclient._transport import _try_http_health
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_app
 from ._core import logger
@@ -141,7 +141,7 @@ def _refuse_terminate_from_unisolated_test() -> None:
     """
     if "PYTEST_CURRENT_TEST" not in os.environ:
         return
-    from ..config import EnvVar
+    from ..config._types import EnvVar
 
     if os.environ.get(EnvVar.STATUS_DIR.value) or os.environ.get(
         EnvVar.QDRANT_STORAGE_DIR.value
@@ -488,7 +488,7 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
     # Remove the discovery file only when it points at the port we just stopped,
     # so stopping a non-default-port service never erases a different config's
     # status file.
-    status = _read_service_status()
+    status = read_service_status()
     if status is not None and int(status.get("port", 0)) == port:
         _delete_service_status()
     _stop_success(
@@ -512,7 +512,7 @@ def _expected_singleton_port(explicit_port: int | None) -> int | None:
     """
     if explicit_port is not None:
         return explicit_port
-    status = _read_service_status()
+    status = read_service_status()
     if status is not None:
         raw = status.get("port")
         if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
@@ -657,7 +657,7 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
             detail=str(exc),
         ) from exc
     lock_holder = machine_lock_live_holder()
-    status = _read_service_status()
+    status = read_service_status()
     pointer_pid = 0
     if status is not None:
         raw = status.get("pid")
@@ -819,7 +819,7 @@ def service_stop(
         _stop_service_on_port(port, json_mode)
         return
 
-    status = _read_service_status()
+    status = read_service_status()
     if status is None:
         # No service.json for this config. Before reporting "not running", fall
         # back to the machine-global singleton lock: a live holder is the

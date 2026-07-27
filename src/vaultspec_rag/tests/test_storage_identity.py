@@ -30,7 +30,7 @@ from ..storage_manifest import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -275,7 +275,7 @@ class TestStoreVerifiesOnEnsure:
 
     @staticmethod
     def _open(root: Path, dim: int = 64) -> VaultStore:
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         return VaultStore(root, embedding_dim=dim)
 
@@ -296,7 +296,7 @@ class TestStoreVerifiesOnEnsure:
         raise the store proceeds and the disagreement resurfaces much later as
         a rejected upsert that burns the full retry budget labelled transient.
         """
-        from ..store import StorageGeometryError
+        from ..store_runtime import StorageGeometryError
 
         store = self._open(tmp_path, dim=64)
         try:

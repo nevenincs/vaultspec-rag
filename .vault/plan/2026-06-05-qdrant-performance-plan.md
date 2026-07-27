@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#qdrant-performance'
 date: '2026-06-05'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-05-qdrant-performance-adr]]'
@@ -59,3 +59,7 @@ Waves W01 and W02 must be executed sequentially, as quantization and recommendat
 - All unit and integration tests compile and run successfully using pytest.
 - CLI and MCP commands operate cleanly when a QDRANT_URL is provided, executing search and indexing concurrently without VaultStoreLockedError.
 - Collection configurations confirm that quantization (e.g., SQ or TurboQuant) is applied on the Qdrant server side when indexing.
+
+## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.

@@ -21,8 +21,8 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     scan_vault,
 )
 
-from ...config import get_config
-from ...config import reset_config as reset_rag_config
+from ...config._settings import get_config
+from ...config._settings import reset_config as reset_rag_config
 from ...progress import NullProgressReporter
 from ..corpus import build_synthetic_vault
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer, VaultIndexer
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
 pytestmark = [pytest.mark.integration]
 
@@ -46,7 +46,8 @@ def _build_vault(
     root: Path, model: EmbeddingModel, *, n_docs: int = 6
 ) -> tuple[VaultStore, VaultIndexer]:
     """Build and fully index a small synthetic vault at *root*."""
-    from ... import VaultIndexer, VaultStore
+    from ... import VaultIndexer
+    from ...store_runtime import VaultStore
 
     reset_config()
     reset_rag_config()
@@ -176,7 +177,8 @@ def _build_code(
     root: Path, model: EmbeddingModel
 ) -> tuple[VaultStore, CodebaseIndexer, Path, Path]:
     """Build a tiny source tree and fully index it at *root*."""
-    from ... import CodebaseIndexer, VaultStore
+    from ... import CodebaseIndexer
+    from ...store_runtime import VaultStore
 
     reset_config()
     reset_rag_config()

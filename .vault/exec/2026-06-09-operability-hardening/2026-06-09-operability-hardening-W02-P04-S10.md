@@ -3,21 +3,20 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S10'
 related:
   - "[[2026-06-09-operability-hardening-plan]]"
 ---
-
 # Persist the service token into service.json during the start health-poll
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/cli/_service_status.py`
 - `src/vaultspec_rag/cli/_service_lifecycle.py`
 - `src/vaultspec_rag/cli/__init__.py`
-
-## Description
 
 The daemon writes `service_token` into `service.json` on its first heartbeat
 tick (~15 s after startup), but `service start` returns as soon as `/health`
@@ -47,7 +46,7 @@ and returning.
 
 Re-exported `_update_service_token` in the import block and `__all__` (sorted).
 
-## Tests
+### Tests
 
 `src/vaultspec_rag/tests/test_service_lifecycle_helpers.py`
 `TestUpdateServiceToken`:
@@ -65,3 +64,7 @@ All 5 tests use `VAULTSPEC_RAG_STATUS_DIR` isolation; no mocks.
 `ruff check` and `ty check` both clean. 9 unit tests pass (5 directly covering
 this step). End-to-end validation (token present in `service.json` before
 first heartbeat) is covered by W04 integration re-validation.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

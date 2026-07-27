@@ -17,7 +17,7 @@ import pytest
 from .._job_errors import JobError, JobErrorKind
 from .._store_models import CodeChunk
 from .._store_writes import StoreWritePolicy
-from ..store import VaultStore
+from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.integration]
 

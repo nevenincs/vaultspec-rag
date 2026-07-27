@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#install-command'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
   - '[[2026-04-12-vaultspec-rag-install-plan]]'

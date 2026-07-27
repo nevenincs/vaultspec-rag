@@ -3,29 +3,29 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-5
+## Description
 
-## goal
+### Goal
 
 Delete the parallel `_Engine` cache in `api.py`, introduce
 `registry.py` as the singleton holder for `ServiceRegistry`, and
 rewrite every facade function to route through
 `ServiceRegistry.lease`.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/registry.py` (new)
 - `src/vaultspec_rag/api.py`
 - `src/vaultspec_rag/mcp_server.py`
 - `src/vaultspec_rag/tests/test_adr_regression.py`
 
-## what was done
+### What was done
 
 - `registry.py` exposes `get_registry()` (double-checked locked
   singleton) and `reset_registry()` (for tests).
@@ -41,7 +41,9 @@ rewrite every facade function to route through
   as `test_registry_singleton_has_lock`; `TestPathResolveCache`
   updated to reference the registry instead of `_engine_lock`.
 
-## test results
+## Outcome
+
+### Test results
 
 - `pytest src/vaultspec_rag/tests/ -m unit` -> 315 passed.
 - `pytest src/vaultspec_rag/tests/integration/test_api_integration.py` -> 10 passed.
@@ -49,14 +51,16 @@ rewrite every facade function to route through
   clean.
 - Final sweep: `grep -rn "_engine\|_Engine\|get_engine\|reset_engine\|_engine_lock" src/vaultspec_rag/` -> 0 matches.
 
-## deviations
-
-None.
-
-## commit hash
+### Commit hash
 
 `027ccc6 refactor(api): collapse Engine cache into ServiceRegistry singleton`
 
-## time spent
+## Notes
+
+### Deviations
+
+None.
+
+### Time spent
 
 ~20 minutes.

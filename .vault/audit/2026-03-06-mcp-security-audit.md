@@ -3,14 +3,19 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: MCP Server Security
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 Feature: mcp_server.py FastMCP tools, resources, prompts
 
-## 2026-03-06 -- Review (Passes 9-19)
+### 2026-03-06 -- Review (Passes 9-19)
 
 ### Path Traversal Fix: VERIFIED (Task #17 -- RESOLVED)
 
@@ -34,7 +39,7 @@ No GPU-specific code. Delegates to VaultSearcher/VaultStore which handle embeddi
 
 Lines 162-178: Uses `hasattr` checks before calling `count()`, `count_code()`, `db_path`. This is overly defensive for internal code (these methods are guaranteed to exist on VaultStore). Not a bug but unnecessary.
 
-## Pass 27 — Full mcp_server.py review
+### Pass 27 — Full mcp_server.py review
 
 Full line-by-line audit. All confirmed correct:
 
@@ -46,3 +51,7 @@ Full line-by-line audit. All confirmed correct:
 - `analyze_feature()` prompt template is clean
 
 No new issues found.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

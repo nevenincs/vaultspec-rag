@@ -3,11 +3,11 @@ tags:
   - '#adr'
   - '#stdio-watchdog-convergence'
 date: '2026-07-17'
-modified: '2026-07-17'
+modified: '2026-07-27'
 related:
   - "[[2026-07-17-stdio-watchdog-convergence-research]]"
+  - '[[2026-07-17-stdio-watchdog-convergence-audit]]'
 ---
-
 # `stdio-watchdog-convergence` adr: `pipe-creator primary anchor and the functional assertion floor` | (**status:** `accepted`)
 
 ## Problem Statement

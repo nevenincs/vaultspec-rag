@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..memory_probe import ENV_VAR as MEMORY_PROBE_ENV_VAR
 
 pytestmark = [pytest.mark.unit]

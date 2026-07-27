@@ -114,7 +114,7 @@ def admit_index_ceilings(
     derived ceiling is built from.
     """
     from .._units import bytes_to_mib
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..memory_probe import (
         reset_cuda_peak_memory_stats,
         resident_cuda_baseline_mb,

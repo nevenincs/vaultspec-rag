@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S13'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
-
 # Split the store client lock into a lifecycle lock plus per-collection point-operation locks, backend-aware so server mode runs lock-free
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/store.py`
-
-## Description
 
 - Split the single store client RLock into a lifecycle lock (open/close,
   collection create/drop, ensure flags) plus one point-operation lock per
@@ -32,3 +31,5 @@ evidence: same-root-mixed dragged 4.2s vault searches to p50 95s purely
 via the shared lock.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

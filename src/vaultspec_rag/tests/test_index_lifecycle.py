@@ -25,6 +25,7 @@ from .. import indexer as indexer_package
 from .._store_models import root_collection_prefix
 from ..indexer._index_lifecycle import (
     INDEX_EVENT_NAMESPACE,
+    IndexLifecycleRequest,
     run_index_lifecycle,
 )
 from ..indexer._vault_prep import IndexResult
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import FunctionType
 
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -80,8 +81,8 @@ def server_mode_store(
     isolation fixture.
     """
     del isolated_status_dir
-    from ..config import reset_config
-    from ..store import VaultStore
+    from ..config._settings import reset_config
+    from ..store_runtime import VaultStore
 
     monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", _DEAD_QDRANT_URL)
     reset_config()
@@ -104,13 +105,15 @@ def _run(
 ) -> IndexResult:
     return run_index_lifecycle(
         body,
-        event_logger=logger,
-        store=store,
-        source="document",
-        mode=mode,
-        clean=clean,
-        root=store.root_dir,
-        run_control=NO_RUN_CONTROL,
+        IndexLifecycleRequest(
+            event_logger=logger,
+            store=store,
+            source="document",
+            mode=mode,
+            clean=clean,
+            root=store.root_dir,
+            run_control=NO_RUN_CONTROL,
+        ),
     )
 
 
@@ -228,17 +231,22 @@ class TestIndexEvents:
         server_mode_store: VaultStore,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        def completion_fields(result: IndexResult) -> dict[str, object]:
+            return {"files": result.files}
+
         with caplog.at_level(logging.INFO):
             run_index_lifecycle(
                 _result,
-                event_logger=logger,
-                store=server_mode_store,
-                source="code",
-                mode="full",
-                clean=True,
-                root=server_mode_store.root_dir,
-                run_control=NO_RUN_CONTROL,
-                completion_fields=lambda result: {"files": result.files},
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=server_mode_store,
+                    source="code",
+                    mode="full",
+                    clean=True,
+                    root=server_mode_store.root_dir,
+                    run_control=NO_RUN_CONTROL,
+                    completion_fields=completion_fields,
+                ),
             )
 
         completed_fields = _index_events(caplog)[-1][1]

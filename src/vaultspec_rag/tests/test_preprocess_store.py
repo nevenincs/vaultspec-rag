@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from .._store_models import CodeChunk
-from ..store import VaultStore
+from ..store_runtime import VaultStore
 
 if TYPE_CHECKING:
     from collections.abc import Generator

@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 26 Audit: embeddings.py Deep Dive
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-08
 **Scope:** `src/vaultspec_rag/embeddings.py` with cross-references to `search.py`, `indexer.py`
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Severity Summary
+### Severity Summary
 
 | Severity     | Count | Status               |
 | ------------ | ----- | -------------------- |
@@ -25,7 +30,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Detailed Findings
+### Detailed Findings
 
 ### 1. Model Loading: `__init__` torch_dtype and flash_attention_2
 
@@ -271,7 +276,7 @@ No issues found.
 
 ______________________________________________________________________
 
-## Config Integration
+### Config Integration
 
 **Status:** ✅ CORRECT
 
@@ -291,7 +296,7 @@ No issues.
 
 ______________________________________________________________________
 
-## Minor Observation
+### Minor Observation
 
 **LOW:** Sparse query encoding creates single-element list
 
@@ -311,7 +316,7 @@ sparse_tensor = self._sparse_model.encode_query(query[:max_chars])  # if API sup
 
 ______________________________________________________________________
 
-## Cross-Codebase Consistency
+### Cross-Codebase Consistency
 
 | Aspect            | File                   | Status                                      |
 | ----------------- | ---------------------- | ------------------------------------------- |
@@ -326,7 +331,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Conclusion
+### Conclusion
 
 **Status:** ✅ **PASS — No Critical or High Issues**
 
@@ -348,10 +353,14 @@ The `embeddings.py` module is **production-ready and correct**:
 
 ______________________________________________________________________
 
-## Audit Metadata
+### Audit Metadata
 
 - **Auditor:** Round 26 (team-led automated audit)
 - **Files examined:** embeddings.py (322 lines), search.py (402 lines partial), indexer.py (grep), config.py (76 lines)
 - **Call sites verified:** 10 sites in indexer.py, search.py, test suite
 - **Dependencies checked:** torch, sentence_transformers, flash_attn (optional)
 - **No follow-up actions required**
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

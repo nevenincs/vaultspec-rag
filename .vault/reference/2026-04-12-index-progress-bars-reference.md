@@ -5,7 +5,7 @@ tags:
   - '#reference'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-index-progress-bars-adr]]'
 ---
@@ -199,3 +199,7 @@ Windows UTF-8 setup (L34–40):
 No TTY detection via `sys.stdout.isatty()` or environment variable checks for `NO_COLOR`, `FORCE_COLOR`, or `TERM`.
 
 Rich's Console auto-detects TTY by default. Non-TTY rendering degrades gracefully (Rich strips ANSI codes automatically).
+
+## Summary
+
+Retained reference evidence: the detailed sections below are the available implementation reference; this summary adds no implementation claim.

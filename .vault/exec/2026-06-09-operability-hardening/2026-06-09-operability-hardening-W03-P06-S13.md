@@ -3,15 +3,16 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S13'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
-
 # CLI help cleanup — operator-facing help, no leaked developer sections
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/cli/_index.py`
 - `src/vaultspec_rag/cli/_search.py`
@@ -20,8 +21,6 @@ related:
 - `src/vaultspec_rag/cli/_service_lifecycle.py`
 - `src/vaultspec_rag/cli/_mcp_admin.py`
 - `src/vaultspec_rag/tests/test_cli.py`
-
-## Description
 
 Moved all user-facing help into explicit `help=` arguments on `@app.command()` and
 `@app.callback()` decorators, and stripped developer sections (`Args:`, `Raises:`,
@@ -83,3 +82,7 @@ panel test asserts `"Code filters"` and `"Vault filters"` are present.
 - `test_cli.py` combined run: 157 previously-passing tests still pass; 6 pre-existing
   failures in `TestServiceProjectsCli` and `TestJsonOutputMode`/`TestJsonStdoutPurityAcrossCommands`
   are unchanged and unrelated to this step.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ...qdrant_runtime._resolve import write_qdrant_identity
 from ...qdrant_runtime._supervise import (

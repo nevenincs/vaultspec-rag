@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from ... import CodebaseIndexer
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from .._chunk_production import produce_chunks
 
 if TYPE_CHECKING:

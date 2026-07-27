@@ -131,7 +131,7 @@ class RunPolicy:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> RunPolicy:
         """Construct a policy from the process configuration snapshot."""
-        from ..config import get_config
+        from ..config._settings import get_config
 
         return cls(
             no_progress_timeout_seconds=(

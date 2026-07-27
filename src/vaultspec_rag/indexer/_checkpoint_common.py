@@ -32,7 +32,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from ._file_state import FileState, FileStateKind
-from ._run_ledger import (
+from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
@@ -49,7 +49,8 @@ if TYPE_CHECKING:
     from . import _config_epoch
     from ._content_policy import ContentKind
     from ._resolved_policy import ResolvedIndexPolicy
-    from ._run_ledger import RunGeneration, RunLedger
+    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_runtime import RunLedger
     from ._run_policy import RunPolicy
 
 __all__ = [

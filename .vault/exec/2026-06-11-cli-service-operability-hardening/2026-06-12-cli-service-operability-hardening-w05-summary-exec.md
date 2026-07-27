@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#cli-service-operability-hardening'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
@@ -111,3 +111,11 @@ Residual risks:
 - A future diagnostic or doctor command is still justified, but this epic hardened the
   existing status, jobs, logs, health, and search surfaces instead of adding a new
   umbrella command.
+
+## Notes
+
+Evidence gap: the retained document body has no separately labelled Notes section.
+
+## Outcome
+
+Evidence gap: the retained document body has no separately labelled Outcome section.

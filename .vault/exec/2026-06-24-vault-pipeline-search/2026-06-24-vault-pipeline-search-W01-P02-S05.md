@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S05'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Add the quality-marked integration harness driving a real index against the gold set
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/integration/test_intent_ranking.py`
-
-## Description
 
 - Authored `test_intent_ranking.py`: a quality-marked harness that loads the labeled query
   set, builds a `{doc_id: grade}` gold map, and scores each query's ranked ids with the

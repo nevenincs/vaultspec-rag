@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S25'
 related:
   - "[[2026-06-12-service-concurrency-plan]]"
 ---
-
 # Record the execution summary and prepare the review handoff
 
-## Scope
+## Description
+
+### Scope
 
 - `.vault/exec/2026-06-12-service-concurrency`
-
-## Description
 
 - Write the wave phase summary consolidating migration, measurements,
   diagnosis, and the follow-on handoffs; close the plan.
@@ -28,3 +27,5 @@ persisted: the qdrant server-mode promotion (implementation dispatched to an
 isolated worktree) and the deferred model/sparse evaluations.
 
 ## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

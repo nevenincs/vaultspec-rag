@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#storage-prealloc-reclaim'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-adr]]"
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
@@ -146,3 +146,7 @@ already removable through an explicit operator flag on the prune verb. The
 five such directories observed accounted for 0.47 GB. The triage hypothesis
 that no reaper can see them is correct only of the resident 0.3.2 service; the
 pending release already closes it. No new work is required here.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

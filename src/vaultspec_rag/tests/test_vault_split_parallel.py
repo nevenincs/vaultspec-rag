@@ -7,7 +7,8 @@ import os
 import pytest
 
 from .._store_models import VaultDocument
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..indexer._vault_prep import (
     _plan_split_workers,
     split_document,

@@ -23,12 +23,12 @@ import httpx
 import pytest
 
 from .. import server
-from ..config import get_config, reset_config
+from ..config._settings import get_config, reset_config
 from ..server import WatcherStartOutcome
 from ..server import _watcher as watcher_lifecycle
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -81,7 +81,7 @@ async def watcher_client() -> AsyncIterator[httpx.AsyncClient]:
 
 
 @contextlib.asynccontextmanager
-async def _stop_still_draining(root: Path) -> AsyncIterator[None]:
+async def _stop_still_draining(root: Path) -> AsyncGenerator[None]:
     """Hold *root* in the state an unfinished stop leaves behind."""
     release = asyncio.Event()
 

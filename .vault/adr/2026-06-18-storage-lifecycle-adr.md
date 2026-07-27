@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#storage-lifecycle'
 date: '2026-06-18'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-18-storage-lifecycle-research]]"
   - "[[2026-06-13-server-first-default-adr]]"
@@ -180,3 +180,7 @@ single out-of-scope deletion is unacceptable.
   Cross-root orphan reconciliation (prune) is a server-mode-only capability by design,
   because a daemon-less local install has no shared tree to reconcile. This asymmetry is
   documented, not a gap.
+
+## Considered options
+
+Evidence gap: the retained document body has no separately labelled Considered options section.

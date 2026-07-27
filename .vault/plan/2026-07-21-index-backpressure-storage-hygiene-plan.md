@@ -3,14 +3,29 @@ tags:
   - '#plan'
   - '#index-backpressure-storage-hygiene'
 date: '2026-07-21'
-modified: '2026-07-21'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-21-index-backpressure-storage-hygiene-adr]]'
   - '[[2026-07-21-index-backpressure-storage-hygiene-research]]'
 ---
-
 # `index-backpressure-storage-hygiene` plan
+
+## Description
+
+Implements the accepted ADR for this feature (see `related:`), grounded in the
+2026-07-21 research with file-level evidence. The incident behind issue 242
+proved the job-failure machinery works only for raised exceptions; P01 makes
+every persistent storage failure raise (client timeout, typed classification,
+bounded encode ladder), P02 makes failures and stalls visible on every adapter
+surface from one shared taxonomy, P03 refuses bulk work that cannot land, P04
+closes the namespace leak (alias-proof hashing, ephemeral flag plus persisted
+idle-TTL tier through the unchanged destruction gates), P05 shrinks empty
+namespaces and surfaces crash debris plus total backend size, and P06
+documents and regression-guards the whole. All maintenance-adjacent work must
+stay lifecycle-inert and every test isolates both storage env dirs.
+
+## Steps
 
 Close issue 242: make index write failures loud and classified, refuse indexing into a full disk, and stop the shared backend degrading through temp namespaces, alias duplicates, fat empty collections, and invisible crash debris.
 
@@ -73,22 +88,6 @@ Close defect 3: a pytest run must never terminate or mutate the operator's machi
 - [x] `P07.S23` - add a lifecycle tripwire refusing stop/terminate of the machine-global service when running under pytest without explicitly isolated status dir; `src/vaultspec_rag/cli/_service_lifecycle.py`.
 - [x] `P07.S24` - persist an active-jobs snapshot and mark jobs from a prior daemon life as interrupted at startup so killed jobs never vanish from server jobs; `src/vaultspec_rag/jobs.py`.
 - [x] `P07.S25` - add tests for the isolation guard, the lifecycle tripwire, and interrupted-job visibility across a simulated daemon restart; `src/vaultspec_rag/tests/`.
-
-## Description
-
-Implements the accepted ADR for this feature (see `related:`), grounded in the
-2026-07-21 research with file-level evidence. The incident behind issue 242
-proved the job-failure machinery works only for raised exceptions; P01 makes
-every persistent storage failure raise (client timeout, typed classification,
-bounded encode ladder), P02 makes failures and stalls visible on every adapter
-surface from one shared taxonomy, P03 refuses bulk work that cannot land, P04
-closes the namespace leak (alias-proof hashing, ephemeral flag plus persisted
-idle-TTL tier through the unchanged destruction gates), P05 shrinks empty
-namespaces and surfaces crash debris plus total backend size, and P06
-documents and regression-guards the whole. All maintenance-adjacent work must
-stay lifecycle-inert and every test isolates both storage env dirs.
-
-## Steps
 
 ## Parallelization
 

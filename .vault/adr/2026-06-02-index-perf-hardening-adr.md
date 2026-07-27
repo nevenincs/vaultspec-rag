@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#index-perf-hardening'
 date: '2026-06-02'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-02-index-perf-hardening-research]]"
 ---
@@ -128,3 +128,7 @@ plugs into the consumer without touching the producer.
   **Rule:** Codebase-index worker processes must never import or initialize CUDA/torch;
   the embedding GPU is touched only by the single in-process consumer, and the worker pool
   must use the `spawn` start method.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ._http_stubs import QuietHandler
 from ._model_setup import (
     configured_service_model_ids,
@@ -50,6 +50,14 @@ class _PersistentGatewayTimeout(QuietHandler):
 
     def do_GET(self) -> None:
         self._gateway_timeout()
+
+    def handle(self) -> None:
+        with contextlib.suppress(
+            BrokenPipeError,
+            ConnectionAbortedError,
+            ConnectionResetError,
+        ):
+            super().handle()
 
     def _gateway_timeout(self) -> None:
         type(self).requests_received += 1

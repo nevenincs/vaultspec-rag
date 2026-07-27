@@ -8,8 +8,14 @@ import pytest
 
 from ..._store_models import CodeChunk
 from ...search._noise import NoisePolicy
-from ...search._searcher import VaultSearcher
-from ...store import VaultStore
+from ...search._parsing import parse_query
+from ...search._searcher import (
+    CodebaseSearchOptions,
+    VaultSearcher,
+    _CodebaseCandidateRequest,
+    _EncodedSearchQuery,
+)
+from ...store_runtime import VaultStore
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -50,7 +56,7 @@ def _searcher_shell(
     searcher = VaultSearcher.__new__(VaultSearcher)
     searcher.root_dir = root
     searcher.store = store
-    searcher._reranker_enabled = reranker_enabled  # pyright: ignore[reportPrivateUsage]
+    searcher._reranker_enabled = reranker_enabled
     return searcher
 
 
@@ -61,19 +67,21 @@ def _fetch(
     policy: NoisePolicy,
     include_norm: list[str] | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, int]]:
-    return searcher._fetch_codebase_candidates(  # pyright: ignore[reportPrivateUsage]
-        query_vector=[1.0, 0.0],
-        sparse_vector=None,
-        query_text="candidate",
-        store_filters={},
-        top_k=top_k,
-        include_norm=include_norm or [],
-        exclude_norm=[],
-        policy=policy,
-        like_ids=None,
-        unlike_ids=None,
-        timings=None,
-        notes=None,
+    return searcher._fetch_codebase_candidates(
+        _CodebaseCandidateRequest(
+            encoded=_EncodedSearchQuery(
+                parsed=parse_query("candidate"),
+                text="candidate",
+                dense_vector=[1.0, 0.0],
+                sparse_vector=None,
+                top_k=top_k,
+            ),
+            store_filters={},
+            include_norm=include_norm or [],
+            exclude_norm=[],
+            policy=policy,
+            options=CodebaseSearchOptions(),
+        )
     )
 
 

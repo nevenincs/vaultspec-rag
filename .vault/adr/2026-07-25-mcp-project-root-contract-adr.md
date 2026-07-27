@@ -3,11 +3,10 @@ tags:
   - '#adr'
   - '#mcp-project-root-contract'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - "[[2026-07-25-mcp-project-root-contract-research]]"
 ---
-
 # `mcp-project-root-contract` adr: `the mcp surface resolves the root the daemon must never guess` | (**status:** `accepted`)
 
 ## Problem Statement
@@ -18,6 +17,10 @@ A schema that says optional and a route that says required is a broken contract
 on one side or the other, and the two must stop disagreeing. Which side yields
 determines whether a wrong root fails loudly or resolves silently against the
 wrong index.
+
+## Considerations
+
+Evidence gap: the retained ADR body has no separately labelled Considerations section.
 
 ## Considered options
 

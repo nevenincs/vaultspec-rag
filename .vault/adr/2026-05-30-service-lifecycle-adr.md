@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-lifecycle'
 date: '2026-05-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-05-30-service-lifecycle-research]]'
 ---
@@ -172,3 +172,7 @@ complains about.
 - `service.lifecycle` log lines change the log volume slightly
   (startup + shutdown per process lifetime). No per-request or
   per-tool spam.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

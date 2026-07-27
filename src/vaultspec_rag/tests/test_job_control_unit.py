@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from ..config import EnvVar, get_config, reset_config
+from ..config._settings import get_config, reset_config
+from ..config._types import EnvVar
 from ..job_control import (
     NO_RUN_CONTROL,
     CancelRequested,
@@ -36,7 +37,7 @@ _JOB_CONFIG_VARS = (
 _CONFIG_PROBE = """
 import sys
 
-from vaultspec_rag.config import get_config  # absolute-import-ok
+from vaultspec_rag.config._settings import get_config  # absolute-import-ok
 
 try:
     value = getattr(get_config(), sys.argv[1])

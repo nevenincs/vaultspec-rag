@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#install-mcp-dependency-fix'
 date: '2026-06-10'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L1
 related:
   - '[[2026-06-10-install-mcp-dependency-fix-adr]]'
@@ -37,6 +37,8 @@ upstream version-floor follow-up, and commits. The rejected DLL shim and the
 deferred `mcp` version floor are explicitly out of scope.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

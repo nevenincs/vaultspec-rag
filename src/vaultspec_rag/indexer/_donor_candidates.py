@@ -207,7 +207,7 @@ def expected_vector_schema() -> VectorSchema:
     the expectation always matches what the indexing root's own collection is
     (or will be) built with, never a stale code default.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     return VectorSchema(
         dense_name=store_schema.DENSE_VECTOR_NAME,
@@ -234,7 +234,7 @@ def _embed_schema_marker(kind: CollectionKind) -> str:
 
 def current_model_identity(kind: CollectionKind) -> ModelIdentity:
     """Return the recorded-form model identity of the current process."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     return ModelIdentity(
@@ -268,7 +268,7 @@ def read_donor_recorded_state(
     predating the epoch keys, or an incomplete document publication all
     return ``None`` - the caller must treat that candidate as ineligible.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     root = Path(donor_root)
     if kind is CollectionKind.DOCUMENT:

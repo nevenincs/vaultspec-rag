@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-operability'
 date: '2026-06-01'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-01-service-operability-research]]"
   - "[[2026-05-28-cli-backend-parity-adr]]"
@@ -223,3 +223,7 @@ start.
   tokens to avoid collisions.
 - Whether `reconfigure` on a not-yet-running root is a no-op, an error, or an
   implicit start.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

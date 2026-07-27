@@ -152,7 +152,7 @@ class VaultIndexer:
                 expected - same-thread re-entry would deadlock; the
                 indexer never nests its own GPU acquisitions.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
 
@@ -267,7 +267,7 @@ class VaultIndexer:
                 rebuilt (the collection still contains valid new
                 data plus the stale rows).
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         start = time.time()
         slice_size = max(1, get_config().embedding_batch_size)
@@ -511,7 +511,7 @@ class VaultIndexer:
                 run_control=run_control,
             )
 
-        from ..config import get_config
+        from ..config._settings import get_config
 
         start = time.time()
         slice_size = max(1, get_config().embedding_batch_size)
@@ -814,7 +814,7 @@ class VaultIndexer:
             An ``IndexResult`` with added/updated/removed counts for the
             reconciled subset and the post-reconcile total document count.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         start = time.time()
         slice_size = max(1, get_config().embedding_batch_size)
@@ -967,7 +967,7 @@ class VaultIndexer:
                 from ``_write_meta``).
         """
         meta: dict[str, str] = {}
-        from ..config import get_config
+        from ..config._settings import get_config
 
         docs_dir = self.root_dir / get_config().docs_dir
         for doc in docs:
@@ -1078,7 +1078,7 @@ class VaultIndexer:
 
     def _current_vault_content_epoch(self) -> str:
         """Compute the content epoch over the current ``vault_chunk_chars``."""
-        from ..config import get_config
+        from ..config._settings import get_config
 
         return _config_epoch.vault_content_epoch(
             vault_chunk_chars=int(get_config().vault_chunk_chars),

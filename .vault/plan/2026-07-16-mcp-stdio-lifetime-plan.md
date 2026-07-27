@@ -3,14 +3,29 @@ tags:
   - '#plan'
   - '#mcp-stdio-lifetime'
 date: '2026-07-16'
-modified: '2026-07-21'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-16-mcp-stdio-lifetime-adr]]'
   - '[[2026-07-16-mcp-stdio-lifetime-research]]'
 ---
-
 # `mcp-stdio-lifetime` plan
+
+## Description
+
+Implements the accepted mcp-stdio-lifetime ADR: the stdio MCP shim
+(`vaultspec-search-mcp`) gains a self-defense lifetime backstop so orphaned
+`uv -> launcher -> python` chains stop accumulating on Windows. A new
+stdlib-only module discovers the shim's ancestor chain at startup, takes
+SYNCHRONIZE handles immediately (PID-reuse safe), arms a wait-any watchdog
+daemon thread after a short grace window, and hard-exits (`os._exit(0)`)
+when any watched ancestor dies. stdin EOF remains the primary shutdown
+path; POSIX gets a coarse reparent poll. The watchdog installs only on the
+stdio branch of the entry point, never in the HTTP daemon, honoring the
+thin-client and optional-mcp parent decisions. Authorizing decision and
+grounding research are in the frontmatter chain.
+
+## Steps
 
 ### Phase `P01` - Watchdog module
 
@@ -34,22 +49,6 @@ Prove the watchdog end-to-end in real subprocesses (the research W2 mandate), pi
 - [x] `P03.S06` - Add integration tests: spawn a real parent-intermediary-worker chain, kill the intermediary after the grace window, assert the worker hard-exits within the bound, and prove stdin EOF still exits the real shim cleanly; `src/vaultspec_rag/tests/integration/test_stdio_lifetime_e2e.py`.
 - [x] `P03.S07` - Add ADR regression guards: fresh-interpreter import of the watchdog module loads neither torch nor mcp, and the HTTP daemon path never references the watchdog installer; `src/vaultspec_rag/tests/test_adr_regression.py`.
 - [x] `P03.S08` - Document the stdio lifetime contract, the --parent-pid override, and the VAULTSPEC_RAG_STDIO_WATCHDOG knob in the service reference docs; `docs/`.
-
-## Description
-
-Implements the accepted mcp-stdio-lifetime ADR: the stdio MCP shim
-(`vaultspec-search-mcp`) gains a self-defense lifetime backstop so orphaned
-`uv -> launcher -> python` chains stop accumulating on Windows. A new
-stdlib-only module discovers the shim's ancestor chain at startup, takes
-SYNCHRONIZE handles immediately (PID-reuse safe), arms a wait-any watchdog
-daemon thread after a short grace window, and hard-exits (`os._exit(0)`)
-when any watched ancestor dies. stdin EOF remains the primary shutdown
-path; POSIX gets a coarse reparent poll. The watchdog installs only on the
-stdio branch of the entry point, never in the HTTP daemon, honoring the
-thin-client and optional-mcp parent decisions. Authorizing decision and
-grounding research are in the frontmatter chain.
-
-## Steps
 
 ## Parallelization
 

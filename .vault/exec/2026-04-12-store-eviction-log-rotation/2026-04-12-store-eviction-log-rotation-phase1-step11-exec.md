@@ -3,26 +3,26 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-11
+## Description
 
-## goal
+### Goal
 
 Lint the full modified surface and update user-facing docs for the
 four new config knobs, the `service projects list|evict` CLI
 subcommands, and the rotating log handler.
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/README.md`
 - `CHANGELOG.md`
 
-## what was done
+### What was done
 
 - Extended the env-vars table with
   `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS`,
@@ -42,20 +42,24 @@ subcommands, and the rotating log handler.
 - `pre-commit run --all-files` reformatted the README table column
   widths (mdformat) and then re-ran clean on every hook.
 
-## deviations
+## Outcome
 
-None.
+### Test results
 
-## test results
-
-- `pre-commit run --all-files` — all hooks green (ruff,
+- `pre-commit run --all-files` â€” all hooks green (ruff,
   ruff-format, taplo, ty, vault fix, mdformat-check,
   pymarkdown, provider artifacts, spec check).
 
-## commit hash
+### Commit hash
 
 `acb9d69 docs: document service eviction and log rotation`
 
-## time spent
+## Notes
+
+### Deviations
+
+None.
+
+### Time spent
 
 ~10 minutes.

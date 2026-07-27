@@ -3,22 +3,37 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-06-codebase-indexer-tech-stack-research]]'
   - '[[2026-03-07-api-verification-research]]'
 ---
-
 # `gpu-rag-stack` adr: `Manual tree-sitter node walking over Query API for metadata extraction` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 The `ASTChunker` in `indexer.py` needs to extract metadata (function names,
 class names, node types) from tree-sitter parse trees. Two approaches exist:
 the tree-sitter Query API (S-expression pattern matching) and manual node
 walking via `child_by_field_name()`.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Use manual node walking (`node.child_by_field_name("name")`) for metadata
 extraction rather than the tree-sitter Query API.

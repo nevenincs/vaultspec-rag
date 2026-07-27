@@ -3,22 +3,37 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-08-qdrant-filter-verification-research]]'
   - '[[2026-03-07-libdoc-verification-research]]'
 ---
-
 # `gpu-rag-stack` adr: `Filters must go on each Prefetch, not top-level query_filter` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 Qdrant's `query_points()` API has two places to specify filters: a top-level
 `query_filter` parameter and a `filter` field on each `Prefetch` object. When
 using `prefetch` + `FusionQuery(RRF)` for hybrid search, it was unclear
 whether a single top-level filter would apply to all prefetch branches.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Always place filters on each `Prefetch` individually when using prefetch-based
 hybrid search. Do not rely on top-level `query_filter` alone.

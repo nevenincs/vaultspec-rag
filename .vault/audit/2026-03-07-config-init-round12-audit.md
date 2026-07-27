@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 12 Audit -- config.py and __init__.py
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 __Auditor:__ docs-researcher-2-2
 __Files:__ `src/vaultspec_rag/config.py` (78 lines), `src/vaultspec_rag/__init__.py` (52 lines), cross-ref `src/vaultspec_rag/api.py` (264 lines)
@@ -14,7 +19,7 @@ __Date:__ 2026-03-07
 
 ______________________________________________________________________
 
-## config.py Audit
+### config.py Audit
 
 ### Check 1: RAG Defaults Coverage
 
@@ -160,7 +165,7 @@ __Verdict: PASS.__ Clean import graph with deferred imports.
 
 ______________________________________________________________________
 
-## __init__.py Audit
+### __init__.py Audit
 
 ### Check 1: Exports
 
@@ -244,7 +249,7 @@ __Verdict: PASS.__ All return types are available to consumers of the public API
 
 ______________________________________________________________________
 
-## Additional Observations
+### Additional Observations
 
 ### `__init__.py` eager imports trigger GPU model loading
 
@@ -258,7 +263,7 @@ Line 36: `def __getattr__(self, name: str) -> Any:` -- the return type is `Any`,
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 | ID     | Severity | Finding                                                                          |
 | ------ | -------- | -------------------------------------------------------------------------------- |
@@ -271,3 +276,7 @@ ______________________________________________________________________
 Note: The `CodebaseIndexer` hardcoded `"code_index_meta.json"` (indexer.py:874) was initially flagged as MEDIUM but downgraded to MINOR on analysis -- vault and codebase intentionally use separate metadata files.
 
 __0 HIGH/MEDIUM findings. 5 MINOR findings.__
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

@@ -142,9 +142,10 @@ def noise_searcher(
 ) -> Generator[tuple[VaultSearcher, Path]]:
     import os
 
-    from ... import CodebaseIndexer, VaultSearcher, VaultStore
-    from ...config import reset_config
+    from ... import CodebaseIndexer, VaultSearcher
+    from ...config._settings import reset_config
     from ...progress import NullProgressReporter
+    from ...store_runtime import VaultStore
 
     # The noise policy (hide/demote/dedup) runs after rerank and is independent
     # of it; disabling the CrossEncoder keeps this benchmark deterministic and

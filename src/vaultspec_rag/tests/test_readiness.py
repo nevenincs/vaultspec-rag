@@ -25,7 +25,8 @@ from .._readiness import (
     ReadinessStatus,
     compute_readiness,
 )
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 from ..store_schema import STORAGE_SCHEMA_VERSION as _STORAGE_SCHEMA_VERSION
 
 if TYPE_CHECKING:
@@ -193,7 +194,7 @@ class TestTorchDimension:
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestModelsDimension:
     def test_models_dimension_probes_each_configured_repo(self) -> None:
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         report = compute_readiness()

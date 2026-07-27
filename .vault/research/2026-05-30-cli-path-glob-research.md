@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cli-path-glob'
 date: '2026-05-30'
-modified: '2026-07-22'
+modified: '2026-07-27'
 related: []
 ---
 
@@ -98,3 +98,5 @@ without churning the call site.
 Wire the lists through `api.search_codebase`, `mcp_server. search_codebase`, `cli.handle_search`, and `cli._try_mcp_search` in
 the same shape as the existing `--path` flag — see PR #109 for the
 template.
+## Sources
+- Evidence cited inline: `src/client/application/`, `pyproject.toml`.

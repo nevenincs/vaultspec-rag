@@ -3,14 +3,19 @@ tags:
   - '#plan'
   - '#qdrant-store-resilience'
 date: '2026-06-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-06-30-qdrant-store-resilience-adr]]'
   - '[[2026-06-30-qdrant-store-resilience-research]]'
 ---
-
 # `qdrant-store-resilience` plan
+
+## Description
+
+No separate description is recorded in the retained prior plan body. Source: retained prior plan body.
+
+## Steps
 
 ### Phase `P01` - Quarantine primitive
 
@@ -42,10 +47,10 @@ Real-behavior tests for the quarantine move, the detection parser, the bounded r
 
 - [x] `P05.S05` - Add real-behavior tests for quarantine move, detection parser, bounded retry, and the CLI verb under an isolated storage dir; `src/vaultspec_rag/tests/test_qdrant_store_resilience.py`.
 
-## Description
-
-## Steps
-
 ## Parallelization
 
+No separate parallelization is recorded in the retained prior plan body. Source: retained prior plan body.
+
 ## Verification
+
+No separate verification is recorded in the retained prior plan body. Source: retained prior plan body.

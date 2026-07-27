@@ -79,7 +79,7 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel, SparseResult
     from ..job_control import QuiesceGate
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._noise import NoisePolicy
 
 logger = logging.getLogger(__name__)
@@ -329,7 +329,7 @@ class VaultSearcher:
                 paused, new GPU sections park at zero CPU until resumed;
                 requests already inside a GPU section are never preempted.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         settings = VaultSearcherConfiguration(**configuration)
@@ -357,7 +357,7 @@ class VaultSearcher:
 
     def _vault_docs_prefix(self) -> str:
         """The docs directory (e.g. ``.vault``) vault paths are stored under."""
-        from ..config import get_config
+        from ..config._settings import get_config
 
         return str(get_config().docs_dir)
 
@@ -403,7 +403,7 @@ class VaultSearcher:
             from sentence_transformers import CrossEncoder
 
             from .._gpu import load_torch
-            from ..config import get_config
+            from ..config._settings import get_config
 
             torch = load_torch()
             # Hold the shared GPU lock across the model load. Constructing the
@@ -458,7 +458,7 @@ class VaultSearcher:
             return results[:top_k]
         import torch
 
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         reranker = self._get_reranker()
@@ -539,7 +539,7 @@ class VaultSearcher:
         requested/default intent name has no profile, so the caller leaves the
         bare-reranker ordering untouched.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         if not cfg.vault_intent_ranking_enabled:
@@ -564,7 +564,7 @@ class VaultSearcher:
         self, results: list[SearchResult], intent: str | None
     ) -> list[SearchResult]:
         """Apply the intent type x status prior and per-type cap when active."""
-        from ..config import get_config
+        from ..config._settings import get_config
 
         profile = self._resolve_intent_profile(intent)
         if profile is None:
@@ -861,7 +861,7 @@ class VaultSearcher:
         Returns:
             Ranked list of codebase SearchResult instances.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         # Domain filters arrive either as explicit kwargs (api / MCP) or as

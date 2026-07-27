@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-index-progress-bars-reference]]'
   - '[[2026-04-12-index-progress-bars-research]]'
@@ -257,3 +257,7 @@ Future considerations:
   (separate ADR), the `threading.Lock`-guarded line reporter and the
   thread-safe Rich adapter both already handle concurrent `advance()`
   calls, so no contract change is needed.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

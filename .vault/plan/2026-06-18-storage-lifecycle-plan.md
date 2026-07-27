@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#storage-lifecycle'
 date: '2026-06-18'
-modified: '2026-06-25'
+modified: '2026-07-27'
 tier: L3
 related:
   - '[[2026-06-18-storage-lifecycle-adr]]'
@@ -153,3 +153,7 @@ The plan is complete when every Step is closed and these criteria hold:
 - The adversarial suite passes: out-of-scope deletion, path traversal, symlink escape, unknown-namespace, busy-root, and json-without-confirmation are all rejected.
 - `server storage migrate` round-trips a root index between local and server backends with an integrity check, reusing the single GPU consumer when re-embedding and holding the GPU lock over forward passes only.
 - The full real-backend test suite passes on the GPU host, ruff and basedpyright are clean, and the code reviewer signs off.
+
+## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.

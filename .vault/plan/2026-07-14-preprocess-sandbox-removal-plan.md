@@ -3,14 +3,27 @@ tags:
   - '#plan'
   - '#preprocess-sandbox-removal'
 date: '2026-07-14'
-modified: '2026-07-22'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-14-preprocess-sandbox-removal-adr]]'
   - '[[2026-07-13-preprocess-sandbox-research]]'
 ---
-
 # `preprocess-sandbox-removal` plan
+
+## Description
+
+Remove the OS-level preprocess hook sandbox per the accepted removal ADR (D1-D10 in the
+related frontmatter chain). The AppContainer/bwrap/seatbelt containment layer costs
+~5-8s per matched file against a ~50ms baseline (measured: 640 chunks in 80 minutes on
+the production corpus); the owner mandate keeps preprocessing on by default and removes the
+containment. The hook remains a bounded subprocess grandchild (CPU/CUDA-correctness
+boundary per the preprocess-hooks ADR D6/D9 and the index-workers-stay-cpu-only rule)
+with the curated env, timeout, output caps, schema validation, and content-hash cache
+all retained. The tri-state control surface collapses to on/off (BREAKING: the
+UNSANDBOXED env knob and --preprocess-unsandboxed flags are removed).
+
+## Steps
 
 ### Phase `P01` - Core sandbox removal
 
@@ -47,20 +60,6 @@ Rewrite the test surface for direct execution semantics, update operator docs to
 - [x] `P03.S19` - Sweep remaining sandbox mentions from README, cli, and configuration docs; `docs/`.
 - [x] `P03.S20` - Run the full unit suite, lints (ruff, ty, basedpyright), and an end-to-end preprocess index benchmark on a rule-matched corpus to confirm the per-file cost returns to the process-spawn baseline; `src/vaultspec_rag/`.
 - [x] `P03.S21` - Amend the hook child cwd from a scratch dir to the project root so project-launcher commands (uv run) resolve, per the client validation failure; `src/vaultspec_rag/indexer/_preprocess_runner.py`.
-
-## Description
-
-Remove the OS-level preprocess hook sandbox per the accepted removal ADR (D1-D10 in the
-related frontmatter chain). The AppContainer/bwrap/seatbelt containment layer costs
-~5-8s per matched file against a ~50ms baseline (measured: 640 chunks in 80 minutes on
-the production corpus); the owner mandate keeps preprocessing on by default and removes the
-containment. The hook remains a bounded subprocess grandchild (CPU/CUDA-correctness
-boundary per the preprocess-hooks ADR D6/D9 and the index-workers-stay-cpu-only rule)
-with the curated env, timeout, output caps, schema validation, and content-hash cache
-all retained. The tri-state control surface collapses to on/off (BREAKING: the
-UNSANDBOXED env knob and --preprocess-unsandboxed flags are removed).
-
-## Steps
 
 ## Parallelization
 

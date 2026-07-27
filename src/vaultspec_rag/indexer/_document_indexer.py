@@ -305,7 +305,7 @@ class DocumentIndexer:
             SourceProfileVersion.CONVENTIONAL_V1
         )
         self._writer_lock = threading.RLock()
-        from ..config import get_config
+        from ..config._settings import get_config
 
         self._data_root = self.root_dir / get_config().data_dir
         self._meta_path = document_metadata_path(self.root_dir)
@@ -487,7 +487,7 @@ class DocumentIndexer:
 
     @staticmethod
     def _support_limits() -> SupportProfileLimits:
-        from ..config import get_config
+        from ..config._settings import get_config
 
         return get_index_support_profile(get_config().index_support_profile).document
 
@@ -568,7 +568,7 @@ class DocumentIndexer:
                 content_hash=result.content_hash,
             )
             return None, 0, f"{result.rel_path}: {reason}"
-        from ..config import get_config
+        from ..config._settings import get_config
 
         cfg = get_config()
         slice_size = max(1, int(cfg.embedding_batch_size))
@@ -667,7 +667,7 @@ class DocumentIndexer:
         returns, in slice order, so a write failure surfaces before this
         file's evidence is treated as durable.
         """
-        from ..config import get_config
+        from ..config._settings import get_config
         from ..memory_probe import record_forward_peaks
 
         self.store.disk_headroom_preflight(len(request.selected))
@@ -726,7 +726,7 @@ class DocumentIndexer:
         run_control: RunControl,
     ) -> DocumentRunCheckpoint:
         """Open one compatible storage-confirmed document generation."""
-        from ..config import get_config
+        from ..config._settings import get_config
         from ..store_schema import effective_sparse_dim
 
         config = get_config()

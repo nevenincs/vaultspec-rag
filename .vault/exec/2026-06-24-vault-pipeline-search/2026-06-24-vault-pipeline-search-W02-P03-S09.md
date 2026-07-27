@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-06-24'
+modified: '2026-07-27'
 step_id: 'S09'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"
@@ -11,11 +11,11 @@ related:
 
 # Add related and status fields to SearchResult
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/search/_models.py`
-
-## Description
 
 - Added `status: str = ""` and `related: list[str]` (via `field(default_factory=list)`) to
   the `SearchResult` dataclass, importing `field`.

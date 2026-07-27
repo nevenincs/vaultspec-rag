@@ -3,11 +3,11 @@ tags:
   - '#adr'
   - '#mcp-launch-hygiene'
 date: '2026-07-17'
-modified: '2026-07-17'
+modified: '2026-07-27'
 related:
   - "[[2026-07-17-mcp-launch-hygiene-research]]"
+  - '[[2026-07-17-mcp-launch-hygiene-audit]]'
 ---
-
 # `mcp-launch-hygiene` adr: `rag binds to core's static-launch contract: tool spec token and placement-aware extra` | (**status:** `accepted`)
 
 ## Problem Statement

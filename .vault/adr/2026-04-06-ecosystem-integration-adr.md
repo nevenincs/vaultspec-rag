@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#ecosystem-integration'
 date: '2026-04-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-06-ecosystem-integration-research]]'
   - '[[2026-04-06-ecosystem-integration-plan]]'
@@ -154,3 +154,7 @@ throwaway code. The ADR's phased approach anticipated this — phase 1
 - Phase 4 (documentation) — depends on phase 2 completion
 - #48 (pre-commit hooks) — awaits core#36
 - #55 (MCP registry) — awaits core#43
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

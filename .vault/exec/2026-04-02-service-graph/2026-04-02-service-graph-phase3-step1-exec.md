@@ -3,23 +3,25 @@ tags:
   - '#exec'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-02-service-graph-phase1-plan]]'
 ---
 
 # service-graph phase-3 step-1: fastmcp lifespan + health endpoint
 
-## Completed
+## Description
+
+### Completed
 
 Refactored `mcp_server.py` to use `ServiceRegistry` from Phase 2,
 added `service_lifespan` async context manager for eager model loading,
 `/health` endpoint, Starlette app composition, and `project_root`
 parameter on all MCP tools.
 
-## Changes
+### Changes
 
-- `src/vaultspec_rag/mcp_server.py` — major refactor:
+- `src/vaultspec_rag/mcp_server.py` â€” major refactor:
 
   - Removed `RagComponents` dataclass, `get_comp()`, `_comp`,
     `_comp_lock`, `_comp_error`, and module-level `_graph_cache`
@@ -46,14 +48,14 @@ parameter on all MCP tools.
   - `vault://{doc_id}` resource and `analyze_feature` prompt
     preserved unchanged
 
-- `src/vaultspec_rag/embeddings.py` — timing logs:
+- `src/vaultspec_rag/embeddings.py` â€” timing logs:
 
   - Added `import os, time` at module level
   - Added HF cache directory log at start of `__init__`
   - Added `time.perf_counter()` timing around dense model load
     and sparse model load with per-model log messages
 
-- `src/vaultspec_rag/tests/test_mcp_server.py` — updated tests:
+- `src/vaultspec_rag/tests/test_mcp_server.py` â€” updated tests:
 
   - Removed `TestGetCompFailureCaching` and
     `TestRagComponentsDataclass` classes (old API removed)
@@ -68,14 +70,16 @@ parameter on all MCP tools.
   - Added `test_health_response` and `test_health_response_defaults`
     for the new HealthResponse Pydantic model
 
-- `src/vaultspec_rag/tests/test_adr_regression.py` — updated:
+- `src/vaultspec_rag/tests/test_adr_regression.py` â€” updated:
 
   - `test_mcp_comp_lock_exists` renamed to
     `test_mcp_registry_lock_exists`, checks `_registry._lock`
   - `test_reindex_vault_resets_graph_cache` assertion updated to
     match `slot.graph_cache.invalidate()` pattern
 
-## API compatibility
+## Outcome
+
+### API compatibility
 
 - `mcp.streamable_http_app()` confirmed available (returns
   `starlette.applications.Starlette`)
@@ -86,9 +90,13 @@ parameter on all MCP tools.
   route alongside the MCP mount)
 - `starlette`, `uvicorn` both available as transitive dependencies
 
-## Test results
+### Test results
 
 - 239 unit tests pass (0 failures, 0 errors)
 - 36 mcp_server tests pass (including 2 new health handler tests
   using Starlette TestClient)
 - ruff check and ruff format clean on all modified files
+
+## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.

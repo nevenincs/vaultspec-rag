@@ -26,12 +26,13 @@ if TYPE_CHECKING:
 from ..indexer._streaming import (
     StoreWriteTask,
     UnsettledStoreWriterError,
+    VaultStreamRequest,
     _release_cuda_cache,
     _SliceWriter,
     _stream_encode_and_upsert_vault,
 )
 from ..progress import NullProgressReporter
-from ..store import VaultStore
+from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -156,12 +157,14 @@ def _stream(
     # The encoder satisfies the streaming path's structural encode protocol;
     # the cast keeps the real GPU model out of a threading/timing test.
     return _stream_encode_and_upsert_vault(
-        docs=[_doc(index) for index in range(n_docs)],
-        slice_size=slice_size,
-        model=cast("EmbeddingModel", encoder),
-        store=store,
-        gpu_lock=threading.Lock(),
-        reporter=NullProgressReporter(),
+        VaultStreamRequest(
+            docs=[_doc(index) for index in range(n_docs)],
+            slice_size=slice_size,
+            model=cast("EmbeddingModel", encoder),
+            store=store,
+            gpu_lock=threading.Lock(),
+            reporter=NullProgressReporter(),
+        )
     )
 
 

@@ -33,8 +33,14 @@ __all__ = [
     "NamespaceSurvey",
     "_prefix_of",
     "classify_namespaces",
+    "is_canonical_prefix",
     "is_temp_rooted",
 ]
+
+
+def is_canonical_prefix(value: str) -> bool:
+    """Return whether *value* is exactly one canonical root prefix."""
+    return ROOT_COLLECTION_PREFIX_RE.fullmatch(value) is not None
 
 
 def is_temp_rooted(root: str | None) -> bool:

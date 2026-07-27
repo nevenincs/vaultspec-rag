@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S15'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
-
 # operator-persona testimonial end-to-end CLI integration tests
 
-## Scope
+## Description
+
+### Scope
 
 - `src/vaultspec_rag/tests/integration/test_cli_ux_testimonial.py` (new file)
-
-## Description
 
 Created `test_cli_ux_testimonial.py` with three operator-persona test
 classes. Each class runs a scripted real CLI sequence and records
@@ -79,3 +78,7 @@ uses the `live_service` fixture:
 - `subprocess_gpu` tests (`test_live_code_search`,
   `test_server_lifecycle_and_observability`) deferred to W04 full-run
   validation.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

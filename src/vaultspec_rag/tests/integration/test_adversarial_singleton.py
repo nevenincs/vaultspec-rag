@@ -21,7 +21,8 @@ from ..._machine_lock import (
     acquire_machine_lock,
     machine_lock_live_holder,
 )
-from ...config import EnvVar, reset_config
+from ...config._settings import reset_config
+from ...config._types import EnvVar
 from ...qdrant_runtime._resolve import (
     QdrantEndpointProbe,
     QdrantIdentity,

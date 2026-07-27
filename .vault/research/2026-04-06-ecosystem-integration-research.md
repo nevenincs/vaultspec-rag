@@ -3,21 +3,22 @@ tags:
   - '#research'
   - '#ecosystem-integration'
 date: '2026-04-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'
   - '[[2026-04-06-ecosystem-integration-plan]]'
   - '[[2026-04-02-service-graph-research]]'
   - '[[2026-04-01-cicl-pipeline-research]]'
 ---
-
 # `ecosystem-integration` research: `vaultspec-rag + vaultspec-core cohabitation`
+
+## Findings
 
 Cross-repo investigation into how vaultspec-rag and vaultspec-core coexist
 in the same worktree. Covers CLI compatibility, rule coverage, sync pipeline,
 data separation, config alignment, install mechanics, and extension model.
 
-## Q1: CLI compatibility
+### Q1: CLI compatibility
 
 **No entry-point conflicts.** Both packages can be installed in the same venv.
 
@@ -36,7 +37,7 @@ RAG CLI commands: `index`, `search`, `status`, `server` (sub-group),
 
 No command-name overlap. Both can coexist safely.
 
-## Q2: rule coverage (RAG awareness in core)
+### Q2: rule coverage (RAG awareness in core)
 
 **Core's rule system has zero mentions of RAG.** Grep for "rag" (case-insensitive)
 across all 38 files in `.vaultspec/rules/` returned no matches.
@@ -59,7 +60,7 @@ vault management. This is the primary integration gap.
 - Optionally, a RAG-aware research skill variant that delegates to the MCP
   search tool for knowledge discovery.
 
-## Q3: core's sync pipeline
+### Q3: core's sync pipeline
 
 `vaultspec-core sync` executes 5 resource passes:
 
@@ -91,7 +92,7 @@ filesystem, not just builtins.
 **Recommended approach:** RAG ships a `.vaultspec/rules/rules/vaultspec-rag.builtin.md`
 that core's sync picks up and distributes. No core code changes needed.
 
-## Q4: `.vault/data/` separation
+### Q4: `.vault/data/` separation
 
 **Qdrant storage:** `{root}/.vault/data/search-data/qdrant/` (binary protobuf
 files). Index metadata stored as JSON alongside.
@@ -119,7 +120,7 @@ files). Index metadata stored as JSON alongside.
 - Alternatively, RAG's install should ensure the gitignore entry exists
 - Consider adding `data/` to scanner.py's skip list for defense-in-depth
 
-## Q5: config alignment
+### Q5: config alignment
 
 **No env var conflicts.** Clean namespace separation:
 
@@ -139,7 +140,7 @@ env var > `_RAG_DEFAULTS`.
 
 **No conflict. Integration is clean.**
 
-## Q6: install/uninstall
+### Q6: install/uninstall
 
 **RAG has no `install` command.** It relies on:
 
@@ -164,7 +165,7 @@ env var > `_RAG_DEFAULTS`.
 1. Seeds `vaultspec-rag.builtin.md` into `.vaultspec/rules/rules/`
 1. Triggers `vaultspec-core sync` to propagate the new rule
 
-## Q7: extension model
+### Q7: extension model
 
 **Core has no formal extension/plugin system.** Providers are hardcoded in a
 `Tool` enum and `_PROVIDER_TO_TOOLS` mapping. No dynamic registration, no
@@ -182,7 +183,7 @@ plugin discovery, no entry-point scanning.
 The term "companion" is more accurate: two cooperating packages that share a
 workspace without one being subordinate to the other.
 
-## Findings summary
+### Findings summary
 
 | Area             | Status                                              | Action needed                                           |
 | ---------------- | --------------------------------------------------- | ------------------------------------------------------- |
@@ -194,7 +195,7 @@ workspace without one being subordinate to the other.
 | Install command  | **MISSING** in RAG                                  | Implement minimal install (mcp.json + gitignore + rule) |
 | Extension model  | None in core                                        | Document "companion" relationship                       |
 
-## Recommended implementation order
+### Recommended implementation order
 
 - **Phase 1 (rule integration):** Create `vaultspec-rag.builtin.md`, seed
   it during RAG install, let core sync propagate it
@@ -204,7 +205,7 @@ workspace without one being subordinate to the other.
   list in core; clean up orphaned `VAULTSPEC_RAG_ROOT`
 - **Phase 4 (documentation):** Document companion model in both repos
 
-## Scope revision (2026-04-11)
+### Scope revision (2026-04-11)
 
 Review of upstream dependencies revealed that core#36 (pre-commit hook
 standardization) and core#43 (MCP server registry) are still open and
@@ -227,3 +228,7 @@ on core APIs that have not yet landed.
   and hook scaffolding land, so the install command can use official APIs
   rather than hand-rolling `.mcp.json` manipulation that will be
   immediately replaced
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

@@ -31,7 +31,8 @@ from .._store_writes import (
     run_store_operation_with_retry,
     store_volume_path,
 )
-from ..config import EnvVar, reset_config
+from ..config._settings import reset_config
+from ..config._types import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -339,7 +340,7 @@ class TestStoreCallSitesRouteThroughTheRetry:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        from ..store import VaultStore
+        from ..store_runtime import VaultStore
 
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))

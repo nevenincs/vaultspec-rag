@@ -3,22 +3,37 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-08-qdrant-hybrid-search-patterns-research]]'
   - '[[2026-03-07-libdoc-verification-research]]'
 ---
-
 # `gpu-rag-stack` adr: `Payload indexes are no-ops in local mode; add for forward compatibility` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 Qdrant supports payload indexes for efficient filtering on fields like
 `path`, `language`, `function_name`. Our codebase uses `QdrantClient(path=...)`
 (local mode). The question is whether to call `create_payload_index()` when
 it has no effect in local mode.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Call `create_payload_index()` unconditionally at collection setup time, even
 though it is a no-op in local mode.

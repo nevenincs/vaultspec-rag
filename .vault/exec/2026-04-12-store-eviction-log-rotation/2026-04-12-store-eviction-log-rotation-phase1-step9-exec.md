@@ -3,25 +3,25 @@ tags:
   - '#exec'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
 ---
 
-# store-eviction-log-rotation phase-1 step-9
+## Description
 
-## goal
+### Goal
 
 Wire `install_daemon_log_rotation` into `mcp_server.main()` in the
 HTTP-mode branch, between `configure_logging()` and
 `uvicorn.run(...)` per ADR D1 "Install ordering (CRITICAL)".
 
-## files touched
+### Files touched
 
 - `src/vaultspec_rag/mcp_server.py`
 
-## what was done
+### What was done
 
 - Added `_resolve_log_path()` helper that mirrors `cli._log_file()`
   resolution (status_dir/log_file) so the daemon writes to the same
@@ -35,21 +35,25 @@ HTTP-mode branch, between `configure_logging()` and
   one-shot CLI tooling, not daemon use). Explanatory comment
   cites ADR D1 by name.
 
-## deviations
+## Outcome
 
-None. No unit tests added by design — coverage for this wiring
-is the step-10 integration tests, per ADR D1 and the project's
-no-mocks mandate.
-
-## test results
+### Test results
 
 - `ruff check` + `ty check src/vaultspec_rag` clean.
 - No new unit tests; integration coverage lands in step 10.
 
-## commit hash
+### Commit hash
 
 `a805afc feat(mcp): install rotating log handler in daemon main`
 
-## time spent
+## Notes
+
+### Deviations
+
+None. No unit tests added by design â€” coverage for this wiring
+is the step-10 integration tests, per ADR D1 and the project's
+no-mocks mandate.
+
+### Time spent
 
 ~10 minutes.

@@ -1,20 +1,20 @@
 ---
 tags: ['#exec', '#cli-service-operability-hardening']
 date: '2026-06-11'
-modified: '2026-06-30'
-step_id: 'W00.S01'
+modified: '2026-07-27'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
 ---
-
 # `cli-service-operability-hardening` W00.S01 - baseline research and ADR setup
 
-## Step
+## Description
+
+### Step
 
 Established the implementation basis for the hardening epic.
 
-## Evidence
+### Evidence
 
 - Refreshed the vault index through `vaultspec-rag index --type vault --port 8766 --json`.
 - Used `vaultspec-rag search` for ADR and implementation discovery.

@@ -3,19 +3,18 @@ tags:
   - '#exec'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S14'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---
-
 # Author the indexing and retrieval architecture guide
 
-## Scope
+## Description
+
+### Scope
 
 - `docs/indexing.md` (new file)
-
-## Description
 
 Created `docs/indexing.md` — a grounded, operator-facing guide to the
 indexing and retrieval architecture. Every technical claim was verified against
@@ -32,7 +31,7 @@ the live source before writing.
   OOM halve-and-retry on both dense and sparse paths.
 - `src/vaultspec_rag/search/_searcher.py` — CrossEncoder `BAAI/bge-reranker-v2-m3`,
   `activation_fn=Sigmoid()`, lazy load + shared instance, candidate fetch
-  `max(top_k × 4, 20)`, `reranker_batch_size` default 32 with OOM halve-retry;
+  `max(top_k Ã— 4, 20)`, `reranker_batch_size` default 32 with OOM halve-retry;
   graph-TTL cache (double-checked locking, lock `_graph_lock`).
 - `src/vaultspec_rag/store.py` — `TABLE_NAME = "vault_docs"`,
   `CODE_TABLE_NAME = "codebase_docs"`, cosine distance 1 024-d dense +
@@ -83,3 +82,7 @@ the live source before writing.
 `mdformat docs/indexing.md` ran with exit 0 and no output — file is
 mdformat-clean. All model IDs, dimensions, defaults, and constants verified
 against the live code.
+
+## Notes
+
+Evidence gap: the original record contains no Notes section with authored incident, deferred-work, or follow-up evidence.

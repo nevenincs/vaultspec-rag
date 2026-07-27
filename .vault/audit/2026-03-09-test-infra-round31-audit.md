@@ -3,10 +3,15 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Round 31: Test Infrastructure & Integration Gap Analysis (2026-03-09)
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date:** 2026-03-09
 **Auditor:** codebase-auditor
@@ -14,7 +19,7 @@ modified: '2026-07-25'
 
 ______________________________________________________________________
 
-## Part A: Test Fixture Correctness Audit
+### Part A: Test Fixture Correctness Audit
 
 ### 1. Session-scoped EmbeddingModel ✅
 
@@ -130,7 +135,7 @@ gpu_fast_corpus_stems = frozenset([
 
 ______________________________________________________________________
 
-## Part B: Integration Test Gap Analysis
+### Part B: Integration Test Gap Analysis
 
 ### Test Coverage Summary
 
@@ -220,7 +225,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Part C: Compliance Spot-Check
+### Part C: Compliance Spot-Check
 
 ### Banned Patterns Search
 
@@ -242,7 +247,7 @@ grep -r "import unittest|from unittest|MagicMock|@patch|monkeypatch|assert True|
 
 ______________________________________________________________________
 
-## Part D: Additional Findings
+### Part D: Additional Findings
 
 ### Recommendation 1: full_index(clean=True) Integration Test
 
@@ -333,7 +338,7 @@ def test_graph_cache_invalidated_after_reindex(rag_components):
 
 ______________________________________________________________________
 
-## Summary
+### Summary
 
 **Overall Status:** ✅ PASS — Test infrastructure is well-designed with proper isolation.
 
@@ -359,7 +364,17 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Recommendations for Future Work
+### Next Round
+
+Round 32 should focus on:
+
+- Live R29-C1 (drop→search race condition) integration test
+- Live R29-H1 (graph cache invalidation after reindex) integration test
+- Complete MCP integration testing (fallback paths + re-ranking)
+
+## Recommendations
+
+### Recommendations for Future Work
 
 1. **Add integration test for `full_index(clean=True)` path** — tests drop→recreate→search race
 1. **Add integration test for engine cache isolation** — verify different roots get different engines
@@ -367,11 +382,3 @@ ______________________________________________________________________
 1. **Benchmark fixtures: accept embedding_model parameter** — save 900MB VRAM if benchmarks expand
 
 ______________________________________________________________________
-
-## Next Round
-
-Round 32 should focus on:
-
-- Live R29-C1 (drop→search race condition) integration test
-- Live R29-H1 (graph cache invalidation after reindex) integration test
-- Complete MCP integration testing (fallback paths + re-ranking)

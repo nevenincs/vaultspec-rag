@@ -11,7 +11,7 @@ supersedes:
   - '2026-06-05-cli-mcp-decoupling-adr'
   - '2026-06-07-mcp-server-deconflation-adr'
   - '2026-06-10-install-mcp-dependency-fix-adr'
-modified: '2026-06-30'
+modified: '2026-07-27'
 ---
 
 # `mcp-service-client` adr: `MCP backend reframed as a thin service client` | (**status:** `accepted`)
@@ -173,3 +173,7 @@ delivered.
   **Rule:** CLI and MCP must consume one shared service-client surface; neither may carry
   bespoke business logic or a duplicate wire client — all behavior lives in the backend
   libraries.
+## Considered options
+
+- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Not selected:** approaches that conflict with those recorded constraints.

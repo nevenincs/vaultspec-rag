@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#operator-feedback-hardening'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-07-24-operator-feedback-hardening-P01-S01]]'
   - '[[2026-07-24-operator-feedback-hardening-P01-S02]]'
@@ -19,6 +19,7 @@ related:
   - '[[2026-07-24-operator-feedback-hardening-adr]]'
   - '[[2026-07-24-operator-feedback-hardening-audit]]'
   - '[[2026-07-24-operator-feedback-hardening-plan]]'
+  - '[[2026-07-27-operator-feedback-hardening-grounding-research]]'
 ---
 
 # `operator-feedback-hardening` feature index
@@ -51,3 +52,7 @@ Auto-generated index of all documents tagged with `#operator-feedback-hardening`
 ### plan
 
 - `2026-07-24-operator-feedback-hardening-plan` - `operator-feedback-hardening` plan
+
+### research
+
+- `2026-07-27-operator-feedback-hardening-grounding-research` - `operator-feedback-hardening` research: `Grounding`

@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#serviceclient-admin-errors'
 date: '2026-06-24'
-modified: '2026-06-30'
+modified: '2026-07-27'
 tier: L1
 related:
   - '[[2026-06-24-serviceclient-admin-errors-adr]]'
@@ -31,6 +31,8 @@ no-mock regression test - grounded in the ADR and its research. This is the plan
 artifact only; no code is written here, and the ADR awaits user sign-off before execution.
 
 ## Steps
+
+Retained-plan evidence: the detailed phase, wave, or step sections in this document are the step inventory; this canonical section preserves that inventory without duplicating it.
 
 ## Parallelization
 

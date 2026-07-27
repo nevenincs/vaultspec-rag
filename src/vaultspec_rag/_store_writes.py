@@ -174,7 +174,7 @@ def run_store_operation_with_retry[T](
             run many operations back to back under one lock supply this so a
             stalled backend cannot extend the hold proportionally.
     """
-    from .config import get_config
+    from .config._settings import get_config
 
     cfg = get_config()
     attempts = cfg.store_write_retry_attempts
@@ -490,7 +490,7 @@ def store_volume_path(root: pathlib.Path) -> pathlib.Path:
     store is what lets an admission preflight name the right volume before
     any mutable resource exists.
     """
-    from .config import get_config
+    from .config._settings import get_config
 
     cfg = get_config()
     if cfg.effective_server_mode():
@@ -506,7 +506,7 @@ def workspace_volume_path(root: pathlib.Path) -> pathlib.Path:
     vectors, so this target's requirement is the small shared write floor,
     never the store's profile-scoped headroom.
     """
-    from .config import get_config
+    from .config._settings import get_config
 
     return pathlib.Path(root) / get_config().data_dir
 
@@ -515,7 +515,7 @@ def _is_remote_store() -> bool:
     """Whether an operator pointed the store at a Qdrant this host cannot see."""
     from urllib.parse import urlsplit
 
-    from .config import get_config
+    from .config._settings import get_config
 
     url = str(get_config().qdrant_url or "")
     if not url:

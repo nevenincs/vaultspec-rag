@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-discovery-schema'
-date: '2026-07-25'
-modified: '2026-07-25'
+date: '2026-07-27'
+modified: '2026-07-27'
 related:
   - '[[2026-06-24-service-discovery-schema-P01-S01]]'
   - '[[2026-06-24-service-discovery-schema-P01-S02]]'

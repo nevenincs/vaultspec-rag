@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#index-throughput'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-27'
 step_id: 'S01'
 related:
   - "[[2026-07-24-index-throughput-plan]]"
@@ -22,4 +22,7 @@ Implemented the machine-wide encode-job admission gate in the managed dispatch l
 
 ## Outcome
 
+Evidence gap: `2026-07-24-index-throughput-plan` marks `P01.S01` closed, while this record's retained body and complete git log --follow history do not state an implementation result. No outcome beyond that source-attributed plan state is asserted.
+
 ## Notes
+Template evidence: intro_commit=d81c21c6f44aed3da9929714232da41e21367d60; template_commit=d81c21c6f44aed3da9929714232da41e21367d60:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

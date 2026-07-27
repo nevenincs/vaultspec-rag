@@ -223,7 +223,7 @@ class TestProjectRootWireContract:
         the adapter resolves and serializes that root; the explicit call can
         return the other content only if it takes precedence over the env var.
         """
-        from ..config import EnvVar
+        from ..config._types import EnvVar
         from ..mcp._tools import get_code_file
         from ._cli_helpers import _running_service_record
 

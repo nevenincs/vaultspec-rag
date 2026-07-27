@@ -3,12 +3,13 @@ tags:
   - '#adr'
   - '#pool-orphan-guard'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - "[[2026-06-02-index-perf-hardening-adr]]"
   - "[[2026-06-02-rag-index-performance-adr]]"
   - "[[2026-07-23-service-orphan-reaping-adr]]"
   - '[[2026-07-25-pool-orphan-guard-reference]]'
+  - '[[2026-07-27-pool-orphan-guard-grounding-research]]'
 ---
 
 # `pool-orphan-guard` adr: `spawn pool workers watch the parent sentinel and exit when it fires` | (**status:** `accepted`)

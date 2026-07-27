@@ -5,7 +5,7 @@ status file (atomic write + tolerant read), the rotating log file, and
 the Windows-only lifecycle shutdown mirror line.
 
 The read-only discovery surface (``_status_dir``, ``_status_file``,
-``_read_service_status``, ``_default_service_port``) was factored into the
+``read_service_status``, ``_default_service_port``) was factored into the
 import-light ``vaultspec_rag.serviceclient`` package so the CLI and the MCP
 share one client. Those names are re-exported here unchanged so the CLI's
 existing imports keep working; the status *writer* helpers below stay owned
@@ -23,9 +23,9 @@ from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_VERSION,
     _discovery_timestamp,
     _merge_service_status,
-    _read_service_status,
     _status_dir,
     _status_file,
+    read_service_status,
 )
 from ._core import logger
 
@@ -58,7 +58,7 @@ def _log_file() -> Path:
     Returns:
         Path to ``{status_dir}/{log_file}``.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     cfg = get_config()
     return _status_dir() / cfg.log_file
@@ -142,7 +142,7 @@ def _update_service_token(token: str) -> None:
     if not sf.exists():
         logger.debug("_update_service_token: service.json absent, skipping")
         return
-    current = _read_service_status()
+    current = read_service_status()
     if current is not None and current.get("service_token") == token:
         # Already current: skip the write so an unchanged token never churns
         # the file's mtime, which discovery consumers read as recency.

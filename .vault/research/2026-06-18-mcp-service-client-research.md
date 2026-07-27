@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#mcp-service-client'
 date: '2026-06-18'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-07-mcp-server-deconflation-adr]]"
   - "[[2026-06-05-cli-mcp-decoupling-adr]]"
@@ -265,3 +265,6 @@ Sources: MCP spec Transports (modelcontextprotocol.io/specification/2025-11-25),
 Code MCP docs (code.claude.com/docs/en/mcp), Cursor MCP docs (cursor.com/docs/mcp), Codex
 MCP docs (developers.openai.com/codex/mcp), VS Code MCP docs
 (code.visualstudio.com/docs/agent-customization/mcp-servers).
+## Sources
+- Evidence cited inline: `src/vaultspec_rag/mcp/`, `src/vaultspec_rag/mcp/_mcp.py`.
+- Related record identifiers: `2026-06-07-mcp-server-deconflation-adr`, `2026-06-05-cli-mcp-decoupling-adr`, `2026-06-13-server-first-default-adr`.

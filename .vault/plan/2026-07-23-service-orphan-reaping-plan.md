@@ -3,14 +3,31 @@ tags:
   - '#plan'
   - '#service-orphan-reaping'
 date: '2026-07-23'
-modified: '2026-07-25'
+modified: '2026-07-27'
 tier: L2
 related:
   - '[[2026-07-23-service-orphan-reaping-adr]]'
   - '[[2026-07-23-service-orphan-reaping-research]]'
 ---
-
 # `service-orphan-reaping` plan
+
+## Description
+
+Fixes the orphaned-daemon bug where a resident daemon that loses the
+machine-singleton race lingers alive and stays invisible to `server stop`, so
+repeated starts accumulate orphans and the operator cannot recover the machine.
+Executes `2026-07-23-service-orphan-reaping-adr`, grounded in
+`2026-07-23-service-orphan-reaping-research`, and extends the machine-singleton
+reap of `2026-06-24-service-hardware-singleton-adr` (which reaps dead Qdrant
+orphans and the lock holder, not live idle server daemons). P01 confirms the
+launcher-daemon pair's origin so the reap predicate is trusted. P02 is part one
+of the decision - guaranteed daemon self-exit on a failed claim or port bind,
+which stops accumulation at the source. P03 is part two - a bounded, opt-in
+signature reap that clears the backlog while provably never touching the real
+singleton or an isolated-config instance. P04 verifies both against the
+service-lifecycle and broker structured-stop regression suites and runs review.
+
+## Steps
 
 ### Phase `P01` - confirm the launcher-daemon pair origin
 
@@ -42,24 +59,6 @@ Prove self-exit and reap against regression and the broker structured-stop contr
 
 - [x] `P04.S10` - Reconcile the reap envelope with the broker and control-plane structured-stop regression suite; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 - [x] `P04.S11` - Run the code review and the full gate suite for the changed lifecycle and stop surface; `.vault/audit/service-orphan-reaping`.
-
-## Description
-
-Fixes the orphaned-daemon bug where a resident daemon that loses the
-machine-singleton race lingers alive and stays invisible to `server stop`, so
-repeated starts accumulate orphans and the operator cannot recover the machine.
-Executes `2026-07-23-service-orphan-reaping-adr`, grounded in
-`2026-07-23-service-orphan-reaping-research`, and extends the machine-singleton
-reap of `2026-06-24-service-hardware-singleton-adr` (which reaps dead Qdrant
-orphans and the lock holder, not live idle server daemons). P01 confirms the
-launcher-daemon pair's origin so the reap predicate is trusted. P02 is part one
-of the decision - guaranteed daemon self-exit on a failed claim or port bind,
-which stops accumulation at the source. P03 is part two - a bounded, opt-in
-signature reap that clears the backlog while provably never touching the real
-singleton or an isolated-config instance. P04 verifies both against the
-service-lifecycle and broker structured-stop regression suites and runs review.
-
-## Steps
 
 ## Parallelization
 

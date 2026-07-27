@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#index-drift-hardening'
 date: '2026-07-13'
-modified: '2026-07-14'
+modified: '2026-07-27'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-06-02-watcher-targeted-reindex-adr]]'
@@ -258,3 +258,7 @@ Adopt both halves as one feature:
    back-compat aliases above.
 1. Targeted watcher fixes the epoch cannot provide: re-resolve `preprocess_config` on
    a `.vaultragpreprocess.toml` change; add `.md` to the watcher code-extension set.
+
+## Sources
+
+Evidence gap: the retained document body has no separately labelled Sources section.

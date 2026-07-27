@@ -19,7 +19,7 @@ import pytest
 
 from .. import store_schema
 from .._store_models import root_collection_prefix
-from ..config import get_config, reset_config
+from ..config._settings import get_config, reset_config
 from ..indexer._code_meta import (
     CODE_EMBED_SCHEMA,
     CONTENT_EPOCH_KEY,

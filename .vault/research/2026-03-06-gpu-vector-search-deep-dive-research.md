@@ -3,10 +3,13 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # GPU Vector Search Deep Dive
+
+## Findings
+
+### Retained preamble
 
 Date: 2026-03-06
 Context7: NOT AVAILABLE. All data from WebSearch + WebFetch + official docs.
@@ -24,7 +27,7 @@ Sources:
 
 ______________________________________________________________________
 
-## Primary Question: Are we leaving performance on the table?
+### Primary Question: Are we leaving performance on the table?
 
 **Short answer: No.** For our use case (local Obsidian vault, ~10K-100K documents), GPU-accelerated vector search provides negligible benefit. The bottleneck is embedding inference (GPU), not vector search (CPU). Qdrant local mode with CPU HNSW search is already sub-millisecond at this scale.
 
@@ -32,7 +35,7 @@ GPU vector search becomes relevant at 10M+ vectors. GPU reranking is the one are
 
 ______________________________________________________________________
 
-## 1. Qdrant GPU Support (v1.13+)
+### 1. Qdrant GPU Support (v1.13+)
 
 ### What's GPU-Accelerated
 
@@ -98,7 +101,7 @@ docker run --rm --device /dev/kfd --device /dev/dri \
 
 ______________________________________________________________________
 
-## 2. FAISS-GPU with cuVS (CAGRA)
+### 2. FAISS-GPU with cuVS (CAGRA)
 
 ### Performance Benchmarks (H100 GPU vs Xeon Platinum CPU)
 
@@ -136,7 +139,7 @@ FAISS-GPU is for billion-scale similarity search in research/production ML pipel
 
 ______________________________________________________________________
 
-## 3. Milvus with GPU Index
+### 3. Milvus with GPU Index
 
 ### GPU CAGRA Support
 
@@ -168,7 +171,7 @@ Milvus GPU is impressive for large-scale deployments but is **architecturally mi
 
 ______________________________________________________________________
 
-## 4. GPU Cross-Encoder Reranking
+### 4. GPU Cross-Encoder Reranking
 
 ### What It Does
 
@@ -216,7 +219,7 @@ Query -> [Dense + Sparse Encoding] -> [Qdrant RRF Fusion] -> top-20 -> [CrossEnc
 
 ______________________________________________________________________
 
-## 5. Summary: Are We Leaving Performance on the Table?
+### 5. Summary: Are We Leaving Performance on the Table?
 
 | Component                    | GPU Option                   | Benefit at Our Scale        | Recommendation               |
 | ---------------------------- | ---------------------------- | --------------------------- | ---------------------------- |
@@ -246,7 +249,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 6. Risks & Caveats
+### 6. Risks & Caveats
 
 | Item                                         | Detail                                                                |
 | -------------------------------------------- | --------------------------------------------------------------------- |
@@ -255,3 +258,7 @@ ______________________________________________________________________
 | CrossEncoder adds latency                    | ~5-10ms per query for 20 docs; acceptable but not free                |
 | SPLADE + dense + reranker = 3 models in VRAM | ~2.1 GB total in fp16; fits on any modern GPU                         |
 | Reranker model selection                     | MiniLM-L6-v2 is English-only; use BGE-reranker-v2-m3 for multilingual |
+
+## Sources
+
+No separate sources is recorded in the retained prior research body. Source: retained prior research body.

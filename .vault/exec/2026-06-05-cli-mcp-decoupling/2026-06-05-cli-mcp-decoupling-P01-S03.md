@@ -3,19 +3,17 @@ tags:
   - '#exec'
   - '#cli-mcp-decoupling'
 date: '2026-06-05'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S03'
 related:
   - "[[2026-06-05-cli-mcp-decoupling-plan]]"
 ---
 
-# Extract synthetic quality testing logic from CLI into new backend API function run_quality_probe
+## Description
 
-## Scope
+### Scope
 
 - `src/vaultspec_rag/api.py`
-
-## Description
 
 - Implement `run_quality_probe` in `src/vaultspec_rag/api.py` using a temporary directory slot.
 - Generate synthetic vault, index it, run needle-based precision probes, and calculate precision.
@@ -27,3 +25,5 @@ related:
 - Successfully extracted the quality probe logic into the unified backend API function in `src/vaultspec_rag/api.py`.
 
 ## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
-from ..config import EnvVar
+from ..config._types import EnvVar
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
     _get_admin_timeout,
@@ -280,7 +280,7 @@ class TestDegradedDiscoveryPropagation:
 
     @staticmethod
     def _isolate(tmp_path: Path) -> None:
-        from ..config import reset_config
+        from ..config._settings import reset_config
 
         os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
         os.environ[EnvVar.QDRANT_STORAGE_DIR.value] = str(
@@ -292,7 +292,7 @@ class TestDegradedDiscoveryPropagation:
     @staticmethod
     def _restore() -> None:
         from .._machine_lock import release_machine_lock
-        from ..config import reset_config
+        from ..config._settings import reset_config
 
         release_machine_lock()
         os.environ.pop(EnvVar.STATUS_DIR.value, None)

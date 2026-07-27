@@ -3,12 +3,13 @@ tags:
   - '#reference'
   - '#mcp-conformance'
 date: '2026-06-30'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - "[[2026-06-30-mcp-conformance-research]]"
 ---
-
 # `mcp-conformance` reference: `MCP specification baseline and conformant search surface`
+
+## Summary
 
 Grounding for the MCP conformance epic: the current Model Context Protocol
 specification (revision `2025-11-25`) and the Python SDK in use, mapped against the
@@ -17,7 +18,7 @@ spec-conformant tool surface under the decided narrow scope (MCP is code search,
 search, and index-refresh only; lifecycle and administration stay in the CLI). Source
 files are named in inline backticks; external spec URLs are listed under Sources.
 
-## MCP specification baseline
+### MCP specification baseline
 
 The current GA revision of the Model Context Protocol is `2025-11-25`, the stable spec
 published on MCP's one-year anniversary (it supersedes `2025-06-18`, which itself
@@ -75,7 +76,7 @@ Local HTTP servers MUST validate `Origin` (DNS-rebinding defense), SHOULD bind o
 agents connect to, Streamable HTTP is the recommended transport; stdio is
 one-subprocess-per-client and cannot multiplex.
 
-## Current vaultspec-rag MCP implementation
+### Current vaultspec-rag MCP implementation
 
 **SDK version.** `pyproject.toml` pins `mcp>=1.26.0` (the `[mcp]` extra is a deprecated
 no-op alias retained for install compatibility). MCP Python SDK `1.26.x` targets the
@@ -112,7 +113,7 @@ converts them into a tool result with `isError: true` carrying the message - whi
 spec-correct mechanism for a recoverable error, though it is incidental rather than
 deliberately modeled.
 
-## Divergences from spec and best practice
+### Divergences from spec and best practice
 
 - **No `outputSchema`/`structuredContent` on any tool.** The `2025-11-25` structured-output
   contract is unused, so clients get untyped JSON text and cannot validate results; the
@@ -136,7 +137,7 @@ deliberately modeled.
   `get_watcher_state`, `survey_storage`) - operability concerns the project's own
   `service-domain-owns-operability` direction and the new narrow scope place in the CLI.
 
-## Recommended conformant surface under the narrow scope
+### Recommended conformant surface under the narrow scope
 
 Decided scope: MCP = code search + vault/ADR search + index-refresh only; lifecycle and
 admin are CLI-only; one multi-tenant service; an absent service must fail fast with a
@@ -179,7 +180,7 @@ MCP specification also defines Streamable HTTP for multi-agent HTTP serving, whi
 project deliberately does not use; if a future need for HTTP-served MCP arises, that is the
 spec-correct transport to adopt.
 
-## Sources
+### Sources
 
 - MCP spec 2025-11-25, Tools: https://modelcontextprotocol.io/specification/2025-11-25/server/tools
 - MCP spec 2025-11-25, Transports: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports

@@ -3,12 +3,12 @@ tags:
   - '#adr'
   - '#qdrant-long-paths'
 date: '2026-07-14'
-modified: '2026-07-14'
+modified: '2026-07-27'
 related:
   - "[[2026-07-13-control-plane-affordances-audit]]"
   - "[[2026-07-13-storage-autoprune-safety-research]]"
+  - '[[2026-07-27-qdrant-long-paths-grounding-research]]'
 ---
-
 # `qdrant-long-paths` adr: `verbatim storage paths make Windows path length a non-issue` | (**status:** `accepted`)
 
 ## Problem Statement
@@ -23,6 +23,10 @@ grounding lives in the control-plane-affordances audit
 latest upstream release, so no pin bump exists, and the current mitigation is
 only a supervisor warning above 90 characters. The operator directed a local
 hardening instead of an upstream issue.
+
+## Considerations
+
+Evidence gap: the retained ADR body has no separately labelled Considerations section.
 
 ## Considered options
 
@@ -41,6 +45,10 @@ hardening instead of an upstream issue.
   the store from the configured path makes data appear lost when config and
   reality diverge.
 
+## Constraints
+
+Evidence gap: the retained ADR body has no separately labelled Constraints section.
+
 ## Implementation
 
 The supervisor's child-env builder converts the storage and snapshots paths
@@ -56,6 +64,10 @@ pytest tmp paths for isolated qdrant storage, which regression-exercises
 long paths on every integration run, and a dedicated regression test spawns
 a supervisor with a >140-character storage dir and creates a real
 collection.
+
+## Rationale
+
+Evidence gap: the retained ADR body has no separately labelled Rationale section.
 
 ## Consequences
 

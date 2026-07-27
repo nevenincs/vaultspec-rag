@@ -53,8 +53,8 @@ related:
 <!-- Succinct line-by-line list of steps executed. Use imperative language, mirroring git commit summary lines. -->
 
 - Stamp `completed_at` at snapshot-manifest publication with an aware UTC instant.
-- Assert the emitted stamp exists, is offset-aware, and falls inside the real write interval.
-- Mutation-prove the guard by renaming the output key; the focused assertion failed because `completed_at` was absent, then passed after restoration.
+- Assert the emitted stamp is UTC and falls inside the real write interval despite an adjacent copied metadata artifact carrying a 31-day-old mtime.
+- Mutation-prove the guard by renaming the output key and by backdating the written timestamp; each focused assertion failed for its intended reason, then passed after restoration.
 
 ## Outcome
 

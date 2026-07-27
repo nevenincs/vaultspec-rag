@@ -3,23 +3,24 @@ tags:
   - '#research'
   - '#project-hardening'
 date: '2026-05-03'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related: []
 ---
-
 # `project-hardening` research: `vaultspec-rag discoverability`
+
+## Findings
 
 This note captures the practical listing and announcement targets for
 `vaultspec-rag` after the 0.2.6 PyPI release and repository metadata pass.
 
-## Current state
+### Current state
 
 - Public PyPI install works: `uv run --isolated --no-project --with vaultspec-rag==0.2.6 python -c "import vaultspec_rag; print(vaultspec_rag.__version__)"` returned `0.2.6`.
 - GitHub topics are set to: `cuda`, `embeddings`, `gpu`, `mcp`, `qdrant`, `rag`, `semantic-search`, `sentence-transformers`, `vector-search`, `vaultspec`.
 - GitHub repository description is set to: `GPU-accelerated RAG search for vaultspec vaults and project codebases`.
 - README badges now cover Python, PyPI, alpha status, CI, MCP, uv, and MIT license.
 
-## Candidate listings
+### Candidate listings
 
 ### MCP directories
 
@@ -62,7 +63,7 @@ fit than a bare repository link.
 
 Reference: https://qdrant.tech/community/
 
-## Recommended sequence
+### Recommended sequence
 
 1. Make the repository public when the owner is ready. Most external directories
    require public source URLs.
@@ -72,3 +73,7 @@ Reference: https://qdrant.tech/community/
 1. Prepare a short Qdrant-oriented demo note showing local hybrid search over
    vault docs and source code.
 1. Only after public visibility and stable docs, submit to RAG/AI awesome lists.
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

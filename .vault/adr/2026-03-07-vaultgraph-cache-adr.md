@@ -3,22 +3,37 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - '[[2026-03-07-threading-lock-for-singleton-adr]]'
   - '[[2026-03-07-continuous-research]]'
 ---
-
 # `gpu-rag-stack` adr: `VaultGraph cache with threading.Lock and explicit invalidation` | (**status:** `accepted`)
 
-## Context
+## Problem Statement
+
+### Context
 
 `get_related()` in `api.py` builds a fresh `VaultGraph` on every call,
 re-reading graph data from disk each time. This is wasteful for repeated
 queries. A caching pattern is needed that avoids redundant I/O, invalidates
 after reindex, and is thread-safe for MCP worker threads.
 
-## Decision
+## Considerations
+
+No separate considerations is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Considered options
+
+No separate considered options is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Constraints
+
+No separate constraints is recorded in the retained prior ADR body. Source: retained prior ADR body.
+
+## Implementation
+
+### Decision
 
 Use a module-level singleton cache with `threading.Lock` for construction/
 invalidation, and explicit invalidation after reindex.

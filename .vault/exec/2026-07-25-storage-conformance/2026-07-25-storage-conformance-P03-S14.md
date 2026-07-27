@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 step_id: 'S14'
 related:
   - "[[2026-07-25-storage-conformance-plan]]"
@@ -16,6 +16,8 @@ related:
 - `src/vaultspec_rag/storage_survey.py`
 
 ## Description
+
+Plan evidence: `2026-07-25-storage-conformance-plan` marks `P03.S14` closed for Report the per-collection verdict and stamped identity in the storage survey payload.
 
 ## Outcome
 
@@ -33,3 +35,4 @@ able to say how much is stored; this is the first thing it can say about what
 made it.
 
 ## Notes
+Template evidence: intro_commit=2f3068c7d9236d0ef7c4a81177caabf640399f5b; template_commit=2f3068c7d9236d0ef7c4a81177caabf640399f5b:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

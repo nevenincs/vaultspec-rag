@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 step_id: 'S04'
 related:
   - "[[2026-07-25-storage-conformance-plan]]"
@@ -44,3 +44,4 @@ comparison would always hold. That removal is what made the first version of the
 S05 guard inert - see that Step's record.
 
 ## Notes
+Template evidence: intro_commit=bb97c918472220397b2f4b63f5dfbd0549b70a78; template_commit=bb97c918472220397b2f4b63f5dfbd0549b70a78:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

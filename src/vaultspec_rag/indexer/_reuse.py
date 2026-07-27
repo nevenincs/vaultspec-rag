@@ -270,7 +270,7 @@ def resolve_donor_reuse(
     Discovery and every eligibility gate fail closed: any error here
     degrades to "no donors" and can never fail the indexing job.
     """
-    from ..config import get_config
+    from ..config._settings import get_config
 
     if not bool(get_config().index_reuse_enabled):
         return None, None

@@ -3,25 +3,26 @@ tags:
   - '#research'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-06-30'
+modified: '2026-07-27'
 related:
   - '[[2026-04-12-index-progress-bars-reference]]'
   - '[[2026-04-12-index-progress-bars-adr]]'
 ---
-
 # index-progress-bars research
 
-## Scope
+## Findings
+
+### Scope
 
 Issue #62 asks for visible, granular progress feedback across the whole
 `vaultspec-rag index` pipeline. This note records the investigation that
 fed the ADR. Because the problem is concrete and localised to a small
 set of existing modules, a full open-ended research phase was unnecessary;
 the investigation took the form of a code reference audit
-(see `[[2026-04-12-index-progress-bars-reference]]`), supplemented by the
+(see `2026-04-12-index-progress-bars-reference`), supplemented by the
 targeted question list below.
 
-## Current State
+### Current State
 
 - `cli.py` is the only Rich-aware surface. It already imports `Console`,
   `Progress`, `SpinnerColumn`, `BarColumn`, and `TextColumn`, and drives a
@@ -41,7 +42,7 @@ targeted question list below.
 - The project forbids mocks, stubs, and skips in tests. Any progress hook
   must be exercisable against real corpora on the real GPU.
 
-## Gaps Identified
+### Gaps Identified
 
 - No signal at all during the long embed phase — users cannot tell a
   wedged process from one making progress.
@@ -53,7 +54,7 @@ targeted question list below.
 - Non-TTY runs (CI logs, piped output) currently emit the Rich live-frame
   regardless, which spams logs.
 
-## Options Considered for the Reporter Contract
+### Options Considered for the Reporter Contract
 
 - **Plain callable** `Callable[[str, int, int], None]`. Rejected: the CLI
   needs distinct signals for *total-known*, *advance*, *phase-start*, and
@@ -67,7 +68,7 @@ targeted question list below.
   `typing.Protocol`; the CLI supplies a `RichProgressReporter` adapter.
   A `NullProgressReporter` no-ops when no reporter is supplied.
 
-## Embed-Phase Granularity: Slice vs Callback
+### Embed-Phase Granularity: Slice vs Callback
 
 Two ways to surface per-document advance during embedding were weighed:
 
@@ -85,7 +86,7 @@ Slicing at the indexer layer was selected. It keeps `embeddings.py` a
 pure GPU-facing surface and localises the progress concern to the one
 module that also owns document discovery.
 
-## Multi-Corpus UX Decision
+### Multi-Corpus UX Decision
 
 `handle_index` runs vault and codebase sequentially. A single
 `rich.Progress` with two or three stacked task rows matches the existing
@@ -94,7 +95,7 @@ expanded into explicit `phase_start` calls around its real sub-steps;
 vault and codebase tasks become per-document/per-chunk bars with totals
 set once discovery completes.
 
-## Non-TTY Handling
+### Non-TTY Handling
 
 Rich's `Console` already auto-detects non-TTY stdout and honours
 `NO_COLOR`. The remaining gap is that a non-TTY run still emits the full
@@ -104,15 +105,19 @@ live-updating frame. The `RichProgressReporter` checks
 This is a pure adapter-level switch — no new dependencies, no new env
 vars beyond what Rich already reads.
 
-## Thread Safety
+### Thread Safety
 
 Rich's `Progress.update()` is documented as thread-safe, so the threaded
 parse phase can call `reporter.advance()` from worker threads without
 extra coordination. The line-based fallback guards its counter with a
 `threading.Lock`.
 
-## Outcome
+### Outcome
 
 The findings above informed the ADR's choice of a Protocol-based reporter
 with an indexer-side slicing strategy and a TTY-aware adapter. No further
 open questions blocked the ADR.
+
+## Sources
+
+Evidence gap: the retained research body has no separately labelled Sources section.

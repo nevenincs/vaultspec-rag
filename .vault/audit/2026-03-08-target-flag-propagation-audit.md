@@ -3,20 +3,25 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-25'
+modified: '2026-07-27'
 ---
-
 # Audit: --target Flag Propagation Through CLI Stack
+
+## Scope
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled scope section. This scope is limited to the retained audit content in Findings.
+
+## Findings
 
 **Date**: 2026-03-08
 **Auditor**: codebase-researcher
 **Scope**: CLI `--target` flag → workspace resolution → VaultStore → VaultIndexer → CodebaseIndexer → VaultSearcher → MCP server
 
-## Summary
+### Summary
 
 The `--target` flag propagation is **correct and consistent** across the entire stack. No bugs found. One minor observation about the MCP server path (documented below).
 
-## Propagation Chain
+### Propagation Chain
 
 ### 1. CLI Entry (`cli.py:90-138`)
 
@@ -116,7 +121,7 @@ All commands consistently extract `state.target` from `CLIState` and pass it to 
 
 **Verdict**: CORRECT (by design, not target-dependent).
 
-## Issues Found
+### Issues Found
 
 ### MEDIUM: --target silently ignored for `server mcp start`
 
@@ -132,6 +137,10 @@ The early return for `"server"` skips workspace resolution, so `--target` has no
 1. Remove `"server"` from the early-return list and let workspace resolution run for server commands.
 1. OR: Have the `mcp_start` command accept its own `--target` option.
 
-## Conclusion
+### Conclusion
 
 The propagation is correct for all non-server commands. The one bug is that `--target` is silently ignored when launching the MCP server via CLI.
+
+## Recommendations
+
+Provenance gap: the manifest locator for this record is `intro_commit=none; template_commit=none`, and its original body has no separately labelled recommendations section. Any recommendation context remains only in the retained findings.

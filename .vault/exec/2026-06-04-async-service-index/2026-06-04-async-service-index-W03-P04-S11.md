@@ -3,19 +3,17 @@ tags:
   - '#exec'
   - '#async-service-index'
 date: '2026-06-04'
-modified: '2026-06-30'
+modified: '2026-07-27'
 step_id: 'S11'
 related:
   - "[[2026-06-04-async-service-index-plan]]"
 ---
 
-# Move background task registry and asyncio create_task execution into a new backend module
+## Description
 
-## Scope
+### Scope
 
 - `src/vaultspec_rag/jobs.py`
-
-## Description
 
 - Move background reindexing task and jobs registry into `src/vaultspec_rag/jobs.py` to decouple task execution from the MCP transport layer.
 - Keep strong references to background asyncio Tasks inside a module-level set in `jobs.py`.
@@ -26,3 +24,5 @@ related:
 - Created the new backend module successfully.
 
 ## Notes
+
+No separate notes is recorded in the retained prior execution record. Source: retained prior execution record body.

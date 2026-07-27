@@ -3,7 +3,7 @@ tags:
   - '#exec'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 step_id: 'S12'
 related:
   - "[[2026-07-25-storage-conformance-plan]]"
@@ -16,6 +16,8 @@ related:
 - `src/vaultspec_rag/server/_lifespan.py`
 
 ## Description
+
+Plan evidence: `2026-07-25-storage-conformance-plan` marks `P03.S12` closed for Author the nonconforming verdict as a live-service degraded reason where degradation is already authored.
 
 ## Outcome
 
@@ -35,3 +37,4 @@ vectors (`assert 'ready' == 'degraded'`), and with the collection names dropped
 the naming assertion fails.
 
 ## Notes
+Template evidence: intro_commit=2f3068c7d9236d0ef7c4a81177caabf640399f5b; template_commit=2f3068c7d9236d0ef7c4a81177caabf640399f5b:.vaultspec/templates/exec-step.md requires Description, Outcome, and Notes. This repair preserves the retained record text and adds no new implementation claim.

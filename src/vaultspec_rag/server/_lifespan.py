@@ -43,7 +43,8 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.requests import Request
 
-    from ..job_manager import JobManager, JobShutdownResult
+    from ..job_manager.manager import JobManager
+    from ..job_manager.models import JobShutdownResult
     from ..qdrant_runtime._constants import QdrantRuntimeState
     from ..qdrant_runtime._supervise import QdrantSupervisor
     from ..service import ServiceHealth
@@ -92,7 +93,7 @@ def _stamp_qdrant_identity(
     """Authoritatively publish the ready child before model warming begins."""
     from pathlib import Path
 
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..qdrant_runtime._constants import QDRANT_SERVER_VERSION
     from ..qdrant_runtime._resolve import (
         probe_qdrant_endpoint,
@@ -131,7 +132,7 @@ def _stamp_qdrant_identity(
 
 def _stop_active_qdrant() -> bool:
     """Stop the process-owned supervisor and report confirmed convergence."""
-    from ..config import EnvVar
+    from ..config._types import EnvVar
     from ..qdrant_runtime import _supervise
 
     supervisor = _supervise.active_supervisor()
@@ -174,7 +175,7 @@ def _reconcile_storage_manifest(
     """
 
     from .._store_models import ROOT_COLLECTION_PREFIX_RE
-    from ..config import get_config
+    from ..config._settings import get_config
     from ..storage_manifest import reconcile_manifest
 
     try:
@@ -414,7 +415,8 @@ async def _start_components(
         await them.
     """
     # HF cache status
-    from ..config import EnvVar, get_config
+    from ..config._settings import get_config
+    from ..config._types import EnvVar
 
     hf_home = get_config().hf_cache_location
     logger.info("HF cache: %s", hf_home)
@@ -615,7 +617,7 @@ async def _drain_managed_work(
     watcher_stop_ok: bool,
 ) -> tuple[bool, bool, tuple[str, ...], str]:
     """Boundedly join watcher and manager ownership after intake stops."""
-    from ..config import get_config
+    from ..config._settings import get_config
 
     timeout = float(get_config().job_shutdown_timeout_seconds)
     watcher_result, raw_manager_result = await _await_shutdown_results(
@@ -1086,7 +1088,7 @@ def _job_source(record: dict[str, object]) -> object:
     """Return the content source a job record indexed, or ``None``."""
     spec = record.get("spec")
     if isinstance(spec, dict):
-        return spec.get("source")
+        return cast("dict[str, object]", spec).get("source")
     return record.get("source")
 
 

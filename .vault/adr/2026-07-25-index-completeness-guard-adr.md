@@ -3,12 +3,12 @@ tags:
   - '#adr'
   - '#index-completeness-guard'
 date: '2026-07-25'
-modified: '2026-07-25'
+modified: '2026-07-27'
 related:
   - "[[2026-07-25-index-completeness-guard-research]]"
   - "[[2026-07-25-index-resume-drift-race-adr]]"
+  - '[[2026-07-25-index-completeness-guard-audit]]'
 ---
-
 # `index-completeness-guard` adr: `reconcile published evidence against stored breadth and refuse silent partial answers` | (**status:** `accepted`)
 
 ## Problem Statement
