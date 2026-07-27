@@ -11,6 +11,7 @@ gone. ``cli.__init__`` registers the verb modules for their decorators.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import typer
@@ -52,12 +53,6 @@ def _print_lifecycle_next_actions(*commands: str) -> None:
 
 def _fail_lifecycle(
     json_mode: bool,
-    *,
-    command: str,
-    error: str,
-    message: str,
-    human_lines: tuple[str, ...],
-    next_actions: tuple[str, ...] = (),
     **data: object,
 ) -> typer.Exit:
     """Render a failed lifecycle outcome and RETURN the ``typer.Exit`` to raise.
@@ -74,6 +69,11 @@ def _fail_lifecycle(
     Returns the ``Exit`` rather than raising it so the call site keeps an
     explicit ``raise`` and its control flow stays legible.
     """
+    command = cast("str", data.pop("command"))
+    error = cast("str", data.pop("error"))
+    message = cast("str", data.pop("message"))
+    human_lines = cast("tuple[str, ...]", data.pop("human_lines"))
+    next_actions = cast("tuple[str, ...]", data.pop("next_actions", ()))
     if json_mode:
         _emit_json(
             False,
@@ -91,11 +91,6 @@ def _fail_lifecycle(
 
 def _lifecycle_success(
     json_mode: bool,
-    *,
-    command: str,
-    status: str,
-    human_title: str,
-    human_lines: tuple[str, ...] = (),
     **data: object,
 ) -> None:
     """Emit a successful lifecycle outcome. The caller returns after this.
@@ -110,6 +105,10 @@ def _lifecycle_success(
     already-done ``status``, so a supervising broker reads the idempotent case
     as satisfied rather than as a fault.
     """
+    command = cast("str", data.pop("command"))
+    status = cast("str", data.pop("status"))
+    human_title = cast("str", data.pop("human_title"))
+    human_lines = cast("tuple[str, ...]", data.pop("human_lines", ()))
     if json_mode:
         _emit_json(True, command, data={"status": status, **data})
     else:
@@ -153,15 +152,17 @@ def _warmup_failure_detail(repo_id: str, exc: Exception) -> str:
     return f"{repo_id} failed: {exc} (partial cache may remain in {cache})"
 
 
-def _warmup_fetch_model(
-    download: Callable[..., object],
-    progress: StartupStatusReporter,
-    *,
-    repo_id: str,
-    label: str,
-    position: int,
-    total: int,
-) -> str:
+@dataclass(frozen=True, slots=True)
+class _WarmupFetchRequest:
+    download: Callable[..., object]
+    progress: StartupStatusReporter
+    repo_id: str
+    label: str
+    position: int
+    total: int
+
+
+def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
     """Fetch one model repo with live progress; return its result line.
 
     The fetch is minutes long and its size is known to the hub, so the stage
@@ -171,6 +172,15 @@ def _warmup_fetch_model(
     operator re-running it to discover the next one.
     """
     from ._hf_progress import SnapshotProgress
+
+    download, progress, repo_id, label, position, total = (
+        request.download,
+        request.progress,
+        request.repo_id,
+        request.label,
+        request.position,
+        request.total,
+    )
 
     heading = f"Downloading {label} ({position}/{total})"
     progress.stage(f"{heading}...")
@@ -235,14 +245,16 @@ def service_warmup() -> None:
             _print_detail_line(
                 label,
                 _warmup_fetch_model(
-                    # The hub ships partial stubs, so the imported symbol is
-                    # only partially typed; naming the shape this call site
-                    # actually uses is what keeps the strict gate honest.
-                    cast("Callable[..., object]", snapshot_download),
-                    progress,
-                    repo_id=repo_id,
-                    label=label,
-                    position=position,
-                    total=len(models),
+                    _WarmupFetchRequest(
+                        # The hub ships partial stubs, so the imported symbol is
+                        # only partially typed; naming the shape this call site
+                        # actually uses is what keeps the strict gate honest.
+                        cast("Callable[..., object]", snapshot_download),
+                        progress,
+                        repo_id,
+                        label,
+                        position,
+                        len(models),
+                    )
                 ),
             )
