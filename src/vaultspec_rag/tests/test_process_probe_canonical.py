@@ -830,6 +830,72 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestNoOptionIsDeclaredTwice:
+    """No two commands declare the same flag for themselves.
+
+    A repeated ``Annotated[T, typer.Option(...)]`` repeats a contract: the flag
+    name, its type, and the sentence an operator reads in ``--help``. Twenty-
+    five duplicate declarations had accumulated, and one had already drifted -
+    ``--port`` was described two ways, sixteen verbs calling it "Service port
+    (defaults to running service)." and ``index``/``search`` calling it "Use
+    the service running on this port." for the identical flag and type.
+
+    Nothing fails when that happens. An operator comparing two ``--help``
+    screens simply reads a difference that is not there, and the next verb to
+    need the flag copies whichever neighbour it happened to look at.
+
+    The package already fixed this once for ``--json``, whose shared constant
+    records that thirty-three declarations had reached four wordings. This is
+    the same rule applied to the flags that were still spelled per verb.
+
+    Scoped to IDENTICAL declarations on purpose. A companion check asserting
+    that one flag name carries one description was written and deleted: it
+    fails on sixteen flags, and it is wrong to. ``--port`` names the Qdrant
+    HTTP port on one verb, the port ``server start`` binds on another, and the
+    port to stop a service by identity on a third; ``--dry-run`` and ``--yes``
+    each name what that specific verb previews or confirms. Same flag name,
+    genuinely different contracts. Only a repeated declaration - same name,
+    same type, same sentence - is evidence of a copy.
+    """
+
+    def test_no_annotated_option_declaration_repeats(self) -> None:
+        """Two commands wanting one flag share a declaration, or drift."""
+        declarations: dict[str, list[str]] = {}
+        cli_root = _PACKAGE_ROOT / "cli"
+        for path in sorted(cli_root.rglob("*.py")):
+            if path.name == "_app.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                arguments = [*node.args.args, *node.args.kwonlyargs]
+                for argument in arguments:
+                    if argument.annotation is None:
+                        continue
+                    rendered = ast.unparse(argument.annotation)
+                    if "typer.Option" not in rendered and (
+                        "typer.Argument" not in rendered
+                    ):
+                        continue
+                    key = " ".join(rendered.split())
+                    declarations.setdefault(key, []).append(
+                        f"{path.name}:{argument.lineno}"
+                    )
+        offenders = {
+            key: sites for key, sites in declarations.items() if len(sites) > 1
+        }
+        assert not offenders, (
+            f"these option declarations are written more than once: "
+            f"{ {k[:60]: v for k, v in offenders.items()} }; declare the "
+            "shared ones in _app and annotate with the alias, so one flag "
+            "cannot end up documented two ways"
+        )
+
+
 class TestRootPrefixFormatHasOneSpelling:
     """The root-prefix shape is written once, by the module that builds it.
 

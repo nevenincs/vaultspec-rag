@@ -16,7 +16,13 @@ from .._operator_commands import (
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import JsonMode, server_watcher_app
+from ._app import (
+    JsonMode,
+    PortOption,
+    RepeatUpdateDelayOption,
+    UpdateDelayOption,
+    server_watcher_app,
+)
 from ._cli_format import _counted_unit, _project_name
 from ._render import (
     _address_line,
@@ -217,10 +223,7 @@ _UPDATES_TIMING_COMMAND = "service.updates.timing"
 
 @server_watcher_app.command("status")
 def service_watcher_status(
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Show automatic index update settings and projects."""
@@ -261,10 +264,7 @@ def service_watcher_status(
 @server_watcher_app.command("start")
 def service_watcher_start(
     project: Annotated[str, typer.Argument(help="Project to keep indexed.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Start automatic index updates for a project."""
@@ -320,10 +320,7 @@ def service_watcher_stop(
         str,
         typer.Argument(help="Project to stop updating automatically."),
     ],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Stop automatic index updates for a project."""
@@ -369,27 +366,9 @@ def service_watcher_stop(
 @server_watcher_app.command("timing")
 def service_watcher_timing(
     project: Annotated[str, typer.Argument(help="Project to update timing for.")],
-    update_delay_ms: Annotated[
-        int | None,
-        typer.Option(
-            "--update-delay-ms",
-            help="Delay before indexing a burst of file changes, in milliseconds.",
-        ),
-    ] = None,
-    repeat_update_delay_s: Annotated[
-        float | None,
-        typer.Option(
-            "--repeat-update-delay-s",
-            help=(
-                "Minimum wait before automatically updating a project again, "
-                "in seconds."
-            ),
-        ),
-    ] = None,
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    update_delay_ms: UpdateDelayOption = None,
+    repeat_update_delay_s: RepeatUpdateDelayOption = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Change automatic index update timing."""

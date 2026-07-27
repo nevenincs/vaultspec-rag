@@ -8,14 +8,16 @@ computes the status vocabulary and this layer only renders it.
 
 from __future__ import annotations
 
-from typing import Annotated
-
 import typer
 
 from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import JsonMode, server_app
+from ._app import (
+    JsonMode,
+    PortOption,
+    server_app,
+)
 from ._render import (
     _address_line,
     _emit_json,
@@ -100,10 +102,7 @@ def _fail_unreachable(command: str, json_mode: bool, *, port: int | None) -> Non
 
 @server_app.command("pause", help="Hold the running service at safe checkpoints.")
 def service_pause(
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Pause the whole daemon; it stays alive and releases on ``server resume``."""
@@ -112,10 +111,7 @@ def service_pause(
 
 @server_app.command("resume", help="Release a paused service.")
 def service_resume(
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Release a paused daemon so held workers continue."""

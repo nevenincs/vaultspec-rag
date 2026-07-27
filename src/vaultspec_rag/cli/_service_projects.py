@@ -11,7 +11,11 @@ import vaultspec_rag.cli as _cli
 from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE, server_status_command
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import JsonMode, server_projects_app
+from ._app import (
+    JsonMode,
+    PortOption,
+    server_projects_app,
+)
 from ._cli_format import _counted_unit, _project_name
 from ._render import (
     _address_line,
@@ -139,10 +143,7 @@ def _print_projects_summary(
 
 @server_projects_app.command("list")
 def service_projects_list(
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """List projects currently loaded by the running search service."""
@@ -244,10 +245,7 @@ def _handle_evict_json(
 @server_projects_app.command("unload")
 def service_projects_unload(
     project: Annotated[str, typer.Argument(help="Project to unload.")],
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    port: PortOption = None,
     json_mode: JsonMode = False,
 ) -> None:
     """Unload a project from the running search service."""
