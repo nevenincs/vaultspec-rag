@@ -737,6 +737,23 @@ def evaluate_conformance(
             "identity could not be confirmed against it",
         )
 
+    geometry = _geometry_conformance(
+        stamped,
+        expected=expected,
+        live_dense_dim=live_dense_dim,
+    )
+    if geometry is not None:
+        return geometry
+    return _model_conformance(stamped, expected=expected)
+
+
+def _geometry_conformance(
+    stamped: CollectionIdentity,
+    *,
+    expected: CollectionIdentity,
+    live_dense_dim: int,
+) -> ConformanceVerdict | None:
+    """Return the first fatal vector-geometry disagreement, if any."""
     compatibility = assert_compatible(
         _identity_descriptor(stamped),
         known_version=expected.storage_schema_version,
@@ -761,6 +778,15 @@ def evaluate_conformance(
             f"{expected.distance} is configured",
             geometry_fatal=True,
         )
+    return None
+
+
+def _model_conformance(
+    stamped: CollectionIdentity,
+    *,
+    expected: CollectionIdentity,
+) -> ConformanceVerdict:
+    """Judge provenance after geometry has established readable vectors."""
     if stamped.dense_model != expected.dense_model:
         return ConformanceVerdict(
             NONCONFORMING,
