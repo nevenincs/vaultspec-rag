@@ -745,21 +745,23 @@ def _prepare_mcp_transition(
     return True, mode_flipped
 
 
-def _run_mode_migration(
-    report: InstallReport,
-    mode: InstallMode,
-    *,
-    mode_flipped: bool,
-    force: bool,
-    dry_run: bool,
-    skip: set[str],
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _ModeMigrationRequest:
+    report: InstallReport
+    mode: InstallMode
+    mode_flipped: bool
+    force: bool
+    dry_run: bool
+    skip: set[str]
+
+
+def _run_mode_migration(request: _ModeMigrationRequest) -> None:
     """Repair only RAG's managed native entry after a real mode flip."""
-    if not mode_flipped or force or dry_run or {"core", "mcp"} & skip:
+    if not request.mode_flipped or request.force or request.dry_run or {"core", "mcp"} & request.skip:
         return
-    migration = migrate_rag_mcp_entry(mode)
-    report.sync_results.append(migration)
-    report.mcp_sync_results.append(migration)
+    migration = migrate_rag_mcp_entry(request.mode)
+    request.report.sync_results.append(migration)
+    request.report.mcp_sync_results.append(migration)
 
 
 def install_run(
@@ -1080,12 +1082,9 @@ def _install_run_unchecked(
     # when the mode did not flip - the common case the native sync already
     # handled above.
     _run_mode_migration(
-        report,
-        resolved.mode,
-        mode_flipped=mcp_mode_flipped,
-        force=force,
-        dry_run=dry_run,
-        skip=skip,
+        _ModeMigrationRequest(
+            report, resolved.mode, mcp_mode_flipped, force, dry_run, skip
+        )
     )
 
     # A failed MCP transition must not continue into unrelated package or
