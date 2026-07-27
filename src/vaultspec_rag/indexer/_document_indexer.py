@@ -244,6 +244,32 @@ class _DocumentSliceWriteRequest:
     release_cache: bool = True
 
 
+@dataclass(frozen=True, slots=True)
+class _DocumentResultDetails:
+    """Measured output for one document indexing attempt."""
+
+    started: float
+    added: int
+    updated: int
+    removed: int
+    files: int
+    preprocess_ok: int
+    failures: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentMetadataReplacement:
+    """One in-memory document manifest replacement after slice publication."""
+
+    current: dict[str, DocumentFileMetadata]
+    rel: str
+    old: DocumentFileMetadata | None
+    metadata: DocumentFileMetadata
+    chunk_count: int
+    counts: _DocumentRunCounts
+    checkpoint: DocumentRunCheckpoint
+
+
 class DocumentIndexer:
     """Index only paths explicitly admitted to the document domain."""
 
@@ -753,37 +779,24 @@ class DocumentIndexer:
         finally:
             reporter.phase_end()
         return self._finish_result(
-            started=started,
-            added=0,
-            updated=0,
-            removed=0,
-            files=0,
-            preprocess_ok=0,
-            failures=[],
+            _DocumentResultDetails(started, 0, 0, 0, 0, 0, []),
         )
 
     def _finish_result(
         self,
-        *,
-        started: float,
-        added: int,
-        updated: int,
-        removed: int,
-        files: int,
-        preprocess_ok: int,
-        failures: list[str],
+        details: _DocumentResultDetails,
     ) -> IndexResult:
         return IndexResult(
             total=self.store.count_document(),
-            added=added,
-            updated=updated,
-            removed=removed,
-            duration_ms=int((time.monotonic() - started) * 1000),
+            added=details.added,
+            updated=details.updated,
+            removed=details.removed,
+            duration_ms=int((time.monotonic() - details.started) * 1000),
             device=str(getattr(self.model, "device", "unknown")),
-            files=files,
-            preprocess_ok=preprocess_ok,
-            preprocess_skipped=len(failures),
-            preprocess_failures=failures,
+            files=details.files,
+            preprocess_ok=details.preprocess_ok,
+            preprocess_skipped=len(details.failures),
+            preprocess_failures=details.failures,
             reuse=self._reuse_snapshot(),
         )
 
@@ -918,13 +931,15 @@ class DocumentIndexer:
             assert metadata is not None
             current[rel] = metadata
             self._replace_incremental_metadata(
-                current,
-                rel=rel,
-                old=old,
-                metadata=metadata,
-                chunk_count=chunk_count,
-                counts=counts,
-                checkpoint=request.checkpoint,
+                _DocumentMetadataReplacement(
+                    current,
+                    rel,
+                    old,
+                    metadata,
+                    chunk_count,
+                    counts,
+                    request.checkpoint,
+                )
             )
             if request.policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
@@ -932,27 +947,24 @@ class DocumentIndexer:
 
     def _replace_incremental_metadata(
         self,
-        current: dict[str, DocumentFileMetadata],
-        *,
-        rel: str,
-        old: DocumentFileMetadata | None,
-        metadata: DocumentFileMetadata,
-        chunk_count: int,
-        counts: _DocumentRunCounts,
-        checkpoint: DocumentRunCheckpoint,
+        replacement: _DocumentMetadataReplacement,
     ) -> None:
         """Replace one file generation and account for obsolete points."""
-        current[rel] = metadata
-        obsolete = set(old.point_ids if old else ()) - set(metadata.point_ids)
+        replacement.current[replacement.rel] = replacement.metadata
+        obsolete = set(
+            replacement.old.point_ids if replacement.old else ()
+        ) - set(replacement.metadata.point_ids)
         if obsolete:
             obsolete_ids = tuple(sorted(obsolete))
             self.store.delete_document_content_chunks(list(obsolete_ids))
-            checkpoint.record_confirmed_stale_deletion(rel, obsolete_ids)
-            counts.removed += len(obsolete)
-        if old is None:
-            counts.added += chunk_count
+            replacement.checkpoint.record_confirmed_stale_deletion(
+                replacement.rel, obsolete_ids
+            )
+            replacement.counts.removed += len(obsolete)
+        if replacement.old is None:
+            replacement.counts.added += replacement.chunk_count
         else:
-            counts.updated += chunk_count
+            replacement.counts.updated += replacement.chunk_count
 
     def full_index(
         self,
@@ -1074,13 +1086,15 @@ class DocumentIndexer:
                 checkpoint.publish_metadata(self._meta_path)
                 checkpoint.publish_generation()
         return self._finish_result(
-            started=started,
-            added=counts.added,
-            updated=counts.updated,
-            removed=removed,
-            files=len(paths),
-            preprocess_ok=counts.preprocess_ok,
-            failures=failures,
+            _DocumentResultDetails(
+                started,
+                counts.added,
+                counts.updated,
+                removed,
+                len(paths),
+                counts.preprocess_ok,
+                failures,
+            ),
         )
 
     def incremental_index(
@@ -1210,11 +1224,13 @@ class DocumentIndexer:
                 checkpoint.publish_metadata(self._meta_path)
                 checkpoint.publish_generation()
             return self._finish_result(
-                started=started,
-                added=counts.added,
-                updated=counts.updated,
-                removed=counts.removed,
-                files=len(selected),
-                preprocess_ok=counts.preprocess_ok,
-                failures=failures,
+                _DocumentResultDetails(
+                    started,
+                    counts.added,
+                    counts.updated,
+                    counts.removed,
+                    len(selected),
+                    counts.preprocess_ok,
+                    failures,
+                ),
             )
