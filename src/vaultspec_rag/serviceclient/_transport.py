@@ -39,7 +39,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict, Unpack, cast
 
 from .._loopback_http import (
     FAST_CONNECT_TIMEOUT_SECONDS,
@@ -107,6 +108,148 @@ type ReindexInitiator = Literal["cli", "mcp"]
 type DocumentSearchFilters = dict[str, str | None]
 type HTTPMethod = Literal["GET", "POST", "PUT", "DELETE"]
 type JobControlMode = Literal["graceful", "force"]
+
+
+class HTTPCallOptions(TypedDict, total=False):
+    """Optional wire controls retained by the general HTTP-call surface."""
+
+    method: HTTPMethod | None
+    headers: dict[str, str] | None
+
+
+@dataclass(frozen=True)
+class _HTTPCallRequest:
+    """One fully resolved authenticated service request."""
+
+    port: int
+    path: str
+    payload: dict[str, object] | None
+    token: str
+    method: HTTPMethod | None = None
+    headers: dict[str, str] | None = None
+
+
+class JobCallOptions(TypedDict, total=False):
+    """Optional controls for an already-routed jobs request."""
+
+    payload: dict[str, object] | None
+    headers: dict[str, str] | None
+    timeout: float | None
+
+
+@dataclass(frozen=True)
+class _JobCallRequest:
+    """One jobs endpoint call after its route and method are fixed."""
+
+    port: int | None
+    path: str
+    method: HTTPMethod
+    payload: dict[str, object] | None = None
+    headers: dict[str, str] | None = None
+    timeout: float | None = None
+
+
+class CreateJobOptions(TypedDict, total=False):
+    """Optional fields for a create-job request."""
+
+    mode: JobMode | None
+    start_paused: bool
+    initiator_kind: str
+    command: str
+    idempotency_key: str | None
+    timeout: float | None
+
+
+@dataclass(frozen=True)
+class _CreateJobRequest:
+    """A create-job request before it is serialized to the jobs endpoint."""
+
+    source: JobSource
+    project_root: str
+    port: int | None
+    mode: JobMode | None = None
+    start_paused: bool = False
+    initiator_kind: str = "cli"
+    command: str = "server_job_create"
+    idempotency_key: str | None = None
+    timeout: float | None = None
+
+
+class DesiredStateOptions(TypedDict, total=False):
+    """Optional concurrency and termination controls for a job transition."""
+
+    expected_revision: int | None
+    mode: JobControlMode
+    timeout: float | None
+
+
+@dataclass(frozen=True)
+class _DesiredStateRequest:
+    """One desired-state transition before it is serialized."""
+
+    job_id: str
+    state: DesiredJobState
+    port: int | None
+    expected_revision: int | None = None
+    mode: JobControlMode = "graceful"
+    timeout: float | None = None
+
+
+class SearchCallArguments(TypedDict, total=False):
+    """Stable positional-or-named transport search arguments."""
+
+    query: str
+    search_type: str
+    top_k: int
+    port: int
+    project_root: str
+    timeout: float | None
+    language: str | None
+    path: str | None
+    node_type: str | None
+    function_name: str | None
+    class_name: str | None
+    doc_type: str | None
+    feature: str | None
+    date: str | None
+    tag: str | None
+    intent: str | None
+    include_paths: list[str] | None
+    exclude_paths: list[str] | None
+    dedup_locales: bool | None
+    prefer: str | None
+    like_ids: list[str | int] | None
+    unlike_ids: list[str | int] | None
+    document_filters: DocumentSearchFilters | None
+
+
+@dataclass(frozen=True)
+class _SearchCallRequest:
+    """One validated client search request and its optional filters."""
+
+    query: str
+    search_type: str
+    top_k: int
+    port: int
+    project_root: str
+    timeout: float | None = None
+    language: str | None = None
+    path: str | None = None
+    node_type: str | None = None
+    function_name: str | None = None
+    class_name: str | None = None
+    doc_type: str | None = None
+    feature: str | None = None
+    date: str | None = None
+    tag: str | None = None
+    intent: str | None = None
+    include_paths: list[str] | None = None
+    exclude_paths: list[str] | None = None
+    dedup_locales: bool | None = None
+    prefer: str | None = None
+    like_ids: list[str | int] | None = None
+    unlike_ids: list[str | int] | None = None
+    document_filters: DocumentSearchFilters | None = None
 
 
 class ServiceUnavailableError(RuntimeError):
@@ -240,9 +383,9 @@ def _format_timeout_seconds(timeout: float) -> str:
 
 def _status_file_token() -> str:
     """Return the ``service_token`` recorded in the local status file, or ``""``."""
-    from ._discovery import _read_service_status
+    from ._discovery import read_service_status
 
-    status = _read_service_status()
+    status = read_service_status()
     if not status:
         return ""
     token = status.get("service_token", status.get("token", ""))
@@ -358,22 +501,18 @@ def _fetch_health_token(port: int, timeout: float | None = None) -> str:
 
 
 def _build_call_request(
-    port: int,
-    path: str,
-    payload: dict[str, object] | None,
-    token: str,
-    *,
-    method: HTTPMethod | None = None,
-    extra_headers: dict[str, str] | None = None,
+    request: _HTTPCallRequest,
 ) -> urllib.request.Request:
-    url = f"http://127.0.0.1:{port}{path}"
-    headers = dict(extra_headers or {})
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    resolved_method: HTTPMethod = method or ("POST" if payload is not None else "GET")
-    if payload is not None:
+    url = f"http://127.0.0.1:{request.port}{request.path}"
+    headers = dict(request.headers or {})
+    if request.token:
+        headers["Authorization"] = f"Bearer {request.token}"
+    resolved_method: HTTPMethod = request.method or (
+        "POST" if request.payload is not None else "GET"
+    )
+    if request.payload is not None:
         headers["Content-Type"] = "application/json"
-        data = json.dumps(payload).encode("utf-8")
+        data = json.dumps(request.payload).encode("utf-8")
         return urllib.request.Request(
             url,
             data=data,
@@ -449,9 +588,7 @@ def _do_http_call(
     path: str,
     payload: dict[str, object] | None,
     timeout: float | None = None,
-    *,
-    method: HTTPMethod | None = None,
-    headers: dict[str, str] | None = None,
+    **options: Unpack[HTTPCallOptions],
 ) -> dict[str, object] | None:
     """Call a service route, recovering the auth token on a 401.
 
@@ -481,6 +618,7 @@ def _do_http_call(
     is tolerable. Only the connect is bounded this tightly; a live service
     keeps the whole resolved timeout to answer.
     """
+    request_options = _HTTPCallRequest(port, path, payload, token="", **options)
     resolved_timeout = _get_admin_timeout(timeout)
     connect_bound = min(FAST_CONNECT_TIMEOUT_SECONDS, resolved_timeout)
     if probe_loopback_connect(port, timeout=connect_bound) == "refused":
@@ -505,12 +643,14 @@ def _do_http_call(
         try:
             return _send_call(
                 _build_call_request(
-                    port,
-                    path,
-                    payload,
-                    token,
-                    method=method,
-                    extra_headers=headers,
+                    _HTTPCallRequest(
+                        request_options.port,
+                        request_options.path,
+                        request_options.payload,
+                        token,
+                        request_options.method,
+                        request_options.headers,
+                    ),
                 ),
                 remaining(stage),
             )
@@ -621,34 +761,34 @@ def _try_http_job_call(
     port: int | None,
     path: str,
     method: HTTPMethod,
-    *,
-    payload: dict[str, object] | None = None,
-    headers: dict[str, str] | None = None,
-    timeout: float | None = None,
+    **options: Unpack[JobCallOptions],
 ) -> dict[str, object] | None:
-    if port is None:
+    request = _JobCallRequest(port, path, method, **options)
+    if request.port is None:
         return None
-    resolved_timeout = _get_admin_timeout(timeout)
+    resolved_timeout = _get_admin_timeout(request.timeout)
     try:
         result = _do_http_call(
-            port,
-            path,
-            payload,
+            request.port,
+            request.path,
+            request.payload,
             timeout=resolved_timeout,
-            method=method,
-            headers=headers,
+            method=request.method,
+            headers=request.headers,
         )
         return result if result is not None else {}
     except Exception as exc:
         if _is_connection_refused(exc):
-            logger.debug("HTTP job call on port %s: connection refused (%s)", port, exc)
+            logger.debug(
+                "HTTP job call on port %s: connection refused (%s)", request.port, exc
+            )
             return None
         if _is_timeout(exc):
             return {
                 "ok": False,
                 "error": "admin_timeout",
                 "message": (
-                    f"The service on port {port} did not answer within "
+                    f"The service on port {request.port} did not answer within "
                     f"{_format_timeout_seconds(resolved_timeout)}. "
                     f"Deadline diagnostics: {exc}"
                 ),
@@ -657,7 +797,7 @@ def _try_http_job_call(
         return {
             "ok": False,
             "error": "http_call_failed",
-            "message": f"HTTP job call on port {port} failed: {cls}: {exc}",
+            "message": f"HTTP job call on port {request.port} failed: {cls}: {exc}",
         }
 
 
@@ -672,34 +812,31 @@ def _try_http_create_job(
     source: JobSource,
     project_root: str,
     port: int | None,
-    *,
-    mode: JobMode | None = None,
-    start_paused: bool = False,
-    initiator_kind: str = "cli",
-    command: str = "server_job_create",
-    idempotency_key: str | None = None,
-    timeout: float | None = None,
+    **options: Unpack[CreateJobOptions],
 ) -> dict[str, object] | None:
+    request = _CreateJobRequest(source, project_root, port, **options)
     payload: dict[str, object] = {
         "operation": "index",
-        "source": source,
-        "project_root": project_root,
+        "source": request.source,
+        "project_root": request.project_root,
         # Resolved here, not in the signature: the enum is annotation-only in
         # this module so the client keeps the domain out of its import graph.
-        "mode": mode if mode is not None else _default_job_mode(),
-        "start_paused": start_paused,
-        "initiator": {"kind": initiator_kind, "command": command},
+        "mode": request.mode if request.mode is not None else _default_job_mode(),
+        "start_paused": request.start_paused,
+        "initiator": {"kind": request.initiator_kind, "command": request.command},
     }
     headers = (
-        {"Idempotency-Key": idempotency_key} if idempotency_key is not None else None
+        {"Idempotency-Key": request.idempotency_key}
+        if request.idempotency_key is not None
+        else None
     )
     return _try_http_job_call(
-        port,
+        request.port,
         "/jobs",
         "POST",
         payload=payload,
         headers=headers,
-        timeout=timeout,
+        timeout=request.timeout,
     )
 
 
@@ -721,20 +858,18 @@ def _try_http_set_job_desired_state(
     job_id: str,
     state: DesiredJobState,
     port: int | None,
-    *,
-    expected_revision: int | None = None,
-    mode: JobControlMode = "graceful",
-    timeout: float | None = None,
+    **options: Unpack[DesiredStateOptions],
 ) -> dict[str, object] | None:
-    payload: dict[str, object] = {"state": state, "mode": mode}
-    if expected_revision is not None:
-        payload["expected_revision"] = expected_revision
+    request = _DesiredStateRequest(job_id, state, port, **options)
+    payload: dict[str, object] = {"state": request.state, "mode": request.mode}
+    if request.expected_revision is not None:
+        payload["expected_revision"] = request.expected_revision
     return _try_http_job_call(
-        port,
-        _job_path(job_id, "/desired-state"),
+        request.port,
+        _job_path(request.job_id, "/desired-state"),
         "PUT",
         payload=payload,
-        timeout=timeout,
+        timeout=request.timeout,
     )
 
 
@@ -850,12 +985,14 @@ def _resolve_admin_call(
     tool_name: str, args: dict[str, Any]
 ) -> tuple[str, dict[str, Any] | None] | None:
     """Resolve an admin tool to its ``(path, body)`` pair, or ``None`` if unknown."""
-    if tool_name == "get_logs":
-        return _logs_route_path(args), None
-    if tool_name == "get_jobs":
-        return _jobs_route_path(args), None
-    if tool_name == "get_storage_survey":
-        return _storage_survey_route_path(args), None
+    filtered_routes = {
+        "get_logs": _logs_route_path,
+        "get_jobs": _jobs_route_path,
+        "get_storage_survey": _storage_survey_route_path,
+    }
+    filter_route = filtered_routes.get(tool_name)
+    if filter_route is not None:
+        return filter_route(args), None
     if tool_name in _GET_ROOT_ROUTES:
         return _admin_url_with_root(_GET_ROOT_ROUTES[tool_name], args), None
     if tool_name in _POST_BODY_ROUTES:
@@ -1027,7 +1164,7 @@ def document_search_filters(
     }
 
 
-def _probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
+def probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
     logger.debug("%s diagnostic probe failed: %s", kind, exc, exc_info=True)
     return {
         "available": False,
@@ -1040,7 +1177,7 @@ def _running_jobs_summary(port: int) -> dict[str, object]:
     try:
         jobs = _do_http_call(port, "/jobs?limit=5&phase=running", None, timeout=1.0)
     except Exception as exc:
-        return _probe_unavailable("jobs", exc)
+        return probe_unavailable("jobs", exc)
     if not isinstance(jobs, dict):
         return {"available": False}
     if jobs.get("ok") is False:
@@ -1065,7 +1202,7 @@ def _health_summary(port: int) -> dict[str, object]:
     try:
         health = _do_http_call(port, "/health", None, timeout=1.0)
     except Exception as exc:
-        return _probe_unavailable("health", exc)
+        return probe_unavailable("health", exc)
     if not isinstance(health, dict):
         return {"available": False}
     if health.get("ok") is False:
@@ -1135,72 +1272,52 @@ def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
 
 
 def _build_http_search_payload(
-    query: str,
-    search_type: str,
-    top_k: int,
-    project_root: str,
-    language: str | None,
-    path: str | None,
-    node_type: str | None,
-    function_name: str | None,
-    class_name: str | None,
-    doc_type: str | None,
-    feature: str | None,
-    date: str | None,
-    tag: str | None,
-    intent: str | None,
-    include_paths: list[str] | None,
-    exclude_paths: list[str] | None,
-    dedup_locales: bool | None,
-    prefer: str | None,
-    like_ids: list[str | int] | None,
-    unlike_ids: list[str | int] | None,
-    document_filters: DocumentSearchFilters | None,
+    request: _SearchCallRequest,
+    source: PublicSourceType,
 ) -> dict[str, object]:
-    source = parse_source_type(search_type, allow_aliases=True)
     payload: dict[str, object] = {
-        "query": query,
-        "top_k": top_k,
-        "project_root": project_root,
+        "query": request.query,
+        "top_k": request.top_k,
+        "project_root": request.project_root,
         "type": source.value,
     }
-    if like_ids:
-        payload["like_ids"] = list(like_ids)
-    if unlike_ids:
-        payload["unlike_ids"] = list(unlike_ids)
+    if request.like_ids:
+        payload["like_ids"] = list(request.like_ids)
+    if request.unlike_ids:
+        payload["unlike_ids"] = list(request.unlike_ids)
     selected_filters: dict[str, object | None] = {}
     if source in {PublicSourceType.CODE, PublicSourceType.COMBINED}:
         selected_filters.update(
             {
-                "language": language,
-                "path": path,
-                "node_type": node_type,
-                "function_name": function_name,
-                "class_name": class_name,
+                "language": request.language,
+                "path": request.path,
+                "node_type": request.node_type,
+                "function_name": request.function_name,
+                "class_name": request.class_name,
             }
         )
-        if include_paths:
-            payload["include_paths"] = list(include_paths)
-        if exclude_paths:
-            payload["exclude_paths"] = list(exclude_paths)
+        if request.include_paths:
+            payload["include_paths"] = list(request.include_paths)
+        if request.exclude_paths:
+            payload["exclude_paths"] = list(request.exclude_paths)
         # Tri-state: only send when the caller set it explicitly, so the server
         # resolves the configured default when it is absent.
-        if dedup_locales is not None:
-            payload["dedup_locales"] = bool(dedup_locales)
-        if prefer is not None:
-            payload["prefer"] = prefer
+        if request.dedup_locales is not None:
+            payload["dedup_locales"] = bool(request.dedup_locales)
+        if request.prefer is not None:
+            payload["prefer"] = request.prefer
     if source in {PublicSourceType.VAULT, PublicSourceType.COMBINED}:
         selected_filters.update(
             {
-                "doc_type": doc_type,
-                "feature": feature,
-                "date": date,
-                "tag": tag,
-                "intent": intent,
+                "doc_type": request.doc_type,
+                "feature": request.feature,
+                "date": request.date,
+                "tag": request.tag,
+                "intent": request.intent,
             }
         )
     if source in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
-        selected_filters.update(document_filters or {})
+        selected_filters.update(request.document_filters or {})
     for key, value in selected_filters.items():
         if value is not None:
             payload[key] = value
@@ -1229,128 +1346,119 @@ def _search_response_envelope(response: object, port: int) -> dict[str, object]:
     return _invalid_search_service_response(port)
 
 
-def _try_http_search(
-    query: str,
-    search_type: str,
-    top_k: int,
-    port: int,
-    project_root: str,
-    *,
-    timeout: float | None = None,
-    language: str | None = None,
-    path: str | None = None,
-    node_type: str | None = None,
-    function_name: str | None = None,
-    class_name: str | None = None,
-    doc_type: str | None = None,
-    feature: str | None = None,
-    date: str | None = None,
-    tag: str | None = None,
-    intent: str | None = None,
-    include_paths: list[str] | None = None,
-    exclude_paths: list[str] | None = None,
-    dedup_locales: bool | None = None,
-    prefer: str | None = None,
-    like_ids: list[str | int] | None = None,
-    unlike_ids: list[str | int] | None = None,
-    document_filters: DocumentSearchFilters | None = None,
-) -> dict[str, object] | None:
-    # Import the lightweight validator from the leaf module rather than the
-    # ``..search`` package, whose __init__ pulls the heavy VaultSearcher (and
-    # thus store/embeddings). ``_validation`` imports only stdlib, so this keeps
-    # the service-client transport import-light.
+def _search_request_from_arguments(
+    positional: tuple[object, ...],
+    arguments: SearchCallArguments,
+) -> _SearchCallRequest:
+    """Normalize the stable positional-or-named search surface once."""
+    names = ("query", "search_type", "top_k", "port", "project_root")
+    if len(positional) > len(names):
+        raise TypeError(
+            f"_try_http_search accepts at most {len(names)} positional arguments"
+        )
+    values: dict[str, object] = dict(zip(names, positional, strict=False))
+    for name, value in arguments.items():
+        if name in values:
+            raise TypeError(
+                f"_try_http_search got multiple values for argument {name!r}"
+            )
+        values[name] = value
+    return _SearchCallRequest(**cast("Any", values))
+
+
+def _validate_search_request(
+    request: _SearchCallRequest,
+) -> tuple[PublicSourceType | None, dict[str, object] | None]:
+    """Resolve the source and reject unsupported search-filter combinations."""
     from ..search._validation import (
         InvalidFilterForSearchTypeError,
         InvalidPreferValueError,
+        SearchFilterOptions,
         validate_search_filters,
     )
 
     try:
-        source = parse_source_type(search_type, allow_aliases=True)
+        source = parse_source_type(request.search_type, allow_aliases=True)
     except SourceTypeParseError as exc:
-        return exc.as_error_envelope()
-
+        return None, exc.as_error_envelope()
     refusal = unsupported_feedback_envelope(
-        source, has_point_ids=bool(like_ids or unlike_ids)
+        source, has_point_ids=bool(request.like_ids or request.unlike_ids)
     )
     if refusal is not None:
-        return refusal
-
+        return None, refusal
     try:
         validate_search_filters(
             cast("Any", source.value),
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-            source_path=(document_filters or {}).get("source_path"),
-            extractor_id=(document_filters or {}).get("extractor_id"),
-            extractor_version=(document_filters or {}).get("extractor_version"),
-            locator_kind=(document_filters or {}).get("locator_kind"),
+            SearchFilterOptions(
+                language=request.language,
+                path=request.path,
+                node_type=request.node_type,
+                function_name=request.function_name,
+                class_name=request.class_name,
+                doc_type=request.doc_type,
+                feature=request.feature,
+                date=request.date,
+                tag=request.tag,
+                include_paths=request.include_paths,
+                exclude_paths=request.exclude_paths,
+                dedup_locales=request.dedup_locales,
+                prefer=request.prefer,
+                source_path=(request.document_filters or {}).get("source_path"),
+                extractor_id=(request.document_filters or {}).get("extractor_id"),
+                extractor_version=(request.document_filters or {}).get(
+                    "extractor_version"
+                ),
+                locator_kind=(request.document_filters or {}).get("locator_kind"),
+            ),
         )
     except InvalidFilterForSearchTypeError as exc:
-        return {
+        return None, {
             "ok": False,
             "error": "invalid_filter_for_search_type",
             "message": str(exc),
         }
     except InvalidPreferValueError as exc:
-        return {"ok": False, "error": "invalid_prefer_value", "message": str(exc)}
+        return None, {"ok": False, "error": "invalid_prefer_value", "message": str(exc)}
+    return source, None
 
-    timeout = _get_search_timeout(timeout)
-    payload = _build_http_search_payload(
-        query,
-        source.value,
-        top_k,
-        project_root,
-        language,
-        path,
-        node_type,
-        function_name,
-        class_name,
-        doc_type,
-        feature,
-        date,
-        tag,
-        intent,
-        include_paths,
-        exclude_paths,
-        dedup_locales,
-        prefer,
-        like_ids,
-        unlike_ids,
-        document_filters,
-    )
+
+def _search_transport_failure(
+    exc: Exception,
+    port: int,
+    timeout: float,
+) -> dict[str, object] | None:
+    """Translate the general transport exception into the search contract."""
+    if _is_timeout(exc):
+        return _timeout_diagnostics(port, timeout)
+    if _is_connection_refused(exc):
+        logger.debug("HTTP search on port %s: connection refused (%s)", port, exc)
+        return None
+    if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+        return _invalid_search_service_response(port)
+    cls = exc.__class__.__name__
+    return {
+        "ok": False,
+        "error": "http_call_failed",
+        "message": f"HTTP search on port {port} failed: {cls}: {exc}",
+    }
+
+
+def _try_http_search(
+    *positional: object,
+    **arguments: Unpack[SearchCallArguments],
+) -> dict[str, object] | None:
+    request = _search_request_from_arguments(positional, arguments)
+    source, refusal = _validate_search_request(request)
+    if refusal is not None or source is None:
+        return refusal
+
+    timeout = _get_search_timeout(request.timeout)
+    payload = _build_http_search_payload(request, source)
 
     try:
-        response: object = _do_http_call(port, "/search", payload, timeout=timeout)
-        return _search_response_envelope(response, port)
-    except TimeoutError:
-        logger.debug("HTTP search on port %s timed out after %ss", port, timeout)
-        return _timeout_diagnostics(port, timeout)
+        response: object = _do_http_call(
+            request.port, "/search", payload, timeout=timeout
+        )
+        return _search_response_envelope(response, request.port)
     except Exception as exc:
-        if isinstance(exc, TimeoutError) or (
-            isinstance(exc, urllib.error.URLError)
-            and isinstance(exc.reason, TimeoutError)
-        ):
-            return _timeout_diagnostics(port, timeout)
-        if _is_connection_refused(exc):
-            logger.debug("HTTP search on port %s: connection refused (%s)", port, exc)
-            return None
-        if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
-            return _invalid_search_service_response(port)
-        cls = exc.__class__.__name__
-        return {
-            "ok": False,
-            "error": "http_call_failed",
-            "message": f"HTTP search on port {port} failed: {cls}: {exc}",
-        }
+        return _search_transport_failure(exc, request.port, timeout)
