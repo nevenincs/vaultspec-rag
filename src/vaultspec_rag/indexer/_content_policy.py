@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePosixPath
 
+from .._content_route_syntax import validate_content_route_pattern
+
 __all__ = [
     "AdmissionDisposition",
     "AdmissionPolicyError",
@@ -65,10 +67,7 @@ class ContentRoute:
     kind: ContentKind
 
     def __post_init__(self) -> None:
-        if not self.pattern.strip():
-            raise ValueError("content route pattern must not be empty")
-        if "\0" in self.pattern:
-            raise ValueError("content route pattern must not contain NUL")
+        validate_content_route_pattern(self.pattern)
 
 
 @dataclass(frozen=True, slots=True)

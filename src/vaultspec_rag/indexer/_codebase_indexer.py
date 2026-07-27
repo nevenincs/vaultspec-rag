@@ -957,16 +957,11 @@ class CodebaseIndexer:
     def _resolve_code_pipeline_limits(self) -> _CodePipelineLimits:
         """Freeze code segment, queue, slice, and model limits."""
         from ..config import get_config
+        from ..store_schema import effective_sparse_dim
 
         config = get_config()
         sparse_enabled = bool(config.sparse_enabled)
-        sparse_dimension_value = getattr(self.model, "sparse_dimension", None)
-        if sparse_enabled:
-            if type(sparse_dimension_value) is not int or sparse_dimension_value <= 0:
-                raise RuntimeError("loaded sparse model has no valid output dimension")
-            sparse_dimension = sparse_dimension_value
-        else:
-            sparse_dimension = 1
+        sparse_dimension = effective_sparse_dim(self.model)
         return _CodePipelineLimits(
             segment_max_chunks=int(config.index_segment_max_chunks),
             segment_max_bytes=int(config.index_segment_max_bytes),
