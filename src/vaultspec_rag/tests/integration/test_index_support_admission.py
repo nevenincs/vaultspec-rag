@@ -224,7 +224,7 @@ async def test_admission_refusal_states_its_kind_exactly_once(
     """
     from ...cli import console
     from ...cli._index import _print_service_domain_outcomes
-    from ...server._routes import _reindex_failure
+    from ...server._routes_reindex import _reindex_failure
 
     token = "test-admission-message-shape"
     with _refusing_admission_service(tmp_path, token) as root:
