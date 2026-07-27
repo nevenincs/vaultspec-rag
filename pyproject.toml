@@ -193,7 +193,7 @@ target-version = "py313"
   # NOTE: preview is deliberately OFF here — enabling it globally changes the
   # behavior of stable rules (e.g. F401 submodule tracking) and surfaces
   # findings in src/ owned by the remediation campaign. The preview-only
-  # nesting-depth rule (PLR1702) is gated separately by `just dev lint
+  # nesting-depth rule (PLR1702) is gated separately by `just lint
   # nesting`, which runs a scoped `--select PLR1702 --preview` instead.
   ignore = ["TID252"]
   select = [
@@ -253,7 +253,7 @@ root = [".", "src"]
 
 # Strict-mode type checking — now GATING (the burndown reached zero on
 # 2026-06-10). `ty` remains the fast pre-commit gate; basedpyright gates in CI
-# and `just dev lint all`. Run via `just dev lint type-strict` or `just dev health`.
+# and `just lint all`. Run via `just lint type-strict` or `just health`.
 [tool.basedpyright]
 include = ["src/vaultspec_rag"]
 pythonVersion = "3.13"
@@ -288,7 +288,7 @@ typeCheckingMode = "strict"
 # Production only. The tree's worst score overall is 44, in a test that walks
 # the AST of every module to prove a structural invariant; that shape is
 # inherent to the guard, not debt to pay down. Tests are measured by
-# `just dev audit complexity` instead, which reports without failing.
+# `just audit complexity` instead, which reports without failing.
 [tool.complexipy]
 exclude = ["**/tests/**"]
 max-complexity-allowed = 20
@@ -332,7 +332,7 @@ enable = ["C0302", "R0902", "R0904", "R0916"]
 #
 # Test modules are NOT gated on length; the longest is 3942 lines. That is a
 # deliberate scope choice, but it does mean test growth is invisible here.
-# `just dev health` ranks the whole tree.
+# `just health` ranks the whole tree.
 [tool.pylint.format]
 max-module-lines = 3000
 
@@ -389,7 +389,7 @@ paths = ["src/vaultspec_rag"]
 # than a defect. They stay ENABLED and are read per finding — suppressing a
 # family wholesale would also hide the first real one.
 #
-# The test tree is excluded by the `-x` flag in the `just dev audit security`
+# The test tree is excluded by the `-x` flag in the `just audit security`
 # recipe, NOT by an `exclude_dirs` key here. bandit reads `skips` from this
 # table but silently ignores `exclude_dirs` from it: configured here the scan
 # returns 320 findings, 280 of them inside the tree this was meant to exclude.

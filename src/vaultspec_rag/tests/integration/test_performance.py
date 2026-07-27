@@ -5,7 +5,7 @@ these tests' wall-clock latency and footprint assertions ARE the system under
 test - they are not rewritten to outcome/invariant form, because the number is
 the point. A loaded machine can therefore fail them for reasons unrelated to a
 regression, so they carry ONLY the ``performance`` marker (not ``integration``)
-and must be run as their own explicit lane (``just dev test perf``), never
+and must be run as their own explicit lane (``just test perf``), never
 bundled into the correctness gate. Do not add ``pytest.mark.integration`` here.
 """
 

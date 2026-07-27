@@ -70,7 +70,7 @@ jobs:
         uses: taiki-e/install-action@just
 
       - name: Install dependencies
-        run: just dev deps sync
+        run: just deps sync
 
       # Every gate below carries `if: '!cancelled()'` so the job runs all of
       # them and reports each one, instead of stopping at the first red. The
@@ -83,36 +83,36 @@ jobs:
       # complexity step never executed. One red gate hid another.
       - name: Ruff
         if: '!cancelled()'
-        run: just dev lint python
+        run: just lint python
 
       - name: Ty
         if: '!cancelled()'
-        run: just dev lint type
+        run: just lint type
 
       - name: Taplo
         if: '!cancelled()'
-        run: just dev lint toml
+        run: just lint toml
 
       - name: Lychee
         if: '!cancelled()'
-        run: just dev lint links
+        run: just lint links
 
       - name: Markdown
         if: '!cancelled()'
-        run: just dev lint markdown
+        run: just lint markdown
 
       - name: Docs version guard
         if: '!cancelled()'
-        run: just dev lint docs-version
+        run: just lint docs-version
 
       # ADVISORY (continue-on-error) — see the block above the ratchet gates
       # below. Previously absent from CI entirely: the recipe existed and ran
-      # only from `just dev lint all` on a workstation. Red today on seven test
+      # only from `just lint all` on a workstation. Red today on seven test
       # modules that import the package absolutely.
       - name: Absolute imports (advisory)
         if: '!cancelled()'
         continue-on-error: true
-        run: just dev lint absolute-imports
+        run: just lint absolute-imports
 
       # Gating: fails CI if tracked source cites a development record (plan/Step
       # coordinate, dated vault stem) in a comment or docstring, or hardcodes a
@@ -120,7 +120,7 @@ jobs:
       # paths are reported as smells but do not fail.
       - name: Citations
         if: '!cancelled()'
-        run: just dev lint citations
+        run: just lint citations
 
       # ─────────────────────────────────────────────────────────────────────
       # ADVISORY RATCHETS — these RUN and REPORT on every PR, and none of them
@@ -132,7 +132,7 @@ jobs:
       # block unrelated work on debt its author did not create.
       #
       # They still run on every PR, and a regression shows as a step warning
-      # on the run. `just dev lint <target>` reproduces any of them locally
+      # on the run. `just lint <target>` reproduces any of them locally
       # and DOES exit non-zero — the local recipe is the strict one.
       #
       # Promote a step out of this block by deleting its `continue-on-error`
@@ -144,7 +144,7 @@ jobs:
       - name: Complexity (advisory)
         if: '!cancelled()'
         continue-on-error: true
-        run: just dev lint complexity
+        run: just lint complexity
 
       # ruff's nesting-depth rule is preview-only, so it runs scoped here
       # rather than from the main ruff config, where global preview mode
@@ -152,7 +152,7 @@ jobs:
       - name: Nesting depth (advisory)
         if: '!cancelled()'
         continue-on-error: true
-        run: just dev lint nesting
+        run: just lint nesting
 
       # Module length (pylint C0302) and the class-shape limits ruff has no
       # rule for. This replaced a bespoke script whose CI step claimed to be
@@ -160,13 +160,13 @@ jobs:
       - name: Module and class size (advisory)
         if: '!cancelled()'
         continue-on-error: true
-        run: just dev lint size
+        run: just lint size
 
       # Gating: basedpyright strict reached zero on 2026-06-10, so this now
       # fails CI on any new strict-type error.
       - name: Strict types
         if: '!cancelled()'
-        run: just dev lint type-strict
+        run: just lint type-strict
 
   tests:
     name: Tests
@@ -192,10 +192,10 @@ jobs:
         uses: taiki-e/install-action@just
 
       - name: Install dependencies
-        run: just dev deps sync
+        run: just deps sync
 
       - name: Run tests
-        run: just dev test python
+        run: just test python
 
   gpu-tests:
     name: GPU Tests
@@ -263,7 +263,7 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $dest
 
       - name: Install dependencies
-        run: just dev deps sync
+        run: just deps sync
 
       - name: Verify CUDA is visible to the runner
         run: uv run --no-sync python -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable on GPU runner'; print(torch.cuda.get_device_name(0))"
@@ -274,7 +274,7 @@ jobs:
       - name: Run GPU test tier
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: just dev test gpu
+        run: just test gpu
 
   vault-audit:
     name: Vault Audit
@@ -300,7 +300,7 @@ jobs:
         uses: taiki-e/install-action@just
 
       - name: Install dependencies
-        run: just dev deps sync
+        run: just deps sync
 
       - name: Verify vault structure and links
         run: uv run vaultspec-core vault check all
@@ -329,13 +329,13 @@ jobs:
         uses: taiki-e/install-action@just
 
       - name: Install dependencies
-        run: just dev deps sync
+        run: just deps sync
 
       - name: Python dependency vulnerability audit
-        run: just dev audit deps
+        run: just audit deps
 
   # Advisory only — this job reports and can never fail the run. It is the CI
-  # face of `just dev audit`: dead code, undeclared (transitively-resolved)
+  # face of `just audit`: dead code, undeclared (transitively-resolved)
   # imports, and the security scan. Each yields a lead to confirm rather than a
   # verdict, so none of them belongs in a blocking gate.
   #
@@ -365,19 +365,19 @@ jobs:
         uses: taiki-e/install-action@just
 
       - name: Install dependencies
-        run: just dev deps sync
+        run: just deps sync
 
       - name: Dead code (vulture)
         if: '!cancelled()'
         continue-on-error: true
-        run: just dev audit dead-code
+        run: just audit dead-code
 
       - name: Undeclared dependencies (deptry)
         if: '!cancelled()'
         continue-on-error: true
-        run: just dev audit dependencies
+        run: just audit dependencies
 
       - name: Security (bandit)
         if: '!cancelled()'
         continue-on-error: true
-        run: just dev audit security
+        run: just audit security

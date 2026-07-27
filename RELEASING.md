@@ -30,7 +30,7 @@ The release PR cannot be merged until these required checks pass:
 - **Lint, Type, Config, Link, and Markdown Checks** - ruff, ty, taplo,
   lychee, mdformat, and a docs version guard that fails when README.md or
   docs/ still show a `vaultspec-rag v0.x.y` output literal that does not
-  match `pyproject.toml` (`just dev lint docs-version`).
+  match `pyproject.toml` (`just lint docs-version`).
 - **Tests** - the unit suite.
 - **Vault Audit** - `vaultspec-core vault check all`.
 - **Dependency Audit** - `uv audit` for known CVEs.
@@ -82,7 +82,7 @@ The `publish-pypi` job already declares `environment: pypi` and
 1. **Regenerate the README terminal renders** if a command's output shape
    changed since the last release (new flags, reworded status lines, a
    different table layout): `just readme-assets`, then review the diff
-   under `assets/` and commit it. `just dev lint docs-version` catches
+   under `assets/` and commit it. `just lint docs-version` catches
    stale `vaultspec-rag v0.x.y` literals in prose, but not stale terminal
    captures - re-render is a judgment call, not an automated gate.
 
