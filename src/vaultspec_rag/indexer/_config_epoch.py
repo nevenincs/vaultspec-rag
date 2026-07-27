@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -45,6 +45,51 @@ __all__ = [
 
 RAW_CHUNK_SEMANTICS_VERSION = 1
 PARSER_CAPABILITY_VERSION = 1
+
+
+class _PolicyFingerprintOptions(TypedDict, total=False):
+    policy_schema_version: int
+    content_policy: RootContentPolicy
+    gitignore_patterns: Sequence[str]
+    vaultragignore_patterns: Sequence[str]
+    extra_excludes: Sequence[str]
+    preprocess_schema_version: int
+    preprocess_rules: Sequence[ResolvedPreprocessRule]
+    decoder_encoding: str
+    decoder_errors: str
+    normalize_newlines: bool
+    execution_mode: PreprocessMode
+    html_strip: bool
+    max_emitted_bytes: int
+    document_chunking: Mapping[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _PolicyFingerprintRequest:
+    policy_schema_version: int
+    content_policy: RootContentPolicy
+    gitignore_patterns: Sequence[str]
+    vaultragignore_patterns: Sequence[str]
+    extra_excludes: Sequence[str]
+    preprocess_schema_version: int
+    preprocess_rules: Sequence[ResolvedPreprocessRule]
+    decoder_encoding: str
+    decoder_errors: str
+    normalize_newlines: bool
+    execution_mode: PreprocessMode
+    html_strip: bool
+    max_emitted_bytes: int
+    document_chunking: Mapping[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _PerKindFingerprintRequest:
+    policy_schema_version: int
+    persistent_membership_payload: Mapping[str, object]
+    operation_membership_payload: Mapping[str, object]
+    content_payload: Mapping[str, object]
+    preprocess_rules: Sequence[ResolvedPreprocessRule]
+    document_chunking: Mapping[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,21 +165,14 @@ def _preprocess_patterns(rules: Sequence[PreprocessRule]) -> list[str]:
 
 
 def resolved_policy_fingerprints(
-    *,
-    policy_schema_version: int,
-    content_policy: RootContentPolicy,
-    gitignore_patterns: Sequence[str],
-    vaultragignore_patterns: Sequence[str],
-    extra_excludes: Sequence[str],
-    preprocess_schema_version: int,
-    preprocess_rules: Sequence[ResolvedPreprocessRule],
-    decoder_encoding: str,
-    decoder_errors: str,
-    normalize_newlines: bool,
-    execution_mode: PreprocessMode,
-    html_strip: bool,
-    max_emitted_bytes: int,
-    document_chunking: Mapping[str, int],
+    **options: Unpack[_PolicyFingerprintOptions],
+) -> NormalizedPolicyFingerprints:
+    """Hash a resolved policy without depending on object identity."""
+    return _resolved_policy_fingerprints(_PolicyFingerprintRequest(**options))
+
+
+def _resolved_policy_fingerprints(
+    request: _PolicyFingerprintRequest,
 ) -> NormalizedPolicyFingerprints:
     """Hash a resolved policy without depending on object identity.
 
@@ -145,6 +183,27 @@ def resolved_policy_fingerprints(
     either triggers a rebuild rather than leaving previously unsplit points
     in place with no signal that they are stale.
     """
+    (
+        policy_schema_version, content_policy, gitignore_patterns,
+        vaultragignore_patterns, extra_excludes, preprocess_schema_version,
+        preprocess_rules, decoder_encoding, decoder_errors, normalize_newlines,
+        execution_mode, html_strip, max_emitted_bytes, document_chunking,
+    ) = (
+        request.policy_schema_version,
+        request.content_policy,
+        request.gitignore_patterns,
+        request.vaultragignore_patterns,
+        request.extra_excludes,
+        request.preprocess_schema_version,
+        request.preprocess_rules,
+        request.decoder_encoding,
+        request.decoder_errors,
+        request.normalize_newlines,
+        request.execution_mode,
+        request.html_strip,
+        request.max_emitted_bytes,
+        request.document_chunking,
+    )
     persistent_membership_payload = {
         "version": policy_schema_version,
         "source_profile": content_policy.source_profile.value,
@@ -207,12 +266,14 @@ def resolved_policy_fingerprints(
         {"version": policy_schema_version, "preprocess_mode": execution_mode}
     )
     per_kind = _per_kind_fingerprints(
-        policy_schema_version=policy_schema_version,
-        persistent_membership_payload=persistent_membership_payload,
-        operation_membership_payload=operation_membership_payload,
-        content_payload=content_payload,
-        preprocess_rules=preprocess_rules,
-        document_chunking=document_chunking,
+        _PerKindFingerprintRequest(
+            policy_schema_version,
+            persistent_membership_payload,
+            operation_membership_payload,
+            content_payload,
+            preprocess_rules,
+            document_chunking,
+        )
     )
     snapshot = _digest(
         {
@@ -243,17 +304,23 @@ def resolved_policy_fingerprints(
 
 
 def _per_kind_fingerprints(
-    *,
-    policy_schema_version: int,
-    persistent_membership_payload: Mapping[str, object],
-    operation_membership_payload: Mapping[str, object],
-    content_payload: Mapping[str, object],
-    preprocess_rules: Sequence[ResolvedPreprocessRule],
-    document_chunking: Mapping[str, int],
+    request: _PerKindFingerprintRequest,
 ) -> PerKindPolicyFingerprints:
     """Derive independent kind identities from canonical aggregate payloads."""
     from ._content_policy import ContentKind
 
+    (
+        policy_schema_version, persistent_membership_payload,
+        operation_membership_payload, content_payload, preprocess_rules,
+        document_chunking,
+    ) = (
+        request.policy_schema_version,
+        request.persistent_membership_payload,
+        request.operation_membership_payload,
+        request.content_payload,
+        request.preprocess_rules,
+        request.document_chunking,
+    )
     by_kind: dict[ContentKind, ContentKindFingerprints] = {}
     for kind in ContentKind:
         persistent_payload = {
