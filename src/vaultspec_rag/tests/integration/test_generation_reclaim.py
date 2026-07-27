@@ -51,22 +51,25 @@ class TestGenerationReclaimAgainstRealStorage:
         unexpired window too, failing the pending assertion in the sibling test.
         """
         from ..._store_models import publish_served_code_collection
-        from ...storage_ops import reclaim_superseded_generations
+        from ...storage_reclamation import (
+            GenerationReclaimRequest,
+            reclaim_superseded_generations,
+        )
 
         served = f"{_DERIVED}_gnew"
         superseded = f"{_DERIVED}_gold"
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
         try:
-            results, stamps = reclaim_superseded_generations(
-                client,
+            results, stamps = reclaim_superseded_generations(GenerationReclaimRequest(
+                client=client,
                 roots={str(tmp_path): _DERIVED},
                 stamps={superseded: _LONG_AGO},
                 now=_NOW,
                 grace_hours=24.0,
                 reader_present=lambda _root: False,
                 dry_run=False,
-            )
+            ))
             live = _live(client)
         finally:
             client.close()
@@ -84,22 +87,25 @@ class TestGenerationReclaimAgainstRealStorage:
         drops the collection and fails the survival assertion.
         """
         from ..._store_models import publish_served_code_collection
-        from ...storage_ops import reclaim_superseded_generations
+        from ...storage_reclamation import (
+            GenerationReclaimRequest,
+            reclaim_superseded_generations,
+        )
 
         served = f"{_DERIVED}_gnew"
         superseded = f"{_DERIVED}_gold"
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
         try:
-            _results, stamps = reclaim_superseded_generations(
-                client,
+            _results, stamps = reclaim_superseded_generations(GenerationReclaimRequest(
+                client=client,
                 roots={str(tmp_path): _DERIVED},
                 stamps={superseded: _LONG_AGO},
                 now=_NOW,
                 grace_hours=24.0,
                 reader_present=lambda _root: True,
                 dry_run=False,
-            )
+            ))
             live = _live(client)
         finally:
             client.close()
@@ -120,7 +126,10 @@ class TestGenerationReclaimAgainstRealStorage:
         reach the gate and be dropped.
         """
         from ..._store_models import served_code_pointer_path
-        from ...storage_ops import reclaim_superseded_generations
+        from ...storage_reclamation import (
+            GenerationReclaimRequest,
+            reclaim_superseded_generations,
+        )
 
         superseded = f"{_DERIVED}_gold"
         client = _client(tmp_path, _DERIVED, superseded)
@@ -128,15 +137,15 @@ class TestGenerationReclaimAgainstRealStorage:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{ not json", encoding="utf-8")
         try:
-            _results, stamps = reclaim_superseded_generations(
-                client,
+            _results, stamps = reclaim_superseded_generations(GenerationReclaimRequest(
+                client=client,
                 roots={str(tmp_path): _DERIVED},
                 stamps={superseded: _LONG_AGO},
                 now=_NOW,
                 grace_hours=24.0,
                 reader_present=lambda _root: False,
                 dry_run=False,
-            )
+            ))
             live = _live(client)
         finally:
             client.close()
@@ -152,22 +161,25 @@ class TestGenerationReclaimAgainstRealStorage:
     def test_a_dry_run_removes_nothing(self, tmp_path: Path) -> None:
         """Planning must not mutate storage."""
         from ..._store_models import publish_served_code_collection
-        from ...storage_ops import reclaim_superseded_generations
+        from ...storage_reclamation import (
+            GenerationReclaimRequest,
+            reclaim_superseded_generations,
+        )
 
         served = f"{_DERIVED}_gnew"
         superseded = f"{_DERIVED}_gold"
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
         try:
-            results, _stamps = reclaim_superseded_generations(
-                client,
+            results, _stamps = reclaim_superseded_generations(GenerationReclaimRequest(
+                client=client,
                 roots={str(tmp_path): _DERIVED},
                 stamps={superseded: _LONG_AGO},
                 now=_NOW,
                 grace_hours=24.0,
                 reader_present=lambda _root: False,
                 dry_run=True,
-            )
+            ))
             live = _live(client)
         finally:
             client.close()
@@ -204,7 +216,7 @@ class TestTheCycleRunsTheGenerationPass:
         """
         from ..._store_models import publish_served_code_collection
         from ...storage_manifest import record_root
-        from ...storage_ops import ReclaimPolicy, run_maintenance_cycle
+        from ...storage_reclamation import ReclaimPolicy, run_maintenance_cycle
 
         _ = isolated_status_dir
         entry = record_root(tmp_path, backend="local")
