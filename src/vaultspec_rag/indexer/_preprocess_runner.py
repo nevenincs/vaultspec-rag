@@ -116,6 +116,39 @@ class PreprocessResult:
     reason: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _PreprocessExecutionContext:
+    """Shared cap, root, and checkpoint controls for one hook invocation."""
+
+    max_emitted_bytes: int
+    project_root: pathlib.Path
+    checkpoint: Callable[[], None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedProcessRequest:
+    """One child process launch with its bounded-output controls."""
+
+    argv: list[str]
+    timeout_s: float | None
+    stdout_cap: int
+    cwd: pathlib.Path
+    env: dict[str, str]
+    checkpoint: Callable[[], None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _BatchOutputInput:
+    """Raw batch output and the source identities it must account for."""
+
+    returncode: int
+    stdout: bytes
+    stderr: str
+    stdout_cap: int
+    context: _PreprocessExecutionContext
+    source_paths: Sequence[pathlib.Path]
+
+
 def _emitted_text_bytes(output: PreprocOutput) -> int:
     """Return the aggregate UTF-8 byte count of all emitted text."""
     if output.text is not None:
@@ -318,15 +351,7 @@ def _drain_and_wait(
     return returncode, captured["stdout"], stderr_text
 
 
-def _run_bounded(
-    argv: list[str],
-    timeout_s: float | None,
-    stdout_cap: int,
-    *,
-    cwd: pathlib.Path,
-    env: dict[str, str],
-    checkpoint: Callable[[], None] | None = None,
-) -> tuple[int, bytes, str]:
+def _run_bounded(request: _BoundedProcessRequest) -> tuple[int, bytes, str]:
     """Launch ``argv`` directly and drain it bounded.
 
     The child runs with the curated env and ``cwd`` as its working directory.
@@ -336,21 +361,23 @@ def _run_bounded(
         _PreprocessSkipError: On launch failure or timeout.
     """
     try:
-        handle = default_popen_handle(argv, cwd=cwd, env=env)
+        handle = default_popen_handle(request.argv, cwd=request.cwd, env=request.env)
     except OSError as exc:
         msg = f"preprocessor could not be launched: {exc}"
         raise _PreprocessSkipError(msg) from exc
 
-    return _drain_and_wait(handle, timeout_s, stdout_cap, checkpoint)
+    return _drain_and_wait(
+        handle,
+        request.timeout_s,
+        request.stdout_cap,
+        request.checkpoint,
+    )
 
 
 def _invoke_and_validate(
     source_path: pathlib.Path,
     rule: PreprocessRule,
-    max_emitted_bytes: int,
-    *,
-    project_root: pathlib.Path,
-    checkpoint: Callable[[], None] | None = None,
+    context: _PreprocessExecutionContext,
 ) -> PreprocOutput:
     """Run the preprocessor, validate its output, and enforce the caps.
 
@@ -374,26 +401,31 @@ def _invoke_and_validate(
     invocation = _invocation_envelope(
         (source_path,),
         rule,
-        project_root,
+        context.project_root,
         "single",
     )
-    stdout_cap = max(max_emitted_bytes * _STDOUT_CAP_MULTIPLIER, _MIN_STDOUT_CAP)
+    stdout_cap = max(
+        context.max_emitted_bytes * _STDOUT_CAP_MULTIPLIER,
+        _MIN_STDOUT_CAP,
+    )
     returncode, stdout, stderr = _run_bounded(
-        argv,
-        rule.timeout_s,
-        stdout_cap,
-        cwd=project_root,
-        env=_child_env(project_root, invocation),
-        checkpoint=checkpoint,
+        _BoundedProcessRequest(
+            argv=argv,
+            timeout_s=rule.timeout_s,
+            stdout_cap=stdout_cap,
+            cwd=context.project_root,
+            env=_child_env(context.project_root, invocation),
+            checkpoint=context.checkpoint,
+        )
     )
     output = _validate_output(
         returncode,
         stdout,
         stderr,
         stdout_cap,
-        max_emitted_bytes,
+        context.max_emitted_bytes,
     )
-    _validate_source_binding(output, source_path, project_root)
+    _validate_source_binding(output, source_path, context.project_root)
     return output
 
 
@@ -488,9 +520,11 @@ def run_preprocessor(
         output = _invoke_and_validate(
             source_path,
             rule,
-            max_emitted_bytes,
-            project_root=project_root,
-            checkpoint=checkpoint,
+            _PreprocessExecutionContext(
+                max_emitted_bytes=max_emitted_bytes,
+                project_root=project_root,
+                checkpoint=checkpoint,
+            ),
         )
     except _PreprocessSkipError as exc:
         return _dispose_failure(source_path, rule, str(exc), cause=exc)
@@ -602,15 +636,7 @@ def _match_batch_key(
     return keys_by_norm.get(os.path.normcase(os.path.abspath(resolved)))
 
 
-def _split_batch_output(
-    returncode: int,
-    stdout: bytes,
-    stderr: str,
-    stdout_cap: int,
-    max_emitted_bytes: int,
-    source_paths: Sequence[pathlib.Path],
-    project_root: pathlib.Path,
-) -> _BatchParse:
+def _split_batch_output(input: _BatchOutputInput) -> _BatchParse:
     """Parse and validate a batch envelope into per-file outputs and failures.
 
     Raises:
@@ -618,14 +644,14 @@ def _split_batch_output(
             non-zero exit, non-JSON, or a non-array top level). The caller
             resolves every file in the batch through ``on_error`` for these.
     """
-    if len(stdout) > stdout_cap:
-        msg = f"preprocessor stdout exceeds {stdout_cap} bytes; skipping"
+    if len(input.stdout) > input.stdout_cap:
+        msg = f"preprocessor stdout exceeds {input.stdout_cap} bytes; skipping"
         raise _PreprocessSkipError(msg)
-    if returncode != 0:
-        msg = f"preprocessor exited {returncode}: {stderr[:500]}"
+    if input.returncode != 0:
+        msg = f"preprocessor exited {input.returncode}: {input.stderr[:500]}"
         raise _PreprocessSkipError(msg)
     try:
-        payload = json.loads(stdout.decode("utf-8"))
+        payload = json.loads(input.stdout.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         msg = f"preprocessor stdout is not valid JSON: {exc}"
         raise _PreprocessSkipError(msg) from exc
@@ -633,14 +659,18 @@ def _split_batch_output(
         msg = "preprocessor batch output must be a JSON array of per-file objects"
         raise _PreprocessSkipError(msg)
 
-    keys_by_norm = _batch_key_lookup(source_paths)
+    keys_by_norm = _batch_key_lookup(input.source_paths)
     outputs: dict[str, PreprocOutput] = {}
     failures: dict[str, str] = {}
     for raw_element in cast("list[object]", payload):
         if not isinstance(raw_element, dict):
             continue
         element = cast("dict[str, object]", raw_element)
-        key = _match_batch_key(element.get("path"), keys_by_norm, project_root)
+        key = _match_batch_key(
+            element.get("path"),
+            keys_by_norm,
+            input.context.project_root,
+        )
         if key is None:
             continue
         body = {name: value for name, value in element.items() if name != "path"}
@@ -650,14 +680,19 @@ def _split_batch_output(
             failures[key] = f"preprocessor output failed validation: {exc}"
             continue
         try:
-            _validate_source_binding(output, pathlib.Path(key), project_root)
+            _validate_source_binding(
+                output,
+                pathlib.Path(key),
+                input.context.project_root,
+            )
         except _PreprocessSkipError as exc:
             failures[key] = str(exc)
             continue
         emitted = _emitted_text_bytes(output)
-        if emitted > max_emitted_bytes:
+        if emitted > input.context.max_emitted_bytes:
             failures[key] = (
-                f"emitted text bytes {emitted} exceeds cap {max_emitted_bytes}"
+                "emitted text bytes "
+                f"{emitted} exceeds cap {input.context.max_emitted_bytes}"
             )
             continue
         outputs[key] = output
@@ -667,10 +702,8 @@ def _split_batch_output(
 def _invoke_batch(
     source_paths: Sequence[pathlib.Path],
     rule: PreprocessRule,
-    max_emitted_bytes: int,
-    project_root: pathlib.Path,
     manifest_path: str,
-    checkpoint: Callable[[], None] | None = None,
+    context: _PreprocessExecutionContext,
 ) -> _BatchParse:
     """Run the batch command once over the manifest and split its envelope.
 
@@ -686,7 +719,10 @@ def _invoke_batch(
     argv = _build_batch_argv(rule, manifest_path)
     count = len(source_paths)
     stdout_cap = min(
-        max(max_emitted_bytes * _STDOUT_CAP_MULTIPLIER * count, _MIN_STDOUT_CAP),
+        max(
+            context.max_emitted_bytes * _STDOUT_CAP_MULTIPLIER * count,
+            _MIN_STDOUT_CAP,
+        ),
         _MAX_BATCH_STDOUT_CAP,
     )
     timeout_s = (
@@ -694,23 +730,31 @@ def _invoke_batch(
         if rule.timeout_s is None
         else min(rule.timeout_s * count, _MAX_BATCH_TIMEOUT_S)
     )
-    invocation = _invocation_envelope(source_paths, rule, project_root, "batch")
+    invocation = _invocation_envelope(
+        source_paths,
+        rule,
+        context.project_root,
+        "batch",
+    )
     returncode, stdout, stderr = _run_bounded(
-        argv,
-        timeout_s,
-        stdout_cap,
-        cwd=project_root,
-        env=_child_env(project_root, invocation),
-        checkpoint=checkpoint,
+        _BoundedProcessRequest(
+            argv=argv,
+            timeout_s=timeout_s,
+            stdout_cap=stdout_cap,
+            cwd=context.project_root,
+            env=_child_env(context.project_root, invocation),
+            checkpoint=context.checkpoint,
+        )
     )
     return _split_batch_output(
-        returncode,
-        stdout,
-        stderr,
-        stdout_cap,
-        max_emitted_bytes,
-        source_paths,
-        project_root,
+        _BatchOutputInput(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+            stdout_cap=stdout_cap,
+            context=context,
+            source_paths=source_paths,
+        )
     )
 
 
@@ -761,10 +805,12 @@ def run_preprocessor_batch(
             parsed = _invoke_batch(
                 source_paths,
                 rule,
-                max_emitted_bytes,
-                project_root,
                 manifest_path,
-                checkpoint,
+                _PreprocessExecutionContext(
+                    max_emitted_bytes=max_emitted_bytes,
+                    project_root=project_root,
+                    checkpoint=checkpoint,
+                ),
             )
         except _PreprocessSkipError as exc:
             reason = str(exc)
