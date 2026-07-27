@@ -1058,8 +1058,8 @@ class TestDaemonServesNativeRestOnly:
 
         from .. import server
 
-        source = inspect.getsource(server.main)
-        assert "uvicorn.run(\n                app," in source
+        source = inspect.getsource(server._main._run_http_daemon)
+        assert "uvicorn.run(\n            app," in source
 
 
 class TestDaemonLifecycleHelpers:
