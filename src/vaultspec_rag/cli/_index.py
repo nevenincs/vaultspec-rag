@@ -42,6 +42,7 @@ from ._render import (
     _format_local_index_busy_message,
     _plain,
 )
+from ._search import _suppress_hf_progress
 
 
 def _warn_preprocess_flag_ignored_when_delegating(json_mode: bool) -> None:
@@ -625,7 +626,7 @@ def handle_index(
 ) -> None:
     """Index vault documents and/or codebase chunks."""
     if not verbose:
-        _cli._suppress_hf_progress()
+        _suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
     source = _parse_index_source(index_type, command="index", json_mode=json_mode)

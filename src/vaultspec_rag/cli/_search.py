@@ -1098,7 +1098,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     """Search vault documents or source code."""
     _validate_search_extra_args(ctx)
     if not verbose:
-        _cli._suppress_hf_progress()
+        _suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
     prefer = _search_prefer_filter(prefer, json_mode=json_mode)

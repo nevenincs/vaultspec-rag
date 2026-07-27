@@ -1,13 +1,17 @@
 """Process and port helpers for the background service.
 
-Liveness (``_is_pid_alive``), identity (``_is_our_service`` via a
-``/health`` service-token round-trip through the service client, with an
-executable-name fallback), port probes, heartbeat staleness, the
-detached-daemon spawn, and graceful termination all live here. The helpers
-reached from other command modules (e.g. ``_is_pid_alive``) are referenced
-through the package namespace at call time, which keeps those modules from
-importing this one at their own import time and pulling process and socket
-handling onto every CLI import path.
+Identity (``_is_our_service`` via a ``/health`` service-token round-trip
+through the service client, with an executable-name fallback), port probes,
+heartbeat staleness, the detached-daemon spawn, and graceful termination all
+live here. Liveness itself does not: it is the same question the qdrant
+runtime answers for a storage owner, down to the access-denied-means-alive
+rule, so callers import ``pid_alive`` from ``_process_probe`` directly.
+
+Consumers import what they use from this module by name. They once reached
+these helpers through the package namespace at call time, to keep process and
+socket handling off every CLI import path - but every module doing so already
+imported this one at module scope for other names, so the deferral bought
+nothing and only hid which module owned the behaviour.
 """
 
 from __future__ import annotations
@@ -24,8 +28,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
-
-import vaultspec_rag.cli as _cli
 
 from .._process_probe import (
     bounded_call,
@@ -48,6 +50,7 @@ from .._win32 import (
 from ..config import EnvVar
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
+from ._service_status import _read_service_status
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -61,7 +64,6 @@ __all__ = [
     "_call_interruptibly",
     "_heartbeat_age_seconds",
     "_is_our_service",
-    "_is_pid_alive",
     "_port_is_available",
     "_port_is_listening",
     "_probe_daemon_cuda",
@@ -111,13 +113,6 @@ class DaemonBreakawayError(RuntimeError):
     """
 
 
-#: Service liveness is the same question the qdrant runtime already answers
-#: for a storage owner, down to the access-denied-means-alive rule, so it has
-#: one implementation and this module publishes it under the name the package
-#: namespace exposes for substitution.
-_is_pid_alive = pid_alive
-
-
 def _is_our_service(
     pid: int,
     port: int | None = None,
@@ -152,7 +147,7 @@ def _is_our_service(
         ``service.json``.
 
     """
-    if not _cli._is_pid_alive(pid):
+    if not pid_alive(pid):
         return False
 
     # Primary check: token round-trip via /health. Gated on both
@@ -676,7 +671,7 @@ def _discover_late_service_pids(
     discovery rather than blocking the cleanup.
     """
     candidates: dict[int, float] = {}
-    status = _cli._read_service_status()
+    status = _read_service_status()
     status_pid = 0
     if (
         status is not None
@@ -894,7 +889,7 @@ def _terminate_pid(
     if _wait_for_child_exit(pid, timeout=graceful_wait):
         _reap_owned_qdrant(qdrant_identity, deadline=deadline)
         return TerminationResult(alive=False, signal_denied=False)
-    if _cli._is_pid_alive(pid):
+    if pid_alive(pid):
         if sys.platform == "win32":
             escalation = signal.SIGTERM  # TerminateProcess on Windows
         else:
@@ -909,7 +904,7 @@ def _terminate_pid(
             timeout=max(0.0, deadline - time.monotonic()),
         )
     _reap_owned_qdrant(qdrant_identity, deadline=deadline)
-    alive = _cli._is_pid_alive(pid)
+    alive = pid_alive(pid)
     return TerminationResult(alive=alive, signal_denied=denied and alive)
 
 
@@ -924,7 +919,7 @@ def _wait_for_child_exit(pid: int, *, timeout: float) -> bool:
                 waited = 0
             if waited == pid:
                 return True
-        if not _cli._is_pid_alive(pid):
+        if not pid_alive(pid):
             return True
         time.sleep(0.05)
     return False

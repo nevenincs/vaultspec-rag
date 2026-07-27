@@ -19,14 +19,16 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from .._process_probe import iter_process_info, pid_is_zombie
+from .._process_probe import iter_process_info, pid_alive, pid_is_zombie
 from ..serviceclient._discovery import _delete_service_status, _read_service_status
 from ..serviceclient._transport import _try_http_health
 from ._app import server_app
 from ._core import logger
 from ._process import (
     _DEFAULT_GRACEFUL_DRAIN_SECONDS,
+    _is_our_service,
     _port_is_listening,
+    _terminate_pid,
 )
 from ._service_lifecycle import (
     _fail_lifecycle,
@@ -34,6 +36,7 @@ from ._service_lifecycle import (
     _process_line,
     _should_unlink_discovery_file,
 )
+from ._service_status import _append_lifecycle_shutdown_log
 
 __all__ = [
     "_fail_still_running",
@@ -85,8 +88,8 @@ def _reclaim_machine_singleton() -> tuple[int, _cli.TerminationResult] | None:
     if (
         holder
         and holder != os.getpid()
-        and _cli._is_pid_alive(holder)
-        and _cli._is_our_service(holder)
+        and pid_alive(holder)
+        and _is_our_service(holder)
     ):
         return holder, _terminate_and_confirm(holder)
     return None
@@ -228,7 +231,7 @@ def _terminate_and_confirm(
     returned result is still alive.
     """
     _refuse_terminate_from_unisolated_test()
-    result = _cli._terminate_pid(
+    result = _terminate_pid(
         pid,
         timeout=_STOP_TERMINATION_BUDGET_SECONDS,
         graceful_drain=_stop_graceful_drain_seconds(),
@@ -237,11 +240,11 @@ def _terminate_and_confirm(
 
     # Wait briefly for process to exit
     for _ in range(50):
-        if not _cli._is_pid_alive(pid):
+        if not pid_alive(pid):
             break
         time.sleep(0.1)
 
-    if _cli._is_pid_alive(pid):
+    if pid_alive(pid):
         # Nothing below applies to a survivor. Its discovery records still
         # describe a live daemon, so removing them would strand it, and a
         # shutdown attribution line for a termination that never happened is a
@@ -263,7 +266,7 @@ def _terminate_and_confirm(
     # signal handler → lifespan finally → ``_record_shutdown("clean")`` and the
     # daemon logs its own clean shutdown, but the CLI-side initiator attribution
     # is valuable on every platform, so the line is emitted unconditionally.
-    _cli._append_lifecycle_shutdown_log(
+    _append_lifecycle_shutdown_log(
         "cli_terminate",
         pid=pid,
         platform=sys.platform,
@@ -447,7 +450,7 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
         )
         return
     pid, token = resolved
-    if not _cli._is_our_service(pid, port=port, expected_token=token):
+    if not _is_our_service(pid, port=port, expected_token=token):
         raise _fail_stop(
             json_mode,
             error="identity_unconfirmed",
@@ -550,7 +553,7 @@ def _pid_terminated(pid: int) -> bool:
     """True if *pid* is gone or a POSIX zombie (dead, awaiting parent reap).
 
     A force-killed orphan whose parent has not yet ``waitpid``'d it lingers as a
-    zombie: ``os.kill(pid, 0)`` still succeeds so ``_is_pid_alive`` reports it
+    zombie: ``os.kill(pid, 0)`` still succeeds so ``pid_alive`` reports it
     live, yet the process is terminated and holds no GPU, port, or machine lock.
     The reap must count such a defunct process as reaped, not as a survivor -
     otherwise a killed orphan whose supervisor is still running (which reparents
@@ -558,7 +561,7 @@ def _pid_terminated(pid: int) -> bool:
     despite being dead. Windows has no zombie state (``TerminateProcess`` removes
     the process), so this only refines the POSIX case.
     """
-    if not _cli._is_pid_alive(pid):
+    if not pid_alive(pid):
         return True
     return pid_is_zombie(pid)
 
@@ -663,7 +666,7 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     survivors: list[int] = []
     denied = False
     for pid in matched:
-        if pid in protected or not _cli._is_our_service(pid):
+        if pid in protected or not _is_our_service(pid):
             continue
         # Discovered pid, not one we spawned: force-kill by pid, never a
         # console-group CTRL_BREAK that could reach the operator's own console.
@@ -835,12 +838,12 @@ def service_stop(
     port = int(status["port"])
     raw_token = status.get("service_token")
     expected_token = raw_token if isinstance(raw_token, str) else None
-    if not _cli._is_our_service(pid, port=port, expected_token=expected_token):
+    if not _is_our_service(pid, port=port, expected_token=expected_token):
         # Identity not confirmed. Remove the discovery file only when the PID
         # is confirmed dead; an alive-but-unconfirmed PID (a transient
         # /health/identity miss) must not have its file erased, which would
         # both mis-report a live daemon as gone and break discovery (#204).
-        if _should_unlink_discovery_file(_cli._is_pid_alive(pid)):
+        if _should_unlink_discovery_file(pid_alive(pid)):
             _delete_service_status()
             _stop_success(
                 json_mode,

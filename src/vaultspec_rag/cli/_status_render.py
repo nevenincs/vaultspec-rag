@@ -17,6 +17,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._process_probe import pid_alive as _pid_alive
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
     SERVICE_PHASE_WARMING,
@@ -37,6 +38,7 @@ from ._app import server_app
 from ._cli_format import NOT_REPORTED
 from ._process import (
     _heartbeat_age_seconds,
+    _is_our_service,
     _port_is_listening,
 )
 from ._render import _address_line, _emit_json, _plain
@@ -109,11 +111,9 @@ def _liveness_from_resolution(resolution: MachineResolution) -> LivenessSignals:
     pid = resolution.pointer_pid or 0
     port = resolution.port or 0
     token = resolution.service_token
-    pid_alive = _cli._is_pid_alive(pid) if pid > 0 else False
+    pid_alive = _pid_alive(pid) if pid > 0 else False
     pid_matches = (
-        _cli._is_our_service(pid, port=port, expected_token=token)
-        if pid_alive
-        else False
+        _is_our_service(pid, port=port, expected_token=token) if pid_alive else False
     )
     port_listening = _port_is_listening(port) if port > 0 else False
     age = resolution.heartbeat_age_s
@@ -234,9 +234,9 @@ def _evaluate_service_signals(
 
     raw_token = status.get("service_token")
     expected_token = raw_token if isinstance(raw_token, str) and raw_token else None
-    pid_alive = _cli._is_pid_alive(pid)
+    pid_alive = _pid_alive(pid)
     pid_is_ours = (
-        _cli._is_our_service(pid, port=port, expected_token=expected_token)
+        _is_our_service(pid, port=port, expected_token=expected_token)
         if pid_alive
         else False
     )
@@ -956,9 +956,9 @@ def _render_explicit_port_status(
     started_at = str(status.get("started_at", "unknown"))
     raw_token = status.get("service_token")
     expected_token = raw_token if isinstance(raw_token, str) else None
-    pid_alive = _cli._is_pid_alive(pid)
+    pid_alive = _pid_alive(pid)
     pid_is_ours = (
-        _cli._is_our_service(pid, port=status_file_port, expected_token=expected_token)
+        _is_our_service(pid, port=status_file_port, expected_token=expected_token)
         if pid_alive
         else False
     )

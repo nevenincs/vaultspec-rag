@@ -20,8 +20,7 @@ between a deliberate side-effect import and one a later reader deletes as unused
 
 What this package does export is the small set of names its own consumers reach
 through the package namespace rather than from the module that defines them:
-``console`` and the process helpers (``_is_pid_alive``, ``_is_our_service``,
-``_terminate_pid``) are read at call time through
+``console`` is read at call time through
 ``import vaultspec_rag.cli as _cli``. Reading them at call time keeps the
 command modules from importing ``_core`` and the process module at their own
 import time, which is what would put them in the decorator-registration cycle
@@ -62,7 +61,6 @@ from ._process import (
     TerminationResult,
     _heartbeat_age_seconds,
     _is_our_service,
-    _is_pid_alive,
     _port_is_listening,
     _service_child_env,
     _spawn_service,
@@ -95,7 +93,6 @@ __all__ = [
     "_index",
     "_install",
     "_is_our_service",
-    "_is_pid_alive",
     "_log_file",
     "_no_gpu_message",
     "_no_torch_message",
