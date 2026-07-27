@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..._loopback_http import probe_loopback_connect
 from ..._machine_lock import (
     acquire_machine_lock,
     acquire_machine_lock_lease,
@@ -30,20 +29,12 @@ from ..._machine_lock import (
 from ...config._types import EnvVar
 from ._helpers import _get_ephemeral_port, _get_ephemeral_qdrant_port
 from ._machine_lock_holder import spawn_foreign_machine_lock_holder
+from ._service_lifecycle_helpers import _ports_listening
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
-
-
-def _port_is_listening(port: int) -> bool:
-    """Whether anything accepts a loopback connect, at the conservative bound.
-
-    These asserts claim a loser daemon bound NOTHING, so they wait out the
-    full pre-existing deadline rather than trading accuracy for speed.
-    """
-    return probe_loopback_connect(port, timeout=1.0) == "accepted"
 
 
 def _assert_windows_singleton_refusal(output: str, holder_pid: int) -> None:
@@ -262,6 +253,11 @@ class TestLosingDaemonBoundary:
             )
             output = f"{logs}\n{completed.stdout}\n{completed.stderr}"
 
+            # The loser has exited, so what it did or did not bind is settled;
+            # both ports are probed together at the same conservative deadline
+            # each would get alone, and asserted on individually below.
+            listening = _ports_listening(port, qdrant_port)
+
             # The loser must fail loudly rather than idle or exit success.
             assert completed.returncode != 0, (
                 f"losing daemon exited 0; output:\n{output[-3000:]}"
@@ -272,7 +268,7 @@ class TestLosingDaemonBoundary:
                 f"{sorted(item.name for item in status_dir.rglob('*'))}"
             )
             # It must not have bound the listener it was asked for.
-            assert not _port_is_listening(port), (
+            assert not listening[port], (
                 f"losing daemon bound port {port} before refusing"
             )
             # It must not have published discovery over the incumbent's
@@ -298,7 +294,7 @@ class TestLosingDaemonBoundary:
                 f"losing daemon reached component startup; output:\n{output[-3000:]}"
             )
             # No managed Qdrant child came up on the isolated port either.
-            assert not _port_is_listening(qdrant_port), (
+            assert not listening[qdrant_port], (
                 f"losing daemon started a Qdrant child on {qdrant_port}"
             )
 

@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
@@ -54,6 +55,8 @@ __all__ = [
     "_cleanup_forced_stop_harness",
     "_identity_health_process",
     "_job_owns_full_pipeline",
+    "_port_is_listening",
+    "_ports_listening",
     "_service_processes_on_port",
     "_signal_service_shutdown",
     "_signalable_live_service",
@@ -231,14 +234,26 @@ def _port_is_listening(port: int) -> bool:
     return probe_loopback_connect(port, timeout=1.0) == "accepted"
 
 
+def _ports_listening(*ports: int) -> dict[int, bool]:
+    """Probe several ports at once, each at the full single-port deadline.
+
+    An unbound loopback port costs the whole deadline here: nothing completes
+    the handshake and nothing refuses it fast enough to shortcut the wait, so
+    probing in sequence pays that deadline once per port. Fanning out keeps
+    every port's deadline intact and spends one deadline of wall time total.
+    """
+    with ThreadPoolExecutor(max_workers=len(ports)) as pool:
+        return dict(zip(ports, pool.map(_port_is_listening, ports), strict=True))
+
+
 def _wait_for_listeners_closed(*ports: int, timeout: float = 10.0) -> bool:
     """Return whether every test-owned listener closes within the bound."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not any(_port_is_listening(port) for port in ports):
+        if not any(_ports_listening(*ports).values()):
             return True
         time.sleep(0.1)
-    return not any(_port_is_listening(port) for port in ports)
+    return not any(_ports_listening(*ports).values())
 
 
 def _wait_for_persisted_job(
