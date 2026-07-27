@@ -135,6 +135,16 @@ def group_chunks_by_document(results: list[SearchResult]) -> list[SearchResult]:
 #: drops that phase out of the total and reports a smaller number than the work
 #: took. Naming them makes the pairing something the reader can follow and the
 #: type checker can catch.
+#: Recorded by assigning into the timings mapping rather than through
+#: ``record_seconds``, which is why the first pass over this vocabulary missed
+#: them: a subscript store is not a call, and the guard was only reading calls.
+#: Two of them cross a module boundary - the searcher writes, the search route
+#: reads - and two more are written by ``api`` and read by that same route.
+PHASE_EMBEDDING = "embedding_seconds"
+PHASE_POSTPROCESS = "postprocess_seconds"
+PHASE_MODEL_LOAD = "model_load_seconds"
+PHASE_PROJECT_LEASE = "project_lease_seconds"
+
 PHASE_QDRANT = "qdrant_seconds"
 PHASE_RESULT_MAPPING = "result_mapping_seconds"
 PHASE_RERANK = "rerank_seconds"

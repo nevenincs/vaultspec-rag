@@ -17,6 +17,7 @@ from ._source_types import PublicSourceType, parse_source_type
 from ._units import bytes_to_mib
 from .progress import NullProgressReporter
 from .registry import get_registry
+from .search._result_shaping import PHASE_MODEL_LOAD, PHASE_PROJECT_LEASE
 
 if TYPE_CHECKING:
     import pathlib
@@ -440,8 +441,8 @@ def search_vault_timed(
             like_ids=like_ids,
             unlike_ids=unlike_ids,
         )
-    timings["model_load_seconds"] = model_load_seconds
-    timings["project_lease_seconds"] = project_lease_seconds
+    timings[PHASE_MODEL_LOAD] = model_load_seconds
+    timings[PHASE_PROJECT_LEASE] = project_lease_seconds
     timings["indexed_count"] = indexed_count
     return results, timings
 
@@ -643,8 +644,8 @@ def search_codebase_timed(
             unlike_ids=unlike_ids,
             notes=notes,
         )
-    timings["model_load_seconds"] = model_load_seconds
-    timings["project_lease_seconds"] = project_lease_seconds
+    timings[PHASE_MODEL_LOAD] = model_load_seconds
+    timings[PHASE_PROJECT_LEASE] = project_lease_seconds
     timings["indexed_count"] = indexed_count
     timings.update(breadth)
     return results, timings
