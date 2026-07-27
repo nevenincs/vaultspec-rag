@@ -8,6 +8,7 @@ import stat
 import tempfile
 from contextlib import contextmanager
 from contextvars import Context
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -78,15 +79,21 @@ logger = logging.getLogger(__name__)
 _DEFAULT_PROJECT_MCP_PROVIDERS = (Tool.CLAUDE, Tool.CODEX)
 
 
+@dataclass(frozen=True, slots=True)
+class _BuiltinSeedOptions:
+    """Controls one builtin-tree seeding operation."""
+
+    dry_run: bool
+    force: bool
+    upgrade: bool
+    install_mcp: bool
+    skip_mcp: bool = False
+
+
 def _seed_builtins(
     vaultspec_dir: Path,
     report: InstallReport,
-    dry_run: bool,
-    force: bool,
-    upgrade: bool,
-    install_mcp: bool,
-    *,
-    skip_mcp: bool = False,
+    options: _BuiltinSeedOptions,
 ) -> None:
     """Seed rag's whole bundled tree flat into ``.vaultspec/`` (core's fold).
 
@@ -95,14 +102,14 @@ def _seed_builtins(
     write failure the partially-seeded files are rolled back before the error
     propagates.
     """
-    if not dry_run:
+    if not options.dry_run:
         written: list[str] = []
         try:
             seeded = seed_builtins(
                 vaultspec_dir,
-                force=force or upgrade,
+                force=options.force or options.upgrade,
                 written=written,
-                exclude_prefixes=("mcps/",) if skip_mcp else (),
+                exclude_prefixes=("mcps/",) if options.skip_mcp else (),
             )
         except Exception:
             _rollback_seeded(vaultspec_dir, written, report)
@@ -110,16 +117,16 @@ def _seed_builtins(
     else:
         seeded = seed_builtins(
             vaultspec_dir,
-            force=force or upgrade,
+            force=options.force or options.upgrade,
             dry_run=True,
-            exclude_prefixes=("mcps/",) if skip_mcp else (),
+            exclude_prefixes=("mcps/",) if options.skip_mcp else (),
         )
 
     mcp_sources = {rel for rel in list_builtins() if rel.startswith("mcps/")}
     report.seeded = [item for item in seeded if item[0] not in mcp_sources]
-    if skip_mcp:
+    if options.skip_mcp:
         return
-    if install_mcp:
+    if options.install_mcp:
         report.seeded.extend(item for item in seeded if item[0] in mcp_sources)
         return
     for rel in sorted(mcp_sources):
@@ -373,10 +380,12 @@ def _commit_mcp_placement_and_mode(
         _seed_builtins(
             target / WORKSPACE_DIR,
             report,
-            False,
-            force,
-            upgrade,
-            enabled,
+            _BuiltinSeedOptions(
+                dry_run=False,
+                force=force,
+                upgrade=upgrade,
+                install_mcp=enabled,
+            ),
         )
     except Exception as exc:
         rollback_errors = rollback_file_snapshots(snapshots)
@@ -1007,11 +1016,13 @@ def _install_run_unchecked(
         _seed_builtins(
             vaultspec_dir,
             report,
-            dry_run,
-            force,
-            upgrade,
-            install_mcp,
-            skip_mcp="mcp" in skip,
+            _BuiltinSeedOptions(
+                dry_run=dry_run,
+                force=force,
+                upgrade=upgrade,
+                install_mcp=install_mcp,
+                skip_mcp="mcp" in skip,
+            ),
         )
 
     # sync_provider needs core's runtime context. Initialise it here
