@@ -9,9 +9,9 @@ runs.
 
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import dataclass
-from typing import Annotated, Any, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 from typer.core import TyperGroup, TyperOption
@@ -28,6 +28,9 @@ from .._named_root import env_named_root
 from ..config import EnvVar
 from ..logging_config import configure_logging
 from ._render import _plain
+
+if TYPE_CHECKING:
+    import click
 
 __all__ = [
     "JSON_ENVELOPE_OPTION_HELP",
@@ -235,7 +238,10 @@ class _LiteralArgvGroup(TyperGroup):
                     param_decls=["--status-dir"],
                     type=str,
                     default=None,
-                    help="Directory for service runtime files (default: ~/.vaultspec-rag)",
+                    help=(
+                        "Directory for service runtime files "
+                        "(default: ~/.vaultspec-rag)"
+                    ),
                 ),
                 TyperOption(
                     param_decls=["--log-file"],
