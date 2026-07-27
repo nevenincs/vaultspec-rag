@@ -816,10 +816,13 @@ def _render_status_summary(request: _StatusSummaryRequest) -> None:
         else None
     )
     jobs_dict = cast("dict[str, object]", jobs) if isinstance(jobs, dict) else None
+    request_status = _status_health_label(
+        request.health,
+        port_listening=request.port_listening,
+    )
     lines = [
         f"Server: {_plain_status_label(request.state_label)}",
-        "Requests: "
-        f"{_status_health_label(request.health, port_listening=request.port_listening)}",
+        f"Requests: {request_status}",
         *_degraded_lines(request.operational, request.health),
         f"Busy: {_status_busy_label(jobs_dict)}",
         address_line(request.port),
