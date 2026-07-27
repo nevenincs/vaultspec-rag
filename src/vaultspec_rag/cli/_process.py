@@ -26,7 +26,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
 
 from .._process_probe import (
     bounded_call,
@@ -283,14 +283,33 @@ def _call_interruptibly[T](
     return cast("T", outcome)
 
 
+class _ServiceChildEnvOptions(TypedDict, total=False):
+    watch: bool | None
+    watch_debounce_ms: int | None
+    watch_cooldown_s: float | None
+    qdrant: bool | None
+    local_only: bool | None
+    preprocess_mode: Literal["off"] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceChildEnvRequest:
+    watch: bool | None = None
+    watch_debounce_ms: int | None = None
+    watch_cooldown_s: float | None = None
+    qdrant: bool | None = None
+    local_only: bool | None = None
+    preprocess_mode: Literal["off"] | None = None
+
+
 def _service_child_env(
-    watch: bool | None = None,
-    watch_debounce_ms: int | None = None,
-    watch_cooldown_s: float | None = None,
-    qdrant: bool | None = None,
-    local_only: bool | None = None,
-    preprocess_mode: Literal["off"] | None = None,
+    **options: Unpack[_ServiceChildEnvOptions],
 ) -> dict[str, str]:
+    """Build the environment for the detached daemon process."""
+    return _build_service_child_env(_ServiceChildEnvRequest(**options))
+
+
+def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]:
     """Build the environment for the detached daemon process.
 
     The daemon inherits configuration only through the environment (it
@@ -318,6 +337,14 @@ def _service_child_env(
     Returns:
         The child-process environment mapping.
     """
+    watch, watch_debounce_ms, watch_cooldown_s, qdrant, local_only, preprocess_mode = (
+        request.watch,
+        request.watch_debounce_ms,
+        request.watch_cooldown_s,
+        request.qdrant,
+        request.local_only,
+        request.preprocess_mode,
+    )
     # Strip VAULTSPEC_RAG_ROOT from the daemon env - the HTTP service is
     # multi-tenant and must not fall back to a baked-in project root.
     # Case-insensitive compare: Windows os.environ stores original case
@@ -445,18 +472,43 @@ def _cuda_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
     )
 
 
+class _ServiceSpawnOptions(_ServiceChildEnvOptions, total=False):
+    timeout: float | None
+    cleanup_timeout: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceSpawnRequest:
+    port: int
+    log_path: Path
+    child_env: _ServiceChildEnvRequest
+    timeout: float | None = None
+    cleanup_timeout: float = 15.0
+
+
 def _spawn_service(
     port: int,
     log_path: Path,
-    watch: bool | None = None,
-    watch_debounce_ms: int | None = None,
-    watch_cooldown_s: float | None = None,
-    qdrant: bool | None = None,
-    local_only: bool | None = None,
-    preprocess_mode: Literal["off"] | None = None,
-    timeout: float | None = None,
-    cleanup_timeout: float = 15.0,
+    **options: Unpack[_ServiceSpawnOptions],
 ) -> int:
+    """Spawn the RAG service as a detached background process."""
+    child_options = {
+        name: value
+        for name, value in options.items()
+        if name in _ServiceChildEnvOptions.__annotations__
+    }
+    return _spawn_service_request(
+        _ServiceSpawnRequest(
+            port,
+            log_path,
+            _ServiceChildEnvRequest(**child_options),
+            options.get("timeout"),
+            float(options.get("cleanup_timeout", 15.0)),
+        )
+    )
+
+
+def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     """Spawn the RAG service as a detached background process.
 
     Args:
@@ -479,6 +531,12 @@ def _spawn_service(
         enforce_pytest_managed_singleton_containment,
     )
 
+    port, log_path, timeout, cleanup_timeout = (
+        request.port,
+        request.log_path,
+        request.timeout,
+        request.cleanup_timeout,
+    )
     enforce_pytest_managed_singleton_containment(
         operation="spawn the managed service process",
         targets=(log_path,),
@@ -497,14 +555,7 @@ def _spawn_service(
         "--launch-token",
         launch_token,
     ]
-    env = _service_child_env(
-        watch=watch,
-        watch_debounce_ms=watch_debounce_ms,
-        watch_cooldown_s=watch_cooldown_s,
-        qdrant=qdrant,
-        local_only=local_only,
-        preprocess_mode=preprocess_mode,
-    )
+    env = _build_service_child_env(request.child_env)
     # Owner-only log, refusing a pre-planted symlink at the path where the
     # platform offers O_NOFOLLOW (local log-tamper / redirect hardening).
     _log_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
