@@ -105,7 +105,9 @@ class TestRobustness:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         # Use a broad query that should match many docs.
         results = searcher.search_vault("pipeline implementation", top_k=15)
 

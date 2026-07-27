@@ -57,7 +57,9 @@ class TestPerformance:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
 
         # Warmup: ensure FTS index is built and model is warm
         searcher.search_vault("warmup", top_k=1)
@@ -81,7 +83,9 @@ class TestPerformance:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
         queries = [
             "architecture decision",
             "type:plan implementation",
@@ -189,7 +193,9 @@ class TestPerformance:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(
+            root, model, store, reranker=rag_components["reranker"]
+        )
 
         # First search builds graph
         searcher.search_vault("architecture", top_k=1)
@@ -209,7 +215,13 @@ class TestPerformance:
         store: VaultStore = rag_components["store"]
         root: Path = rag_components["root"]
 
-        searcher = VaultSearcher(root, model, store, graph_ttl_seconds=0)
+        searcher = VaultSearcher(
+            root,
+            model,
+            store,
+            graph_ttl_seconds=0,
+            reranker=rag_components["reranker"],
+        )
 
         searcher.search_vault("architecture", top_k=1)
         graph1 = searcher._cached_graph

@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
+    from sentence_transformers import CrossEncoder
+
     from ..._store_models import CodeChunk
     from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer
@@ -59,6 +61,7 @@ class _CodeProject(TypedDict):
     code_indexer: CodebaseIndexer
     store: VaultStore
     model: EmbeddingModel
+    reranker: CrossEncoder
     root: Path
     src_dir: Path
 
@@ -87,6 +90,7 @@ def code_project(
         code_indexer=code_indexer,
         store=store,
         model=model,
+        reranker=rag_components["reranker"],
         root=tmp_path,
         src_dir=src_dir,
     )
@@ -979,7 +983,7 @@ class TestCodebaseSearch:
         store = code_project["store"]
         root = code_project["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(root, model, store, reranker=code_project["reranker"])
         results = searcher.search_codebase("calculator add numbers", top_k=5)
 
         assert len(results) > 0
@@ -1006,6 +1010,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
 
         # Without exclude: tests/ paths should appear in the candidate set.
@@ -1045,6 +1050,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
 
         results = searcher.search_codebase(
@@ -1083,6 +1089,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
 
         results = searcher.search_codebase(
@@ -1120,6 +1127,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
 
         results = searcher.search_codebase("calculator path:src/", top_k=10)
@@ -1148,6 +1156,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
 
         notes: dict[str, object] = {}
@@ -1181,6 +1190,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
 
         notes: dict[str, object] = {}
@@ -1208,7 +1218,7 @@ class TestCodebaseSearch:
         store = code_project["store"]
         root = code_project["root"]
 
-        searcher = VaultSearcher(root, model, store)
+        searcher = VaultSearcher(root, model, store, reranker=code_project["reranker"])
         results = searcher.search_codebase(
             "hello world",
             top_k=5,
@@ -1234,6 +1244,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
         results = searcher.search_codebase("calculator add multiply", top_k=5)
 
@@ -1258,6 +1269,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
         results = searcher.search_codebase("function definition", top_k=5)
 
@@ -1281,6 +1293,7 @@ class TestCodebaseSearch:
             code_project["root"],
             code_project["model"],
             code_project["store"],
+            reranker=code_project["reranker"],
         )
         results = searcher.search_codebase("hello world greeting", top_k=5)
 
