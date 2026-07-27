@@ -58,7 +58,7 @@ _HEALTH: dict[str, object] = {
 _PROJECTS: dict[str, object] = {
     "projects": [
         {
-            "root": "Y:\\code\\vaultspec-rag-worktrees\\main",
+            "root": "/repos/example-worktrees/main",
             "last_access": 430419.3930949,
             "ref_count": 1,
             "idle_seconds": 588.1502224999713,
@@ -72,7 +72,7 @@ _SURVEY: dict[str, object] = {
     "namespaces": [
         {
             "prefix": "rea7120f40662_",
-            "root": "Y:\\code\\vaultspec-rag-worktrees\\main",
+            "root": "/repos/example-worktrees/main",
             "status": "live",
             "points": 8225,
             "footprint_bytes": 1055084331,
