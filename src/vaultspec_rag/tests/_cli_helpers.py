@@ -50,6 +50,29 @@ def _isolated_status_dir(status_dir: Path) -> typing.Generator[Path]:
         os.environ.pop(EnvVar.STATUS_DIR, None)
 
 
+#: The identity token a stubbed daemon publishes on ``/health`` and records in
+#: its discovery file, so the two round-trip the way a real pair does.
+#:
+#: Identity is that round-trip. Without a token on both sides the CLI falls
+#: back to inspecting the recorded process itself - its executable image on
+#: Windows, the command line that started it elsewhere - and the interpreter
+#: running these tests answers that question differently per platform and per
+#: runner. A fixture that leans on the fallback is asserting a property of the
+#: test runner; one that publishes a token asserts the check the daemon ships.
+_CONTRACT_SERVICE_TOKEN = "contract-service-token-3f5a1c9e"
+
+
+def _with_service_token(health: dict[str, object]) -> dict[str, object]:
+    """Return *health* as a daemon would report it, carrying its identity token.
+
+    Applied to every ``/health`` body a contract server serves, including one a
+    test supplied outright: a real daemon reports its token whatever else its
+    health says, and a stub that omitted it on the customised payloads would
+    make identity depend on which test wrote the body.
+    """
+    return {**health, "service_token": _CONTRACT_SERVICE_TOKEN}
+
+
 @contextlib.contextmanager
 def _serving(contract_server: tuple[typing.Any, typing.Any]) -> typing.Generator[int]:
     """Own the shutdown of a contract server and its thread, yielding the port."""
@@ -71,11 +94,14 @@ def _running_service_record(
 ) -> typing.Generator[Path]:
     """Isolate the status dir and leave a record that reads as a live daemon.
 
-    A running daemon publishes two things: the discovery file, and a heartbeat
-    it keeps fresh. A record without the heartbeat is *correctly* read as
-    crashed, so a test that wants a running service has to write both - which is
-    why this is one helper rather than a line in each test. ``drop`` removes
-    keys afterwards, for the tests whose subject is a field the daemon omitted.
+    A running daemon publishes three things: the discovery file, a heartbeat it
+    keeps fresh, and the identity token its ``/health`` answers with. A record
+    without the heartbeat is *correctly* read as crashed, and one without the
+    token names a pid the CLI can only judge by inspecting the process - which
+    for this interpreter is not the daemon and reads as a recycled pid. A test
+    that wants a running service has to write all three, which is why this is
+    one helper rather than three lines in each test. ``drop`` removes keys
+    afterwards, for the tests whose subject is a field the daemon omitted.
 
     Yields the record path and restores the environment on exit.
     """
@@ -86,6 +112,7 @@ def _running_service_record(
         record_path = status_dir / "service.json"
         record = json.loads(record_path.read_text(encoding="utf-8"))
         record["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
+        record["service_token"] = _CONTRACT_SERVICE_TOKEN
         for key in drop:
             record.pop(key, None)
         record_path.write_text(json.dumps(record), encoding="utf-8")
@@ -174,7 +201,7 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
         "Address": f"http://127.0.0.1:{port}",
         "Process": "running",
         "Process check": "verified",
-        "Identity check": "not verified by this status check",
+        "Identity check": "verified",
         "Network": "accepting connections",
         "Server": "running",
         "Requests": "ready for requests",
@@ -358,7 +385,7 @@ def _status_contract_server(
                     )
                 )
             else:
-                payload = (
+                payload = _with_service_token(
                     health if health is not None else _status_contract_health_payload()
                 )
             self.send_response(status_code)
@@ -1016,6 +1043,46 @@ def _reindex_contract_server() -> tuple[
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread, requests
+
+
+@contextlib.contextmanager
+def _process_the_identity_check_recognises() -> typing.Generator[int]:
+    """Run a live process this build accepts as its own daemon, yielding its pid.
+
+    Where no ``/health`` token can be round-tripped - a daemon still warming
+    has not bound its port - identity falls back to inspecting the process
+    itself: its executable image on Windows, the command line that started it
+    everywhere else. The interpreter running these tests satisfies neither rule
+    on purpose; it is not the daemon, and whether its own command line happens
+    to mention the package is a property of how the suite was invoked rather
+    than of the code under test. So a test that needs a recognisable pid starts
+    a process that carries the witness on both platforms - a python interpreter
+    running this package - instead of lending out its own.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    holder = textwrap.dedent("""
+        import time
+        import vaultspec_rag
+        print("up", flush=True)
+        time.sleep(120)
+    """)
+    process = subprocess.Popen(
+        [sys.executable, "-c", holder],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        if process.stdout.readline().strip() != "up":
+            msg = "the stand-in daemon process never started"
+            raise AssertionError(msg)
+        yield process.pid
+    finally:
+        process.kill()
+        process.wait(timeout=10)
 
 
 @contextlib.contextmanager
