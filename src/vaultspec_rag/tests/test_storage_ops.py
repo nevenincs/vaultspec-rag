@@ -27,17 +27,15 @@ from ..storage_manifest import (
     update_activity_stamps,
     update_orphan_stamps,
 )
-from ..storage_ops import (
-    GeometryEntry,
-    MigrateResult,
+from ..storage_migration import MigrateResult, carry_migrated_identity
+from ..storage_reclamation import (
+    MaintenanceCycleRequest,
     ReclaimPolicy,
-    ReconcileResult,
-    carry_migrated_identity,
     evaluate_reclaim,
-    plan_reconcile,
     run_maintenance_cycle,
     sweep_archive,
 )
+from ..storage_reconciliation import GeometryEntry, ReconcileResult, plan_reconcile
 from ..storage_survey import NamespaceSurvey, is_temp_rooted
 from ..store_schema import (
     SERVER_SEGMENT_NUMBER,
@@ -767,7 +765,7 @@ class TestDebrisVisibility:
         return debris_dir
 
     def test_debris_dirs_surface_with_footprint(self, tmp_path: Path) -> None:
-        from ..storage_ops import debris_surveys
+        from ..storage_survey_ops import debris_surveys
 
         storage = tmp_path / "collections"
         storage.mkdir()
@@ -782,12 +780,12 @@ class TestDebrisVisibility:
         assert surveys[0].points == 0
 
     def test_no_storage_dir_yields_no_debris(self) -> None:
-        from ..storage_ops import debris_surveys
+        from ..storage_survey_ops import debris_surveys
 
         assert debris_surveys(["a"], None) == []
 
     def test_backend_totals_roll_up_all_statuses(self) -> None:
-        from ..storage_ops import backend_totals
+        from ..storage_survey_ops import backend_totals
 
         surveys = [
             _survey("raaaaaaaaaaa1_", status="live", footprint=100),
@@ -810,7 +808,7 @@ class TestDebrisVisibility:
         }
 
     def test_prune_debris_dry_run_removes_nothing(self, tmp_path: Path) -> None:
-        from ..storage_ops import prune_debris
+        from ..storage_survey_ops import prune_debris
 
         storage = tmp_path / "collections"
         storage.mkdir()
@@ -823,7 +821,7 @@ class TestDebrisVisibility:
         assert debris_dir.exists()
 
     def test_prune_debris_removes_only_unlisted_dirs(self, tmp_path: Path) -> None:
-        from ..storage_ops import prune_debris
+        from ..storage_survey_ops import prune_debris
 
         storage = tmp_path / "collections"
         storage.mkdir()
@@ -840,7 +838,7 @@ class TestDebrisVisibility:
         assert live_dir.exists()
 
     def test_prune_debris_with_nothing_to_do_is_success(self, tmp_path: Path) -> None:
-        from ..storage_ops import prune_debris
+        from ..storage_survey_ops import prune_debris
 
         storage = tmp_path / "collections"
         storage.mkdir()
@@ -1051,7 +1049,7 @@ class TestConvergenceDetection:
 
     @staticmethod
     def _wait(client: object, path: Path, budget_s: float = 60.0):
-        from ..storage_ops import _await_convergence
+        from ..storage_reconciliation import _await_convergence
 
         clock = {"t": 0.0}
 
@@ -1145,7 +1143,7 @@ class TestConvergenceDetection:
     def test_shutdown_event_abandons_the_wait(self, tmp_path: Path) -> None:
         import threading
 
-        from ..storage_ops import _await_convergence
+        from ..storage_reconciliation import _await_convergence
 
         path = tmp_path / "coll"
         client = _ScriptedClient(path, [(9, "yellow", 12)])
@@ -1198,7 +1196,7 @@ class TestGeometryScope:
         foreign collection is an unauthorised mutation of someone else's
         data - the same reason every destructive verb is prefix-guarded.
         """
-        from ..storage_ops import read_geometry
+        from ..storage_reconciliation import read_geometry
 
         client = _GeometryClient(
             [
@@ -1219,7 +1217,7 @@ class TestGeometryScope:
         assert client.inspected == ["rfeedfacefeed_vault_docs"]
 
     def test_owned_collection_at_target_is_not_drifted(self, tmp_path: Path) -> None:
-        from ..storage_ops import plan_reconcile, read_geometry
+        from ..storage_reconciliation import plan_reconcile, read_geometry
 
         client = _GeometryClient(
             ["rfeedfacefeed_vault_docs"], target=SERVER_SEGMENT_NUMBER
@@ -1374,13 +1372,15 @@ def _run_cycle(
 ):
     """Run one real maintenance cycle against *client*, reconcile disabled."""
     return run_maintenance_cycle(
-        cast("QdrantClient", client),
-        now=now,
-        policy=policy or ReclaimPolicy(reconcile=False),
-        storage_dir=None,
-        snapshots_dir=tmp_path / "snapshots",
-        archive_dir=tmp_path / "archive",
-        active_prefixes=lambda: active,
+        MaintenanceCycleRequest(
+            client=cast("QdrantClient", client),
+            now=now,
+            policy=policy or ReclaimPolicy(reconcile=False),
+            storage_dir=None,
+            snapshots_dir=tmp_path / "snapshots",
+            archive_dir=tmp_path / "archive",
+            active_prefixes=lambda: active,
+        )
     )
 
 
@@ -1496,7 +1496,7 @@ class TestActiveIndexPrefixes:
         from .. import jobs
         from .._store_models import root_collection_prefix
         from ..job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
-        from ..storage_ops import _active_index_prefixes
+        from ..storage_reclamation import _active_index_prefixes
 
         jobs.reset()
         try:

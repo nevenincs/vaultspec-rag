@@ -21,12 +21,8 @@ from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from .._machine_lock import MachineLockLease
-    from ..storage_ops import (
-        MaintenanceResult,
-        ReclaimPolicy,
-        ReconcileBatch,
-        ReconcileResult,
-    )
+    from ..storage_reclamation import MaintenanceResult, ReclaimPolicy
+    from ..storage_reconciliation import ReconcileBatch, ReconcileResult
 
 __all__ = [
     "_QDRANT_CLIENT_OP_TIMEOUT_SECONDS",
@@ -543,7 +539,7 @@ def _build_reclaim_policy() -> ReclaimPolicy:
     survey and the non-destructive reconcile.
     """
     from ..config import get_config
-    from ..storage_ops import ReclaimPolicy
+    from ..storage_reclamation import ReclaimPolicy
 
     cfg = get_config()
     autoprune = bool(cfg.storage_autoprune)
@@ -626,7 +622,7 @@ def _publish_cycle_metrics(
     result: MaintenanceResult, *, disk_free: int, removed: int
 ) -> None:
     """Publish one cycle's reclamation gauges and counters."""
-    from ..storage_ops import backend_totals
+    from ..storage_survey_ops import backend_totals
     from ._state import incr, observe
 
     incr("maintenance_cycles_total")
@@ -693,7 +689,7 @@ def _storage_maintenance_tick_sync() -> None:
     from qdrant_client import QdrantClient
 
     from ..config import get_config
-    from ..storage_ops import run_maintenance_cycle
+    from ..storage_reclamation import MaintenanceCycleRequest, run_maintenance_cycle
 
     cfg = get_config()
     # Reconcile is non-destructive and independent of the grace machinery, so
@@ -718,12 +714,14 @@ def _storage_maintenance_tick_sync() -> None:
     now = datetime.now(UTC)
     try:
         result = run_maintenance_cycle(
-            client,
-            now=now,
-            policy=policy,
-            storage_dir=collections_dir if collections_dir.is_dir() else None,
-            snapshots_dir=snapshots_dir,
-            archive_dir=archive_dir,
+            MaintenanceCycleRequest(
+                client=client,
+                now=now,
+                policy=policy,
+                storage_dir=collections_dir if collections_dir.is_dir() else None,
+                snapshots_dir=snapshots_dir,
+                archive_dir=archive_dir,
+            )
         )
     except BaseException as exc:
         _jobs_registry.record_finish(job_id, error=str(exc))
@@ -786,7 +784,7 @@ def _storage_survey_warm_sync() -> None:
     from qdrant_client import QdrantClient
 
     from ..config import get_config
-    from ..storage_ops import gather_survey, server_storage_collections_dir
+    from ..storage_survey_ops import gather_survey, server_storage_collections_dir
 
     cfg = get_config()
     if not cfg.effective_server_mode():

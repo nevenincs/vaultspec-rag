@@ -704,16 +704,22 @@ def _reclaim_generations_for_cycle(
     return results
 
 
+@dataclass(frozen=True)
+class MaintenanceCycleRequest:
+    """All dependencies and controls for one scheduled maintenance cycle."""
+
+    client: QdrantClient
+    now: datetime
+    policy: ReclaimPolicy
+    storage_dir: Path | None
+    snapshots_dir: Path
+    archive_dir: Path
+    dry_run: bool = False
+    active_prefixes: Callable[[], frozenset[str]] = _active_index_prefixes
+
+
 def run_maintenance_cycle(
-    client: QdrantClient,
-    *,
-    now: datetime,
-    policy: ReclaimPolicy,
-    storage_dir: Path | None,
-    snapshots_dir: Path,
-    archive_dir: Path,
-    dry_run: bool = False,
-    active_prefixes: Callable[[], frozenset[str]] = _active_index_prefixes,
+    request: MaintenanceCycleRequest,
 ) -> MaintenanceResult:
     """Run one scheduled reclamation cycle end to end.
 
@@ -755,10 +761,10 @@ def run_maintenance_cycle(
     """
     from .storage_manifest import update_activity_stamps, update_orphan_stamps
 
-    surveys = gather_survey(client, storage_dir)
+    surveys = gather_survey(request.client, request.storage_dir)
     stamps = update_orphan_stamps(
         {s.prefix: s.status for s in surveys},
-        now_iso=now.isoformat(),
+        now_iso=request.now.isoformat(),
     )
     # The ephemeral tier's idle clock, advanced from what the stored data is
     # doing rather than from index-run stamps alone. Reading the manifest
@@ -766,35 +772,35 @@ def run_maintenance_cycle(
     # the blind spot this tier cannot afford.
     last_indexed = update_activity_stamps(
         {s.prefix: (s.status, s.points) for s in surveys},
-        now_iso=now.isoformat(),
+        now_iso=request.now.isoformat(),
     )
     decisions = evaluate_reclaim(
         surveys,
         stamps,
-        now=now,
-        policy=policy,
+        now=request.now,
+        policy=request.policy,
         last_indexed=last_indexed,
     )
     generations = _reclaim_generations_for_cycle(
-        client,
+        request.client,
         surveys=surveys,
-        now=now,
-        policy=policy,
-        dry_run=dry_run,
+        now=request.now,
+        policy=request.policy,
+        dry_run=request.dry_run,
     )
     applied: list[ReclaimDecision] = []
     archived: list[Path] = []
     reclaimed = 0
     for decision in decisions:
-        if decision.action not in ("reclaim_empty", "reclaim_data") or dry_run:
+        if decision.action not in ("reclaim_empty", "reclaim_data") or request.dry_run:
             applied.append(decision)
             continue
         outcome, artifacts = _apply_reclaim(
-            client,
+            request.client,
             decision,
-            snapshots_dir=snapshots_dir,
-            archive_dir=archive_dir,
-            active_prefixes=active_prefixes,
+            snapshots_dir=request.snapshots_dir,
+            archive_dir=request.archive_dir,
+            active_prefixes=request.active_prefixes,
         )
         archived.extend(artifacts)
         applied.append(outcome)
@@ -802,25 +808,25 @@ def run_maintenance_cycle(
             reclaimed += outcome.footprint_bytes
     swept = (
         []
-        if dry_run
+        if request.dry_run
         else sweep_archive(
-            archive_dir,
-            now=now,
-            retention_days=policy.archive_retention_days,
-            max_total_bytes=policy.archive_max_bytes,
+            request.archive_dir,
+            now=request.now,
+            retention_days=request.policy.archive_retention_days,
+            max_total_bytes=request.policy.archive_max_bytes,
         )
     )
     # Reconcile runs last so a convergence budget is never spent on a
     # namespace this same cycle just destroyed. It is non-destructive and
     # independent of the grace machinery above.
     reconcile: ReconcileBatch | None = None
-    if policy.reconcile:
+    if request.policy.reconcile:
         reconcile = reconcile_collections(
-            client,
-            storage_dir=storage_dir,
-            cap=policy.reconcile_max_per_cycle,
-            budget_s=policy.reconcile_budget_seconds,
-            dry_run=dry_run,
+            request.client,
+            storage_dir=request.storage_dir,
+            cap=request.policy.reconcile_max_per_cycle,
+            budget_s=request.policy.reconcile_budget_seconds,
+            dry_run=request.dry_run,
         )
     counts: dict[str, int] = {}
     for survey in surveys:
