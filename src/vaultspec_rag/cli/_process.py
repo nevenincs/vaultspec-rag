@@ -1065,7 +1065,7 @@ def _reap_owned_qdrant(
     deadline: float,
 ) -> None:
     """Revalidate and reap the same previously captured Qdrant incarnation."""
-    if identity is None:
+    if identity is None or not pid_alive(identity.qdrant_pid):
         return
     from pathlib import Path
 
@@ -1078,54 +1078,55 @@ def _reap_owned_qdrant(
     )
 
     qdrant_pid = identity.qdrant_pid
-    if not pid_alive(qdrant_pid):
-        return
     current = read_qdrant_identity()
     expected_storage = Path(str(get_config().qdrant_storage_dir)).expanduser().resolve()
     recorded_storage = Path(identity.storage_path).expanduser().resolve()
     remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return
-    if (
-        current != identity
-        or identity.qdrant_start_time <= 0.0
-        or recorded_storage != expected_storage
-        or identity.version != QDRANT_SERVER_VERSION
-    ):
-        return
-    if not pid_matches_start_time(
+    is_valid = (
+        remaining > 0
+        and (
+            current == identity
+            and identity.qdrant_start_time > 0.0
+            and recorded_storage == expected_storage
+            and identity.version == QDRANT_SERVER_VERSION
+        )
+    )
+    is_valid = is_valid and pid_matches_start_time(
         qdrant_pid,
         identity.qdrant_start_time,
         timeout=remaining,
-    ):
-        return
+    )
     remaining = deadline - time.monotonic()
-    if remaining <= 0 or not pid_image_matches(qdrant_pid, "qdrant", timeout=remaining):
-        return
+    is_valid = is_valid and remaining > 0 and pid_image_matches(
+        qdrant_pid, "qdrant", timeout=remaining
+    )
     remaining = deadline - time.monotonic()
-    if remaining <= 0 or not pid_listens_on_loopback_port(
+    is_valid = is_valid and remaining > 0 and pid_listens_on_loopback_port(
         qdrant_pid,
         identity.http_port,
         timeout=remaining,
-    ):
-        return
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return
-    probe = probe_qdrant_endpoint(
-        identity.http_port,
-        timeout=max(0.001, min(2.0, remaining / 2.0)),
     )
-    if not probe.ready or probe.version != QDRANT_SERVER_VERSION:
-        return
     remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return
-    if not reap_qdrant_orphan(
+    probe = (
+        probe_qdrant_endpoint(
+            identity.http_port,
+            timeout=max(0.001, min(2.0, remaining / 2.0)),
+        )
+        if is_valid and remaining > 0
+        else None
+    )
+    is_valid = (
+        is_valid
+        and probe is not None
+        and probe.ready
+        and probe.version == QDRANT_SERVER_VERSION
+    )
+    reaped = is_valid and reap_qdrant_orphan(
         qdrant_pid,
         wait_seconds=remaining,
         expected_start_time=identity.qdrant_start_time,
-    ):
+    )
+    if is_valid and not reaped:
         logger.warning(
             "validated service-owned qdrant pid %d survived forced service stop",
             qdrant_pid,
