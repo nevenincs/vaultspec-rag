@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
@@ -320,31 +320,35 @@ def _handle_vaultstore_locked_error(
     raise typer.Exit(code=1) from exc
 
 
+@dataclass(frozen=True, slots=True)
+class _InProcessSearchRequest:
+    target: pathlib.Path
+    query: str
+    search_type: PublicSourceType
+    max_results: int
+    language: str | None
+    path: str | None
+    node_type: str | None
+    function_name: str | None
+    class_name: str | None
+    include_paths: list[str] | None
+    exclude_paths: list[str] | None
+    dedup_locales: bool | None
+    prefer: str | None
+    doc_type: str | None
+    feature: str | None
+    date: str | None
+    tag: str | None
+    source_path: str | None
+    extractor_id: str | None
+    extractor_version: str | None
+    locator_kind: str | None
+    json_mode: bool
+    envelope: dict[str, object] | None = None
+
+
 def _try_in_process_search(
-    target: pathlib.Path,
-    query: str,
-    search_type: PublicSourceType,
-    max_results: int,
-    language: str | None,
-    path: str | None,
-    node_type: str | None,
-    function_name: str | None,
-    class_name: str | None,
-    include_paths: list[str] | None,
-    exclude_paths: list[str] | None,
-    dedup_locales: bool | None,
-    prefer: str | None,
-    doc_type: str | None,
-    feature: str | None,
-    date: str | None,
-    tag: str | None,
-    source_path: str | None,
-    extractor_id: str | None,
-    extractor_version: str | None,
-    locator_kind: str | None,
-    json_mode: bool,
-    *,
-    envelope: dict[str, object] | None = None,
+    request: _InProcessSearchRequest,
 ) -> list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome:
     """Run one search in this process.
 
@@ -354,6 +358,20 @@ def _try_in_process_search(
     a fresh count, so the local path pays no store round trip the service does
     not.
     """
+    (
+        target, query, search_type, max_results, language, path, node_type,
+        function_name, class_name, include_paths, exclude_paths, dedup_locales,
+        prefer, doc_type, feature, date, tag, source_path, extractor_id,
+        extractor_version, locator_kind, json_mode, envelope,
+    ) = (
+        request.target, request.query, request.search_type, request.max_results,
+        request.language, request.path, request.node_type, request.function_name,
+        request.class_name, request.include_paths, request.exclude_paths,
+        request.dedup_locales, request.prefer, request.doc_type, request.feature,
+        request.date, request.tag, request.source_path, request.extractor_id,
+        request.extractor_version, request.locator_kind, request.json_mode,
+        request.envelope,
+    )
     import vaultspec_rag
 
     from .._public_search import (
@@ -505,27 +523,7 @@ def _try_in_process_search(
         return []
 
 
-def _validate_and_handle_filters(
-    search_type: PublicSourceType,
-    language: str | None,
-    path: str | None,
-    node_type: str | None,
-    function_name: str | None,
-    class_name: str | None,
-    doc_type: str | None,
-    feature: str | None,
-    date: str | None,
-    tag: str | None,
-    include_paths: list[str] | None,
-    exclude_paths: list[str] | None,
-    dedup_locales: bool | None,
-    prefer: str | None,
-    source_path: str | None,
-    extractor_id: str | None,
-    extractor_version: str | None,
-    locator_kind: str | None,
-    json_mode: bool,
-) -> None:
+def _validate_and_handle_filters(request: _InProcessSearchRequest) -> None:
     from ..search import (
         InvalidFilterForSearchTypeError,
         InvalidPreferValueError,
@@ -534,28 +532,28 @@ def _validate_and_handle_filters(
     )
 
     try:
-        validate_search_filters(search_type, SearchFilterOptions(
-            language=language,
-            path=path,
-            node_type=node_type,
-            function_name=function_name,
-            class_name=class_name,
-            doc_type=doc_type,
-            feature=feature,
-            date=date,
-            tag=tag,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            dedup_locales=dedup_locales,
-            prefer=prefer,
-            source_path=source_path,
-            extractor_id=extractor_id,
-            extractor_version=extractor_version,
-            locator_kind=locator_kind,
+        validate_search_filters(request.search_type, SearchFilterOptions(
+            language=request.language,
+            path=request.path,
+            node_type=request.node_type,
+            function_name=request.function_name,
+            class_name=request.class_name,
+            doc_type=request.doc_type,
+            feature=request.feature,
+            date=request.date,
+            tag=request.tag,
+            include_paths=request.include_paths,
+            exclude_paths=request.exclude_paths,
+            dedup_locales=request.dedup_locales,
+            prefer=request.prefer,
+            source_path=request.source_path,
+            extractor_id=request.extractor_id,
+            extractor_version=request.extractor_version,
+            locator_kind=request.locator_kind,
         ))
     except InvalidPreferValueError as exc:
         msg = str(exc)
-        if json_mode:
+        if request.json_mode:
             _emit_json_error_and_exit(
                 "search",
                 "invalid_prefer_value",
@@ -567,7 +565,7 @@ def _validate_and_handle_filters(
         raise typer.Exit(code=2) from None
     except InvalidFilterForSearchTypeError as exc:
         msg = str(exc)
-        if json_mode:
+        if request.json_mode:
             _emit_json_error_and_exit(
                 "search",
                 "invalid_filter_for_search_type",
@@ -622,18 +620,27 @@ def _validate_search_type(search_type: str, *, json_mode: bool) -> PublicSourceT
         raise typer.Exit(code=2) from None
 
 
-def _render_in_process_results(
-    results: list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome,
-    query: str,
-    search_type: PublicSourceType,
-    json_mode: bool,
-    show_scores: bool,
-    target: pathlib.Path,
-    envelope: dict[str, object] | None = None,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _InProcessRenderRequest:
+    results: list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome
+    query: str
+    search_type: PublicSourceType
+    json_mode: bool
+    show_scores: bool
+    target: pathlib.Path
+    envelope: dict[str, object] | None = None
+
+
+def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     from dataclasses import asdict
 
-    breadth = envelope or {}
+    results = request.results
+    query = request.query
+    search_type = request.search_type
+    json_mode = request.json_mode
+    show_scores = request.show_scores
+    target = request.target
+    breadth = request.envelope or {}
 
     if search_type is PublicSourceType.COMBINED:
         outcome = cast("CombinedSearchOutcome", results)
@@ -1115,28 +1122,13 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     target = state.target
     prefer = _search_prefer_filter(prefer, json_mode=json_mode)
     search_type = _validate_search_type(search_type, json_mode=json_mode)
-
-    _validate_and_handle_filters(
-        search_type=search_type,
-        language=language,
-        path=path,
-        node_type=structure,
-        function_name=function_name,
-        class_name=class_name,
-        doc_type=doc_type,
-        feature=feature,
-        date=date,
-        tag=tag,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        dedup_locales=dedup_locales,
-        prefer=prefer,
-        source_path=source_path,
-        extractor_id=extractor_id,
-        extractor_version=extractor_version,
-        locator_kind=locator_kind,
-        json_mode=json_mode,
+    local_request = _InProcessSearchRequest(
+        target, query, search_type, max_results, language, path, structure,
+        function_name, class_name, include_paths, exclude_paths, dedup_locales,
+        prefer, doc_type, feature, date, tag, source_path, extractor_id,
+        extractor_version, locator_kind, json_mode,
     )
+    _validate_and_handle_filters(local_request)
 
     # Search is service-first: local execution requires an explicit mandate
     # (--allow-fallback or configured local-only mode). Discovering a service
@@ -1220,39 +1212,19 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         envelope: dict[str, object] = {}
         try:
             results = _try_in_process_search(
-                target,
-                query,
-                search_type,
-                max_results,
-                language,
-                path,
-                structure,
-                function_name,
-                class_name,
-                include_paths,
-                exclude_paths,
-                dedup_locales,
-                prefer,
-                doc_type,
-                feature,
-                date,
-                tag,
-                source_path,
-                extractor_id,
-                extractor_version,
-                locator_kind,
-                json_mode,
-                envelope=envelope,
+                replace(local_request, envelope=envelope)
             )
 
             _render_in_process_results(
-                results,
-                query,
-                search_type,
-                json_mode,
-                show_scores,
-                target,
-                envelope,
+                _InProcessRenderRequest(
+                    results,
+                    query,
+                    search_type,
+                    json_mode,
+                    show_scores,
+                    target,
+                    envelope,
+                )
             )
         finally:
             from ..registry import get_registry
