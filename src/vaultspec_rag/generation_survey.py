@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "GenerationReclaim",
+    "GenerationReclaimContext",
     "RootGenerations",
     "advance_generation_stamps",
     "decide_generation_reclaim",
@@ -120,14 +121,20 @@ class GenerationReclaim:
         return self.action == "reclaim"
 
 
+@dataclass(frozen=True, slots=True)
+class GenerationReclaimContext:
+    """The observed safety gates for one superseded generation."""
+
+    stamps: Mapping[str, str]
+    now: datetime
+    grace_hours: float
+    reader_present: bool
+    pointer_verifiable: bool
+
+
 def decide_generation_reclaim(
     collection: str,
-    *,
-    stamps: Mapping[str, str],
-    now: datetime,
-    grace_hours: float,
-    reader_present: bool,
-    pointer_verifiable: bool,
+    context: GenerationReclaimContext,
 ) -> GenerationReclaim:
     """Decide whether one superseded generation may be dropped now.
 
@@ -147,19 +154,19 @@ def decide_generation_reclaim(
     one between gather and drop, and a stale snapshot would step past every
     gate here while naming a live index.
     """
-    if not pointer_verifiable:
+    if not context.pointer_verifiable:
         return GenerationReclaim(collection, "held", "pointer_unverifiable")
-    if reader_present:
+    if context.reader_present:
         return GenerationReclaim(collection, "held", "reader_lease_held")
-    first_seen = stamps.get(collection)
+    first_seen = context.stamps.get(collection)
     if not first_seen:
         return GenerationReclaim(collection, "pending", "grace_started")
     seen_at = parse_iso_timestamp(first_seen, field="first_seen")
     if seen_at is None:
         return GenerationReclaim(collection, "pending", "grace_restarted")
-    age_hours = (now - seen_at).total_seconds() / 3600.0
-    if age_hours < grace_hours:
-        remaining = grace_hours - age_hours
+    age_hours = (context.now - seen_at).total_seconds() / 3600.0
+    if age_hours < context.grace_hours:
+        remaining = context.grace_hours - age_hours
         return GenerationReclaim(
             collection, "pending", f"grace_remaining_h={remaining:.1f}"
         )

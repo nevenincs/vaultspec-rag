@@ -2027,7 +2027,7 @@ def _evaluate_generation_reports(
 
     Returns ``(results, droppable, held, unreferenced)``.
     """
-    from .generation_survey import decide_generation_reclaim
+    from .generation_survey import GenerationReclaimContext, decide_generation_reclaim
 
     results: list[DeleteResult] = []
     droppable: list[str] = []
@@ -2037,8 +2037,7 @@ def _evaluate_generation_reports(
         has_reader = reader_present(report.root)
         for collection in report.unreferenced:
             unreferenced.append(collection)
-            decision = decide_generation_reclaim(
-                collection,
+            decision = decide_generation_reclaim(collection, GenerationReclaimContext(
                 stamps=stamps,
                 now=now,
                 grace_hours=grace_hours,
@@ -2047,7 +2046,7 @@ def _evaluate_generation_reports(
                 # could not read, so every collection reaching here came from a
                 # root whose served name was legible at decision time.
                 pointer_verifiable=True,
-            )
+            ))
             if decision.action == "held":
                 held.append(collection)
             if decision.droppable:
