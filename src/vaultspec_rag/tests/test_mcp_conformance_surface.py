@@ -11,18 +11,24 @@ research recorded).
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
+import time
 from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 import pytest
+import uvicorn
+from starlette.applications import Starlette
 
 from ..mcp._mcp import mcp
 from ..serviceclient._transport import _do_http_call
 from ._http_stubs import QuietHandler
+from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from mcp.types import Tool
 
@@ -73,6 +79,48 @@ _CLEAN_TOOLS = {"clean_documents", "clean_all"}
 
 def _tools() -> list[Tool]:
     return asyncio.run(mcp.list_tools())
+
+
+@pytest.fixture
+def service_routes() -> Iterator[int]:
+    """Serve the production route table over a live loopback Uvicorn server."""
+    from .. import server as server_module
+    from ..server._routes import ROUTES
+    from ._cli_helpers import _CONTRACT_SERVICE_TOKEN
+
+    port = free_loopback_port()
+    prior_token = server_module._SERVICE_TOKEN
+    server_module._SERVICE_TOKEN = _CONTRACT_SERVICE_TOKEN
+    server = uvicorn.Server(
+        uvicorn.Config(
+            Starlette(routes=ROUTES),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            access_log=False,
+            lifespan="off",
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        yield port
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        server_module._SERVICE_TOKEN = prior_token
+        assert not thread.is_alive()
+
+
+def _workspace(path: Path) -> Path:
+    """Create the smallest enrolled workspace accepted by the root resolver."""
+    (path / ".vault").mkdir(parents=True)
+    (path / ".vaultspec").mkdir()
+    return path
 
 
 class TestNarrowedSurface:
@@ -158,6 +206,48 @@ class TestNarrowedSurface:
                 props = set(tool.outputSchema.get("properties", {}))
                 assert {"results", "summary"} <= props, tool.name
                 assert {"results", "summary"} <= model_props
+
+
+class TestProjectRootWireContract:
+    """Optional MCP roots are concrete on the daemon wire, never a 400 input."""
+
+    def test_omitted_root_uses_env_and_explicit_root_wins(
+        self,
+        tmp_path: Path,
+        service_routes: int,
+    ) -> None:
+        """Exercise MCP discovery, transport, and the production code-file route.
+
+        The two workspaces contain different files at the same relative path.
+        The omitted call can return the environment workspace's content only if
+        the adapter resolves and serializes that root; the explicit call can
+        return the other content only if it takes precedence over the env var.
+        """
+        from ..config import EnvVar
+        from ..mcp._tools import get_code_file
+        from ._cli_helpers import _running_service_record
+
+        env_root = _workspace(tmp_path / "environment-project").resolve()
+        explicit_root = _workspace(tmp_path / "explicit-project").resolve()
+        relative_path = "root-proof.py"
+        (env_root / relative_path).write_text("environment root\n", encoding="utf-8")
+        (explicit_root / relative_path).write_text("explicit root\n", encoding="utf-8")
+        previous_root = os.environ.get(EnvVar.RAG_ROOT.value)
+        os.environ[EnvVar.RAG_ROOT.value] = str(env_root)
+        try:
+            with _running_service_record(tmp_path / "status", service_routes):
+                omitted = asyncio.run(get_code_file(relative_path))
+                explicit = asyncio.run(
+                    get_code_file(relative_path, project_root=str(explicit_root))
+                )
+        finally:
+            if previous_root is None:
+                os.environ.pop(EnvVar.RAG_ROOT.value, None)
+            else:
+                os.environ[EnvVar.RAG_ROOT.value] = previous_root
+
+        assert omitted == "environment root\n"
+        assert explicit == "explicit root\n"
 
 
 class _EmptyBody404Handler(QuietHandler):

@@ -9,11 +9,13 @@ runs.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
-from typer.core import TyperGroup
+from typer.core import TyperGroup, TyperOption
+from typer.main import TyperPath
 from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     WorkspaceError,
     WorkspaceLayout,
@@ -26,6 +28,9 @@ from .._named_root import env_named_root
 from ..config import EnvVar
 from ..logging_config import configure_logging
 from ._render import _plain
+
+if TYPE_CHECKING:
+    import click
 
 __all__ = [
     "JSON_ENVELOPE_OPTION_HELP",
@@ -136,6 +141,38 @@ SkipOption = Annotated[
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class _RootOptions:
+    target: Path | None
+    verbose: bool
+    debug: bool
+    data_dir: str | None
+    storage_dir: str | None
+    status_dir: str | None
+    log_file: str | None
+
+
+def version_callback(value: bool) -> None:
+    """Print the installed vaultspec-rag version and exit."""
+    if value:
+        import importlib.metadata
+
+        try:
+            version = importlib.metadata.version("vaultspec-rag")
+            _cli.console.print(f"vaultspec-rag v{version}")
+        except importlib.metadata.PackageNotFoundError:
+            _cli.console.print("vaultspec-rag (unknown version)")
+        raise typer.Exit()
+
+
+def _version_option_callback(
+    _ctx: click.Context, _param: click.Parameter, value: bool
+) -> bool:
+    """Adapt the public one-value callback to Click's option callback API."""
+    version_callback(value)
+    return value
+
+
 class _LiteralArgvGroup(TyperGroup):
     """Root command group that hands ``sys.argv`` to the parser verbatim.
 
@@ -157,6 +194,87 @@ class _LiteralArgvGroup(TyperGroup):
     def main(self, *args: Any, **kwargs: Any) -> Any:
         kwargs["windows_expand_args"] = False
         return super().main(*args, **kwargs)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.params.extend(
+            (
+                TyperOption(
+                    param_decls=["--target", "-t"],
+                    type=TyperPath(
+                        path_type=Path,
+                        dir_okay=True,
+                        file_okay=False,
+                        resolve_path=True,
+                    ),
+                    default=None,
+                    help="Directory containing .vault and .vaultspec",
+                ),
+                TyperOption(
+                    param_decls=["--verbose", "-v"],
+                    default=False,
+                    is_flag=True,
+                    help="Enable INFO logging",
+                ),
+                TyperOption(
+                    param_decls=["--debug", "-d"],
+                    default=False,
+                    is_flag=True,
+                    help="Enable DEBUG logging",
+                ),
+                TyperOption(
+                    param_decls=["--data-dir"],
+                    type=str,
+                    default=None,
+                    help="Index data directory (default: .vault/data/search-data)",
+                ),
+                TyperOption(
+                    param_decls=["--storage-dir"],
+                    type=str,
+                    default=None,
+                    help="Index data subdirectory relative to --data-dir",
+                ),
+                TyperOption(
+                    param_decls=["--status-dir"],
+                    type=str,
+                    default=None,
+                    help=(
+                        "Directory for service runtime files "
+                        "(default: ~/.vaultspec-rag)"
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--log-file"],
+                    type=str,
+                    default=None,
+                    help="Service log filename inside --status-dir",
+                ),
+                TyperOption(
+                    param_decls=["--version", "-V"],
+                    default=False,
+                    is_flag=True,
+                    help="Show version",
+                    callback=_version_option_callback,
+                    is_eager=True,
+                ),
+            )
+        )
+
+    def make_context(self, *args: Any, **kwargs: Any) -> typer.Context:
+        """Configure root state after Click has parsed the root flags."""
+        ctx = super().make_context(*args, **kwargs)
+        if ctx.parent is None:
+            _configure_root_context(ctx, bool(ctx._protected_args))
+        return ctx
+
+    def invoke(self, ctx: typer.Context) -> Any:
+        """Invoke the empty registration callback without root option kwargs."""
+        params = ctx.params
+        ctx.params = {}
+        try:
+            return super().invoke(ctx)
+        finally:
+            ctx.params = params
 
 
 app = typer.Typer(
@@ -305,99 +423,41 @@ class CLIState:
         self.target = layout.target_dir
 
 
-def version_callback(value: bool) -> None:
-    """Print the installed vaultspec-rag version and exit."""
-    if value:
-        import importlib.metadata
-
-        try:
-            version = importlib.metadata.version("vaultspec-rag")
-            _cli.console.print(f"vaultspec-rag v{version}")
-        except importlib.metadata.PackageNotFoundError:
-            _cli.console.print("vaultspec-rag (unknown version)")
-        raise typer.Exit()
-
-
 @app.callback(invoke_without_command=True)
-def main(
-    ctx: typer.Context,
-    target: Annotated[
-        Path | None,
-        typer.Option(
-            "--target",
-            "-t",
-            help="Directory containing .vault and .vaultspec",
-            dir_okay=True,
-            file_okay=False,
-            resolve_path=True,
-        ),
-    ] = None,
-    verbose: Annotated[
-        bool,
-        typer.Option("--verbose", "-v", help="Enable INFO logging"),
-    ] = False,
-    debug: Annotated[
-        bool,
-        typer.Option("--debug", "-d", help="Enable DEBUG logging"),
-    ] = False,
-    data_dir: Annotated[
-        str | None,
-        typer.Option(
-            "--data-dir",
-            help="Index data directory (default: .vault/data/search-data)",
-        ),
-    ] = None,
-    storage_dir: Annotated[
-        str | None,
-        typer.Option(
-            "--storage-dir",
-            help="Index data subdirectory relative to --data-dir",
-        ),
-    ] = None,
-    status_dir: Annotated[
-        str | None,
-        typer.Option(
-            "--status-dir",
-            help="Directory for service runtime files (default: ~/.vaultspec-rag)",
-        ),
-    ] = None,
-    log_file: Annotated[
-        str | None,
-        typer.Option(
-            "--log-file",
-            help="Service log filename inside --status-dir",
-        ),
-    ] = None,
-    _version: Annotated[
-        bool,
-        typer.Option(
-            "--version",
-            "-V",
-            help="Show version",
-            callback=version_callback,
-            is_eager=True,
-        ),
-    ] = False,
-) -> None:
+def main() -> None:
+    """Register root options through ``_LiteralArgvGroup``."""
+
+
+def _configure_root_context(ctx: typer.Context, has_subcommand: bool) -> None:
     """Configure logging, resolve workspace, and dispatch to a subcommand."""
-    configure_logging(debug=debug, level="INFO" if verbose else None)
+    params = ctx.params
+    options = _RootOptions(
+        target=cast("Path | None", params["target"]),
+        verbose=cast("bool", params["verbose"]),
+        debug=cast("bool", params["debug"]),
+        data_dir=cast("str | None", params["data_dir"]),
+        storage_dir=cast("str | None", params["storage_dir"]),
+        status_dir=cast("str | None", params["status_dir"]),
+        log_file=cast("str | None", params["log_file"]),
+    )
+    configure_logging(debug=options.debug, level="INFO" if options.verbose else None)
 
     # Wire CLI overrides into the config system.
     from ..config import get_config
 
     cli_overrides: dict[str, Any] = {}
-    if data_dir is not None:
-        cli_overrides["data_dir"] = data_dir
-    if storage_dir is not None:
-        cli_overrides["qdrant_dir"] = storage_dir
-    if status_dir is not None:
-        cli_overrides["status_dir"] = status_dir
-    if log_file is not None:
-        cli_overrides["log_file"] = log_file
+    if options.data_dir is not None:
+        cli_overrides["data_dir"] = options.data_dir
+    if options.storage_dir is not None:
+        cli_overrides["qdrant_dir"] = options.storage_dir
+    if options.status_dir is not None:
+        cli_overrides["status_dir"] = options.status_dir
+    if options.log_file is not None:
+        cli_overrides["log_file"] = options.log_file
     if cli_overrides:
         get_config(cli_overrides)
 
-    if ctx.invoked_subcommand is None:
+    if not has_subcommand:
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
 
@@ -410,9 +470,9 @@ def main(
     # is what makes that possible: the variable decides *which* project a
     # configuration is built for, so it cannot be resolved alongside the
     # settings that are read out of that project.
-    named_target = target if target is not None else env_named_root()
+    named_target = options.target if options.target is not None else env_named_root()
 
-    if ctx.invoked_subcommand in (
+    if ctx._protected_args[0] in (
         "server",
         "install",
         "uninstall",
@@ -433,7 +493,7 @@ def main(
         layout = resolve_workspace(target_override=named_target)
         ctx.obj = CLIState(layout)
     except WorkspaceError as e:
-        if target is None and named_target is not None:
+        if options.target is None and named_target is not None:
             # Attribute the failure to the variable: an operator who passed no
             # flag has no other way to learn that the environment chose the
             # directory being complained about.

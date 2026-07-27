@@ -284,8 +284,14 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
     """Measure production discovery, extraction, chunking, and queue weights."""
     from ...config import get_config
     from ...indexer import DocumentIndexer
-    from ...indexer._chunk_worker import chunk_document_and_hash_file
-    from ...indexer._streaming import iter_weighted_document_slices
+    from ...indexer._chunk_worker import (
+        DocumentChunkingOptions,
+        chunk_document_and_hash_file,
+    )
+    from ...indexer._streaming import (
+        DocumentSliceStreamRequest,
+        iter_weighted_document_slices,
+    )
 
     resolved = root.resolve()
     indexer = DocumentIndexer(
@@ -309,16 +315,20 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
             result = chunk_document_and_hash_file(
                 path,
                 resolved,
-                prep,
-                execution_policy,
+                DocumentChunkingOptions(
+                    prep=prep,
+                    execution_policy=execution_policy,
+                ),
             )
             extracted_bytes += sum(
                 len(chunk.payload.content.encode("utf-8")) for chunk in result.chunks
             )
             generated_chunks += len(result.chunks)
             for weighted in iter_weighted_document_slices(
-                result.chunks,
-                max_chunks=int(cfg.embedding_batch_size),
+                DocumentSliceStreamRequest(
+                    chunks=result.chunks,
+                    max_chunks=int(cfg.embedding_batch_size),
+                )
             ):
                 weighted_bytes += weighted.estimated_bytes
                 queue_bytes = max(queue_bytes, weighted.estimated_bytes)
@@ -344,6 +354,7 @@ def _validate_measurement(
     from ..._store_writes import probe_store_volume
     from ...config import get_config
     from ...index_profiles import (
+        AdmissionEnvironment,
         IndexDomain,
         SupportMeasurement,
         validate_profile_admission,
@@ -354,9 +365,11 @@ def _validate_measurement(
         cfg.index_support_profile,
         IndexDomain.DOCUMENT,
         SupportMeasurement(**asdict(measurement)),
-        backend="server" if cfg.qdrant_url else "local",
-        available_ram_bytes=int(psutil.virtual_memory().total),
-        store_volume=probe_store_volume(root),
+        AdmissionEnvironment(
+            backend="server" if cfg.qdrant_url else "local",
+            available_ram_bytes=int(psutil.virtual_memory().total),
+            store_volume=probe_store_volume(root),
+        ),
     )
 
 
@@ -368,7 +381,7 @@ def _run_interrupted_index(
 ) -> tuple[str, int]:
     """Interrupt after durable units exist and return their generation evidence."""
     from ...config import get_config
-    from ...indexer._run_ledger import index_run_ledger_path
+    from ...indexer._run_ledger_models import index_run_ledger_path
     from ...job_control import CancelRequested, RunControlToken
 
     if interrupt_after_units <= 0:
@@ -446,7 +459,7 @@ def _document_generation_units(ledger_path: Path) -> tuple[str, int]:
     """Read the latest benchmark generation identity and durable unit count."""
     from ... import store_schema
     from ...indexer._content_policy import ContentKind
-    from ...indexer._run_ledger import RunLedger
+    from ...indexer._run_ledger_runtime import RunLedger
 
     if not ledger_path.is_file():
         return "", 0
@@ -469,12 +482,14 @@ def run_document_acceptance(
     interrupt_after_units: int = 1,
 ) -> DocumentAcceptanceReport:
     """Run real extraction, CUDA embedding, Qdrant writes, interruption, and resume."""
-    from ... import EmbeddingModel, VaultStore, store_schema
+    from ... import EmbeddingModel, store_schema
     from ...config import get_config
     from ...indexer import DocumentIndexer
     from ...indexer._content_policy import ContentKind
-    from ...indexer._run_ledger import RunLedger, index_run_ledger_path
+    from ...indexer._run_ledger_models import index_run_ledger_path
+    from ...indexer._run_ledger_runtime import RunLedger
     from ...progress import NullProgressReporter
+    from ...store_runtime import VaultStore
 
     resolved = root.resolve()
     prepared = prepare_document_workload(resolved, spec)

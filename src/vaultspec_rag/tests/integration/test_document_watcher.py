@@ -23,17 +23,21 @@ from ...indexer._resolved_policy import (
     IndexPolicyResolutionOptions,
     resolve_index_policy,
 )
-from ...indexer._run_ledger import (
+from ...indexer._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
-    RunLedger,
     RunOperation,
     RunSignature,
     index_run_ledger_path,
 )
+from ...indexer._run_ledger_runtime import RunLedger
 from ...job_models import JobSource
 from ...service import ServiceRegistry
-from ...watcher_control import _record_watcher_changes, _WatcherConvergenceSlot
+from ...watcher_control import (
+    _record_watcher_changes,
+    _WatcherChangeRouting,
+    _WatcherConvergenceSlot,
+)
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
 
 if TYPE_CHECKING:
@@ -156,12 +160,14 @@ def test_deleted_path_uses_prior_ledger_owner_not_current_route(
 
         observed = _record_watcher_changes(
             [(Change.deleted, str(deleted))],
-            root_dir=tmp_path,
-            vault_dir=tmp_path / ".vault",
-            policy=_policy(tmp_path),
-            vault_slot=vault,
-            code_slot=code,
-            document_slot=document,
+            routing=_WatcherChangeRouting(
+                root_dir=tmp_path,
+                vault_dir=tmp_path / ".vault",
+                policy=_policy(tmp_path),
+                vault_slot=vault,
+                code_slot=code,
+                document_slot=document,
+            ),
         )
 
         assert observed == (False, True, False)
@@ -186,12 +192,14 @@ def test_deleted_path_keeps_prior_owner_across_an_incomplete_clean(
 
         observed = _record_watcher_changes(
             [(Change.deleted, str(deleted))],
-            root_dir=tmp_path,
-            vault_dir=tmp_path / ".vault",
-            policy=_policy(tmp_path),
-            vault_slot=vault,
-            code_slot=code,
-            document_slot=document,
+            routing=_WatcherChangeRouting(
+                root_dir=tmp_path,
+                vault_dir=tmp_path / ".vault",
+                policy=_policy(tmp_path),
+                vault_slot=vault,
+                code_slot=code,
+                document_slot=document,
+            ),
         )
 
         assert observed == (False, True, False)
@@ -214,12 +222,14 @@ def test_policy_control_event_schedules_code_and_document_independently(
 
         observed = _record_watcher_changes(
             [(Change.modified, str(control))],
-            root_dir=tmp_path,
-            vault_dir=tmp_path / ".vault",
-            policy=_policy(tmp_path),
-            vault_slot=vault,
-            code_slot=code,
-            document_slot=document,
+            routing=_WatcherChangeRouting(
+                root_dir=tmp_path,
+                vault_dir=tmp_path / ".vault",
+                policy=_policy(tmp_path),
+                vault_slot=vault,
+                code_slot=code,
+                document_slot=document,
+            ),
         )
 
         assert observed == (False, True, True)

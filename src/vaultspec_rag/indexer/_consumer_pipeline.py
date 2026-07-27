@@ -17,6 +17,7 @@ import hashlib
 import logging
 import queue
 import time
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -25,12 +26,16 @@ from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from ._chunk_producer import (
     CONTROL_POLL_SECONDS,
     WeightedCodeSegmentQueue,
+    _SegmentSubmission,
+    _SingleProductionOptions,
     drain_code_chunks,
 )
 from ._file_state import FileStateKind
 from ._run_checkpoint import CodeRunConfiguration
-from ._run_ledger import RunOperation
+from ._run_ledger_models import RunOperation
 from ._streaming import (
+    CodeFileSegmentRequest,
+    CodeSliceRequest,
     _release_cuda_cache,
     encode_and_upsert_code_slice,
     iter_code_file_segments,
@@ -47,7 +52,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudgetSnapshot, MemoryProbe
     from ..progress import ProgressReporter
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._chunk_producer import CodeChunkProducer
     from ._chunk_worker import FileChunkResult
     from ._generation_lifecycle import CodeGenerationLifecycle
@@ -120,6 +125,58 @@ class ChunkEmbedResult(NamedTuple):
     reuse_stats: ReuseStats | None
 
 
+@dataclass(frozen=True, slots=True)
+class CodePipelineBindings:
+    """Stable collaborators and run-accounting callbacks for one pipeline."""
+
+    root_dir: pathlib.Path
+    model: EmbeddingModel
+    store: VaultStore
+    producer: CodeChunkProducer
+    lifecycle: CodeGenerationLifecycle
+    gpu_lock: threading.Lock | None
+    begin_memory_budget: Callable[[], None]
+    sample_memory_budget: Callable[[str], MemoryBudgetSnapshot]
+    forward_peak_recording: Callable[[], contextlib.AbstractContextManager[None]]
+    fail_cuda_oom: Callable[[str, BaseException], None]
+    begin_support_measurement: Callable[[Iterable[pathlib.Path]], None]
+    measure_code_segments: Callable[
+        [Iterable[CodeFileSegment]], Iterator[CodeFileSegment]
+    ]
+    record_extracted_bytes: Callable[[int], None]
+    record_preprocess_result: Callable[[FileChunkResult], None]
+
+
+@dataclass(frozen=True, slots=True)
+class CodePipelineRun:
+    """Per-run inputs shared by the producer and GPU consumer."""
+
+    reporter: ProgressReporter
+    checkpoint: CodeRunCheckpoint
+    limits: CodePipelineLimits
+    content_epoch: str | None
+    code_build_target: str | None
+    ingest_wait: bool = True
+    run_control: RunControl = NO_RUN_CONTROL
+
+
+@dataclass(frozen=True, slots=True)
+class _WeightedConsumerRun:
+    """Mutable accounting and immutable controls shared by one consumer thread."""
+
+    segment_queue: WeightedCodeSegmentQueue
+    consumer_exceptions: list[BaseException]
+    limits: CodePipelineLimits
+    new_ids: set[str]
+    total: list[int]
+    metadata: dict[str, str]
+    checkpoint: CodeRunCheckpoint | None
+    ingest_wait: bool
+    run_control: RunControl
+    code_build_target: str | None
+    donor_reuse: DonorReuseContext | None
+
+
 class CodeConsumerPipeline:
     """Own one root's bounded code chunk-production and GPU-encode pipeline.
 
@@ -131,26 +188,7 @@ class CodeConsumerPipeline:
     state it does not own.
     """
 
-    def __init__(
-        self,
-        root_dir: pathlib.Path,
-        model: EmbeddingModel,
-        store: VaultStore,
-        producer: CodeChunkProducer,
-        lifecycle: CodeGenerationLifecycle,
-        *,
-        gpu_lock: threading.Lock | None,
-        begin_memory_budget: Callable[[], None],
-        sample_memory_budget: Callable[[str], MemoryBudgetSnapshot],
-        forward_peak_recording: Callable[[], contextlib.AbstractContextManager[None]],
-        fail_cuda_oom: Callable[[str, BaseException], None],
-        begin_support_measurement: Callable[[Iterable[pathlib.Path]], None],
-        measure_code_segments: Callable[
-            [Iterable[CodeFileSegment]], Iterator[CodeFileSegment]
-        ],
-        record_extracted_bytes: Callable[[int], None],
-        record_preprocess_result: Callable[[FileChunkResult], None],
-    ) -> None:
+    def __init__(self, bindings: CodePipelineBindings) -> None:
         """Bind the pipeline to one root's model, store, and run bookkeeping.
 
         Args:
@@ -171,20 +209,20 @@ class CodeConsumerPipeline:
             record_extracted_bytes: Add extractor output bytes to the run.
             record_preprocess_result: Score one worker result's disposition.
         """
-        self._root_dir = root_dir
-        self._model = model
-        self._store = store
-        self._producer = producer
-        self._lifecycle = lifecycle
-        self._gpu_lock = gpu_lock
-        self._begin_memory_budget = begin_memory_budget
-        self._sample_memory_budget = sample_memory_budget
-        self._forward_peak_recording = forward_peak_recording
-        self._fail_cuda_oom = fail_cuda_oom
-        self._begin_support_measurement = begin_support_measurement
-        self._measure_code_segments = measure_code_segments
-        self._record_extracted_bytes = record_extracted_bytes
-        self._record_preprocess_result = record_preprocess_result
+        self._root_dir = bindings.root_dir
+        self._model = bindings.model
+        self._store = bindings.store
+        self._producer = bindings.producer
+        self._lifecycle = bindings.lifecycle
+        self._gpu_lock = bindings.gpu_lock
+        self._begin_memory_budget = bindings.begin_memory_budget
+        self._sample_memory_budget = bindings.sample_memory_budget
+        self._forward_peak_recording = bindings.forward_peak_recording
+        self._fail_cuda_oom = bindings.fail_cuda_oom
+        self._begin_support_measurement = bindings.begin_support_measurement
+        self._measure_code_segments = bindings.measure_code_segments
+        self._record_extracted_bytes = bindings.record_extracted_bytes
+        self._record_preprocess_result = bindings.record_preprocess_result
 
     def resolve_limits(self) -> CodePipelineLimits:
         """Freeze code segment, queue, slice, and model limits."""
@@ -208,21 +246,18 @@ class CodeConsumerPipeline:
             flush_slices=max(1, int(config.index_cache_flush_slices)),
         )
 
-    def run(
-        self,
-        paths: list[pathlib.Path],
-        *,
-        reporter: ProgressReporter,
-        checkpoint: CodeRunCheckpoint,
-        limits: CodePipelineLimits,
-        content_epoch: str | None,
-        code_build_target: str | None,
-        ingest_wait: bool = True,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> ChunkEmbedResult:
+    def run(self, paths: list[pathlib.Path], run: CodePipelineRun) -> ChunkEmbedResult:
         """Overlap bounded CPU production with one weighted GPU consumer."""
         from ._donor_candidates import CollectionKind
         from ._reuse import resolve_donor_reuse
+
+        reporter = run.reporter
+        checkpoint = run.checkpoint
+        limits = run.limits
+        content_epoch = run.content_epoch
+        code_build_target = run.code_build_target
+        ingest_wait = run.ingest_wait
+        run_control = run.run_control
 
         # One donor resolution per run: the consumer thread reads the
         # resolved context per slice, outside the GPU lock.
@@ -263,30 +298,26 @@ class CodeConsumerPipeline:
                 max_bytes=limits.queue_max_bytes,
             )
             consumer_exceptions: list[BaseException] = []
-            consumer = self._spawn_weighted_consumer(
-                segment_queue,
-                consumer_exceptions,
-                limits,
-                new_ids,
-                total,
-                metadata,
-                checkpoint,
-                code_build_target=code_build_target,
-                donor_reuse=donor_reuse,
+            consumer_run = _WeightedConsumerRun(
+                segment_queue=segment_queue,
+                consumer_exceptions=consumer_exceptions,
+                limits=limits,
+                new_ids=new_ids,
+                total=total,
+                metadata=metadata,
+                checkpoint=checkpoint,
                 ingest_wait=ingest_wait,
                 run_control=run_control,
+                code_build_target=code_build_target,
+                donor_reuse=donor_reuse,
             )
+            consumer = self._spawn_weighted_consumer(consumer_run)
 
             def _publish_result(result: FileChunkResult) -> bool:
                 return self._enqueue_code_result(
                     result,
-                    limits=limits,
-                    segment_queue=segment_queue,
+                    consumer_run=consumer_run,
                     consumer=consumer,
-                    consumer_exceptions=consumer_exceptions,
-                    metadata=metadata,
-                    checkpoint=checkpoint,
-                    run_control=run_control,
                 )
 
             producer_exception: BaseException | None = None
@@ -304,13 +335,15 @@ class CodeConsumerPipeline:
                 if singles:
                     self._producer.produce_singles(
                         singles,
-                        publish_result=_publish_result,
-                        consumer_failed=lambda: (
-                            bool(consumer_exceptions) or not consumer.is_alive()
+                        _SingleProductionOptions(
+                            publish_result=_publish_result,
+                            consumer_failed=lambda: (
+                                bool(consumer_exceptions) or not consumer.is_alive()
+                            ),
+                            reporter=reporter,
+                            total=total,
+                            run_control=run_control,
                         ),
-                        reporter=reporter,
-                        total=total,
-                        run_control=run_control,
                     )
             except BaseException as exc:
                 producer_exception = exc
@@ -416,15 +449,13 @@ class CodeConsumerPipeline:
         self,
         result: FileChunkResult,
         *,
-        limits: CodePipelineLimits,
-        segment_queue: WeightedCodeSegmentQueue,
+        consumer_run: _WeightedConsumerRun,
         consumer: threading.Thread,
-        consumer_exceptions: list[BaseException],
-        metadata: dict[str, str],
-        checkpoint: CodeRunCheckpoint | None,
-        run_control: RunControl = NO_RUN_CONTROL,
     ) -> bool:
         """Drain one file result into bounded weighted segments."""
+        limits = consumer_run.limits
+        checkpoint = consumer_run.checkpoint
+        run_control = consumer_run.run_control
         run_control.checkpoint()
         self._record_preprocess_result(result)
         self.raise_code_result_failure(result, checkpoint)
@@ -432,15 +463,17 @@ class CodeConsumerPipeline:
             self._record_extracted_bytes(
                 sum(len(chunk.content.encode("utf-8")) for chunk in result.chunks)
             )
-        metadata[result.rel_path] = result.content_hash
+        consumer_run.metadata[result.rel_path] = result.content_hash
         segments = iter_code_file_segments(
-            drain_code_chunks(result.chunks),
-            max_chunks=limits.segment_max_chunks,
-            max_bytes=limits.segment_max_bytes,
-            dense_dimension=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            sparse_dimension=limits.sparse_dimension,
-            run_control=run_control,
+            CodeFileSegmentRequest(
+                chunks=drain_code_chunks(result.chunks),
+                max_chunks=limits.segment_max_chunks,
+                max_bytes=limits.segment_max_bytes,
+                dense_dimension=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                sparse_dimension=limits.sparse_dimension,
+                run_control=run_control,
+            )
         )
         measured_segments = self._measure_code_segments(segments)
         pending_segments = (
@@ -450,11 +483,13 @@ class CodeConsumerPipeline:
         )
         return self._producer.submit_segments(
             pending_segments,
-            segment_queue=segment_queue,
-            consumer=consumer,
-            consumer_exceptions=consumer_exceptions,
-            on_wait=self._sample_memory_budget,
-            run_control=run_control,
+            _SegmentSubmission(
+                segment_queue=consumer_run.segment_queue,
+                consumer=consumer,
+                consumer_exceptions=consumer_run.consumer_exceptions,
+                on_wait=self._sample_memory_budget,
+                run_control=run_control,
+            ),
         )
 
     def _iter_consumer_segments(
@@ -495,18 +530,13 @@ class CodeConsumerPipeline:
         weighted_slice: WeightedCodeSlice,
         *,
         slice_index: int,
-        limits: CodePipelineLimits,
-        new_ids: set[str],
-        total: list[int],
-        metadata: dict[str, str],
-        checkpoint: CodeRunCheckpoint | None,
+        consumer_run: _WeightedConsumerRun,
         probe: MemoryProbe,
-        ingest_wait: bool,
-        run_control: RunControl,
-        code_build_target: str | None,
-        donor_reuse: DonorReuseContext | None,
     ) -> None:
         """Encode, store, and account for one bounded weighted slice."""
+        limits = consumer_run.limits
+        checkpoint = consumer_run.checkpoint
+        run_control = consumer_run.run_control
         run_control.checkpoint()
         self._sample_memory_budget(f"slice-{slice_index}-before-encode")
         slice_chunks = sorted(
@@ -520,7 +550,7 @@ class CodeConsumerPipeline:
                 partial(
                     self._record_confirmed_slice,
                     weighted_slice.segments,
-                    metadata,
+                    consumer_run.metadata,
                 )
                 if checkpoint is not None
                 else None
@@ -544,28 +574,32 @@ class CodeConsumerPipeline:
             # the job's demand rather than a process-wide high-water.
             with self._forward_peak_recording():
                 encode_and_upsert_code_slice(
-                    slice_chunks,
-                    model=self._model,
-                    store=self._store,
-                    gpu_lock=self._gpu_lock,
-                    release_cache=(completed_slice_index % limits.flush_slices == 0),
-                    encode_batch_size=limits.encode_batch_size,
-                    write_policy=(
-                        checkpoint.run_policy.store_write_policy
-                        if checkpoint is not None
-                        else None
-                    ),
-                    ingest_wait=ingest_wait,
-                    collection=code_build_target,
-                    on_storage_confirmed=on_storage_confirmed,
-                    after_forward=_after_forward,
-                    on_cuda_oom=_on_cuda_oom,
-                    run_control=run_control,
-                    reuse=donor_reuse,
+                    CodeSliceRequest(
+                        chunks=slice_chunks,
+                        model=self._model,
+                        store=self._store,
+                        gpu_lock=self._gpu_lock,
+                        release_cache=(
+                            completed_slice_index % limits.flush_slices == 0
+                        ),
+                        encode_batch_size=limits.encode_batch_size,
+                        write_policy=(
+                            checkpoint.run_policy.store_write_policy
+                            if checkpoint is not None
+                            else None
+                        ),
+                        ingest_wait=consumer_run.ingest_wait,
+                        collection=consumer_run.code_build_target,
+                        on_storage_confirmed=on_storage_confirmed,
+                        after_forward=_after_forward,
+                        on_cuda_oom=_on_cuda_oom,
+                        run_control=run_control,
+                        reuse=consumer_run.donor_reuse,
+                    )
                 )
             run_control.checkpoint()
-            new_ids.update(chunk.id for chunk in slice_chunks)
-            total[0] += len(slice_chunks)
+            consumer_run.new_ids.update(chunk.id for chunk in slice_chunks)
+            consumer_run.total[0] += len(slice_chunks)
             probe.checkpoint(f"slice-{completed_slice_index}-after-store")
             self._sample_memory_budget(f"slice-{completed_slice_index}-after-store")
         finally:
@@ -590,17 +624,7 @@ class CodeConsumerPipeline:
 
     def _run_weighted_consumer(
         self,
-        segment_queue: WeightedCodeSegmentQueue,
-        consumer_exceptions: list[BaseException],
-        limits: CodePipelineLimits,
-        new_ids: set[str],
-        total: list[int],
-        metadata: dict[str, str],
-        checkpoint: CodeRunCheckpoint | None,
-        ingest_wait: bool,
-        run_control: RunControl,
-        code_build_target: str | None,
-        donor_reuse: DonorReuseContext | None,
+        consumer_run: _WeightedConsumerRun,
     ) -> None:
         """Run the sole weighted consumer and retain failures for the producer."""
         from ..memory_probe import MemoryProbe
@@ -611,50 +635,31 @@ class CodeConsumerPipeline:
             with probe:
                 self._sample_memory_budget("code consumer start")
                 segments = self._iter_consumer_segments(
-                    segment_queue,
-                    run_control=run_control,
+                    consumer_run.segment_queue,
+                    run_control=consumer_run.run_control,
                 )
                 for slice_index, weighted_slice in enumerate(
                     iter_weighted_code_slices(
                         segments,
-                        max_chunks=limits.slice_max_chunks,
-                        max_bytes=limits.slice_max_bytes,
-                        run_control=run_control,
+                        max_chunks=consumer_run.limits.slice_max_chunks,
+                        max_bytes=consumer_run.limits.slice_max_bytes,
+                        run_control=consumer_run.run_control,
                     )
                 ):
                     self._consume_weighted_slice(
                         weighted_slice,
                         slice_index=slice_index,
-                        limits=limits,
-                        new_ids=new_ids,
-                        total=total,
-                        metadata=metadata,
-                        checkpoint=checkpoint,
+                        consumer_run=consumer_run,
                         probe=probe,
-                        ingest_wait=ingest_wait,
-                        run_control=run_control,
-                        code_build_target=code_build_target,
-                        donor_reuse=donor_reuse,
                     )
         except BaseException as exc:
-            consumer_exceptions.append(exc)
+            consumer_run.consumer_exceptions.append(exc)
         finally:
-            self._finish_consumer_probe(probe, consumer_exceptions)
+            self._finish_consumer_probe(probe, consumer_run.consumer_exceptions)
 
     def _spawn_weighted_consumer(
         self,
-        segment_queue: WeightedCodeSegmentQueue,
-        consumer_exceptions: list[BaseException],
-        limits: CodePipelineLimits,
-        new_ids: set[str],
-        total: list[int],
-        metadata: dict[str, str],
-        checkpoint: CodeRunCheckpoint | None,
-        *,
-        code_build_target: str | None,
-        donor_reuse: DonorReuseContext | None,
-        ingest_wait: bool = True,
-        run_control: RunControl = NO_RUN_CONTROL,
+        consumer_run: _WeightedConsumerRun,
     ) -> threading.Thread:
         """Start the sole GPU consumer for weighted file segments."""
         import contextvars
@@ -665,20 +670,7 @@ class CodeConsumerPipeline:
         # a bare Thread would silently detach the attribution.
         consumer = threading.Thread(
             target=contextvars.copy_context().run,
-            args=(
-                self._run_weighted_consumer,
-                segment_queue,
-                consumer_exceptions,
-                limits,
-                new_ids,
-                total,
-                metadata,
-                checkpoint,
-                ingest_wait,
-                run_control,
-                code_build_target,
-                donor_reuse,
-            ),
+            args=(self._run_weighted_consumer, consumer_run),
             name="codebase-indexer-consumer",
         )
         consumer.start()

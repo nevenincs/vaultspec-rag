@@ -24,9 +24,10 @@ import threading
 import time
 import urllib.error
 from collections import deque
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 from .._loopback_http import (
     FAST_CONNECT_TIMEOUT_SECONDS,
@@ -60,6 +61,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 __all__ = [
     "QdrantSupervisor",
     "active_supervisor",
@@ -84,6 +86,27 @@ _QDRANT_DRAIN_CHUNK_BYTES = 64 * 1024
 _DRAIN_JOIN_TIMEOUT_SECONDS = 3.0
 _MANAGED_LOG_MAX_BYTES_DEFAULT = 10 * 1024 * 1024
 _MANAGED_LOG_BACKUP_COUNT_DEFAULT = 5
+
+
+class _SupervisorOptions(TypedDict, total=False):
+    http_port: int
+    storage_dir: Path
+    grpc_port: int | None
+    log_path: Path | None
+    log_max_bytes: int
+    log_backup_count: int
+    migrated_from: str
+
+
+@dataclass(frozen=True)
+class _SupervisorConfig:
+    http_port: int
+    storage_dir: Path
+    grpc_port: int | None = None
+    log_path: Path | None = None
+    log_max_bytes: int = _MANAGED_LOG_MAX_BYTES_DEFAULT
+    log_backup_count: int = _MANAGED_LOG_BACKUP_COUNT_DEFAULT
+    migrated_from: str = ""
 
 # Recovery bound: how many collections may be quarantined within one supervised
 # start before the start fails loudly instead of quarantining further. A
@@ -296,27 +319,25 @@ class QdrantSupervisor:
     def __init__(
         self,
         binary: Path,
-        *,
-        http_port: int,
-        storage_dir: Path,
-        grpc_port: int | None = None,
-        log_path: Path | None = None,
-        log_max_bytes: int = _MANAGED_LOG_MAX_BYTES_DEFAULT,
-        log_backup_count: int = _MANAGED_LOG_BACKUP_COUNT_DEFAULT,
-        migrated_from: str = "",
+        **options: Unpack[_SupervisorOptions],
     ) -> None:
+        config = _SupervisorConfig(**options)
         self.binary = binary
-        self.http_port = int(http_port)
-        self.grpc_port = int(grpc_port) if grpc_port is not None else self.http_port - 1
-        self.storage_dir = storage_dir
-        self.log_path = log_path
-        self.log_max_bytes = int(log_max_bytes)
-        self.log_backup_count = int(log_backup_count)
+        self.http_port = int(config.http_port)
+        self.grpc_port = (
+            int(config.grpc_port)
+            if config.grpc_port is not None
+            else self.http_port - 1
+        )
+        self.storage_dir = config.storage_dir
+        self.log_path = config.log_path
+        self.log_max_bytes = int(config.log_max_bytes)
+        self.log_backup_count = int(config.log_backup_count)
         # Held rather than re-derived: the successful open rewrites the stamp
         # to the running version, so after start() the store no longer records
         # that it was carried across a change. The pre-spawn judgement is the
         # only witness, and it is needed for as long as this daemon runs.
-        self.migrated_from = migrated_from
+        self.migrated_from = config.migrated_from
         if self.log_max_bytes <= 0:
             raise ValueError("log_max_bytes must be positive")
         if self.log_backup_count < 0:

@@ -10,6 +10,7 @@ from .._job_errors import JobError, JobErrorKind
 from .._store_writes import VolumeReading
 from .._units import human_bytes
 from ..index_profiles import (
+    AdmissionEnvironment,
     IndexDomain,
     StorageBackend,
     SupportMeasurement,
@@ -45,6 +46,15 @@ def _volume(
     )
 
 
+def _environment(
+    backend: StorageBackend,
+    ram: int,
+    store: VolumeReading,
+    workspace: VolumeReading | None = None,
+) -> AdmissionEnvironment:
+    return AdmissionEnvironment(backend, ram, store, workspace)
+
+
 def test_profiles_keep_code_and_document_limits_independent() -> None:
     profile = get_index_support_profile("managed-service")
     assert profile.limits_for(IndexDomain.CODE) is profile.code
@@ -68,9 +78,7 @@ def test_document_profile_admits_within_every_declared_bound() -> None:
             rss_bytes=limits.rss_bytes,
             cuda_bytes=limits.cuda_bytes,
         ),
-        backend="server",
-        available_ram_bytes=profile.minimum_ram_bytes,
-        store_volume=_volume(profile.minimum_free_disk_bytes),
+        _environment("server", profile.minimum_ram_bytes, _volume(profile.minimum_free_disk_bytes)),
     )
     assert admitted is profile
 
@@ -104,9 +112,7 @@ def test_profile_rejects_corpus_dimensions_structurally(
             profile.name,
             IndexDomain.CODE,
             measurement,
-            backend="server",
-            available_ram_bytes=profile.minimum_ram_bytes,
-            store_volume=_volume(profile.minimum_free_disk_bytes),
+            _environment("server", profile.minimum_ram_bytes, _volume(profile.minimum_free_disk_bytes)),
         )
     assert raised.value.error_kind is kind
 
@@ -130,9 +136,7 @@ def test_profile_rejects_backend_host_and_disk_before_corpus() -> None:
                 profile.name,
                 IndexDomain.DOCUMENT,
                 SupportMeasurement(1, 1),
-                backend=cast("StorageBackend", backend),  # ty: ignore[redundant-cast]
-                available_ram_bytes=ram,
-                store_volume=_volume(disk),
+                _environment(cast("StorageBackend", backend), ram, _volume(disk)),  # ty: ignore[redundant-cast]
             )
         assert raised.value.error_kind is kind
 
@@ -195,9 +199,7 @@ def test_disk_refusal_names_units_location_and_a_way_out() -> None:
             profile.name,
             IndexDomain.CODE,
             SupportMeasurement(1, 1),
-            backend="server",
-            available_ram_bytes=profile.minimum_ram_bytes,
-            store_volume=volume,
+            _environment("server", profile.minimum_ram_bytes, volume),
         )
 
     detail = raised.value.detail
@@ -227,9 +229,7 @@ def test_ordered_ladder_offers_the_lower_floor_as_a_way_out() -> None:
             profile.name,
             IndexDomain.CODE,
             SupportMeasurement(1, 1),
-            backend="server",
-            available_ram_bytes=profile.minimum_ram_bytes,
-            store_volume=_volume(profile.minimum_free_disk_bytes - 1),
+            _environment("server", profile.minimum_ram_bytes, _volume(profile.minimum_free_disk_bytes - 1)),
         )
 
     detail = raised.value.detail
@@ -255,9 +255,7 @@ def test_the_lowest_profile_offers_no_switch() -> None:
             profile.name,
             IndexDomain.CODE,
             SupportMeasurement(1, 1),
-            backend="local",
-            available_ram_bytes=profile.minimum_ram_bytes,
-            store_volume=_volume(profile.minimum_free_disk_bytes - 1),
+            _environment("local", profile.minimum_ram_bytes, _volume(profile.minimum_free_disk_bytes - 1)),
         )
 
     assert "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE" not in raised.value.detail
@@ -296,9 +294,7 @@ def test_unmeasurable_store_volume_skips_the_disk_check() -> None:
         profile.name,
         IndexDomain.CODE,
         SupportMeasurement(1, 1),
-        backend="server",
-        available_ram_bytes=profile.minimum_ram_bytes,
-        store_volume=_volume(None),
+        _environment("server", profile.minimum_ram_bytes, _volume(None)),
     )
 
     # An unknown free figure (a remote store this host cannot see) must not
@@ -322,10 +318,7 @@ def test_workspace_shortfall_is_reported_as_its_own_condition() -> None:
             profile.name,
             IndexDomain.CODE,
             SupportMeasurement(1, 1),
-            backend="server",
-            available_ram_bytes=profile.minimum_ram_bytes,
-            store_volume=store,
-            workspace_volume=workspace,
+            _environment("server", profile.minimum_ram_bytes, store, workspace),
         )
 
     detail = raised.value.detail
@@ -350,10 +343,7 @@ def test_workspace_check_defers_when_both_targets_share_a_volume() -> None:
         profile.name,
         IndexDomain.CODE,
         SupportMeasurement(1, 1),
-        backend="local",
-        available_ram_bytes=profile.minimum_ram_bytes,
-        store_volume=store,
-        workspace_volume=workspace,
+        _environment("local", profile.minimum_ram_bytes, store, workspace),
     )
 
     # Local mode puts both targets on one volume, where the store's larger
@@ -370,9 +360,7 @@ def test_ram_refusal_reports_units_not_raw_bytes() -> None:
             profile.name,
             IndexDomain.CODE,
             SupportMeasurement(1, 1),
-            backend="server",
-            available_ram_bytes=profile.minimum_ram_bytes - 1,
-            store_volume=_volume(profile.minimum_free_disk_bytes),
+            _environment("server", profile.minimum_ram_bytes - 1, _volume(profile.minimum_free_disk_bytes)),
         )
 
     detail = raised.value.detail

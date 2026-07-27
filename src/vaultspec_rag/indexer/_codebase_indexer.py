@@ -12,6 +12,7 @@ import hashlib
 import logging
 import pathlib
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
@@ -29,7 +30,11 @@ from ._code_meta import (
     EMBED_SCHEMA_KEY,
     MEMBERSHIP_EPOCH_KEY,
 )
-from ._consumer_pipeline import CodeConsumerPipeline, CodePipelineLimits
+from ._consumer_pipeline import (
+    CodeConsumerPipeline,
+    CodePipelineBindings,
+    CodePipelineRun,
+)
 from ._content_discovery import (
     DEFAULT_SCAN_SAMPLE_LIMIT as _DEFAULT_SCAN_SAMPLE_LIMIT,
 )
@@ -79,6 +84,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class _FullStaleReconciliation:
+    """Inputs used to remove stale code identities after a full rebuild."""
+
+    checkpoint: CodeRunCheckpoint
+    previous_metadata: dict[str, str]
+    metadata: dict[str, str]
+    existing_ids: set[str]
+    retained_ids: set[str]
+    reporter: ProgressReporter
+
+
 class CodebaseIndexer:
     """Orchestrates source code indexing into the vector store.
 
@@ -90,15 +107,20 @@ class CodebaseIndexer:
     hashing to skip unchanged files.
     """
 
+    @dataclass(frozen=True, slots=True)
+    class Options:
+        """Optional root-level collaborators and discovery policy."""
+
+        gpu_lock: threading.Lock | None = None
+        extra_excludes: list[str] | None = None
+        content_policy: RootContentPolicy | None = None
+
     def __init__(
         self,
         root_dir: pathlib.Path,
         model: EmbeddingModel,
         store: VaultStore,
-        *,
-        gpu_lock: threading.Lock | None = None,
-        extra_excludes: list[str] | None = None,
-        content_policy: RootContentPolicy | None = None,
+        options: Options | None = None,
     ) -> None:
         """Initialize the codebase indexer.
 
@@ -115,12 +137,13 @@ class CodebaseIndexer:
             content_policy: Caller-authored content ownership policy. The
                 versioned conventional source profile is used when omitted.
         """
+        options = options or self.Options()
         self.root_dir = root_dir
         self.model = model
         self.store = store
-        self._gpu_lock = gpu_lock
-        self._extra_excludes = extra_excludes or []
-        self._content_policy = content_policy or RootContentPolicy(
+        self._gpu_lock = options.gpu_lock
+        self._extra_excludes = options.extra_excludes or []
+        self._content_policy = options.content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
         )
         # Discovery is fully determined by the three inputs above and holds no
@@ -182,20 +205,22 @@ class CodebaseIndexer:
             read_meta_raw=self._read_meta_raw,
         )
         self._consumer_pipeline = CodeConsumerPipeline(
-            self.root_dir,
-            self.model,
-            self.store,
-            self._producer,
-            self._lifecycle,
-            gpu_lock=self._gpu_lock,
-            begin_memory_budget=self._support_budget.begin_memory_budget,
-            sample_memory_budget=self._support_budget.sample_memory_budget,
-            forward_peak_recording=self._support_budget.forward_peak_recording,
-            fail_cuda_oom=self._support_budget.fail_cuda_oom,
-            begin_support_measurement=self._support_budget.begin_support_measurement,
-            measure_code_segments=self._support_budget.measure_code_segments,
-            record_extracted_bytes=self._support_budget.record_extracted_bytes,
-            record_preprocess_result=self._record_preprocess_result,
+            CodePipelineBindings(
+                root_dir=self.root_dir,
+                model=self.model,
+                store=self.store,
+                producer=self._producer,
+                lifecycle=self._lifecycle,
+                gpu_lock=self._gpu_lock,
+                begin_memory_budget=self._support_budget.begin_memory_budget,
+                sample_memory_budget=self._support_budget.sample_memory_budget,
+                forward_peak_recording=self._support_budget.forward_peak_recording,
+                fail_cuda_oom=self._support_budget.fail_cuda_oom,
+                begin_support_measurement=self._support_budget.begin_support_measurement,
+                measure_code_segments=self._support_budget.measure_code_segments,
+                record_extracted_bytes=self._support_budget.record_extracted_bytes,
+                record_preprocess_result=self._record_preprocess_result,
+            )
         )
         self._incremental_commit = CodeIncrementalCommit(
             self.store,
@@ -540,12 +565,7 @@ class CodebaseIndexer:
     def _pipeline_chunk_and_embed(
         self,
         paths: list[pathlib.Path],
-        *,
-        reporter: ProgressReporter,
-        checkpoint: CodeRunCheckpoint,
-        limits: CodePipelineLimits,
-        ingest_wait: bool = True,
-        run_control: RunControl = NO_RUN_CONTROL,
+        run: CodePipelineRun,
     ) -> tuple[set[str], int, dict[str, str]]:
         """Chunk, embed, and upsert *paths* through the consumer pipeline.
 
@@ -557,13 +577,7 @@ class CodebaseIndexer:
         """
         result = self._consumer_pipeline.run(
             paths,
-            reporter=reporter,
-            checkpoint=checkpoint,
-            limits=limits,
-            content_epoch=self._content_epoch,
-            code_build_target=self._code_build_target,
-            ingest_wait=ingest_wait,
-            run_control=run_control,
+            run,
         )
         self._reuse_stats = result.reuse_stats
         return result.new_ids, result.total, result.metadata
@@ -629,23 +643,17 @@ class CodebaseIndexer:
 
     def _reconcile_full_stale_ids(
         self,
-        *,
-        checkpoint: CodeRunCheckpoint,
-        previous_metadata: dict[str, str],
-        metadata: dict[str, str],
-        existing_ids: set[str],
-        retained_ids: set[str],
-        reporter: ProgressReporter,
+        request: _FullStaleReconciliation,
     ) -> list[str]:
         """Delete stale full-run identities and checkpoint removed paths."""
-        stale_ids = sorted(existing_ids - retained_ids)
-        removed_paths = set(previous_metadata) - set(metadata)
+        stale_ids = sorted(request.existing_ids - request.retained_ids)
+        removed_paths = set(request.previous_metadata) - set(request.metadata)
         removed_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
-            checkpoint,
+            request.checkpoint,
             removed_paths,
             retained=True,
         )
-        reporter.phase_start("purge stale chunks", len(stale_ids))
+        request.reporter.phase_start("purge stale chunks", len(stale_ids))
         try:
             if not stale_ids:
                 return stale_ids
@@ -656,7 +664,7 @@ class CodebaseIndexer:
                     if not point_ids:
                         continue
                     self.store.delete_code_chunks(list(point_ids))
-                    checkpoint.record_confirmed_deletion(rel, point_ids)
+                    request.checkpoint.record_confirmed_deletion(rel, point_ids)
                     path_removed_ids.update(point_ids)
                 remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
                 if remaining_stale_ids:
@@ -668,10 +676,10 @@ class CodebaseIndexer:
                     len(stale_ids),
                 )
                 raise
-            reporter.advance(len(stale_ids))
+            request.reporter.advance(len(stale_ids))
             return stale_ids
         finally:
-            reporter.phase_end()
+            request.reporter.phase_end()
 
     def full_index(
         self,
@@ -719,6 +727,44 @@ class CodebaseIndexer:
         fields = preprocess_completion_fields(result)
         fields["preprocess_rules"] = self._prep_rule_count()
         return fields
+
+    def _prepare_full_collection(
+        self,
+        _checkpoint: CodeRunCheckpoint,
+        *,
+        effective_clean: bool,
+        clean_has_confirmed_units: bool,
+        reporter: ProgressReporter,
+    ) -> set[str]:
+        """Create or snapshot the build collection before streaming a full run."""
+        reporter.phase_start("prepare collection", 1)
+        try:
+            if effective_clean and not clean_has_confirmed_units:
+                # A fresh generation name cannot collide with a surviving
+                # directory, so this creates rather than recreates and the
+                # served collection is left alone.
+                self.store.ensure_code_table(self._code_build_target)
+                # The generation is new: the snapshot is empty by
+                # construction, and a full id scan of a large local
+                # collection costs minutes of GIL-holding CPU.
+                existing_ids_before: set[str] = set()
+            else:
+                self.store.ensure_code_table(self._code_build_target)
+                try:
+                    existing_ids_before = set(
+                        self.store.get_all_code_ids(self._code_build_target)
+                    )
+                except (OSError, RuntimeError):
+                    logger.warning(
+                        "Could not snapshot existing code-chunk IDs "
+                        "before rebuild; stale-chunk purge will be skipped",
+                        exc_info=True,
+                    )
+                    existing_ids_before = set()
+            reporter.advance(1)
+            return existing_ids_before
+        finally:
+            reporter.phase_end()
 
     def _full_index_locked(
         self,
@@ -822,34 +868,12 @@ class CodebaseIndexer:
             else contextlib.nullcontext()
         )
         with checkpoint.preserve_incomplete_generation(), publication_span:
-            reporter.phase_start("prepare collection", 1)
-            try:
-                if effective_clean and not clean_has_confirmed_units:
-                    # A fresh generation name cannot collide with a surviving
-                    # directory, so this creates rather than recreates and the
-                    # served collection is left alone.
-                    self.store.ensure_code_table(self._code_build_target)
-                    # The generation is new: the snapshot is empty by
-                    # construction, and a full id scan of a large local
-                    # collection costs minutes of GIL-holding CPU.
-                    existing_ids_before: set[str] = set()
-                else:
-                    self.store.ensure_code_table(self._code_build_target)
-                    try:
-                        existing_ids_before = set(
-                            self.store.get_all_code_ids(self._code_build_target)
-                        )
-                    except (OSError, RuntimeError):
-                        logger.warning(
-                            "Could not snapshot existing code-chunk IDs "
-                            "before rebuild; stale-chunk purge will be "
-                            "skipped",
-                            exc_info=True,
-                        )
-                        existing_ids_before = set()
-                reporter.advance(1)
-            finally:
-                reporter.phase_end()
+            existing_ids_before = self._prepare_full_collection(
+                checkpoint,
+                effective_clean=effective_clean,
+                clean_has_confirmed_units=clean_has_confirmed_units,
+                reporter=reporter,
+            )
             run_control.checkpoint()
 
             # Pipelined chunk -> embed: process-pool workers read, hash, and chunk
@@ -859,11 +883,15 @@ class CodebaseIndexer:
             # from the same read, so ``meta`` needs no separate hash pass.
             new_ids, total_chunks, meta = self._pipeline_chunk_and_embed(
                 paths,
-                reporter=reporter,
-                checkpoint=checkpoint,
-                limits=limits,
-                ingest_wait=False,
-                run_control=run_control,
+                CodePipelineRun(
+                    reporter=reporter,
+                    checkpoint=checkpoint,
+                    limits=limits,
+                    content_epoch=self._content_epoch,
+                    code_build_target=self._code_build_target,
+                    ingest_wait=False,
+                    run_control=run_control,
+                ),
             )
             new_ids.update(
                 existing_ids_before if preserved_ids is None else preserved_ids
@@ -883,12 +911,14 @@ class CodebaseIndexer:
             )
             run_control.checkpoint()
             stale_ids = self._reconcile_full_stale_ids(
-                checkpoint=checkpoint,
-                previous_metadata=previous_metadata,
-                metadata=meta,
-                existing_ids=existing_ids_before,
-                retained_ids=new_ids,
-                reporter=reporter,
+                _FullStaleReconciliation(
+                    checkpoint=checkpoint,
+                    previous_metadata=previous_metadata,
+                    metadata=meta,
+                    existing_ids=existing_ids_before,
+                    retained_ids=new_ids,
+                    reporter=reporter,
+                )
             )
 
             reporter.phase_start("write metadata", 1)
@@ -1012,6 +1042,7 @@ class CodebaseIndexer:
     ) -> IndexResult:
         """Locked implementation of cooperative incremental indexing."""
         run_control.checkpoint()
+        full_rebuild_clean: bool | None = None
         if self._lifecycle.published_evidence_lost():
             # The predicate has already logged which branch fired and, for a
             # shortfall, both counts. Naming only the absent-collection case
@@ -1021,22 +1052,19 @@ class CodebaseIndexer:
                 "running a full failure-safe reconciliation instead of "
                 "trusting the carried evidence"
             )
+            full_rebuild_clean = False
+        else:
+            needs_embed_rebuild = self._needs_embed_rebuild()
+            run_control.checkpoint()
+            if needs_embed_rebuild:
+                logger.info(
+                    "Codebase embedding input format changed; rebuilding the code "
+                    "index into a new generation",
+                )
+                full_rebuild_clean = True
+        if full_rebuild_clean is not None:
             return self._full_index_locked(
-                clean=False,
-                policy=policy,
-                discovered_paths=discovered_paths,
-                reporter=reporter,
-                run_control=run_control,
-            )
-        needs_embed_rebuild = self._needs_embed_rebuild()
-        run_control.checkpoint()
-        if needs_embed_rebuild:
-            logger.info(
-                "Codebase embedding input format changed; rebuilding the code index "
-                "into a new generation",
-            )
-            return self._full_index_locked(
-                clean=True,
+                clean=full_rebuild_clean,
                 policy=policy,
                 discovered_paths=discovered_paths,
                 reporter=reporter,
@@ -1130,52 +1158,50 @@ class CodebaseIndexer:
             reporter=reporter,
             started_at=start,
         )
-        if resumed_publication is not None:
-            return resumed_publication
-        publication = self._incremental_commit.supersede_and_publish(
-            IncrementalPublicationRequest(
-                checkpoint=checkpoint,
-                hashes=current_hashes,
-                to_index=to_index,
-                paths_to_index=paths_to_index,
-                attempted_paths=attempted_paths,
-                reporter=reporter,
-                limits=limits,
-                run_control=run_control,
+        if resumed_publication is None:
+            publication = self._incremental_commit.supersede_and_publish(
+                IncrementalPublicationRequest(
+                    checkpoint=checkpoint,
+                    hashes=current_hashes,
+                    to_index=to_index,
+                    paths_to_index=paths_to_index,
+                    attempted_paths=attempted_paths,
+                    reporter=reporter,
+                    limits=limits,
+                    run_control=run_control,
+                )
             )
-        )
-        current_hashes.update(publication.published_hashes)
-        self._incremental_commit.commit_replacement(
-            IncrementalReplacementRequest(
-                policy=policy,
-                existing_ids=publication.existing_ids,
-                published_ids=publication.published_ids,
-                prior_ids_by_path=publication.prior_ids_by_path,
-                deleted_paths=deleted_files,
-                checkpoint=checkpoint,
-                metadata=current_hashes,
-                files_count=len(attempted_paths),
-                protect_replacement=bool(modified_files or deleted_files),
-                reporter=reporter,
-                run_control=run_control,
+            current_hashes.update(publication.published_hashes)
+            self._incremental_commit.commit_replacement(
+                IncrementalReplacementRequest(
+                    policy=policy,
+                    existing_ids=publication.existing_ids,
+                    published_ids=publication.published_ids,
+                    prior_ids_by_path=publication.prior_ids_by_path,
+                    deleted_paths=deleted_files,
+                    checkpoint=checkpoint,
+                    metadata=current_hashes,
+                    files_count=len(attempted_paths),
+                    protect_replacement=bool(modified_files or deleted_files),
+                    reporter=reporter,
+                    run_control=run_control,
+                )
             )
-        )
-        total = self.store.count_code()
-        duration_ms = int((time.time() - start) * 1000)
-        return IndexResult(
-            total=total,
-            added=len(new_files),
-            updated=len(modified_files),
-            removed=len(deleted_files),
-            duration_ms=duration_ms,
-            device=self.model.device,
-            files=len(to_index),
-            preprocess_ok=self._prep_ok,
-            preprocess_skipped=len(self._prep_skips),
-            preprocess_failures=list(self._prep_skips),
-            reuse=self._reuse_snapshot(),
-            drift=self._lifecycle.drift_snapshot(),
-        )
+            result = IndexResult(
+                total=self.store.count_code(),
+                added=len(new_files),
+                updated=len(modified_files),
+                removed=len(deleted_files),
+                duration_ms=int((time.time() - start) * 1000),
+                device=self.model.device,
+                files=len(to_index),
+                preprocess_ok=self._prep_ok,
+                preprocess_skipped=len(self._prep_skips),
+                preprocess_failures=list(self._prep_skips),
+                reuse=self._reuse_snapshot(),
+                drift=self._lifecycle.drift_snapshot(),
+            )
+        return resumed_publication if resumed_publication is not None else result
 
     def _scan_changed_paths(
         self,

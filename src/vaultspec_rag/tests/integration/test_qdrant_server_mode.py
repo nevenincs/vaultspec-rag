@@ -110,8 +110,9 @@ class TestServerModeRoundTrip:
         tmp_path: Path,
     ) -> None:
         """Full vault + code index and hybrid search against the server."""
-        from ... import CodebaseIndexer, VaultIndexer, VaultStore
+        from ... import CodebaseIndexer, VaultIndexer
         from ...search import VaultSearcher
+        from ...store_runtime import VaultStore
 
         build_synthetic_vault(tmp_path, n_docs=8, seed=42)
         (tmp_path / "src").mkdir(exist_ok=True)
@@ -169,7 +170,8 @@ class TestServerModeRoundTrip:
         incremental reindex over the deleted path, and confirm the chunks are gone
         while the surviving file is untouched.
         """
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
+        from ...store_runtime import VaultStore
 
         build_synthetic_vault(tmp_path, n_docs=3, seed=11)
         pkg = tmp_path / "pkg"
@@ -212,7 +214,7 @@ class TestServerModeRoundTrip:
         tmp_path: Path,
     ) -> None:
         """Distinct roots own distinct prefixed collections server-side."""
-        from ... import VaultStore
+        from ...store_runtime import VaultStore
 
         root_a = tmp_path / "root-a"
         root_b = tmp_path / "root-b"
@@ -253,8 +255,9 @@ class TestServerModeDeletionEviction:
     ) -> None:
         """Deleting a code file then scoped-reindexing drops its chunks and
         removes it from hybrid search, in server mode."""
-        from ... import CodebaseIndexer, VaultStore
+        from ... import CodebaseIndexer
         from ...search import VaultSearcher
+        from ...store_runtime import VaultStore
 
         src = tmp_path / "src"
         src.mkdir(parents=True)
@@ -331,8 +334,9 @@ class TestServerModeDeletionEviction:
     ) -> None:
         """Deleting a vault document then scoped-reindexing evicts it from
         the vault collection, in server mode."""
-        from ... import VaultIndexer, VaultStore
+        from ... import VaultIndexer
         from ...config import get_config
+        from ...store_runtime import VaultStore
 
         build_synthetic_vault(tmp_path, n_docs=6, seed=7)
         store = VaultStore(tmp_path)
@@ -372,9 +376,10 @@ class TestServerModeWatcherEviction:
         embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
-        from ... import CodebaseIndexer, VaultIndexer, VaultStore
+        from ... import CodebaseIndexer, VaultIndexer
         from ...graph_cache import GraphCache
-        from ...watcher import watch_and_reindex
+        from ...store_runtime import VaultStore
+        from ...watcher_control import WatcherConfiguration, watch_and_reindex
 
         vault_dir = tmp_path / ".vault"
         adr_dir = vault_dir / "adr"
@@ -417,14 +422,16 @@ class TestServerModeWatcherEviction:
         stop_event = asyncio.Event()
         watcher_task = asyncio.create_task(
             watch_and_reindex(
-                root_dir=tmp_path,
-                vault_dir=vault_dir,
-                vault_indexer=vault_indexer,
-                code_indexer=code_indexer,
-                stop_event=stop_event,
-                graph_cache=graph_cache,
-                debounce=50,
-                cooldown=0.1,
+                WatcherConfiguration(
+                    root_dir=tmp_path,
+                    vault_dir=vault_dir,
+                    vault_indexer=vault_indexer,
+                    code_indexer=code_indexer,
+                    stop_event=stop_event,
+                    graph_cache=graph_cache,
+                    debounce=50,
+                    cooldown=0.1,
+                )
             )
         )
         try:
@@ -467,10 +474,11 @@ class TestServerModeWatcherEviction:
     ) -> None:
         """The user's exact scenario: a deleted code file must drop out of
         code search after the watcher's scoped reindex, in server mode."""
-        from ... import CodebaseIndexer, VaultIndexer, VaultStore
+        from ... import CodebaseIndexer, VaultIndexer
         from ...graph_cache import GraphCache
         from ...search import VaultSearcher
-        from ...watcher import watch_and_reindex
+        from ...store_runtime import VaultStore
+        from ...watcher_control import WatcherConfiguration, watch_and_reindex
 
         vault_dir = tmp_path / ".vault"
         vault_dir.mkdir(parents=True)
@@ -512,14 +520,16 @@ class TestServerModeWatcherEviction:
         stop_event = asyncio.Event()
         watcher_task = asyncio.create_task(
             watch_and_reindex(
-                root_dir=tmp_path,
-                vault_dir=vault_dir,
-                vault_indexer=vault_indexer,
-                code_indexer=code_indexer,
-                stop_event=stop_event,
-                graph_cache=graph_cache,
-                debounce=50,
-                cooldown=0.1,
+                WatcherConfiguration(
+                    root_dir=tmp_path,
+                    vault_dir=vault_dir,
+                    vault_indexer=vault_indexer,
+                    code_indexer=code_indexer,
+                    stop_event=stop_event,
+                    graph_cache=graph_cache,
+                    debounce=50,
+                    cooldown=0.1,
+                )
             )
         )
         try:
@@ -648,8 +658,8 @@ class TestServerFirstStartupSelection:
         never publishes ``QDRANT_URL``, so a store opens in on-disk mode
         with point-operation locks engaged - the backend-aware local path.
         """
-        from ... import VaultStore
         from ...config import get_config
+        from ...store_runtime import VaultStore
 
         prev_local = os.environ.get(EnvVar.LOCAL_ONLY.value)
         prev_url = os.environ.get(EnvVar.QDRANT_URL.value)

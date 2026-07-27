@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from .. import store_schema
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
@@ -13,16 +13,16 @@ from ._document_meta import (
     publish_document_meta_from_file_states,
 )
 from ._file_state import FileStateKind
-from ._run_ledger import (
+from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
-    RunLedger,
     RunLedgerCompatibilityError,
     RunOperation,
     RunSignature,
     RunTerminalState,
     index_run_ledger_path,
 )
+from ._run_ledger_runtime import RunLedger
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
@@ -30,7 +30,11 @@ if TYPE_CHECKING:
 
     from ._resolved_policy import ResolvedIndexPolicy
 
-__all__ = ["DocumentRunCheckpoint", "DocumentRunConfiguration"]
+__all__ = [
+    "DocumentRunCheckpoint",
+    "DocumentRunConfiguration",
+    "DocumentRunOpenRequest",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +65,21 @@ class DocumentRunConfiguration:
             raise TypeError("sparse_enabled must be a bool")
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentRunOpenRequest:
+    """All compatibility inputs for opening one document generation."""
+
+    data_root: Path
+    root_dir: Path
+    policy: ResolvedIndexPolicy
+    run_policy: RunPolicy
+    operation: RunOperation
+    clean: bool
+    model_identity: str
+    dense_dimensions: int
+    configuration: DocumentRunConfiguration
+
+
 @dataclass(slots=True)
 class DocumentRunCheckpoint(RunCheckpointBase):
     """One document generation's durable storage and publication authority."""
@@ -71,46 +90,43 @@ class DocumentRunCheckpoint(RunCheckpointBase):
     @classmethod
     def open(
         cls,
-        *,
-        data_root: Path,
-        root_dir: Path,
-        policy: ResolvedIndexPolicy,
-        run_policy: RunPolicy,
-        operation: RunOperation,
-        clean: bool,
-        model_identity: str,
-        dense_dimensions: int,
-        configuration: DocumentRunConfiguration,
+        request: DocumentRunOpenRequest | None = None,
+        **legacy: object,
     ) -> DocumentRunCheckpoint:
         """Open or resume the compatible document generation for one attempt."""
-        fingerprints = policy.fingerprints_for(ContentKind.DOCUMENT)
+        if request is None:
+            request = DocumentRunOpenRequest(**cast("dict[str, Any]", legacy))
+        elif legacy:
+            raise TypeError("use either a DocumentRunOpenRequest or named inputs")
+        fingerprints = request.policy.fingerprints_for(ContentKind.DOCUMENT)
         signature = RunSignature(
-            root_identity=str(root_dir.resolve()),
+            root_identity=str(request.root_dir.resolve()),
             collection_identity=store_schema.DOCUMENT_COLLECTION,
             source_type=ContentKind.DOCUMENT,
-            operation=operation,
-            clean=clean,
-            model_identity=model_identity,
-            dense_dimensions=dense_dimensions,
+            operation=request.operation,
+            clean=request.clean,
+            model_identity=request.model_identity,
+            dense_dimensions=request.dense_dimensions,
             embedding_schema=DOCUMENT_EMBED_SCHEMA,
             payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
             content_epoch=fingerprints.content,
             membership_epoch=fingerprints.membership,
-            preprocessing_identity=policy.fingerprints.execution,
-            configuration_fingerprint=configuration_fingerprint(configuration),
-            policy_fingerprint=policy.fingerprints.snapshot,
+            preprocessing_identity=request.policy.fingerprints.execution,
+            configuration_fingerprint=configuration_fingerprint(request.configuration),
+            policy_fingerprint=request.policy.fingerprints.snapshot,
         )
-        ledger = RunLedger(index_run_ledger_path(data_root))
+        ledger = RunLedger(index_run_ledger_path(request.data_root))
         generation = ledger.start_generation(signature)
         if (
-            operation in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
+            request.operation
+            in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
             and generation.parent_generation_id is None
         ):
             raise RunLedgerCompatibilityError(
                 "incremental document indexing requires a compatible published "
                 "manifest; run a full reconciliation"
             )
-        return cls(ledger, generation, policy, run_policy)
+        return cls(ledger, generation, request.policy, request.run_policy)
 
     def unit_for(
         self,

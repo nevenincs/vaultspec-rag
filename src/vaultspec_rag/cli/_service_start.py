@@ -14,9 +14,12 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-import typer
+from typer.core import TyperCommand, TyperOption
+
+if TYPE_CHECKING:
+    import typer
 
 from .._operator_commands import (
     server_jobs_command,
@@ -38,8 +41,6 @@ from ..serviceclient._discovery import (
 from ..serviceclient._transport import _try_http_health
 from ._app import (
     JSON_ENVELOPE_OPTION_HELP,
-    RepeatUpdateDelayOption,
-    UpdateDelayOption,
     _global_target,
     server_app,
 )
@@ -89,6 +90,167 @@ __all__ = [
 ]
 
 _START_COMMAND = "service.start"
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedServiceRequest:
+    """The daemon-launch options resolved by the start command."""
+
+    port: int
+    log_path: Path
+    updates: bool | None
+    update_delay_ms: int | None
+    repeat_update_delay_s: float | None
+    qdrant: bool | None
+    local_only: bool
+    preprocess_forward: Literal["off"] | None
+    json_mode: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceReadinessRequest:
+    """The spawned daemon and context needed to await its readiness."""
+
+    pid: int
+    port: int
+    log_path: Path
+    json_mode: bool
+    started_at: float
+    env_warnings: tuple[str, ...] = ()
+    progress: StartupStatusReporter | None = None
+    deadline: float = 300.0
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceStartOptions:
+    """The command-line options accepted by ``server start``."""
+
+    port: int
+    updates: bool | None
+    update_delay_ms: int | None
+    repeat_update_delay_s: float | None
+    local_only: bool
+    qdrant: bool | None
+    qdrant_auto_provision: bool
+    no_preprocess: bool
+    json_mode: bool
+
+
+class _ServiceStartCommand(TyperCommand):
+    """Expose the start options without expanding the callback signature."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.params.extend(
+            (
+                TyperOption(
+                    param_decls=["--port"],
+                    type=int,
+                    default=8766,
+                    envvar=EnvVar.PORT,
+                    help="Port for the background search service.",
+                ),
+                TyperOption(
+                    param_decls=["--updates/--no-updates"],
+                    default=None,
+                    is_flag=True,
+                    help=(
+                        "Enable or disable automatic index updates when files change "
+                        "(default: enabled)."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--update-delay-ms"],
+                    type=int,
+                    default=None,
+                    help=(
+                        "Delay before indexing a burst of file changes, "
+                        "in milliseconds."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--repeat-update-delay-s"],
+                    type=float,
+                    default=None,
+                    help=(
+                        "Minimum wait before automatically updating a project again, "
+                        "in seconds."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--local-only"],
+                    default=False,
+                    is_flag=True,
+                    help=(
+                        "Use the on-disk local store instead of the default managed "
+                        "Qdrant server. This is the first-class opt-out for CI, "
+                        "offline, and small-project hosts."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--qdrant/--no-qdrant"],
+                    default=None,
+                    is_flag=True,
+                    help=(
+                        "Explicitly opt in to (or out of) the managed Qdrant server. "
+                        "Server mode is already the default, so --qdrant is redundant; "
+                        "use --local-only to select the on-disk store. Unset leaves "
+                        "the current Qdrant setting unchanged."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--qdrant-auto-provision"],
+                    default=False,
+                    is_flag=True,
+                    help=(
+                        "Download the managed Qdrant server if it is missing. "
+                        "Without this flag, start prints the install command."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--no-preprocess"],
+                    default=False,
+                    is_flag=True,
+                    help=(
+                        "Kill switch: the service loads no document-preprocessing "
+                        "rules "
+                        "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off)."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--json"],
+                    default=False,
+                    is_flag=True,
+                    help=(
+                        f"{JSON_ENVELOPE_OPTION_HELP} "
+                        "An already-running owned service is the success "
+                        "`already_running` (exit 0), so a supervising broker can "
+                        "attach "
+                        "rather than treating it as a fault."
+                    ),
+                ),
+            )
+        )
+
+    def invoke(self, ctx: typer.Context) -> Any:
+        """Dispatch parsed Click parameters as the typed start options."""
+        params = ctx.params
+        return _run_service_start(
+            ctx,
+            _ServiceStartOptions(
+                port=cast("int", params["port"]),
+                updates=cast("bool | None", params["updates"]),
+                update_delay_ms=cast("int | None", params["update_delay_ms"]),
+                repeat_update_delay_s=cast(
+                    "float | None", params["repeat_update_delay_s"]
+                ),
+                local_only=cast("bool", params["local_only"]),
+                qdrant=cast("bool | None", params["qdrant"]),
+                qdrant_auto_provision=cast("bool", params["qdrant_auto_provision"]),
+                no_preprocess=cast("bool", params["no_preprocess"]),
+                json_mode=cast("bool", params["json"]),
+            ),
+        )
 
 
 def _ensure_qdrant_binary(
@@ -547,33 +709,22 @@ def _attach_warming_service(json_mode: bool) -> bool:
     return True
 
 
-def _spawn_prepared_service(
-    port: int,
-    log_path: Path,
-    *,
-    updates: bool | None,
-    update_delay_ms: int | None,
-    repeat_update_delay_s: float | None,
-    qdrant: bool | None,
-    local_only: bool,
-    preprocess_forward: Literal["off"] | None,
-    json_mode: bool,
-) -> int:
+def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
     """Spawn one prepared daemon or translate breakaway denial."""
     try:
         return _spawn_service(
-            port,
-            log_path,
-            watch=updates,
-            watch_debounce_ms=update_delay_ms,
-            watch_cooldown_s=repeat_update_delay_s,
-            qdrant=qdrant,
-            local_only=local_only,
-            preprocess_mode=preprocess_forward,
+            request.port,
+            request.log_path,
+            watch=request.updates,
+            watch_debounce_ms=request.update_delay_ms,
+            watch_cooldown_s=request.repeat_update_delay_s,
+            qdrant=request.qdrant,
+            local_only=request.local_only,
+            preprocess_mode=request.preprocess_forward,
         )
     except DaemonBreakawayError as exc:
         raise _fail_start(
-            json_mode,
+            request.json_mode,
             error="daemon_breakaway",
             message="Service start failed",
             human_lines=(str(exc),),
@@ -588,91 +739,28 @@ def _spawn_prepared_service(
 
 @server_app.command(
     "start",
+    cls=_ServiceStartCommand,
     help=(
         "Start the background search service. Defaults to the managed Qdrant "
         "server backend (server mode); pass --local-only for the on-disk store. "
         "Waits until it is ready and records how the CLI can reach it."
     ),
 )
-def service_start(
-    ctx: typer.Context,
-    port: Annotated[
-        int,
-        typer.Option(
-            "--port",
-            help="Port for the background search service.",
-            envvar=EnvVar.PORT,
-        ),
-    ] = 8766,
-    updates: Annotated[
-        bool | None,
-        typer.Option(
-            "--updates/--no-updates",
-            help=(
-                "Enable or disable automatic index updates when files change "
-                "(default: enabled)."
-            ),
-        ),
-    ] = None,
-    update_delay_ms: UpdateDelayOption = None,
-    repeat_update_delay_s: RepeatUpdateDelayOption = None,
-    local_only: Annotated[
-        bool,
-        typer.Option(
-            "--local-only",
-            help=(
-                "Use the on-disk local store instead of the default managed "
-                "Qdrant server. This is the first-class opt-out for CI, "
-                "offline, and small-project hosts."
-            ),
-        ),
-    ] = False,
-    qdrant: Annotated[
-        bool | None,
-        typer.Option(
-            "--qdrant/--no-qdrant",
-            help=(
-                "Explicitly opt in to (or out of) the managed Qdrant server. "
-                "Server mode is already the default, so --qdrant is redundant; "
-                "use --local-only to select the on-disk store. Unset leaves "
-                "the current Qdrant setting unchanged."
-            ),
-        ),
-    ] = None,
-    qdrant_auto_provision: Annotated[
-        bool,
-        typer.Option(
-            "--qdrant-auto-provision",
-            help=(
-                "Download the managed Qdrant server if it is missing. "
-                "Without this flag, start prints the install command."
-            ),
-        ),
-    ] = False,
-    no_preprocess: Annotated[
-        bool,
-        typer.Option(
-            "--no-preprocess",
-            help=(
-                "Kill switch: the service loads no document-preprocessing rules "
-                "for any root (forwards VAULTSPEC_RAG_PREPROCESS=off)."
-            ),
-        ),
-    ] = False,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help=(
-                f"{JSON_ENVELOPE_OPTION_HELP} "
-                "An already-running owned service is the success "
-                "`already_running` (exit 0), so a supervising broker can attach "
-                "rather than treating it as a fault."
-            ),
-        ),
-    ] = False,
-) -> None:
-    """Start the background search service."""
+def service_start() -> None:
+    """Register the custom command; it dispatches through ``_ServiceStartCommand``."""
+
+
+def _run_service_start(ctx: typer.Context, options: _ServiceStartOptions) -> None:
+    """Start the background search service from parsed command options."""
+    port = options.port
+    updates = options.updates
+    update_delay_ms = options.update_delay_ms
+    repeat_update_delay_s = options.repeat_update_delay_s
+    local_only = options.local_only
+    qdrant = options.qdrant
+    qdrant_auto_provision = options.qdrant_auto_provision
+    no_preprocess = options.no_preprocess
+    json_mode = options.json_mode
     preprocess_forward: Literal["off"] | None = "off" if no_preprocess else None
     with StartupStatusReporter(json_mode=json_mode) as progress:
         # The very first thing the command does, before any probe that can
@@ -744,9 +832,9 @@ def service_start(
         _preflight_daemon_cuda(interpreter, json_mode=json_mode)
         t0 = time.perf_counter()
         progress.stage("Launching the service process...")
-        pid = _spawn_prepared_service(
-            port,
-            log_path,
+        start_request = _PreparedServiceRequest(
+            port=port,
+            log_path=log_path,
             updates=updates,
             update_delay_ms=update_delay_ms,
             repeat_update_delay_s=repeat_update_delay_s,
@@ -755,15 +843,18 @@ def service_start(
             preprocess_forward=preprocess_forward,
             json_mode=json_mode,
         )
+        pid = _spawn_prepared_service(start_request)
         _write_service_status(pid, port)
         _await_service_ready(
-            pid,
-            port,
-            log_path,
-            json_mode=json_mode,
-            t0=t0,
-            env_warnings=env_warnings,
-            progress=progress,
+            _ServiceReadinessRequest(
+                pid=pid,
+                port=port,
+                log_path=log_path,
+                json_mode=json_mode,
+                started_at=t0,
+                env_warnings=env_warnings,
+                progress=progress,
+            )
         )
 
 
@@ -936,14 +1027,7 @@ def _fail_start_died(
 
 
 def _emit_start_succeeded(
-    health: dict[str, object],
-    *,
-    pid: int,
-    port: int,
-    log_path: Path,
-    t0: float,
-    json_mode: bool,
-    env_warnings: tuple[str, ...],
+    health: dict[str, object], request: _ServiceReadinessRequest
 ) -> None:
     """Record the serving daemon's identity and emit the success outcome.
 
@@ -956,10 +1040,12 @@ def _emit_start_succeeded(
     token_from_health = health.get("service_token")
     if isinstance(token_from_health, str) and token_from_health:
         _update_service_token(token_from_health)
-    serving_pid = _health_service_pid(health, pid)
+    serving_pid = _health_service_pid(health, request.pid)
     _update_service_metadata(_status_metadata_from_health(health, pid=serving_pid))
-    startup_s = time.perf_counter() - t0
-    extra: dict[str, object] = {"warnings": list(env_warnings)} if env_warnings else {}
+    startup_s = time.perf_counter() - request.started_at
+    extra: dict[str, object] = (
+        {"warnings": list(request.env_warnings)} if request.env_warnings else {}
+    )
     raw_status = health.get("status")
     health_status = raw_status if isinstance(raw_status, str) and raw_status else ""
     reason_lines: tuple[str, ...] = ()
@@ -972,35 +1058,25 @@ def _emit_start_succeeded(
         if reasons:
             extra["degraded_reasons"] = reasons
     _start_success(
-        json_mode,
+        request.json_mode,
         status="started",
         human_title="Service started",
         human_lines=(
             _process_line(serving_pid),
-            _address_line(port),
+            _address_line(request.port),
             f"Startup: {startup_s:.1f}s",
-            f"Log: {log_path}",
+            f"Log: {request.log_path}",
             *reason_lines,
         ),
         pid=serving_pid,
-        port=port,
+        port=request.port,
         startup_s=round(startup_s, 1),
-        log=str(log_path),
+        log=str(request.log_path),
         **extra,
     )
 
 
-def _await_service_ready(
-    pid: int,
-    port: int,
-    log_path: Path,
-    *,
-    json_mode: bool,
-    t0: float,
-    env_warnings: tuple[str, ...] = (),
-    progress: StartupStatusReporter | None = None,
-    deadline: float = 300.0,
-) -> None:
+def _await_service_ready(request: _ServiceReadinessRequest) -> None:
     """Poll the spawned daemon until it is serving, or fail/time out.
 
     Extracted from :func:`service_start` so the guard sequence and the health
@@ -1012,53 +1088,37 @@ def _await_service_ready(
     wedged daemon.
 
     Args:
-        pid: The spawned daemon process id.
-        port: The port the daemon was started on.
-        log_path: The daemon log file, surfaced in failure output.
-        json_mode: Whether to emit a machine-readable outcome envelope.
-        t0: The ``time.perf_counter`` reading taken just before the spawn, for
-            the reported startup duration.
-        env_warnings: Daemon-interpreter warnings to carry into the outcome.
-        progress: The reporter that renders the wait; ``None`` polls silently.
-        deadline: Seconds to wait before reporting a timeout. A parameter so the
-            timeout branch is reachable in a test without waiting out the real
-            budget; callers take the default.
+        request: The spawned daemon, readiness deadline, and outcome context.
     """
     delay = 0.1
     elapsed = 0.0
     last_health: dict[str, object] | None = None
-    if progress is not None:
+    if request.progress is not None:
         # Announced once rather than repeated on every tick: the operator wants
         # it to tail a slow start, and it is far too long to sit in a status
         # line that refreshes every few seconds.
-        progress.announce(f"Log: {log_path}")
+        request.progress.announce(f"Log: {request.log_path}")
     try:
-        while elapsed < deadline:
+        while elapsed < request.deadline:
             time.sleep(delay)
-            elapsed = time.perf_counter() - t0
+            elapsed = time.perf_counter() - request.started_at
 
             # Check if process died (port conflict, etc.)
-            if not pid_alive(pid):
-                raise _fail_start_died(pid, port, log_path, json_mode)
+            if not pid_alive(request.pid):
+                raise _fail_start_died(
+                    request.pid, request.port, request.log_path, request.json_mode
+                )
 
             # Run the probe off the main thread: a health request blocks in a
             # socket read for its whole timeout, and a thread parked there
             # reaches no interpreter check, so an operator's Ctrl+C would be
             # dead for seconds at a time during the very wait they are trying
             # to abandon.
-            health = _call_interruptibly(lambda: _try_http_health(port))
+            health = _call_interruptibly(lambda: _try_http_health(request.port))
             if health is not None:
                 last_health = health
                 if _daemon_is_serving(health):
-                    _emit_start_succeeded(
-                        health,
-                        pid=pid,
-                        port=port,
-                        log_path=log_path,
-                        t0=t0,
-                        json_mode=json_mode,
-                        env_warnings=env_warnings,
-                    )
+                    _emit_start_succeeded(health, request)
                     return
 
             # Surface the cold-start phase rather than a static label: the
@@ -1066,8 +1126,8 @@ def _await_service_ready(
             # /health reports its own status - a minutes-long cold start must
             # be distinguishable from a wedged daemon. Refreshed every poll so
             # the elapsed counter advances even when the phase does not.
-            if progress is not None:
-                progress.heartbeat(
+            if request.progress is not None:
+                request.progress.heartbeat(
                     f"Starting service... {_startup_phase_label(health)} "
                     f"({elapsed:.0f}s elapsed)"
                 )
@@ -1079,36 +1139,36 @@ def _await_service_ready(
         # (issue #237). The requested state (ready) is unconfirmed, so this
         # is a non-zero outcome per the lifecycle contract.
         raise _fail_start(
-            json_mode,
+            request.json_mode,
             error="start_interrupted",
             message="Service start interrupted",
             human_lines=(
-                _process_line(pid),
+                _process_line(request.pid),
                 "The detached daemon continues starting in the background.",
-                f"Log: {log_path}",
+                f"Log: {request.log_path}",
             ),
             next_actions=(server_status_command(),),
-            pid=pid,
-            log=str(log_path),
+            pid=request.pid,
+            log=str(request.log_path),
         ) from None
 
     # Report the last phase the daemon published rather than a bare "not ready":
     # a timeout that names the stage it died on (provisioning, model load, never
     # answered at all) is the difference between a diagnosis and a mystery.
     raise _fail_start(
-        json_mode,
+        request.json_mode,
         error="start_timeout",
         message="Service start timed out",
         human_lines=(
-            f"Waited: {deadline:.0f}s",
-            _process_line(pid),
+            f"Waited: {request.deadline:.0f}s",
+            _process_line(request.pid),
             f"Server: process is running but not serving "
             f"({_startup_phase_label(last_health)})",
             *_serving_warning_lines(last_health or {}),
-            f"Log: {log_path}",
+            f"Log: {request.log_path}",
         ),
-        pid=pid,
-        waited_s=deadline,
+        pid=request.pid,
+        waited_s=request.deadline,
         last_phase=_startup_phase_label(last_health),
-        log=str(log_path),
+        log=str(request.log_path),
     )

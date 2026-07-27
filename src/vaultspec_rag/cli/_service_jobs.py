@@ -11,9 +11,10 @@ import functools
 import re
 import time
 from dataclasses import dataclass
-from typing import Annotated, NoReturn, cast
+from typing import Annotated, Any, NoReturn, cast
 
 import typer
+from typer.core import TyperCommand, TyperOption
 
 import vaultspec_rag.cli as _cli
 
@@ -47,11 +48,11 @@ from ._cli_format import (
     _path_label,
 )
 from ._render import (
-    _address_line,
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
     _plain,
+    address_line,
 )
 
 __all__ = [
@@ -546,7 +547,7 @@ def _render_jobs_header(
 ) -> None:
     """Print the opening lines both the populated and empty views share."""
     _plain("Jobs")
-    _plain(_address_line(port))
+    _plain(address_line(port))
     _plain(f"Displayed: {shown_count}")
     _plain(f"Total: {_job_count_text(total)}")
     _plain(counts_line)
@@ -753,6 +754,158 @@ class _JobsQuery:
     since: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _JobStateChangeRequest:
+    """One requested desired-state transition for a service job."""
+
+    action: str
+    reference: str
+    state: DesiredJobState
+    port: int | None
+    json_mode: bool
+    force: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _JobControlFailureRequest:
+    """One terminal job-control error rendered for humans or JSON clients."""
+
+    command: str
+    error: str
+    message: str
+    json_mode: bool
+    exit_code: int
+    data: dict[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceJobsOptions:
+    limit: int = 20
+    state: str | None = None
+    index: str | None = None
+    started_by: str | None = None
+    query: str | None = None
+    failed: bool = False
+    job_id: str | None = None
+    since: float | None = None
+    port: int | None = None
+    json_mode: bool = False
+    watch: bool = False
+    interval: float = 2.0
+
+
+class _ServiceJobsCommand(TyperCommand):
+    """Parse the jobs collection options into one command request."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.params.extend(
+            (
+                TyperOption(
+                    param_decls=["--limit"],
+                    type=int,
+                    default=20,
+                    help="Maximum number of matching jobs to show.",
+                ),
+                TyperOption(
+                    param_decls=["--state"],
+                    type=str,
+                    default=None,
+                    help=(
+                        "Filter by job state: active, waiting, finished, failed, "
+                        "or cancelled."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--index"],
+                    type=str,
+                    default=None,
+                    help="Filter by index type: vault or code.",
+                ),
+                TyperOption(
+                    param_decls=["--started-by"],
+                    type=str,
+                    default=None,
+                    help=(
+                        "Filter by who started the job: manual requests or "
+                        "automatic updates."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--query", "-q"],
+                    type=str,
+                    default=None,
+                    help="Filter by text in job id, outcome, or progress.",
+                ),
+                TyperOption(
+                    param_decls=["--failed"],
+                    default=False,
+                    is_flag=True,
+                    help="Show only failed jobs.",
+                ),
+                TyperOption(
+                    param_decls=["--job-id"],
+                    type=str,
+                    default=None,
+                    help="Show details for a job id or prefix.",
+                ),
+                TyperOption(
+                    param_decls=["--since"],
+                    type=float,
+                    default=None,
+                    help="Show jobs updated within the last N seconds.",
+                ),
+                TyperOption(
+                    param_decls=["--port"],
+                    type=int,
+                    default=None,
+                    help="Service port (defaults to running service).",
+                ),
+                TyperOption(
+                    param_decls=["--json"],
+                    default=False,
+                    is_flag=True,
+                    help=(
+                        f"{JSON_OPTION_HELP} Always use this for scripted waits: "
+                        "the human summary line unconditionally contains the words "
+                        "'active' and 'waiting'."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--watch"],
+                    default=False,
+                    is_flag=True,
+                    help="Open the interactive jobs interface with per-job controls.",
+                ),
+                TyperOption(
+                    param_decls=["--interval"],
+                    type=float,
+                    default=2.0,
+                    help="Seconds between refreshes in the interactive interface.",
+                ),
+            )
+        )
+
+    def invoke(self, ctx: typer.Context) -> Any:
+        params = ctx.params
+        return _run_service_jobs(
+            _ServiceJobsOptions(
+                limit=cast("int", params["limit"]),
+                state=cast("str | None", params["state"]),
+                index=cast("str | None", params["index"]),
+                started_by=cast("str | None", params["started_by"]),
+                query=cast("str | None", params["query"]),
+                failed=cast("bool", params["failed"]),
+                job_id=cast("str | None", params["job_id"]),
+                since=cast("float | None", params["since"]),
+                port=cast("int | None", params["port"]),
+                json_mode=cast("bool", params["json"]),
+                watch=cast("bool", params["watch"]),
+                interval=cast("float", params["interval"]),
+            )
+        )
+
+
 def _jobs_args(spec: _JobsQuery) -> dict[str, object]:
     args: dict[str, object] = {"limit": spec.limit}
     optional_args = {
@@ -789,30 +942,28 @@ def _jobs_from_result(result: dict[str, object]) -> list[object]:
 
 
 def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
+    message = "No jobs have been reported by this service yet."
     if job_id:
-        return "No job matched that id."
-    raw_filters = result.get("filters")
-    if not isinstance(raw_filters, dict):
-        return "No jobs have been reported by this service yet."
-    filters = cast("dict[str, object]", raw_filters)
-    if filters.get("failed") is True:
-        return "There are no failed jobs."
-    state = filters.get("state")
-    if state == "active":
-        return "There are no active jobs."
-    if state == "waiting":
-        return "There are no waiting jobs."
-    phase = filters.get("phase")
-    if isinstance(phase, str) and phase.lower() == "running":
-        return "There are no active or waiting jobs."
-    active_filters = [
-        key
-        for key, value in filters.items()
-        if key != "limit" and value not in (None, "", False)
-    ]
-    if active_filters:
-        return "No jobs matched these filters."
-    return "No jobs have been reported by this service yet."
+        message = "No job matched that id."
+    elif isinstance(raw_filters := result.get("filters"), dict):
+        filters = cast("dict[str, object]", raw_filters)
+        if filters.get("failed") is True:
+            message = "There are no failed jobs."
+        elif filters.get("state") == "active":
+            message = "There are no active jobs."
+        elif filters.get("state") == "waiting":
+            message = "There are no waiting jobs."
+        elif (
+            isinstance(phase := filters.get("phase"), str)
+            and phase.lower() == "running"
+        ):
+            message = "There are no active or waiting jobs."
+        elif any(
+            key != "limit" and value not in (None, "", False)
+            for key, value in filters.items()
+        ):
+            message = "No jobs matched these filters."
+    return message
 
 
 def _render_job_progress_detail(job: dict[str, object]) -> None:
@@ -934,7 +1085,7 @@ def _render_job_result_detail(job: dict[str, object]) -> None:
 
 def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> None:
     if port is not None:
-        _plain(_address_line(port))
+        _plain(address_line(port))
     _cli.console.print(f"Job {job.get('id', '')!s}")
     _cli.console.print(f"Operation: {_operation_label(job)}")
     _cli.console.print(f"Project: {_project_label(job)}")
@@ -1028,26 +1179,18 @@ def _job_control_command(action: str) -> str:
     return f"server.job.{action}"
 
 
-def _job_control_failure(
-    command: str,
-    error: str,
-    message: str,
-    *,
-    json_mode: bool,
-    exit_code: int,
-    data: dict[str, object] | None = None,
-) -> NoReturn:
-    if json_mode:
+def _job_control_failure(request: _JobControlFailureRequest) -> NoReturn:
+    if request.json_mode:
         _emit_json_error_and_exit(
-            command,
-            error,
-            message,
-            exit_code,
-            data=data or {},
+            request.command,
+            request.error,
+            request.message,
+            request.exit_code,
+            data=request.data or {},
         )
-    _plain(f"Error: {message}", soft_wrap=True)
-    _plain(f"Code: {error}")
-    raise typer.Exit(exit_code)
+    _plain(f"Error: {request.message}", soft_wrap=True)
+    _plain(f"Code: {request.error}")
+    raise typer.Exit(request.exit_code)
 
 
 def _job_control_port(
@@ -1059,11 +1202,13 @@ def _job_control_port(
     resolved = port if port is not None else _default_service_port()
     if resolved is None:
         _job_control_failure(
-            command,
-            "service_not_running",
-            SERVICE_NOT_RUNNING_MESSAGE,
-            json_mode=json_mode,
-            exit_code=3,
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=json_mode,
+                exit_code=3,
+            )
         )
     return resolved
 
@@ -1083,12 +1228,14 @@ def _job_control_result_failure(
         if result.get(key) is not None
     }
     _job_control_failure(
-        command,
-        error,
-        message,
-        json_mode=json_mode,
-        exit_code=exit_code,
-        data=data,
+        _JobControlFailureRequest(
+            command=command,
+            error=error,
+            message=message,
+            json_mode=json_mode,
+            exit_code=exit_code,
+            data=data,
+        )
     )
 
 
@@ -1101,11 +1248,13 @@ def _human_exact_job_id(
     result = _try_http_admin("get_jobs", {"job_id": reference}, port)
     if result is None:
         _job_control_failure(
-            command,
-            "service_not_running",
-            SERVICE_NOT_RUNNING_MESSAGE,
-            json_mode=False,
-            exit_code=3,
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=False,
+                exit_code=3,
+            )
         )
     if result.get("ok") is False:
         _job_control_result_failure(command, result, json_mode=False)
@@ -1116,30 +1265,38 @@ def _human_exact_job_id(
     ]
     if not matches:
         _job_control_failure(
-            command,
-            "job_not_found",
-            f'No job matches "{reference}".',
-            json_mode=False,
-            exit_code=1,
+            _JobControlFailureRequest(
+                command=command,
+                error="job_not_found",
+                message=f'No job matches "{reference}".',
+                json_mode=False,
+                exit_code=1,
+            )
         )
     if len(matches) > 1:
         _job_control_failure(
-            command,
-            "ambiguous_job_id",
-            f'Job prefix "{reference}" matches {len(matches)} jobs. '
-            "Use a longer prefix.",
-            json_mode=False,
-            exit_code=2,
-            data={"matches": [job.get("id") for job in matches]},
+            _JobControlFailureRequest(
+                command=command,
+                error="ambiguous_job_id",
+                message=(
+                    f'Job prefix "{reference}" matches {len(matches)} jobs. '
+                    "Use a longer prefix."
+                ),
+                json_mode=False,
+                exit_code=2,
+                data={"matches": [job.get("id") for job in matches]},
+            )
         )
     exact_id = matches[0].get("id")
     if not isinstance(exact_id, str) or not exact_id:
         _job_control_failure(
-            command,
-            "invalid_job_resource",
-            "The service returned a job without an exact identifier.",
-            json_mode=False,
-            exit_code=1,
+            _JobControlFailureRequest(
+                command=command,
+                error="invalid_job_resource",
+                message="The service returned a job without an exact identifier.",
+                json_mode=False,
+                exit_code=1,
+            )
         )
     return exact_id
 
@@ -1163,32 +1320,40 @@ def _exact_job_for_control(
     result = _try_http_get_job(exact_id, port)
     if result is None:
         _job_control_failure(
-            command,
-            "service_not_running",
-            SERVICE_NOT_RUNNING_MESSAGE,
-            json_mode=json_mode,
-            exit_code=3,
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=json_mode,
+                exit_code=3,
+            )
         )
     if result.get("ok") is not True:
         _job_control_result_failure(command, result, json_mode=json_mode)
     raw_job = result.get("job")
     if not isinstance(raw_job, dict):
         _job_control_failure(
-            command,
-            "invalid_job_resource",
-            "The service returned an invalid job resource.",
-            json_mode=json_mode,
-            exit_code=1,
+            _JobControlFailureRequest(
+                command=command,
+                error="invalid_job_resource",
+                message="The service returned an invalid job resource.",
+                json_mode=json_mode,
+                exit_code=1,
+            )
         )
     job = cast("dict[str, object]", raw_job)
     reported_id = job.get("id")
     if reported_id != exact_id:
         _job_control_failure(
-            command,
-            "invalid_job_resource",
-            "The service returned a different job identifier than requested.",
-            json_mode=json_mode,
-            exit_code=1,
+            _JobControlFailureRequest(
+                command=command,
+                error="invalid_job_resource",
+                message=(
+                    "The service returned a different job identifier than requested."
+                ),
+                json_mode=json_mode,
+                exit_code=1,
+            )
         )
     return exact_id, job
 
@@ -1203,11 +1368,13 @@ def _job_revision(
     if isinstance(revision, int) and not isinstance(revision, bool) and revision >= 1:
         return revision
     _job_control_failure(
-        command,
-        "invalid_job_resource",
-        "The service returned a job without a positive revision.",
-        json_mode=json_mode,
-        exit_code=1,
+        _JobControlFailureRequest(
+            command=command,
+            error="invalid_job_resource",
+            message="The service returned a job without a positive revision.",
+            json_mode=json_mode,
+            exit_code=1,
+        )
     )
 
 
@@ -1234,11 +1401,13 @@ def _complete_job_control(
 ) -> None:
     if result is None:
         _job_control_failure(
-            command,
-            "service_not_running",
-            SERVICE_NOT_RUNNING_MESSAGE,
-            json_mode=json_mode,
-            exit_code=3,
+            _JobControlFailureRequest(
+                command=command,
+                error="service_not_running",
+                message=SERVICE_NOT_RUNNING_MESSAGE,
+                json_mode=json_mode,
+                exit_code=3,
+            )
         )
     if result.get("ok") is not True:
         _job_control_result_failure(command, result, json_mode=json_mode)
@@ -1254,32 +1423,26 @@ def _complete_job_control(
     _render_job_control_outcome(result)
 
 
-def _set_job_state(
-    action: str,
-    reference: str,
-    state: DesiredJobState,
-    *,
-    port: int | None,
-    json_mode: bool,
-    force: bool = False,
-) -> None:
-    command = _job_control_command(action)
-    resolved_port = _job_control_port(port, command=command, json_mode=json_mode)
+def _set_job_state(request: _JobStateChangeRequest) -> None:
+    command = _job_control_command(request.action)
+    resolved_port = _job_control_port(
+        request.port, command=command, json_mode=request.json_mode
+    )
     exact_id, job = _exact_job_for_control(
-        reference,
+        request.reference,
         resolved_port,
         command=command,
-        json_mode=json_mode,
+        json_mode=request.json_mode,
     )
-    revision = _job_revision(job, command=command, json_mode=json_mode)
+    revision = _job_revision(job, command=command, json_mode=request.json_mode)
     result = _try_http_set_job_desired_state(
         exact_id,
-        state,
+        request.state,
         resolved_port,
         expected_revision=revision,
-        mode="force" if force else "graceful",
+        mode="force" if request.force else "graceful",
     )
-    _complete_job_control(command, result, json_mode=json_mode)
+    _complete_job_control(command, result, json_mode=request.json_mode)
 
 
 @server_job_app.command("show")
@@ -1311,7 +1474,13 @@ def service_job_pause(
 ) -> None:
     """Request a cooperative pause for one job."""
     _set_job_state(
-        "pause", job_id, DesiredJobState.PAUSED, port=port, json_mode=json_mode
+        _JobStateChangeRequest(
+            action="pause",
+            reference=job_id,
+            state=DesiredJobState.PAUSED,
+            port=port,
+            json_mode=json_mode,
+        )
     )
 
 
@@ -1323,7 +1492,13 @@ def service_job_resume(
 ) -> None:
     """Resume one paused job through reconciliation."""
     _set_job_state(
-        "resume", job_id, DesiredJobState.RUNNING, port=port, json_mode=json_mode
+        _JobStateChangeRequest(
+            action="resume",
+            reference=job_id,
+            state=DesiredJobState.RUNNING,
+            port=port,
+            json_mode=json_mode,
+        )
     )
 
 
@@ -1342,12 +1517,14 @@ def service_job_stop(
 ) -> None:
     """Request cancellation without disabling automatic updates."""
     _set_job_state(
-        "stop",
-        job_id,
-        DesiredJobState.CANCELLED,
-        port=port,
-        json_mode=json_mode,
-        force=force,
+        _JobStateChangeRequest(
+            action="stop",
+            reference=job_id,
+            state=DesiredJobState.CANCELLED,
+            port=port,
+            json_mode=json_mode,
+            force=force,
+        )
     )
 
 
@@ -1394,77 +1571,29 @@ def service_job_delete(
     _complete_job_control(command, result, json_mode=json_mode)
 
 
-@server_app.command("jobs")
-def service_jobs(
-    limit: Annotated[
-        int,
-        typer.Option("--limit", help="Maximum number of matching jobs to show."),
-    ] = 20,
-    state: Annotated[
-        str | None,
-        typer.Option(
-            "--state",
-            help=(
-                "Filter by job state: active, waiting, finished, failed, or cancelled."
-            ),
-        ),
-    ] = None,
-    index: Annotated[
-        str | None,
-        typer.Option("--index", help="Filter by index type: vault or code."),
-    ] = None,
-    started_by: Annotated[
-        str | None,
-        typer.Option(
-            "--started-by",
-            help="Filter by who started the job: manual requests or automatic updates.",
-        ),
-    ] = None,
-    query: Annotated[
-        str | None,
-        typer.Option(
-            "--query",
-            "-q",
-            help="Filter by text in job id, outcome, or progress.",
-        ),
-    ] = None,
-    failed: Annotated[
-        bool,
-        typer.Option("--failed", help="Show only failed jobs."),
-    ] = False,
-    job_id: Annotated[
-        str | None,
-        typer.Option("--job-id", help="Show details for a job id or prefix."),
-    ] = None,
-    since: Annotated[
-        float | None,
-        typer.Option("--since", help="Show jobs updated within the last N seconds."),
-    ] = None,
-    port: PortOption = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help=(
-                f"{JSON_OPTION_HELP} Always use this "
-                "for scripted waits: the human summary line unconditionally "
-                "contains the words 'active' and 'waiting'."
-            ),
-        ),
-    ] = False,
-    watch: Annotated[
-        bool,
-        typer.Option(
-            "--watch",
-            help="Open the interactive jobs interface with per-job controls.",
-        ),
-    ] = False,
-    interval: Annotated[
-        float,
-        typer.Option("--interval", help="Seconds between --watch refreshes."),
-    ] = 2.0,
-) -> None:
+@server_app.command(
+    "jobs",
+    cls=_ServiceJobsCommand,
+    help="Show recent index update activity from the running service.",
+)
+def service_jobs() -> None:
+    """Register the custom jobs command schema."""
+
+
+def _run_service_jobs(options: _ServiceJobsOptions) -> None:
     """Show recent index update activity from the running service."""
+    limit = options.limit
+    state = options.state
+    index = options.index
+    started_by = options.started_by
+    query = options.query
+    failed = options.failed
+    job_id = options.job_id
+    since = options.since
+    port = options.port
+    json_mode = options.json_mode
+    watch = options.watch
+    interval = options.interval
     phase, client_state = _jobs_state_filter(state, json_mode)
     source = _jobs_index_filter(index, json_mode)
     trigger = _jobs_started_by_filter(started_by, json_mode)

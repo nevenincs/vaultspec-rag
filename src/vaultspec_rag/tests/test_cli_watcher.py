@@ -15,6 +15,7 @@ import json
 import os
 import threading
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 import pytest
@@ -47,6 +48,15 @@ _DEAD_PORT = "59231"
 _TEST_PROJECT_ROOT = os.path.abspath(
     os.path.join(os.sep, "projects", "code-worktrees", "feature-server-supervision")
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectCommandCase:
+    argv: list[str]
+    payload: dict[str, object]
+    expected_status: str
+    request_path: str
+    request_extra: dict[str, object]
 
 
 class _UpdatesHTTPHandler(QuietHandler):
@@ -392,23 +402,23 @@ def test_updates_start_timeout_uses_singular_second(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("argv", "payload", "expected_status", "request_path", "request_extra"),
+    "case",
     [
-        (
+        _ProjectCommandCase(
             ["server", "updates", "start", "."],
             {"started": True, "watch_enabled": True},
             "started",
             "/watcher/start",
             {},
         ),
-        (
+        _ProjectCommandCase(
             ["server", "updates", "stop", "."],
             {"stopped": True},
             "stopped",
             "/watcher/stop",
             {},
         ),
-        (
+        _ProjectCommandCase(
             [
                 "server",
                 "updates",
@@ -428,28 +438,24 @@ def test_updates_start_timeout_uses_singular_second(tmp_path: Path) -> None:
 )
 def test_updates_project_commands_resolve_relative_project(
     tmp_path: Path,
-    argv: list[str],
-    payload: dict[str, object],
-    expected_status: str,
-    request_path: str,
-    request_extra: dict[str, object],
+    case: _ProjectCommandCase,
 ) -> None:
     project = str(tmp_path.resolve())
     previous_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        with _updates_http_server(payload) as (_server, port):
-            result = runner.invoke(app, [*argv, "--port", str(port)])
+        with _updates_http_server(case.payload) as (_server, port):
+            result = runner.invoke(app, [*case.argv, "--port", str(port)])
     finally:
         os.chdir(previous_cwd)
 
     assert result.exit_code == 0, result.output
-    body = {"root": project, **request_extra}
+    body = {"root": project, **case.request_extra}
     assert _UpdatesHTTPHandler.requests == [
-        {"method": "POST", "path": request_path, "body": body}
+        {"method": "POST", "path": case.request_path, "body": body}
     ]
     labels = _label_values(result.output)
-    assert labels["Automatic index updates"] == expected_status
+    assert labels["Automatic index updates"] == case.expected_status
     assert labels["Project"] == tmp_path.name
     assert labels["Path"] == project
     assert "Project: ." not in result.output

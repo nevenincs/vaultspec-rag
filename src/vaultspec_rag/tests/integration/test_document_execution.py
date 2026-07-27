@@ -20,12 +20,14 @@ from ..._job_errors import JobError, JobErrorKind
 from ..._store_models import DocumentChunk, DocumentPayload
 from ..._store_writes import VolumeReading
 from ...index_profiles import (
+    AdmissionEnvironment,
     IndexDomain,
     SupportMeasurement,
     get_index_support_profile,
     validate_profile_admission,
 )
 from ...indexer._chunk_worker import (
+    DocumentChunkingOptions,
     DocumentFileChunkResult,
     chunk_document_and_hash_file,
     chunk_file_with_status,
@@ -57,7 +59,7 @@ from ...jobs import (
     validate_document_support_profile,
 )
 from ...service import ServiceRegistry
-from ...watcher_retry import WatcherRetryPolicy, WatcherSource
+from ...watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -126,7 +128,9 @@ def test_extractor_owned_binary_bypasses_decoder_and_source_cap_prevents_launch(
     _write_rule(tmp_path, command=_command(extractor))
     context = _context(tmp_path)
 
-    extracted = chunk_document_and_hash_file(source, tmp_path, context)
+    extracted = chunk_document_and_hash_file(
+        source, tmp_path, DocumentChunkingOptions(prep=context)
+    )
 
     assert isinstance(extracted, DocumentFileChunkResult)
     assert extracted.preprocess_status == "ok"
@@ -144,7 +148,9 @@ def test_extractor_owned_binary_bypasses_decoder_and_source_cap_prevents_launch(
         max_emitted_bytes=context.max_emitted_bytes,
         project_root=tmp_path,
     )
-    refused = chunk_document_and_hash_file(source, tmp_path, capped)
+    refused = chunk_document_and_hash_file(
+        source, tmp_path, DocumentChunkingOptions(prep=capped)
+    )
 
     assert refused.preprocess_status == "skipped"
     assert refused.chunks == []
@@ -167,7 +173,9 @@ def test_document_passthrough_stays_document_owned_and_code_worker_fails_closed(
     _write_rule(tmp_path, command=_command(extractor), on_error="passthrough")
     context = _context(tmp_path)
 
-    result = chunk_document_and_hash_file(source, tmp_path, context)
+    result = chunk_document_and_hash_file(
+        source, tmp_path, DocumentChunkingOptions(prep=context)
+    )
 
     assert marker.exists()
     assert isinstance(result, DocumentFileChunkResult)
@@ -205,7 +213,7 @@ def test_raw_document_stream_is_memory_bounded_and_cooperatively_cancelled(
     cancelled = stream_document_and_hash_file(
         source,
         tmp_path,
-        run_control=control,
+        DocumentChunkingOptions(run_control=control),
     )
     control.request_cancel()
     with pytest.raises(CancelRequested):
@@ -328,7 +336,14 @@ async def test_document_attempt_honors_cancellation_before_admission(
         with pytest.raises(CancelRequested):
             _run_indexing_attempt(
                 context,
-                dispatch=_AttemptDispatch(JobSource.DOCUMENT, manager, created.job.id, tmp_path, False, registry),
+                dispatch=_AttemptDispatch(
+                    JobSource.DOCUMENT,
+                    manager,
+                    created.job.id,
+                    tmp_path,
+                    False,
+                    registry,
+                ),
             )
     finally:
         registry.close_all()
@@ -391,23 +406,27 @@ def test_document_retry_state_and_resource_profile_are_independent(
     canonical_root = os.path.normcase(str(tmp_path.resolve()))
     code = WatcherRetryPolicy(
         tmp_path / "state" / "code.json",
-        canonical_root=canonical_root,
-        source=WatcherSource.CODE,
-        base_seconds=10,
-        max_seconds=60,
-        jitter_fraction=0,
-        failure_threshold=3,
-        now=0,
+        _WatcherRetryOptions(
+            canonical_root=canonical_root,
+            source=WatcherSource.CODE,
+            base_seconds=10,
+            max_seconds=60,
+            jitter_fraction=0,
+            failure_threshold=3,
+            now=0,
+        ),
     )
     document = WatcherRetryPolicy(
         tmp_path / "state" / "document.json",
-        canonical_root=canonical_root,
-        source=WatcherSource.DOCUMENT,
-        base_seconds=10,
-        max_seconds=60,
-        jitter_fraction=0,
-        failure_threshold=3,
-        now=0,
+        _WatcherRetryOptions(
+            canonical_root=canonical_root,
+            source=WatcherSource.DOCUMENT,
+            base_seconds=10,
+            max_seconds=60,
+            jitter_fraction=0,
+            failure_threshold=3,
+            now=0,
+        ),
     )
     code.mark_convergence_pending(now=1)
     code_before = code.state
@@ -443,13 +462,15 @@ def test_document_retry_state_and_resource_profile_are_independent(
                 source_files=profile.document.source_files + 1,
                 source_bytes=0,
             ),
-            backend="local",
-            available_ram_bytes=profile.minimum_ram_bytes,
-            store_volume=VolumeReading(
+            AdmissionEnvironment(
+                backend="local",
+                available_ram_bytes=profile.minimum_ram_bytes,
+                store_volume=VolumeReading(
                 role="vector store",
                 path=tmp_path,
                 measured_path=tmp_path,
                 free_bytes=profile.minimum_free_disk_bytes,
+                ),
             ),
         )
     assert caught.value.error_kind is JobErrorKind.CORPUS_LIMIT_EXCEEDED

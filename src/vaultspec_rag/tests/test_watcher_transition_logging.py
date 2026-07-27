@@ -35,8 +35,8 @@ from ..job_models import (
     JobTimestamps,
 )
 from ..service import ServiceRegistry
-from ..watcher import _log_managed_transition, _WatcherConvergenceSlot
-from ..watcher_retry import WatcherRetryPolicy, WatcherSource
+from ..watcher_control import _log_managed_transition, _WatcherConvergenceSlot
+from ..watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
 
 pytestmark = [pytest.mark.unit]
 
@@ -122,12 +122,14 @@ def _log(
         registry=ServiceRegistry(),
         retry_policy=WatcherRetryPolicy(
             root,
-            canonical_root=str(root),
-            source=WatcherSource.CODE,
-            base_seconds=1.0,
-            max_seconds=2.0,
-            jitter_fraction=0.0,
-            failure_threshold=3,
+            _WatcherRetryOptions(
+                canonical_root=str(root),
+                source=WatcherSource.CODE,
+                base_seconds=1.0,
+                max_seconds=2.0,
+                jitter_fraction=0.0,
+                failure_threshold=3,
+            ),
         ),
     )
     caplog.clear()

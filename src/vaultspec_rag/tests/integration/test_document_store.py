@@ -25,9 +25,10 @@ from ...indexer._document_meta import (
     document_metadata_path,
     write_document_meta,
 )
-from ...server._routes_storage import _shape_survey_payload
-from ...storage_ops import archive_prefix, gather_survey
-from ...store import VaultStore
+from ...server._routes_storage import _SurveyPayloadRequest, _shape_survey_payload
+from ...storage_reclamation import archive_prefix
+from ...storage_survey_ops import gather_survey
+from ...store_runtime import VaultStore
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
@@ -272,12 +273,14 @@ def test_document_count_appears_in_real_storage_survey(
         assert survey.document_points == 1
 
         payload = _shape_survey_payload(
-            surveys,
-            None,
-            10,
-            None,
-            computed_at="2026-07-22T00:00:00+00:00",
-            source="fresh",
+            _SurveyPayloadRequest(
+                surveys=surveys,
+                status_filter=None,
+                limit=10,
+                root=None,
+                computed_at="2026-07-22T00:00:00+00:00",
+                source="fresh",
+            )
         )
         namespace = next(
             item
