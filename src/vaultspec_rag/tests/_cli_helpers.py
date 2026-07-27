@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
 import http.server
 import json
 import os
 import re
 import typing
+from dataclasses import dataclass
 
 from typer.testing import CliRunner
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
