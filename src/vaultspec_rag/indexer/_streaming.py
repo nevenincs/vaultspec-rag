@@ -594,21 +594,25 @@ class _SliceWriter:
             )
 
 
-def _encode_and_upsert_vault_slice(
-    *,
-    slice_chunks: list[VaultChunk],
-    slice_index: int,
-    model: EmbeddingModel,
-    store: VaultStore,
-    gpu_lock: threading.Lock | None,
-    sparse_enabled: bool,
-    probe: MemoryProbe,
-    ingest_wait: bool = True,
-    run_control: RunControl = NO_RUN_CONTROL,
-    reuse: DonorReuseContext | None = None,
-    writer: _SliceWriter | None = None,
-    release_cache: bool = True,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _VaultSliceRequest:
+    """One bounded vault slice and its ordered publication controls."""
+
+    slice_chunks: list[VaultChunk]
+    slice_index: int
+    model: EmbeddingModel
+    store: VaultStore
+    gpu_lock: threading.Lock | None
+    sparse_enabled: bool
+    probe: MemoryProbe
+    ingest_wait: bool = True
+    run_control: RunControl = NO_RUN_CONTROL
+    reuse: DonorReuseContext | None = None
+    writer: _SliceWriter | None = None
+    release_cache: bool = True
+
+
+def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
     """Encode one vault chunk slice and store it, inline or via the writer.
 
     ``ingest_wait=False`` defers the server-mode apply handshake to the
@@ -624,51 +628,52 @@ def _encode_and_upsert_vault_slice(
     """
 
     def _after_encode() -> None:
-        probe.checkpoint(f"slice-{slice_index}-after-encode")
+        request.probe.checkpoint(f"slice-{request.slice_index}-after-encode")
 
-    probe.checkpoint(f"slice-{slice_index}-before-encode")
+    request.probe.checkpoint(f"slice-{request.slice_index}-before-encode")
     handed_off = False
     try:
-        run_control.checkpoint()
+        request.run_control.checkpoint()
         _encode_slice_vector_fields(
             _VectorEncodeRequest(
-                chunks=slice_chunks,
+                chunks=request.slice_chunks,
                 slice_texts=[
-                    f"{chunk.title}\n\n{chunk.text}" for chunk in slice_chunks
+                    f"{chunk.title}\n\n{chunk.text}"
+                    for chunk in request.slice_chunks
                 ],
-                model=model,
-                gpu_lock=gpu_lock,
-                sparse_enabled=sparse_enabled,
+                model=request.model,
+                gpu_lock=request.gpu_lock,
+                sparse_enabled=request.sparse_enabled,
                 encode_batch_size=None,
                 after_encode=_after_encode,
-                reuse=reuse,
+                reuse=request.reuse,
             )
         )
-        run_control.checkpoint()
-        if writer is None:
-            store.upsert_document_chunks(
-                slice_chunks,
+        request.run_control.checkpoint()
+        if request.writer is None:
+            request.store.upsert_document_chunks(
+                request.slice_chunks,
                 write_policy=None,
-                wait=ingest_wait,
+                wait=request.ingest_wait,
             )
         else:
-            writer.submit(
+            request.writer.submit(
                 StoreWriteTask(
                     write=partial(
-                        store.upsert_document_chunks,
-                        slice_chunks,
+                        request.store.upsert_document_chunks,
+                        request.slice_chunks,
                         write_policy=None,
-                        wait=ingest_wait,
+                        wait=request.ingest_wait,
                     ),
-                    release=partial(_release_vector_fields, slice_chunks),
+                    release=partial(_release_vector_fields, request.slice_chunks),
                 ),
-                run_control=run_control,
+                run_control=request.run_control,
             )
             handed_off = True
     finally:
         if not handed_off:
-            _release_vector_fields(slice_chunks)
-        if release_cache:
+            _release_vector_fields(request.slice_chunks)
+        if request.release_cache:
             _release_cuda_cache()
 
 
@@ -741,20 +746,22 @@ def _stream_encode_and_upsert_vault(
                     slice_chunks = sorted_chunks[i : i + slice_size]
                     is_last = i + slice_size >= len(sorted_chunks)
                     _encode_and_upsert_vault_slice(
-                        slice_chunks=slice_chunks,
-                        slice_index=i,
-                        model=model,
-                        store=store,
-                        gpu_lock=gpu_lock,
-                        sparse_enabled=sparse_enabled,
-                        probe=probe,
-                        ingest_wait=ingest_wait,
-                        run_control=run_control,
-                        reuse=reuse,
-                        writer=writer,
-                        release_cache=(
-                            is_last or (slice_index + 1) % flush_slices == 0
-                        ),
+                        _VaultSliceRequest(
+                            slice_chunks=slice_chunks,
+                            slice_index=i,
+                            model=model,
+                            store=store,
+                            gpu_lock=gpu_lock,
+                            sparse_enabled=sparse_enabled,
+                            probe=probe,
+                            ingest_wait=ingest_wait,
+                            run_control=run_control,
+                            reuse=reuse,
+                            writer=writer,
+                            release_cache=(
+                                is_last or (slice_index + 1) % flush_slices == 0
+                            ),
+                        )
                     )
                     probe.checkpoint(f"slice-{i}-after-empty-cache")
                     reporter.advance(len(slice_chunks))
