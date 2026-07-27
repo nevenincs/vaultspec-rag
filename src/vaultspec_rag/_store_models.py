@@ -181,20 +181,31 @@ def root_collection_prefix(root_dir: pathlib.Path | str) -> str:
     without the strip an aliased spelling of an already-registered root
     mints a duplicate namespace for the same project.
 
+    Naming a root never requires reaching it. A root that is
+    unreachable rather than absent - an offline share, an unplugged
+    drive - makes ``resolve()`` raise instead of falling back to its
+    lexical result, because Windows reports those as network and device
+    errors rather than as not-found. Resolution failure therefore falls
+    back to lexical normalisation, which agrees with ``resolve()`` for
+    any absolute link-free path, so a root keeps the namespace it had
+    while it was reachable.
+
     Args:
         root_dir: Workspace root directory.
 
     Returns:
         A prefix of the form ``r{12-hex}_``.
     """
-    import pathlib as _pathlib
-
     raw = str(root_dir)
     if raw.startswith("\\\\?\\UNC\\"):
         raw = "\\\\" + raw[8:]
     elif raw.startswith("\\\\?\\"):
         raw = raw[4:]
-    resolved = os.path.normcase(str(_pathlib.Path(raw).resolve()))
+    try:
+        normalized = str(pathlib.Path(raw).resolve())
+    except OSError:
+        normalized = str(pathlib.Path(os.path.abspath(raw)))
+    resolved = os.path.normcase(normalized)
     digest = hashlib.blake2b(
         resolved.encode("utf-8"), digest_size=_ROOT_PREFIX_DIGEST_BYTES
     ).hexdigest()
