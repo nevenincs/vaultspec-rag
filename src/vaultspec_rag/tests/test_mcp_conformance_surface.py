@@ -11,20 +11,24 @@ research recorded).
 from __future__ import annotations
 
 import asyncio
-import json
+import os
 import threading
+import time
 from http.server import ThreadingHTTPServer
-from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING
 
 import pytest
+import uvicorn
+from starlette.applications import Starlette
 
 from ..mcp._mcp import mcp
 from ..serviceclient._transport import _do_http_call
 from ._http_stubs import QuietHandler
+from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from mcp.types import Tool
 
@@ -73,64 +77,43 @@ _REFRESH_TOOLS = {
 _CLEAN_TOOLS = {"clean_documents", "clean_all"}
 
 
-class _RecordedRequest(TypedDict):
-    """One JSON request the loopback daemon received on its actual wire."""
-
-    path: str
-    payload: dict[str, object]
-
-
 def _tools() -> list[Tool]:
     return asyncio.run(mcp.list_tools())
 
 
 @pytest.fixture
-def recording_daemon() -> Iterator[tuple[int, list[_RecordedRequest]]]:
-    """Run a loopback daemon that records the real MCP request payloads."""
-    requests: list[_RecordedRequest] = []
+def service_routes() -> Iterator[int]:
+    """Serve the production route table over a live loopback Uvicorn server."""
+    from .. import server as server_module
+    from ..server._routes import ROUTES
+    from ._cli_helpers import _CONTRACT_SERVICE_TOKEN
 
-    class _RecordingDaemonHandler(QuietHandler):
-        def do_POST(self) -> None:  # stdlib handler contract
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length)
-            parsed: object = json.loads(raw) if raw else {}
-            payload = (
-                cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
-            )
-            requests.append({"path": self.path, "payload": payload})
-
-            if self.path == "/search":
-                response: dict[str, object] = {"results": [], "summary": "recorded"}
-            elif self.path == "/reindex":
-                response = {
-                    "ok": True,
-                    "added": 0,
-                    "updated": 0,
-                    "removed": 0,
-                    "total": 0,
-                    "duration_ms": 1,
-                }
-            else:
-                self.send_response(404)
-                self.end_headers()
-                return
-
-            encoded = json.dumps(response).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingDaemonHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    port = free_loopback_port()
+    prior_token = server_module._SERVICE_TOKEN
+    server_module._SERVICE_TOKEN = _CONTRACT_SERVICE_TOKEN
+    server = uvicorn.Server(
+        uvicorn.Config(
+            Starlette(routes=ROUTES),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            access_log=False,
+            lifespan="off",
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     try:
-        yield int(server.server_address[1]), requests
+        deadline = time.monotonic() + 5.0
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        yield port
     finally:
-        server.shutdown()
-        server.server_close()
+        server.should_exit = True
         thread.join(timeout=5)
+        server_module._SERVICE_TOKEN = prior_token
+        assert not thread.is_alive()
 
 
 def _workspace(path: Path) -> Path:
@@ -228,57 +211,43 @@ class TestNarrowedSurface:
 class TestProjectRootWireContract:
     """Optional MCP roots are concrete on the daemon wire, never a 400 input."""
 
-    def test_omitted_roots_are_concrete_and_explicit_roots_win(
+    def test_omitted_root_uses_env_and_explicit_root_wins(
         self,
         tmp_path: Path,
-        recording_daemon: tuple[int, list[_RecordedRequest]],
+        service_routes: int,
     ) -> None:
-        """Exercise the MCP adapter through discovery and a loopback daemon.
+        """Exercise MCP discovery, transport, and the production code-file route.
 
-        The daemon records the actual JSON bodies after the adapter, discovery,
-        worker-thread offload, and shared HTTP client have all run. A direct
-        resolver assertion would miss a regression that resolved a root but
-        failed to serialize it into either request shape.
+        The two workspaces contain different files at the same relative path.
+        The omitted call can return the environment workspace's content only if
+        the adapter resolves and serializes that root; the explicit call can
+        return the other content only if it takes precedence over the env var.
         """
-        from ..mcp._tools import reindex_codebase, search_codebase
+        from ..config import EnvVar
+        from ..mcp._tools import get_code_file
         from ._cli_helpers import _running_service_record
 
-        port, requests = recording_daemon
+        env_root = _workspace(tmp_path / "environment-project").resolve()
         explicit_root = _workspace(tmp_path / "explicit-project").resolve()
-        with _running_service_record(tmp_path / "status", port):
-            omitted_search = asyncio.run(search_codebase("wire root proof"))
-            omitted_reindex = asyncio.run(reindex_codebase())
-            explicit_search = asyncio.run(
-                search_codebase("wire root proof", project_root=str(explicit_root))
-            )
-            explicit_reindex = asyncio.run(
-                reindex_codebase(project_root=str(explicit_root))
-            )
+        relative_path = "root-proof.py"
+        (env_root / relative_path).write_text("environment root\n", encoding="utf-8")
+        (explicit_root / relative_path).write_text("explicit root\n", encoding="utf-8")
+        previous_root = os.environ.get(EnvVar.RAG_ROOT.value)
+        os.environ[EnvVar.RAG_ROOT.value] = str(env_root)
+        try:
+            with _running_service_record(tmp_path / "status", service_routes):
+                omitted = asyncio.run(get_code_file(relative_path))
+                explicit = asyncio.run(
+                    get_code_file(relative_path, project_root=str(explicit_root))
+                )
+        finally:
+            if previous_root is None:
+                os.environ.pop(EnvVar.RAG_ROOT.value, None)
+            else:
+                os.environ[EnvVar.RAG_ROOT.value] = previous_root
 
-        assert omitted_search.results == []
-        assert omitted_reindex["ok"] is True
-        assert explicit_search.results == []
-        assert explicit_reindex["ok"] is True
-        assert len(requests) == 4
-
-        omitted = [requests[0]["payload"], requests[1]["payload"]]
-        explicit = [requests[2]["payload"], requests[3]["payload"]]
-        assert all(isinstance(payload, dict) for payload in omitted + explicit)
-        assert all(
-            isinstance(payload["project_root"], str)
-            and bool(payload["project_root"])
-            and Path(payload["project_root"]).is_absolute()
-            for payload in omitted
-        )
-        assert [payload["project_root"] for payload in explicit] == [
-            str(explicit_root),
-            str(explicit_root),
-        ]
-        assert requests[0]["path"] == "/search"
-        assert requests[1]["path"] == "/reindex"
-        assert requests[0]["payload"]["type"] == "code"
-        assert requests[1]["payload"]["type"] == "code"
-        assert requests[1]["payload"]["initiator_kind"] == "mcp"
+        assert omitted == "environment root\n"
+        assert explicit == "explicit root\n"
 
 
 class _EmptyBody404Handler(QuietHandler):
