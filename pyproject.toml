@@ -77,21 +77,13 @@ version = "0.3.11"
   Repository = "https://github.com/nevenincs/vaultspec-rag"
 
   [project.optional-dependencies]
-  dev = [
-    "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
-    "pytest-timeout>=2.4.0",
-    "pytest-reportlog>=0.4.0",
-    "pytest-durations>=1.0.0",
-    "pytest-xdist>=3.8.0",
-    "ruff>=0.15.2",
-    "ty>=0.0.15",
-    "identify>=2.0.0",
-    "mdformat>=1.0.0",
-    "mdformat-frontmatter>=2.0.10",
-    "mdformat-gfm>=1.0.0",
-    "pymarkdownlnt>=0.9.0",
-  ]
+  # There is deliberately no `dev` extra here. The development toolchain lives
+  # in `[dependency-groups].dev` below, which is what `uv sync --group dev` and
+  # every CI job install. A `dev` extra existed alongside it and was installed
+  # by nothing; it had drifted into a stale subset, missing the type checker
+  # and every complexity, dead-code, dependency and security tool, so anyone
+  # who did install it got a toolchain that silently could not run the gates.
+  #
   # The agent-facing MCP server is an opt-in extra: the CLI and the HTTP search
   # daemon never import `mcp`, so a base install must not drag it (and, on
   # Windows, its `pywin32` transitive). Install `vaultspec-rag[mcp]` to run the
@@ -293,9 +285,18 @@ typeCheckingMode = "strict"
 # measures. Nesting compounds the score here, so a deeply-indented function
 # ranks far worse than a flat one with the same branch count.
 #
-# BASELINE-CALIBRATED (captured 2026-07-27): 25 is the current worst
+# BASELINE-CALIBRATED (captured 2026-07-27): 20 is the current worst
 # production function. Ratchet DOWN as hotspots are paid off; never raise.
 # Long-term target: 15, the tool's own default.
+#
+# Ratcheted 25 -> 20 once the seven functions above 20 were paid down by
+# extraction. The remaining distance, measured at the same time:
+#
+#     over 19:   7 functions
+#     over 18:  16
+#     over 17:  24
+#     over 16:  39
+#     over 15:  57      <- the target
 #
 # Production only. The tree's worst score overall is 44, in a test that walks
 # the AST of every module to prove a structural invariant; that shape is
@@ -303,7 +304,7 @@ typeCheckingMode = "strict"
 # `just dev audit complexity` instead, which reports without failing.
 [tool.complexipy]
 exclude = ["**/tests/**"]
-max-complexity-allowed = 25
+max-complexity-allowed = 20
 
 # pylint runs with every check off except the four that ruff has no rule for.
 # It is not a second general-purpose linter here — enabling more would produce
@@ -403,6 +404,29 @@ skips = ["B101"]
 
 # Dependency drift. Reports imports that resolve only transitively — a
 # transitive bump can withdraw one without any change here.
+#
+# The test tree is excluded because it ships INSIDE the package, at
+# `src/vaultspec_rag/tests/`. deptry classifies by path, not by marker, so it
+# reads every `import pytest` there as production code reaching for a dev
+# dependency and reports the whole tree under DEP004. The exclusion is a
+# limitation of that classification, not a decision to stop checking tests.
 [tool.deptry]
 extend_exclude = [".*[\\/]tests[\\/].*"]
 known_first_party = ["vaultspec_rag"]
+
+  # Each entry is a deliberate declaration the scanner cannot infer, not a
+  # finding waved through. Nothing else is suppressed.
+  [tool.deptry.per_rule_ignores]
+  # DEP002 is "declared but never imported". Both of these are version FLOORS
+  # on packages reached through another dependency, pinned here on purpose:
+  # `transformers` is what sentence-transformers loads models through, and
+  # `tree-sitter` is the runtime `tree-sitter-language-pack` parses with. The
+  # only direct reference to `tree_sitter` is a typing-time import of `Node`.
+  # Dropping either pin would leave the floor to whatever the intermediate
+  # package happens to require.
+  DEP002 = ["transformers", "tree-sitter"]
+  # DEP003 is "imported but only transitive". `tqdm` arrives with the hub and
+  # is imported lazily behind ImportError, which the code treats as survivable
+  # by falling back to a plain download with no progress bar. Declaring it
+  # would make a genuinely optional import look mandatory.
+  DEP003 = ["tqdm"]
