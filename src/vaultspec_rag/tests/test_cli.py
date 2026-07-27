@@ -79,34 +79,6 @@ class TestMainHelp:
         assert "vaultspec-rag" in result.output
 
 
-class TestTestCommand:
-    """Tests for the `test` subcommand argument pass-through."""
-
-    def test_help(self):
-        result = runner.invoke(app, ["test", "--help"])
-        assert result.exit_code == 0
-        assert "pytest" in result.output.lower()
-        assert "Extra arguments are passed to pytest" in result.output
-        for forbidden in ("Args:", "Raises:", "Examples::", "ctx:"):
-            assert forbidden not in result.output
-
-    def test_accepts_marker_flag(self):
-        """Verify the command accepts -m without erroring on arg parsing."""
-        result = runner.invoke(app, ["test", "--collect-only", "-q"])
-        # Exit code depends on pytest finding tests, but the CLI
-        # should not reject the args at the typer level.
-        # A typer rejection would show "Error" and "Usage" in output.
-        assert "Usage:" not in result.output
-
-    def test_accepts_multiple_pytest_args(self):
-        """Verify arbitrary pytest flags pass through."""
-        result = runner.invoke(
-            app,
-            ["test", "-m", "unit", "-v", "--timeout=5", "-x"],
-        )
-        assert "Usage:" not in result.output
-
-
 class TestHelpCleanup:
     """Verify --help output is operator-facing and free of developer sections.
 

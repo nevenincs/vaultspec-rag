@@ -52,7 +52,6 @@ from . import (
     _status,
     _status_render,
     _store,
-    _test,
 )
 from ._app import app, run_cli
 from ._core import console
@@ -119,7 +118,6 @@ __all__ = [
     "_store",
     "_suppress_hf_progress",
     "_terminate_pid",
-    "_test",
     "_try_http_reindex",
     "_try_http_search",
     "_write_service_status",
