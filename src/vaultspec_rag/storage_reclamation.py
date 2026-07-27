@@ -580,25 +580,10 @@ def _apply_reclaim(
     Returns:
         The outcome decision and the archive paths written.
     """
-    # Liveness first. An archive taken across a live writer is torn, so this
-    # gate has to precede the archive, not just the drop.
-    if decision.prefix in active_prefixes():
-        return _redecide(decision, "deferred", "active_index_job"), []
-    # Re-count immediately before acting, in BOTH tiers. The survey reading
-    # can be many minutes stale by the time this prefix's turn arrives, and
-    # any movement since means a writer this cycle cannot see. An archive
-    # makes loss recoverable, never prevented, so the data tier needs this
-    # check at least as much as the empty tier.
-    observed = _prefix_points(client, decision.prefix)
-    if observed is None:
-        return _redecide(decision, "deferred", "points_unverifiable"), []
-    if observed != decision.points:
-        moved = (
-            "points_appeared_since_survey"
-            if decision.tier == "empty"
-            else "points_changed_since_survey"
-        )
-        return _redecide(decision, "deferred", moved), []
+    gate = _pre_drop_reclaim_gate(client, decision, active_prefixes=active_prefixes)
+    if isinstance(gate, ReclaimDecision):
+        return gate, []
+    observed = gate
     archived: list[Path] = []
     if decision.action == "reclaim_data":
         try:
@@ -632,6 +617,33 @@ def _apply_reclaim(
         ),
         archived,
     )
+
+
+def _pre_drop_reclaim_gate(
+    client: QdrantClient,
+    decision: ReclaimDecision,
+    *,
+    active_prefixes: Callable[[], frozenset[str]],
+) -> int | ReclaimDecision:
+    """Return the stable point count, or one precise pre-drop deferral."""
+    # Liveness first. An archive taken across a live writer is torn, so this
+    # gate has to precede the archive, not just the drop.
+    if decision.prefix in active_prefixes():
+        return _redecide(decision, "deferred", "active_index_job")
+    # Re-count immediately before acting, in BOTH tiers. The survey reading
+    # can be many minutes stale by the time this prefix's turn arrives, and
+    # any movement since means a writer this cycle cannot see.
+    observed = _prefix_points(client, decision.prefix)
+    if observed is None:
+        return _redecide(decision, "deferred", "points_unverifiable")
+    if observed != decision.points:
+        moved = (
+            "points_appeared_since_survey"
+            if decision.tier == "empty"
+            else "points_changed_since_survey"
+        )
+        return _redecide(decision, "deferred", moved)
+    return observed
 
 
 def _reclaim_generations_for_cycle(
@@ -849,16 +861,19 @@ def _evaluate_generation_reports(
         has_reader = reader_present(report.root)
         for collection in report.unreferenced:
             unreferenced.append(collection)
-            decision = decide_generation_reclaim(collection, GenerationReclaimContext(
-                stamps=stamps,
-                now=now,
-                grace_hours=grace_hours,
-                reader_present=has_reader,
-                # survey_generations already omitted any root whose pointer it
-                # could not read, so every collection reaching here came from a
-                # root whose served name was legible at decision time.
-                pointer_verifiable=True,
-            ))
+            decision = decide_generation_reclaim(
+                collection,
+                GenerationReclaimContext(
+                    stamps=stamps,
+                    now=now,
+                    grace_hours=grace_hours,
+                    reader_present=has_reader,
+                    # survey_generations already omitted any root whose pointer it
+                    # could not read, so every collection reaching here came from a
+                    # root whose served name was legible at decision time.
+                    pointer_verifiable=True,
+                ),
+            )
             if decision.action == "held":
                 held.append(collection)
             if decision.droppable:
