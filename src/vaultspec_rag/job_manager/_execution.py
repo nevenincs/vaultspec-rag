@@ -37,7 +37,13 @@ from ..job_models import (
 from ..job_models import (
     is_encode_bearing as _is_encode_bearing,
 )
-from .models import JobAttemptContext, JobExecutionResult, JobShutdownResult
+from ._control import _AttemptTerminal
+from .models import (
+    JobAttemptContext,
+    JobExecutionResult,
+    JobShutdownResult,
+    ResourceUpdate,
+)
 from .state import (
     AttemptExit,
     JobAttemptFinishedCallback,
@@ -495,9 +501,11 @@ class JobManagerExecution(JobManagerState):
         # and distinguishes a genuinely running attempt from one still
         # queued behind the encode slot.
         capacity_persisted = context.set_resources(
-            started=self._process_resource_snapshot(),
-            index_capacity_held=True,
-            admission_acquired_at=time.time(),
+            ResourceUpdate(
+                started=self._process_resource_snapshot(),
+                index_capacity_held=True,
+                admission_acquired_at=time.time(),
+            )
         )
         if not capacity_persisted:
             raise RuntimeError("could not publish managed index-capacity ownership")
@@ -508,7 +516,7 @@ class JobManagerExecution(JobManagerState):
             try:
                 return binding.runner(context)
             finally:
-                context.set_resources(gpu_lock_wait_seconds=gpu_wait.seconds)
+                context.set_resources(ResourceUpdate(gpu_lock_wait_seconds=gpu_wait.seconds))
 
     def _complete_attempt(
         self,
@@ -590,11 +598,13 @@ class JobManagerExecution(JobManagerState):
             result = exit_state.result
             return self.finish_attempt(
                 job_id,
-                attempt=attempt,
-                task=task,
-                state=JobState.SUCCEEDED,
-                result=result.summary if result is not None else None,
-                reuse=result.reuse if result is not None else None,
+                _AttemptTerminal(
+                    attempt=attempt,
+                    task=task,
+                    state=JobState.SUCCEEDED,
+                    result=result.summary if result is not None else None,
+                    reuse=result.reuse if result is not None else None,
+                ),
             )
 
     def _recover_completion_persistence(
@@ -700,11 +710,15 @@ class JobManagerExecution(JobManagerState):
         )
         return self.finish_attempt(
             job_id,
-            attempt=attempt,
-            task=task,
-            state=state,
-            result=result,
-            error_kind=("interrupted" if interrupted else classify_error_text(result)),
+            _AttemptTerminal(
+                attempt=attempt,
+                task=task,
+                state=state,
+                result=result,
+                error_kind=(
+                    "interrupted" if interrupted else classify_error_text(result)
+                ),
+            ),
         )
 
     @staticmethod

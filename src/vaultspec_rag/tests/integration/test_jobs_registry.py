@@ -27,7 +27,8 @@ import vaultspec_rag.mcp._tools as tools
 from ... import jobs as _jobs
 from ... import server
 from ...job_control import RunControlToken
-from ...job_manager import JobManager
+from ...job_manager._control import _AttemptTerminal
+from ...job_manager.manager import JobManager
 from ...job_models import (
     DesiredJobState,
     JobInitiator,
@@ -132,6 +133,38 @@ def _assert_resource_snapshot(raw: object) -> dict[str, object]:
     return resources
 
 
+def _assert_running_job_snapshot(entry: dict[str, object], job_id: str) -> None:
+    assert entry["id"] == job_id
+    assert entry["source"] == "vault"
+    assert entry["trigger"] == "tool"
+    assert entry["phase"] == "running"
+    assert isinstance(entry["started_at"], float)
+    assert entry["finished_at"] is None
+    assert entry["result"] is None
+    _assert_runtime_context(entry["runtime"])
+    resources = _assert_resources(entry)
+    _assert_resource_snapshot(resources["started"])
+    assert resources["finished"] is None
+
+
+def _assert_done_job_snapshot(entry: dict[str, object], job_id: str) -> None:
+    assert entry["id"] == job_id
+    assert entry["phase"] == "done"
+    finished_at = entry["finished_at"]
+    started_at = entry["started_at"]
+    assert isinstance(finished_at, float)
+    assert isinstance(started_at, float)
+    assert finished_at >= started_at
+    assert entry["result"] == "+1 /0 -0 (5ms)"
+    assert isinstance(_assert_resources(entry)["finished"], dict)
+
+
+def _assert_resources(entry: dict[str, object]) -> dict[str, object]:
+    resources = entry["resources"]
+    assert isinstance(resources, dict)
+    return cast("dict[str, object]", resources)
+
+
 # --------------------------------------------------------------------------- #
 # Unit-style: schema, bounding, concurrency                                   #
 # --------------------------------------------------------------------------- #
@@ -143,38 +176,13 @@ def test_record_start_then_finish_produces_done_snapshot(_clean_jobs: None) -> N
 
     running = _jobs.snapshot()
     assert len(running) == 1
-    entry = running[0]
-    assert entry["id"] == job_id
-    assert entry["source"] == "vault"
-    assert entry["trigger"] == "tool"
-    assert entry["phase"] == "running"
-    assert isinstance(entry["started_at"], float)
-    assert entry["finished_at"] is None
-    assert entry["result"] is None
-    _assert_runtime_context(entry["runtime"])
-    resources = entry["resources"]
-    assert isinstance(resources, dict)
-    resources = cast("dict[str, object]", resources)
-    _assert_resource_snapshot(resources["started"])
-    assert resources["finished"] is None
+    _assert_running_job_snapshot(running[0], job_id)
 
     _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
 
     finished = _jobs.snapshot()
     assert len(finished) == 1
-    done = finished[0]
-    assert done["id"] == job_id
-    assert done["phase"] == "done"
-    finished_at = done["finished_at"]
-    started_at = done["started_at"]
-    assert isinstance(finished_at, float)
-    assert isinstance(started_at, float)
-    assert finished_at >= started_at
-    assert done["result"] == "+1 /0 -0 (5ms)"
-    done_resources = done["resources"]
-    assert isinstance(done_resources, dict)
-    done_resources = cast("dict[str, object]", done_resources)
-    assert isinstance(done_resources["finished"], dict)
+    _assert_done_job_snapshot(finished[0], job_id)
 
 
 @pytest.mark.unit
@@ -514,10 +522,12 @@ class TestManagedJobPersistence:
             assert (
                 manager.finish_attempt(
                     completed.job.id,
-                    attempt=1,
-                    task=completed_task,
-                    state=JobState.SUCCEEDED,
-                    result="done",
+                    _AttemptTerminal(
+                        attempt=1,
+                        task=completed_task,
+                        state=JobState.SUCCEEDED,
+                        result="done",
+                    ),
                 ).code
                 == "job_finished"
             )
@@ -755,11 +765,13 @@ class TestManagedJobPersistence:
             state_path.mkdir()
             outcome = manager.finish_attempt(
                 created.job.id,
-                attempt=1,
-                task=task,
-                state=JobState.FAILED,
-                result="real worker failure",
-                error_kind="other",
+                _AttemptTerminal(
+                    attempt=1,
+                    task=task,
+                    state=JobState.FAILED,
+                    result="real worker failure",
+                    error_kind="other",
+                ),
             )
 
             assert outcome.code == "job_persistence_failed"

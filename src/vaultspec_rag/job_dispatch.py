@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._units import bytes_to_mib
-from .job_manager.models import JobAttemptContext, JobExecutionResult
+from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceUpdate
 from .job_models import (
     IndexResilienceSnapshot,
     JobMode,
@@ -102,9 +102,9 @@ def _run_vault_attempt(
     dispatch.registry.load_model()
     try:
         with dispatch.registry.lease(dispatch.root) as slot:
-            context.set_resources(project_lease_held=True)
+            context.set_resources(ResourceUpdate(project_lease_held=True))
             try:
-                context.set_resources(writer_lock_held=True)
+                context.set_resources(ResourceUpdate(writer_lock_held=True))
                 reporter = JobProgressReporter(dispatch.job_id, context=context)
                 snapshot = dispatch.manager.get(dispatch.job_id)
                 resumed = (
@@ -123,10 +123,10 @@ def _run_vault_attempt(
                         run_control=context.control,
                     )
             finally:
-                context.set_resources(writer_lock_held=False)
+                context.set_resources(ResourceUpdate(writer_lock_held=False))
             slot.graph_cache.invalidate()
     finally:
-        context.set_resources(project_lease_held=False)
+        context.set_resources(ResourceUpdate(project_lease_held=False))
     return JobExecutionResult(
         summary=(
             f"+{result.added} /{result.updated} "
@@ -186,9 +186,11 @@ def _run_indexing_attempt(
     dispatch.registry.load_model()
     try:
         with dispatch.registry.lease(dispatch.root) as slot:
-            context.set_resources(project_lease_held=True)
+            context.set_resources(ResourceUpdate(project_lease_held=True))
             try:
-                context.set_resources(writer_lock_held=True, pipeline_active=True)
+                context.set_resources(
+                    ResourceUpdate(writer_lock_held=True, pipeline_active=True)
+                )
                 reporter = JobProgressReporter(dispatch.job_id, context=context)
                 snapshot = dispatch.manager.get(dispatch.job_id)
                 resumed = (
@@ -238,9 +240,11 @@ def _run_indexing_attempt(
                         ),
                     )
             finally:
-                context.set_resources(writer_lock_held=False, pipeline_active=False)
+                context.set_resources(
+                    ResourceUpdate(writer_lock_held=False, pipeline_active=False)
+                )
     finally:
-        context.set_resources(project_lease_held=False)
+        context.set_resources(ResourceUpdate(project_lease_held=False))
     skipped_suffix = (
         f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
     )

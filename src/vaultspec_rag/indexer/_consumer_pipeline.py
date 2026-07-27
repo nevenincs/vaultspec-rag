@@ -17,6 +17,7 @@ import hashlib
 import logging
 import queue
 import time
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -122,6 +123,41 @@ class ChunkEmbedResult(NamedTuple):
     reuse_stats: ReuseStats | None
 
 
+@dataclass(frozen=True, slots=True)
+class CodePipelineBindings:
+    """Stable collaborators and run-accounting callbacks for one pipeline."""
+
+    root_dir: pathlib.Path
+    model: EmbeddingModel
+    store: VaultStore
+    producer: CodeChunkProducer
+    lifecycle: CodeGenerationLifecycle
+    gpu_lock: threading.Lock | None
+    begin_memory_budget: Callable[[], None]
+    sample_memory_budget: Callable[[str], MemoryBudgetSnapshot]
+    forward_peak_recording: Callable[[], contextlib.AbstractContextManager[None]]
+    fail_cuda_oom: Callable[[str, BaseException], None]
+    begin_support_measurement: Callable[[Iterable[pathlib.Path]], None]
+    measure_code_segments: Callable[
+        [Iterable[CodeFileSegment]], Iterator[CodeFileSegment]
+    ]
+    record_extracted_bytes: Callable[[int], None]
+    record_preprocess_result: Callable[[FileChunkResult], None]
+
+
+@dataclass(frozen=True, slots=True)
+class CodePipelineRun:
+    """Per-run inputs shared by the producer and GPU consumer."""
+
+    reporter: ProgressReporter
+    checkpoint: CodeRunCheckpoint
+    limits: CodePipelineLimits
+    content_epoch: str | None
+    code_build_target: str | None
+    ingest_wait: bool = True
+    run_control: RunControl = NO_RUN_CONTROL
+
+
 class CodeConsumerPipeline:
     """Own one root's bounded code chunk-production and GPU-encode pipeline.
 
@@ -133,26 +169,7 @@ class CodeConsumerPipeline:
     state it does not own.
     """
 
-    def __init__(
-        self,
-        root_dir: pathlib.Path,
-        model: EmbeddingModel,
-        store: VaultStore,
-        producer: CodeChunkProducer,
-        lifecycle: CodeGenerationLifecycle,
-        *,
-        gpu_lock: threading.Lock | None,
-        begin_memory_budget: Callable[[], None],
-        sample_memory_budget: Callable[[str], MemoryBudgetSnapshot],
-        forward_peak_recording: Callable[[], contextlib.AbstractContextManager[None]],
-        fail_cuda_oom: Callable[[str, BaseException], None],
-        begin_support_measurement: Callable[[Iterable[pathlib.Path]], None],
-        measure_code_segments: Callable[
-            [Iterable[CodeFileSegment]], Iterator[CodeFileSegment]
-        ],
-        record_extracted_bytes: Callable[[int], None],
-        record_preprocess_result: Callable[[FileChunkResult], None],
-    ) -> None:
+    def __init__(self, bindings: CodePipelineBindings) -> None:
         """Bind the pipeline to one root's model, store, and run bookkeeping.
 
         Args:
@@ -173,20 +190,20 @@ class CodeConsumerPipeline:
             record_extracted_bytes: Add extractor output bytes to the run.
             record_preprocess_result: Score one worker result's disposition.
         """
-        self._root_dir = root_dir
-        self._model = model
-        self._store = store
-        self._producer = producer
-        self._lifecycle = lifecycle
-        self._gpu_lock = gpu_lock
-        self._begin_memory_budget = begin_memory_budget
-        self._sample_memory_budget = sample_memory_budget
-        self._forward_peak_recording = forward_peak_recording
-        self._fail_cuda_oom = fail_cuda_oom
-        self._begin_support_measurement = begin_support_measurement
-        self._measure_code_segments = measure_code_segments
-        self._record_extracted_bytes = record_extracted_bytes
-        self._record_preprocess_result = record_preprocess_result
+        self._root_dir = bindings.root_dir
+        self._model = bindings.model
+        self._store = bindings.store
+        self._producer = bindings.producer
+        self._lifecycle = bindings.lifecycle
+        self._gpu_lock = bindings.gpu_lock
+        self._begin_memory_budget = bindings.begin_memory_budget
+        self._sample_memory_budget = bindings.sample_memory_budget
+        self._forward_peak_recording = bindings.forward_peak_recording
+        self._fail_cuda_oom = bindings.fail_cuda_oom
+        self._begin_support_measurement = bindings.begin_support_measurement
+        self._measure_code_segments = bindings.measure_code_segments
+        self._record_extracted_bytes = bindings.record_extracted_bytes
+        self._record_preprocess_result = bindings.record_preprocess_result
 
     def resolve_limits(self) -> CodePipelineLimits:
         """Freeze code segment, queue, slice, and model limits."""
@@ -210,21 +227,18 @@ class CodeConsumerPipeline:
             flush_slices=max(1, int(config.index_cache_flush_slices)),
         )
 
-    def run(
-        self,
-        paths: list[pathlib.Path],
-        *,
-        reporter: ProgressReporter,
-        checkpoint: CodeRunCheckpoint,
-        limits: CodePipelineLimits,
-        content_epoch: str | None,
-        code_build_target: str | None,
-        ingest_wait: bool = True,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> ChunkEmbedResult:
+    def run(self, paths: list[pathlib.Path], run: CodePipelineRun) -> ChunkEmbedResult:
         """Overlap bounded CPU production with one weighted GPU consumer."""
         from ._donor_candidates import CollectionKind
         from ._reuse import resolve_donor_reuse
+
+        reporter = run.reporter
+        checkpoint = run.checkpoint
+        limits = run.limits
+        content_epoch = run.content_epoch
+        code_build_target = run.code_build_target
+        ingest_wait = run.ingest_wait
+        run_control = run.run_control
 
         # One donor resolution per run: the consumer thread reads the
         # resolved context per slice, outside the GPU lock.

@@ -29,7 +29,7 @@ from . import jobs as _jobs
 from ._backoff import capped_exponential
 from .indexer._content_policy import ContentKind
 from .indexer._route_migration import prior_stored_owners
-from .job_manager.models import JobAttemptContext, JobExecutionResult
+from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceUpdate
 from .job_models import (
     IndexResilienceSnapshot,
     JobInitiator,
@@ -1785,11 +1785,13 @@ def _run_managed_index_attempt(
     registry.load_model()
     try:
         with registry.lease(slot.root) as project:
-            context.set_resources(project_lease_held=True)
+            context.set_resources(ResourceUpdate(project_lease_held=True))
             try:
                 context.set_resources(
-                    writer_lock_held=True,
-                    pipeline_active=pipeline_active,
+                    ResourceUpdate(
+                        writer_lock_held=True,
+                        pipeline_active=pipeline_active,
+                    )
                 )
                 try:
                     result = _execute_project_incremental(
@@ -1803,11 +1805,13 @@ def _run_managed_index_attempt(
                     _publish_watcher_index_resilience(slot, project, context)
             finally:
                 context.set_resources(
-                    writer_lock_held=False,
-                    pipeline_active=False,
+                    ResourceUpdate(
+                        writer_lock_held=False,
+                        pipeline_active=False,
+                    )
                 )
     finally:
-        context.set_resources(project_lease_held=False)
+        context.set_resources(ResourceUpdate(project_lease_held=False))
     skipped_suffix = (
         f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
     )
