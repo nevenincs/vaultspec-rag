@@ -18,7 +18,7 @@ from ..indexer._chunk_producer import (
     WeightedCodeSegmentQueue,
     drain_code_chunks,
 )
-from ..indexer._codebase_indexer import CodebaseIndexer
+from ..indexer._consumer_pipeline import CodeConsumerPipeline
 from ..indexer._run_policy import DurableProgressKind, RunPolicy
 from ..indexer._streaming import (
     CodeFileSegment,
@@ -289,7 +289,7 @@ def test_normal_consumer_drain_extends_while_storage_progress_continues() -> Non
     consumer = threading.Thread(target=_consume, name="real-progressing-consumer")
     started = time.monotonic()
     consumer.start()
-    CodebaseIndexer._drain_consumer(consumer, segment_q, policy)
+    CodeConsumerPipeline._drain_consumer(consumer, segment_q, policy)
     elapsed = time.monotonic() - started
 
     assert not consumer.is_alive()

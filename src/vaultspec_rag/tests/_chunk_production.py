@@ -64,7 +64,9 @@ def produce_file_results(
         # Mirror the pipeline's sink: it records the preprocess disposition and
         # raises the typed failure before anything reaches the queue.
         indexer._record_preprocess_result(result)  # pyright: ignore[reportPrivateUsage]
-        indexer._raise_code_result_failure(result, None)  # pyright: ignore[reportPrivateUsage]
+        indexer._consumer_pipeline.raise_code_result_failure(  # pyright: ignore[reportPrivateUsage]
+            result, None
+        )
         collected.append(result)
         return True
 

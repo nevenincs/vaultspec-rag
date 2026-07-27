@@ -216,7 +216,7 @@ class TestIncrementalPublicationRecovery:
         chunk = _stored_partial_chunk(rel_path, point_id)
         store.upsert_code_chunks([chunk], write_policy=None)
         policy = indexer.resolve_policy_snapshot()
-        limits = indexer._resolve_code_pipeline_limits()  # pyright: ignore[reportPrivateUsage]
+        limits = indexer._consumer_pipeline.resolve_limits()  # pyright: ignore[reportPrivateUsage]
         checkpoint = indexer._lifecycle.open_checkpoint(  # pyright: ignore[reportPrivateUsage]
             policy=policy,
             operation=RunOperation.INCREMENTAL,
@@ -239,7 +239,7 @@ class TestIncrementalPublicationRecovery:
         token = RunControlToken()
         assert token.request_cancel()
         with pytest.raises(CancelRequested):
-            indexer._commit_incremental_replacement(  # pyright: ignore[reportPrivateUsage]
+            indexer._incremental_commit.commit_replacement(  # pyright: ignore[reportPrivateUsage]
                 policy=policy,
                 existing_ids=set(),
                 published_ids={point_id},
@@ -276,7 +276,7 @@ class TestIncrementalPublicationRecovery:
         source = code_project["src_dir"] / "sample.py"
         preflight = indexer.preflight_content()
         policy = preflight.policy
-        limits = indexer._resolve_code_pipeline_limits()  # pyright: ignore[reportPrivateUsage]
+        limits = indexer._consumer_pipeline.resolve_limits()  # pyright: ignore[reportPrivateUsage]
         checkpoint = indexer._lifecycle.open_checkpoint(  # pyright: ignore[reportPrivateUsage]
             policy=policy,
             operation=RunOperation.FULL,
