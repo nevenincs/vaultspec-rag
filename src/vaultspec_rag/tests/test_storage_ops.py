@@ -10,6 +10,7 @@ integration tier against a live daemon.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -436,8 +437,12 @@ class TestSweepArchive:
 
     def _stamp_archive(self, path: Path, *, age_days: float) -> None:
         """Set one completed archive directory's retention clock."""
-        mtime = (_NOW - timedelta(days=age_days)).timestamp()
-        os.utime(path, (mtime, mtime))
+        path.mkdir(parents=True, exist_ok=True)
+        completed_at = _NOW - timedelta(days=age_days)
+        (path / "snapshot-manifest.json").write_text(
+            json.dumps({"completed_at": completed_at.isoformat()}),
+            encoding="utf-8",
+        )
 
     def test_missing_dir_is_a_noop(self, tmp_path: Path) -> None:
         assert (
@@ -491,6 +496,18 @@ class TestSweepArchive:
         assert not oldest.exists()
         assert (middle / "snapshot-manifest.json").exists()
         assert (newest / "snapshot-manifest.json").exists()
+
+    def test_missing_completion_stamp_is_never_guessed_from_file_mtime(
+        self, tmp_path: Path
+    ) -> None:
+        archive = tmp_path / "archive"
+        legacy = archive / "legacy"
+        self._touch(legacy / "copied-metadata.json", size=600, age_days=365)
+        deleted = sweep_archive(
+            archive, now=_NOW, retention_days=30.0, max_total_bytes=0
+        )
+        assert deleted == []
+        assert legacy.exists()
 
 
 class TestSurveySnapshot:
@@ -1034,7 +1051,7 @@ class _ScriptedClient:
     Convergence depends on *when* readings stop moving, which a live server
     cannot be made to reproduce on demand. Each scripted step names the
     segment count, the collection status, and how many filler blocks should
-    exist on disk at that moment - so `_dir_bytes` measures a real directory
+    exist on disk at that moment - so ``directory_size_bytes`` measures a real directory
     that really inflates and then shrinks, exactly as a merge does.
     """
 
@@ -1073,7 +1090,7 @@ class TestConvergenceDetection:
 
     @staticmethod
     def _wait(client: object, path: Path, budget_s: float = 60.0):
-        from ..storage_reconciliation import _await_convergence
+        from ..storage_reconciliation import await_convergence
 
         clock = {"t": 0.0}
 
@@ -1083,7 +1100,7 @@ class TestConvergenceDetection:
         def _sleep(seconds: float) -> None:
             clock["t"] += seconds
 
-        return _await_convergence(
+        return await_convergence(
             cast("QdrantClient", client),
             "rfeedfacefeed_vault_docs",
             path,
@@ -1167,14 +1184,14 @@ class TestConvergenceDetection:
     def test_shutdown_event_abandons_the_wait(self, tmp_path: Path) -> None:
         import threading
 
-        from ..storage_reconciliation import _await_convergence
+        from ..storage_reconciliation import await_convergence
 
         path = tmp_path / "coll"
         client = _ScriptedClient(path, [(9, "yellow", 12)])
         stop = threading.Event()
         stop.set()
 
-        result = _await_convergence(
+        result = await_convergence(
             cast("QdrantClient", client),
             "rfeedfacefeed_vault_docs",
             path,
