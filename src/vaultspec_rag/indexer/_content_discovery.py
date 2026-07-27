@@ -63,6 +63,19 @@ class AdmissionCount:
 
 
 @dataclass(frozen=True, slots=True)
+class _ScanFileRequest:
+    dirpath: str
+    files: list[str]
+    rel_dir: str
+    policy: ResolvedIndexPolicy
+    result: list[pathlib.Path]
+    counts: dict[tuple[ContentKind | None, bool, AdmissionReason], int]
+    samples: list[AdmissionSample]
+    sample_limit: int
+    run_control: RunControl = NO_RUN_CONTROL
+
+
+@dataclass(frozen=True, slots=True)
 class AdmissionSample:
     """One bounded, project-relative example from a structured scan."""
 
@@ -421,15 +434,17 @@ class CodeContentDiscovery:
                     d for d in dirs if not self.is_ignored(policy, f"{rel_dir}/{d}/")
                 ]
             admitted_files, admitted_bytes = self._process_scan_files(
-                dirpath,
-                files,
-                rel_dir,
-                policy,
-                result,
-                counts,
-                samples,
-                sample_limit,
-                run_control=run_control,
+                _ScanFileRequest(
+                    dirpath,
+                    files,
+                    rel_dir,
+                    policy,
+                    result,
+                    counts,
+                    samples,
+                    sample_limit,
+                    run_control,
+                )
             )
             source_files += admitted_files
             source_bytes += admitted_bytes
@@ -461,19 +476,21 @@ class CodeContentDiscovery:
             ),
         )
 
-    def _process_scan_files(
-        self,
-        dirpath: str,
-        files: list[str],
-        rel_dir: str,
-        policy: ResolvedIndexPolicy,
-        result: list[pathlib.Path],
-        counts: dict[tuple[ContentKind | None, bool, AdmissionReason], int],
-        samples: list[AdmissionSample],
-        sample_limit: int,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[int, int]:
+    def _process_scan_files(self, request: _ScanFileRequest) -> tuple[int, int]:
+        (
+            dirpath, files, rel_dir, policy, result, counts, samples,
+            sample_limit, run_control,
+        ) = (
+            request.dirpath,
+            request.files,
+            request.rel_dir,
+            request.policy,
+            request.result,
+            request.counts,
+            request.samples,
+            request.sample_limit,
+            request.run_control,
+        )
         admitted_files = 0
         admitted_bytes = 0
         for fname in files:
