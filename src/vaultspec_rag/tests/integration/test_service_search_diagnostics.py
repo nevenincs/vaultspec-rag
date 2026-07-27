@@ -530,7 +530,7 @@ def _shared_search_after_concurrent_admission(
             query,
             "vault",
             5,
-            port,
+            context.port,
             str(root),
             timeout=300,
         )
