@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._loopback_http import probe_loopback_connect
 from ..._machine_lock import (
     acquire_machine_lock,
     acquire_machine_lock_lease,
@@ -26,7 +27,6 @@ from ..._machine_lock import (
     release_machine_lock,
     release_machine_lock_lease,
 )
-from ...cli._process import _port_is_listening
 from ...config import EnvVar
 from ._helpers import _get_ephemeral_port, _get_ephemeral_qdrant_port
 from ._machine_lock_holder import spawn_foreign_machine_lock_holder
@@ -35,6 +35,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+
+def _port_is_listening(port: int) -> bool:
+    """Whether anything accepts a loopback connect, at the conservative bound.
+
+    These asserts claim a loser daemon bound NOTHING, so they wait out the
+    full pre-existing deadline rather than trading accuracy for speed.
+    """
+    return probe_loopback_connect(port, timeout=1.0) == "accepted"
 
 
 def _assert_windows_singleton_refusal(output: str, holder_pid: int) -> None:

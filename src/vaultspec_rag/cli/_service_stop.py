@@ -19,6 +19,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._loopback_http import probe_loopback_connect
 from .._operator_commands import server_status_command
 from .._process_probe import iter_process_info, pid_alive, pid_is_zombie
 from ..serviceclient._discovery import _delete_service_status, _read_service_status
@@ -28,7 +29,6 @@ from ._core import logger
 from ._process import (
     _DEFAULT_GRACEFUL_DRAIN_SECONDS,
     _is_our_service,
-    _port_is_listening,
     _terminate_pid,
 )
 from ._service_lifecycle import (
@@ -61,6 +61,14 @@ _STOP_COMMAND = "service.stop"
 # escalation and owned-child reap once the drain window expires.
 _STOP_GRACEFUL_DRAIN_SECONDS = 20.0
 _STOP_TERMINATION_BUDGET_SECONDS = 45.0
+
+# Stop's success claims ride on these probes: a live listener misread as gone
+# would report an already-stopped success, or reap without the serving-pid
+# anchor, while the service is still running. So no fast connect deadline
+# here - a full second (the bound these checks have always used) against a
+# loopback handshake the kernel completes in microseconds fails only when
+# nothing is accepting.
+_STOP_CONNECT_TIMEOUT_SECONDS = 1.0
 
 
 def _reclaim_machine_singleton() -> tuple[int, _cli.TerminationResult] | None:
@@ -367,9 +375,16 @@ def _service_pid_on_port(port: int) -> tuple[int, str | None] | None:
     the running instance). Returns ``None`` when nothing healthy
     is serving the port.
     """
-    if not _port_is_listening(port):
+    listening = (
+        probe_loopback_connect(port, timeout=_STOP_CONNECT_TIMEOUT_SECONDS)
+        == "accepted"
+    )
+    if not listening:
         return None
-    health = _try_http_health(port)
+    # connect_timeout=None: a fast-deadline misread here would turn into an
+    # already-stopped success over a live service, so wait for the OS's
+    # authoritative refusal instead.
+    health = _try_http_health(port, connect_timeout=None)
     if health is None:
         return None
     serving_pid = health.get("pid")
@@ -586,7 +601,11 @@ def _guard_unconfirmed_port_holder(
     Raises:
         typer.Exit: When something is listening but unidentifiable.
     """
-    if serving is not None or not _port_is_listening(port):
+    if (
+        serving is not None
+        or probe_loopback_connect(port, timeout=_STOP_CONNECT_TIMEOUT_SECONDS)
+        != "accepted"
+    ):
         return
     raise _fail_stop(
         json_mode,

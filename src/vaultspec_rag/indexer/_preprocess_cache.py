@@ -36,6 +36,7 @@ from .._atomic_write import write_json_atomically
 from ._preprocess_schema import (
     SUPPORTED_SCHEMA_VERSION,
     UnsupportedSchemaVersionError,
+    validate_max_emitted_bytes,
     validate_preproc_output,
 )
 
@@ -104,8 +105,7 @@ class PreprocessCacheIdentity:
         max_emitted_bytes: int,
     ) -> PreprocessCacheIdentity:
         """Bind one source to the rule's complete execution semantics."""
-        if isinstance(max_emitted_bytes, bool) or max_emitted_bytes <= 0:
-            raise ValueError("max_emitted_bytes must be a positive integer")
+        validate_max_emitted_bytes(max_emitted_bytes)
         execution = {
             "command": rule.command,
             "entry_point": rule.entry_point,

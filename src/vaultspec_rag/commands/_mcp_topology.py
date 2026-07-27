@@ -11,7 +11,7 @@ from contextvars import Context
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
     init_paths,
@@ -29,6 +29,55 @@ from .._workspace_layout import (
     workspace_directories,
 )
 from ..builtins import list_builtins
+
+#: What an operator is told when the required-MCP topology refuses a run.
+#:
+#: Install and uninstall each built these three sentences for themselves, and
+#: each then recorded them on two channels by hand. Both halves mattered. The
+#: pair has to stay symmetric - the same condition should not be worded one way
+#: when installing and another when removing - and the two-channel record is
+#: the thing an operator actually reads: ``mcp_errors`` drives the exit path,
+#: ``warnings`` drives the human report, and a failure appended to only one of
+#: them either exits without explaining itself or explains itself without
+#: failing. The two copies had even settled on opposite append orders.
+TOPOLOGY_PREFLIGHT_FAILED = "required MCP topology preflight failed"
+TOPOLOGY_MATERIALIZATION_FAILED = "required MCP topology materialization failed"
+
+#: The one preflight refusal that is a stated condition rather than a caught
+#: exception: links exist that cannot be undone without changing the topology.
+LINKED_NODES_NOT_REMOVABLE = (
+    f"{TOPOLOGY_PREFLIGHT_FAILED}: linked required nodes cannot be safely "
+    "removed while preserving exact link topology"
+)
+
+
+def topology_preflight_failure(exc: object) -> str:
+    """Return the operator sentence for a failed topology inspection."""
+    return f"{TOPOLOGY_PREFLIGHT_FAILED}: {exc}"
+
+
+def topology_materialization_failure(exc: object) -> str:
+    """Return the operator sentence for a failed topology materialization."""
+    return f"{TOPOLOGY_MATERIALIZATION_FAILED}: {exc}"
+
+
+class McpFailureReport(Protocol):
+    """The two channels an MCP failure must reach on any report shape.
+
+    Structural rather than a base class: the install and uninstall reports are
+    separate dataclasses, and giving them a shared base would mean a mixin
+    whose annotations ``dataclass`` collects as fields, reordering both
+    constructors for the sake of two list attributes.
+    """
+
+    mcp_errors: list[str]
+    warnings: list[str]
+
+
+def record_mcp_failure(report: McpFailureReport, message: str) -> None:
+    """Record *message* on both channels an operator reads."""
+    report.mcp_errors.append(message)
+    report.warnings.append(message)
 
 
 class SnapshotKind(Enum):
@@ -169,7 +218,7 @@ class RequiredMcpTopology:
             rollback = self.restore()
             if rollback:
                 raise OSError(
-                    "required MCP topology materialization failed and rollback "
+                    f"{TOPOLOGY_MATERIALIZATION_FAILED} and rollback "
                     f"was incomplete: {'; '.join(rollback)}"
                 ) from None
             raise
