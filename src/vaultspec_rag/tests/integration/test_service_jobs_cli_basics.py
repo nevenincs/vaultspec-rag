@@ -7,8 +7,7 @@ import urllib.parse
 
 import pytest
 
-from vaultspec_rag.cli import app
-
+from ...cli import app
 from ._service_jobs_support import (
     _DEAD_PORT,
     _jobs_http_server,

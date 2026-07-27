@@ -11,8 +11,9 @@ import pytest
 from starlette.applications import Starlette
 
 import vaultspec_rag.server as _m
-from vaultspec_rag import jobs as _jobs
-from vaultspec_rag.server._routes import ROUTES
+
+from ... import jobs as _jobs
+from ...server._routes import ROUTES
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine

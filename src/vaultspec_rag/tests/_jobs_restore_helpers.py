@@ -8,8 +8,8 @@ import sys
 _RECORD_JOB_AND_EXIT = """
 import sys
 
-from vaultspec_rag.job_models import JobSource
-from vaultspec_rag.jobs import record_finish, record_start
+from ..job_models import JobSource
+from ..jobs import record_finish, record_start
 
 job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
 if "finish" in sys.argv:

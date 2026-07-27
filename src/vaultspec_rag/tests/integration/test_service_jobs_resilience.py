@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from vaultspec_rag import jobs as _managed_jobs
-from vaultspec_rag._job_errors import JobError, JobErrorKind, remediation
-from vaultspec_rag.cli import app
-from vaultspec_rag.job_control import RunControlToken
-from vaultspec_rag.job_manager._control import AttemptTerminal
-from vaultspec_rag.job_models import (
+from ... import jobs as _managed_jobs
+from ..._job_errors import JobError, JobErrorKind, remediation
+from ...cli import app
+from ...job_control import RunControlToken
+from ...job_manager._control import AttemptTerminal
+from ...job_models import (
     DesiredJobState,
     IndexResilienceSnapshot,
     JobInitiator,
@@ -25,7 +25,6 @@ from vaultspec_rag.job_models import (
     JobSpec,
     JobState,
 )
-
 from ._service_jobs_support import _canonical_resilience_server, runner
 
 if TYPE_CHECKING:

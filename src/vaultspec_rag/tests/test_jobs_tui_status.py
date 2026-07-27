@@ -172,7 +172,7 @@ class _StatusService:
     ) -> None:
         health = answers["/health"]
         metrics = answers["/metrics"]
-        routes: dict[str, dict[str, object] | None] = {
+        routes: dict[str, object | None] = {
             path: payload if isinstance(payload, dict) else None
             for path, payload in answers.items()
             if path in {"/projects", "/storage/survey", "/watcher"}

@@ -6,9 +6,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from vaultspec_rag import jobs as _jobs
-from vaultspec_rag.job_models import JobSource
-
+from ... import jobs as _jobs
+from ...job_models import JobSource
 from .._job_records import activity_record
 from ._service_jobs_route_helpers import (
     _routes_app as _routes_app_fixture,
