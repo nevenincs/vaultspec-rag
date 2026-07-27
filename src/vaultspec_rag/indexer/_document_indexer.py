@@ -777,14 +777,8 @@ class DocumentIndexer:
     def _publish_full_paths(
         self,
         paths: tuple[pathlib.Path, ...],
-        *,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
         previous_files: dict[str, DocumentFileMetadata],
-        reporter: ProgressReporter,
-        run_control: RunControl,
+        request: _DocumentPublishRequest,
     ) -> tuple[list[DocumentFileMetadata], _DocumentRunCounts, list[str]]:
         """Publish a full discovered set while retaining failed prior points."""
         published: list[DocumentFileMetadata] = []
@@ -792,7 +786,10 @@ class DocumentIndexer:
         failures: list[str] = []
         for path in paths:
             rel = path.relative_to(self.root_dir).as_posix()
-            if policy.execution_mode == "off" and policy.match_preprocess(rel):
+            if (
+                request.policy.execution_mode == "off"
+                and request.policy.match_preprocess(rel)
+            ):
                 retained = previous_files.get(rel)
                 if retained is not None:
                     published.append(retained)
@@ -802,14 +799,7 @@ class DocumentIndexer:
                 continue
             metadata, chunk_count, failure = self._publish_file(
                 path,
-                request=_DocumentPublishRequest(
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    checkpoint=checkpoint,
-                    reporter=reporter,
-                    run_control=run_control,
-                ),
+                request=request,
             )
             if failure is not None:
                 failures.append(failure)
@@ -823,7 +813,7 @@ class DocumentIndexer:
                 counts.updated += chunk_count
             else:
                 counts.added += chunk_count
-            if policy.match_preprocess(rel) is not None:
+            if request.policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
         return published, counts, failures
 
@@ -878,14 +868,8 @@ class DocumentIndexer:
     def _reconcile_incremental_paths(
         self,
         selected: set[str],
-        *,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
         previous_files: dict[str, DocumentFileMetadata],
-        reporter: ProgressReporter,
-        run_control: RunControl,
+        request: _DocumentPublishRequest,
     ) -> tuple[dict[str, DocumentFileMetadata], _DocumentRunCounts, list[str]]:
         """Apply one selected incremental set under the document writer lock."""
         current = dict(previous_files)
@@ -893,16 +877,19 @@ class DocumentIndexer:
         failures: list[str] = []
         for rel in sorted(selected):
             path = self.root_dir / pathlib.PurePosixPath(rel)
-            disposition = policy.classify(rel).disposition
+            disposition = request.policy.classify(rel).disposition
             admitted = disposition.admitted and disposition.kind is ContentKind.DOCUMENT
             if not path.is_file() or not admitted:
                 old = current.pop(rel, None)
                 if old is not None:
                     self.store.delete_document_content_chunks(list(old.point_ids))
-                    checkpoint.record_confirmed_deletion(rel, old.point_ids)
+                    request.checkpoint.record_confirmed_deletion(rel, old.point_ids)
                     counts.removed += len(old.point_ids)
                 continue
-            if policy.execution_mode == "off" and policy.match_preprocess(rel):
+            if (
+                request.policy.execution_mode == "off"
+                and request.policy.match_preprocess(rel)
+            ):
                 failures.append(
                     f"{rel}: preprocessing disabled; retained work as stale"
                 )
@@ -910,14 +897,7 @@ class DocumentIndexer:
             old = current.get(rel)
             metadata, chunk_count, failure = self._publish_file(
                 path,
-                request=_DocumentPublishRequest(
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    checkpoint=checkpoint,
-                    reporter=reporter,
-                    run_control=run_control,
-                ),
+                request=request,
             )
             if failure is not None:
                 failures.append(failure)
@@ -931,9 +911,9 @@ class DocumentIndexer:
                 metadata=metadata,
                 chunk_count=chunk_count,
                 counts=counts,
-                checkpoint=checkpoint,
+                checkpoint=request.checkpoint,
             )
-            if policy.match_preprocess(rel) is not None:
+            if request.policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
         return current, counts, failures
 
@@ -1000,12 +980,14 @@ class DocumentIndexer:
                     paths,
                     started=started,
                     effective_clean=effective_clean,
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    checkpoint=checkpoint,
-                    reporter=reporter,
-                    run_control=run_control,
+                    request=_DocumentPublishRequest(
+                        policy=policy,
+                        prep=prep,
+                        budget=budget,
+                        checkpoint=checkpoint,
+                        reporter=reporter,
+                        run_control=run_control,
+                    ),
                 ),
                 event_logger=logger,
                 store=self.store,
@@ -1023,14 +1005,12 @@ class DocumentIndexer:
         *,
         started: float,
         effective_clean: bool,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
-        reporter: ProgressReporter,
-        run_control: RunControl,
+        request: _DocumentPublishRequest,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`."""
+        policy = request.policy
+        checkpoint = request.checkpoint
+        reporter = request.reporter
         resumed = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -1061,13 +1041,8 @@ class DocumentIndexer:
             self.store.ensure_document_table()
             published, counts, failures = self._publish_full_paths(
                 paths,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                checkpoint=checkpoint,
                 previous_files=previous_files,
-                reporter=reporter,
-                run_control=run_control,
+                request=request,
             )
             removed = self._reconcile_full_stale(
                 previous_files,
@@ -1153,13 +1128,15 @@ class DocumentIndexer:
                     authorized_paths,
                     started=started,
                     scoped=changed_paths is not None,
-                    policy=policy,
-                    prep=prep,
-                    budget=budget,
-                    checkpoint=checkpoint,
+                    request=_DocumentPublishRequest(
+                        policy=policy,
+                        prep=prep,
+                        budget=budget,
+                        checkpoint=checkpoint,
+                        reporter=reporter,
+                        run_control=run_control,
+                    ),
                     previous=previous,
-                    reporter=reporter,
-                    run_control=run_control,
                 ),
                 event_logger=logger,
                 store=self.store,
@@ -1179,15 +1156,13 @@ class DocumentIndexer:
         *,
         started: float,
         scoped: bool,
-        policy: ResolvedIndexPolicy,
-        prep: PreprocessContext | None,
-        budget: _DocumentResourceBudget,
-        checkpoint: DocumentRunCheckpoint,
+        request: _DocumentPublishRequest,
         previous: DocumentIndexMetadata,
-        reporter: ProgressReporter,
-        run_control: RunControl,
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`."""
+        policy = request.policy
+        checkpoint = request.checkpoint
+        reporter = request.reporter
         resumed = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -1207,13 +1182,8 @@ class DocumentIndexer:
         with checkpoint.preserve_incomplete_generation():
             _current, counts, failures = self._reconcile_incremental_paths(
                 selected,
-                policy=policy,
-                prep=prep,
-                budget=budget,
-                checkpoint=checkpoint,
                 previous_files=previous_files,
-                reporter=reporter,
-                run_control=run_control,
+                request=request,
             )
             if failures:
                 checkpoint.mark_failed("; ".join(failures))
