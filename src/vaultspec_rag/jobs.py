@@ -46,7 +46,6 @@ from .registry import get_registry
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .api import AllIndexOutcomes
     from .index_profiles import SupportMeasurement
     from .indexer import CodebaseIndexer
     from .indexer._codebase_indexer import (
@@ -54,13 +53,11 @@ if TYPE_CHECKING:
         CodeScopedPreflight,
         ContentScanResult,
     )
-    from .indexer._content_policy import RootContentPolicy
     from .indexer._document_indexer import (
         DocumentIndexPreflight,
         DocumentScopedPreflight,
     )
     from .job_control import RunControl
-    from .progress import ProgressReporter
     from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
@@ -70,7 +67,6 @@ __all__ = [
     "activate_index_job",
     "active_index_support_profiles",
     "get_job_manager",
-    "index_all_domains",
     "index_job_status",
     "record_finish",
     "record_progress",
@@ -101,30 +97,6 @@ def active_index_support_profiles() -> dict[str, object]:
     from .index_profiles import index_support_profile_status
 
     return index_support_profile_status(get_config().index_support_profile)
-
-
-def index_all_domains(
-    root: Path,
-    *,
-    full: bool = False,
-    clean: bool = False,
-    reporter: ProgressReporter | None = None,
-    model_name: str | None = None,
-    extra_excludes: list[str] | None = None,
-    content_policy: RootContentPolicy | None = None,
-) -> AllIndexOutcomes:
-    """Run all indexing domains without collapsing a partial failure."""
-    from .api import index_all
-
-    return index_all(
-        root,
-        full=full,
-        clean=clean,
-        reporter=reporter,
-        model_name=model_name,
-        extra_excludes=extra_excludes,
-        content_policy=content_policy,
-    )
 
 
 # What initiated the activity: a reindex tool call, the filesystem watcher,

@@ -54,6 +54,7 @@ from ..job_models import JobOutcome
 from ..logging_config import (
     InvalidManagedLogSourceError,
     log_event,
+    managed_log_filters,
     query_managed_logs,
     render_managed_log_groups,
 )
@@ -68,7 +69,6 @@ from ._routes_jobs import (
     _parse_since_seconds,
     _prioritise_running_jobs,
 )
-from ._routes_logs import _log_filters_from_request
 from ._routes_storage import (
     _clamp_survey_limit,
     _fetch_surveys,
@@ -251,7 +251,14 @@ async def _managed_logs_for_request(
     """Read, filter, and shape one bounded managed-log request."""
     lines = request.query_params.get("lines")
     source = request.query_params.get("source", "all")
-    filters = _log_filters_from_request(request)
+    # The route reads the query string; which filters are accepted, and what
+    # counts as an empty one, belongs to the managed-log contract. Restating
+    # that here is how the HTTP boundary and the CLI come to disagree about
+    # whether a whitespace-only --contains filters anything.
+    filters = managed_log_filters(
+        job_id=request.query_params.get("job_id"),
+        contains=request.query_params.get("contains"),
+    )
     try:
         # Reading, filtering, and byte-bounded shaping are one service-domain
         # operation and stay off the event loop for both live and offline parity.

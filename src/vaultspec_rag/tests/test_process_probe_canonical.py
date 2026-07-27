@@ -829,6 +829,66 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestManagedLogFiltersHaveOneRule:
+    """Which log filters exist, and what makes one empty, is stated once.
+
+    The CLI verb asked the logging domain. The HTTP route had its own copy,
+    reading the two query parameters and applying its own strip-and-drop-empty
+    test - the same rule, restated at the boundary, in a module whose whole
+    contents were that one function.
+
+    Nothing failed while they agreed. The cost is that they had to keep
+    agreeing by hand: a third filter, or a change to what counts as empty,
+    lands in one and not the other, and then a whitespace-only ``--contains``
+    filters nothing over HTTP and everything from the CLI, for the same
+    service and the same contract.
+    """
+
+    def test_only_the_logging_domain_builds_the_filter_mapping(self) -> None:
+        """A second builder of these keys is a second definition of the rule."""
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "logging_config.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Subscript):
+                    continue
+                target = node.slice
+                if (
+                    isinstance(node.value, ast.Name)
+                    and "filter" in node.value.id.lower()
+                    and isinstance(target, ast.Constant)
+                    and target.value in {"job_id", "contains"}
+                    and isinstance(node.ctx, ast.Store)
+                ):
+                    offenders.append(f"{path.name}:{node.lineno} sets {target.value!r}")
+        assert not offenders, (
+            f"a managed-log filter mapping is built outside the logging "
+            f"domain at {offenders}; call managed_log_filters, so the HTTP "
+            "boundary and the CLI cannot disagree about what an empty filter is"
+        )
+
+    def test_a_whitespace_only_filter_is_dropped_not_carried(self) -> None:
+        """The behaviour both copies happened to share, pinned to one home.
+
+        Proven able to fail: dropping the ``.strip()`` test so any truthy
+        string is kept fails this on the whitespace assertion below - which is
+        the divergence a second copy would eventually introduce, since a bare
+        ``if job_id:`` reads as obviously correct.
+        """
+        from ..logging_config import managed_log_filters
+
+        assert managed_log_filters(job_id="   ", contains="\t") == {}
+        assert managed_log_filters(job_id="  j1  ") == {"job_id": "j1"}
+        assert managed_log_filters() == {}
+        # "0" is falsy-looking to a careless rewrite but is a real filter.
+        assert managed_log_filters(contains="0") == {"contains": "0"}
+
+
 class TestNoFacadeReExportServesOnlyTests:
     """A package ``__init__`` re-exports a private name only if production reads it.
 
