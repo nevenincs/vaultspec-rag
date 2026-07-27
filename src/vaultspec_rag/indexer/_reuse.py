@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from ..store import DonorPoint, VaultStore
+    from ..store_runtime import DonorPoint, VaultStore
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +156,17 @@ def _verify_and_adopt(
 
 
 @dataclass(slots=True)
+class _DonorAdoptionState:
+    """Mutable per-slice state shared while consulting donor collections."""
+
+    chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk]
+    identities: Sequence[tuple[str, str]]
+    remaining: dict[str, int]
+    adopted: list[bool]
+    sparse_required: bool
+
+
+@dataclass(slots=True)
 class DonorReuseContext:
     """One run's resolved donor set plus its accounting.
 
@@ -193,11 +204,13 @@ class DonorReuseContext:
                 break
             self._adopt_from_collection(
                 collection,
-                chunks,
-                identities,
-                remaining,
-                adopted,
-                sparse_required=sparse_required,
+                _DonorAdoptionState(
+                    chunks=chunks,
+                    identities=identities,
+                    remaining=remaining,
+                    adopted=adopted,
+                    sparse_required=sparse_required,
+                ),
             )
         hits = sum(adopted)
         self.stats.reuse_hits += hits
@@ -207,12 +220,7 @@ class DonorReuseContext:
     def _adopt_from_collection(
         self,
         collection: str,
-        chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk],
-        identities: Sequence[tuple[str, str]],
-        remaining: dict[str, int],
-        adopted: list[bool],
-        *,
-        sparse_required: bool,
+        state: _DonorAdoptionState,
     ) -> None:
         """Consult one donor collection, adopting each verified hit in place.
 
@@ -222,7 +230,7 @@ class DonorReuseContext:
         *remaining* and flips its index in *adopted*.
         """
         try:
-            found = self.store.retrieve_donor_points(collection, list(remaining))
+            found = self.store.retrieve_donor_points(collection, list(state.remaining))
         except Exception:
             logger.warning(
                 "Donor read against %s failed; encoding its misses instead",
@@ -231,17 +239,17 @@ class DonorReuseContext:
             )
             return
         for chunk_id, point in found.items():
-            index = remaining.get(chunk_id)
+            index = state.remaining.get(chunk_id)
             if index is None:
                 continue
             if _verify_and_adopt(
-                chunks[index],
+                state.chunks[index],
                 point,
-                identities[index][1],
-                sparse_required=sparse_required,
+                state.identities[index][1],
+                sparse_required=state.sparse_required,
             ):
-                adopted[index] = True
-                del remaining[chunk_id]
+                state.adopted[index] = True
+                del state.remaining[chunk_id]
 
 
 def resolve_donor_reuse(
