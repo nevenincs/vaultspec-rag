@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
 if TYPE_CHECKING:
@@ -206,6 +207,19 @@ class _DryRunScan(NamedTuple):
     def total(self) -> int:
         document_total = self.document_scan.total_files if self.document_scan else 0
         return len(self.code_files) + document_total
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceDelegationRequest:
+    """The exact CLI selection offered to a running index service."""
+
+    port: int
+    exclude: list[str] | None
+    json_mode: bool
+    index_type: PublicSourceType
+    rebuild: bool
+    target: pathlib.Path
+    allow_fallback: bool
 
 
 def _validate_dry_run_request(
@@ -434,24 +448,16 @@ def _validate_rebuild(ctx: typer.Context, json_mode: bool) -> None:
         raise typer.Exit(code=2)
 
 
-def _try_service_delegation(
-    port: int,
-    exclude: list[str] | None,
-    json_mode: bool,
-    index_type: PublicSourceType,
-    rebuild: bool,
-    target: pathlib.Path,
-    allow_fallback: bool,
-) -> bool:
-    if exclude and not json_mode:
+def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
+    if request.exclude and not request.json_mode:
         _cli.console.print(
             "--exclude is ignored when using the running service.",
         )
     data = _try_http_reindex(
-        index_type,
-        rebuild,
-        port,
-        str(target),
+        request.index_type,
+        request.rebuild,
+        request.port,
+        str(request.target),
         initiator_kind="cli",
     )
     if (
@@ -459,24 +465,28 @@ def _try_service_delegation(
         and data.get("ok") is False
         and data.get("partial") is not True
     ):
-        if not json_mode:
+        if not request.json_mode:
             _plain(
-                f"Reindex {index_type.value} reported an error; "
+                f"Reindex {request.index_type.value} reported an error; "
                 "refusing to silently fall back."
             )
-        _display_service_error(data, json_mode=json_mode, command="index")
+        _display_service_error(data, json_mode=request.json_mode, command="index")
         raise typer.Exit(code=1)
 
     if data is not None:
-        if json_mode:
+        if request.json_mode:
             _emit_json(
                 True,
                 "index",
-                data={"via": "service", "source": index_type.value, "outcome": data},
+                data={
+                    "via": "service",
+                    "source": request.index_type.value,
+                    "outcome": data,
+                },
             )
         elif "job_id" in data:
             _plain(
-                f"{_index_source_label(index_type.value)} re-index job queued on "
+                f"{_index_source_label(request.index_type.value)} re-index job queued on "
                 f"service: {data.get('job_id')}"
             )
             _cli.console.print("Check progress with: vaultspec-rag server jobs")
@@ -492,7 +502,7 @@ def _try_service_delegation(
                 _print_index_summary(
                     [
                         {
-                            "source": index_type.value,
+                            "source": request.index_type.value,
                             **data,
                         }
                     ],
@@ -500,11 +510,11 @@ def _try_service_delegation(
                 )
         return True
 
-    if not allow_fallback:
+    if not request.allow_fallback:
         _display_port_unreachable_error(
-            port,
+            request.port,
             command="indexing",
-            json_mode=json_mode,
+            json_mode=request.json_mode,
         )
         raise typer.Exit(code=1)
 
@@ -673,7 +683,15 @@ def handle_index(
         _warn_preprocess_flag_ignored_when_delegating(json_mode)
 
     if port is not None and _try_service_delegation(
-        port, exclude, json_mode, source, rebuild, target, allow_fallback
+        _ServiceDelegationRequest(
+            port,
+            exclude,
+            json_mode,
+            source,
+            rebuild,
+            target,
+            allow_fallback,
+        )
     ):
         return
 
