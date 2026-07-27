@@ -38,7 +38,7 @@ def test_completed_source_generation_exposes_route_migration_evidence(
         RunTerminalState,
         index_run_ledger_path,
     )
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
     source = tmp_path / "module.py"
     source.write_text("def indexed_source() -> int:\n    return 23\n", encoding="utf-8")
@@ -84,7 +84,7 @@ def test_code_and_document_publish_independent_generation_signatures(
     from ...indexer._content_policy import ContentKind
     from ...indexer._document_meta import read_document_meta
     from ...indexer._run_ledger import RunLedger, index_run_ledger_path
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
     (tmp_path / "module.py").write_text(
         "def source() -> int:\n    return 7\n", encoding="utf-8"
@@ -148,7 +148,7 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
     from ...indexer._content_policy import ContentKind
     from ...indexer._run_ledger import RunLedger, index_run_ledger_path
     from ...job_control import CancelRequested, RunControlToken
-    from ...store import VaultStore
+    from ...store_runtime import VaultStore
 
     get_config({"embedding_batch_size": 1})
     source = tmp_path / "restart.txt"
@@ -245,7 +245,10 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
         DocumentRunCheckpoint,
         DocumentRunConfiguration,
     )
-    from ...indexer._resolved_policy import resolve_index_policy
+    from ...indexer._resolved_policy import (
+        IndexPolicyResolutionOptions,
+        resolve_index_policy,
+    )
     from ...indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
     from ...indexer._run_ledger import RunOperation, RunTerminalState
     from ...indexer._run_policy import RunPolicy
@@ -253,7 +256,9 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
 
     policy = resolve_index_policy(
         tmp_path,
-        content_policy=_document_policy("guide.txt"),
+        IndexPolicyResolutionOptions(
+            content_policy=_document_policy("guide.txt")
+        ),
     )
     run_policy = RunPolicy(no_progress_timeout_seconds=30.0)
     data_root = tmp_path / ".state"

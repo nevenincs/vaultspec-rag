@@ -25,8 +25,12 @@ from ..indexer._content_policy import (
     SourceProfileVersion,
 )
 from ..indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
-from ..indexer._resolved_policy import ResolvedIndexPolicy, resolve_index_policy
-from ..watcher import _is_code_change, _is_vault_change
+from ..indexer._resolved_policy import (
+    IndexPolicyResolutionOptions,
+    ResolvedIndexPolicy,
+    resolve_index_policy,
+)
+from ..watcher_policy import _is_code_change, _is_vault_change
 
 pytestmark = [pytest.mark.unit]
 
@@ -44,7 +48,9 @@ def code_policy(project: tuple[Path, Path]) -> ResolvedIndexPolicy:
     root, _vault = project
     return resolve_index_policy(
         root,
-        content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1),
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
     )
 
 
@@ -160,7 +166,9 @@ def test_explicit_code_target_admits_unconventional_source(
 
     policy = resolve_index_policy(
         root,
-        content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1),
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
     )
 
     watched_pdf = root / "docs" / "report.pdf"

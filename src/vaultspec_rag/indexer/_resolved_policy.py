@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DecoderPolicy",
     "DocumentChunkingPolicy",
+    "IndexPolicyResolutionOptions",
     "ResolvedIndexPolicy",
     "ResolvedPreprocessRule",
     "compile_content_policy",
@@ -283,7 +284,19 @@ class DocumentChunkingPolicy:
             raise ValueError(
                 "chunk_overlap_chars must be smaller than chunk_chars, got "
                 f"overlap={self.chunk_overlap_chars}, budget={self.chunk_chars}"
-            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class IndexPolicyResolutionOptions:
+    """Caller-owned values resolved into one immutable index policy."""
+
+    content_policy: RootContentPolicy
+    extra_excludes: Sequence[str] = ()
+    decoder: DecoderPolicy | None = None
+    execution_mode: PreprocessMode | None = None
+    html_strip: bool | None = None
+    max_emitted_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,23 +554,23 @@ def compile_content_policy(config: RootContentPolicyConfig) -> RootContentPolicy
 
 def resolve_index_policy(
     root_dir: pathlib.Path,
-    *,
-    content_policy: RootContentPolicy,
-    extra_excludes: Sequence[str] = (),
-    decoder: DecoderPolicy | None = None,
-    execution_mode: PreprocessMode | None = None,
-    html_strip: bool | None = None,
-    max_emitted_bytes: int | None = None,
+    options: IndexPolicyResolutionOptions,
 ) -> ResolvedIndexPolicy:
     """Resolve one root policy without reopening mutable index resources."""
     cfg = get_config()
-    resolved_decoder = decoder or DecoderPolicy()
-    resolved_mode = cfg.preprocess_mode if execution_mode is None else execution_mode
-    resolved_html_strip = bool(cfg.html_strip) if html_strip is None else html_strip
+    resolved_decoder = options.decoder or DecoderPolicy()
+    resolved_mode = (
+        cfg.preprocess_mode
+        if options.execution_mode is None
+        else options.execution_mode
+    )
+    resolved_html_strip = (
+        bool(cfg.html_strip) if options.html_strip is None else options.html_strip
+    )
     resolved_max_bytes = (
         int(cfg.preprocess_max_emitted_bytes)
-        if max_emitted_bytes is None
-        else max_emitted_bytes
+        if options.max_emitted_bytes is None
+        else options.max_emitted_bytes
     )
 
     # Strict loading both rejects malformed ownership and bypasses the kill
@@ -570,7 +583,7 @@ def resolve_index_policy(
     return ResolvedIndexPolicy(
         root_dir=root_dir.resolve(),
         policy_schema_version=POLICY_SCHEMA_VERSION,
-        content_policy=content_policy,
+        content_policy=options.content_policy,
         preprocess_schema_version=preprocess_config.schema_version,
         preprocess_rules=rules,
         decoder=resolved_decoder,
@@ -581,7 +594,7 @@ def resolve_index_policy(
         vaultragignore_patterns=tuple(
             _ignore_specs.collect_vaultragignore_patterns(root_dir)
         ),
-        extra_excludes=tuple(extra_excludes),
+        extra_excludes=tuple(options.extra_excludes),
         document_chunking=DocumentChunkingPolicy(
             chunk_chars=int(cfg.document_chunk_chars),
             chunk_overlap_chars=int(cfg.document_chunk_overlap_chars),

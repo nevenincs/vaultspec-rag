@@ -33,7 +33,7 @@ from ..indexer._document_checkpoint import (
     DocumentRunConfiguration,
 )
 from ..indexer._file_state import FileStateKind
-from ..indexer._resolved_policy import resolve_index_policy
+from ..indexer._resolved_policy import IndexPolicyResolutionOptions, resolve_index_policy
 from ..indexer._run_checkpoint import CodeRunCheckpoint
 from ..indexer._run_ledger import (
     CommitUnit,
@@ -62,7 +62,9 @@ def _open(
 ) -> DocumentRunCheckpoint:
     policy = resolve_index_policy(
         tmp_path,
-        content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1),
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
     )
     return DocumentRunCheckpoint.open(
         data_root=tmp_path / ".state",

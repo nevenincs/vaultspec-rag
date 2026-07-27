@@ -27,6 +27,7 @@ from ..indexer._preprocess_config import (
 )
 from ..indexer._resolved_policy import (
     DecoderPolicy,
+    IndexPolicyResolutionOptions,
     ResolvedIndexPolicy,
     ResolvedPreprocessRule,
     compile_content_policy,
@@ -154,11 +155,13 @@ def test_resolved_snapshot_pickle_preserves_classification_and_fingerprints(
     policy = RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
     snapshot = resolve_index_policy(
         tmp_path,
-        content_policy=policy,
-        extra_excludes=("generated/**",),
-        execution_mode="default",
-        html_strip=True,
-        max_emitted_bytes=4096,
+        IndexPolicyResolutionOptions(
+            content_policy=policy,
+            extra_excludes=("generated/**",),
+            execution_mode="default",
+            html_strip=True,
+            max_emitted_bytes=4096,
+        ),
     )
     restored = pickle.loads(pickle.dumps(snapshot))
     assert restored == snapshot
@@ -182,7 +185,9 @@ def test_legacy_migration_refusal_does_not_mutate_root(tmp_path: Path) -> None:
     with pytest.raises(PreprocessPolicyError) as caught:
         resolve_index_policy(
             tmp_path,
-            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1),
+            IndexPolicyResolutionOptions(
+                content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+            ),
         )
     after = {
         path.relative_to(tmp_path).as_posix(): path.read_bytes()
