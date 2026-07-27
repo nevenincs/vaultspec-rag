@@ -343,3 +343,83 @@ class TestAdmissionSamplesBeforeDispatch:
         # The document run also publishes the same budget on the indexer, which
         # is what the service reads for its live memory reporting.
         assert indexer._memory_budget is budget.memory_budget  # pyright: ignore[reportPrivateUsage]
+
+
+class TestNoHeadroomIsRefusedAtAdmission:
+    """A ceiling that admits no forward is refused before dispatch.
+
+    Enforcement compares peak and ceiling net of the resident baseline, so a
+    ceiling at or below that baseline can never admit anything. Enforcing it
+    produced a run's worth of mid-forward failures each reporting a "0.0 MiB
+    ceiling" - a figure that named neither the baseline that consumed it nor
+    the knob that would restore it.
+
+    The refusal wiring is exercised where a real resident baseline exists, in
+    the integration suite; this module has no models loaded, so its baseline is
+    structurally zero and no ceiling can be pinned beneath it. What lives here
+    is the decision itself and the CPU-path exemption.
+    """
+
+    @BOTH_INDEXERS
+    def test_the_cpu_path_is_not_refused(
+        self,
+        derive: BudgetFactory,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Off the GPU the ceiling is inert, so an empty one costs nothing.
+
+        Every reading it would be compared against is structurally zero there.
+        Refusing would ground a CPU-side run on a device figure that never
+        applies to it.
+        """
+        monkeypatch.setenv(EnvVar.INDEX_CUDA_CEILING_MB.value, "0.5")
+        monkeypatch.setenv(EnvVar.INDEX_RSS_CEILING_MB.value, str(CONFIG_RSS_MB))
+        reset_config()
+
+        budget = derive(
+            tmp_path,
+            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            False,
+        )
+
+        assert budget.cuda_ceiling_mb is None
+
+    def test_an_exhausted_device_names_the_device_not_the_knob(self) -> None:
+        """A collapsed DERIVED ceiling reports free memory, not configuration.
+
+        Driven at the decision rather than through admission: reaching this
+        branch for real means holding the device at zero free memory, and this
+        suite shares its GPU. The two branches differ only in which detail they
+        raise, so the decision is where that difference lives.
+        """
+        from .._job_errors import JobError, JobErrorKind
+        from ..indexer._resource_ceilings import _require_cuda_headroom
+
+        with pytest.raises(JobError) as refused:
+            _require_cuda_headroom(
+                ceiling_mb=0.0,
+                baseline_mb=6301.1,
+                configured_mb=0.0,
+            )
+
+        assert refused.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
+        assert "6301.1 MiB resident model baseline" in refused.value.detail
+        assert "free device memory" in refused.value.detail
+        assert "configured" not in refused.value.detail
+
+    def test_any_positive_headroom_is_admitted(self) -> None:
+        """The threshold is no-headroom-at-all, never a minimum size.
+
+        A deliberately tiny budget is a legitimate configuration, and the tests
+        that prove the ceiling still FIRES pin exactly that: a hair above the
+        measured reading. A floor with any positive width would refuse them at
+        admission and destroy the mid-run coverage they exist for.
+        """
+        from ..indexer._resource_ceilings import _require_cuda_headroom
+
+        _require_cuda_headroom(
+            ceiling_mb=6301.1 + 0.001,
+            baseline_mb=6301.1,
+            configured_mb=6301.1 + 0.001,
+        )

@@ -48,6 +48,56 @@ class AdmittedCeilings:
         return self.cuda_ceiling_mb if self.uses_cuda else None
 
 
+def _require_cuda_headroom(
+    *,
+    ceiling_mb: float,
+    baseline_mb: float,
+    configured_mb: float,
+) -> None:
+    """Refuse before dispatch when the ceiling admits no forward at all.
+
+    Enforcement compares peak and ceiling NET of the resident baseline, so a
+    ceiling at or below that baseline leaves zero admissible headroom: every
+    forward, however small, breaches it. Enforcing such a ceiling turns one
+    admission-time fact into a run's worth of mid-forward failures, each
+    reporting a "0.0 MiB ceiling" that names neither the baseline that consumed
+    it nor the knob that would restore it.
+
+    The threshold is strictly "no headroom at all". A ceiling with any positive
+    room above the baseline is admitted and enforced exactly as before - a
+    deliberately tiny budget is a legitimate configuration, and a floor that
+    rejected it would refuse the jobs whose whole purpose is to prove the
+    ceiling still fires.
+
+    The two ways headroom disappears need different operator actions, so the
+    detail names which one happened rather than leaving both under the shared
+    "stop competing GPU work" remediation.
+
+    Raises:
+        JobError: With ``CUDA_MEMORY_CEILING``, so the refusal carries the same
+            typed identity, envelope, and remediation channel as the mid-run
+            breach it replaces.
+    """
+    if ceiling_mb - baseline_mb > 0.0:
+        return
+    from .._job_errors import JobError, JobErrorKind
+
+    if configured_mb > 0:
+        detail = (
+            f"the configured CUDA ceiling of {configured_mb:.1f} MiB is at or "
+            f"below the {baseline_mb:.1f} MiB resident model baseline, leaving "
+            "no memory for any forward pass; raise the configured ceiling "
+            "above the baseline, or load fewer models"
+        )
+    else:
+        detail = (
+            f"no CUDA memory remains above the {baseline_mb:.1f} MiB resident "
+            "model baseline; free device memory or stop competing GPU work "
+            "before indexing"
+        )
+    raise JobError(JobErrorKind.CUDA_MEMORY_CEILING, detail)
+
+
 def admit_index_ceilings(
     model: object,
     limits: SupportProfileLimits | None,
@@ -81,14 +131,24 @@ def admit_index_ceilings(
     if uses_cuda:
         reset_cuda_peak_memory_stats()
     cuda_baseline_mb = resident_cuda_baseline_mb() if uses_cuda else None
+    cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
+        configured_mb=config.index_cuda_ceiling_mb,
+        headroom_mb=config.index_cuda_headroom_mb,
+        profile_cuda_mb=profile_cuda_mb,
+        baseline_mb=cuda_baseline_mb or 0.0,
+    )
+    # Only where CUDA is actually enforced: off the GPU path every reading the
+    # ceiling would be compared against is structurally zero, so a ceiling that
+    # looks empty there costs nothing and must not refuse the run.
+    if uses_cuda:
+        _require_cuda_headroom(
+            ceiling_mb=cuda_ceiling_mb,
+            baseline_mb=cuda_baseline_mb or 0.0,
+            configured_mb=config.index_cuda_ceiling_mb,
+        )
     return AdmittedCeilings(
         rss_ceiling_mb=rss_ceiling_mb,
-        cuda_ceiling_mb=resolve_index_cuda_ceiling_mb(
-            configured_mb=config.index_cuda_ceiling_mb,
-            headroom_mb=config.index_cuda_headroom_mb,
-            profile_cuda_mb=profile_cuda_mb,
-            baseline_mb=cuda_baseline_mb or 0.0,
-        ),
+        cuda_ceiling_mb=cuda_ceiling_mb,
         cuda_baseline_mb=cuda_baseline_mb,
         uses_cuda=uses_cuda,
     )
