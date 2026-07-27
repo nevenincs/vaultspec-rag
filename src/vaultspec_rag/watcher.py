@@ -1266,7 +1266,7 @@ async def _submit_watcher_job(
     await _run_in_thread(
         partial(
             _jobs.record_start,
-            slot.source.value,
+            slot.source,
             "watcher",
             project_root=slot.root,
             command=slot.command,
@@ -1995,11 +1995,7 @@ def _observe_managed_job(
                 slot.pending_paths.update(slot.held_paths)
                 slot.held_paths.clear()
 
-            if snapshot.state in {
-                JobState.CANCELLED,
-                JobState.FAILED,
-                JobState.INTERRUPTED,
-            }:
+            if snapshot.state.is_retryable:
                 replacement_delay = slot.defer_replacement(now)
 
             slot.job_id = None

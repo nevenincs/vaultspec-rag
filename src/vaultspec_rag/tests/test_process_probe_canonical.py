@@ -591,7 +591,18 @@ class TestNoStructurallyIdenticalFunctions:
         "unrelated."
     )
 
+    _NAMED_SUBSET = (
+        "A membership test against a named subset of one enum's members. The "
+        "shape is `return self in {...}` and the whole content is WHICH "
+        "members - parameterising it would mean a set of sets keyed by name, "
+        "which is the enumeration these properties exist to remove."
+    )
+
     _ALLOWED_SHAPES: ClassVar[dict[tuple[str, ...], str]] = {
+        (
+            "job_models.py:is_live_attempt",
+            "job_models.py:is_retryable",
+        ): _NAMED_SUBSET,
         (
             "cli/_search.py:_render_breadth_shortfall",
             "cli/_search.py:_render_file_breadth_shortfall",
@@ -2407,3 +2418,76 @@ class TestCrossModuleLiteralTwins:
             "admitted": sample.admitted,
             "reason": sample.reason.value,
         }
+
+
+class TestJobEnumGroupingsAreDeclared:
+    """A named subset of an enum's members is declared on the enum.
+
+    ``JobState`` already carried ``is_terminal`` as a property, so the
+    mechanism existed and the code was written around it: three more
+    groupings were enumerated at call sites instead. Nine sites listed
+    members to ask one of three questions - is an attempt in flight, may this
+    be retried, is this a corpus rather than housekeeping.
+
+    Naming them also fixed an imprecision. The retry route rejected a job with
+    "Only terminal jobs can be retried" while testing the narrower retryable
+    set: a succeeded job is terminal and has nothing to retry. A grouping with
+    no name gets described by whichever nearby word is close enough.
+    """
+
+    def test_no_module_enumerates_a_job_enum_grouping(self) -> None:
+        from ..job_models import JobSource, JobState
+
+        groupings = {
+            "JobState.is_live_attempt": frozenset(
+                m.name for m in JobState if m.is_live_attempt
+            ),
+            "JobState.is_retryable": frozenset(
+                m.name for m in JobState if m.is_retryable
+            ),
+            "JobState.is_terminal": frozenset(
+                m.name for m in JobState if m.is_terminal
+            ),
+            "JobSource.is_corpus": frozenset(m.name for m in JobSource if m.is_corpus),
+        }
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "job_models.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Set | ast.Tuple | ast.List):
+                    continue
+                members = {
+                    element.attr
+                    for element in node.elts
+                    if isinstance(element, ast.Attribute)
+                    and isinstance(element.value, ast.Name)
+                    and element.value.id in {"JobState", "JobSource"}
+                }
+                if not members:
+                    continue
+                for name, expected in groupings.items():
+                    if members == expected:
+                        offenders.append(f"{path.name}:{node.lineno} relists {name}")
+        assert not offenders, (
+            f"{offenders}; ask the enum, so a member added to the grouping "
+            "reaches every caller instead of whichever ones get remembered"
+        )
+
+    def test_retryable_is_narrower_than_terminal(self) -> None:
+        """The distinction the enumerated version kept losing.
+
+        Proven able to fail: widening ``is_retryable`` to ``is_terminal``
+        fails this on the strict-subset assertion below.
+        """
+        from ..job_models import JobState
+
+        terminal = {state for state in JobState if state.is_terminal}
+        retryable = {state for state in JobState if state.is_retryable}
+        assert retryable < terminal
+        assert JobState.SUCCEEDED in terminal
+        assert JobState.SUCCEEDED not in retryable

@@ -658,7 +658,7 @@ def index_job_status(
     canonical_root = os.path.normcase(str(root.resolve()))
     observed_at = time.time() if now is None else now
     owner = get_job_manager() if manager is None else manager
-    domains = (JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT)
+    domains = tuple(source for source in JobSource if source.is_corpus)
     latest: dict[JobSource, JobSnapshot] = {}
     for job in owner.list_jobs():
         project_root = job.spec.project_root

@@ -1005,7 +1005,7 @@ def _assert_operator_matrix_conflicts(port: int, job_id: str, revision: int) -> 
     """Assert revision replay, active-delete, and force-stop outcomes."""
     stale = _try_http_set_job_desired_state(
         job_id,
-        "running",
+        DesiredJobState.RUNNING,
         port,
         expected_revision=revision + 100,
         timeout=5.0,
@@ -1015,7 +1015,7 @@ def _assert_operator_matrix_conflicts(port: int, job_id: str, revision: int) -> 
     assert stale["error"] == "revision_conflict"
     replay = _try_http_set_job_desired_state(
         job_id,
-        "paused",
+        DesiredJobState.PAUSED,
         port,
         expected_revision=revision + 100,
         timeout=5.0,

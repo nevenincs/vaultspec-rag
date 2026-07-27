@@ -56,7 +56,7 @@ def bind_index_job(
     spec = snapshot.spec
     if (
         spec.operation is not JobOperation.INDEX
-        or spec.source not in {JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT}
+        or not spec.source.is_corpus
         or spec.project_root is None
         or spec.mode is None
     ):

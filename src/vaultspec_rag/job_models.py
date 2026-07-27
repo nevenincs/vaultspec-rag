@@ -47,6 +47,18 @@ class JobSource(StrEnum):
     DOCUMENT = "document"
     MAINTENANCE = "maintenance"
 
+    @property
+    def is_corpus(self) -> bool:
+        """Return whether this source names a corpus rather than housekeeping.
+
+        Indexing a corpus encodes on the single GPU and takes the machine-wide
+        admission slot; maintenance is the service's own storage work and
+        stays outside that gate. Four call sites drew the line by listing the
+        three corpora, so adding a fourth would have had to be remembered in
+        all four before it could be indexed at all.
+        """
+        return self is not JobSource.MAINTENANCE
+
 
 class JobMode(StrEnum):
     """Requested indexing convergence mode."""
@@ -75,6 +87,38 @@ class JobState(StrEnum):
             JobState.CANCELLED,
             JobState.SUCCEEDED,
             JobState.FAILED,
+            JobState.INTERRUPTED,
+        }
+
+    @property
+    def is_live_attempt(self) -> bool:
+        """Return whether an attempt is in flight in this state.
+
+        Running, pausing and cancelling all mean a worker is still holding the
+        attempt: it is progressing, winding down, or being torn down. Three
+        call sites tested for it by listing the members - accepting progress,
+        restoring a snapshot, and asserting a live attempt has a start time -
+        which is one grouping written three ways.
+        """
+        return self in {
+            JobState.RUNNING,
+            JobState.PAUSING,
+            JobState.CANCELLING,
+        }
+
+    @property
+    def is_retryable(self) -> bool:
+        """Return whether a finished attempt in this state may be retried.
+
+        Narrower than :attr:`is_terminal`: a succeeded job is terminal and has
+        nothing to retry. One of the two call sites already called its result
+        `retryable`; the other described the same set as "terminal" in an
+        error message it shows an operator, which is the imprecision that
+        having no name for the grouping produces.
+        """
+        return self in {
+            JobState.FAILED,
+            JobState.CANCELLED,
             JobState.INTERRUPTED,
         }
 
@@ -468,18 +512,14 @@ def is_encode_bearing(spec: JobSpec) -> bool:
     Maintenance and every read-only operation stay outside the gate so
     lifecycle-inert work can never starve or deadlock behind an encode job.
     """
-    return spec.operation is JobOperation.INDEX and spec.source in {
-        JobSource.VAULT,
-        JobSource.CODE,
-        JobSource.DOCUMENT,
-    }
+    return spec.operation is JobOperation.INDEX and spec.source.is_corpus
 
 
 def job_spec_error(spec: JobSpec) -> str | None:
     """Return the canonical validation error for a submitted specification."""
     if spec.operation is not JobOperation.INDEX:
         return "Only indexing operations are managed by the controllable job runtime."
-    if spec.source not in {JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT}:
+    if not spec.source.is_corpus:
         return "Indexing jobs require a vault, code, or document source."
     if spec.mode is None:
         return "Indexing jobs require an incremental or rebuild mode."
@@ -519,6 +559,6 @@ def capabilities_for_state(spec: JobSpec, state: JobState) -> JobCapabilities:
         pausable=state in {JobState.QUEUED, JobState.RUNNING},
         resumable=state in {JobState.PAUSING, JobState.PAUSED},
         cancellable=not state.is_terminal,
-        retryable=state in {JobState.FAILED, JobState.CANCELLED, JobState.INTERRUPTED},
+        retryable=state.is_retryable,
         deletable=state.is_terminal,
     )

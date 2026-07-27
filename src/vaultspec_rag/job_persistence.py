@@ -366,10 +366,7 @@ def _validate_persisted_lifecycle(job: JobSnapshot) -> None:
     allowed_desired = expected_desired.get(job.state)
     if allowed_desired is not None and job.desired_state not in allowed_desired:
         raise ValueError(f"job {job.id}: observed and desired states disagree")
-    if (
-        job.state in {JobState.RUNNING, JobState.PAUSING, JobState.CANCELLING}
-        and job.timestamps.started_at is None
-    ):
+    if job.state.is_live_attempt and job.timestamps.started_at is None:
         raise ValueError(f"job {job.id}: live attempt lacks a start time")
     if job.state not in {JobState.QUEUED, JobState.PAUSED}:
         return
