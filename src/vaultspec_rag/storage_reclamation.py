@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -414,6 +415,7 @@ def archive_prefix(
     entry = load_manifest().get(prefix)
     identities = {} if entry is None else entry.collection_identity
     for name in targets:
+        points = int(client.count(collection_name=name).count)
         description = client.create_snapshot(collection_name=name, wait=True)
         if description is None or not description.name:
             raise RuntimeError(f"snapshot creation returned no name for {name}")
@@ -427,7 +429,7 @@ def archive_prefix(
             SnapshotCollection(
                 name=name,
                 snapshot_file=dest.name,
-                points=int(client.count(collection_name=name).count),
+                points=points,
                 identity=identities.get(name),
             )
         )
@@ -456,8 +458,70 @@ def archive_prefix(
             metadata_files=tuple(sorted(metadata_files)),
         ),
     )
+    _verify_completed_archive(client, dest_dir, manifest_path)
     archived.append(manifest_path)
     return archived
+
+
+def _verify_completed_archive(
+    client: QdrantClient,
+    archive_dir: Path,
+    manifest_path: Path,
+) -> None:
+    """Re-read a completed archive and prove it still describes live data."""
+    records = _read_archive_records(manifest_path)
+    for name, snapshot_file, points in records:
+        artifact = archive_dir / snapshot_file
+        if artifact.parent != archive_dir or not artifact.is_file():
+            raise RuntimeError(f"archived snapshot file not found: {artifact}")
+        try:
+            if artifact.stat().st_size <= 0:
+                raise RuntimeError(f"archived snapshot file is empty: {artifact}")
+        except OSError as exc:
+            message = f"archived snapshot file is unreadable: {artifact}"
+            raise RuntimeError(message) from exc
+        current_points = int(client.count(collection_name=name).count)
+        if current_points != points:
+            raise RuntimeError(
+                f"archived snapshot point count changed for {name}: "
+                f"expected {points}, found {current_points}"
+            )
+
+
+def _read_archive_records(manifest_path: Path) -> tuple[tuple[str, str, int], ...]:
+    """Load the snapshot records from a non-empty completed archive manifest."""
+    try:
+        if manifest_path.stat().st_size <= 0:
+            raise RuntimeError(f"archive manifest is empty: {manifest_path}")
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"archive manifest is unreadable: {manifest_path}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
+    raw_records = payload.get("collections")
+    if not isinstance(raw_records, list):
+        message = f"archive manifest has no collection records: {manifest_path}"
+        raise RuntimeError(message)
+    return tuple(_archive_record(record, manifest_path) for record in raw_records)
+
+
+def _archive_record(record: object, manifest_path: Path) -> tuple[str, str, int]:
+    """Validate one persisted snapshot record before using its file name."""
+    if not isinstance(record, dict):
+        raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
+    name = record.get("name")
+    snapshot_file = record.get("snapshot_file")
+    points = record.get("points")
+    if (
+        not isinstance(name, str)
+        or not isinstance(snapshot_file, str)
+        or Path(snapshot_file).name != snapshot_file
+        or isinstance(points, bool)
+        or not isinstance(points, int)
+        or points < 0
+    ):
+        raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
+    return name, snapshot_file, points
 
 
 def sweep_archive(
