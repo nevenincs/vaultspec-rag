@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,9 @@ from typing import TYPE_CHECKING, cast
 
 from ._store_models import root_collection_prefix
 from ._timestamps import parse_iso_timestamp
+from .qdrant_runtime._constants import (
+    WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
+)
 from .storage_manifest import record_restored_archive, snapshot_manifest_path
 from .storage_survey import is_canonical_prefix
 from .store_schema import CollectionIdentity
@@ -177,8 +181,15 @@ def restore_archive(
     )
     if existing:
         return RestoreResult("refused", destination, names, "destination_exists")
-    if request.dry_run:
+    if request.dry_run or sys.platform == "win32":
         return RestoreResult("would_restore", destination, names)
+            if request.dry_run
+            else RestoreResult(
+                "refused",
+                destination,
+                names,
+                WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
+            )
     restored: list[str] = []
     try:
         from qdrant_client.http import models
