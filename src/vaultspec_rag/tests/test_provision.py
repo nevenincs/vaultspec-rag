@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._sync_vocabulary import ProvisionAction
 from ..commands._provision import (
-    ProvisionAction,
     ProvisionOutcome,
     ProvisionStep,
     ProvisionStepResult,
@@ -67,7 +67,7 @@ def test_operator_symlink_binary_is_refused(
     # Security: an operator-supplied binary path that is a symlink must be
     # refused, never followed - copying it would dereference the link and could
     # register attacker content (TOCTOU) under an operator-blessed manifest.
-    from ..qdrant_runtime._constants import QdrantProvisionAction
+    from .._sync_vocabulary import ProvisionAction
     from ..qdrant_runtime._provision import provision
 
     real = tmp_path / "real_qdrant"
@@ -79,7 +79,7 @@ def test_operator_symlink_binary_is_refused(
         pytest.fail("Cannot create symlink - test requires symlink support")
 
     report = provision(binary=link)
-    assert report.action == QdrantProvisionAction.FAILED
+    assert report.action == ProvisionAction.FAILED
     assert "symlink" in report.message.lower()
     # Nothing was registered into the managed dir.
     assert not (qdrant_bin_dir() / binary_filename()).exists()

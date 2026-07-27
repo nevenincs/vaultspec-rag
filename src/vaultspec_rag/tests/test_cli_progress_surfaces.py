@@ -32,6 +32,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from .._sync_vocabulary import ProvisionAction
 from ..cli._core import _build_console
 from ..cli._hf_progress import SnapshotProgress
 from ..cli._progress import StartupStatusReporter
@@ -549,7 +550,6 @@ class TestStartPathProvisionProgress:
             MANIFEST_FILENAME,
             QDRANT_SERVER_VERSION,
             ProvisionReport,
-            QdrantProvisionAction,
         )
         from ..qdrant_runtime._provision import _download_line, _no_progress
         from ..qdrant_runtime._resolve import binary_filename, qdrant_bin_dir
@@ -575,7 +575,7 @@ class TestStartPathProvisionProgress:
             on_progress("Verifying the Qdrant download checksum...")
             if not succeeds:
                 return ProvisionReport(
-                    action=QdrantProvisionAction.FAILED,
+                    action=ProvisionAction.FAILED,
                     message="SHA256 mismatch for the release archive",
                 )
             version_dir = qdrant_bin_dir()
@@ -588,7 +588,7 @@ class TestStartPathProvisionProgress:
                 ),
                 encoding="utf-8",
             )
-            return ProvisionReport(action=QdrantProvisionAction.CREATED, binary=target)
+            return ProvisionReport(action=ProvisionAction.CREATED, binary=target)
 
         monkeypatch.setattr(_provision_module, "provision", _provision)
         return calls

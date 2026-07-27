@@ -32,16 +32,16 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from .._sync_vocabulary import ProvisionAction
+
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..qdrant_runtime._constants import QdrantProvisionAction
     from ._models import ConfirmFn, InstallReport
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "ProvisionAction",
     "ProvisionOutcome",
     "ProvisionStep",
     "ProvisionStepResult",
@@ -60,33 +60,6 @@ class ProvisionStep(StrEnum):
     TORCH = "torch"
     MODELS = "models"
     QDRANT = "qdrant"
-
-
-class ProvisionAction(StrEnum):
-    """Shared sync vocabulary for a single provisioning step.
-
-    Mirrors the project-wide vocabulary so JSON consumers can filter on
-    the same strings the qdrant provisioner and torch configurator
-    already emit. ``StrEnum`` members compare equal to their string
-    value.
-
-    Values:
-        CREATED: the dependency was provisioned for the first time.
-        UPDATED: an existing provision was replaced / advanced.
-        UNCHANGED: a satisfied dependency; an idempotent no-op with no
-            network.
-        SKIPPED: the step did not run this invocation; ``detail``
-            always carries the reason.
-        FAILED: the step ran and failed; ``detail`` carries the cause.
-        DRY_RUN: a preview that did not touch the network or disk.
-    """
-
-    CREATED = "created"
-    UPDATED = "updated"
-    UNCHANGED = "unchanged"
-    SKIPPED = "skipped"
-    FAILED = "failed"
-    DRY_RUN = "dry_run"
 
 
 @dataclass
@@ -474,9 +447,8 @@ def _provision_qdrant(
     """Delegate to the Qdrant runtime provisioner and map its action.
 
     Preserves the provisioner's verify-before-execute security contract
-    untouched - this is a pure delegation that only translates the
-    returned :class:`QdrantProvisionAction` onto the front door's
-    vocabulary.
+    untouched. The provisioner already reports in the shared vocabulary,
+    so there is nothing to translate.
     """
     if local_only:
         return ProvisionStepResult(
@@ -496,39 +468,19 @@ def _provision_qdrant(
     report = provision(dry_run=dry_run)
     return ProvisionStepResult(
         step=ProvisionStep.QDRANT,
-        action=_map_qdrant_action(report.action),
+        action=report.action,
         detail=report.message or _qdrant_default_detail(report.action),
     )
 
 
-def _map_qdrant_action(action: QdrantProvisionAction) -> ProvisionAction:
-    """Map the qdrant provisioner's action onto the shared vocabulary.
-
-    The qdrant vocabulary already mirrors the shared one one-for-one,
-    so this is a direct value translation that keeps the front door's
-    enum the single contract surface callers filter on.
-    """
-    from ..qdrant_runtime._constants import QdrantProvisionAction
-
-    mapping = {
-        QdrantProvisionAction.CREATED: ProvisionAction.CREATED,
-        QdrantProvisionAction.UPDATED: ProvisionAction.UPDATED,
-        QdrantProvisionAction.UNCHANGED: ProvisionAction.UNCHANGED,
-        QdrantProvisionAction.SKIPPED: ProvisionAction.SKIPPED,
-        QdrantProvisionAction.FAILED: ProvisionAction.FAILED,
-        QdrantProvisionAction.DRY_RUN: ProvisionAction.DRY_RUN,
-    }
-    return mapping[action]
-
-
-def _qdrant_default_detail(action: QdrantProvisionAction) -> str:
+def _qdrant_default_detail(action: ProvisionAction) -> str:
     """Provide a detail line when the provisioner left ``message`` empty."""
-    from ..qdrant_runtime._constants import QdrantProvisionAction
+    from .._sync_vocabulary import ProvisionAction
 
-    if action == QdrantProvisionAction.CREATED:
+    if action == ProvisionAction.CREATED:
         return "downloaded and verified the pinned qdrant binary"
-    if action == QdrantProvisionAction.UPDATED:
+    if action == ProvisionAction.UPDATED:
         return "replaced the qdrant binary with the pinned version"
-    if action == QdrantProvisionAction.UNCHANGED:
+    if action == ProvisionAction.UNCHANGED:
         return "verified qdrant binary already present"
     return ""

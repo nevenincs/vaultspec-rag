@@ -1775,3 +1775,63 @@ class TestJsonOptionHasOneDeclaration:
 
         assert JSON_ENVELOPE_OPTION_HELP != JSON_OPTION_HELP
         assert "one structured" in JSON_ENVELOPE_OPTION_HELP
+
+
+class TestOneVocabularyHasOneType:
+    """No two enums carry the same member set.
+
+    ``ProvisionAction`` existed twice - once in the install front door, once in
+    the qdrant runtime - with identical members, each docstring saying it
+    "mirrors the project-wide sync vocabulary" that neither owned. Keeping the
+    mirror aligned needed a six-entry translation whose every entry mapped a
+    member onto the member of the same name.
+
+    An identity map is the clearest signal two types are one type, and it has
+    to be edited whenever either side gains a member: a missed edit raises
+    ``KeyError`` the first time the new outcome occurs, on the least-tested
+    path there is.
+    """
+
+    def test_no_two_enums_share_a_member_set(self) -> None:
+        import collections
+
+        by_members: collections.defaultdict[frozenset[str], list[str]] = (
+            collections.defaultdict(list)
+        )
+        for path in _production_sources():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                if not any(
+                    isinstance(base, ast.Name) and "Enum" in base.id
+                    for base in node.bases
+                ):
+                    continue
+                values = {
+                    stmt.value.value
+                    for stmt in node.body
+                    if isinstance(stmt, ast.Assign)
+                    and isinstance(stmt.value, ast.Constant)
+                    and isinstance(stmt.value.value, str)
+                }
+                # Two-member enums are too small for a shared set to mean
+                # anything; a boolean-ish pair collides by coincidence.
+                if len(values) >= 3:
+                    by_members[frozenset(values)].append(f"{path.name}:{node.name}")
+        # tuple(), not sorted(): a list is unhashable, so the dict
+        # comprehension raised TypeError instead of reporting - which only
+        # showed up when a twin actually existed.
+        twins = {
+            tuple(sorted(members)): names
+            for members, names in by_members.items()
+            if len(names) > 1
+        }
+        assert not twins, (
+            f"enums with identical member sets: {twins}; one vocabulary is one "
+            "type, or the copies need a hand-written translation that goes "
+            "stale the moment either side gains a member"
+        )
