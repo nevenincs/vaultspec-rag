@@ -762,10 +762,8 @@ def test_batch_pool_retains_only_one_worker_window(tmp_path: Path) -> None:
         assert singles == []
         assert len(batch_groups) == 6
 
-        handler_started = threading.Event()
-        release_handler = threading.Event()
-        received: list[int] = []
-        failures: list[BaseException] = []
+        handler_started, release_handler = threading.Event(), threading.Event()
+        received, failures = [], []
 
         def _observe_window(results: list[_chunk_worker.FileChunkResult]) -> None:
             received.append(len(results))
