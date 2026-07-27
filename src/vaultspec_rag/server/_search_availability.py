@@ -60,6 +60,37 @@ class SearchResponseClassification:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchAvailabilityContext:
+    """One request's immutable search-availability evidence and routing data."""
+
+    before_snapshot: Sequence[object]
+    after_snapshot: Sequence[object]
+    requested_root: Path
+    source: IndexSource
+    request_id: str
+    index_state: Mapping[str, object]
+    port: int | None
+
+
+def _availability_context(
+    context: SearchAvailabilityContext | None,
+    values: Mapping[str, object],
+) -> SearchAvailabilityContext:
+    """Normalize legacy keyword callers at the request-classification seam."""
+    if context is not None:
+        return context
+    return SearchAvailabilityContext(
+        before_snapshot=cast("Sequence[object]", values["before_snapshot"]),
+        after_snapshot=cast("Sequence[object]", values["after_snapshot"]),
+        requested_root=cast("Path", values["requested_root"]),
+        source=cast("IndexSource", values["source"]),
+        request_id=cast("str", values["request_id"]),
+        index_state=cast("Mapping[str, object]", values["index_state"]),
+        port=cast("int | None", values["port"]),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class _MatchingJob:
     """Normalized evidence from one matching convergence job."""
 
@@ -184,23 +215,19 @@ def _combined_matches(
 
 
 def _build_index_unavailable_response(
+    context: SearchAvailabilityContext,
     *,
-    requested_root: Path,
-    source: IndexSource,
-    request_id: str,
-    index_state: Mapping[str, object],
-    port: int | None,
     matching_jobs: Sequence[MatchingIndexJobReference],
     matching_jobs_truncated: bool,
     rebuilding: bool,
 ) -> dict[str, object]:
     """Build the exact failure body from the classification's own evidence."""
     response_index_state: dict[str, object] = {
-        "source": index_state["source"],
-        "indexed_count": index_state["indexed_count"],
-        "indexed_target_root": index_state["indexed_target_root"],
-        "requested_target_root": index_state["requested_target_root"],
-        "target_matches": index_state["target_matches"],
+        "source": context.index_state["source"],
+        "indexed_count": context.index_state["indexed_count"],
+        "indexed_target_root": context.index_state["indexed_target_root"],
+        "requested_target_root": context.index_state["requested_target_root"],
+        "target_matches": context.index_state["target_matches"],
         "status": "rebuilding" if rebuilding else "updating",
         "matching_jobs": [job.to_dict() for job in matching_jobs],
         "matching_jobs_truncated": matching_jobs_truncated,
@@ -209,13 +236,13 @@ def _build_index_unavailable_response(
         "ok": False,
         "error": "index_unavailable",
         "message": (
-            f"The {source} index for {requested_root} is changing; "
+            f"The {context.source} index for {context.requested_root} is changing; "
             "this empty search cannot establish that no matches exist."
         ),
-        "request_id": request_id,
+        "request_id": context.request_id,
         "index_state": response_index_state,
         "remediation": [
-            server_jobs_command(port, index=source),
+            server_jobs_command(context.port, index=context.source),
             "Retry the search after the matching index job reaches a terminal state.",
         ],
     }
@@ -249,27 +276,16 @@ def _is_qdrant_collection_disappearance(exc: BaseException) -> bool:
 
 def classify_qdrant_collection_disappearance(
     exc: BaseException,
-    *,
-    before_snapshot: Sequence[object],
-    after_snapshot: Sequence[object],
-    requested_root: Path,
-    source: IndexSource,
-    request_id: str,
-    index_state: Mapping[str, object],
-    port: int | None,
+    context: SearchAvailabilityContext | None = None,
+    **values: object,
 ) -> SearchResponseClassification | None:
     """Convert a matching collection-disappearance race, or decline it."""
     if not _is_qdrant_collection_disappearance(exc):
         return None
+    context = _availability_context(context, values)
     classification = classify_search_response(
         {"results": []},
-        before_snapshot=before_snapshot,
-        after_snapshot=after_snapshot,
-        requested_root=requested_root,
-        source=source,
-        request_id=request_id,
-        index_state=index_state,
-        port=port,
+        context,
     )
     if classification.status_code != 503:
         return None
@@ -278,23 +294,18 @@ def classify_qdrant_collection_disappearance(
 
 def classify_search_response(
     result: dict[str, object],
-    *,
-    before_snapshot: Sequence[object],
-    after_snapshot: Sequence[object],
-    requested_root: Path,
-    source: IndexSource,
-    request_id: str,
-    index_state: Mapping[str, object],
-    port: int | None,
+    context: SearchAvailabilityContext | None = None,
+    **values: object,
 ) -> SearchResponseClassification:
     """Classify one response and preserve one bounded before/after evidence set."""
-    normalized_root = _normalized_root(requested_root)
+    context = _availability_context(context, values)
+    normalized_root = _normalized_root(context.requested_root)
     matches = (
         _combined_matches(
-            before_snapshot,
-            after_snapshot,
+            context.before_snapshot,
+            context.after_snapshot,
             requested_root=normalized_root,
-            source=source,
+            source=context.source,
         )
         if normalized_root is not None
         else []
@@ -306,11 +317,7 @@ def classify_search_response(
     results = result.get("results")
     if isinstance(results, list) and not results and matches:
         response = _build_index_unavailable_response(
-            requested_root=requested_root,
-            source=source,
-            request_id=request_id,
-            index_state=index_state,
-            port=port,
+            context,
             matching_jobs=matching_jobs,
             matching_jobs_truncated=matching_jobs_truncated,
             rebuilding=rebuilding,
