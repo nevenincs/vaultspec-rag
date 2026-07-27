@@ -1449,6 +1449,56 @@ class TestOperatorCommandsHaveOneSpelling:
             "server_jobs_command so a renamed flag changes in one place"
         )
 
+    def test_no_module_spells_a_bare_status_or_start_command(self) -> None:
+        """A command handed over as a whole string must come from the builder.
+
+        Scoped to a string that IS the command, which is what a caller passes
+        as a next action. A sentence that mentions the tool in passing is
+        prose and keeps its own words; the sites that hand an operator
+        something to run do not.
+        """
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "_operator_commands.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                    continue
+                text = node.value
+                if text.startswith(
+                    ("vaultspec-rag server status", "vaultspec-rag server start")
+                ):
+                    offenders.append(f"{path.name}:{node.lineno} {text!r}")
+        assert not offenders, (
+            f"a hand-spelled status/start command at {offenders}; call "
+            "server_status_command or server_start_command so a renamed flag "
+            "changes in one place"
+        )
+
+    def test_the_not_running_message_has_one_wording(self) -> None:
+        """Ten modules carried this sentence verbatim.
+
+        An operator meeting it from two different verbs must not be told two
+        different things, and the command inside it has to survive a rename.
+        """
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "_operator_commands.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if "Service is not running. Start it with" in line
+        ]
+        assert not offenders, (
+            f"the service-not-running sentence is spelled again at {offenders}; "
+            "import SERVICE_NOT_RUNNING_MESSAGE"
+        )
+
     def test_the_renamed_flag_is_not_reachable(self) -> None:
         """``--running`` was replaced by ``--state active`` and must stay gone.
 

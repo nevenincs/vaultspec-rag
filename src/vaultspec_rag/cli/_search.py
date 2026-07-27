@@ -11,6 +11,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._operator_commands import server_start_command, server_status_command
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from ..serviceclient._compat import resolve_data_plane_service
@@ -277,7 +278,7 @@ def _handle_vaultstore_locked_error(
             remediation=[
                 "Wait for the other command or update to finish.",
                 "vaultspec-rag search ... --port 8766",
-                "vaultspec-rag server status",
+                server_status_command(),
                 "vaultspec-rag server stop",
                 "Stop any orphaned Python process that is still using this workspace.",
             ],
@@ -755,8 +756,8 @@ def _display_service_down_error(*, json_mode: bool) -> NoReturn:
             ),
             1,
             remediation=[
-                "vaultspec-rag server status",
-                "vaultspec-rag server start",
+                server_status_command(),
+                server_start_command(),
                 "rerun with --allow-fallback (one local user only)",
             ],
         )
@@ -795,7 +796,7 @@ def _abort_on_local_deadline(seconds: float, json_mode: bool) -> NoReturn:
             ),
             "timeout_seconds": seconds,
             "remediation": [
-                "vaultspec-rag server start",
+                server_start_command(),
                 "rerun with a longer --timeout",
             ],
         }

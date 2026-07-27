@@ -12,6 +12,7 @@ from typing import Annotated
 
 import typer
 
+from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import server_app
@@ -86,7 +87,7 @@ def _human_line(status: str) -> str:
 
 
 def _fail_unreachable(command: str, json_mode: bool, *, port: int | None) -> None:
-    message = "Service is not running. Start it with `vaultspec-rag server start`."
+    message = SERVICE_NOT_RUNNING_MESSAGE
     if json_mode:
         _emit_json_error_and_exit(
             command, "service_unreachable", message, 1, data={"port": port}

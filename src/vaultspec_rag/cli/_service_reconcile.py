@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
+from .._operator_commands import server_status_command
 from ..serviceclient._discovery import resolve_machine_service
 from ..serviceclient._status import (
     RECONCILE_INTERVAL_SECONDS,
@@ -120,6 +121,6 @@ def _render_human(outcome: ReconcileOutcome) -> None:
     )
     if not outcome.converged:
         _print_lifecycle_next_actions(
-            "vaultspec-rag server status --verbose",
+            server_status_command(verbose=True),
             "vaultspec-rag server logs",
         )

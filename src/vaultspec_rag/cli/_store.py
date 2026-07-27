@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import typer
 
+from .._operator_commands import server_status_command
 from .._store_locks import VaultStoreLockedError
 from ..store import VaultStore
 from ._render import _emit_json_error_and_exit, _plain
@@ -65,7 +66,7 @@ def _open_vault_store(
                 db_path=str(exc.db_path),
                 remediation=[
                     "Wait for the other process to finish.",
-                    "vaultspec-rag server status",
+                    server_status_command(),
                     "vaultspec-rag server stop",
                     (
                         "Stop any orphaned Python process that is still using "

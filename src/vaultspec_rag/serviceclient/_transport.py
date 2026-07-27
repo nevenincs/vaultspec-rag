@@ -42,7 +42,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
 
 from .._loopback_http import LOOPBACK_OPENER
-from .._operator_commands import server_jobs_command
+from .._operator_commands import server_jobs_command, server_status_command
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from ..config import get_config, rag_default
 
@@ -1061,7 +1061,7 @@ def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
             },
         },
         "remediation": [
-            f"vaultspec-rag server status --port {port}",
+            server_status_command(port),
             server_jobs_command(port),
             f"Rerun the same search with --timeout {retry_timeout:g}",
         ],

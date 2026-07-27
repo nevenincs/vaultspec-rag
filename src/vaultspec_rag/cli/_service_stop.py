@@ -19,6 +19,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._operator_commands import server_status_command
 from .._process_probe import iter_process_info, pid_alive, pid_is_zombie
 from ..serviceclient._discovery import _delete_service_status, _read_service_status
 from ..serviceclient._transport import _try_http_health
@@ -307,7 +308,7 @@ def still_running_remediation_for(
     on either kind of machine, while a host can only ever exercise one.
     """
     if not pids:
-        return ("vaultspec-rag server status --verbose",)
+        return (server_status_command(verbose=True),)
     if platform == "win32":
         # /T takes the process tree, so the daemon's qdrant child and any
         # launcher shim go with it rather than needing a second command.
@@ -460,7 +461,7 @@ def _stop_service_on_port(port: int, json_mode: bool = False) -> None:
                 "not be confirmed as a vaultspec-rag service; it was left "
                 "running.",
             ),
-            next_actions=(f"vaultspec-rag server status --port {port} --verbose",),
+            next_actions=(server_status_command(port, verbose=True),),
             pid=pid,
             port=port,
         )
@@ -597,7 +598,7 @@ def _guard_unconfirmed_port_holder(
             "No daemon was reaped. An orphan holds no port, so nothing this "
             "command clears is affected by stopping here.",
         ),
-        next_actions=(f"vaultspec-rag server status --port {port} --verbose",),
+        next_actions=(server_status_command(port, verbose=True),),
         port=port,
     )
 
@@ -632,7 +633,7 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
                 "No daemon was reaped, and no claim is made about whether any "
                 "orphan exists.",
             ),
-            next_actions=(f"vaultspec-rag server status --port {port} --verbose",),
+            next_actions=(server_status_command(port, verbose=True),),
             port=port,
             detail=str(exc),
         ) from exc
@@ -861,7 +862,7 @@ def service_stop(
                 f"Recorded process {pid} is alive but its identity could not "
                 "be confirmed; the discovery file was left in place.",
             ),
-            next_actions=("vaultspec-rag server status --verbose",),
+            next_actions=(server_status_command(verbose=True),),
             pid=pid,
             port=port,
         )
