@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .._operator_commands import server_jobs_command
+
 if TYPE_CHECKING:
     # The convergence-mode vocabulary has one declaration, in the transport.
     # Annotation-only, so the client is not imported at runtime.
@@ -196,7 +198,6 @@ def _build_index_unavailable_response(
         "matching_jobs": [job.to_dict() for job in matching_jobs],
         "matching_jobs_truncated": matching_jobs_truncated,
     }
-    port_suffix = f" --port {port}" if port is not None else ""
     return {
         "ok": False,
         "error": "index_unavailable",
@@ -207,7 +208,7 @@ def _build_index_unavailable_response(
         "request_id": request_id,
         "index_state": response_index_state,
         "remediation": [
-            f"vaultspec-rag server jobs --state active --index {source}{port_suffix}",
+            server_jobs_command(port, index=source),
             "Retry the search after the matching index job reaches a terminal state.",
         ],
     }

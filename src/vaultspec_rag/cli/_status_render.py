@@ -17,6 +17,7 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
+from .._operator_commands import port_option, server_jobs_command
 from .._process_probe import pid_alive as _pid_alive
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
@@ -642,7 +643,7 @@ def _status_next_action(
     findings: list[DegradedFinding] | None = None,
     port: int | None = None,
 ) -> str:
-    port_arg = f" --port {port}" if port is not None else ""
+    port_arg = port_option(port)
     if state == "stopped":
         return f"vaultspec-rag server start{port_arg}"
     if state == "warming":
@@ -653,7 +654,7 @@ def _status_next_action(
         health,
         jobs,
         findings or [],
-        port_arg=port_arg,
+        port=port,
     )
 
 
@@ -662,9 +663,10 @@ def _running_service_next_action(
     jobs: dict[str, object],
     findings: list[DegradedFinding],
     *,
-    port_arg: str,
+    port: object | None,
 ) -> str:
     """Choose the follow-up for a service that is up, degraded or not."""
+    port_arg = port_option(port)
     # A named cause outranks every generic follow-up: the operator's next move
     # is whatever inspects the thing that is actually broken.
     remediation = next((finding.command for finding in findings if finding.command), "")
@@ -678,7 +680,7 @@ def _running_service_next_action(
         return f"vaultspec-rag server status --verbose{port_arg}"
     running_jobs = jobs.get("running")
     if isinstance(running_jobs, int) and running_jobs > 0:
-        return f"vaultspec-rag server jobs --state active{port_arg}"
+        return server_jobs_command(port)
     return f'vaultspec-rag search "<query>" --type code{port_arg} --timeout 120'
 
 
@@ -687,7 +689,7 @@ def _failure_followup(
     jobs: dict[str, object],
     findings: list[DegradedFinding],
     *,
-    port_arg: str,
+    port: object | None,
 ) -> dict[str, str] | None:
     """Turn a non-zero failed-job count into something the operator can run.
 
@@ -699,7 +701,7 @@ def _failure_followup(
     summary = "" if already_reported else _last_failure_label(health)
     if failed_total <= 0 and not summary:
         return None
-    followup = {"command": f"vaultspec-rag server jobs --failed{port_arg}"}
+    followup = {"command": server_jobs_command(port, failed=True)}
     if summary:
         followup["summary"] = summary
     return followup
@@ -714,7 +716,7 @@ def _status_operational_summary(
     explicit_port: bool = False,
 ) -> dict[str, object]:
     jobs = _status_jobs_summary(port, port_listening)
-    port_arg = f" --port {port}" if explicit_port else ""
+    port_arg = port_option(port if explicit_port else None)
     findings = degradation_findings(health)
     operational: dict[str, object] = {
         "jobs": jobs,
@@ -727,7 +729,9 @@ def _status_operational_summary(
             port=port if explicit_port else None,
         ),
     }
-    failure = _failure_followup(health, jobs, findings, port_arg=port_arg)
+    failure = _failure_followup(
+        health, jobs, findings, port=port if explicit_port else None
+    )
     if failure is not None:
         operational["failure"] = failure
     return operational

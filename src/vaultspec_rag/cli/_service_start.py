@@ -18,6 +18,7 @@ from typing import Annotated, Literal, cast
 
 import typer
 
+from .._operator_commands import server_jobs_command
 from .._process_probe import pid_alive
 from ..config import EnvVar, get_config
 from ..serviceclient._compat import (
@@ -402,7 +403,7 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
             ),
             next_actions=(
                 f"vaultspec-rag server status --port {port}",
-                f"vaultspec-rag server jobs --state active --port {port}",
+                server_jobs_command(port),
                 "vaultspec-rag server start --port <free-port>",
             ),
             port=port,
