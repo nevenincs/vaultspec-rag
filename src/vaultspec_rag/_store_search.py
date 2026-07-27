@@ -475,23 +475,22 @@ class _VaultSearchMixin:
         """
         from qdrant_client import models
 
+        from . import store_schema
+
+        # Re-listing these was how the document filter came to reject a key
+        # the schema had indexed, silently returning unfiltered results.
+        allowed = frozenset(store_schema.CODE_FILTER_KEYS)
         conditions: list[Condition] = []
         for key, value in (filters or {}).items():
-            if key in (
-                "language",
-                "path",
-                "node_type",
-                "function_name",
-                "class_name",
-            ):
-                conditions.append(
-                    models.FieldCondition(
-                        key=key,
-                        match=models.MatchValue(value=value),
-                    ),
-                )
-            else:
+            if key not in allowed:
                 logger.warning("Unknown filter key: %s", key)
+                continue
+            conditions.append(
+                models.FieldCondition(
+                    key=key,
+                    match=models.MatchValue(value=value),
+                ),
+            )
         if only_domains:
             conditions.append(
                 models.FieldCondition(

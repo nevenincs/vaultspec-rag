@@ -14,6 +14,7 @@ import time
 from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Protocol, cast
 
+from .. import store_schema
 from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
 from ._models import DocumentSearchResult, ParsedQuery, SearchResult
 from ._noise import (
@@ -423,7 +424,7 @@ class VaultSearcher:
         store_filters = {
             k: v
             for k, v in parsed.filters.items()
-            if k in ("doc_type", "feature", "date", "tag")
+            if k in store_schema.VAULT_FILTER_KEYS
         }
         if doc_type is not None:
             store_filters["doc_type"] = doc_type
@@ -1038,14 +1039,7 @@ class VaultSearcher:
         filters = {
             key: value
             for key, value in parsed.filters.items()
-            if key
-            in {
-                "source_path",
-                "extractor_id",
-                "extractor_version",
-                "locator_kind",
-                "locator_value_str",
-            }
+            if key in store_schema.DOCUMENT_QUERY_FILTER_KEYS
         }
         for key, value in (
             ("source_path", source_path),

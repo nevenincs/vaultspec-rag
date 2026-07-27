@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .. import store_schema
 from .._domain import DOMAINS
 from .._source_types import PublicSourceType, parse_source_type
 
@@ -142,37 +143,33 @@ def _supplied_filters(
     locator_kind: str | None,
 ) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
     """Return code, vault, document, glob, and postprocess filter names."""
-    code_supplied = [
-        name
-        for name, val in (
-            ("language", language),
-            ("path", path),
-            ("node_type", node_type),
-            ("function_name", function_name),
-            ("class_name", class_name),
-        )
-        if val is not None
-    ]
-    vault_supplied = [
-        name
-        for name, val in (
-            ("doc_type", doc_type),
-            ("feature", feature),
-            ("date", date),
-            ("tag", tag),
-        )
-        if val is not None
-    ]
-    document_supplied = [
-        name
-        for name, val in (
-            ("source_path", source_path),
-            ("extractor_id", extractor_id),
-            ("extractor_version", extractor_version),
-            ("locator_kind", locator_kind),
-        )
-        if val is not None
-    ]
+    # Keyed off the schema's filter vocabulary rather than a second list of the
+    # same names. Indexing is deliberate: a key added to the schema and not
+    # here raises instead of quietly dropping out of the supplied set, which
+    # is what would let a filter meant for another search type slip through
+    # unreported.
+    supplied_values: dict[str, object] = {
+        "language": language,
+        "path": path,
+        "node_type": node_type,
+        "function_name": function_name,
+        "class_name": class_name,
+        "doc_type": doc_type,
+        "feature": feature,
+        "date": date,
+        "tag": tag,
+        "source_path": source_path,
+        "extractor_id": extractor_id,
+        "extractor_version": extractor_version,
+        "locator_kind": locator_kind,
+    }
+
+    def _supplied(keys: tuple[str, ...]) -> list[str]:
+        return [name for name in keys if supplied_values[name] is not None]
+
+    code_supplied = _supplied(store_schema.CODE_FILTER_KEYS)
+    vault_supplied = _supplied(store_schema.VAULT_FILTER_KEYS)
+    document_supplied = _supplied(store_schema.DOCUMENT_FILTER_KEYS)
     glob_supplied = [
         flag
         for flag, supplied in (
