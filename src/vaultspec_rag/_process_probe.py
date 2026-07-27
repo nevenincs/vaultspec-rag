@@ -187,36 +187,37 @@ def pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if sys.platform == "win32":
-        import ctypes
+        return _windows_pid_alive(pid)
+    return _posix_pid_alive(pid)
 
-        kernel32 = win_kernel32()
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            # A null handle carries two opposite facts, and the error code is
-            # the only thing that separates them. ERROR_ACCESS_DENIED means the
-            # process exists and runs at a privilege this one cannot open -
-            # alive, and the case the POSIX branch below already got right.
-            # Every other code (ERROR_INVALID_PARAMETER for a pid nothing
-            # occupies) means genuinely absent. Reading them as one reports a
-            # live higher-privilege daemon dead, and callers that delete state
-            # for a confirmed-dead holder then destroy a running service's.
-            # GetLastError is read before any other FFI call so nothing
-            # overwrites the thread's last-error value.
-            return kernel32.GetLastError() == _ERROR_ACCESS_DENIED
-        try:
-            code = ctypes.c_ulong()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return False
-            return code.value == _STILL_ACTIVE
-        finally:
-            kernel32.CloseHandle(handle)
+
+def _windows_pid_alive(pid: int) -> bool:
+    """Read Windows liveness while preserving access-denied as alive."""
+    import ctypes
+
+    kernel32 = win_kernel32()
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        # A null handle carries two opposite facts, and the error code is
+        # the only thing that separates them. ERROR_ACCESS_DENIED means the
+        # process exists and runs at a privilege this one cannot open.
+        return kernel32.GetLastError() == _ERROR_ACCESS_DENIED
+    try:
+        code = ctypes.c_ulong()
+        return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and (
+            code.value == _STILL_ACTIVE
+        )
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _posix_pid_alive(pid: int) -> bool:
+    """Probe POSIX liveness, treating permission denial as positive evidence."""
     try:
         os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
     except PermissionError:
         return True
-    except OSError:
+    except (ProcessLookupError, OSError):
         return False
     return True
 
@@ -298,13 +299,23 @@ def pid_image_matches(pid: int, needle: str, *, timeout: float | None = None) ->
     if image is not None:
         return lowered in Path(image).name.lower()
     if sys.platform != "win32":
-        # The exe symlink is the authoritative image; comm (the image name,
-        # world-readable) is the fallback when exe is unreadable.
-        try:
-            comm = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8")
-        except OSError:
-            return False
-        return lowered in comm.strip().lower()
+        return _posix_image_matches(pid, lowered)
+    return _windows_image_matches(pid, lowered, timeout)
+
+
+def _posix_image_matches(pid: int, lowered_needle: str) -> bool:
+    """Fall back to Linux's readable process-image name."""
+    try:
+        comm = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return lowered_needle in comm.strip().lower()
+
+
+def _windows_image_matches(
+    pid: int, lowered_needle: str, timeout: float | None
+) -> bool:
+    """Use tasklist only after handle-based image lookup was unavailable."""
     import subprocess
 
     if timeout is not None and timeout <= 0.0:
@@ -320,7 +331,7 @@ def pid_image_matches(pid: int, needle: str, *, timeout: float | None = None) ->
     except subprocess.TimeoutExpired:
         logger.debug("image inspection for pid %d exceeded %.3fs", pid, timeout)
         return False
-    return lowered in result.stdout.lower()
+    return lowered_needle in result.stdout.lower()
 
 
 def pid_start_time(pid: int, *, timeout: float | None = None) -> float:
