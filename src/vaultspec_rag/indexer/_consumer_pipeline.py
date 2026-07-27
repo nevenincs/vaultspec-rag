@@ -25,11 +25,13 @@ from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from ._chunk_producer import (
     CONTROL_POLL_SECONDS,
     WeightedCodeSegmentQueue,
+    _SegmentSubmission,
+    _SingleProductionOptions,
     drain_code_chunks,
 )
 from ._file_state import FileStateKind
 from ._run_checkpoint import CodeRunConfiguration
-from ._run_ledger import RunOperation
+from ._run_ledger_models import RunOperation
 from ._streaming import (
     _release_cuda_cache,
     encode_and_upsert_code_slice,
@@ -47,7 +49,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudgetSnapshot, MemoryProbe
     from ..progress import ProgressReporter
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._chunk_producer import CodeChunkProducer
     from ._chunk_worker import FileChunkResult
     from ._generation_lifecycle import CodeGenerationLifecycle
@@ -304,13 +306,15 @@ class CodeConsumerPipeline:
                 if singles:
                     self._producer.produce_singles(
                         singles,
-                        publish_result=_publish_result,
-                        consumer_failed=lambda: (
-                            bool(consumer_exceptions) or not consumer.is_alive()
+                        _SingleProductionOptions(
+                            publish_result=_publish_result,
+                            consumer_failed=lambda: (
+                                bool(consumer_exceptions) or not consumer.is_alive()
+                            ),
+                            reporter=reporter,
+                            total=total,
+                            run_control=run_control,
                         ),
-                        reporter=reporter,
-                        total=total,
-                        run_control=run_control,
                     )
             except BaseException as exc:
                 producer_exception = exc
@@ -450,11 +454,13 @@ class CodeConsumerPipeline:
         )
         return self._producer.submit_segments(
             pending_segments,
-            segment_queue=segment_queue,
-            consumer=consumer,
-            consumer_exceptions=consumer_exceptions,
-            on_wait=self._sample_memory_budget,
-            run_control=run_control,
+            _SegmentSubmission(
+                segment_queue=segment_queue,
+                consumer=consumer,
+                consumer_exceptions=consumer_exceptions,
+                on_wait=self._sample_memory_budget,
+                run_control=run_control,
+            ),
         )
 
     def _iter_consumer_segments(

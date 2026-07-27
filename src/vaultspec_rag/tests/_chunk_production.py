@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..indexer._chunk_producer import _SingleProductionOptions
 from ..progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -77,10 +78,12 @@ def produce_file_results(
     if singles:
         producer.produce_singles(
             singles,
-            publish_result=_publish,
-            consumer_failed=lambda: False,
-            reporter=progress,
-            total=[0],
+            _SingleProductionOptions(
+                publish_result=_publish,
+                consumer_failed=lambda: False,
+                reporter=progress,
+                total=[0],
+            ),
         )
     return sorted(collected, key=lambda result: result.rel_path)
 
