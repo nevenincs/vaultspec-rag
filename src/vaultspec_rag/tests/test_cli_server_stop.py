@@ -356,7 +356,8 @@ class TestStopThatDidNotStop:
     def test_terminate_pid_reports_a_child_it_really_killed(self) -> None:
         # The success direction against a real process: a child this test may
         # signal must come back alive=False with no denial recorded.
-        from ..cli import _is_pid_alive, _terminate_pid
+        from .._process_probe import pid_alive
+        from ..cli import _terminate_pid
 
         if sys.platform == "win32":
             child = subprocess.Popen(
@@ -371,7 +372,7 @@ class TestStopThatDidNotStop:
             assert result.signal_denied is False, (
                 "a child this process may signal must record no denial"
             )
-            assert not _is_pid_alive(child.pid)
+            assert not pid_alive(child.pid)
         finally:
             if child.poll() is None:
                 child.kill()

@@ -536,7 +536,7 @@ class TestSupervision:
         tmp_path: Path,
     ) -> None:
         """A stopped supervisor leaves no qdrant process behind."""
-        import vaultspec_rag.cli as cli
+        from vaultspec_rag._process_probe import pid_alive
 
         supervisor = QdrantSupervisor(
             real_qdrant_binary,
@@ -548,13 +548,13 @@ class TestSupervision:
         supervisor.start(timeout=60.0)
         pid = supervisor.pid
         assert pid is not None
-        assert cli._is_pid_alive(pid)
+        assert pid_alive(pid)
         assert supervisor.server_version().startswith("1.18")
 
         supervisor.stop()
 
         assert not supervisor.is_alive()
-        assert not cli._is_pid_alive(pid), "qdrant child must be reaped"
+        assert not pid_alive(pid), "qdrant child must be reaped"
 
     def test_restart_recovers_a_killed_child(
         self,

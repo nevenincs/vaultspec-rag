@@ -18,8 +18,7 @@ from typing import Annotated, Literal, cast
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
+from .._process_probe import pid_alive
 from ..config import EnvVar, get_config
 from ..serviceclient._compat import (
     VERSION_ERROR_MISMATCH,
@@ -43,6 +42,7 @@ from ._gpu_errors import (
 from ._process import (
     DaemonBreakawayError,
     _call_interruptibly,
+    _is_our_service,
     _port_is_available,
     _probe_daemon_cuda,
     _resolve_daemon_interpreter,
@@ -219,7 +219,7 @@ def _existing_service_running() -> _AttachCandidate | None:
     existing_port = int(status["port"])
     existing_token = status.get("service_token")
     existing_token_str = existing_token if isinstance(existing_token, str) else None
-    if _cli._is_our_service(
+    if _is_our_service(
         existing_pid,
         port=existing_port,
         expected_token=existing_token_str,
@@ -239,7 +239,7 @@ def _existing_service_running() -> _AttachCandidate | None:
     # Identity or health did not confirm a live service we own. Remove the
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
-    if _should_unlink_discovery_file(_cli._is_pid_alive(existing_pid)):
+    if _should_unlink_discovery_file(pid_alive(existing_pid)):
         _delete_service_status()
     return None
 
@@ -518,7 +518,7 @@ def _attach_warming_service(json_mode: bool) -> bool:
         return False
     warming_pid = int(warming_status["pid"])
     warming_port = int(warming_status["port"])
-    if not _cli._is_pid_alive(warming_pid) or not _cli._is_our_service(warming_pid):
+    if not pid_alive(warming_pid) or not _is_our_service(warming_pid):
         return False
     _start_success(
         json_mode,
@@ -1042,7 +1042,7 @@ def _await_service_ready(
             elapsed = time.perf_counter() - t0
 
             # Check if process died (port conflict, etc.)
-            if not _cli._is_pid_alive(pid):
+            if not pid_alive(pid):
                 raise _fail_start_died(pid, port, log_path, json_mode)
 
             # Run the probe off the main thread: a health request blocks in a

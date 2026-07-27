@@ -19,7 +19,7 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config,
 )
 
-from ...cli import _is_pid_alive
+from ..._process_probe import pid_alive
 from ...config import reset_config as reset_rag_config
 from ...serviceclient._transport import _try_http_health
 from .._ports import free_loopback_port
@@ -287,7 +287,7 @@ def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
     """Wait for a process to exit.  Returns True if exited within timeout."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not _is_pid_alive(pid):
+        if not pid_alive(pid):
             return True
         time.sleep(0.3)
     return False

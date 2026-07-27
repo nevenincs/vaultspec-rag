@@ -27,8 +27,8 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from typer.testing import CliRunner
 
+from ..._process_probe import pid_alive
 from ...cli import (
-    _is_pid_alive,
     _port_is_listening,
     _read_service_status,
     _spawn_service,
@@ -76,7 +76,7 @@ def _assert_expired_startup_torn_down(
     termination_started = time.monotonic()
     _terminate_pid(daemon_pid, timeout=0.200)
     assert time.monotonic() - termination_started < 0.700
-    if _is_pid_alive(daemon_pid):
+    if pid_alive(daemon_pid):
         _terminate_pid(daemon_pid, timeout=15.0)
     assert _wait_for_exit(daemon_pid, timeout=30.0), (
         f"startup-expired service process {daemon_pid} did not exit"
@@ -84,7 +84,7 @@ def _assert_expired_startup_torn_down(
     assert _wait_for_exit(launcher_pid, timeout=30.0), (
         f"startup-expired service launcher {launcher_pid} did not exit"
     )
-    if _is_pid_alive(qdrant_pid):
+    if pid_alive(qdrant_pid):
         assert reap_qdrant_orphan(
             qdrant_pid,
             wait_seconds=15.0,
@@ -104,7 +104,7 @@ def _await_ready_marker(
     """Block until the readiness marker appears or its launcher dies."""
     deadline = time.monotonic() + timeout
     while not ready_path.exists() and time.monotonic() < deadline:
-        if not _is_pid_alive(launcher_pid):
+        if not pid_alive(launcher_pid):
             break
         time.sleep(0.05)
 
@@ -118,7 +118,7 @@ def _await_models_loaded(
     """Block until the daemon logs model readiness; return the final log text."""
     deadline = time.monotonic() + timeout
     output = ""
-    while time.monotonic() < deadline and _is_pid_alive(daemon_pid):
+    while time.monotonic() < deadline and pid_alive(daemon_pid):
         if daemon_log.is_file():
             output = daemon_log.read_text(encoding="utf-8", errors="replace")
         if "All models loaded" in output:
@@ -172,7 +172,7 @@ def _wait_for_published_qdrant(
         )
         if valid_pid and valid_port:
             return cast("int", raw_pid), cast("int", raw_port)
-        if not _is_pid_alive(service_pid):
+        if not pid_alive(service_pid):
             return None
         time.sleep(0.1)
     return None
@@ -203,7 +203,7 @@ def _service_processes_on_port(port: int) -> dict[int, list[str]]:
 def _terminate_test_processes(pids: list[int]) -> None:
     """Best-effort finalizer for only the process identifiers this test owns."""
     for pid in pids:
-        if _is_pid_alive(pid):
+        if pid_alive(pid):
             _terminate_pid(pid)
             _wait_for_exit(pid, timeout=15.0)
 
@@ -369,7 +369,7 @@ def _cleanup_forced_stop_harness(
     from ..._process_probe import pid_alive
     from ...qdrant_runtime._resolve import reap_qdrant_orphan
 
-    if _is_pid_alive(service.pid):
+    if pid_alive(service.pid):
         service.kill()
         service.wait(timeout=15)
     if pid_alive(qdrant_pid):
@@ -561,8 +561,8 @@ def test_live_service_readiness_expiry_uses_reserved_cleanup_budget(
     owner_pid = int(identity["owner_pid"])
     qdrant_pid = int(identity["qdrant_pid"])
     qdrant_port = int(identity["http_port"])
-    assert not _is_pid_alive(launcher_pid)
-    assert not _is_pid_alive(owner_pid)
+    assert not pid_alive(launcher_pid)
+    assert not pid_alive(owner_pid)
     assert not pid_alive(qdrant_pid)
     assert _wait_for_listeners_closed(service_port, qdrant_port)
 
@@ -704,7 +704,7 @@ def test_startup_expiry_reaps_pre_readiness_qdrant(
         assert status_before_parent is not None
         daemon_pid = cast("int", status_before_parent["pid"])
         assert daemon_pid > 0
-        assert _is_pid_alive(daemon_pid)
+        assert pid_alive(daemon_pid)
         if daemon_pid != pid:
             owned_pids.append(daemon_pid)
         nested_identity = _assert_published_qdrant_identity(
@@ -713,7 +713,7 @@ def test_startup_expiry_reaps_pre_readiness_qdrant(
             qdrant_pid=qdrant_pid,
             qdrant_port=qdrant_port,
         )
-        assert _is_pid_alive(qdrant_pid)
+        assert pid_alive(qdrant_pid)
         assert _port_is_listening(qdrant_port)
 
         # The deliberately delayed parent publication must merge rather than
@@ -767,8 +767,8 @@ if sys.platform == "win32":
             identity_path = tmp_path / "identity.json"
             if identity_path.is_file():
                 identity = json.loads(identity_path.read_text(encoding="utf-8"))
-                assert not _is_pid_alive(int(identity["owner_pid"]))
-                assert not _is_pid_alive(int(identity["qdrant_pid"]))
+                assert not pid_alive(int(identity["owner_pid"]))
+                assert not pid_alive(int(identity["qdrant_pid"]))
                 assert not _port_is_listening(int(identity["http_port"]))
 
     @pytest.mark.integration
@@ -886,7 +886,7 @@ if sys.platform == "win32":
                 assert error == ""
                 assert _wait_for_exit(owned.pid, timeout=5.0)
                 assert unrelated.poll() is None
-                assert _is_pid_alive(unrelated.pid)
+                assert pid_alive(unrelated.pid)
             finally:
                 for process in (owned, unrelated):
                     if process.poll() is None:
@@ -1095,7 +1095,7 @@ if sys.platform != "win32":
                     tampered,
                     f"tampered {tampered_field}",
                 )
-            assert _is_pid_alive(qdrant_pid)
+            assert pid_alive(qdrant_pid)
             assert _port_is_listening(qdrant_port)
             assert reap_qdrant_orphan(
                 qdrant_pid,
@@ -1156,7 +1156,7 @@ if sys.platform != "win32":
             _terminate_pid(service.pid)
 
             assert service.wait(timeout=15.0) is not None
-            assert _is_pid_alive(qdrant_pid)
+            assert pid_alive(qdrant_pid)
             assert _port_is_listening(qdrant_port)
             assert reap_qdrant_orphan(qdrant_pid)
             assert _wait_for_exit(qdrant_pid, timeout=15.0)
@@ -1197,7 +1197,7 @@ if sys.platform != "win32":
             _terminate_pid(service.pid)
 
             assert service.wait(timeout=15.0) is not None
-            assert _is_pid_alive(qdrant_pid)
+            assert pid_alive(qdrant_pid)
             assert _port_is_listening(qdrant_port)
             assert reap_qdrant_orphan(
                 qdrant_pid,
@@ -1232,7 +1232,7 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
 
         _terminate_pid(pid)
         assert _wait_for_exit(pid), f"PID {pid} did not exit after terminate"
-        assert not _is_pid_alive(pid)
+        assert not pid_alive(pid)
 
 
 @pytest.mark.integration
@@ -1499,7 +1499,7 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
             )
             new_pid = int(new_status["pid"])
             assert new_pid != 99999
-            assert _is_pid_alive(new_pid)
+            assert pid_alive(new_pid)
 
             health = _poll_health(port)
             assert health["status"] == "ready"
@@ -1548,7 +1548,7 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
         )
 
         assert _wait_for_exit(pid), f"PID {pid} did not exit after stop"
-        assert not _is_pid_alive(pid)
+        assert not pid_alive(pid)
         assert not _status_file().exists(), "Status file should be removed after stop"
 
 
@@ -1588,7 +1588,7 @@ def test_stop_running_service_by_port_without_status_file(
         assert _wait_for_exit(serving_pid), (
             f"serving PID {serving_pid} did not exit after stop --port"
         )
-        assert not _is_pid_alive(serving_pid)
+        assert not pid_alive(serving_pid)
 
 
 @pytest.mark.integration
@@ -1977,7 +1977,7 @@ def test_reconcile_rejects_live_legacy_status_without_singleton_owner(
         discovery = payload["data"]["service"]["discovery"]
         assert discovery["source"] == "status_file"
         assert discovery["holder_pid"] == 0
-        assert _is_pid_alive(pid)
+        assert pid_alive(pid)
 
 
 @pytest.mark.parametrize("missing_field", ["pid", "service_token"])
@@ -2024,7 +2024,7 @@ def test_reconcile_rejects_machine_pointer_with_incomplete_identity(
         discovery = payload["data"]["service"]["discovery"]
         assert discovery["source"] == "machine_pointer"
         assert discovery["holder_pid"] == pid
-        assert _is_pid_alive(pid)
+        assert pid_alive(pid)
 
 
 @pytest.mark.integration
@@ -2227,7 +2227,7 @@ def test_reconcile_recovers_discovery_without_touching_the_daemon(
             assert repaired["port"] == port
 
             # Reconcile is non-destructive: same process, still serving.
-            assert _is_pid_alive(serving_pid), (
+            assert pid_alive(serving_pid), (
                 f"daemon died during the {label} reconcile round"
             )
             live = _poll_health(port)

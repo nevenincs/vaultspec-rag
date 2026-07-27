@@ -286,7 +286,8 @@ def _wait_for_qdrant_publication(
     timeout: float,
 ) -> dict[str, object]:
     """Wait boundedly for the authoritative pre-warmup Qdrant status."""
-    from ...cli import _is_pid_alive, _read_service_status
+    from ..._process_probe import pid_alive
+    from ...cli import _read_service_status
 
     deadline = time.monotonic() + timeout
     last: dict[str, object] | None = None
@@ -298,7 +299,7 @@ def _wait_for_qdrant_publication(
             if (
                 isinstance(daemon_pid, int)
                 and not isinstance(daemon_pid, bool)
-                and _is_pid_alive(daemon_pid)
+                and pid_alive(daemon_pid)
                 and status.get("port") == service_port
                 and isinstance(status.get("qdrant_pid"), int)
                 and isinstance(status.get("qdrant_port"), int)
@@ -306,7 +307,7 @@ def _wait_for_qdrant_publication(
                 and bool(status.get("qdrant_version"))
             ):
                 return last
-        if not _is_pid_alive(service_pid):
+        if not pid_alive(service_pid):
             break
         time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
     raise TimeoutError(

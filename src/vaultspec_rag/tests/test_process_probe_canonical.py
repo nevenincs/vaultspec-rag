@@ -1147,14 +1147,11 @@ class TestNoCompatibilityAliases:
     not be spelled like the last one.
     """
 
-    #: The one remaining alias, named so it cannot silently grow back into a
-    #: population. ``cli._process._is_pid_alive`` fronts ``_process_probe.
-    #: pid_alive`` for roughly sixty call sites, most of them in integration
-    #: tests reached through the ``cli`` package; unpicking it is its own
-    #: change, not a rider on this one.
-    KNOWN: ClassVar[frozenset[tuple[str, str]]] = frozenset(
-        {("_process.py", "_is_pid_alive")}
-    )
+    #: Empty, and meant to stay that way. It is the staging mechanism, not a
+    #: permission list: an entry records an alias a cleanup has not reached
+    #: yet, and the companion test below fails once that alias is gone so the
+    #: entry cannot outlive it and quietly re-permit the name.
+    KNOWN: ClassVar[frozenset[tuple[str, str]]] = frozenset()
 
     def test_no_module_rebinds_an_imported_name(self) -> None:
         offenders: list[str] = []
@@ -1197,16 +1194,22 @@ class TestNoCompatibilityAliases:
             "that does not own it"
         )
 
-    def test_the_known_alias_still_exists(self) -> None:
+    def test_every_allowlisted_alias_still_exists(self) -> None:
         """The allowlist must not outlive what it allows.
 
-        An entry left behind after the alias is gone would silently permit a
-        fresh alias of the same name in the same module.
+        An entry left behind after its alias is gone would silently permit a
+        fresh alias of that name in that module. Vacuously true while KNOWN is
+        empty, which is the intended resting state.
         """
-        from ..cli import _process
-
-        source = Path(_process.__file__).read_text(encoding="utf-8")
-        assert "_is_pid_alive = pid_alive" in source, (
-            "the allowlisted alias is gone; drop it from KNOWN so the scan "
-            "covers that module fully again"
+        stale = [
+            f"{module}:{name}"
+            for module, name in sorted(self.KNOWN)
+            if not any(
+                path.name == module and f"{name} = " in path.read_text(encoding="utf-8")
+                for path in _production_sources()
+            )
+        ]
+        assert not stale, (
+            f"allowlist entries with no alias behind them: {stale}; drop them "
+            "so the scan covers those modules fully again"
         )

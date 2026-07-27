@@ -98,13 +98,22 @@ class TestLivenessEverywhere:
     def test_a_non_positive_pid_counts_as_dead(self, pid: int) -> None:
         assert pid_alive(pid) is False
 
+    def test_an_unassigned_pid_counts_as_dead(self) -> None:
+        """A positive pid no process holds is dead, not merely unopenable."""
+        assert pid_alive(99999999) is False
+
 
 def test_service_liveness_has_no_second_implementation() -> None:
-    """The CLI seam and the runtime helper are one function, not two bodies.
+    """The CLI calls the one liveness function, under its own name.
 
     A second copy is what let the access-denied rule be right on one path and
-    wrong on the other for the whole time the defect was live.
+    wrong on the other for the whole time the defect was live. The CLI used to
+    bind ``_is_pid_alive = pid_alive`` and route every caller through the
+    package attribute, so a second body could be introduced under the old name
+    without a single caller changing. Nothing ever substituted that seam, so
+    it bought no testability and carried that risk for free.
     """
     from vaultspec_rag.cli import _process
 
-    assert _process._is_pid_alive is pid_alive
+    assert _process.pid_alive is pid_alive
+    assert not hasattr(_process, "_is_pid_alive")

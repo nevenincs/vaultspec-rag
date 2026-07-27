@@ -11,6 +11,7 @@ import typing
 
 import pytest
 
+from .._process_probe import pid_alive
 from ._cli_helpers import (
     _ANSI_RE,
     EnvVar,
@@ -831,7 +832,7 @@ class TestLifecycleShutdownLog:
             assert result.exit_code == 0, result.output
             assert f"Process ID: {child.pid}" in result.output
             assert "PID:" not in result.output
-            assert not cli._is_pid_alive(child.pid), (
+            assert not pid_alive(child.pid), (
                 "a stop that reports success must have stopped the process"
             )
         finally:

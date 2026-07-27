@@ -18,7 +18,6 @@ from ._cli_helpers import (
     _assert_verbose_status_summary,
     _find_free_port,
     _is_our_service,
-    _is_pid_alive,
     _isolated_status_dir,
     _label_values,
     _plain_lines,
@@ -571,22 +570,6 @@ class TestHealthyServiceStaysQuiet:
 
 class TestServiceDaemonHelpers:
     """Tests for the service daemon helper functions."""
-
-    def test_is_pid_alive_current_process(self):
-        """Current process PID should be alive."""
-        assert _is_pid_alive(os.getpid()) is True
-
-    def test_is_pid_alive_impossible_pid(self):
-        """An impossibly large PID should not be alive."""
-        assert _is_pid_alive(99999999) is False
-
-    def test_is_pid_alive_zero(self):
-        """PID 0 should return False."""
-        assert _is_pid_alive(0) is False
-
-    def test_is_pid_alive_negative(self):
-        """Negative PIDs should return False."""
-        assert _is_pid_alive(-1) is False
 
     def test_is_our_service_current_process(self):
         """Current process (Python) should be recognized as ours."""
