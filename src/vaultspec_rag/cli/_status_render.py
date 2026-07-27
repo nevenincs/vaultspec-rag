@@ -40,7 +40,7 @@ from ..serviceclient._status import (
     compose_discovery_status,
 )
 from ..serviceclient._transport import _try_http_admin, _try_http_health
-from ._app import server_app
+from ._app import JSON_OPTION_HELP, server_app
 from ._cli_format import NOT_REPORTED
 from ._process import (
     _heartbeat_age_seconds,
@@ -1059,7 +1059,7 @@ def service_status(
         typer.Option(
             "--json",
             help=(
-                "Emit JSON for scripts instead of human text. Preserves exit "
+                f"{JSON_OPTION_HELP} Preserves exit "
                 "codes 0 (running), 3 (stopped), 4 (crashed or divergent), "
                 "and 5 (warming: models loading, not yet serving)."
             ),

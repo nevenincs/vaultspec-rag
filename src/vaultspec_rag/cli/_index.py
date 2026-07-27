@@ -30,7 +30,7 @@ from .._store_writes import InsufficientDiskSpaceError
 from ..config import EnvVar
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import _try_http_reindex
-from ._app import CLIState, app
+from ._app import JSON_OPTION_HELP, CLIState, JsonMode, app
 from ._cli_format import _counted_unit
 from ._core import logger
 from ._gpu_errors import _handle_gpu_error
@@ -617,13 +617,7 @@ def handle_index(
             help="Show model loading and indexing progress messages.",
         ),
     ] = False,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help="Emit JSON for scripts instead of human text.",
-        ),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Index vault documents and/or codebase chunks."""
     if not verbose:
@@ -941,7 +935,7 @@ def handle_clean(
         typer.Option(
             "--json",
             help=(
-                "Emit JSON for scripts instead of human text. Requires --yes "
+                f"{JSON_OPTION_HELP} Requires --yes "
                 "so no prompt interrupts the JSON output."
             ),
         ),

@@ -23,7 +23,7 @@ from .._operator_commands import server_status_command
 from .._process_probe import iter_process_info, pid_alive, pid_is_zombie
 from ..serviceclient._discovery import _delete_service_status, _read_service_status
 from ..serviceclient._transport import _try_http_health
-from ._app import server_app
+from ._app import JSON_ENVELOPE_OPTION_HELP, server_app
 from ._core import logger
 from ._process import (
     _DEFAULT_GRACEFUL_DRAIN_SECONDS,
@@ -731,8 +731,8 @@ def service_stop(
         typer.Option(
             "--json",
             help=(
-                "Emit one machine-readable outcome envelope instead of human "
-                "text. An already-stopped service is the success "
+                f"{JSON_ENVELOPE_OPTION_HELP} "
+                "An already-stopped service is the success "
                 "`already_stopped` (exit 0); a stop that leaves the service "
                 "running (unconfirmed identity) is `identity_unconfirmed` "
                 "(exit 1) in both output modes."

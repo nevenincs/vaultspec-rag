@@ -32,7 +32,7 @@ from ..indexer._preprocess_config import (
     load_preprocess_rules,
 )
 from ..indexer._preprocess_runner import PreprocessAbortError, run_preprocessor
-from ._app import CLIState, preprocess_app
+from ._app import CLIState, JsonMode, preprocess_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
 
 
@@ -94,10 +94,7 @@ def _format_unit_count(unit_count: int) -> str:
 @preprocess_app.command("list", help="List resolved preprocess rules for the project.")
 def handle_preprocess_list(
     ctx: typer.Context,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Show the project's resolved preprocess rules in precedence order."""
     try:
@@ -147,10 +144,7 @@ def handle_preprocess_list(
 )
 def handle_preprocess_check(
     ctx: typer.Context,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Strictly validate the config and report the first defect."""
     try:
@@ -228,10 +222,7 @@ def _report_preprocess_no_match(
 def handle_preprocess_run_one(
     ctx: typer.Context,
     path: Annotated[str, typer.Argument(help="Source file to preprocess.")],
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Trial the matching preprocessor against one file for authoring/debugging."""
     from ..config import get_config
@@ -371,10 +362,7 @@ def _status_effect_line(mode: PreprocessMode, rule_count: int) -> str:
 )
 def handle_preprocess_status(
     ctx: typer.Context,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Report the preprocess mode and the root's rule configuration."""
     root = _root(ctx)

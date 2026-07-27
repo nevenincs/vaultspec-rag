@@ -11,7 +11,7 @@ import vaultspec_rag.cli as _cli
 from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE, server_status_command
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import server_projects_app
+from ._app import JsonMode, server_projects_app
 from ._cli_format import _counted_unit, _project_name
 from ._render import (
     _address_line,
@@ -143,13 +143,7 @@ def service_projects_list(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help="Emit JSON for scripts instead of human text.",
-        ),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """List projects currently loaded by the running search service."""
     resolved_port = port if port is not None else _default_service_port()
@@ -254,13 +248,7 @@ def service_projects_unload(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help="Emit JSON for scripts instead of human text.",
-        ),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Unload a project from the running search service."""
     resolved_port = port if port is not None else _default_service_port()

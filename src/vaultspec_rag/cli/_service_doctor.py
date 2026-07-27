@@ -23,7 +23,7 @@ from typing import Annotated, cast
 import typer
 
 from ..api import get_readiness
-from ._app import server_app
+from ._app import JSON_ENVELOPE_OPTION_HELP, server_app
 from ._render import _emit_json, _plain
 
 #: The distribution name rag's own doctor rows read from the shared per-package
@@ -43,7 +43,10 @@ _RAG_PACKAGE = "vaultspec-rag"
 def service_doctor(
     json_output: Annotated[
         bool,
-        typer.Option("--json", help="Emit the readiness snapshot as a JSON envelope."),
+        typer.Option(
+            "--json",
+            help=f"{JSON_ENVELOPE_OPTION_HELP} It is the readiness snapshot.",
+        ),
     ] = False,
 ) -> None:
     """Render the two-axis readiness snapshot in human or JSON mode.

@@ -15,7 +15,7 @@ import typer
 from .._operator_commands import SERVICE_NOT_RUNNING_MESSAGE
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import server_app
+from ._app import JsonMode, server_app
 from ._render import (
     _address_line,
     _emit_json,
@@ -104,10 +104,7 @@ def service_pause(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Pause the whole daemon; it stays alive and releases on ``server resume``."""
     _quiesce(pause=True, command=_PAUSE_COMMAND, port=port, json_mode=json_mode)
@@ -119,10 +116,7 @@ def service_resume(
         int | None,
         typer.Option("--port", help="Service port (defaults to running service)."),
     ] = None,
-    json_mode: Annotated[
-        bool,
-        typer.Option("--json", help="Emit JSON for scripts instead of human text."),
-    ] = False,
+    json_mode: JsonMode = False,
 ) -> None:
     """Release a paused daemon so held workers continue."""
     _quiesce(pause=False, command=_RESUME_COMMAND, port=port, json_mode=json_mode)
