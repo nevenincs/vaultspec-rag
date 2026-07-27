@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import itertools
 import logging
-from dataclasses import dataclass
 import multiprocessing
 import os
 import queue
@@ -29,6 +28,7 @@ from concurrent.futures import (
     wait,
 )
 from concurrent.futures.process import BrokenProcessPool
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..job_control import NO_RUN_CONTROL
@@ -62,6 +62,42 @@ class _PoolDrainRequest:
     publish_result: Callable[[FileChunkResult], bool]
     consumer_failed: Callable[[], bool]
     reporter: ProgressReporter
+    run_control: RunControl
+
+
+@dataclass(frozen=True, slots=True)
+class _PoolDrainPlan:
+    """Inputs for one bounded spawned-worker drain."""
+
+    workers: int
+    ctx: BaseContext
+    paths_iter: Iterator[pathlib.Path]
+    window: int
+    publish_result: Callable[[FileChunkResult], bool]
+    consumer_failed: Callable[[], bool]
+    reporter: ProgressReporter
+    run_control: RunControl = NO_RUN_CONTROL
+
+
+@dataclass(frozen=True, slots=True)
+class _SingleProductionOptions:
+    """Caller-owned collaborators for one ordinary-file production pass."""
+
+    publish_result: Callable[[FileChunkResult], bool]
+    consumer_failed: Callable[[], bool]
+    reporter: ProgressReporter
+    total: list[int]
+    run_control: RunControl = NO_RUN_CONTROL
+
+
+@dataclass(frozen=True, slots=True)
+class _SegmentSubmission:
+    """Queue and liveness ownership for segment publication."""
+
+    segment_queue: WeightedCodeSegmentQueue
+    consumer: threading.Thread
+    consumer_exceptions: list[BaseException]
+    on_wait: Callable[[str], object]
     run_control: RunControl
 
 # Polling bound for cooperative control while the parent waits on CPU workers
@@ -532,36 +568,31 @@ class CodeChunkProducer:
 
     def _drain_pool(
         self,
-        workers: int,
-        ctx: BaseContext,
-        paths_iter: Iterator[pathlib.Path],
-        window: int,
-        publish_result: Callable[[FileChunkResult], bool],
-        consumer_failed: Callable[[], bool],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
+        plan: _PoolDrainPlan,
     ) -> tuple[bool, bool, int]:
         """Drain a bounded spawned-worker window into the consumer."""
         broke = False
         consumer_died = False
         advanced = 0
         try:
-            with spawn_pool(max_workers=workers, mp_context=ctx) as pool:
+            with spawn_pool(max_workers=plan.workers, mp_context=plan.ctx) as pool:
                 pending: set[Future[FileChunkResult]] = set()
                 try:
                     self._submit_pool_window(
-                        pool, itertools.islice(paths_iter, window), pending, run_control
+                        pool,
+                        itertools.islice(plan.paths_iter, plan.window),
+                        pending,
+                        plan.run_control,
                     )
                     consumer_died, advanced = self._drain_pending_pool(
                         _PoolDrainRequest(
                             pool=pool,
                             pending=pending,
-                            paths_iter=paths_iter,
-                            publish_result=publish_result,
-                            consumer_failed=consumer_failed,
-                            reporter=reporter,
-                            run_control=run_control,
+                            paths_iter=plan.paths_iter,
+                            publish_result=plan.publish_result,
+                            consumer_failed=plan.consumer_failed,
+                            reporter=plan.reporter,
+                            run_control=plan.run_control,
                         )
                     )
                 except BaseException:
@@ -611,12 +642,7 @@ class CodeChunkProducer:
             for future in done:
                 died, advanced_inc = self._process_future(
                     future,
-                    request.pool,
-                    request.pending,
-                    request.paths_iter,
-                    request.publish_result,
-                    request.reporter,
-                    run_control=request.run_control,
+                    request,
                 )
                 advanced += advanced_inc
                 if died:
@@ -630,16 +656,10 @@ class CodeChunkProducer:
     def _process_future(
         self,
         future: Future[FileChunkResult],
-        pool: ProcessPoolExecutor,
-        pending: set[Future[FileChunkResult]],
-        paths_iter: Iterator[pathlib.Path],
-        publish_result: Callable[[FileChunkResult], bool],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
+        request: _PoolDrainRequest,
     ) -> tuple[bool, int]:
         """Publish one worker result and refill its bounded slot."""
-        run_control.checkpoint()
+        request.run_control.checkpoint()
         try:
             result = future.result()
         except BrokenProcessPool:
@@ -649,17 +669,17 @@ class CodeChunkProducer:
         except Exception:
             logger.warning("Worker failed to chunk a file", exc_info=True)
             raise
-        run_control.checkpoint()
-        died = not publish_result(result)
-        reporter.advance()
-        run_control.checkpoint()
+        request.run_control.checkpoint()
+        died = not request.publish_result(result)
+        request.reporter.advance()
+        request.run_control.checkpoint()
         if died:
             return True, 1
-        next_path = next(paths_iter, None)
+        next_path = next(request.paths_iter, None)
         if next_path is not None:
-            run_control.checkpoint()
-            pending.add(
-                pool.submit(
+            request.run_control.checkpoint()
+            request.pending.add(
+                request.pool.submit(
                     _chunk_worker.chunk_and_hash_file,
                     next_path,
                     self._root_dir,
@@ -667,24 +687,22 @@ class CodeChunkProducer:
                     self._chunk_execution_policy,
                 )
             )
-            run_control.checkpoint()
+            request.run_control.checkpoint()
         return False, 1
 
     def produce_singles(
         self,
         singles: list[pathlib.Path],
-        *,
-        publish_result: Callable[[FileChunkResult], bool],
-        consumer_failed: Callable[[], bool],
-        reporter: ProgressReporter,
-        total: list[int],
-        run_control: RunControl = NO_RUN_CONTROL,
+        options: _SingleProductionOptions,
     ) -> int:
         """Produce ordinary files serially or through the CPU pool."""
         workers = self.plan_workers(singles)
         if workers <= 1:
             return self._run_serial_chunk_producer(
-                singles, publish_result, reporter, run_control=run_control
+                singles,
+                options.publish_result,
+                options.reporter,
+                run_control=options.run_control,
             )
         ctx = multiprocessing.get_context("spawn")
         window = min(
@@ -692,77 +710,68 @@ class CodeChunkProducer:
             max(1, _CHUNK_FUTURE_WINDOW_PER_WORKER * workers),
         )
         broke, _consumer_died, advanced = self._drain_pool(
-            workers,
-            ctx,
-            iter(singles),
-            window,
-            publish_result,
-            consumer_failed,
-            reporter,
-            run_control=run_control,
+            _PoolDrainPlan(
+                workers=workers,
+                ctx=ctx,
+                paths_iter=iter(singles),
+                window=window,
+                publish_result=options.publish_result,
+                consumer_failed=options.consumer_failed,
+                reporter=options.reporter,
+                run_control=options.run_control,
+            )
         )
         if not broke:
             return advanced
-        if advanced or total[0]:
+        if advanced or options.total[0]:
             logger.error(
                 "Chunk process pool broke after %d files (%d chunks embedded); "
                 "aborting. Set index_chunk_workers=1 to force the serial path.",
                 advanced,
-                total[0],
+                options.total[0],
             )
             raise BrokenProcessPool("codebase chunk process pool broke mid-run")
         logger.warning(
             "Chunk process pool could not start; running chunk + embed serially"
         )
         return self._run_serial_chunk_producer(
-            singles, publish_result, reporter, run_control=run_control
+            singles,
+            options.publish_result,
+            options.reporter,
+            run_control=options.run_control,
         )
 
     def enqueue_segment(
         self,
         segment: CodeFileSegment,
-        *,
-        segment_queue: WeightedCodeSegmentQueue,
-        consumer: threading.Thread,
-        consumer_exceptions: list[BaseException],
-        on_wait: Callable[[str], object],
-        run_control: RunControl,
+        submission: _SegmentSubmission,
     ) -> bool:
         """Place one segment on the bounded queue while the consumer is live.
 
         *on_wait* is called each time the queue refuses the segment, so the
         caller samples whatever it enforces while production is parked.
         """
-        while not consumer_exceptions and consumer.is_alive():
-            run_control.checkpoint()
+        while not submission.consumer_exceptions and submission.consumer.is_alive():
+            submission.run_control.checkpoint()
             try:
-                segment_queue.put(segment, timeout=CONTROL_POLL_SECONDS)
+                submission.segment_queue.put(segment, timeout=CONTROL_POLL_SECONDS)
             except queue.Full:
-                on_wait("code producer queue wait")
+                submission.on_wait("code producer queue wait")
                 continue
-            run_control.checkpoint()
+            submission.run_control.checkpoint()
             return True
         return False
 
     def submit_segments(
         self,
         segments: Iterable[CodeFileSegment],
-        *,
-        segment_queue: WeightedCodeSegmentQueue,
-        consumer: threading.Thread,
-        consumer_exceptions: list[BaseException],
-        on_wait: Callable[[str], object],
-        run_control: RunControl,
+        submission: _SegmentSubmission,
     ) -> bool:
         """Submit every segment, stopping as soon as the consumer is gone."""
         for segment in segments:
             if not self.enqueue_segment(
                 segment,
-                segment_queue=segment_queue,
-                consumer=consumer,
-                consumer_exceptions=consumer_exceptions,
-                on_wait=on_wait,
-                run_control=run_control,
+                submission,
             ):
                 return False
         return True
