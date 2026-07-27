@@ -1,11 +1,13 @@
 """Verified Qdrant attach-or-refuse integration tests.
 
-No mocks, no real Qdrant, no GPU: a real stdlib HTTP server stands in for a
-running managed Qdrant (it answers /readyz and reports a version), the managed
-config is driven through the genuine env knobs, and the identity sidecar is
-written to make the server "owned". The full `start_supervised_from_config`
-decision path is exercised: it must attach to a healthy, owned, capable server
-without spawning, and refuse fast otherwise.
+No mocks, no GPU: the managed config is driven through the genuine env knobs
+and the full `start_supervised_from_config` decision path is exercised. The
+attach gate demands live process witnesses - a child pid whose OS image is
+qdrant and which owns the loopback listener - so the attach test runs the real
+provisioned binary; an in-process stand-in has no separate process to witness.
+The refusal tests fail before any witness inspection, so a real stdlib HTTP
+server answering /readyz and reporting a version is enough to stand in for the
+port holder there.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from ...qdrant_runtime._supervise import (
     set_active_supervisor,
     start_supervised_from_config,
 )
+from ._helpers import _get_ephemeral_qdrant_port, _mirror_managed_qdrant_binary
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -51,14 +54,8 @@ def _handler_for(version: str) -> type[BaseHTTPRequestHandler]:
 
 
 @contextlib.contextmanager
-def _running_managed_qdrant(
-    tmp_path: Path, *, version: str
-) -> Generator[tuple[int, Path]]:
-    """Run a fake managed Qdrant and point the managed config at it."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(version))
-    port = int(server.server_address[1])
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+def _managed_qdrant_env(tmp_path: Path, *, port: int) -> Generator[Path]:
+    """Point the managed config (port, storage, status) at *tmp_path*."""
     storage = tmp_path / "qdrant-server" / "storage"
     prior = {
         EnvVar.QDRANT_PORT.value: os.environ.get(EnvVar.QDRANT_PORT.value),
@@ -72,7 +69,7 @@ def _running_managed_qdrant(
     os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
     reset_config()
     try:
-        yield port, storage
+        yield storage
     finally:
         set_active_supervisor(None)
         for key, value in prior.items():
@@ -81,6 +78,21 @@ def _running_managed_qdrant(
             else:
                 os.environ[key] = value
         reset_config()
+
+
+@contextlib.contextmanager
+def _running_managed_qdrant(
+    tmp_path: Path, *, version: str
+) -> Generator[tuple[int, Path]]:
+    """Run a fake managed Qdrant and point the managed config at it."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(version))
+    port = int(server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with _managed_qdrant_env(tmp_path, port=port) as storage:
+            yield port, storage
+    finally:
         server.shutdown()
         server.server_close()
 
@@ -92,44 +104,39 @@ class TestVerifiedAttach:
         tmp_path: Path,
         required_host_provisioned_qdrant_source: tuple[Path, Path],
     ) -> None:
-        """Integration-gated: the fake in-thread HTTP server this module uses
-        cannot satisfy the attach path's hardened witness check.
+        """A live, owned, witness-complete server is reused without spawning.
 
-        `_verify_attach_identity_witnesses` (added alongside the two-witness
-        owner/child identity scheme) requires `qdrant_pid`/`qdrant_start_time`
-        to resolve to a live process whose OS image is actually named
-        `qdrant` (`pid_image_is_qdrant`) and which owns the expected loopback
-        listener (`pid_listens_on_loopback_port`). This module's fake server
-        runs on a background thread inside the test process itself, so there
-        is no separate qdrant-named process to witness - the module's stated
-        "no real Qdrant, no GPU" design and the attach path's real-process
-        requirement are mutually exclusive. Requiring
-        `required_host_provisioned_qdrant_source` here (like
-        `test_managed_singleton_isolation.py` / `test_qdrant_store_resilience.py`)
-        gates this test on a real managed Qdrant binary being present, matching
-        the honest classification even though the fake server below is not yet
-        rewritten to use it - that rewrite (spawn the real binary, or a process
-        renamed to `qdrant`/`qdrant.exe` serving the fake responses so the
-        witnessed PID is real) is tracked integration-tier coverage debt, not
-        built here.
+        The attach gate requires the recorded child pid to resolve to a live
+        qdrant-image process owning the expected loopback listener, so the
+        healthy holder here is a real provisioned binary spawned through the
+        supervised start path - which records the complete owner/child witness
+        in the identity sidecar. A second supervised start against that live
+        holder must take the attach branch: no spawned child, and liveness
+        reported through the endpoint it points at.
         """
         binary, manifest = required_host_provisioned_qdrant_source
         assert binary.is_file()
         assert manifest.is_file()
-        with _running_managed_qdrant(tmp_path, version=QDRANT_SERVER_VERSION) as (
-            port,
-            storage,
-        ):
-            write_qdrant_identity(
-                storage_path=str(storage),
-                version=QDRANT_SERVER_VERSION,
-                owner_pid=os.getpid(),
-                http_port=port,
+        with _managed_qdrant_env(tmp_path, port=_get_ephemeral_qdrant_port()):
+            _mirror_managed_qdrant_binary(
+                tmp_path / "status",
+                required_host_provisioned_qdrant_source,
             )
-            supervisor = start_supervised_from_config()
-            # Attached: reuses the running server (no spawned child) and is live.
-            assert supervisor.pid is None
-            assert supervisor.is_alive() is True
+            owner = None
+            try:
+                owner = start_supervised_from_config()
+                assert owner.pid is not None
+                assert owner.is_alive() is True
+                set_active_supervisor(None)
+
+                supervisor = start_supervised_from_config()
+                # Attached: reuses the running server (no spawned child) and
+                # is live.
+                assert supervisor.pid is None
+                assert supervisor.is_alive() is True
+            finally:
+                if owner is not None:
+                    owner.stop()
 
     @pytest.mark.unit
     def test_refuses_foreign_holder_without_identity(self, tmp_path: Path) -> None:
