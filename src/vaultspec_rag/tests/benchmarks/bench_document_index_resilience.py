@@ -349,6 +349,7 @@ def _validate_measurement(
     from ..._store_writes import probe_store_volume
     from ...config import get_config
     from ...index_profiles import (
+        AdmissionEnvironment,
         IndexDomain,
         SupportMeasurement,
         validate_profile_admission,
@@ -359,9 +360,11 @@ def _validate_measurement(
         cfg.index_support_profile,
         IndexDomain.DOCUMENT,
         SupportMeasurement(**asdict(measurement)),
-        backend="server" if cfg.qdrant_url else "local",
-        available_ram_bytes=int(psutil.virtual_memory().total),
-        store_volume=probe_store_volume(root),
+        AdmissionEnvironment(
+            backend="server" if cfg.qdrant_url else "local",
+            available_ram_bytes=int(psutil.virtual_memory().total),
+            store_volume=probe_store_volume(root),
+        ),
     )
 
 
