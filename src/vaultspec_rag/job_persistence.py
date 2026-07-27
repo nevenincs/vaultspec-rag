@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol, cast
 
+from ._atomic_write import fsync_directory
 from .job_models import (
     DesiredJobState,
     IndexResilienceSnapshot,
@@ -189,17 +190,8 @@ def _ensure_parent_directory(directory: Path) -> None:
             break
         cursor = parent
     directory.mkdir(parents=True, exist_ok=True)
-    if os.name != "nt":
-        for created in reversed(missing):
-            _fsync_directory(created.parent)
-
-
-def _fsync_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    for created in reversed(missing):
+        fsync_directory(created.parent)
 
 
 def _parse_persisted_manager_state(payload: object) -> PersistedManagerState:

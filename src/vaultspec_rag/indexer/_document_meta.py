@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from .. import store_schema
-from .._atomic_write import replace_atomically
+from .._atomic_write import write_json_atomically
 from ._document_identity import normalize_document_source_path
 
 if TYPE_CHECKING:
@@ -214,23 +213,9 @@ def read_document_meta(meta_path: Path) -> DocumentIndexMetadata | None:
 
 def write_document_meta(meta_path: Path, metadata: DocumentIndexMetadata) -> None:
     """Publish document metadata and its explicit completeness state atomically."""
-    meta_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = meta_path.with_name(f".{meta_path.name}.{os.getpid()}.tmp")
-    encoded = json.dumps(
-        metadata.as_payload(),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
+    write_json_atomically(
+        meta_path, metadata.as_payload(), sort_keys=True, compact=True, durable=True
     )
-    try:
-        with tmp_path.open("w", encoding="utf-8", newline="\n") as stream:
-            stream.write(encoded)
-            stream.flush()
-            os.fsync(stream.fileno())
-        replace_atomically(tmp_path, meta_path)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
 
 
 def publish_document_meta_from_file_states(

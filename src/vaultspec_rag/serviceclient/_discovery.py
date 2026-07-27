@@ -337,6 +337,12 @@ def _replace_service_status(
         operation="replace the managed service status snapshot",
         targets=(path,),
     )
+    # Before the lock, not inside it: the lock file is a sibling opened with
+    # O_CREAT, so the directory has to exist to take the lock at all. Leaving
+    # this to the writer put the mkdir after the acquisition, and heartbeat
+    # recovery into a status directory that did not yet exist stopped
+    # publishing anything.
+    path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(fields)
     with _status_write_lock(path, timeout=timeout):
         write_json_atomically(path, data)

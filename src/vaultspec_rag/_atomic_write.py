@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "NotDurableError",
+    "fsync_directory",
     "replace_atomically",
     "replace_durably",
     "write_json_atomically",
@@ -140,18 +141,10 @@ def replace_durably(source: Path | str, destination: Path | str) -> None:
         _retrying(lambda: _move_file_write_through(source, destination))
         return
     _retrying(lambda: os.replace(source, destination))
-    parent = os.path.dirname(os.path.abspath(str(destination)))
     try:
-        descriptor = os.open(parent, os.O_RDONLY)
+        fsync_directory(os.path.dirname(os.path.abspath(str(destination))))
     except OSError as exc:
         raise NotDurableError(str(exc)) from exc
-    try:
-        os.fsync(descriptor)
-    except OSError as exc:
-        raise NotDurableError(str(exc)) from exc
-    finally:
-        with contextlib.suppress(OSError):
-            os.close(descriptor)
 
 
 def _move_file_write_through(source: Path | str, destination: Path | str) -> None:
@@ -176,6 +169,7 @@ def write_json_atomically(
     *,
     indent: int | None = None,
     sort_keys: bool = False,
+    compact: bool = False,
     durable: bool = False,
 ) -> None:
     """Publish *payload* as JSON at *path*, atomically, leaving no temp behind.
@@ -207,13 +201,27 @@ def write_json_atomically(
 
     """
     target = pathlib.Path(path)
-    encoded = json.dumps(payload, indent=indent, sort_keys=sort_keys)
+    encoded = json.dumps(
+        payload,
+        indent=indent,
+        sort_keys=sort_keys,
+        separators=(",", ":") if compact else None,
+        # NaN and Infinity are not JSON. Python emits them anyway and reads
+        # them back, so a document carrying one round-trips here and is
+        # rejected by every stricter reader. One caller already refused them;
+        # refusing at the single writer means the bug surfaces where it is
+        # made rather than wherever the file is next parsed.
+        allow_nan=False,
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(
         f".{target.name}.{os.getpid()}.{os.urandom(6).hex()}.tmp"
     )
     try:
-        with temporary.open("w", encoding="utf-8") as handle:
+        # newline="" so the bytes do not depend on the platform: with an
+        # indent, the default translation would emit CRLF on Windows and LF
+        # elsewhere for the same payload.
+        with temporary.open("w", encoding="utf-8", newline="") as handle:
             handle.write(encoded)
             if durable:
                 handle.flush()
@@ -225,3 +233,27 @@ def write_json_atomically(
     finally:
         with contextlib.suppress(OSError):
             temporary.unlink(missing_ok=True)
+
+
+def fsync_directory(directory: Path | str) -> None:
+    """Force *directory*'s own entry to disk.
+
+    A rename is not durable until the directory holding it is synced, and
+    neither is a freshly created directory. POSIX only: on Windows a directory
+    handle cannot be opened this way, and the write-through move covers the
+    rename case instead.
+
+    Raises:
+        OSError: The directory could not be opened or synced. Callers decide
+            what that means - a failed rename sync is reported as
+            :class:`NotDurableError`, while a failed mkdir sync is fatal.
+
+    """
+    if sys.platform == "win32":
+        return
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(descriptor)

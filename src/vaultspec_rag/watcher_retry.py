@@ -23,7 +23,7 @@ from enum import StrEnum
 from itertools import islice
 from typing import TYPE_CHECKING, Final, cast
 
-from ._atomic_write import replace_atomically
+from ._atomic_write import NotDurableError, replace_durably, write_json_atomically
 from ._job_errors import JobError, JobErrorKind, classify_error_text
 from ._process_probe import pid_alive, pid_is_zombie, pid_start_time
 from ._store_locks import FileLock
@@ -345,6 +345,9 @@ class WatcherRetryPolicy:
         )
         marker_id = uuid.uuid4().hex
         marker = self._path.with_name(f"{self._path.stem}.recovery.{marker_id}.json")
+        # The temp name is a contract, not an incidental detail: an abandoned
+        # one is reaped by a sweeper that globs exactly this shape, so it is
+        # spelled here rather than delegated to the shared JSON publisher.
         temporary = self._path.with_name(
             f".{self._path.stem}.recovery-write.{marker_id}.tmp"
         )
@@ -356,8 +359,10 @@ class WatcherRetryPolicy:
                 json.dump(payload, stream, allow_nan=False, separators=(",", ":"))
                 stream.flush()
                 os.fsync(stream.fileno())
-            replace_atomically(temporary, marker)
-            _fsync_parent_best_effort(marker)
+            # replace_durably owns the parent fsync on POSIX and a write-through
+            # move on Windows, where the hand-rolled version simply returned.
+            with suppress(NotDurableError):
+                replace_durably(temporary, marker)
         except OSError as exc:
             with suppress(OSError):
                 temporary.unlink()
@@ -1025,19 +1030,7 @@ def _write_state(path: Path, state: WatcherRetryState) -> None:
             state.last_error_kind.value if state.last_error_kind is not None else None
         )
         payload["circuit_state"] = state.circuit_state.value
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as stream:
-            json.dump(
-                payload,
-                stream,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            stream.flush()
-            os.fsync(stream.fileno())
-        replace_atomically(tmp, path)
-        _fsync_parent_best_effort(path)
+        write_json_atomically(path, payload, sort_keys=True, compact=True, durable=True)
     except OSError as exc:
         raise _state_io_failure("write", path, exc) from exc
 
@@ -1068,21 +1061,6 @@ def _lock_error_is_contention(error: OSError) -> bool:
     return error.errno in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK} or getattr(
         error, "winerror", None
     ) in {32, 33}
-
-
-def _fsync_parent_best_effort(path: Path) -> None:
-    if os.name == "nt":
-        return
-    try:
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(directory_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(directory_fd)
 
 
 def _cleanup_stale_recovery_temps(path: Path, timestamp: float) -> None:
