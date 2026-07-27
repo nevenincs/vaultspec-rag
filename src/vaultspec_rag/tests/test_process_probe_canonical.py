@@ -831,6 +831,111 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestRepeatedStatementRunsStayMerged:
+    """No long run of statements is repeated inside two functions.
+
+    Every other structural check here compares whole function bodies, so a run
+    repeated INSIDE two larger functions was invisible to all of them. That is
+    how a nine-statement pyproject write, a nine-statement incremental ingest
+    phase, and an eleven-statement report section all survived earlier passes.
+
+    The threshold is measured, not guessed. On the merged tree the repeated-run
+    count by window size is: seven and above, none; six, four; five, ten; four,
+    thirty-eight. The lower bands are dominated by constructor assignment
+    sequences, which look alike once identifiers are blinded without being
+    copies of anything, so a bound below seven would report noise and train its
+    reader to ignore the check. Seven is the lowest bound that holds with no
+    allowlist, which is the property worth having - an allowlist longer than
+    the rule is how a guard stops meaning anything.
+
+    Counting is by TOP-LEVEL statement, so a nested ``if`` or ``for`` body
+    counts as one. A seven-statement run here is therefore a larger fragment
+    than the number suggests.
+
+    The two groups sitting just under the bound have been read, so the next
+    person to lower it inherits the verdict rather than re-deriving it:
+
+    * ``_progress`` and ``_run_policy`` constructors. Different classes,
+      different fields, the same shape only because blinding erases the names -
+      a run of attribute assignments is what every constructor looks like. Not
+      duplication, and no bound distinguishes it from one that is.
+    * ``job_dispatch`` code and document attempt runners. Genuine: two parallel
+      implementations differing by which admission call and which indexer they
+      use, where the sixth matched statement is the whole ``try`` body. Merging
+      them means parameterising the job execution path by source, which is a
+      real change to the path that runs every index job and wants its own
+      iteration rather than a hurried one.
+    """
+
+    _MIN_RUN: ClassVar[int] = 7
+
+    @staticmethod
+    def _blinded_runs(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+        """Return the function's top-level statements, identifier-blinded."""
+
+        class _Blind(ast.NodeTransformer):
+            def visit_Name(self, node: ast.Name) -> ast.AST:
+                return ast.copy_location(ast.Name(id="_", ctx=node.ctx), node)
+
+            def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+                self.generic_visit(node)
+                return ast.copy_location(
+                    ast.Attribute(value=node.value, attr="_", ctx=node.ctx), node
+                )
+
+            def visit_Constant(self, node: ast.Constant) -> ast.AST:
+                return ast.copy_location(ast.Constant(value=None), node)
+
+            def visit_ExceptHandler(self, node: ast.ExceptHandler) -> ast.AST:
+                self.generic_visit(node)
+                node.name = "_" if node.name else None
+                return node
+
+        rendered: list[str] = []
+        for statement in node.body:
+            if isinstance(statement, ast.Expr) and isinstance(
+                statement.value, ast.Constant
+            ):
+                continue
+            if isinstance(statement, ast.Import | ast.ImportFrom):
+                continue
+            try:
+                reparsed = ast.parse(ast.unparse(statement)).body[0]
+            except (SyntaxError, ValueError):  # pragma: no cover - unparseable
+                continue
+            rendered.append(ast.dump(_Blind().visit(reparsed)))
+        return rendered
+
+    def test_no_long_statement_run_appears_in_two_functions(self) -> None:
+        """A repeated run is a copy that shares only part of its host."""
+        runs: dict[str, set[str]] = {}
+        for path in _every_production_file():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                body = self._blinded_runs(node)
+                if len(body) < self._MIN_RUN:
+                    continue
+                where = f"{path.name}:{node.lineno} {node.name}"
+                for start in range(len(body) - self._MIN_RUN + 1):
+                    window = hashlib.sha256(
+                        chr(31).join(body[start : start + self._MIN_RUN]).encode()
+                    ).hexdigest()
+                    runs.setdefault(window, set()).add(where)
+        offenders = sorted(
+            {tuple(sorted(sites)) for sites in runs.values() if len(sites) > 1}
+        )
+        assert not offenders, (
+            f"a run of {self._MIN_RUN}+ statements is repeated inside these "
+            f"functions: {offenders}; extract the shared phase, because a "
+            "fragment copy is the one shape the whole-body scans cannot see"
+        )
+
+
 class TestPyprojectWritesGoThroughOneWriter:
     """Every pyproject rewrite preserves byte shape through one function.
 
