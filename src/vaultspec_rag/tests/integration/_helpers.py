@@ -234,7 +234,13 @@ def _get_ephemeral_qdrant_port() -> int:
 
 
 def _poll_health(port: int, timeout: float = 90.0) -> dict[str, Any]:
-    """Poll health without allowing a probe or sleep to overrun the deadline."""
+    """Poll health without allowing a probe or sleep to overrun the deadline.
+
+    The backoff cap stays low: readiness lands mid-sleep, so the cap is the
+    worst-case detection overshoot added to every service startup this suite
+    performs, and a loopback health probe is cheap enough that the extra
+    polls a low cap costs are noise by comparison.
+    """
     delay = 0.5
     deadline = time.monotonic() + timeout
     while True:
@@ -248,7 +254,7 @@ def _poll_health(port: int, timeout: float = 90.0) -> dict[str, Any]:
         if remaining <= 0:
             break
         time.sleep(min(delay, remaining))
-        delay = min(delay * 2, 5.0)
+        delay = min(delay * 2, 1.0)
     msg = f"Service on port {port} not ready after {timeout:.3f}s"
     raise TimeoutError(msg)
 
@@ -284,7 +290,8 @@ def _poll_own_health(
         if remaining <= 0:
             return None
         time.sleep(min(delay, remaining))
-        delay = min(delay * 2, 5.0)
+        # Same low cap as _poll_health: the cap bounds detection overshoot.
+        delay = min(delay * 2, 1.0)
 
 
 def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
