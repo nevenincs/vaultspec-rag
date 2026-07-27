@@ -176,7 +176,7 @@ def publish_meta_from_file_states(
     the indexed-path sidecar. Any unresolved state or non-canonical iterator
     order aborts publication and leaves the prior sidecar untouched.
     """
-    from ._file_state import FileStateKind
+    from ._file_state import iter_publishable_states
 
     for name, value in (
         ("generation_id", generation_id),
@@ -198,7 +198,6 @@ def publish_meta_from_file_states(
     )
     temp_path = Path(temp_name)
     count = 0
-    previous_path: str | None = None
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             stream.write("{\n")
@@ -219,23 +218,9 @@ def publish_meta_from_file_states(
                     stream.write(",\n")
                 stream.write(f"  {json.dumps(key)}: {json.dumps(value)}")
                 first = False
-            for state in states:
-                if not state.converged:
-                    raise ValueError(
-                        f"cannot publish unresolved file state for {state.rel_path}"
-                    )
-                if previous_path is not None and state.rel_path <= previous_path:
-                    raise ValueError(
-                        "ledger file states must be unique and ordered by relative path"
-                    )
-                previous_path = state.rel_path
-                if state.state is not FileStateKind.INDEXED:
-                    continue
-                assert state.content_hash is not None
+            for rel_path, content_hash in iter_publishable_states(states):
                 stream.write(",\n")
-                stream.write(
-                    f"  {json.dumps(state.rel_path)}: {json.dumps(state.content_hash)}"
-                )
+                stream.write(f"  {json.dumps(rel_path)}: {json.dumps(content_hash)}")
                 count += 1
             stream.write("\n}\n")
             stream.flush()

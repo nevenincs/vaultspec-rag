@@ -46,27 +46,49 @@ ALLOWED_DOWNLOAD_HOSTS: Final[frozenset[str]] = frozenset(
     }
 )
 
+#: The release asset filenames, named once.
+#:
+#: The platform resolver used to write these out again to pick one, so the
+#: names existed twice: here as the keys the digest is looked up by, and there
+#: as literals in an if/elif chain. The resolver already refused an asset with
+#: no committed digest, which caught a typo in one direction - but only after
+#: the mismatch, and only for the platform the mismatch was on, so it would
+#: surface as a provisioning failure on one architecture rather than as a bad
+#: edit. Naming them once removes the direction the check could not cover.
+ASSET_MACOS_ARM: Final = "qdrant-aarch64-apple-darwin.tar.gz"
+ASSET_MACOS_X86: Final = "qdrant-x86_64-apple-darwin.tar.gz"
+ASSET_LINUX_ARM_MUSL: Final = "qdrant-aarch64-unknown-linux-musl.tar.gz"
+ASSET_LINUX_X86_GNU: Final = "qdrant-x86_64-unknown-linux-gnu.tar.gz"
+ASSET_LINUX_X86_MUSL: Final = "qdrant-x86_64-unknown-linux-musl.tar.gz"
+ASSET_WINDOWS_X86: Final = "qdrant-x86_64-pc-windows-msvc.zip"
+
 #: Committed SHA256 digests for every per-platform release asset of
 #: :data:`QDRANT_SERVER_VERSION`. Verified against the downloaded
 #: archive BEFORE extraction; a mismatch deletes the partial download
 #: and fails the provisioning run.
+#:
+#: ``ASSET_LINUX_X86_MUSL`` is pinned but no platform selects it: the resolver
+#: sends x86-64 Linux to the gnu build. The digest is kept rather than dropped
+#: because removing a reviewed pin is how an unpinned asset later becomes
+#: reachable, but it is deliberately unreachable today and a guard asserts the
+#: two lists differ only by this one entry.
 QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
-    "qdrant-aarch64-apple-darwin.tar.gz": (
+    ASSET_MACOS_ARM: (
         "859f487e316ae1bda3b5d7c1e129a0a7344424d992503c188979ca6ac1b47253"
     ),
-    "qdrant-aarch64-unknown-linux-musl.tar.gz": (
+    ASSET_LINUX_ARM_MUSL: (
         "2ead5bb8206289b67c930f0eb29123228ddb43c2344551a0947cbc9046f92c6c"
     ),
-    "qdrant-x86_64-apple-darwin.tar.gz": (
+    ASSET_MACOS_X86: (
         "d395eb3d96c2196bbb8c611b800842928fb8b4997924b585bf42ce0ceb90fa1f"
     ),
-    "qdrant-x86_64-pc-windows-msvc.zip": (
+    ASSET_WINDOWS_X86: (
         "b2b262cba6f78cf4fa794ae78d73a8f70a221c93c76c75ac8fd6fe95d809b142"
     ),
-    "qdrant-x86_64-unknown-linux-gnu.tar.gz": (
+    ASSET_LINUX_X86_GNU: (
         "cd619c61d8d32dd176af88cf498714ecb765b7df9021d691862478d6ac35392c"
     ),
-    "qdrant-x86_64-unknown-linux-musl.tar.gz": (
+    ASSET_LINUX_X86_MUSL: (
         "40a6af44f8a496560c9d2352b6b2a0ada816aa48d0781c68f602582e67b3aea0"
     ),
 }

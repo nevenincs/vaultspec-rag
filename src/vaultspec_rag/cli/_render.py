@@ -637,6 +637,32 @@ def _render_mcp_extra(report: Any) -> None:
     _plain(f"MCP optional dependency: {_action_label(action)}{suffix}")
 
 
+def _render_provider_and_torch_sections(report: object) -> None:
+    """Render the sections install and uninstall report identically.
+
+    Provider sync, the MCP extra, and the whole PyTorch block read the same
+    fields and print the same lines in both reports. The pair is meant to be
+    symmetric - an operator should see one condition described one way
+    whether they installed or removed - and two copies of the section is how
+    that stops being true without anything failing. Each report then
+    continues differently, which is why only the shared part moved.
+
+    Reads through ``getattr`` with defaults because the two report shapes are
+    separate dataclasses and not every field exists on both.
+    """
+    _render_provider_sync(report)
+    _render_mcp_extra(report)
+    tc_action = getattr(report, "torch_config_action", "skipped")
+    _plain(f"PyTorch configuration: {_action_label(tc_action)}")
+    td_action = getattr(report, "torch_direct_dep_action", "skipped")
+    if td_action not in ("skipped",):
+        td_location = getattr(report, "torch_direct_dep_location", "")
+        suffix = f" ({td_location})" if td_location else ""
+        _plain(f"PyTorch dependency: {_action_label(td_action)}{suffix}")
+    for conflict in getattr(report, "torch_config_conflicts", []):
+        _plain(f"  conflict: {conflict}")
+
+
 def _render_install_report(report: Any) -> None:
     """Render an install report as plain CLI lines."""
     title = {
@@ -664,17 +690,7 @@ def _render_install_report(report: Any) -> None:
     sync_updated = sum(getattr(r, "updated", 0) for r in report.sync_results)
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     _render_sync_summary(sync_added, sync_updated, sync_pruned)
-    _render_provider_sync(report)
-    _render_mcp_extra(report)
-    tc_action = getattr(report, "torch_config_action", "skipped")
-    _plain(f"PyTorch configuration: {_action_label(tc_action)}")
-    td_action = getattr(report, "torch_direct_dep_action", "skipped")
-    if td_action not in ("skipped",):
-        td_location = getattr(report, "torch_direct_dep_location", "")
-        suffix = f" ({td_location})" if td_location else ""
-        _plain(f"PyTorch dependency: {_action_label(td_action)}{suffix}")
-    for conflict in getattr(report, "torch_config_conflicts", []):
-        _plain(f"  conflict: {conflict}")
+    _render_provider_and_torch_sections(report)
     tsync = getattr(report, "torch_sync_action", "skipped")
     if tsync not in ("skipped",):
         _plain(f"uv sync --reinstall-package torch: {tsync}")
@@ -771,16 +787,6 @@ def _render_uninstall_report(report: Any) -> None:
     sync_pruned = sum(getattr(r, "pruned", 0) for r in report.sync_results)
     if sync_pruned:
         _render_sync_summary(0, 0, sync_pruned)
-    _render_provider_sync(report)
-    _render_mcp_extra(report)
-    tc_action = getattr(report, "torch_config_action", "skipped")
-    _plain(f"PyTorch configuration: {_action_label(tc_action)}")
-    td_action = getattr(report, "torch_direct_dep_action", "skipped")
-    if td_action not in ("skipped",):
-        td_location = getattr(report, "torch_direct_dep_location", "")
-        suffix = f" ({td_location})" if td_location else ""
-        _plain(f"PyTorch dependency: {_action_label(td_action)}{suffix}")
-    for conflict in getattr(report, "torch_config_conflicts", []):
-        _plain(f"  conflict: {conflict}")
+    _render_provider_and_torch_sections(report)
     for warning in report.warnings:
         _print_warning_or_note(warning)

@@ -28,7 +28,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from .._loopback_http import LOOPBACK_OPENER
+from .._loopback_http import (
+    FAST_CONNECT_TIMEOUT_SECONDS,
+    LOOPBACK_OPENER,
+    probe_loopback_connect,
+)
 from .._managed_log_sink import RawRotatingLogSink
 from .._operator_commands import server_start_command
 from .._win32 import (
@@ -539,6 +543,15 @@ class QdrantSupervisor:
         return "".join(lines[-max_lines:])
 
     def _ready_probe(self) -> bool:
+        # Until the child binds its port, a poll would otherwise wait out the
+        # OS's slow connection refusal (~1s on Windows) on every cycle. A
+        # false "not ready" only means the next poll asks again.
+        if (
+            probe_loopback_connect(self.http_port, timeout=FAST_CONNECT_TIMEOUT_SECONDS)
+            == "refused"
+        ):
+            logger.debug("qdrant readyz probe: port %d not accepting", self.http_port)
+            return False
         url = f"{self.url}/readyz"
         try:
             with LOOPBACK_OPENER.open(url, timeout=2.0) as resp:
@@ -824,20 +837,18 @@ _PORT_RELEASE_TIMEOUT_SECONDS = 10.0
 _PORT_RELEASE_SETTLE_SECONDS = 0.25
 
 
-def _port_is_listening(http_port: int, *, timeout: float = 0.25) -> bool:
+def _port_is_listening(http_port: int) -> bool:
     """Return whether something accepts a loopback TCP connection on *http_port*.
 
-    A connection refused (or any connect error) means nothing is listening - the
-    port is free. Used after an orphan reap to wait for the prior child's
-    listening socket to be fully released before a fresh bind.
+    A refused (or timed-out) connect means nothing is listening - the port is
+    free. Used after an orphan reap to wait for the prior child's listening
+    socket to be fully released before a fresh bind; a rare misread of "free"
+    only reaches a spawn that then fails loudly on the bind.
     """
-    import socket
-
-    try:
-        with socket.create_connection(("127.0.0.1", http_port), timeout=timeout):
-            return True
-    except OSError:
-        return False
+    return (
+        probe_loopback_connect(http_port, timeout=FAST_CONNECT_TIMEOUT_SECONDS)
+        == "accepted"
+    )
 
 
 def _wait_for_port_release(

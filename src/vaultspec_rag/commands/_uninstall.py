@@ -21,7 +21,14 @@ from .._workspace_layout import (
 )
 from ..builtins import list_builtins
 from ._mcp_extra import reconcile_mcp_extra
-from ._mcp_topology import RequiredMcpTopology, inspect_required_mcp_topology
+from ._mcp_topology import (
+    LINKED_NODES_NOT_REMOVABLE,
+    RequiredMcpTopology,
+    inspect_required_mcp_topology,
+    record_mcp_failure,
+    topology_materialization_failure,
+    topology_preflight_failure,
+)
 from ._mode import resolve_rag_mode
 from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
@@ -164,8 +171,7 @@ def _record_extra_failure(
     report.mcp_extra_action = action
     for detail in messages:
         message = f"MCP extra: {detail}"
-        report.mcp_errors.append(message)
-        report.warnings.append(message)
+        record_mcp_failure(report, message)
 
 
 def _reverse_mcp_extra(
@@ -274,9 +280,8 @@ def _run_mcp_disenrollment_transaction(
         try:
             topology.materialize()
         except Exception as exc:
-            message = f"required MCP topology materialization failed: {exc}"
-            report.mcp_errors.append(message)
-            report.warnings.append(message)
+            message = topology_materialization_failure(exc)
+            record_mcp_failure(report, message)
             return False
     if not _reverse_mcp_extra(target, report, dry_run=dry_run):
         if not dry_run and rollback_on_failure:
@@ -298,8 +303,7 @@ def _run_mcp_disenrollment_transaction(
 
 def _record_topology_errors(report: UninstallReport, errors: list[str]) -> None:
     for message in errors:
-        report.mcp_errors.append(message)
-        report.warnings.append(message)
+        record_mcp_failure(report, message)
 
 
 def uninstall_run(
@@ -368,17 +372,12 @@ def uninstall_run(
         try:
             topology = inspect_required_mcp_topology(target)
         except Exception as exc:
-            message = f"required MCP topology preflight failed: {exc}"
-            report.mcp_errors.append(message)
-            report.warnings.append(message)
+            message = topology_preflight_failure(exc)
+            record_mcp_failure(report, message)
             return report
         if topology.disenrollment_links:
-            message = (
-                "required MCP topology preflight failed: linked required nodes "
-                "cannot be safely removed while preserving exact link topology"
-            )
-            report.mcp_errors.append(message)
-            report.warnings.append(message)
+            message = LINKED_NODES_NOT_REMOVABLE
+            record_mcp_failure(report, message)
             return report
 
     if not (target / WORKSPACE_DIR).is_dir():

@@ -47,6 +47,7 @@ from .._source_types import (
     PublicSourceType,
     SourceTypeParseError,
     parse_source_type,
+    unsupported_feedback_envelope,
 )
 from .._store_locks import VaultStoreLockedError
 from ..concurrency import get_search_limiter
@@ -154,21 +155,13 @@ def _unsupported_search_feedback(
     payload: dict[str, object],
 ) -> JSONResponse | None:
     """Reject feedback where no cross-collection identity contract exists."""
-    if search_type not in {PublicSourceType.DOCUMENT, PublicSourceType.COMBINED}:
-        return None
-    if not (payload.get("like_ids") or payload.get("unlike_ids")):
-        return None
-    return JSONResponse(
-        {
-            "ok": False,
-            "error": "unsupported_feedback_for_search_type",
-            "message": (
-                f"feedback point ids are not supported for {search_type.value} "
-                "search; omit like_ids and unlike_ids"
-            ),
-        },
-        status_code=400,
+    envelope = unsupported_feedback_envelope(
+        search_type,
+        has_point_ids=bool(payload.get("like_ids") or payload.get("unlike_ids")),
     )
+    if envelope is None:
+        return None
+    return JSONResponse(envelope, status_code=400)
 
 
 def _extract_token(request: Request) -> str | None:

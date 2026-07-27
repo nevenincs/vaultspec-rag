@@ -73,6 +73,7 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
 )
 
 from ._atomic_write import write_json_atomically
+from ._content_route_syntax import validate_content_route_pattern
 from ._env_values import BOOL_SHAPE, parse_bool, rejection
 
 logger = logging.getLogger(__name__)
@@ -100,10 +101,7 @@ class ContentRouteConfig:
     target: str
 
     def __post_init__(self) -> None:
-        if not self.pattern.strip():
-            raise ValueError("content route pattern must not be empty")
-        if "\0" in self.pattern:
-            raise ValueError("content route pattern must not contain NUL")
+        validate_content_route_pattern(self.pattern)
         if not self.target.strip():
             raise ValueError("content route target must not be empty")
 

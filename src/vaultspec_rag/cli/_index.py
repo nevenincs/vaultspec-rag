@@ -39,7 +39,13 @@ from .._store_writes import InsufficientDiskSpaceError
 from ..config import EnvVar
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import _try_http_reindex
-from ._app import JSON_OPTION_HELP, CLIState, JsonMode, app
+from ._app import (
+    JSON_OPTION_HELP,
+    CLIState,
+    JsonMode,
+    PortOption,
+    app,
+)
 from ._cli_format import _counted_unit
 from ._core import logger
 from ._gpu_errors import _handle_gpu_error
@@ -545,13 +551,7 @@ def handle_index(
             help="Delete the selected index data before rebuilding it.",
         ),
     ] = False,
-    port: Annotated[
-        int | None,
-        typer.Option(
-            "--port",
-            help="Use the service running on this port.",
-        ),
-    ] = None,
+    port: PortOption = None,
     dry_run: Annotated[
         bool,
         typer.Option(
