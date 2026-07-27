@@ -309,6 +309,16 @@ _dev-audit target:
 # assertions ARE the system under test, so a loaded machine fails them for
 # reasons unrelated to a regression - they are excluded from "gpu" and run
 # only on explicit `just dev test perf`, never as a correctness gate.
+#
+# Only "python" runs parallel. `-n auto` resolves to PHYSICAL cores when psutil
+# is importable, which it always is here (it is a runtime dependency), and
+# `--dist loadfile` keeps a module's tests on one worker so module-scoped state
+# and the ports a file reserves stay private to it. The tier is dominated by
+# subprocess spawns and socket waits rather than by CPU, so it parallelises
+# well: 666s to 162s on a 12-core host. The other lanes must NOT get this. "gpu"
+# serialises on the in-process gpu_lock and a 16 GB card, and "perf" asserts
+# wall-clock latency, so on both a second worker changes the answer rather than
+# just the runtime.
 # NOTE: this recipe body is one continuation-
 # joined logical line for `just`/PowerShell, so it must never contain a `#`
 # comment inside the switch - PowerShell's `#` runs to the end of the joined
@@ -316,7 +326,7 @@ _dev-audit target:
 # braces (this broke every target, not just "gpu", the last time it happened).
 _dev-test target='all':
   switch ("{{target}}") { \
-    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
+    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "integration or quality or robustness or cuda" ; \
