@@ -58,6 +58,23 @@ class SourceTypeParseError(ValueError):
             "aliases_allowed": self.aliases_allowed,
         }
 
+    def as_error_envelope(self) -> dict[str, object]:
+        """Return the failure envelope every adapter reports this rejection as.
+
+        Five call sites built this by hand - two HTTP routes and three service
+        client calls - each spreading :meth:`as_payload` into the same three
+        keys. The exception already knows its kind and how it reads; what it
+        did not own was how it is reported, so every new caller had to be told
+        by example, and a caller told by a stale example reports a shape the
+        others do not.
+        """
+        return {
+            "ok": False,
+            "error": self.error_kind,
+            "message": str(self),
+            **self.as_payload(),
+        }
+
     def __str__(self) -> str:
         choices = ", ".join(repr(value) for value in self.allowed)
         return f"unknown source type {self.received!r}; expected one of {choices}"

@@ -2275,3 +2275,68 @@ class TestNoGuardedReturnRepeatsItsFallback:
             "condition cannot change the answer, so either the branch owes a "
             "different one or it and whatever it tests are dead"
         )
+
+
+class TestParseErrorEnvelopeHasOneShape:
+    """A rejected source type is reported in one envelope, built by the error.
+
+    Five call sites assembled it: two HTTP routes and three service-client
+    calls, each spreading ``as_payload()`` into the same three keys. The
+    exception already knew its kind and how it reads; what it did not own was
+    how it gets reported, so every new caller learned the shape by copying an
+    older one - and a caller copying a stale example reports a shape the
+    others do not.
+
+    Deliberately not caught here: the job-create route classifies the same
+    exception as ``invalid_job_spec`` and routes it through the jobs envelope
+    helper. A bad source inside a job spec is a job-spec error, so that is a
+    different report, not a copy of this one.
+    """
+
+    def test_no_module_assembles_the_parse_error_envelope(self) -> None:
+        offenders: list[str] = []
+        for path in _production_sources():
+            if path.name == "_source_types.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Dict):
+                    continue
+                names = {
+                    key.value
+                    for key in node.keys
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                }
+                spreads_payload = any(
+                    key is None
+                    and isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Attribute)
+                    and value.func.attr == "as_payload"
+                    for key, value in zip(node.keys, node.values, strict=True)
+                )
+                if spreads_payload and {"ok", "message"} <= names:
+                    offenders.append(f"{path.name}:{node.lineno}")
+        assert not offenders, (
+            f"the parse-error envelope is assembled by hand at {offenders}; "
+            "call SourceTypeParseError.as_error_envelope so every adapter "
+            "reports the rejection the same way"
+        )
+
+    def test_the_envelope_carries_what_the_adapters_relied_on(self) -> None:
+        """The keys the five call sites emitted must all still be there."""
+        from .._source_types import SourceTypeParseError, parse_source_type
+
+        with pytest.raises(SourceTypeParseError) as caught:
+            parse_source_type("bogus", allow_aliases=True)
+        envelope = caught.value.as_error_envelope()
+
+        assert envelope["ok"] is False
+        assert envelope["error"] == caught.value.error_kind
+        assert envelope["message"] == str(caught.value)
+        # The payload is spread in, not nested: an adapter reads received and
+        # allowed off the top level.
+        for key, value in caught.value.as_payload().items():
+            assert envelope[key] == value
