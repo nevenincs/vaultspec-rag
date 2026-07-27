@@ -156,6 +156,28 @@ class _TransitionLogContext:
     error: BaseException | None
 
 
+@dataclass(frozen=True, slots=True)
+class _ManagedAttemptInputs:
+    """Admission proof and shared cache for one watcher manager dispatch."""
+
+    initial_attempt: int
+    initial_paths: frozenset[Path]
+    code_preflight: CodeExecutionPreflight | None
+    document_preflight: DocumentExecutionPreflight | None = None
+    secondary_graph_cache: GraphCache | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ManagedAttemptScope:
+    """Resolved execution authority for one manager attempt number."""
+
+    paths: frozenset[Path] | None
+    captured_paths: frozenset[Path]
+    requires_unscoped: bool
+    code_preflight: CodeExecutionPreflight | None
+    document_preflight: DocumentExecutionPreflight | None
+
+
 @dataclass(slots=True)
 class _WatcherConvergenceSlot:
     """Thread-safe ownership of one root/source convergence generation."""
@@ -1246,11 +1268,13 @@ async def _submit_watcher_job(
         return _run_managed_index_attempt(
             slot,
             context,
-            initial_attempt=snapshot.attempt.number,
-            initial_paths=captured_paths,
-            initial_code_preflight=code_preflight,
-            initial_document_preflight=document_preflight,
-            secondary_graph_cache=secondary_graph_cache,
+            _ManagedAttemptInputs(
+                initial_attempt=snapshot.attempt.number,
+                initial_paths=captured_paths,
+                code_preflight=code_preflight,
+                document_preflight=document_preflight,
+                secondary_graph_cache=secondary_graph_cache,
+            ),
         )
 
     def _on_started(started: JobSnapshot) -> None:
@@ -1607,27 +1631,27 @@ def _resolve_attempt_scope(
 def _resolve_attempt_preflights(
     slot: _WatcherConvergenceSlot,
     context: JobAttemptContext,
-    *,
-    captured_paths: frozenset[Path],
-    requires_unscoped: bool,
-    code_preflight: CodeExecutionPreflight | None,
-    document_preflight: DocumentExecutionPreflight | None,
-) -> tuple[CodeExecutionPreflight | None, DocumentExecutionPreflight | None]:
+    scope: _ManagedAttemptScope,
+) -> _ManagedAttemptScope:
     """Refresh admission authority for retries before model acquisition."""
+    code_preflight = scope.code_preflight
+    document_preflight = scope.document_preflight
     if slot.source is JobSource.CODE and code_preflight is None:
         context.control.checkpoint()
         code_preflight = (
             _jobs.validate_code_index_policy(slot.root)
-            if requires_unscoped
-            else _jobs.validate_scoped_code_index_policy(slot.root, captured_paths)
+            if scope.requires_unscoped
+            else _jobs.validate_scoped_code_index_policy(slot.root, scope.captured_paths)
         )
         context.control.checkpoint()
     if slot.source is JobSource.DOCUMENT and document_preflight is None:
         context.control.checkpoint()
         document_preflight = (
             _jobs.validate_document_index_policy(slot.root)
-            if requires_unscoped
-            else _jobs.validate_scoped_document_index_policy(slot.root, captured_paths)
+            if scope.requires_unscoped
+            else _jobs.validate_scoped_document_index_policy(
+                slot.root, scope.captured_paths
+            )
         )
         context.control.checkpoint()
     if slot.source is JobSource.DOCUMENT:
@@ -1635,49 +1659,50 @@ def _resolve_attempt_preflights(
             raise RuntimeError("document watcher attempt has no admission preflight")
         _jobs.validate_document_support_profile(slot.root, document_preflight)
         context.control.checkpoint()
-    return code_preflight, document_preflight
+    return replace(
+        scope,
+        code_preflight=code_preflight,
+        document_preflight=document_preflight,
+    )
 
 
 def _execute_project_incremental(
     project: ProjectSlot,
     slot: _WatcherConvergenceSlot,
     context: JobAttemptContext,
-    *,
-    paths: frozenset[Path] | None,
-    code_preflight: CodeExecutionPreflight | None,
-    document_preflight: DocumentExecutionPreflight | None,
-    secondary_graph_cache: GraphCache | None,
+    scope: _ManagedAttemptScope,
+    inputs: _ManagedAttemptInputs,
 ) -> IndexResult:
     """Dispatch one exhaustively typed domain under an acquired project lease."""
     reporter = _jobs.JobProgressReporter(context.job_id, context=context)
     if slot.source is JobSource.VAULT:
         result = project.vault_indexer.incremental_index(
             reporter=reporter,
-            changed_paths=paths,
+            changed_paths=scope.paths,
             run_control=context.control,
         )
         project.graph_cache.invalidate()
         if (
-            secondary_graph_cache is not None
-            and secondary_graph_cache is not project.graph_cache
+            inputs.secondary_graph_cache is not None
+            and inputs.secondary_graph_cache is not project.graph_cache
         ):
-            secondary_graph_cache.invalidate()
+            inputs.secondary_graph_cache.invalidate()
         return result
     if slot.source is JobSource.CODE:
-        if code_preflight is None:
+        if scope.code_preflight is None:
             raise RuntimeError("code watcher attempt has no execution preflight")
         return project.code_indexer.incremental_index(
             reporter=reporter,
-            changed_paths=paths,
-            preflight=code_preflight,
+            changed_paths=scope.paths,
+            preflight=scope.code_preflight,
             run_control=context.control,
         )
-    if document_preflight is None:
+    if scope.document_preflight is None:
         raise RuntimeError("document watcher attempt has no execution preflight")
     return project.document_indexer.incremental_index(
         reporter=reporter,
-        changed_paths=paths,
-        preflight=document_preflight,
+        changed_paths=scope.paths,
+        preflight=scope.document_preflight,
         run_control=context.control,
     )
 
@@ -1685,34 +1710,31 @@ def _execute_project_incremental(
 def _run_managed_index_attempt(
     slot: _WatcherConvergenceSlot,
     context: JobAttemptContext,
-    *,
-    initial_attempt: int,
-    initial_paths: frozenset[Path],
-    initial_code_preflight: CodeExecutionPreflight | None,
-    initial_document_preflight: DocumentExecutionPreflight | None = None,
-    secondary_graph_cache: GraphCache | None = None,
+    inputs: _ManagedAttemptInputs,
 ) -> JobExecutionResult:
     """Run one watcher generation under manager and registry ownership."""
     paths, captured_paths, requires_unscoped = _resolve_attempt_scope(
         slot,
         context,
-        initial_attempt=initial_attempt,
-        initial_paths=initial_paths,
+        initial_attempt=inputs.initial_attempt,
+        initial_paths=inputs.initial_paths,
     )
-    code_preflight = (
-        initial_code_preflight if context.attempt == initial_attempt else None
-    )
-    document_preflight = (
-        initial_document_preflight if context.attempt == initial_attempt else None
-    )
-    code_preflight, document_preflight = _resolve_attempt_preflights(
-        slot,
-        context,
+    scope = _ManagedAttemptScope(
+        paths=paths,
         captured_paths=captured_paths,
         requires_unscoped=requires_unscoped,
-        code_preflight=code_preflight,
-        document_preflight=document_preflight,
+        code_preflight=(
+            inputs.code_preflight
+            if context.attempt == inputs.initial_attempt
+            else None
+        ),
+        document_preflight=(
+            inputs.document_preflight
+            if context.attempt == inputs.initial_attempt
+            else None
+        ),
     )
+    scope = _resolve_attempt_preflights(slot, context, scope)
     context.set_resilience(_watcher_attempt_resilience(slot))
     pipeline_active = slot.source in {JobSource.CODE, JobSource.DOCUMENT}
     registry = slot.registry
@@ -1730,10 +1752,8 @@ def _run_managed_index_attempt(
                         project,
                         slot,
                         context,
-                        paths=paths,
-                        code_preflight=code_preflight,
-                        document_preflight=document_preflight,
-                        secondary_graph_cache=secondary_graph_cache,
+                        scope,
+                        inputs,
                     )
                 finally:
                     _publish_watcher_index_resilience(slot, project, context)
