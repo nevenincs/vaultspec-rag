@@ -426,11 +426,16 @@ class TestMigrateCarriesIdentity:
 
 
 class TestSweepArchive:
-    """Age-based retention and oldest-first byte-cap eviction."""
+    """Age-based retention and oldest-first whole-archive eviction."""
 
     def _touch(self, path: Path, *, size: int, age_days: float) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"x" * size)
+        mtime = (_NOW - timedelta(days=age_days)).timestamp()
+        os.utime(path, (mtime, mtime))
+
+    def _stamp_archive(self, path: Path, *, age_days: float) -> None:
+        """Set one completed archive directory's retention clock."""
         mtime = (_NOW - timedelta(days=age_days)).timestamp()
         os.utime(path, (mtime, mtime))
 
@@ -445,28 +450,47 @@ class TestSweepArchive:
             == []
         )
 
-    def test_expired_archives_are_deleted(self, tmp_path: Path) -> None:
+    def test_expired_archive_is_deleted_as_a_complete_directory(
+        self, tmp_path: Path
+    ) -> None:
         archive = tmp_path / "archive"
-        self._touch(archive / "p1" / "old.snapshot", size=10, age_days=31)
-        self._touch(archive / "p1" / "fresh.snapshot", size=10, age_days=1)
+        expired = archive / "p1"
+        self._touch(expired / "old.snapshot", size=10, age_days=31)
+        self._touch(expired / "snapshot-manifest.json", size=10, age_days=1)
+        self._stamp_archive(expired, age_days=31)
+        fresh = archive / "p2"
+        self._touch(fresh / "fresh.snapshot", size=10, age_days=31)
+        self._stamp_archive(fresh, age_days=1)
         deleted = sweep_archive(
             archive, now=_NOW, retention_days=30.0, max_total_bytes=10_000
         )
-        assert [p.name for p in deleted] == ["old.snapshot"]
-        assert (archive / "p1" / "fresh.snapshot").exists()
+        assert deleted == [expired]
+        assert not expired.exists()
+        assert (fresh / "fresh.snapshot").exists()
 
-    def test_byte_cap_evicts_oldest_first(self, tmp_path: Path) -> None:
+    def test_byte_cap_evicts_oldest_complete_archive_first(
+        self, tmp_path: Path
+    ) -> None:
         archive = tmp_path / "archive"
-        self._touch(archive / "a.snapshot", size=600, age_days=3)
-        self._touch(archive / "b.snapshot", size=600, age_days=2)
-        self._touch(archive / "c.snapshot", size=600, age_days=1)
+        oldest = archive / "a"
+        self._touch(oldest / "a.snapshot", size=600, age_days=1)
+        self._touch(oldest / "snapshot-manifest.json", size=20, age_days=1)
+        self._stamp_archive(oldest, age_days=3)
+        middle = archive / "b"
+        self._touch(middle / "b.snapshot", size=600, age_days=1)
+        self._touch(middle / "snapshot-manifest.json", size=20, age_days=1)
+        self._stamp_archive(middle, age_days=2)
+        newest = archive / "c"
+        self._touch(newest / "c.snapshot", size=600, age_days=1)
+        self._touch(newest / "snapshot-manifest.json", size=20, age_days=1)
+        self._stamp_archive(newest, age_days=1)
         deleted = sweep_archive(
-            archive, now=_NOW, retention_days=30.0, max_total_bytes=1300
+            archive, now=_NOW, retention_days=30.0, max_total_bytes=1_300
         )
-        assert [p.name for p in deleted] == ["a.snapshot"]
-        assert not (archive / "a.snapshot").exists()
-        assert (archive / "b.snapshot").exists()
-        assert (archive / "c.snapshot").exists()
+        assert deleted == [oldest]
+        assert not oldest.exists()
+        assert (middle / "snapshot-manifest.json").exists()
+        assert (newest / "snapshot-manifest.json").exists()
 
 
 class TestSurveySnapshot:

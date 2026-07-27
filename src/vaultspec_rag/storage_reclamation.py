@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from . import store_schema
 from ._atomic_write import replace_atomically
+from ._rmtree import remove_tree
 from ._timestamps import parse_iso_timestamp
 from .storage_manifest import (
     SnapshotCollection,
@@ -471,32 +472,23 @@ def sweep_archive(
     Args:
         archive_dir: The archive tree to bound. Missing dir is a no-op.
         now: The evaluation clock (timezone-aware).
-        retention_days: Age past which an archive file is deleted.
+        retention_days: Age past which a completed archive is deleted.
         max_total_bytes: Total-byte cap after age-based deletion.
 
     Returns:
-        The deleted archive paths.
+        The deleted archive-directory paths.
     """
     if not archive_dir.is_dir():
         return []
-    files: list[tuple[float, int, Path]] = []
-    for path in archive_dir.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        files.append((stat.st_mtime, stat.st_size, path))
+    archives = _archive_directories(archive_dir)
     deleted: list[Path] = []
     cutoff = now.timestamp() - retention_days * 86400.0
     kept: list[tuple[float, int, Path]] = []
-    for mtime, size, path in files:
+    for mtime, size, path in archives:
         if mtime < cutoff:
-            try:
-                path.unlink()
+            if _delete_archive_directory(path):
                 deleted.append(path)
-            except OSError:
+            else:
                 kept.append((mtime, size, path))
         else:
             kept.append((mtime, size, path))
@@ -504,13 +496,45 @@ def sweep_archive(
     for _mtime, size, path in sorted(kept, key=lambda item: item[0]):
         if total <= max_total_bytes:
             break
-        try:
-            path.unlink()
+        if _delete_archive_directory(path):
             deleted.append(path)
             total -= size
+    return deleted
+
+
+def _archive_directories(archive_dir: Path) -> list[tuple[float, int, Path]]:
+    """Measure direct, non-linked completed archive directories."""
+    archives: list[tuple[float, int, Path]] = []
+    for path in archive_dir.iterdir():
+        if not path.is_dir() or path.is_symlink():
+            continue
+        try:
+            stat = path.stat()
         except OSError:
             continue
-    return deleted
+        archives.append((stat.st_mtime, _archive_size(path), path))
+    return archives
+
+
+def _archive_size(archive: Path) -> int:
+    """Return all readable artifact bytes belonging to one archive."""
+    total = 0
+    for artifact in archive.rglob("*"):
+        if artifact.is_file():
+            try:
+                total += artifact.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _delete_archive_directory(archive: Path) -> bool:
+    """Delete an entire archive directory, returning whether it succeeded."""
+    try:
+        remove_tree(archive)
+    except OSError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
