@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 __all__ = [
     "_document_policy",
     "_get_ephemeral_port",
+    "_get_ephemeral_qdrant_port",
     "_make_root",
     "_mirror_managed_qdrant_binary",
     "_poll_health",
