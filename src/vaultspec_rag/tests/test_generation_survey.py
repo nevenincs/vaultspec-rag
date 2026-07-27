@@ -300,7 +300,7 @@ class TestGenerationReclaimGates:
     _LONG_AGO = "2026-07-01T00:00:00+00:00"
 
     def _decide(self, **overrides: object) -> GenerationReclaim:
-        from ..generation_survey import decide_generation_reclaim
+        from ..generation_survey import GenerationReclaimContext, decide_generation_reclaim
 
         kwargs: dict[str, object] = {
             "stamps": {"c_gold": self._LONG_AGO},
@@ -310,7 +310,9 @@ class TestGenerationReclaimGates:
             "pointer_verifiable": True,
         }
         kwargs.update(overrides)
-        return decide_generation_reclaim("c_gold", **kwargs)  # type: ignore[arg-type]
+        return decide_generation_reclaim(
+            "c_gold", GenerationReclaimContext(**kwargs)  # type: ignore[arg-type]
+        )
 
     def test_an_elapsed_window_with_nothing_contrary_is_droppable(self) -> None:
         """The only path to a drop: every gate passed and time has elapsed."""
@@ -357,16 +359,15 @@ class TestGenerationReclaimGates:
         assert decision.reason == "grace_started"
 
     def test_an_unelapsed_window_reports_what_remains(self) -> None:
-        from ..generation_survey import decide_generation_reclaim
+        from ..generation_survey import GenerationReclaimContext, decide_generation_reclaim
 
-        decision = decide_generation_reclaim(
-            "c_gold",
+        decision = decide_generation_reclaim("c_gold", GenerationReclaimContext(
             stamps={"c_gold": "2026-07-26T11:00:00+00:00"},
             now=self._NOW,
             grace_hours=24.0,
             reader_present=False,
             pointer_verifiable=True,
-        )
+        ))
 
         assert decision.droppable is False
         assert decision.reason.startswith("grace_remaining_h=")
