@@ -9,6 +9,7 @@ how the integration suite isolates runtime state.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -305,3 +306,30 @@ def test_snapshot_manifest_writes_absent_identity_as_null(tmp_path: Path) -> Non
 
     payload = json.loads(written.read_text(encoding="utf-8"))
     assert payload["collections"][0]["identity"] is None
+
+
+def test_snapshot_manifest_stamps_its_own_completion_time(tmp_path: Path) -> None:
+    """An archive age begins at manifest publication, not copied-file mtime.
+
+    Mutation it catches: removing ``completed_at`` or substituting an archive
+    artifact's pre-existing modification time makes the written timestamp fall
+    outside the real write interval below.
+    """
+    before = datetime.now(UTC)
+    written = write_snapshot_manifest(
+        tmp_path / "archive" / "rdeadbeefcafe",
+        StorageSnapshotManifest(
+            prefix="rdeadbeefcafe_",
+            root=None,
+            storage_schema_version=STORAGE_SCHEMA_VERSION,
+            collections=(),
+        ),
+    )
+    after = datetime.now(UTC)
+
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    completed_at = payload.get("completed_at")
+    assert isinstance(completed_at, str)
+    stamped = datetime.fromisoformat(completed_at)
+    assert stamped.tzinfo is not None
+    assert before <= stamped <= after

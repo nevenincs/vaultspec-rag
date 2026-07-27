@@ -28,6 +28,7 @@ read-modify-write.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -182,6 +183,10 @@ def write_snapshot_manifest(
     """Atomically publish a deterministic manifest after an archive completes."""
     path = snapshot_manifest_path(archive_namespace_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
+        # This is the archive's completion clock, written only after every
+        # artifact has reached the archive directory.  Retention must not use
+        # a copied metadata file's source mtime as a proxy for archive age.
+        "completed_at": datetime.now(UTC).isoformat(),
     payload = {
         "version": 1,
         "prefix": manifest.prefix,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, NamedTuple, cast
 
@@ -25,11 +26,11 @@ from ._app import (
 )
 from ._cli_format import _counted_unit, _project_name
 from ._render import (
-    _address_line,
     _display_service_not_running,
     _emit_json,
     _emit_json_error_and_exit,
     _plain,
+    address_line,
 )
 
 
@@ -70,7 +71,7 @@ def _resolve_project_argument(project: str) -> str:
 
 
 def _print_update_address(port: int) -> None:
-    _plain(_address_line(port))
+    _plain(address_line(port))
 
 
 def _print_update_project(project: str) -> None:
@@ -177,40 +178,42 @@ def _updates_next_actions(status: str, port: int) -> list[str]:
     ]
 
 
-def _updates_state_not_achieved(
-    command: str,
-    json_mode: bool,
-    result: dict[str, object],
-    port: int,
-    project: str,
-    *,
-    verb_phrase: str,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _UpdateStateFailure:
+    command: str
+    json_mode: bool
+    result: dict[str, object]
+    port: int
+    project: str
+    verb_phrase: str
+
+
+def _updates_state_not_achieved(failure: _UpdateStateFailure) -> None:
     """Emit one result for a request the service did not achieve, and exit 1.
 
     Both modes converge here so the human text and the JSON envelope name the
     same state, and neither reports success for a watcher that is not running.
     """
-    raw_status = str(result.get("status") or "")
+    raw_status = str(failure.result.get("status") or "")
     if raw_status in _UPDATES_STATE_PHRASES:
         status = raw_status
-    elif result.get("watch_enabled") is False:
+    elif failure.result.get("watch_enabled") is False:
         status = "disabled"
     else:
         status = "unavailable"
     reason = _UPDATES_STATE_PHRASES[status]
-    if json_mode:
+    if failure.json_mode:
         _emit_json_error_and_exit(
-            command,
+            failure.command,
             _UPDATES_STATE_ERRORS[status],
-            f"Automatic index updates {verb_phrase}: {reason}.",
+            f"Automatic index updates {failure.verb_phrase}: {reason}.",
             1,
-            data=result,
+            data=failure.result,
         )
-    _print_update_result(port, verb_phrase, project)
+    _print_update_result(failure.port, failure.verb_phrase, failure.project)
     _plain(f"Reason: {reason}.")
     _plain("Next actions:")
-    for action in _updates_next_actions(status, port):
+    for action in _updates_next_actions(status, failure.port):
         _plain(f"  {action}")
     raise typer.Exit(1)
 
@@ -333,12 +336,14 @@ def service_watcher_start(
     result, resolved_port, resolved_project = called
     if not bool(result.get("started", False)):
         _updates_state_not_achieved(
-            _UPDATES_START_COMMAND,
-            json_mode,
-            result,
-            resolved_port,
-            resolved_project,
-            verb_phrase="not started",
+            _UpdateStateFailure(
+                command=_UPDATES_START_COMMAND,
+                json_mode=json_mode,
+                result=result,
+                port=resolved_port,
+                project=resolved_project,
+                verb_phrase="not started",
+            )
         )
         return
     if json_mode:
@@ -431,12 +436,14 @@ def service_watcher_timing(
         return
     if not bool(result.get("restarted", False)):
         _updates_state_not_achieved(
-            _UPDATES_TIMING_COMMAND,
-            json_mode,
-            result,
-            resolved_port,
-            resolved_project,
-            verb_phrase="timing not applied",
+            _UpdateStateFailure(
+                command=_UPDATES_TIMING_COMMAND,
+                json_mode=json_mode,
+                result=result,
+                port=resolved_port,
+                project=resolved_project,
+                verb_phrase="timing not applied",
+            )
         )
         return
     if json_mode:
