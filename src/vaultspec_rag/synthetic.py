@@ -18,6 +18,10 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ._workspace_layout import (
+    VAULT_DIR,
+    VAULTSPEC_DIR,
+)
 from .search._validation import INDEXABLE_DOC_TYPES
 
 __all__ = [
@@ -262,7 +266,7 @@ def build_synthetic_vault(
         needle keywords, status map, and the graph edge list.
     """
     rng = random.Random(seed)
-    vault_dir = root / ".vault"
+    vault_dir = root / VAULT_DIR
     docs: list[GeneratedDoc] = []
     needles: dict[str, str] = {}
     graph_edges: list[tuple[str, str]] = []
@@ -273,7 +277,7 @@ def build_synthetic_vault(
         (vault_dir / dt).mkdir(parents=True, exist_ok=True)
 
     # Also create .vaultspec so workspace resolution works.
-    (root / ".vaultspec").mkdir(parents=True, exist_ok=True)
+    (root / VAULTSPEC_DIR).mkdir(parents=True, exist_ok=True)
 
     per_type = max(1, n_docs // len(DOC_TYPES))
     doc_index = 0

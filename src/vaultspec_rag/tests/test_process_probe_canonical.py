@@ -1958,3 +1958,58 @@ class TestStatusDirHasOneResolver:
         root = managed_status_dir()
         for path in (_status_file(), manifest_path()):
             assert path.parent == root, (path, root)
+
+
+class TestWorkspaceLayoutHasOneOwner:
+    """Where the workspace keeps its files is declared once.
+
+    ``.vaultspec`` was spelled thirty-one times across five modules, and the
+    names inside it fared no better - ``rules`` seven times, ``mcps`` six,
+    ``mcp-ownership.json`` four. Nothing owned the layout, so installing it,
+    projecting it, uninstalling it and seeding a synthetic copy each carried
+    their own idea of what it contains.
+
+    Two of those ideas were the same six directories written out twice: the
+    scaffolder's list and the topology projection's. A directory added to one
+    and not the other is how a projected workspace comes out missing a tree
+    the real one has - and the projection exists precisely to be a faithful
+    copy.
+    """
+
+    def test_no_module_spells_a_workspace_path(self) -> None:
+        offenders = [
+            f"{path.name}:{number}"
+            for path in _production_sources()
+            if path.name != "_workspace_layout.py"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            )
+            if '".vaultspec"' in line or '".vault"' in line
+        ]
+        assert not offenders, (
+            f"a workspace path spelled inline at {offenders}; join the "
+            "constants from _workspace_layout so the install, the projection "
+            "and the uninstall cannot disagree about what a workspace is"
+        )
+
+    def test_the_projection_covers_what_the_scaffolder_creates(self) -> None:
+        """The two lists must be one list, not two that happen to match.
+
+        Proven able to fail: pinning either side to its own tuple fails this
+        on the identity assertion below. Comparing today's six names would
+        pass two hand-written lists for exactly as long as nobody edited one.
+        """
+        from .._workspace_layout import workspace_directories
+        from ..commands._mcp_topology import _WORKSPACE_CONTAINERS
+
+        assert tuple(_WORKSPACE_CONTAINERS) == tuple(workspace_directories())
+
+        import inspect
+
+        from ..commands import _workspace
+
+        source = inspect.getsource(_workspace._ensure_workspace_dirs)
+        assert "workspace_directories()" in source, (
+            "the scaffolder must build from the shared tuple, or it and the "
+            "projection drift the next time either gains a directory"
+        )

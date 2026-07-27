@@ -28,6 +28,9 @@ __all__ = [
 
 import vaultspec_rag.server as _m
 
+from .._workspace_layout import (
+    VAULT_DIR,
+)
 from ..logging_config import log_event
 
 if TYPE_CHECKING:
@@ -425,7 +428,7 @@ def _start_watcher_locked(
     task = asyncio.create_task(
         watch_and_reindex(
             root_dir=root,
-            vault_dir=root / ".vault",
+            vault_dir=root / VAULT_DIR,
             vault_indexer=slot.vault_indexer,
             code_indexer=slot.code_indexer,
             document_indexer=slot.document_indexer,

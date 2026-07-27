@@ -26,6 +26,9 @@ __all__ = [
 
 import vaultspec_rag.server as _m
 
+from .._workspace_layout import (
+    VAULT_DIR,
+)
 from ..capabilities import backend_capabilities_dict
 from ._state import (
     _MAX_QUERY_LEN,
@@ -86,7 +89,7 @@ def _validate_vault_root(root: Path) -> Path:
     Raises:
         ValueError: If *root* has no ``.vault/`` subdirectory.
     """
-    if not (root / ".vault").is_dir():
+    if not (root / VAULT_DIR).is_dir():
         msg = f"not a vaultspec project (no .vault/ directory): {root}"
         raise ValueError(msg)
     return root
