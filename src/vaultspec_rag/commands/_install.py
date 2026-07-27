@@ -36,13 +36,17 @@ from ..builtins import list_builtins, seed_builtins
 from ..torch_config._constants import TorchConfigAction
 from ._mcp_extra import reconcile_mcp_extra
 from ._mcp_topology import (
+    LINKED_NODES_NOT_REMOVABLE,
     NodeSnapshot,
     RequiredMcpTopology,
     SnapshotKind,
     file_snapshot,
     inspect_required_mcp_topology,
+    record_mcp_failure,
     restore_file_snapshot,
     rollback_file_snapshots,
+    topology_materialization_failure,
+    topology_preflight_failure,
 )
 from ._mode import (
     RAG_DISTRIBUTION_NAME,
@@ -164,8 +168,7 @@ def _record_project_inspection_error(
 ) -> None:
     report.mcp_extra_action = "error"
     message = f"MCP extra inspect failed: {exc}"
-    report.warnings.append(message)
-    report.mcp_errors.append(message)
+    record_mcp_failure(report, message)
     if record_torch_inspect_error:
         report.torch_config_action = TorchConfigAction.ERROR
         report.warnings.append(f"torch-config inspect failed: {exc}")
@@ -257,8 +260,7 @@ def _prepare_install_target(
         fresh_providers = _requested_fresh_mcp_providers(target, skip)
     except Exception as exc:
         message = f"project MCP provider intent is unreadable: {exc}"
-        report.mcp_errors.append(message)
-        report.warnings.append(message)
+        record_mcp_failure(report, message)
         return target, report, None, False
     if not dry_run:
         _resolve_target(target, bootstrap=True)
@@ -287,8 +289,7 @@ def _restore_fresh_provider_transaction(
     if not errors:
         return
     message = "MCP provider-enrollment rollback failed: " + "; ".join(errors)
-    report.mcp_errors.append(message)
-    report.warnings.append(message)
+    record_mcp_failure(report, message)
 
 
 def _persist_fresh_mcp_providers(
@@ -302,8 +303,7 @@ def _persist_fresh_mcp_providers(
         add_providers(target, [provider.value for provider in selected])
     except Exception as exc:
         message = f"project MCP provider enrollment failed: {exc}"
-        report.mcp_errors.append(message)
-        report.warnings.append(message)
+        record_mcp_failure(report, message)
         _restore_fresh_provider_transaction(snapshots, report)
         return False
     return True
@@ -383,8 +383,7 @@ def _commit_mcp_placement_and_mode(
         report.mcp_extra_action = "error"
         message = f"MCP intent transaction failed: {exc}"
         if message not in report.mcp_errors:
-            report.mcp_errors.append(message)
-        report.warnings.append(message)
+            record_mcp_failure(report, message)
         _record_torch_transaction_error(report, exc, configure_torch=configure_torch)
         if rollback_errors:
             rollback_message = "MCP transaction rollback failed: " + "; ".join(
@@ -779,17 +778,12 @@ def install_run(
                 project_exc,
                 record_torch_inspect_error=configure_torch,
             )
-        message = f"required MCP topology preflight failed: {exc}"
-        failure.mcp_errors.append(message)
-        failure.warnings.append(message)
+        message = topology_preflight_failure(exc)
+        record_mcp_failure(failure, message)
         return failure
     if not install_mcp and topology.disenrollment_links:
-        message = (
-            "required MCP topology preflight failed: linked required nodes cannot "
-            "be safely removed while preserving exact link topology"
-        )
-        failure.mcp_errors.append(message)
-        failure.warnings.append(message)
+        message = LINKED_NODES_NOT_REMOVABLE
+        record_mcp_failure(failure, message)
         return failure
 
     def run() -> InstallReport:
@@ -840,9 +834,8 @@ def install_run(
     try:
         topology.materialize()
     except Exception as exc:
-        message = f"required MCP topology materialization failed: {exc}"
-        failure.mcp_errors.append(message)
-        failure.warnings.append(message)
+        message = topology_materialization_failure(exc)
+        record_mcp_failure(failure, message)
         return failure
     try:
         report = run()
@@ -856,8 +849,7 @@ def install_run(
         raise
     topology_errors = topology.finish(commit=not report.mcp_sync_failed)
     for message in topology_errors:
-        report.mcp_errors.append(message)
-        report.warnings.append(message)
+        record_mcp_failure(report, message)
     return report
 
 

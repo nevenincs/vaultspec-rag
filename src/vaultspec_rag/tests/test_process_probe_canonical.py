@@ -830,6 +830,99 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
+class TestMcpFailureIsRecordedOneWay:
+    """The install/uninstall pair words a topology refusal once, and records it once.
+
+    Both verbs built the same three sentences for themselves and then appended
+    each to two lists by hand. Both halves matter. The pair has to stay
+    symmetric, because the same condition worded one way when installing and
+    another when removing is a difference an operator has to work out is not
+    real. And the two-channel record is load-bearing: ``mcp_errors`` drives the
+    exit path while ``warnings`` drives the human report, so a failure written
+    to only one either exits without explaining itself or explains itself
+    without failing.
+
+    The two copies had already settled on opposite append orders, which is the
+    visible end of that drift rather than a bug in itself.
+    """
+
+    def test_no_verb_builds_a_topology_sentence_itself(self) -> None:
+        """A prefix written anywhere but its owner is a second wording."""
+        from ..commands import _mcp_topology
+
+        owned = (
+            _mcp_topology.TOPOLOGY_PREFLIGHT_FAILED,
+            _mcp_topology.TOPOLOGY_MATERIALIZATION_FAILED,
+        )
+        offenders: list[str] = []
+        for path in _every_production_file():
+            if path.name == "_mcp_topology.py":
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and any(prefix in node.value for prefix in owned)
+            )
+        assert not offenders, (
+            f"a topology refusal is worded outside the module that owns it at "
+            f"{offenders}; build it with the shared helper so installing and "
+            "removing describe one condition the same way"
+        )
+
+    def test_no_verb_records_the_two_channels_by_hand(self) -> None:
+        """Both lists are reached through one function, or one gets forgotten."""
+        offenders: list[str] = []
+        # The verbs only. ``_mcp_topology`` holds ``record_mcp_failure``, whose
+        # body is the two appends this forbids everywhere else.
+        for name in ("_install.py", "_uninstall.py"):
+            path = _PACKAGE_ROOT / "commands" / name
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for number, line in enumerate(lines, start=1):
+                nxt = lines[number] if number < len(lines) else ""
+                first, second = line.strip(), nxt.strip()
+                # Both orders count: the two copies had settled on opposite
+                # ones, so matching only errors-then-warnings would have seen
+                # half the sites.
+                channels = {
+                    suffix
+                    for suffix in (
+                        "mcp_errors.append(message)",
+                        "warnings.append(message)",
+                    )
+                    if first.endswith(suffix) or second.endswith(suffix)
+                }
+                if len(channels) == 2:
+                    offenders.append(f"{name}:{number}")
+        assert not offenders, (
+            f"a failure is appended to both channels by hand at {offenders}; "
+            "call record_mcp_failure, because the pair is what makes a refusal "
+            "both exit and explain itself"
+        )
+
+    def test_both_report_shapes_satisfy_the_recorder(self) -> None:
+        """The structural contract, exercised on the real report objects.
+
+        Proven able to fail: dropping either append from ``record_mcp_failure``
+        fails this on the channel it stopped writing.
+        """
+        from pathlib import Path as _Path
+
+        from ..commands._mcp_topology import record_mcp_failure
+        from ..commands._models import InstallReport, UninstallReport
+
+        for shape in (InstallReport, UninstallReport):
+            report = shape(action="x", target=_Path("."))
+            record_mcp_failure(report, "a failure")
+            assert report.mcp_errors == ["a failure"], shape.__name__
+            assert report.warnings == ["a failure"], shape.__name__
+
+
 class TestValidationRulesAreStatedOnce:
     """A rejection rule lives in one function, not one per caller.
 
