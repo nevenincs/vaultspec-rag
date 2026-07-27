@@ -19,7 +19,10 @@ from ...indexer._content_policy import (
     SourceProfileVersion,
 )
 from ...indexer._file_state import FileState
-from ...indexer._resolved_policy import resolve_index_policy
+from ...indexer._resolved_policy import (
+    IndexPolicyResolutionOptions,
+    resolve_index_policy,
+)
 from ...indexer._run_ledger import (
     CommitUnit,
     CommitUnitKind,
@@ -30,7 +33,7 @@ from ...indexer._run_ledger import (
 )
 from ...job_models import JobSource
 from ...service import ServiceRegistry
-from ...watcher import _record_watcher_changes, _WatcherConvergenceSlot
+from ...watcher_control import _record_watcher_changes, _WatcherConvergenceSlot
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
 
 if TYPE_CHECKING:
@@ -42,9 +45,11 @@ pytestmark = [pytest.mark.integration]
 def _policy(root: Path):
     return resolve_index_policy(
         root,
-        content_policy=RootContentPolicy(
-            SourceProfileVersion.EXPLICIT_ONLY_V1,
-            (ContentRoute("removed.txt", ContentKind.DOCUMENT),),
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(
+                SourceProfileVersion.EXPLICIT_ONLY_V1,
+                (ContentRoute("removed.txt", ContentKind.DOCUMENT),),
+            )
         ),
     )
 

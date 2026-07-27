@@ -16,7 +16,7 @@ from ..indexer._content_policy import (
 )
 from ..indexer._drift_owner import CodeDriftOwner
 from ..indexer._file_state import FileState, FileStateKind
-from ..indexer._resolved_policy import resolve_index_policy
+from ..indexer._resolved_policy import IndexPolicyResolutionOptions, resolve_index_policy
 from ..indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
 from ..indexer._run_ledger import (
     FinalizationPhase,
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -88,7 +88,9 @@ def _open(
 ) -> CodeRunCheckpoint:
     policy = resolve_index_policy(
         tmp_path,
-        content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1),
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
     )
     return CodeRunCheckpoint.open(
         data_root=tmp_path / ".state",
@@ -394,7 +396,7 @@ def drift_store(
     """
     del isolated_singleton_dirs
     from ..config import reset_config
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
 
     reset_config()
     store = VaultStore(tmp_path / "store", embedding_dim=_DENSE_DIM)

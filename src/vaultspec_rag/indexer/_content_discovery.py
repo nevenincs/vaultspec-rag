@@ -176,12 +176,14 @@ class CodeContentDiscovery:
         particular, it does not acquire the writer lock or touch collection,
         manifest, metadata, preprocessing-cache, or embedding resources.
         """
-        from ._resolved_policy import resolve_index_policy
+        from ._resolved_policy import IndexPolicyResolutionOptions, resolve_index_policy
 
         return resolve_index_policy(
             self.root_dir,
-            content_policy=self.content_policy,
-            extra_excludes=self.extra_excludes,
+            IndexPolicyResolutionOptions(
+                content_policy=self.content_policy,
+                extra_excludes=self.extra_excludes,
+            ),
         )
 
     def preflight_content(

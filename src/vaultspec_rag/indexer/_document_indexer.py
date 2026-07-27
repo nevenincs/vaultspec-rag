@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot
     from ..progress import ProgressReporter
-    from ..store import VaultStore
+    from ..store_runtime import VaultStore
     from ._preprocess_config import PreprocessContext
     from ._resolved_policy import ResolvedIndexPolicy
     from ._reuse import DonorReuseContext, ReuseStats
@@ -282,12 +282,14 @@ class DocumentIndexer:
 
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve the immutable admission and extraction policy for one run."""
-        from ._resolved_policy import resolve_index_policy
+        from ._resolved_policy import IndexPolicyResolutionOptions, resolve_index_policy
 
         return resolve_index_policy(
             self.root_dir,
-            content_policy=self._content_policy,
-            extra_excludes=self._extra_excludes,
+            IndexPolicyResolutionOptions(
+                content_policy=self._content_policy,
+                extra_excludes=self._extra_excludes,
+            ),
         )
 
     @staticmethod

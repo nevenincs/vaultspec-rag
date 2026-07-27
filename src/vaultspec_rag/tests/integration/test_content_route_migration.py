@@ -29,7 +29,10 @@ from ...indexer._document_checkpoint import (
     DocumentRunConfiguration,
 )
 from ...indexer._document_identity import document_point_id
-from ...indexer._resolved_policy import resolve_index_policy
+from ...indexer._resolved_policy import (
+    IndexPolicyResolutionOptions,
+    resolve_index_policy,
+)
 from ...indexer._route_migration import (
     RouteMigrationJournal,
     iter_stored_route_pages,
@@ -41,7 +44,7 @@ from ...indexer._route_migration import (
 from ...indexer._run_ledger import RunOperation
 from ...indexer._run_policy import RunPolicy
 from ...job_control import CancelRequested, RunControlToken
-from ...store import VaultStore
+from ...store_runtime import VaultStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -59,7 +62,7 @@ def _resolved_policy(root: Path):
             ContentRoute("guide.txt", ContentKind.DOCUMENT),
         ),
     )
-    return resolve_index_policy(root, content_policy=policy)
+    return resolve_index_policy(root, IndexPolicyResolutionOptions(content_policy=policy))
 
 
 def _document_chunk(source_path: str, text: str) -> DocumentChunk:
@@ -446,12 +449,14 @@ def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
     ]
     policy = resolve_index_policy(
         tmp_path,
-        content_policy=RootContentPolicy(
-            SourceProfileVersion.EXPLICIT_ONLY_V1,
-            (
-                ContentRoute("guide.txt", ContentKind.DOCUMENT),
-                ContentRoute("appendix.txt", ContentKind.DOCUMENT),
-                ContentRoute("module.py", ContentKind.CODE),
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(
+                SourceProfileVersion.EXPLICIT_ONLY_V1,
+                (
+                    ContentRoute("guide.txt", ContentKind.DOCUMENT),
+                    ContentRoute("appendix.txt", ContentKind.DOCUMENT),
+                    ContentRoute("module.py", ContentKind.CODE),
+                ),
             ),
         ),
     )
