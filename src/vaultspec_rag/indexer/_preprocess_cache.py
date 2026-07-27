@@ -26,14 +26,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from .._atomic_write import replace_atomically
+from .._atomic_write import write_json_atomically
 from ._preprocess_schema import (
     SUPPORTED_SCHEMA_VERSION,
     UnsupportedSchemaVersionError,
@@ -216,13 +215,7 @@ def write_cached_output(
         "output": output.model_dump(mode="json"),
     }
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Per-process + random temp suffix so two workers writing byte-identical
-        # sources (same cache key) never collide, and the temp path is not
-        # predictable (no symlink/TOCTOU pre-plant on the temp name).
-        tmp_path = path.with_suffix(f".{os.getpid()}.{os.urandom(6).hex()}.tmp")
-        tmp_path.write_text(json.dumps(entry), encoding="utf-8")
-        replace_atomically(tmp_path, path)
+        write_json_atomically(path, entry)
     except OSError as exc:
         logger.debug("could not write preprocess cache %s: %s", path, exc)
 

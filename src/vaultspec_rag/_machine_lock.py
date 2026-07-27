@@ -29,13 +29,12 @@ import contextlib
 import json
 import logging
 import os
-import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from ._atomic_write import replace_atomically
+from ._atomic_write import write_json_atomically
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -172,7 +171,6 @@ def publish_machine_discovery(
     if type(payload_pid) is not int or payload_pid != lease.pid:
         msg = "machine discovery payload PID must match the machine-lock lease"
         raise ValueError(msg)
-    encoded = json.dumps(payload, indent=2)
     pointer = _lease_discovery_path(lease)
     from ._test_isolation import enforce_pytest_managed_singleton_containment
 
@@ -182,27 +180,7 @@ def publish_machine_discovery(
     )
     with _lease_guard:
         _require_active_lease(lease, operation="publish machine discovery")
-        pointer.parent.mkdir(parents=True, exist_ok=True)
-        temporary: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=pointer.parent,
-                prefix=f".{pointer.name}.{lease.pid}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temporary = Path(handle.name)
-                handle.write(encoded)
-                handle.flush()
-                os.fsync(handle.fileno())
-            replace_atomically(temporary, pointer)
-            temporary = None
-        finally:
-            if temporary is not None:
-                with contextlib.suppress(OSError):
-                    temporary.unlink()
+        write_json_atomically(pointer, payload, indent=2, durable=True)
 
 
 def delete_machine_discovery(lease: MachineLockLease) -> None:

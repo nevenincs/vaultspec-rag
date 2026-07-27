@@ -72,7 +72,7 @@ from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  
     get_config as get_base_config,
 )
 
-from ._atomic_write import replace_atomically
+from ._atomic_write import write_json_atomically
 from ._env_values import BOOL_SHAPE, parse_bool, rejection
 
 logger = logging.getLogger(__name__)
@@ -715,10 +715,7 @@ def persist_local_only(value: bool) -> Path:
         The path the marker was written to.
     """
     path = _local_only_marker_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps({"local_only": bool(value)}), encoding="utf-8")
-    replace_atomically(tmp, path)
+    write_json_atomically(path, {"local_only": bool(value)})
     logger.debug("persisted local_only=%s to %s", value, path)
     return path
 

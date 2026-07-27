@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import cast
 
 from . import store_schema
-from ._atomic_write import replace_atomically
+from ._atomic_write import write_json_atomically
 
 __all__ = [
     "load_identity",
@@ -176,8 +176,6 @@ def _record_local(
     with _LOCK:
         collections = dict(_load_sidecar(local_dir))
         collections[collection] = identity.to_payload()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"version": 1, "collections": collections}
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        replace_atomically(tmp, path)
+        write_json_atomically(
+            path, {"version": 1, "collections": collections}, indent=2, sort_keys=True
+        )

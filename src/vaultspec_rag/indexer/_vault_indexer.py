@@ -21,7 +21,7 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
     scan_vault,
 )
 
-from .._atomic_write import replace_atomically
+from .._atomic_write import write_json_atomically
 from ..job_control import NO_RUN_CONTROL
 from . import _config_epoch
 from ._index_lifecycle import run_index_lifecycle
@@ -1126,15 +1126,12 @@ class VaultIndexer:
                 file cannot be written.
         """
         run_control.checkpoint()
-        self._meta_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self._meta_path.with_suffix(".tmp")
         stamped = {
             **meta,
             _SCHEMA_KEY: _VAULT_POINT_SCHEMA,
             _CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
         }
-        tmp_path.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
-        replace_atomically(tmp_path, self._meta_path)
+        write_json_atomically(self._meta_path, stamped, indent=2)
         run_control.checkpoint()
 
     def _read_meta_raw(self) -> dict[str, str]:

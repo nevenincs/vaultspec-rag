@@ -12,7 +12,6 @@ failure that deletes the partial download.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import shutil
@@ -26,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
-from .._atomic_write import replace_atomically
+from .._atomic_write import write_json_atomically
 from .._units import human_bytes
 from ._constants import (
     ALLOWED_DOWNLOAD_HOSTS,
@@ -347,10 +346,7 @@ def _write_manifest(
         "source": source,
         "provisioned_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
-    path = version_dir / MANIFEST_FILENAME
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    replace_atomically(str(tmp), str(path))
+    write_json_atomically(version_dir / MANIFEST_FILENAME, manifest, indent=2)
 
 
 def _existing_install_state(version_dir: Path, expected_sha256: str) -> str:
