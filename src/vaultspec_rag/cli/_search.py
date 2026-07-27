@@ -24,7 +24,12 @@ from ..serviceclient._transport import (
     _try_http_search,
     document_search_filters,
 )
-from ._app import CLIState, JsonMode, app
+from ._app import (
+    CLIState,
+    JsonMode,
+    PortOption,
+    app,
+)
 from ._gpu_errors import _handle_gpu_error
 from ._render import (
     _display_port_unreachable_error,
@@ -1064,10 +1069,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             help="Show numeric relevance scores in human search output.",
         ),
     ] = False,
-    port: Annotated[
-        int | None,
-        typer.Option("--port", help="Use the service running on this port."),
-    ] = None,
+    port: PortOption = None,
     allow_fallback: Annotated[
         bool,
         typer.Option(

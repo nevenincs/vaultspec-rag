@@ -54,7 +54,11 @@ from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_health,
 )
-from ._app import JSON_OPTION_HELP, server_app
+from ._app import (
+    JSON_OPTION_HELP,
+    PortOption,
+    server_app,
+)
 from ._cli_format import NOT_REPORTED
 from ._process import (
     _is_our_service,
@@ -1063,10 +1067,7 @@ def _render_explicit_port_status(
     ),
 )
 def service_status(
-    requested_port: Annotated[
-        int | None,
-        typer.Option("--port", help="Service port (defaults to running service)."),
-    ] = None,
+    requested_port: PortOption = None,
     json_mode: Annotated[
         bool,
         typer.Option(

@@ -36,7 +36,13 @@ from ..serviceclient._discovery import (
     _read_service_status,
 )
 from ..serviceclient._transport import _try_http_health
-from ._app import JSON_ENVELOPE_OPTION_HELP, _global_target, server_app
+from ._app import (
+    JSON_ENVELOPE_OPTION_HELP,
+    RepeatUpdateDelayOption,
+    UpdateDelayOption,
+    _global_target,
+    server_app,
+)
 from ._core import logger
 from ._gpu_errors import (
     RuntimeEnvKind,
@@ -608,23 +614,8 @@ def service_start(
             ),
         ),
     ] = None,
-    update_delay_ms: Annotated[
-        int | None,
-        typer.Option(
-            "--update-delay-ms",
-            help="Delay before indexing a burst of file changes, in milliseconds.",
-        ),
-    ] = None,
-    repeat_update_delay_s: Annotated[
-        float | None,
-        typer.Option(
-            "--repeat-update-delay-s",
-            help=(
-                "Minimum wait before automatically updating a project again, "
-                "in seconds."
-            ),
-        ),
-    ] = None,
+    update_delay_ms: UpdateDelayOption = None,
+    repeat_update_delay_s: RepeatUpdateDelayOption = None,
     local_only: Annotated[
         bool,
         typer.Option(

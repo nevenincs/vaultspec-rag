@@ -1,6 +1,5 @@
 """``install`` and ``uninstall`` commands: workspace enrollment mirror."""
 
-from pathlib import Path
 from typing import Annotated, Any
 
 import click
@@ -13,7 +12,13 @@ from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStub
 
 import vaultspec_rag.cli as _cli
 
-from ._app import JsonMode, _global_target, app
+from ._app import (
+    JsonMode,
+    SkipOption,
+    TargetOption,
+    _global_target,
+    app,
+)
 from ._render import _plain, _render_install_report, _render_uninstall_report
 
 # Group name used when ``--torch-group`` is passed without an explicit
@@ -51,17 +56,7 @@ class _InstallCommand(TyperCommand):
 @app.command("install", cls=_InstallCommand)
 def handle_install(
     ctx: typer.Context,
-    target: Annotated[
-        Path | None,
-        typer.Option(
-            "--target",
-            "-t",
-            help="Workspace path (default: current working directory).",
-            dir_okay=True,
-            file_okay=False,
-            resolve_path=True,
-        ),
-    ] = None,
+    target: TargetOption = None,
     upgrade: Annotated[
         bool,
         typer.Option(
@@ -87,13 +82,7 @@ def handle_install(
             ),
         ),
     ] = False,
-    skip: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--skip",
-            help="Skip a component (repeatable).",
-        ),
-    ] = None,
+    skip: SkipOption = None,
     mode: Annotated[
         InstallMode | None,
         typer.Option(
@@ -340,17 +329,7 @@ def handle_install(
 @app.command("uninstall")
 def handle_uninstall(
     ctx: typer.Context,
-    target: Annotated[
-        Path | None,
-        typer.Option(
-            "--target",
-            "-t",
-            help="Workspace path (default: current working directory).",
-            dir_okay=True,
-            file_okay=False,
-            resolve_path=True,
-        ),
-    ] = None,
+    target: TargetOption = None,
     remove_data: Annotated[
         bool,
         typer.Option(
@@ -372,13 +351,7 @@ def handle_uninstall(
             help="Required to execute. Uninstall is destructive.",
         ),
     ] = False,
-    skip: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--skip",
-            help="Skip a component (repeatable).",
-        ),
-    ] = None,
+    skip: SkipOption = None,
     yes: Annotated[
         bool,
         typer.Option(
