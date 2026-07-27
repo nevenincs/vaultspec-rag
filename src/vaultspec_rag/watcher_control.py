@@ -178,6 +178,22 @@ class _ManagedAttemptScope:
     document_preflight: DocumentExecutionPreflight | None
 
 
+@dataclass(frozen=True, slots=True)
+class WatcherConfiguration:
+    """All immutable dependencies and controls for one watcher lifetime."""
+
+    root_dir: Path
+    vault_dir: Path
+    vault_indexer: VaultIndexer
+    code_indexer: CodebaseIndexer
+    stop_event: asyncio.Event
+    graph_cache: GraphCache
+    document_indexer: DocumentIndexer | None = None
+    debounce: int = 2000
+    cooldown: float = 30.0
+    registry: ServiceRegistry | None = None
+
+
 @dataclass(slots=True)
 class _WatcherConvergenceSlot:
     """Thread-safe ownership of one root/source convergence generation."""
@@ -788,18 +804,7 @@ class WatcherInitializationError(RuntimeError):
     """
 
 
-async def watch_and_reindex(
-    root_dir: Path,
-    vault_dir: Path,
-    vault_indexer: VaultIndexer,
-    code_indexer: CodebaseIndexer,
-    stop_event: asyncio.Event,
-    graph_cache: GraphCache,
-    document_indexer: DocumentIndexer | None = None,
-    debounce: int = 2000,
-    cooldown: float = 30.0,
-    registry: ServiceRegistry | None = None,
-) -> None:
+async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     """Watch for file changes and trigger incremental re-indexing.
 
     Runs until stop_event is set. GPU serialization is handled
@@ -835,6 +840,16 @@ async def watch_and_reindex(
         This coroutine does not propagate exceptions from indexing.
         Indexing errors are caught and logged via ``logger.exception``.
     """
+    root_dir = configuration.root_dir
+    vault_dir = configuration.vault_dir
+    vault_indexer = configuration.vault_indexer
+    code_indexer = configuration.code_indexer
+    stop_event = configuration.stop_event
+    graph_cache = configuration.graph_cache
+    document_indexer = configuration.document_indexer
+    debounce = configuration.debounce
+    cooldown = configuration.cooldown
+    registry = configuration.registry
     try:
         vault_retry, code_retry, document_retry = await _initialize_retry_policies(
             root_dir,
