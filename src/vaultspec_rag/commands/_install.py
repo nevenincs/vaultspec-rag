@@ -543,19 +543,29 @@ def _reconcile_project_mcp(request: _ProjectMcpReconciliationRequest) -> None:
         request.report.mcp_sync_results.append(migration)
 
 
-def _run_core_sync(
-    target: Path,
-    report: InstallReport,
-    dry_run: bool,
-    force: bool,
-    skip: set[str],
-    mode: InstallMode,
-    *,
-    install_mcp: bool,
-    upgrade: bool,
-    mode_flipped: bool,
-    fresh_providers: tuple[Tool, ...] | None,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _CoreSyncRequest:
+    target: Path
+    report: InstallReport
+    dry_run: bool
+    force: bool
+    skip: set[str]
+    mode: InstallMode
+    install_mcp: bool
+    upgrade: bool
+    mode_flipped: bool
+    fresh_providers: tuple[Tool, ...] | None
+
+
+def _run_core_sync(request: _CoreSyncRequest) -> None:
+    (
+        target, report, dry_run, force, skip, mode, install_mcp, upgrade,
+        mode_flipped, fresh_providers,
+    ) = (
+        request.target, request.report, request.dry_run, request.force,
+        request.skip, request.mode, request.install_mcp, request.upgrade,
+        request.mode_flipped, request.fresh_providers,
+    )
     manifest_snapshots = {
         path: file_snapshot(path)
         for path in _fresh_provider_transaction_paths(target)
@@ -1072,16 +1082,18 @@ def _install_run_unchecked(
     # 1:1 with an actual sync invocation - see COHAB-01 fix in
     # _init_core_context. Dry-run skips both the init and the sync.
     _run_core_sync(
-        target,
-        report,
-        dry_run,
-        force,
-        skip,
-        resolved.mode,
-        install_mcp=install_mcp,
-        upgrade=upgrade,
-        mode_flipped=mcp_mode_flipped,
-        fresh_providers=fresh_mcp_providers,
+        _CoreSyncRequest(
+            target,
+            report,
+            dry_run,
+            force,
+            skip,
+            resolved.mode,
+            install_mcp,
+            upgrade,
+            mcp_mode_flipped,
+            fresh_mcp_providers,
+        )
     )
 
     # Mode-flip seam, the analogue of core's own force-managed pass: a plain
