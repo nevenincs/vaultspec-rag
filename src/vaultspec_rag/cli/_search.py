@@ -11,7 +11,11 @@ import typer
 
 import vaultspec_rag.cli as _cli
 
-from .._operator_commands import server_start_command, server_status_command
+from .._operator_commands import (
+    index_command,
+    server_start_command,
+    server_status_command,
+)
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from ..serviceclient._compat import resolve_data_plane_service
@@ -710,7 +714,7 @@ def _render_empty_in_process_results(
     _plain(f"Why: No matching {count_label} were found in the local index.")
     _plain(f"Project: {target}", soft_wrap=True)
     _plain("Next actions:")
-    _plain(f"  - vaultspec-rag index --type {search_type}")
+    _plain(f"  - {index_command(search_type)}")
     _plain("  - vaultspec-rag status")
 
 

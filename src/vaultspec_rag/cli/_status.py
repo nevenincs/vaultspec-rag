@@ -7,7 +7,8 @@ from typing import Any, cast
 
 import typer
 
-from .._operator_commands import server_status_command
+from .._operator_commands import index_command, server_status_command
+from .._source_types import PublicSourceType
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, JsonMode, app
@@ -66,8 +67,8 @@ def _status_next_action(
     if not missing:
         return None
     if len(missing) == 1:
-        return f"vaultspec-rag index --type {missing[0]}"
-    return "vaultspec-rag index --type all"
+        return index_command(missing[0])
+    return index_command(PublicSourceType.COMBINED)
 
 
 def _profile_bytes(profile: dict[str, object], key: str) -> str:

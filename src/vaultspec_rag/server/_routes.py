@@ -36,7 +36,11 @@ from starlette.routing import Route
 import vaultspec_rag.server as _m
 
 from .. import jobs as _jobs
-from .._operator_commands import port_option, server_jobs_command, server_status_command
+from .._operator_commands import (
+    index_command,
+    server_jobs_command,
+    server_status_command,
+)
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from ..concurrency import get_search_limiter
@@ -338,9 +342,8 @@ def _empty_search_diagnostics(
     path_filter: dict[str, object] | None = None,
 ) -> dict[str, object]:
     source = index_state["source"]
-    port_suffix = port_option(port)
     remediation = [
-        f"vaultspec-rag index --type {source}{port_suffix}",
+        index_command(source, port=port),
         server_status_command(),
         server_jobs_command(port),
     ]

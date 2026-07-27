@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Mapping
 
+from ._operator_commands import index_command
+
 logger = logging.getLogger(__name__)
 
 #: Reserved sidecar key carrying the published point count. Reserved keys begin
@@ -64,7 +66,7 @@ SHORTFALL_CONSEQUENCE = "an absent result is not evidence that no such code exis
 #: The one command that repairs any shortfall. A remediation an operator is
 #: told to run has to be the command that still exists; a second copy is one
 #: rename away from sending them to a flag that was removed.
-SHORTFALL_REMEDIATION = "vaultspec-rag index --type code --full"
+SHORTFALL_REMEDIATION = index_command("code", full=True)
 
 
 class BreadthShortfall(NamedTuple):

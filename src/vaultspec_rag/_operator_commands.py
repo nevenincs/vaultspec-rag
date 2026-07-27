@@ -15,8 +15,15 @@ module's business.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from ._source_types import PublicSourceType
+
 __all__ = [
     "SERVICE_NOT_RUNNING_MESSAGE",
+    "index_command",
+    "index_source_option",
     "port_option",
     "server_jobs_command",
     "server_start_command",
@@ -121,3 +128,61 @@ def server_start_command(
 SERVICE_NOT_RUNNING_MESSAGE = (
     f"Service is not running. Start it with `{server_start_command()}`."
 )
+
+
+def index_source_option(
+    source: PublicSourceType,
+) -> Literal["vault", "code", "document", "all"]:
+    """Return the ``--type`` value for *source*, in the CLI's own spelling.
+
+    ``COMBINED`` is spelled ``all`` on the command line. The translation was
+    written inline where the index verb reports what it ran, and the four
+    source spellings were hand-enumerated where it offers a rebuild - so a new
+    source type would have been missing from the remediation an operator is
+    handed, while still being accepted by the flag.
+    """
+    from ._source_types import PublicSourceType as _Source
+
+    if source is _Source.COMBINED:
+        return "all"
+    # The remaining members are exactly these three, which is what lets a
+    # caller hand this to an API accepting only those spellings.
+    return source.value
+
+
+def index_command(
+    source: object | None = None,
+    *,
+    rebuild: bool = False,
+    dry_run: bool = False,
+    dry_run_limit: object | None = None,
+    full: bool = False,
+    port: object | None = None,
+) -> str:
+    """Return the ``index`` invocation an operator should run.
+
+    Thirteen sites across six modules spelled a variant of this. Unlike the
+    lifecycle verbs they are not one command repeated - each names a different
+    combination - which is why counting repeats made this look like it was not
+    duplication. The repeated thing is the VOCABULARY: the verb, its flag
+    names, their order, and which source spellings exist.
+    """
+    command = "vaultspec-rag index"
+    if rebuild:
+        command += " --rebuild"
+    if source is not None:
+        from ._source_types import PublicSourceType as _Source
+
+        resolved = (
+            source
+            if isinstance(source, _Source)
+            else _Source(_Source.COMBINED if source == "all" else source)
+        )
+        command += f" --type {index_source_option(resolved)}"
+    if dry_run:
+        command += " --dry-run"
+    if dry_run_limit is not None:
+        command += f" --dry-run-limit {dry_run_limit}"
+    if full:
+        command += " --full"
+    return command + port_option(port)

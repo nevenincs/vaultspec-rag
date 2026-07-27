@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-from .._operator_commands import server_jobs_command, server_status_command
+from .._operator_commands import (
+    index_command,
+    server_jobs_command,
+    server_status_command,
+)
+from .._source_types import PublicSourceType
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 if TYPE_CHECKING:
@@ -435,7 +440,7 @@ def _conformance_finding(
             "their vectors cannot be ranked against queries from the current "
             "model; rebuild the affected index to restore ranking"
         ),
-        command="vaultspec-rag index --rebuild --type all",
+        command=index_command(PublicSourceType.COMBINED, rebuild=True),
         family=CONFORMANCE_FAMILY,
     )
 
