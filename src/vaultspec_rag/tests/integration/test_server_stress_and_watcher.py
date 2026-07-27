@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ... import VaultStore, jobs, server
+from ..._store_search import HybridSearchRequest
 from ...concurrency import get_encode_limiter, reset_limiters
 from ...config import get_config
 from ...indexer._vault_prep import prepare_document
@@ -47,7 +48,7 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
 
     from ...embeddings import EmbeddingModel
-    from ...job_manager import JobManager
+    from ...job_manager.manager import JobManager
     from ...service import ProjectSlot, ServiceRegistry
 
 from ..._store_locks import VaultStoreLockedError
@@ -528,9 +529,11 @@ class TestLocalConcurrencyLocks:
             try:
                 # This should block until client lock is released
                 store.hybrid_search(
-                    query_vector=[0.0] * 1024,
-                    _query_text="blocking test",
-                    limit=1,
+                    HybridSearchRequest(
+                        query_vector=[0.0] * 1024,
+                        query_text="blocking test",
+                        limit=1,
+                    )
                 )
             except Exception as exc:
                 errors.append(exc)
@@ -714,7 +717,11 @@ async def test_watcher_detects_and_indexes_file(
         # Confirm we cannot find the new document yet
         q_vec = embedding_model.encode_query("concurrency adversarial stress").tolist()
         results = store.hybrid_search(
-            query_vector=q_vec, _query_text="concurrency adversarial stress", limit=10
+            HybridSearchRequest(
+                query_vector=q_vec,
+                query_text="concurrency adversarial stress",
+                limit=10,
+            )
         )
         assert not any("adversarial" in r.get("content", "") for r in results)
 
@@ -736,9 +743,11 @@ async def test_watcher_detects_and_indexes_file(
         for _ in range(30):  # Poll for up to 3 seconds
             await asyncio.sleep(0.1)
             results = store.hybrid_search(
-                query_vector=q_vec,
-                _query_text="concurrency adversarial stress",
-                limit=10,
+                HybridSearchRequest(
+                    query_vector=q_vec,
+                    query_text="concurrency adversarial stress",
+                    limit=10,
+                )
             )
             if any("adversarial" in r.get("content", "") for r in results):
                 break

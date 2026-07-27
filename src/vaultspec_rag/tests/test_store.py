@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._store_search import HybridSearchRequest
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
@@ -261,9 +263,11 @@ class TestStoreLocalClientSerialization:
             tmp_path,
             "TABLE_NAME",
             lambda store: store.hybrid_search(
-                query_vector=[0.0] * DEFAULT_DENSE_DIM,
-                _query_text="anything",
-                limit=1,
+                HybridSearchRequest(
+                    query_vector=[0.0] * DEFAULT_DENSE_DIM,
+                    query_text="anything",
+                    limit=1,
+                )
             ),
             [],
         )
@@ -275,9 +279,11 @@ class TestStoreLocalClientSerialization:
             tmp_path,
             "CODE_TABLE_NAME",
             lambda store: store.hybrid_search_codebase(
-                query_vector=[0.0] * DEFAULT_DENSE_DIM,
-                _query_text="anything",
-                limit=1,
+                HybridSearchRequest(
+                    query_vector=[0.0] * DEFAULT_DENSE_DIM,
+                    query_text="anything",
+                    limit=1,
+                )
             ),
             [],
         )
@@ -298,9 +304,11 @@ class TestStoreLocalClientSerialization:
             thread, finished, errors = self._run_worker(
                 store,
                 lambda s: s.hybrid_search_codebase(
-                    query_vector=[0.0] * DEFAULT_DENSE_DIM,
-                    _query_text="anything",
-                    limit=1,
+                    HybridSearchRequest(
+                        query_vector=[0.0] * DEFAULT_DENSE_DIM,
+                        query_text="anything",
+                        limit=1,
+                    )
                 ),
                 [],
             )
@@ -397,20 +405,24 @@ class TestStoreLocalClientSerialization:
                 for iteration in range(iterations):
                     if (worker_id + iteration) % 2 == 0:
                         rows = store.hybrid_search(
-                            query_vector=query_vector,
-                            _query_text="parallel local qdrant search",
-                            filters={"feature": "parallel-search"},
-                            limit=3,
+                            HybridSearchRequest(
+                                query_vector=query_vector,
+                                query_text="parallel local qdrant search",
+                                filters={"feature": "parallel-search"},
+                                limit=3,
+                            )
                         )
                         assert rows
                         assert all(row["feature"] == "parallel-search" for row in rows)
                         counts["vault"] += len(rows)
                     else:
                         rows = store.hybrid_search_codebase(
-                            query_vector=query_vector,
-                            _query_text="parallel local qdrant code search",
-                            filters={"language": "python"},
-                            limit=3,
+                            HybridSearchRequest(
+                                query_vector=query_vector,
+                                query_text="parallel local qdrant code search",
+                                filters={"language": "python"},
+                                limit=3,
+                            )
                         )
                         assert rows
                         assert all(row["language"] == "python" for row in rows)

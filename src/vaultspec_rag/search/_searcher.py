@@ -15,6 +15,7 @@ from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Protocol, cast
 
 from .. import store_schema
+from .._store_search import HybridSearchRequest
 from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
 from ._models import DocumentSearchResult, ParsedQuery, SearchResult
 from ._noise import (
@@ -452,13 +453,15 @@ class VaultSearcher:
         raw_results: list[dict[str, object]] = cast(
             "list[dict[str, object]]",
             self.store.hybrid_search(
-                query_vector=query_vector,
-                _query_text=query_text,
-                filters=store_filters or None,
-                limit=fetch_limit,
-                sparse_vector=sparse_vector,
-                like_ids=like_ids,
-                unlike_ids=unlike_ids,
+                HybridSearchRequest(
+                    query_vector=query_vector,
+                    query_text=query_text,
+                    filters=store_filters or None,
+                    limit=fetch_limit,
+                    sparse_vector=sparse_vector,
+                    like_ids=like_ids,
+                    unlike_ids=unlike_ids,
+                )
             ),
         )
         _record_seconds(timings, PHASE_QDRANT, phase_started)
@@ -616,15 +619,17 @@ class VaultSearcher:
             raw = cast(
                 "list[dict[str, object]]",
                 self.store.hybrid_search_codebase(
-                    query_vector=query_vector,
-                    _query_text=query_text,
-                    filters=store_filters or None,
-                    limit=limit,
-                    sparse_vector=sparse_vector,
-                    like_ids=like_ids,
-                    unlike_ids=unlike_ids,
-                    exclude_domains=pushdown_exclude,
-                    only_domains=pushdown_only,
+                    HybridSearchRequest(
+                        query_vector=query_vector,
+                        query_text=query_text,
+                        filters=store_filters or None,
+                        limit=limit,
+                        sparse_vector=sparse_vector,
+                        like_ids=like_ids,
+                        unlike_ids=unlike_ids,
+                        exclude_domains=pushdown_exclude,
+                        only_domains=pushdown_only,
+                    )
                 ),
             )
             globbed = _filter_raw_codebase_results_impl(raw, include_norm, exclude_norm)
@@ -1066,11 +1071,13 @@ class VaultSearcher:
         raw_results = cast(
             "list[dict[str, object]]",
             self.store.hybrid_search_document(
-                query_vector=query_vector,
-                _query_text=query_text,
-                filters=filters or None,
-                limit=fetch_limit,
-                sparse_vector=sparse_vector,
+                HybridSearchRequest(
+                    query_vector=query_vector,
+                    query_text=query_text,
+                    filters=filters or None,
+                    limit=fetch_limit,
+                    sparse_vector=sparse_vector,
+                )
             ),
         )
         _record_seconds(timings, PHASE_QDRANT, phase_started)
