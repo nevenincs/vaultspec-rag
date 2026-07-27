@@ -99,7 +99,7 @@ def _ensure_qdrant_binary(
     the exact install command and exits non-zero. In ``--json`` mode the absent/
     failed outcomes are emitted as start envelopes so a broker reads one document.
     """
-    from ..qdrant_runtime._constants import QdrantProvisionAction
+    from .._sync_vocabulary import ProvisionAction
     from ..qdrant_runtime._provision import provision
     from ..qdrant_runtime._resolve import resolve_binary
 
@@ -127,7 +127,7 @@ def _ensure_qdrant_binary(
         report = provision(on_progress=progress.stage)
     else:
         report = provision()
-    if report.action == QdrantProvisionAction.FAILED or resolve_binary() is None:
+    if report.action == ProvisionAction.FAILED or resolve_binary() is None:
         raise _fail_start(
             json_mode,
             error="qdrant_provision_failed",

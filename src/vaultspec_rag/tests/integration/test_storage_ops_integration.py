@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ..._store_models import root_collection_prefix
+from ..._sync_vocabulary import ProvisionAction
 from ...config import reset_config
-from ...qdrant_runtime._constants import QdrantProvisionAction
 from ...qdrant_runtime._provision import provision
 from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
@@ -46,9 +46,9 @@ def _qdrant_binary() -> Path:  # pyright: ignore[reportUnusedFunction]
     reset_config()
     report = provision()
     assert report.action in (
-        QdrantProvisionAction.CREATED,
-        QdrantProvisionAction.UNCHANGED,
-        QdrantProvisionAction.UPDATED,
+        ProvisionAction.CREATED,
+        ProvisionAction.UNCHANGED,
+        ProvisionAction.UPDATED,
     ), report.message
     resolved = resolve_binary()
     assert resolved is not None

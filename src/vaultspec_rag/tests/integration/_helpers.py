@@ -55,16 +55,16 @@ def provisioned_qdrant_binary() -> Path:
     the three benign ones means the managed install is not in a usable state,
     which is a failure of the test's premise rather than of its subject.
     """
-    from ...qdrant_runtime._constants import QdrantProvisionAction
+    from ..._sync_vocabulary import ProvisionAction
     from ...qdrant_runtime._provision import provision
     from ...qdrant_runtime._resolve import resolve_binary
 
     reset_config()
     report = provision()
     assert report.action in {
-        QdrantProvisionAction.CREATED,
-        QdrantProvisionAction.UNCHANGED,
-        QdrantProvisionAction.UPDATED,
+        ProvisionAction.CREATED,
+        ProvisionAction.UNCHANGED,
+        ProvisionAction.UPDATED,
     }, report.message
     resolved = resolve_binary()
     assert resolved is not None, "provisioned binary must resolve"

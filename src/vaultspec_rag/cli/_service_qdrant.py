@@ -13,11 +13,11 @@ from typing import Annotated, Any, NoReturn, cast
 import typer
 
 from .._operator_commands import server_start_command
+from .._sync_vocabulary import ProvisionAction
 from ..config import get_config
 from ..qdrant_runtime._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
-    QdrantProvisionAction,
 )
 from ..qdrant_runtime._provision import provision, provisioned_versions
 from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
@@ -102,7 +102,7 @@ def qdrant_install(
             binary=binary,
             on_progress=progress.stage,
         )
-    failed = report.action == QdrantProvisionAction.FAILED
+    failed = report.action == ProvisionAction.FAILED
 
     if json_mode:
         _emit_json(

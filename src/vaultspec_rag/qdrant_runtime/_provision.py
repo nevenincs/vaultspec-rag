@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from .._atomic_write import write_json_atomically
+from .._sync_vocabulary import ProvisionAction
 from .._units import human_bytes
 from ._constants import (
     ALLOWED_DOWNLOAD_HOSTS,
@@ -34,7 +35,6 @@ from ._constants import (
     QDRANT_RELEASE_BASE_URL,
     QDRANT_SERVER_VERSION,
     ProvisionReport,
-    QdrantProvisionAction,
 )
 from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir, read_manifest
 
@@ -381,7 +381,7 @@ def _provision_operator_binary(
     target = version_dir / binary_filename()
     if dry_run:
         return ProvisionReport(
-            action=QdrantProvisionAction.DRY_RUN,
+            action=ProvisionAction.DRY_RUN,
             binary=target,
             message=(
                 f"Would copy operator binary {binary} to {target} and record "
@@ -390,7 +390,7 @@ def _provision_operator_binary(
         )
     if not binary.is_file():
         return ProvisionReport(
-            action=QdrantProvisionAction.FAILED,
+            action=ProvisionAction.FAILED,
             binary=binary,
             message=f"Operator binary {binary} does not exist.",
         )
@@ -399,7 +399,7 @@ def _provision_operator_binary(
         # intent and the copy (TOCTOU on a shared dir) could register attacker
         # content under an operator-blessed manifest. Require a regular file.
         return ProvisionReport(
-            action=QdrantProvisionAction.FAILED,
+            action=ProvisionAction.FAILED,
             binary=binary,
             message=(
                 f"Operator binary {binary} is a symlink; refusing to follow it. "
@@ -424,9 +424,7 @@ def _provision_operator_binary(
         binary,
     )
     action = (
-        QdrantProvisionAction.UPDATED
-        if previously != "absent"
-        else QdrantProvisionAction.CREATED
+        ProvisionAction.UPDATED if previously != "absent" else ProvisionAction.CREATED
     )
     return ProvisionReport(action=action, binary=target, sha256=digest)
 
@@ -453,7 +451,7 @@ def _download_and_install(
     except ChecksumMismatchError as exc:
         logger.error("qdrant provisioning failed verification: %s", exc)
         return ProvisionReport(
-            action=QdrantProvisionAction.FAILED,
+            action=ProvisionAction.FAILED,
             asset=asset,
             url=url,
             sha256=expected_sha256,
@@ -473,7 +471,7 @@ def _download_and_install(
         (version_dir / binary_filename()).unlink(missing_ok=True)
         logger.error("qdrant provisioning failed: %s", exc)
         return ProvisionReport(
-            action=QdrantProvisionAction.FAILED,
+            action=ProvisionAction.FAILED,
             asset=asset,
             url=url,
             sha256=expected_sha256,
@@ -488,9 +486,7 @@ def _download_and_install(
         source="download",
     )
     action = (
-        QdrantProvisionAction.UPDATED
-        if previously != "absent"
-        else QdrantProvisionAction.CREATED
+        ProvisionAction.UPDATED if previously != "absent" else ProvisionAction.CREATED
     )
     return ProvisionReport(
         action=action,
@@ -545,7 +541,7 @@ def provision(
 
     if state == "verified" and not upgrade:
         return ProvisionReport(
-            action=QdrantProvisionAction.UNCHANGED,
+            action=ProvisionAction.UNCHANGED,
             asset=asset,
             url=url,
             binary=version_dir / binary_filename(),
@@ -557,7 +553,7 @@ def provision(
         # after a constants bump targets a new version dir, so this
         # path is also a no-op.
         return ProvisionReport(
-            action=QdrantProvisionAction.UNCHANGED,
+            action=ProvisionAction.UNCHANGED,
             asset=asset,
             url=url,
             binary=version_dir / binary_filename(),
@@ -566,7 +562,7 @@ def provision(
         )
     if state == "stale" and not upgrade:
         return ProvisionReport(
-            action=QdrantProvisionAction.FAILED,
+            action=ProvisionAction.FAILED,
             asset=asset,
             url=url,
             binary=version_dir / binary_filename(),
@@ -580,7 +576,7 @@ def provision(
 
     if dry_run:
         return ProvisionReport(
-            action=QdrantProvisionAction.DRY_RUN,
+            action=ProvisionAction.DRY_RUN,
             asset=asset,
             url=url,
             binary=version_dir / binary_filename(),

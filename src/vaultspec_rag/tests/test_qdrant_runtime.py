@@ -21,11 +21,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._sync_vocabulary import ProvisionAction
 from ..config import EnvVar, reset_config
 from ..qdrant_runtime._constants import (
     QDRANT_ASSET_SHA256,
     QDRANT_SERVER_VERSION,
-    QdrantProvisionAction,
 )
 from ..qdrant_runtime._provision import (
     ChecksumMismatchError,
@@ -289,7 +289,7 @@ class TestProvision:
     def test_dry_run_writes_nothing(self, isolated_status_dir: Path) -> None:
         report = provision(dry_run=True)
 
-        assert report.action == QdrantProvisionAction.DRY_RUN
+        assert report.action == ProvisionAction.DRY_RUN
         assert report.url.startswith("https://github.com/qdrant/qdrant/")
         assert report.sha256 == QDRANT_ASSET_SHA256[asset_for_platform()]
         assert not (isolated_status_dir / "bin").exists()
@@ -304,7 +304,7 @@ class TestProvision:
 
         report = provision()
 
-        assert report.action == QdrantProvisionAction.UNCHANGED
+        assert report.action == ProvisionAction.UNCHANGED
         assert report.binary == binary
         assert binary.stat().st_mtime_ns == before, "unchanged must not rewrite"
 
@@ -316,7 +316,7 @@ class TestProvision:
 
         report = provision(upgrade=True)
 
-        assert report.action == QdrantProvisionAction.UNCHANGED
+        assert report.action == ProvisionAction.UNCHANGED
 
     def test_stale_install_fails_without_upgrade(
         self, isolated_status_dir: Path
@@ -328,7 +328,7 @@ class TestProvision:
 
         report = provision()
 
-        assert report.action == QdrantProvisionAction.FAILED
+        assert report.action == ProvisionAction.FAILED
         assert "--upgrade" in report.message
 
     def test_operator_binary_registers_without_network(
@@ -340,7 +340,7 @@ class TestProvision:
 
         report = provision(binary=operator_binary)
 
-        assert report.action == QdrantProvisionAction.CREATED
+        assert report.action == ProvisionAction.CREATED
         assert report.binary is not None
         assert report.binary.read_bytes() == b"operator-supplied"
         manifest = json.loads(
@@ -355,7 +355,7 @@ class TestProvision:
         _ = isolated_status_dir
         report = provision(binary=tmp_path / "does-not-exist")
 
-        assert report.action == QdrantProvisionAction.FAILED
+        assert report.action == ProvisionAction.FAILED
 
 
 class TestResolution:

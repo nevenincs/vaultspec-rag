@@ -16,11 +16,12 @@ never consulted at provisioning time.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from .._sync_vocabulary import ProvisionAction
 
 #: Pinned Qdrant server release. Must stay on the same minor line as
 #: the locked qdrant-client (1.18.x as of this pin).
@@ -74,29 +75,12 @@ QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
 MANIFEST_FILENAME: Final[str] = "manifest.json"
 
 
-class QdrantProvisionAction(StrEnum):
-    """Closed outcome vocabulary for the provisioning verb.
-
-    Mirrors the project-wide sync vocabulary: ``created`` /
-    ``updated`` / ``unchanged`` / ``skipped`` / ``failed``, plus
-    ``dry_run`` for the preview path (precedent: the torch-config
-    install actions).
-    """
-
-    CREATED = "created"
-    UPDATED = "updated"
-    UNCHANGED = "unchanged"
-    SKIPPED = "skipped"
-    FAILED = "failed"
-    DRY_RUN = "dry_run"
-
-
 @dataclass
 class ProvisionReport:
     """Structured outcome of one provisioning run.
 
     Attributes:
-        action: A :class:`QdrantProvisionAction` member naming the
+        action: A :class:`ProvisionAction` member naming the
             outcome. ``StrEnum`` members compare equal to their string
             values, so JSON consumers can filter on ``"created"``.
         version: The pinned server version the run targeted.
@@ -111,7 +95,7 @@ class ProvisionReport:
             ``failed``.
     """
 
-    action: QdrantProvisionAction
+    action: ProvisionAction
     version: str = QDRANT_SERVER_VERSION
     asset: str = ""
     url: str = ""
