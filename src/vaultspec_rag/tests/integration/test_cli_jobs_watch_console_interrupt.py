@@ -1,11 +1,18 @@
 """Ctrl+C out of ``server jobs --watch`` with a real console interrupt.
 
-The watch loop parks in a sleep between refreshes, and a terminal ends it by
-delivering a console control event into that sleep. Raising ``KeyboardInterrupt``
-from a substituted sleep asserts that the handler formats an exception the test
-constructed; it cannot show that the signal a terminal actually sends reaches
-the loop and is handled. So the CLI runs as a real child on its own console and
-is interrupted the way an operator interrupts it.
+``--watch`` hands the screen to a full-screen interface, so an interrupt has to
+travel further than it did through a reprint loop: the application owns the
+alternate screen buffer, the cursor and mouse reporting, and it has to give all
+three back on the way out. Raising ``KeyboardInterrupt`` from a substituted
+sleep asserts that a handler formats an exception the test constructed; it
+cannot show that the signal a terminal actually sends reaches a running event
+loop, nor that the terminal survives it. So the CLI runs as a real child on its
+own console and is interrupted the way an operator interrupts it.
+
+An interrupt that ends the process without unwinding the application leaves the
+operator's shell inside the alternate screen with a hidden cursor - a working
+shell that renders as a dead one. That teardown is what the byte-level
+assertions below are reading.
 """
 
 from __future__ import annotations
@@ -13,67 +20,77 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING
 
 import pytest
 
 from .._cli_helpers import _jobs_empty_contract_server
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from ._console_interrupt import (
+    _CREATE_NEW_CONSOLE,
+    _clear_inherited_console_interrupt_deafness,
+    _hidden_console_startupinfo,
+    _interrupt_console_of,
+)
 
 pytestmark = [pytest.mark.integration]
 
-# Conventional interrupted status, 128 + SIGINT.
-_INTERRUPTED_EXIT_CODE = 130
+# Leaving the live view is how an operator finishes with it, by Ctrl+C exactly
+# as by `q`. Nothing was asked for that was not delivered, so there is no
+# failure for a non-zero status to report.
+_OPERATOR_LEFT_EXIT_CODE = 0
 
-_STARTF_USESHOWWINDOW = 0x00000001
-_SW_HIDE = 0
 _RENDER_TIMEOUT = 90.0
 _CLI_EXIT_TIMEOUT = 60.0
 
-_GENERATE_CONSOLE_INTERRUPT = """
-import ctypes
-import sys
+# The terminal state the application takes and must hand back.
+_ENTER_ALTERNATE_SCREEN = b"\x1b[?1049h"
+_LEAVE_ALTERNATE_SCREEN = b"\x1b[?1049l"
+_SHOW_CURSOR = b"\x1b[?25h"
 
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-# Safe here and nowhere else: this process spawns nothing, so the inherited
-# ignore attribute cannot reach the process under test.
-kernel32.SetConsoleCtrlHandler(None, True)
-kernel32.FreeConsole()
-if not kernel32.AttachConsole(int(sys.argv[1])):
-    raise SystemExit(2)
-raise SystemExit(0 if kernel32.GenerateConsoleCtrlEvent(0, 0) else 3)
-"""
+
+def _await_the_first_refresh(
+    proc: subprocess.Popen[bytes], requests: list[str]
+) -> None:
+    """Wait until the view has rendered a real refresh.
+
+    The interrupt has to land in the running event loop rather than during
+    startup; a process interrupted before its terminal setup completes would
+    have nothing to hand back and would pass the teardown assertions trivially.
+    """
+    deadline = time.monotonic() + _RENDER_TIMEOUT
+    while time.monotonic() < deadline and not requests:
+        if proc.poll() is not None:
+            msg = f"the watch exited (rc={proc.returncode}) before refreshing"
+            raise AssertionError(msg)
+        time.sleep(0.05)
+    assert requests, "the watch never issued a refresh"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="console control events")
-def test_a_console_interrupt_ends_the_watch_on_the_interrupted_status(
-    tmp_path: Path,
-) -> None:
-    """Ctrl+C ends the view on 130 with the stop line and no traceback.
+def test_a_console_interrupt_ends_the_watch_and_hands_back_the_terminal() -> None:
+    """Ctrl+C leaves the view cleanly and restores the screen and cursor.
 
-    Reporting 0 would tell a script the watch completed normally. The refresh
-    the loop renders first is a real request to a real server, and the
-    interrupt is the event a terminal generates rather than an exception the
-    test raised into a patched sleep.
+    The refresh the interface renders first is a real request to a real
+    server, and the interrupt is the event a terminal generates rather than an
+    exception the test raised into a patched sleep.
 
-    Proven able to fail: removing the KeyboardInterrupt handler from the watch
-    verb makes the child report the console's own termination status instead of
-    130, and print a traceback rather than the stop line.
+    Proven able to fail, in both directions this test claims:
+
+    - the exit status: parking the watch adapter in a bare sleep after one
+      refresh, instead of handing the screen to the interface, fails on the
+      status assertion with 130 - the entry point's own interrupt guard
+      catching a ``KeyboardInterrupt`` the interface would have absorbed;
+    - the teardown: hard-exiting from a ``SIGINT`` handler inside the
+      interface, so it exits 0 with no traceback but never unwinds, fails on
+      the alternate-screen assertion by name against a stream that enters the
+      screen and never leaves it.
     """
-    import ctypes
-
-    del tmp_path
-    # The ignore attribute is inherited, and a launcher may have set it. A CLI
-    # spawned under an inherited ignore runs straight through the interrupt, so
-    # the guard would be measured against a process that never received it.
-    ctypes.WinDLL("kernel32", use_last_error=True).SetConsoleCtrlHandler(None, False)
+    _clear_inherited_console_interrupt_deafness()
 
     server, thread, requests = _jobs_empty_contract_server()
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags |= _STARTF_USESHOWWINDOW
-    startupinfo.wShowWindow = _SW_HIDE
+    # Bytes, not text: the interface paints escape sequences and box-drawing
+    # characters that the console's ANSI codepage cannot decode, and a decode
+    # error in the reader thread yields a ``None`` stream rather than a failure
+    # anyone can read.
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -87,29 +104,14 @@ def test_a_console_interrupt_ends_the_watch_on_the_interrupted_status(
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        creationflags=subprocess.CREATE_NEW_CONSOLE,
-        startupinfo=startupinfo,
-        text=True,
+        creationflags=_CREATE_NEW_CONSOLE,
+        startupinfo=_hidden_console_startupinfo(),
     )
     try:
-        # Wait for the loop to have rendered a real refresh, so the interrupt
-        # lands in the wait rather than during startup.
-        deadline = time.monotonic() + _RENDER_TIMEOUT
-        while time.monotonic() < deadline and not requests:
-            if proc.poll() is not None:
-                msg = f"the watch exited (rc={proc.returncode}) before refreshing"
-                raise AssertionError(msg)
-            time.sleep(0.05)
-        assert requests, "the watch never issued a refresh"
-
-        sent = subprocess.run(
-            [sys.executable, "-c", _GENERATE_CONSOLE_INTERRUPT, str(proc.pid)],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-        assert sent.returncode == 0, f"could not deliver an interrupt: {sent.stderr}"
+        _await_the_first_refresh(proc, requests)
+        _interrupt_console_of(proc.pid)
+        # A view that swallowed the interrupt would hold the terminal until
+        # this timeout expires, which is the operator-facing failure itself.
         stdout, stderr = proc.communicate(timeout=_CLI_EXIT_TIMEOUT)
     finally:
         if proc.poll() is None:
@@ -119,7 +121,24 @@ def test_a_console_interrupt_ends_the_watch_on_the_interrupted_status(
         server.server_close()
         thread.join(timeout=5)
 
-    assert proc.returncode == _INTERRUPTED_EXIT_CODE
-    assert "Stopped watching jobs." in stdout
-    assert "Traceback" not in stdout
-    assert "Traceback" not in stderr
+    assert proc.returncode == _OPERATOR_LEFT_EXIT_CODE, (
+        f"exit {proc.returncode} (0x{proc.returncode & 0xFFFFFFFF:x}), "
+        f"stderr: {stderr.decode('utf-8', 'replace')}"
+    )
+
+    # Ordering, not presence: an application that emitted the leave sequence
+    # before it ever entered would satisfy a containment check while leaving
+    # the operator on the alternate screen.
+    assert _ENTER_ALTERNATE_SCREEN in stdout, "the interface never took the screen"
+    assert _LEAVE_ALTERNATE_SCREEN in stdout, (
+        "the interrupt left the alternate screen up"
+    )
+    left = stdout.rindex(_LEAVE_ALTERNATE_SCREEN)
+    assert left > stdout.index(_ENTER_ALTERNATE_SCREEN)
+    # The cursor is hidden for the duration and has to come back after the
+    # screen does, or the restored shell has no visible prompt.
+    assert _SHOW_CURSOR in stdout[left:], "the interrupt left the cursor hidden"
+
+    assert b"Traceback" not in stdout
+    assert b"Traceback" not in stderr
+    assert b"KeyboardInterrupt" not in stderr
