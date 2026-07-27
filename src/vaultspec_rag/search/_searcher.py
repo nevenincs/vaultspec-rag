@@ -31,7 +31,9 @@ from ._rerank import rerank_with_graph
 from ._result_shaping import (
     PHASE_DEDUP,
     PHASE_DEMOTE,
+    PHASE_EMBEDDING,
     PHASE_GRAPH_RERANK,
+    PHASE_POSTPROCESS,
     PHASE_PREFER,
     PHASE_QDRANT,
     PHASE_RERANK,
@@ -524,7 +526,7 @@ class VaultSearcher:
             results = apply_status_filter(results, status_spec)
         _record_seconds(timings, PHASE_GRAPH_RERANK, phase_started)
         if timings is not None:
-            timings["postprocess_seconds"] = (
+            timings[PHASE_POSTPROCESS] = (
                 timings.get(PHASE_RESULT_MAPPING, 0.0)
                 + timings.get(PHASE_RERANK, 0.0)
                 + timings.get(PHASE_GRAPH_RERANK, 0.0)
@@ -791,7 +793,7 @@ class VaultSearcher:
             results = _collapse_locale_variants(results)
         _record_seconds(timings, PHASE_DEDUP, phase_started)
         if timings is not None:
-            timings["postprocess_seconds"] = (
+            timings[PHASE_POSTPROCESS] = (
                 timings.get(PHASE_RESULT_MAPPING, 0.0)
                 + timings.get(PHASE_RERANK, 0.0)
                 + timings.get(PHASE_DEMOTE, 0.0)
@@ -917,7 +919,7 @@ class VaultSearcher:
             surface="vault",
             timings=timings,
         )
-        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
         results = self._search_vault_encoded(
             query_vector,
             sparse_vector,
@@ -1080,7 +1082,7 @@ class VaultSearcher:
         results = self._rerank(query_text, results, top_k, timings=timings)
         _record_seconds(timings, PHASE_RERANK, phase_started)
         if timings is not None:
-            timings["postprocess_seconds"] = timings.get(
+            timings[PHASE_POSTPROCESS] = timings.get(
                 PHASE_RESULT_MAPPING, 0.0
             ) + timings.get(PHASE_RERANK, 0.0)
         return results
@@ -1103,7 +1105,7 @@ class VaultSearcher:
             surface="document",
             timings=timings,
         )
-        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
         results = self._search_document_encoded(
             query_vector,
             sparse_vector,
@@ -1208,7 +1210,7 @@ class VaultSearcher:
             surface=None,
             timings=timings,
         )
-        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
 
         allocation = max(1, top_k)
         vault_timings: dict[str, float] = {}
@@ -1312,7 +1314,7 @@ class VaultSearcher:
             surface="code",
             timings=timings,
         )
-        timings["embedding_seconds"] = time.perf_counter() - phase_started
+        timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
         results = self._search_codebase_encoded(
             query_vector,
             sparse_vector,

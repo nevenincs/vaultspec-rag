@@ -861,11 +861,24 @@ class TestSearchPhaseKeysAreNamed:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except SyntaxError:  # pragma: no cover - parsed elsewhere
                 continue
-            # Only LOOKUP positions. The same string is also an HTTP
+            # Only STORE and LOOKUP positions. The same string is also an HTTP
             # response field name in the search route, and that is a separate
             # contract - the wire shape a consumer parses, not the internal
             # key a phase was recorded under. Flagging it would force the two
             # to move together, which is the opposite of what is wanted.
+            #
+            # Subscripts count. A phase is often recorded by assigning into the
+            # mapping rather than through the recorder, and the first version
+            # of this check read only calls - so four keys across three
+            # modules, two of them crossing a module boundary, sat underneath
+            # it untouched.
+            offenders.extend(
+                f"{path.name}:{node.slice.lineno} stores {node.slice.value!r}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Subscript)
+                and isinstance(node.slice, ast.Constant)
+                and node.slice.value in owned
+            )
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue

@@ -59,7 +59,14 @@ from ..logging_config import (
     query_managed_logs,
     render_managed_log_groups,
 )
-from ..search._result_shaping import PHASE_QDRANT, PHASE_RERANK
+from ..search._result_shaping import (
+    PHASE_EMBEDDING,
+    PHASE_MODEL_LOAD,
+    PHASE_POSTPROCESS,
+    PHASE_PROJECT_LEASE,
+    PHASE_QDRANT,
+    PHASE_RERANK,
+)
 from ..service import RegistryFullError
 from ._routes_jobs import (
     _clamp_limit,
@@ -1337,17 +1344,17 @@ def _execute_search_request(
             "timing": {
                 "index_state_seconds": index_state_seconds,
                 "search_seconds": search_seconds,
-                "embedding_seconds": phase_timing.get("embedding_seconds"),
+                "embedding_seconds": phase_timing.get(PHASE_EMBEDDING),
                 "qdrant_seconds": phase_timing.get(PHASE_QDRANT),
                 "rerank_seconds": phase_timing.get(PHASE_RERANK),
-                "postprocess_seconds": phase_timing.get("postprocess_seconds"),
+                "postprocess_seconds": phase_timing.get(PHASE_POSTPROCESS),
                 # Promoted alongside the phases above, not nested only. A
                 # reshape of this dict carried the other phase keys up and left
                 # these two reachable solely through "phases", which silently
                 # broke the diagnostic contract a consumer reads to tell a cold
                 # model load apart from a slow query.
-                "model_load_seconds": phase_timing.get("model_load_seconds"),
-                "project_lease_seconds": phase_timing.get("project_lease_seconds"),
+                "model_load_seconds": phase_timing.get(PHASE_MODEL_LOAD),
+                "project_lease_seconds": phase_timing.get(PHASE_PROJECT_LEASE),
                 "serialization_seconds": time.perf_counter() - phase_started,
                 "queue_wait_seconds": phase_timing.get("queue_wait_seconds", 0.0),
                 "timing_scope": "server_route",
