@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
 import pytest
 
+from ...indexer._vault_meta import VAULT_POINT_SCHEMA, VAULT_POINT_SCHEMA_KEY
 from ...progress import NullProgressReporter
 from ..corpus import build_synthetic_vault
 
@@ -218,7 +219,7 @@ class TestChunkedVaultLifecycle:
             cfg = get_config()
             meta_path = tmp_path / cfg.data_dir / cfg.index_metadata_file
             meta: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
-            meta.pop("__vault_point_schema__")
+            meta.pop(VAULT_POINT_SCHEMA_KEY)
             meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
             result = indexer.incremental_index(reporter=NullProgressReporter())
@@ -226,6 +227,6 @@ class TestChunkedVaultLifecycle:
             # reporting a no-op incremental pass.
             assert result.added == doc_total
             stamped: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
-            assert stamped["__vault_point_schema__"] == "2"
+            assert stamped[VAULT_POINT_SCHEMA_KEY] == VAULT_POINT_SCHEMA
         finally:
             store.close()

@@ -26,6 +26,11 @@ from ..job_control import NO_RUN_CONTROL
 from . import _config_epoch
 from ._index_lifecycle import run_index_lifecycle
 from ._streaming import _stream_encode_and_upsert_vault
+from ._vault_meta import (
+    VAULT_CONTENT_EPOCH_KEY,
+    VAULT_POINT_SCHEMA,
+    VAULT_POINT_SCHEMA_KEY,
+)
 from ._vault_prep import IndexResult, prepare_document
 
 if TYPE_CHECKING:
@@ -41,24 +46,6 @@ if TYPE_CHECKING:
     from ._reuse import DonorReuseContext, ReuseStats
 
 logger = logging.getLogger(__name__)
-
-#: Version of the vault point layout. ``2`` stores one point per
-#: heading-aware chunk (``doc_id#c{ordinal}``); ``1`` (or an absent
-#: marker over a non-empty collection) stored one point per document.
-#: A mismatch triggers a one-time clean rebuild so old-layout points
-#: never coexist with chunked ones.
-_VAULT_POINT_SCHEMA = "2"
-
-#: Reserved key carrying the layout version inside the hash-metadata
-#: sidecar. Never collides with document ids (which are relative paths).
-_SCHEMA_KEY = "__vault_point_schema__"
-
-#: Reserved key carrying the content epoch over ``vault_chunk_chars``. A
-#: mismatch means the chunk boundary changed, so every document re-chunks
-#: with unchanged bytes and the stored vectors are stale - the same drift
-#: class as ``html_strip`` on the code side. Begins with ``__`` so
-#: ``_load_meta`` strips it from document-id set arithmetic.
-_CONTENT_EPOCH_KEY = "__vault_content_epoch__"
 
 
 @contextlib.contextmanager
@@ -1069,7 +1056,7 @@ class VaultIndexer:
         """
         raw = self._read_meta_raw()
         if raw:
-            return raw.get(_SCHEMA_KEY) != _VAULT_POINT_SCHEMA
+            return raw.get(VAULT_POINT_SCHEMA_KEY) != VAULT_POINT_SCHEMA
         try:
             return self.store.count() > 0
         except (OSError, RuntimeError):
@@ -1099,7 +1086,7 @@ class VaultIndexer:
         existing install is not clean-rebuilt merely for upgrading.
         """
         raw = self._read_meta_raw()
-        stored = raw.get(_CONTENT_EPOCH_KEY)
+        stored = raw.get(VAULT_CONTENT_EPOCH_KEY)
         if stored is None:
             return False
         return stored != self._current_vault_content_epoch()
@@ -1128,8 +1115,8 @@ class VaultIndexer:
         run_control.checkpoint()
         stamped = {
             **meta,
-            _SCHEMA_KEY: _VAULT_POINT_SCHEMA,
-            _CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
+            VAULT_POINT_SCHEMA_KEY: VAULT_POINT_SCHEMA,
+            VAULT_CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
         }
         write_json_atomically(self._meta_path, stamped, indent=2)
         run_control.checkpoint()
