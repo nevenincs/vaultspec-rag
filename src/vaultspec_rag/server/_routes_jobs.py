@@ -34,6 +34,7 @@ __all__ = [
     "_job_stalled",
     "_job_summary",
     "_job_with_liveness",
+    "_machine_pressure",
     "_normalise_filter_value",
     "_normalise_job_source_filter",
     "_parse_since_seconds",
@@ -799,6 +800,60 @@ def _job_summary(
         "retryable": tally.retryable,
         "error_kinds": tally.error_kinds,
     }
+
+
+def _machine_pressure(
+    records: list[dict[str, object]],
+    *,
+    now: float,
+) -> dict[str, object]:
+    """The machine pressure block over the full job snapshot.
+
+    Record plumbing only, using the same readers the per-job verdict uses.
+    Every running job's forward telemetry feeds the tier's forward signal,
+    but one job anchors the backend probe: the probe is a bounded wait on
+    the reporting thread, so its cost must not scale with the number of
+    running jobs. Concurrent jobs against *different* stores therefore
+    leave the others' backends unsampled - the tier reports a bounded
+    sample of the machine, not a survey of it. The tier itself is computed
+    in the service domain.
+    """
+    running = [
+        record
+        for record in records
+        if job_state(record) == JobState.RUNNING.value and not _job_is_waiting(record)
+    ]
+    anchor = running[0] if running else None
+    return _jobs.machine_pressure(
+        now=now,
+        forwards=[_job_forward(record) for record in running],
+        project_root=_job_project_root(anchor) if anchor is not None else None,
+        source=job_source(anchor) if anchor is not None else "code",
+        store_failures=_recent_store_failures(records, now=now),
+    )
+
+
+def _recent_store_failures(
+    records: list[dict[str, object]],
+    *,
+    now: float,
+) -> tuple[str, ...]:
+    """Typed failure kinds from jobs that died inside the recency window.
+
+    A store that has already killed jobs is harder evidence about its
+    condition than any read probe, which a full disk answers perfectly
+    well. The window is the shared stall threshold rather than one minted
+    here, so what counts as current has one definition service-wide.
+    """
+    kinds: list[str] = []
+    for record in records:
+        kind = record.get("error_kind")
+        if not isinstance(kind, str) or not kind:
+            continue
+        age = _age_seconds(_job_number(record, "finished_at"), now)
+        if age is not None and age <= STALL_THRESHOLD_SECONDS:
+            kinds.append(kind)
+    return tuple(kinds)
 
 
 def _prioritise_running_jobs(
