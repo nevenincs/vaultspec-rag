@@ -32,6 +32,7 @@ from ...job_models import (
     ResumeStrategy,
 )
 from ...progress import NullProgressReporter
+from ...registry import get_registry, reset_registry
 from ...server import WatcherStartOutcome
 from ...server import _watcher as watcher_lifecycle
 from ...store_runtime import VaultStore
@@ -87,41 +88,52 @@ async def managed_watcher_runtime(
             "watch_circuit_failure_threshold": 2,
         }
     )
-    registry = server._registry
-    registry.prepare_startup()
+    # Claim a fresh singleton rather than inherit whatever the run left open,
+    # and reach it through ``get_registry()``: reading ``server._registry``
+    # here would hand back the instance a previous module closed, which
+    # ``prepare_startup()`` reopens without complaint, leaving this fixture
+    # tidying an orphan while the dispatcher opens slots on the live registry.
+    reset_registry()
+    registry = get_registry()
     registry._model = embedding_model  # pyright: ignore[reportPrivateUsage]
-    assert (  # pyright: ignore[reportPrivateUsage]
-        registry.health()["project_count"],
-        bool(server._watcher_tasks),
-        bool(watcher_lifecycle._watcher_drains),
-    ) == (0, False, False)
+    assert (not server._watcher_tasks) and (
+        not watcher_lifecycle._watcher_drains  # pyright: ignore[reportPrivateUsage]
+    )
     manager = jobs.get_job_manager()
 
-    yield registry, manager
-
-    cleanup_tasks = server._stop_all_watchers()
-    if cleanup_tasks:
-        cleanup_results = await asyncio.gather(*cleanup_tasks)
-        assert all(cleanup_results)
-    assert await server._wait_for_watcher_cleanup(timeout_seconds=_WATCHER_WAIT_SECONDS)
-    for snapshot in manager.active():
-        outcome = manager.set_desired_state(
-            snapshot.id,
-            DesiredJobState.CANCELLED,
-        )
-        assert outcome.status is not JobOutcomeStatus.ERROR
-    for snapshot in manager.active():
-        if snapshot.runtime.task_active:
-            joined = await manager.wait_for_attempt(
-                snapshot.id,
-                timeout_seconds=_WATCHER_WAIT_SECONDS,
+    try:
+        yield registry, manager
+    finally:
+        try:
+            cleanup_tasks = server._stop_all_watchers()
+            if cleanup_tasks:
+                cleanup_results = await asyncio.gather(*cleanup_tasks)
+                assert all(cleanup_results)
+            assert await server._wait_for_watcher_cleanup(
+                timeout_seconds=_WATCHER_WAIT_SECONDS
             )
-            assert joined.code == "attempt_released"
-    assert not manager.active()
-    for project in registry.health()["projects"]:
-        registry.close_project(Path(project))
-    jobs.reset()
-    reset_limiters()
+            for snapshot in manager.active():
+                outcome = manager.set_desired_state(
+                    snapshot.id,
+                    DesiredJobState.CANCELLED,
+                )
+                assert outcome.status is not JobOutcomeStatus.ERROR
+            for snapshot in manager.active():
+                if snapshot.runtime.task_active:
+                    joined = await manager.wait_for_attempt(
+                        snapshot.id,
+                        timeout_seconds=_WATCHER_WAIT_SECONDS,
+                    )
+                    assert joined.code == "attempt_released"
+            assert not manager.active()
+        finally:
+            # Release the registry even when a drain assertion above fails:
+            # leaving slots open turns one failure into a setup error for
+            # every test that follows.
+            for project in registry.health()["projects"]:
+                registry.close_project(Path(project))
+            jobs.reset()
+            reset_limiters()
 
 
 def _watcher_jobs(manager: JobManager, root: Path) -> list[JobSnapshot]:
