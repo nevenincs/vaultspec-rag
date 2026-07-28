@@ -1,4 +1,4 @@
-"""One bounded real-GPU worker producing every frozen-corpus ranking gate's evidence.
+"""One real-GPU experiment producing every frozen-corpus ranking gate's evidence.
 
 The intent-ranking metrics and the persona testimonials are two views of the
 same experiment: both score pre-declared authorities against a real GPU index
@@ -8,30 +8,23 @@ and embeds the whole pinned vault - and running it once per gate indexed the
 identical corpus twice for no additional coverage.
 
 So the corpus is materialised and indexed exactly once here, both gates' real
-searches run against it, and the observations are handed back as JSON. Model
-construction, production indexing, and every production search stay inside one
-bounded, killable child under a single deadline, so external metadata retries
-cannot leave pytest suspended in fixture setup. The parent consumes the
-worker's evidence and does the judging: this module runs the experiment, the
-test modules decide what the results mean.
+searches run against it, and the observations are handed back as one typed
+record. The work runs on the session-shared embedding model and reranker: a
+private copy of either is a second full model set on a card the suite already
+fills, and oversubscribing the device spills into shared system memory and
+slows every later forward pass. Hugging Face acquisition stays bounded where
+it belongs - in the killable snapshot worker those two session fixtures call
+before constructing anything cache-only - so no metadata retry can reach this
+module. It runs the experiment; the test modules decide what the results mean.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
-import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from .._model_setup import (
-    model_setup_timeout_seconds,
-    models_are_cached,
-    run_bounded_process,
-)
 from ..quality._frozen_corpus import (
     frozen_vault_document_count,
     materialize_frozen_vault,
@@ -45,6 +38,9 @@ from ..quality.metrics import (
 from ..quality.rubric import Intent
 
 if TYPE_CHECKING:
+    from sentence_transformers import CrossEncoder
+
+    from ...embeddings import EmbeddingModel
     from ...search import SearchResult
 
 #: Depth the intent gate scores to, and the ``top_k`` its searches request.
@@ -211,155 +207,70 @@ def _copy_real_vault_corpus(destination_root: Path) -> int:
     return real_vault_document_count(destination_vault)
 
 
-def build_frozen_corpus_evidence(output_path: Path) -> FrozenCorpusEvidence:
-    """Run the complete real-GPU ranking setup inside one bounded process."""
-    from ...config._settings import get_config
+def build_frozen_corpus_evidence(
+    root: Path,
+    model: EmbeddingModel,
+    reranker: CrossEncoder,
+) -> FrozenCorpusEvidence:
+    """Index the frozen corpus under *root* and record every gate's observations.
 
-    cfg = get_config()
-    model_ids = (
-        str(cfg.embedding_model),
-        str(cfg.sparse_model),
-        str(cfg.reranker_model),
-    )
-    local_files_only = models_are_cached(model_ids)
-    command = [
-        sys.executable,
-        "-m",
-        "vaultspec_rag.tests.integration._frozen_corpus_evidence",
-        "--worker",
-        "--repo-root",
-        str(repo_root()),
-        "--output",
-        str(output_path),
-    ]
-    if local_files_only:
-        command.append("--local-files-only")
-
-    timeout_seconds = model_setup_timeout_seconds()
-    run_bounded_process(
-        command,
-        timeout_seconds=timeout_seconds,
-        operation="real frozen-corpus ranking session fixture",
-        context=(
-            f"models={model_ids!r}, local_files_only={local_files_only}, "
-            f"corpus='frozen reference vault', "
-            f"deadline={timeout_seconds:.3f}s"
-        ),
-    )
-    try:
-        payload = json.loads(output_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        msg = f"frozen-corpus worker did not produce valid evidence at {output_path}"
-        raise RuntimeError(msg) from exc
-    return cast("FrozenCorpusEvidence", payload)
-
-
-def _run_worker(*, output_path: Path, local_files_only: bool) -> None:
-    """Build and evaluate the real frozen corpus in the bounded child."""
-    from ... import EmbeddingModel, VaultSearcher
+    Takes the session's own model and reranker rather than constructing either:
+    the reranker arrives the way the service injects it, so no searcher here
+    lazily loads a private copy, and nothing in this module can reach Hugging
+    Face.
+    """
+    from ... import VaultSearcher
     from ..conftest import _index_corpus
 
-    with tempfile.TemporaryDirectory(prefix="vaultspec-frozen-corpus-") as temp_dir:
-        root = Path(temp_dir)
-        corpus_documents = _copy_real_vault_corpus(root)
-        print(
-            f"stage=corpus-ready documents={corpus_documents}",
-            flush=True,
-        )
-        model = EmbeddingModel(local_files_only=local_files_only)
-        print("stage=embedding-model-ready", flush=True)
-        components = _index_corpus(root, model)
-        print(
-            f"stage=index-ready documents={components['index_result'].total}",
-            flush=True,
-        )
-        searcher = VaultSearcher(
-            root,
-            components["model"],
-            components["store"],
-            local_files_only=local_files_only,
-        )
-        try:
-            query_evidence: list[QueryEvidence] = []
-            for query in load_queries():
-                print(f"stage=query-start text={query['text']!r}", flush=True)
-                results: list[SearchResult] = searcher.search_vault(
-                    str(query["text"]),
-                    top_k=NDCG_K,
-                    intent=str(query["intent"]),
-                )
-                ranked_ids = [result.id for result in results]
-                query_evidence.append(
-                    QueryEvidence(
-                        report=evaluate_query(ranked_ids, query),
-                        ranked_ids=ranked_ids,
-                        doc_types=[result.doc_type for result in results],
-                    ),
-                )
-                print(f"stage=query-complete text={query['text']!r}", flush=True)
-
-            testimonial_evidence: list[TestimonialEvidence] = []
-            for scenario in SCENARIOS:
-                print(f"stage=scenario-start persona={scenario.persona!r}", flush=True)
-                scenario_results = searcher.search_vault(
-                    scenario.query,
-                    top_k=TESTIMONIAL_TOP_K,
-                    intent=scenario.intent,
-                )
-                testimonial_evidence.append(
-                    TestimonialEvidence(
-                        persona=scenario.persona,
-                        intent=scenario.intent,
-                        query=scenario.query,
-                        expected_authority=scenario.expected_authority,
-                        observed_top=[result.id for result in scenario_results],
-                    ),
-                )
-                print(
-                    f"stage=scenario-complete persona={scenario.persona!r}",
-                    flush=True,
-                )
-
-            evidence = FrozenCorpusEvidence(
-                corpus_documents=corpus_documents,
-                indexed_documents=components["index_result"].total,
-                queries=query_evidence,
-                testimonials=testimonial_evidence,
-            )
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(
-                json.dumps(evidence, indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
-        finally:
-            components["store"].close()
-
-
-def _parse_args() -> argparse.Namespace:
-    """Parse the private frozen-corpus worker command line."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--worker", action="store_true")
-    parser.add_argument("--repo-root", type=Path)
-    parser.add_argument("--output", type=Path)
-    parser.add_argument("--local-files-only", action="store_true")
-    return parser.parse_args()
-
-
-def main() -> int:
-    """Run the private bounded frozen-corpus worker."""
-    args = _parse_args()
-    if not args.worker or args.repo_root is None or args.output is None:
-        raise SystemExit("this module is a private frozen-corpus worker")
-    if args.repo_root.resolve() != repo_root().resolve():
-        raise SystemExit(
-            f"worker repository mismatch: {args.repo_root} != {repo_root()}",
-        )
-    _run_worker(
-        output_path=args.output,
-        local_files_only=args.local_files_only,
+    corpus_documents = _copy_real_vault_corpus(root)
+    components = _index_corpus(root, model)
+    searcher = VaultSearcher(
+        root,
+        components["model"],
+        components["store"],
+        reranker=reranker,
     )
-    return 0
+    try:
+        query_evidence: list[QueryEvidence] = []
+        for query in load_queries():
+            results: list[SearchResult] = searcher.search_vault(
+                str(query["text"]),
+                top_k=NDCG_K,
+                intent=str(query["intent"]),
+            )
+            ranked_ids = [result.id for result in results]
+            query_evidence.append(
+                QueryEvidence(
+                    report=evaluate_query(ranked_ids, query),
+                    ranked_ids=ranked_ids,
+                    doc_types=[result.doc_type for result in results],
+                ),
+            )
 
+        testimonial_evidence: list[TestimonialEvidence] = []
+        for scenario in SCENARIOS:
+            scenario_results = searcher.search_vault(
+                scenario.query,
+                top_k=TESTIMONIAL_TOP_K,
+                intent=scenario.intent,
+            )
+            testimonial_evidence.append(
+                TestimonialEvidence(
+                    persona=scenario.persona,
+                    intent=scenario.intent,
+                    query=scenario.query,
+                    expected_authority=scenario.expected_authority,
+                    observed_top=[result.id for result in scenario_results],
+                ),
+            )
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+        return FrozenCorpusEvidence(
+            corpus_documents=corpus_documents,
+            indexed_documents=components["index_result"].total,
+            queries=query_evidence,
+            testimonials=testimonial_evidence,
+        )
+    finally:
+        # Releases the local-Qdrant sqlite handles; on Windows an open handle
+        # survives the directory it was opened under.
+        components["store"].close()

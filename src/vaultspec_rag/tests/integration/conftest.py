@@ -255,19 +255,26 @@ def _verify_offline_service_startup(log_path: Path, stages: list[str]) -> str:
 
 @pytest.fixture(scope="session")
 def frozen_corpus_evidence(
+    embedding_model: EmbeddingModel,
+    shared_reranker: CrossEncoder,
     tmp_path_factory: TempPathFactory,
 ) -> FrozenCorpusEvidence:
     """Real ranking observations over one shared index of the frozen vault.
 
     Every frozen-corpus gate consumes this one fixture, so the pinned vault is
     materialised and embedded exactly once per session rather than once per
-    gate. See :mod:`._frozen_corpus_evidence` for the bounded worker that
-    produces it.
+    gate. Depending on the two model fixtures is what keeps this to one model
+    set on the device: they own the session's dense, sparse and reranker
+    weights, and they acquire any missing snapshot through the killable
+    bounded worker before constructing anything cache-only.
     """
     from ._frozen_corpus_evidence import build_frozen_corpus_evidence
 
-    output_path = tmp_path_factory.mktemp("frozen-corpus") / "evidence.json"
-    return build_frozen_corpus_evidence(output_path)
+    return build_frozen_corpus_evidence(
+        tmp_path_factory.mktemp("frozen-corpus"),
+        embedding_model,
+        shared_reranker,
+    )
 
 
 @pytest.fixture
