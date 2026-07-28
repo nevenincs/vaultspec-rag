@@ -211,6 +211,8 @@ class EnvVar(StrEnum):
     STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS = (
         "VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS"
     )
+    # Automatic non-destructive repair of a demonstrably shrunken index.
+    INTEGRITY_AUTO_REPAIR = "VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR"
     # Geometry reconcile knobs (non-destructive; see storage-prealloc-reclaim).
     STORAGE_RECONCILE = "VAULTSPEC_RAG_STORAGE_RECONCILE"
     STORAGE_RECONCILE_MAX_PER_CYCLE = "VAULTSPEC_RAG_STORAGE_RECONCILE_MAX_PER_CYCLE"
