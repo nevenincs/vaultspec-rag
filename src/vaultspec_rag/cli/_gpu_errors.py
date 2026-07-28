@@ -147,6 +147,15 @@ def durable_tool_install_command() -> str:
     The platform tag stays hand-picked: it must match what PyTorch actually
     publishes (``manylinux_2_28_x86_64``), which is not necessarily the first
     platform tag ``packaging`` yields for the host.
+
+    The command must also carry ``--python``: ``uv tool install --force``
+    rebuilds the tool env with uv's *default* python request, not the
+    interpreter that printed this command, so on a host whose default is a
+    different version (or a free-threaded build) the pinned wheel fails the
+    resolve on a tag mismatch that never names the real cause. The request is
+    parsed out of the same tag as the wheel filename so the two cannot
+    diverge, and uv records ``python`` in the tool receipt, so upgrades keep
+    resolving on the matching interpreter.
     """
     import sys
 
@@ -156,11 +165,19 @@ def durable_tool_install_command() -> str:
 
     platform_tag = "win_amd64" if sys.platform == "win32" else "manylinux_2_28_x86_64"
     tag = next(iter(cpython_tags()))
+    # tag.interpreter is ``cp<major><minor>`` (single-digit major); uv's
+    # free-threaded request form is ``X.Yt``, signalled by the abi suffix.
+    python_request = f"{tag.interpreter[2]}.{tag.interpreter[3:]}"
+    if tag.abi.endswith("t"):
+        python_request += "t"
     wheel = (
         f"{CU130_INDEX_URL}/torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130"
         f"-{tag.interpreter}-{tag.abi}-{platform_tag}.whl"
     )
-    return f'uv tool install --force "vaultspec-rag[mcp]" --with "torch @ {wheel}"'
+    return (
+        f"uv tool install --force --python {python_request} "
+        f'"vaultspec-rag[mcp]" --with "torch @ {wheel}"'
+    )
 
 
 def _cpu_only_message() -> str:

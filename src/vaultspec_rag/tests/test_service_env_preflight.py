@@ -198,6 +198,12 @@ class TestRemediationCommands:
             f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-{tag.interpreter}-{tag.abi}-"
             in cmd
         )
+        # `uv tool install --force` rebuilds the env with uv's DEFAULT python
+        # request, not the interpreter that printed the command, so the wheel
+        # pin must travel with a matching --python request (uv records it in
+        # the receipt). Derived from sys.version_info here - an independent
+        # source from the packaging tag the implementation parses.
+        assert f"--python {sys.version_info[0]}.{sys.version_info[1]}" in cmd
 
     def test_durable_command_names_the_free_threaded_abi(
         self, monkeypatch: pytest.MonkeyPatch
@@ -229,6 +235,14 @@ class TestRemediationCommands:
         )
         assert "-cp314-cp314-" not in cmd, (
             "the GIL wheel was named for a free-threaded interpreter"
+        )
+        # The --python request must come from the SAME tag as the wheel (the
+        # test interpreter is a GIL build with a different version, so an
+        # implementation reading sys.version_info emits that version without
+        # the t suffix and fails here) - otherwise install resolves on an
+        # interpreter the pinned wheel cannot satisfy.
+        assert "--python 3.14t " in cmd, (
+            f"--python request must name the free-threaded interpreter; was: {cmd}"
         )
 
 
