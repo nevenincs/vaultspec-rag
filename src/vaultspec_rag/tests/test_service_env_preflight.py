@@ -184,7 +184,10 @@ class TestRemediationCommands:
         # so the durable form must be the --with direct wheel URL.
         assert "--with" in cmd
         assert "--index" not in cmd
-        assert f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-cp313-cp313-" in cmd
+        # The ABI tag tracks the RUNNING interpreter — a hardcoded tag hands a
+        # 3.13 wheel to a 3.14 install and uv rejects it on a tag mismatch.
+        abi = f"cp{sys.version_info[0]}{sys.version_info[1]}"
+        assert f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-{abi}-{abi}-" in cmd
 
 
 class TestEphemeralEnvWarning:

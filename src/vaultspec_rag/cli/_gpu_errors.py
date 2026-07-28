@@ -130,15 +130,21 @@ def durable_tool_install_command() -> str:
     an upgrade re-resolved torch to the CPU wheel), so the direct URL is the
     only re-resolution-proof pin. The service must be stopped first: a forced
     reinstall while it runs fails mid-removal on the locked Scripts dir.
+
+    A direct wheel URL has to name one ABI, so the CPython tag is derived from
+    the running interpreter rather than written down. Hardcoding it hands a
+    3.13 wheel to whoever is running 3.14, and uv rejects the mismatch with a
+    tag error that says nothing about why the command was wrong.
     """
     import sys
 
     from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
 
     platform_tag = "win_amd64" if sys.platform == "win32" else "manylinux_2_28_x86_64"
+    abi = f"cp{sys.version_info[0]}{sys.version_info[1]}"
     wheel = (
         f"{CU130_INDEX_URL}/torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130"
-        f"-cp313-cp313-{platform_tag}.whl"
+        f"-{abi}-{abi}-{platform_tag}.whl"
     )
     return f'uv tool install --force "vaultspec-rag[mcp]" --with "torch @ {wheel}"'
 

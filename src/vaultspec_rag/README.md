@@ -6,7 +6,7 @@ vaultspec-core manages a `.vault/` directory of markdown documents - research no
 
 ## Requirements
 
-- Python 3.13 or newer
+- CPython 3.13 or 3.14
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - An NVIDIA GPU with CUDA
 - About 3 GB of free GPU memory

@@ -2,7 +2,7 @@
 
 By the end of this tutorial you have vaultspec-rag installed, a search service running, your project indexed, and a first result on screen. Run the steps in order.
 
-This needs an NVIDIA GPU with CUDA support and roughly 3 GB of free GPU memory. Without one, vaultspec-rag does not run, and you cannot complete the rest of this tutorial. You also need [uv](https://docs.astral.sh/uv/) and Python 3.13 or newer. The [requirements](../README.md#requirements) section lists the full set. For deeper detail, see the [installation guide](installation.md) and the [architecture overview](architecture.md).
+This needs an NVIDIA GPU with CUDA support and roughly 3 GB of free GPU memory. Without one, vaultspec-rag does not run, and you cannot complete the rest of this tutorial. You also need [uv](https://docs.astral.sh/uv/) and CPython 3.13 or 3.14. The [requirements](../README.md#requirements) section lists the full set. For deeper detail, see the [installation guide](installation.md) and the [architecture overview](architecture.md).
 
 ## Step 1: Install and provision
 

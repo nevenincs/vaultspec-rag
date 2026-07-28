@@ -6,7 +6,7 @@ This guide covers how to install the package, provision its dependencies, verify
 
 You need:
 
-- Python 3.13.x. The runtime is locked to CPython 3.13; 3.14 and later are rejected at import.
+- CPython 3.13 or 3.14. The runtime accepts that range and rejects anything outside it at import; 3.15 and later are refused until the test matrix covers them.
 - [uv](https://docs.astral.sh/uv/) for dependency and tool management.
 - An NVIDIA GPU with a working CUDA driver and roughly 3 GB of free video memory (VRAM).
 - Linux or Windows.
