@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING, Any, cast
 from typer.core import TyperCommand, TyperOption
 
 from ..serviceclient._discovery import _default_service_port
-from ._app import JSON_OPTION_HELP, server_app
+from ._app import (
+    JSON_OPTION_HELP,
+    PORT_OPTION_HELP,
+    WATCH_INTERVAL_OPTION_HELP,
+    WATCH_OPTION_HELP,
+    server_app,
+)
 from ._render import _emit_json
 from ._service_jobs_presentation import render_jobs_result
 from ._service_jobs_query import (
@@ -33,7 +39,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class _ServiceJobsOptions:
+class ServiceJobsOptions:
     limit: int = 20
     state: str | None = None
     index: str | None = None
@@ -113,7 +119,7 @@ class _ServiceJobsCommand(TyperCommand):
                     param_decls=["--port"],
                     type=int,
                     default=None,
-                    help="Service port (defaults to running service).",
+                    help=PORT_OPTION_HELP,
                 ),
                 TyperOption(
                     param_decls=["--json"],
@@ -129,21 +135,21 @@ class _ServiceJobsCommand(TyperCommand):
                     param_decls=["--watch"],
                     default=False,
                     is_flag=True,
-                    help="Open the interactive jobs interface with per-job controls.",
+                    help=WATCH_OPTION_HELP,
                 ),
                 TyperOption(
                     param_decls=["--interval"],
                     type=float,
                     default=2.0,
-                    help="Seconds between refreshes in the interactive interface.",
+                    help=WATCH_INTERVAL_OPTION_HELP,
                 ),
             )
         )
 
     def invoke(self, ctx: ClickContext) -> Any:
         params = ctx.params
-        return _run_service_jobs(
-            _ServiceJobsOptions(
+        return run_service_jobs(
+            ServiceJobsOptions(
                 limit=cast("int", params["limit"]),
                 state=cast("str | None", params["state"]),
                 index=cast("str | None", params["index"]),
@@ -169,7 +175,7 @@ def service_jobs() -> None:
     """Register the custom jobs command schema."""
 
 
-def _run_service_jobs(options: _ServiceJobsOptions) -> None:
+def run_service_jobs(options: ServiceJobsOptions) -> None:
     """Show recent index update activity from the running service."""
     json_mode = options.json_mode
     interval = options.interval
