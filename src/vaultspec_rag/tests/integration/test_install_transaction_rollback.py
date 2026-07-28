@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
-    InstallMode,  # pyright: ignore[reportMissingTypeStubs]
+    InstallMode,
 )
 from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
     write_manifest,
 )
 from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
-    read_package_declaration,  # pyright: ignore[reportMissingTypeStubs]
+    read_package_declaration,
 )
 
 from ...commands._install import install_run

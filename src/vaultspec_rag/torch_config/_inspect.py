@@ -169,7 +169,7 @@ def match_source_entry(entry: TableLike) -> str:
     if idx != CU130_INDEX_NAME:
         return ""
     marker = tget(entry, "marker")
-    extras = set(cast("dict[str, object]", entry).keys()) - {"index", "marker"}  # pyright: ignore[reportUnknownMemberType]  # tomlkit keys() returns dict_keys[Unknown, Unknown]
+    extras = set(cast("dict[str, object]", entry).keys()) - {"index", "marker"}
     if marker == CU130_MARKER and not extras:
         return "canonical"
     return "conflict"

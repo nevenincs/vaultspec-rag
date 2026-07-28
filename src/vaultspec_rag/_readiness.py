@@ -221,7 +221,7 @@ def _torch_readiness() -> DependencyReadiness:
     from .torch_config._constants import TorchDiagnosis
     from .torch_config._diagnose import diagnose_torch
 
-    cuda_build = getattr(torch.version, "cuda", None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # torch.version is loosely typed
+    cuda_build = getattr(torch.version, "cuda", None)
     available = bool(torch.cuda.is_available())
     diagnosis = diagnose_torch(cuda_build, available)
 
@@ -275,7 +275,7 @@ def _models_readiness() -> DependencyReadiness:
     """
     try:
         from huggingface_hub import (
-            try_to_load_from_cache,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
+            try_to_load_from_cache,
         )
     except ImportError:
         return DependencyReadiness(

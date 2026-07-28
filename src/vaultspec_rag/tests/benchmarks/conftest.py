@@ -36,7 +36,7 @@ def _bench_components(  # pyright: ignore[reportUnusedFunction]
     yield cast(
         "RagComponentsWithManifest",
         components.__class__(  # type: ignore[call-arg]
-            **components,  # type: ignore[misc]
+            **components,
             manifest=manifest,
             reranker=shared_reranker,
         ),

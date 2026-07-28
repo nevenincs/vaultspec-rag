@@ -93,7 +93,7 @@ async def _stop_still_draining(root: Path) -> AsyncGenerator[None]:
         server._watcher_tasks[root] = intake
         server._watcher_stops[root] = asyncio.Event()
     server._stop_watcher(root)
-    assert root in watcher_lifecycle._watcher_drains  # pyright: ignore[reportPrivateUsage]
+    assert root in watcher_lifecycle._watcher_drains
     assert root not in server._watcher_tasks
     try:
         yield
@@ -106,7 +106,7 @@ async def _stop_still_draining(root: Path) -> AsyncGenerator[None]:
             root,
             timeout_seconds=_DRAIN_TIMEOUT_SECONDS,
         )
-        assert root not in watcher_lifecycle._watcher_drains  # pyright: ignore[reportPrivateUsage]
+        assert root not in watcher_lifecycle._watcher_drains
         assert root not in server._watcher_tasks
 
 

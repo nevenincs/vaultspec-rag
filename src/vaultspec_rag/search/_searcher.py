@@ -27,7 +27,7 @@ from ._noise import (
 from ._parsing import parse_query
 from ._postprocess import (
     GLOB_FETCH_MULTIPLIER,
-    _collapse_locale_variants,  # pyright: ignore[reportPrivateUsage]  # intra-package intentional re-export
+    _collapse_locale_variants,
 )
 from ._rerank import rerank_with_graph
 from ._result_shaping import (

@@ -1149,13 +1149,13 @@ class TestInstallTorchGroupPlacement:
         parsed = tomlkit.parse(pyproject.read_text(encoding="utf-8"))
 
         # torch is in the group...
-        group_deps = parsed["dependency-groups"]["rag"]  # pyright: ignore[reportIndexIssue]
-        assert any("torch" in str(entry) for entry in group_deps)  # pyright: ignore[reportGeneralTypeIssues]
+        group_deps = parsed["dependency-groups"]["rag"]
+        assert any("torch" in str(entry) for entry in group_deps)
 
         # ...and NOT in project.dependencies (which only carries the
         # original vaultspec-rag entry).
-        project_deps = parsed["project"]["dependencies"]  # pyright: ignore[reportIndexIssue]
-        assert not any("torch" in str(entry) for entry in project_deps)  # pyright: ignore[reportGeneralTypeIssues]
+        project_deps = parsed["project"]["dependencies"]
+        assert not any("torch" in str(entry) for entry in project_deps)
 
         # The cu130 index + sources block still landed.
         assert _inspect.detect_state(pyproject) == TorchConfigState.CANONICAL
@@ -1183,8 +1183,8 @@ class TestInstallTorchGroupPlacement:
         parsed = tomlkit.parse(
             (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
         )
-        dev_deps = parsed["dependency-groups"]["dev"]  # pyright: ignore[reportIndexIssue]
-        assert any("torch" in str(entry) for entry in dev_deps)  # pyright: ignore[reportGeneralTypeIssues]
+        dev_deps = parsed["dependency-groups"]["dev"]
+        assert any("torch" in str(entry) for entry in dev_deps)
 
     def test_marker_records_group_location_and_uninstall_removes_group(
         self, consumer_workspace: Path
@@ -1205,8 +1205,8 @@ class TestInstallTorchGroupPlacement:
         assert "managed-torch-direct-dependency" not in after
         # The original project dep survived untouched.
         parsed = tomlkit.parse(after)
-        project_deps = parsed["project"]["dependencies"]  # pyright: ignore[reportIndexIssue]
-        assert any("vaultspec-rag" in str(entry) for entry in project_deps)  # pyright: ignore[reportGeneralTypeIssues]
+        project_deps = parsed["project"]["dependencies"]
+        assert any("vaultspec-rag" in str(entry) for entry in project_deps)
 
     def test_legacy_boolean_marker_still_removes_from_project_deps(
         self, tmp_path: Path
@@ -1313,8 +1313,8 @@ class TestInstallTorchGroupPlacement:
         assert unreport.torch_direct_dep_action != "removed"
         after = (ws / "pyproject.toml").read_text(encoding="utf-8")
         parsed = tomlkit.parse(after)
-        dev_deps = parsed["dependency-groups"]["dev"]  # pyright: ignore[reportIndexIssue]
-        assert any("torch" in str(entry) for entry in dev_deps)  # pyright: ignore[reportGeneralTypeIssues]
+        dev_deps = parsed["dependency-groups"]["dev"]
+        assert any("torch" in str(entry) for entry in dev_deps)
 
     def test_rerun_with_different_target_warns_and_does_not_migrate(
         self, consumer_workspace: Path
@@ -1358,8 +1358,8 @@ class TestInstallTorchGroupPlacement:
         )
         # No empty-named group table was created, and torch was placed nowhere.
         assert "dependency-groups" not in parsed
-        project_deps = parsed["project"]["dependencies"]  # pyright: ignore[reportIndexIssue]
-        assert not any("torch" in str(e) for e in project_deps)  # pyright: ignore[reportGeneralTypeIssues]
+        project_deps = parsed["project"]["dependencies"]
+        assert not any("torch" in str(e) for e in project_deps)
 
     def test_rerun_torch_already_in_requested_group_warns_inert_pin(
         self, consumer_workspace: Path

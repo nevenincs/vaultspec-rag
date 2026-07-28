@@ -187,10 +187,10 @@ class TestBoundedShutdownGuard:
         def wedged_publish() -> None:
             # A different thread holds the guard (the mid-publish tick) and does
             # not release it within the bound.
-            publisher._guard.acquire()  # pyright: ignore[reportPrivateUsage]
+            publisher._guard.acquire()
             held.set()
             release.wait(timeout=15.0)
-            publisher._guard.release()  # pyright: ignore[reportPrivateUsage]
+            publisher._guard.release()
 
         worker = threading.Thread(target=wedged_publish)
         worker.start()
@@ -203,7 +203,7 @@ class TestBoundedShutdownGuard:
             assert elapsed >= 1.0, "quiesce should honour its acquire bound"
             # Stop is flagged even though the guard was abandoned, so a later
             # tick that finishes observes it and goes inert.
-            assert publisher._stopping is True  # pyright: ignore[reportPrivateUsage]
+            assert publisher._stopping is True
         finally:
             release.set()
             worker.join(timeout=5.0)

@@ -146,7 +146,7 @@ def test_missing_domain_fallback_widens_until_survivors_fill_page(
     code_store.client.delete_payload(
         collection_name=code_store.CODE_TABLE_NAME,
         keys=["domain"],
-        points=[code_store._stable_id(chunk.id) for chunk in chunks],  # pyright: ignore[reportPrivateUsage]
+        points=[code_store._stable_id(chunk.id) for chunk in chunks],
     )
     searcher = _searcher_shell(tmp_path, code_store, reranker_enabled=False)
     hide_tests = NoisePolicy(

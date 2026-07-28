@@ -14,7 +14,7 @@ from ..embeddings import (
 
 # pytest.approx's `expected` parameter is untyped in the stub; cast once so
 # call sites stay free of per-call ignores.
-_approx = cast("type[Any]", pytest.approx)  # pyright: ignore[reportUnknownMemberType]
+_approx = cast("type[Any]", pytest.approx)
 
 
 def _reference_conversion(dense_rows: list[list[float]]) -> list[SparseResult]:

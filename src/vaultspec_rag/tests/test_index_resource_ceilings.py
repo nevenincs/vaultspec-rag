@@ -78,7 +78,7 @@ def _model(uses_cuda: bool) -> Any:
     from ..embeddings import EmbeddingModel
 
     model = object.__new__(EmbeddingModel)
-    model._device = "cuda"  # pyright: ignore[reportPrivateUsage]
+    model._device = "cuda"
     return model
 
 
@@ -91,9 +91,9 @@ def _code_budget(
     from ..indexer import CodebaseIndexer
 
     indexer = CodebaseIndexer(root, _model(uses_cuda), cast("Any", None))
-    indexer._support_budget._support_limits = limits  # pyright: ignore[reportPrivateUsage]
-    indexer._support_budget.begin_memory_budget()  # pyright: ignore[reportPrivateUsage]
-    budget = indexer._support_budget._memory_budget  # pyright: ignore[reportPrivateUsage]
+    indexer._support_budget._support_limits = limits
+    indexer._support_budget.begin_memory_budget()
+    budget = indexer._support_budget._memory_budget
     assert budget is not None
     return budget
 
@@ -113,7 +113,7 @@ def _document_budget(
 
     assert limits is not None
     indexer = DocumentIndexer(root, _model(uses_cuda), cast("Any", None))
-    return indexer._begin_resource_budget(limits).memory_budget  # pyright: ignore[reportPrivateUsage]
+    return indexer._begin_resource_budget(limits).memory_budget
 
 
 BUDGETS: list[tuple[str, BudgetFactory]] = [
@@ -316,12 +316,12 @@ class TestAdmissionSamplesBeforeDispatch:
         from ..indexer import CodebaseIndexer
 
         indexer = CodebaseIndexer(tmp_path, _model(False), cast("Any", None))
-        indexer._support_budget._support_limits = _limits(  # pyright: ignore[reportPrivateUsage]
+        indexer._support_budget._support_limits = _limits(
             rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB
         )
         assert indexer.memory_budget_snapshot is None
 
-        indexer._support_budget.begin_memory_budget()  # pyright: ignore[reportPrivateUsage]
+        indexer._support_budget.begin_memory_budget()
 
         snapshot = indexer.memory_budget_snapshot
         assert snapshot is not None
@@ -333,7 +333,7 @@ class TestAdmissionSamplesBeforeDispatch:
 
         indexer = DocumentIndexer(tmp_path, _model(False), cast("Any", None))
 
-        budget = indexer._begin_resource_budget(  # pyright: ignore[reportPrivateUsage]
+        budget = indexer._begin_resource_budget(
             _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB)
         )
 
@@ -343,7 +343,7 @@ class TestAdmissionSamplesBeforeDispatch:
         assert snapshot.rss_ceiling_mb == PROFILE_RSS_BELOW_CONFIG_MB
         # The document run also publishes the same budget on the indexer, which
         # is what the service reads for its live memory reporting.
-        assert indexer._memory_budget is budget.memory_budget  # pyright: ignore[reportPrivateUsage]
+        assert indexer._memory_budget is budget.memory_budget
 
 
 class TestNoHeadroomIsRefusedAtAdmission:

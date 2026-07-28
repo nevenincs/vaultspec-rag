@@ -53,7 +53,7 @@ _CONFIG_ONLY_HEADING = "Config-only keys"
 _PREFIX = "VAULTSPEC_RAG_"
 _CODE_SPAN = re.compile(r"`([^`]+)`")
 
-_DEFAULTS: dict[str, Any] = VaultSpecConfigWrapper._RAG_DEFAULTS  # pyright: ignore[reportPrivateUsage]
+_DEFAULTS: dict[str, Any] = VaultSpecConfigWrapper._RAG_DEFAULTS
 _SETTINGS_KEY_BY_ENV: dict[str, str] = {
     member.value: key for key, member in ENV_OVERRIDE_MAP.items()
 }

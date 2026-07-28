@@ -42,9 +42,7 @@ def _drain_process_output(supervisor: QdrantSupervisor, output: str) -> None:
         text=False,
     )
     assert process.stdout is not None
-    supervisor._drain_output(  # pyright: ignore[reportPrivateUsage]
-        cast("BinaryIO", process.stdout)
-    )
+    supervisor._drain_output(cast("BinaryIO", process.stdout))
     assert process.wait(timeout=10.0) == 0
 
 
@@ -227,9 +225,9 @@ class TestSupervisorOutputCapture:
             text=False,
         )
         assert process.stdout is not None
-        supervisor._proc = process  # pyright: ignore[reportPrivateUsage]
-        supervisor._start_output_drain()  # pyright: ignore[reportPrivateUsage]
-        old_drain = supervisor._drain_thread  # pyright: ignore[reportPrivateUsage]
+        supervisor._proc = process
+        supervisor._start_output_drain()
+        old_drain = supervisor._drain_thread
         assert old_drain is not None
 
         try:
@@ -237,11 +235,9 @@ class TestSupervisorOutputCapture:
             assert old_drain.is_alive()
 
             assert supervisor.restart(timeout=0.1) is False
-            assert (
-                supervisor._drain_thread is old_drain  # pyright: ignore[reportPrivateUsage]
-            )
+            assert supervisor._drain_thread is old_drain
             assert old_drain.is_alive()
-            assert supervisor._proc is process  # pyright: ignore[reportPrivateUsage]
+            assert supervisor._proc is process
 
             release_path.touch()
             old_drain.join(timeout=10.0)
@@ -251,10 +247,8 @@ class TestSupervisorOutputCapture:
             # A later stop reaps the completed reference, after which a new
             # real child and its drain may start normally.
             assert supervisor.stop(timeout=0.1) is True
-            assert (
-                supervisor._drain_thread is None  # pyright: ignore[reportPrivateUsage]
-            )
-            assert supervisor._proc is None  # pyright: ignore[reportPrivateUsage]
+            assert supervisor._drain_thread is None
+            assert supervisor._proc is None
             supervisor.spawn()
         finally:
             release_path.touch(exist_ok=True)

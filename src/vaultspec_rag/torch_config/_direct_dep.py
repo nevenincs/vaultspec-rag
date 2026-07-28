@@ -226,7 +226,7 @@ def _extract_hatch_deps(tool: TableLike, found: list[tuple[str, list[object]]]) 
     if not isinstance(envs, _TABLE_LIKE_TYPES):
         return
     for ename, etable in envs.items():  # pyright: ignore[reportUnknownVariableType]  # tomlkit items() yields Unknown pairs
-        _extract_hatch_env(cast("object", ename), cast("object", etable), found)  # pyright: ignore[reportUnknownArgumentType]  # tomlkit Unknown iteration values
+        _extract_hatch_env(cast("object", ename), cast("object", etable), found)
 
 
 def has_direct_torch_dep(pyproject: Path) -> tuple[bool, str]:
@@ -478,7 +478,7 @@ def remove_managed_direct_torch_dep(pyproject: Path) -> DirectTorchDepReport:
 
     for index, entry in enumerate(list(deps)):
         if entry == DIRECT_TORCH_REQUIREMENT:
-            deps.pop(index)  # pyright: ignore[reportUnknownMemberType]  # tomlkit list
+            deps.pop(index)
             _clear_managed_direct_dep_marker(doc)
             return _finish_direct_dep(
                 report, pyproject, doc, action="removed", location=location

@@ -37,7 +37,7 @@ class TestStoreCodebase:
         """ensure_code_table should create the codebase_docs collection."""
         tmp_vault_store.ensure_code_table()
         assert tmp_vault_store._client is not None
-        assert tmp_vault_store._client.collection_exists(  # pyright: ignore[reportUnknownMemberType]
+        assert tmp_vault_store._client.collection_exists(
             tmp_vault_store.CODE_TABLE_NAME,
         )
 
@@ -49,7 +49,7 @@ class TestStoreCodebase:
         """upsert_code_chunks should add and retrieve chunks."""
         model = rag_components["model"]
         text = "print('hello')"
-        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])  # pyright: ignore[reportUnknownMemberType]
+        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(
@@ -154,7 +154,7 @@ class TestStoreCodebase:
         """delete_code_chunks should remove code chunks by ID."""
         model = rag_components["model"]
         text = "test"
-        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])  # pyright: ignore[reportUnknownMemberType]
+        vector = cast("list[float]", model.encode_documents([text]).tolist()[0])
         sparse = model.encode_documents_sparse([text])[0]
         chunks = [
             CodeChunk(

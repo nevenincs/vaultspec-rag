@@ -275,8 +275,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
 
 
 @pytest.fixture(name="_clean_jobs")
-def _clean_jobs(  # pyright: ignore[reportUnusedFunction]
-) -> Iterator[None]:
+def _clean_jobs() -> Iterator[None]:
     """Reset the in-flight registry before and after each test."""
     _jobs.reset()
     yield

@@ -124,7 +124,7 @@ print(json.dumps(outcomes, sort_keys=True))
 
 def _reset_singleton_configs() -> None:
     """Make direct environment transitions visible to both production caches."""
-    reset_core_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_core_config()
     reset_rag_config()
 
 

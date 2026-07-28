@@ -177,10 +177,7 @@ class TestIncrementalPublicationRecovery:
 
         ids = set(store.get_code_ids_by_paths({rel_path}))
         assert ids == {chunk.id for chunk in expected.chunks}
-        assert (
-            indexer._load_meta()[rel_path]  # pyright: ignore[reportPrivateUsage]
-            == expected.content_hash
-        )
+        assert indexer._load_meta()[rel_path] == expected.content_hash
         assert "scan changed" in reporter.phase_names()
         assert "prepare collection" not in reporter.phase_names()
 
@@ -217,10 +214,7 @@ class TestIncrementalPublicationRecovery:
 
         ids = set(store.get_code_ids_by_paths({rel_path}))
         assert ids == {chunk.id for chunk in expected.chunks}
-        assert (
-            indexer._load_meta()[rel_path]  # pyright: ignore[reportPrivateUsage]
-            == expected.content_hash
-        )
+        assert indexer._load_meta()[rel_path] == expected.content_hash
         assert "chunk + embed" in reporter.phase_names()
         assert "prepare collection" not in reporter.phase_names()
 
@@ -246,8 +240,8 @@ class TestIncrementalPublicationRecovery:
         chunk = _stored_partial_chunk(rel_path, point_id)
         store.upsert_code_chunks([chunk], write_policy=None)
         policy = indexer.resolve_policy_snapshot()
-        limits = indexer._consumer_pipeline.resolve_limits()  # pyright: ignore[reportPrivateUsage]
-        checkpoint = indexer._lifecycle.open_checkpoint(  # pyright: ignore[reportPrivateUsage]
+        limits = indexer._consumer_pipeline.resolve_limits()
+        checkpoint = indexer._lifecycle.open_checkpoint(
             policy=policy,
             operation=RunOperation.INCREMENTAL,
             clean=False,
@@ -271,7 +265,7 @@ class TestIncrementalPublicationRecovery:
         from ...indexer._incremental_commit import IncrementalReplacementRequest
 
         with pytest.raises(CancelRequested):
-            indexer._incremental_commit.commit_replacement(  # pyright: ignore[reportPrivateUsage]
+            indexer._incremental_commit.commit_replacement(
                 IncrementalReplacementRequest(
                     policy=policy,
                     existing_ids=set(),
@@ -315,8 +309,8 @@ class TestIncrementalPublicationRecovery:
         source = code_project["src_dir"] / "sample.py"
         preflight = indexer.preflight_content()
         policy = preflight.policy
-        limits = indexer._consumer_pipeline.resolve_limits()  # pyright: ignore[reportPrivateUsage]
-        checkpoint = indexer._lifecycle.open_checkpoint(  # pyright: ignore[reportPrivateUsage]
+        limits = indexer._consumer_pipeline.resolve_limits()
+        checkpoint = indexer._lifecycle.open_checkpoint(
             policy=policy,
             operation=RunOperation.FULL,
             clean=True,
@@ -431,7 +425,7 @@ class TestIncrementalPublicationRecovery:
         )
 
         assert store.get_code_ids_by_paths({rel_path}) == []
-        assert rel_path not in indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+        assert rel_path not in indexer._load_meta()
         assert result.removed == 0
         assert "scan changed" in reporter.phase_names()
         assert "prepare collection" not in reporter.phase_names()
@@ -650,7 +644,7 @@ def _assert_failed_incremental_attempt(
     assert good_expected
     assert set(case.store.get_code_ids_by_paths({"src/a_good.py"})) == good_expected
     assert case.store.get_code_ids_by_paths({"src/z_fail.fatal"}) == []
-    assert case.indexer._load_meta() == case.metadata_before  # pyright: ignore[reportPrivateUsage]
+    assert case.indexer._load_meta() == case.metadata_before
 
 
 def _run_failing_incremental_attempt(
@@ -677,7 +671,7 @@ def _assert_successful_incremental_retry(
     _assert_phase_balanced(reporter.events)
     assert result.added == 2
     assert case.store.get_code_ids_by_paths(case.attempted)
-    metadata_after = case.indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+    metadata_after = case.indexer._load_meta()
     assert (
         metadata_after["src/a_good.py"]
         == hashlib.blake2b(case.good.read_bytes()).hexdigest()
@@ -797,10 +791,7 @@ class TestCodebaseIncrementalIndex:
         rel_path = "src/many_units.py"
         assert result.added == 1
         assert set(store.get_code_ids_by_paths({rel_path})) == expected_ids
-        assert (
-            indexer._load_meta()[rel_path]  # pyright: ignore[reportPrivateUsage]
-            == expected.content_hash
-        )
+        assert indexer._load_meta()[rel_path] == expected.content_hash
         assert "chunk + embed" in reporter.phase_names()
         assert "chunk files" not in reporter.phase_names()
         assert "embed + upsert chunks" not in reporter.phase_names()
@@ -823,7 +814,7 @@ class TestCodebaseIncrementalIndex:
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
-        metadata_before = indexer._load_meta()  # pyright: ignore[reportPrivateUsage]
+        metadata_before = indexer._load_meta()
 
         good = src_dir / "a_good.py"
         failing = src_dir / "z_fail.fatal"
@@ -1011,7 +1002,7 @@ class TestCodebaseIncrementalIndex:
         assert set(stored) == expected_ids
         assert len(stored) == len(expected_ids)
         assert (
-            indexer._load_meta()["src/a_good.py"]  # pyright: ignore[reportPrivateUsage]
+            indexer._load_meta()["src/a_good.py"]
             == hashlib.blake2b(good.read_bytes()).hexdigest()
         )
 
@@ -1054,7 +1045,7 @@ class TestCodebaseIncrementalIndex:
         from ...indexer._run_ledger_models import index_run_ledger_path
         from ...indexer._run_ledger_runtime import RunLedger
 
-        data_root = indexer._data_root  # pyright: ignore[reportPrivateUsage]
+        data_root = indexer._data_root
         ledger = RunLedger(index_run_ledger_path(data_root))
         generation = ledger.latest_generation(ContentKind.CODE)
         assert generation is not None

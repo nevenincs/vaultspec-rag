@@ -23,11 +23,11 @@ from ..cli import app
 from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..qdrant_runtime._supervise import (
-    _MAX_QUARANTINES_PER_START,  # pyright: ignore[reportPrivateUsage]
+    _MAX_QUARANTINES_PER_START,
     QdrantSupervisor,
-    _corrupt_collection_from_output,  # pyright: ignore[reportPrivateUsage]
-    _list_on_disk_collections,  # pyright: ignore[reportPrivateUsage]
-    _quarantine_collection,  # pyright: ignore[reportPrivateUsage]
+    _corrupt_collection_from_output,
+    _list_on_disk_collections,
+    _quarantine_collection,
 )
 
 if TYPE_CHECKING:

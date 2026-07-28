@@ -242,7 +242,7 @@ def _restore_owned(doc: TOMLDocument, ownership: McpExtraOwnership) -> str | Non
         if entry != ownership.managed:
             continue
         if ownership.original is None:
-            entries.pop(index)  # pyright: ignore[reportUnknownMemberType]
+            entries.pop(index)
             if ownership.created_surface:
                 _drop_empty_created_surface(doc, ownership.location)
         else:

@@ -29,15 +29,15 @@ class TestEmbeddingModel:
         model = rag_components["model"]
         texts = ["This is a test document about architecture decisions."]
         vectors = model.encode_documents(texts)
-        assert vectors.shape[0] == 1  # pyright: ignore[reportUnknownMemberType]  # numpy ndarray stub incomplete
-        assert vectors.shape[1] == model.dimension  # pyright: ignore[reportUnknownMemberType]
+        assert vectors.shape[0] == 1
+        assert vectors.shape[1] == model.dimension
 
     def test_encode_query_shape(
         self, rag_components: RagComponentsWithManifest
     ) -> None:
         model = rag_components["model"]
         vector = model.encode_query("vector database")
-        assert vector.shape == (model.dimension,)  # pyright: ignore[reportUnknownMemberType]
+        assert vector.shape == (model.dimension,)
 
     def test_document_query_similarity(
         self, rag_components: RagComponentsWithManifest
@@ -53,8 +53,8 @@ class TestEmbeddingModel:
         related_query = model.encode_query("vector database for search")
         unrelated_query = model.encode_query("chocolate cake recipe")
 
-        sim_related = float(np.dot(doc_vec, related_query))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # numpy stub incomplete
-        sim_unrelated = float(np.dot(doc_vec, unrelated_query))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # numpy stub incomplete
+        sim_related = float(np.dot(doc_vec, related_query))
+        sim_unrelated = float(np.dot(doc_vec, unrelated_query))
 
         assert sim_related > sim_unrelated
 
@@ -71,8 +71,8 @@ class TestEmbeddingModel:
             "Third document about performance.",
         ]
         vectors = model.encode_documents(texts, batch_size=2)
-        assert vectors.shape[0] == 3  # pyright: ignore[reportUnknownMemberType]
-        assert vectors.shape[1] == model.dimension  # pyright: ignore[reportUnknownMemberType]
+        assert vectors.shape[0] == 3
+        assert vectors.shape[1] == model.dimension
 
     def test_encode_documents_sparse(
         self, rag_components: RagComponentsWithManifest

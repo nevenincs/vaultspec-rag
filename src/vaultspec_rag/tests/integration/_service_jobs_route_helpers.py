@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(name="_routes_app")
-def _routes_app(  # pyright: ignore[reportUnusedFunction]
+def _routes_app(
     _clean_jobs: None,
     tmp_path: Path,
 ) -> Iterator[tuple[TestClient, str]]:

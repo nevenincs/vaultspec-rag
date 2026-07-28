@@ -314,7 +314,7 @@ class _VaultSearchMixin:
                     limit=query.limit,
                     query_filter=query.query_filter,
                 )
-                return results.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
+                return results.points
 
             try:
                 results = self.client.query_points(
@@ -323,7 +323,7 @@ class _VaultSearchMixin:
                     query=models.RrfQuery(rrf=models.Rrf(k=60)),
                     limit=query.limit,
                 )
-                return results.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
+                return results.points
             except (
                 UnexpectedResponse,
                 ResponseHandlingException,
@@ -340,7 +340,7 @@ class _VaultSearchMixin:
                     limit=query.limit,
                     query_filter=query.query_filter,
                 )
-                return fallback.points  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]  # qdrant QueryResponse.points is untyped in stubs
+                return fallback.points
 
     @staticmethod
     def _points_to_dicts(

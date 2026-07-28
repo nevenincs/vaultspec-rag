@@ -248,10 +248,10 @@ class TestPerformance:
         root: Path = rag_components["root"]
 
         start = time.perf_counter()
-        graph = VaultGraph(root)  # pyright: ignore[reportUnknownVariableType]
+        graph = VaultGraph(root)
         graph_ms = (time.perf_counter() - start) * 1000
 
-        assert len(graph.nodes) > 0  # pyright: ignore[reportUnknownMemberType]
+        assert len(graph.nodes) > 0
         # Document the cost - this is informational, threshold is generous
         # since graph rebuild happens on every search query
         assert graph_ms < 2000, (

@@ -7,7 +7,7 @@ from pathlib import Path  # noqa: TC003
 
 import pytest
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
-    InstallMode,  # pyright: ignore[reportMissingTypeStubs]
+    InstallMode,
 )
 from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
     write_manifest,
