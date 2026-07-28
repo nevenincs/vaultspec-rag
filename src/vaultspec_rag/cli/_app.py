@@ -37,6 +37,8 @@ __all__ = [
     "JSON_ENVELOPE_OPTION_HELP",
     "JSON_OPTION_HELP",
     "PORT_OPTION_HELP",
+    "WATCH_INTERVAL_OPTION_HELP",
+    "WATCH_OPTION_HELP",
     "CLIState",
     "JobIdArgument",
     "JsonEnvelopeMode",
@@ -101,6 +103,13 @@ PortOption = Annotated[int | None, typer.Option("--port", help=PORT_OPTION_HELP)
 JobIdArgument = Annotated[
     str, typer.Argument(help="Exact job id or human-mode prefix.")
 ]
+
+#: The interactive jobs view, declared once for the two entry points that open
+#: it. ``server jobs --watch`` opens it with the filters that verb parsed;
+#: ``server --watch`` opens the same screen unfiltered, so both must describe
+#: the same thing.
+WATCH_OPTION_HELP = "Open the interactive jobs interface with per-job controls."
+WATCH_INTERVAL_OPTION_HELP = "Seconds between refreshes in the interactive interface."
 
 #: Watcher tuning, declared once for the two verbs that accept it. ``server
 #: start`` and ``server watch`` set the same two knobs, and a default or a
@@ -362,8 +371,22 @@ def _show_group_help_if_no_command(ctx: typer.Context) -> None:
 
 
 @server_root_app.callback(invoke_without_command=True)
-def server_main(ctx: typer.Context) -> None:
-    """Show server command help when no server subcommand is provided."""
+def server_main(
+    ctx: typer.Context,
+    watch: Annotated[bool, typer.Option("--watch", help=WATCH_OPTION_HELP)] = False,
+    interval: Annotated[
+        float, typer.Option("--interval", help=WATCH_INTERVAL_OPTION_HELP)
+    ] = 2.0,
+    port: PortOption = None,
+) -> None:
+    """Open the interactive jobs interface, else show server command help."""
+    if watch and ctx.invoked_subcommand is None:
+        # Function-local: the jobs module registers its command against the app
+        # objects this module owns, so importing it at module scope is a cycle.
+        from ._service_jobs_collection import ServiceJobsOptions, run_service_jobs
+
+        run_service_jobs(ServiceJobsOptions(port=port, interval=interval, watch=True))
+        return
     _show_group_help_if_no_command(ctx)
 
 

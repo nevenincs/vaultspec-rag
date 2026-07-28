@@ -49,6 +49,32 @@ class TestServerCommands:
         assert "watcher" not in result.output.lower()
         assert "mcp" not in result.output.lower()
 
+    def test_server_watch_opens_the_jobs_interface(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """``server --watch`` is the unfiltered jobs interface, not help."""
+        from ..cli import _jobs_tui
+
+        opened: list[tuple[int, float]] = []
+
+        def _capture(_fetch: object, *, port: int, interval: float) -> None:
+            opened.append((port, interval))
+
+        monkeypatch.setattr(_jobs_tui, "run_jobs_tui", _capture)
+        result = runner.invoke(
+            app, ["server", "--watch", "--port", "1234", "--interval", "5"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert opened == [(1234, 5.0)]
+        assert "Usage:" not in result.output
+
+    def test_server_without_watch_still_shows_help(self):
+        """The bare group keeps printing help; --watch is the only new path."""
+        result = runner.invoke(app, ["server"])
+        assert result.exit_code == 0, result.output
+        assert "Manage the background search service." in result.output
+
     @pytest.mark.parametrize(
         "argv",
         [
