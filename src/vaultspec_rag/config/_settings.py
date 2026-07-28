@@ -103,6 +103,13 @@ class VaultSpecConfigWrapper:
         # disappears. Runs through the same empty/data tiers, archive
         # gate, and per-cycle cap as orphan reclamation. 0 disables.
         "storage_autoprune_ephemeral_idle_hours": 72.0,
+        # Automatic repair of a demonstrably shrunken index. When a search
+        # proves a collection holds fewer points than its publication
+        # claims, the service requests one non-destructive reconciliation
+        # through the ordinary job machinery. Disabling leaves detection
+        # and reporting intact - the status surface then says so honestly
+        # rather than pretending the shrink is being handled.
+        "integrity_auto_repair": True,
         # Geometry reconcile. Collections created before per-collection
         # preallocation was bounded keep their original segment target
         # forever, because collection creation is the only place the bound

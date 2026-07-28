@@ -192,8 +192,7 @@ def _read_document_claim(root: pathlib.Path) -> _BreadthClaim:
         return _BreadthClaim(None, None, REASON_NO_MANIFEST)
     if not meta.complete:
         return _BreadthClaim(None, meta.generation_id, REASON_MANIFEST_INCOMPLETE)
-    claimed = sum(len(file.point_ids) for file in meta.files)
-    return _BreadthClaim(claimed, meta.generation_id, None)
+    return _BreadthClaim(meta.claimed_points, meta.generation_id, None)
 
 
 def _read_vault_claim(root: pathlib.Path) -> _BreadthClaim:

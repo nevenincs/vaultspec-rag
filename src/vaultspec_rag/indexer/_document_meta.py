@@ -113,6 +113,17 @@ class DocumentIndexMetadata:
         if paths != tuple(sorted(paths)) or len(set(paths)) != len(paths):
             raise ValueError("document metadata files must be uniquely path-sorted")
 
+    @property
+    def claimed_points(self) -> int:
+        """Total points this publication claims across every file.
+
+        The single definition of the document breadth claim: the serve-time
+        integrity check and the indexer's own evidence check both compare the
+        live count against this figure, so the two can never disagree about
+        what the manifest promises.
+        """
+        return sum(len(file.point_ids) for file in self.files)
+
     def as_payload(self) -> dict[str, object]:
         """Return the deterministic JSON publication payload."""
         return {
