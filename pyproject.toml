@@ -252,7 +252,7 @@ python-platform = "all"
 root = [".", "src"]
 
 # Strict-mode type checking — now GATING (the burndown reached zero on
-# 2026-06-10). `ty` remains the fast pre-commit gate; basedpyright gates in CI
+# 2026-06-10). `ty` remains the fast gate to run by hand; basedpyright gates in CI
 # and `just lint all`. Run via `just lint type-strict` or `just health`.
 [tool.basedpyright]
 include = ["src/vaultspec_rag"]
