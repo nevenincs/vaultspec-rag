@@ -1,15 +1,21 @@
 {
   "mcpServers": {
     "vaultspec-core": {
-      "command": ".venv/Scripts/python.exe",
+      "command": "uv",
       "args": [
+        "run",
+        "--no-sync",
+        "python",
         "-m",
         "vaultspec_core.mcp_server.app"
       ]
     },
     "vaultspec-rag": {
-      "command": ".venv/Scripts/python.exe",
+      "command": "uv",
       "args": [
+        "run",
+        "--no-sync",
+        "python",
         "-m",
         "vaultspec_rag.server"
       ]
