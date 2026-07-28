@@ -20,7 +20,9 @@ from ..indexer._code_meta import (
 )
 from ..indexer._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ..indexer._file_state import FileState, FileStateKind
+from ..indexer._run_ledger_commits import retained_point_ids_sql
 from ..indexer._run_ledger_models import (
+    FETCH_BATCH,
     INDEX_RUN_LEDGER_FILENAME,
     RESUMABLE_STATES,
     CommitUnit,
@@ -600,6 +602,94 @@ def test_incremental_manifest_carries_forward_and_deletes_exact_paths(
             digest=replacement_hash,
         ).point_ids
     ]
+
+
+def test_retained_point_iteration_stays_on_index_seeks(tmp_path: Path) -> None:
+    """Guard: the retained-point walk must never scan a generation's points.
+
+    The ledger never runs ANALYZE, so no ``sqlite_stat1`` table exists and
+    the planner works from default estimates. Under those estimates the
+    plain-JOIN form of the retained-point query visits ``commit_point_ids``
+    before ``commit_units``, reachable only by ``generation_id`` - a scan of
+    every committed point in the generation for every file row, re-sorted
+    through a temp B-tree, repeated per keyset batch. On a corpus of tens of
+    thousands of points that turns a sub-second walk into minutes of CPU
+    while the writer lock is held. The pinned join order keeps every batch
+    on index seeks; this test asserts the plan properties that pinning
+    guarantees, on a ledger built through the production API so the
+    statistics conditions match production exactly.
+
+    Failure direction proven: replacing both CROSS JOINs with plain JOINs
+    in the SQL this test imports makes the keyset-batch plan reach
+    ``commit_point_ids`` without the ``unit_id`` seek and adds a temp
+    B-tree, failing the seek assertion below; restoring CROSS JOIN makes
+    it pass again.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    full = ledger.start_generation(_signature(tmp_path))
+    for path in ("src/a.py", "src/b.py"):
+        content_hash = _digest(path)
+        ledger.record_storage_confirmed_unit(
+            full.generation_id,
+            _unit(path, 0, 1, digest=content_hash),
+        )
+        ledger.record_file_state(
+            full.generation_id,
+            FileState.indexed(path, ContentKind.CODE, content_hash),
+        )
+    for phase in (
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        ledger.advance_finalization(full.generation_id, phase)
+    ledger.finish_generation(full.generation_id, RunTerminalState.SUCCEEDED)
+    incremental = ledger.start_generation(
+        replace(full.signature, operation=RunOperation.INCREMENTAL)
+    )
+
+    # The carried manifest must actually flow through the pinned query.
+    assert list(ledger.iter_retained_point_ids(incremental.generation_id)) == [
+        point_id
+        for path in ("src/a.py", "src/b.py")
+        for point_id in _unit(path, 0, 1, digest=_digest(path)).point_ids
+    ]
+
+    connection = sqlite3.connect(ledger.path)
+    try:
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        ), "ANALYZE ran; the planner conditions this guard exists for are gone"
+        plan = [
+            str(row[3])
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN "
+                + retained_point_ids_sql(scoped_to_path=False, keyset=True),
+                (
+                    CommitUnitKind.UPSERT.value,
+                    incremental.generation_id,
+                    FileStateKind.INDEXED.value,
+                    "src/a.py",
+                    0,
+                    1,
+                    "src/a.py:0:1",
+                    FETCH_BATCH,
+                ),
+            )
+        ]
+    finally:
+        connection.close()
+
+    points_steps = [step for step in plan if "commit_point_ids" in step]
+    assert points_steps, f"plan named no commit_point_ids access: {plan}"
+    # The degenerate plan reads 'USING INDEX ..._2 (generation_id=?)':
+    # a per-file scan of the whole generation's points. The pinned plan
+    # must seek the point primary key on both join columns.
+    assert all("unit_id=?" in step for step in points_steps), plan
+    assert not any("TEMP B-TREE" in step.upper() for step in plan), plan
 
 
 def test_metadata_publication_streams_only_converged_ledger_rows(

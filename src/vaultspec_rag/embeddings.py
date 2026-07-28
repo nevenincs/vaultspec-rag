@@ -111,6 +111,68 @@ class QueryEmbeddingCache:
                 self._data.popitem(last=False)
 
 
+class EncodeBatchCeiling:
+    """Learned CUDA encode batch ceiling that persists across encode calls.
+
+    Halving inside a single call converges that call, but a ceiling that
+    resets on return makes every subsequent call rediscover it: each
+    rediscovery costs a discarded forward pass plus an allocator cache
+    flush, and under sustained memory pressure that tax is paid on every
+    slice of every job. The ceiling therefore lives on the model instance
+    and clamps each call's starting batch size to the last size that fit.
+
+    The ceiling must also recover: pinning it at its low-water mark forever
+    would turn one transient memory squeeze into a permanent throughput
+    loss. After ``RECOVERY_SUCCESSES`` consecutive successful calls at the
+    ceiling, the next call probes double the ceiling (bounded by what the
+    caller requested); a successful probe raises the ceiling, a failed one
+    re-clamps and restarts the count. While pressure persists, at most one
+    call in ``RECOVERY_SUCCESSES + 1`` pays the discarded-forward cost;
+    when pressure lifts, the ceiling climbs back within tens of calls.
+
+    Thread-safe: encoding runs on the dedicated GPU consumer thread, but
+    successive jobs may run on different threads, so the state is guarded
+    by a lock for visibility rather than left to happenstance ordering.
+    """
+
+    #: Consecutive at-ceiling successes required before probing upward.
+    #: Bounds the amortized probe cost under sustained pressure to one
+    #: discarded forward per this many calls while keeping recovery
+    #: within tens of slices once memory frees up.
+    RECOVERY_SUCCESSES = 16
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ceiling: int | None = None
+        self._successes_at_ceiling = 0
+
+    def clamp(self, requested: int) -> int:
+        """Return the batch size a call should start from."""
+        with self._lock:
+            if self._ceiling is None or requested <= self._ceiling:
+                return requested
+            if self._successes_at_ceiling >= self.RECOVERY_SUCCESSES:
+                self._successes_at_ceiling = 0
+                return min(requested, self._ceiling * 2)
+            return self._ceiling
+
+    def record_success(self, batch_size: int) -> None:
+        """Bank one call that completed at *batch_size* without an OOM."""
+        with self._lock:
+            if self._ceiling is None:
+                return
+            if batch_size > self._ceiling:
+                self._ceiling = batch_size
+            if batch_size >= self._ceiling:
+                self._successes_at_ceiling += 1
+
+    def record_oom(self, halved_batch_size: int) -> None:
+        """Lower the ceiling to the halved size an OOM forced a retry at."""
+        with self._lock:
+            self._ceiling = halved_batch_size
+            self._successes_at_ceiling = 0
+
+
 def _raise_for_hf_access(model_id: str, exc: Exception) -> None:
     """Re-raise a HuggingFace gated/missing repo error as an actionable RuntimeError.
 
@@ -463,6 +525,8 @@ class EmbeddingModel:
         )
         self._device = "cuda"
         self.query_cache = QueryEmbeddingCache()
+        self._dense_batch_ceiling = EncodeBatchCeiling()
+        self._sparse_batch_ceiling = EncodeBatchCeiling()
 
         gpu_name = torch.cuda.get_device_name(0)
         logger.info(
@@ -613,13 +677,20 @@ class EmbeddingModel:
         batch_size: int | None,
         retain_on_device: bool,
     ) -> object:
-        """Run the finite dense OOM ladder with an explicit output lifetime."""
+        """Run the finite dense OOM ladder with an explicit output lifetime.
+
+        The starting batch size is clamped by the instance's learned
+        ceiling, so a call after an OOM starts where the last call fit
+        instead of rediscovering the ceiling with another discarded
+        forward pass.
+        """
         import torch
 
         from .memory_probe import cuda_forward_peak_capture
 
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
+        batch_size = self._dense_batch_ceiling.clamp(batch_size)
 
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
@@ -632,7 +703,7 @@ class EmbeddingModel:
                     # capture attribute this forward's demand to the
                     # calling job alone.
                     with cuda_forward_peak_capture():
-                        return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
+                        encoded: object = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
                             truncated,
                             batch_size=batch_size,
                             show_progress_bar=len(truncated) > 100,
@@ -640,21 +711,26 @@ class EmbeddingModel:
                             convert_to_numpy=False,
                             convert_to_tensor=True,
                         )
-                return self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
-                    truncated,
-                    batch_size=batch_size,
-                    show_progress_bar=len(truncated) > 100,
-                    normalize_embeddings=True,
-                )
+                else:
+                    encoded = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
+                        truncated,
+                        batch_size=batch_size,
+                        show_progress_bar=len(truncated) > 100,
+                        normalize_embeddings=True,
+                    )
             except torch.cuda.OutOfMemoryError:
                 torch.cuda.empty_cache()
                 if batch_size <= 1:
                     raise
                 batch_size = max(1, batch_size // 2)
+                self._dense_batch_ceiling.record_oom(batch_size)
                 logger.warning(
                     "CUDA OOM during dense encoding, retrying with batch_size=%d",
                     batch_size,
                 )
+            else:
+                self._dense_batch_ceiling.record_success(batch_size)
+                return encoded
 
     #: Task-specific instruction prompts for the dense encoder. Qwen3
     #: embeddings are instruction-tuned: telling the model what kind of
@@ -748,6 +824,7 @@ class EmbeddingModel:
             batch_size = self._default_encode_batch_size()
         if batch_size <= 0:
             raise ValueError(f"batch_size must be a positive integer, got {batch_size}")
+        batch_size = self._sparse_batch_ceiling.clamp(batch_size)
 
         max_chars = self._default_max_embed_chars()
         truncated = [t[:max_chars] for t in texts]
@@ -763,17 +840,20 @@ class EmbeddingModel:
                         )
                     finally:
                         del texts_batch
-                return results
             except torch.cuda.OutOfMemoryError:
                 del results
                 torch.cuda.empty_cache()
                 if batch_size <= 1:
                     raise
                 batch_size = max(1, batch_size // 2)
+                self._sparse_batch_ceiling.record_oom(batch_size)
                 logger.warning(
                     "CUDA OOM during sparse encoding, retrying with batch_size=%d",
                     batch_size,
                 )
+            else:
+                self._sparse_batch_ceiling.record_success(batch_size)
+                return results
 
     def _encode_sparse_batch(
         self,
