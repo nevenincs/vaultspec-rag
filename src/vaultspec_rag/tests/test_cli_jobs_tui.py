@@ -133,6 +133,11 @@ def _summarise(records: list[dict[str, object]]) -> dict[str, object]:
     states = [str(record.get("state", "")) for record in records]
     tally: dict[str, object] = {name: states.count(name) for name in set(states)}
     tally["states"] = {name: states.count(name) for name in set(states)}
+    # The job-health tallies ride beside the states, counted over every
+    # record's service-stamped verdict - exactly as the service does.
+    verdicts = [str(record.get("degradation", "")) for record in records]
+    tally["degraded"] = verdicts.count("degraded")
+    tally["stalled"] = verdicts.count("stalled")
     return tally
 
 
@@ -154,6 +159,10 @@ class _JobService:
         # per-job placeholder, so a test can serve the service's real log
         # dialects - including adversarial content - through the real route.
         self.log_lines: list[str] | None = None
+        # When set, the jobs listing carries this GPU pressure block; when
+        # ``None`` the key is omitted entirely, which is how a daemon older
+        # than the field answers.
+        self.gpu: dict[str, object] | None = None
         # When set, every control is answered with this ``(code, message)``
         # rather than performed - the shape a service uses to decline a
         # request it understood.
@@ -207,18 +216,20 @@ class _JobService:
                 limit = int(query.get("limit", ["20"])[0])
                 with service._lock:
                     held = list(service.jobs)
+                    gpu = service.gpu
                 page = held[:limit]
-                self._answer(
-                    {
-                        "ok": True,
-                        "jobs": page,
-                        "total": len(held),
-                        "returned": len(page),
-                        # Tallied over everything held, exactly as the service
-                        # does - the page is not the population.
-                        "summary": _summarise(held),
-                    }
-                )
+                payload: dict[str, object] = {
+                    "ok": True,
+                    "jobs": page,
+                    "total": len(held),
+                    "returned": len(page),
+                    # Tallied over everything held, exactly as the service
+                    # does - the page is not the population.
+                    "summary": _summarise(held),
+                }
+                if gpu is not None:
+                    payload["gpu"] = gpu
+                self._answer(payload)
 
             def _mutate(self, method: str) -> None:
                 path, _query = self._record(method)
@@ -1337,11 +1348,11 @@ class TestHeaderCounts:
             await _ready(pilot, app)
             painted = _screen_text(app)
 
-        assert "succeeded 12" in painted, (
+        assert "✓ 12" in painted, (
             "the counters must describe every record the service holds, not "
             "the five that happen to be on the page"
         )
-        assert "running 1" in painted
+        assert "▶ 1" in painted
         assert "showing 5 of 13" in painted
 
     @pytest.mark.asyncio
@@ -1364,9 +1375,122 @@ class TestHeaderCounts:
             await _ready(pilot, app)
             painted = _screen_text(app)
 
-        assert "succeeded 1" in painted
+        assert "✓ 1" in painted
         assert "other 2" in painted, (
             "states without a counter of their own must still be accounted for"
+        )
+
+    @pytest.mark.asyncio
+    async def test_state_pills_pair_glyph_count_and_recede_at_zero(
+        self, control_service: _JobService
+    ) -> None:
+        """Every pill is a glyph AND a count; an empty bucket goes dim.
+
+        The glyph is never the only signal, so the count must be painted
+        beside it - including the zero, which is a different claim from the
+        bucket not existing at all.
+        """
+        jobs = [
+            _job("abc123def456"),
+            _job("dddd0000eeee", phase="error", state="failed"),
+            _finished_job("job00001aaaa"),
+            _finished_job("job00002aaaa"),
+        ]
+        app = _app(control_service, jobs)
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "▶ 1" in painted, "running renders as its pill with its count"
+        assert "✖ 1" in painted, "failed renders as its pill with its count"
+        assert "✓ 2" in painted, "succeeded renders as its pill with its count"
+        assert "○ 0" in painted, "an empty bucket is still accounted for"
+
+    @pytest.mark.asyncio
+    async def test_the_condition_pill_reports_the_worst_stamped_verdict(
+        self, control_service: _JobService
+    ) -> None:
+        """The header says what the service is, not only what it is doing."""
+        stalled = _job("abc123def456")
+        stalled["degradation"] = "stalled"
+        app = _app(control_service, [stalled, _finished_job("job00001aaaa")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "● stalled" in painted, (
+            "the worst service-stamped verdict must sit in the header"
+        )
+        assert "⊘ 1" in painted, "the stalled tally rides beside the states"
+
+    @pytest.mark.asyncio
+    async def test_a_healthy_service_says_so_in_the_header(
+        self, control_service: _JobService
+    ) -> None:
+        app = _app(control_service, [_finished_job("job00001aaaa")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "● healthy" in painted
+
+    @pytest.mark.asyncio
+    async def test_gpu_pressure_renders_from_the_payload(
+        self, control_service: _JobService
+    ) -> None:
+        control_service.gpu = {
+            "available": True,
+            "utilization_percent": 97.0,
+            "memory_used_mb": 15770.0,
+            "memory_total_mb": 16384.0,
+        }
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "GPU 97% 15.4/16.0G" in painted, (
+            "the card's pressure must be readable in the header at all times"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_absent_gpu_block_renders_a_dash_not_numbers(
+        self, control_service: _JobService
+    ) -> None:
+        """A daemon older than the field must never be given fake numbers.
+
+        Proven able to fail: making the absent branch of ``_gpu_cell``
+        return a zeroed reading - the shape inventing a default would take -
+        paints ``GPU 0%`` and fails both assertions below by name; restored,
+        it passes.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "gpu —" in painted, "an unreported card reads as a dim dash"
+        assert "GPU 0" not in painted, "absence must never be painted as a zero reading"
+
+    @pytest.mark.asyncio
+    async def test_a_probed_but_unmeasurable_host_reads_na(
+        self, control_service: _JobService
+    ) -> None:
+        """Present-and-null is the daemon probing a host it cannot measure."""
+        control_service.gpu = {
+            "available": False,
+            "utilization_percent": None,
+            "memory_used_mb": None,
+            "memory_total_mb": None,
+        }
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "gpu n/a" in painted
+        assert "gpu —" not in painted, (
+            "a probed host is a different answer from an unreporting daemon"
         )
 
     @pytest.mark.asyncio

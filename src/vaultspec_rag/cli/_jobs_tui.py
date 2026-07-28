@@ -193,6 +193,37 @@ _SUMMARY_BUCKETS: tuple[tuple[str, str], ...] = (
     ("succeeded", "succeeded"),
 )
 
+# Header pills: state -> (glyph, ASCII fallback, colour). A pill is always a
+# glyph AND its count - the glyph is never the only signal - and its colour
+# drops to dim at zero so an empty bucket cannot shout. The fallback carries
+# the same meaning on a terminal that cannot paint the glyph.
+_STATE_PILLS: dict[str, tuple[str, str, str]] = {
+    "running": ("▶", ">", "bold green"),
+    "queued": ("○", "o", "yellow"),
+    "paused": ("‖", "=", "cyan"),
+    "failed": ("✖", "x", "bold red"),
+    "succeeded": ("✓", "+", "green"),
+}
+
+# Job-health tallies the service publishes beside the state counts. Shown
+# only when the summary carries the key: a daemon older than the tally is
+# absent, not zero.
+_HEALTH_PILLS: tuple[tuple[str, str, str, str], ...] = (
+    ("degraded", "◆", "!", "bold yellow"),
+    ("stalled", "⊘", "#", "bold magenta"),
+)
+
+# The service-condition pill's vocabulary, worst-last, and its colours.
+# ``reachable`` is what an older daemon that stamps no verdicts can claim.
+_CONDITION_ORDER = ("healthy", "degraded", "stalled")
+_CONDITION_STYLES: dict[str, str] = {
+    "healthy": "green",
+    "degraded": "bold yellow",
+    "stalled": "bold red",
+    "unreachable": "bold red",
+    "reachable": "dim",
+}
+
 _STATE_STYLES: dict[str, str] = {
     "active": "bold green",
     "waiting": "yellow",
@@ -555,6 +586,11 @@ class JobsTuiApp(App[None]):
         # The service's own tally over every record matching the filter, which
         # is the only count that describes more than the page on screen.
         self._summary: object = None
+        # The machine-wide GPU pressure block riding the jobs payload.
+        # Absent-vs-null matters: a daemon older than the field never sends
+        # it, a daemon on a host that cannot measure sends null measurements.
+        self._gpu: dict[str, object] | None = None
+        self._gpu_reported = False
         self._last_refresh: float | None = None
         self._last_error: str | None = None
         # The outcome of the last control, kept in the header until another
@@ -825,6 +861,11 @@ class JobsTuiApp(App[None]):
         self._jobs = jobs
         self._total = _count(payload.get("total"))
         self._summary = payload.get("summary")
+        self._gpu_reported = "gpu" in payload
+        raw_gpu = payload.get("gpu")
+        self._gpu = (
+            cast("dict[str, object]", raw_gpu) if isinstance(raw_gpu, dict) else None
+        )
         self._reconcile_pending(generation, previous)
         self._layout_columns()
         self._render_rows()
@@ -1066,10 +1107,112 @@ class JobsTuiApp(App[None]):
             counts.append(("other", other))
         return counts
 
+    def _unicode_glyphs(self) -> bool:
+        """Whether the console's encoding can carry the pill glyphs."""
+        encoding = str(getattr(self.console, "encoding", "") or "")
+        return "utf" in encoding.lower()
+
+    def _append_pills(self, line: Text) -> None:
+        """Append the icon-coded state pills, then the job-health tallies."""
+        unicode_ok = self._unicode_glyphs()
+        for label, count in self._header_counts():
+            pill = _STATE_PILLS.get(label)
+            if pill is None:
+                # A state without a pill of its own is still accounted for.
+                line.append(f"  {label} {count}", style="" if count else "dim")
+                continue
+            glyph, fallback, style = pill
+            line.append("  ")
+            line.append(
+                f"{glyph if unicode_ok else fallback} {count}",
+                style=style if count else "dim",
+            )
+        summary = self._summary
+        if not isinstance(summary, dict):
+            return
+        counted = cast("dict[str, object]", summary)
+        for key, glyph, fallback, style in _HEALTH_PILLS:
+            if key not in counted:
+                # A daemon older than the tally; absent is not zero.
+                continue
+            count = _count(counted.get(key)) or 0
+            line.append("  ")
+            line.append(
+                f"{glyph if unicode_ok else fallback} {count}",
+                style=style if count else "dim",
+            )
+
+    def _service_condition(self) -> tuple[str, str]:
+        """The service's condition, as (verdict, style).
+
+        Reachability first, then the worst active degradation verdict the
+        service has stamped - taken from the service's own tally where the
+        summary carries one, from the stamped records on the page otherwise.
+        Nothing is computed here; the service is the authority on both.
+        """
+        if self._last_error is not None:
+            return "unreachable", _CONDITION_STYLES["unreachable"]
+        summary = self._summary
+        if isinstance(summary, dict):
+            counted = cast("dict[str, object]", summary)
+            if "stalled" in counted or "degraded" in counted:
+                if _count(counted.get("stalled")):
+                    return "stalled", _CONDITION_STYLES["stalled"]
+                if _count(counted.get("degraded")):
+                    return "degraded", _CONDITION_STYLES["degraded"]
+                return "healthy", _CONDITION_STYLES["healthy"]
+        stamped = [
+            verdict
+            for verdict in (degradation_verdict(job) for job in self._jobs)
+            if isinstance(verdict, str) and verdict in _CONDITION_ORDER
+        ]
+        if not stamped:
+            # An older daemon stamps no verdicts; reachable is all it claims.
+            return "reachable", _CONDITION_STYLES["reachable"]
+        worst = max(stamped, key=_CONDITION_ORDER.index)
+        return worst, _CONDITION_STYLES[worst]
+
+    def _gpu_cell(self) -> tuple[str, str]:
+        """The GPU pressure cell, or an honest absence.
+
+        Never fake numbers: a daemon that does not send the block renders as
+        a dim dash, and one that probed an unmeasurable host as ``n/a``. The
+        colour shift at high pressure is presentation only; any verdict about
+        what the pressure means stays with the service.
+        """
+        if not self._gpu_reported:
+            return "gpu —", "dim"
+        gpu = self._gpu or {}
+        utilization = _measurement(gpu.get("utilization_percent"))
+        used = _measurement(gpu.get("memory_used_mb"))
+        total = _measurement(gpu.get("memory_total_mb"))
+        parts: list[str] = []
+        pressure = 0.0
+        if utilization is not None:
+            parts.append(f"{utilization:.0f}%")
+            pressure = max(pressure, utilization / 100.0)
+        if used is not None and total is not None and total > 0:
+            parts.append(f"{used / 1024:.1f}/{total / 1024:.1f}G")
+            pressure = max(pressure, used / total)
+        if not parts:
+            return "gpu n/a", "dim"
+        style = (
+            "bold red" if pressure >= 0.9 else "yellow" if pressure >= 0.75 else "green"
+        )
+        return f"GPU {' '.join(parts)}", style
+
     def _render_summary(self) -> None:
         line = Text(f"{self._header_glyph()} Jobs on port {self._port}", style="bold")
-        for label, count in self._header_counts():
-            line.append(f"   {label} {count}")
+        self._append_pills(line)
+        verdict, verdict_style = self._service_condition()
+        line.append("   ")
+        line.append(
+            f"{'●' if self._unicode_glyphs() else '*'} {verdict}",
+            style=verdict_style,
+        )
+        gpu_text, gpu_style = self._gpu_cell()
+        line.append("   ")
+        line.append(gpu_text, style=gpu_style)
         shown = len(self._jobs)
         if self._total is None:
             line.append(f"   showing {shown}")
@@ -1526,6 +1669,17 @@ def _count(raw: object) -> int | None:
     if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
         return None
     return raw
+
+
+def _measurement(raw: object) -> float | None:
+    """Read a published measurement, or ``None`` when there is none.
+
+    ``None`` is the probe saying it could not measure; anything non-numeric
+    is read the same way rather than invented into a number.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw < 0:
+        return None
+    return float(raw)
 
 
 def _fetch_error(result: dict[str, object] | None) -> str | None:
