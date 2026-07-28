@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from sentence_transformers import CrossEncoder
+    from sentence_transformers.base.modality_types import PairInput
     from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
         VaultGraph,
     )
@@ -480,7 +481,12 @@ class VaultSearcher:
         # oversized rows (~6 chars per BPE token is a safe ceiling);
         # the model's own max_length does the exact token truncation.
         char_cap = max(1, int(cfg.reranker_max_length)) * 6
-        pairs = [(query, (r.rerank_text or r.snippet)[:char_cap]) for r in results]
+        # Declared, not inferred: `list` is invariant, so an inferred
+        # `list[tuple[str, str]]` is not assignable to the `list[PairInput]`
+        # the overloads accept.
+        pairs: list[PairInput] = [  # pyright: ignore[reportUnknownVariableType]  # sentence_transformers stubs incomplete
+            (query, (r.rerank_text or r.snippet)[:char_cap]) for r in results
+        ]
         batch_size = cfg.reranker_batch_size
         raw_scores = None
         # The GPU lock wraps only the model forward call; the
