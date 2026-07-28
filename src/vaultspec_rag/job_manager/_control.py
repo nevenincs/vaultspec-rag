@@ -28,6 +28,7 @@ from ..job_models import (
 from ..job_models import (
     capabilities_for_state as _capabilities_for_state,
 )
+from ..logging_config import log_event
 from .state import (
     JobManagerState,
     JobRuntimeOwner,
@@ -39,6 +40,73 @@ if TYPE_CHECKING:
     from .. import job_persistence as _job_persistence
 
 logger = logging.getLogger("vaultspec_rag.jobs")
+
+#: Rejection codes that indicate a broken internal contract rather than a
+#: request an operator can correct. They log at ERROR; every other rejection
+#: is an answerable request and logs at WARNING.
+_INTERNAL_REJECTION_CODES = frozenset(
+    {
+        "dispatch_not_bound",
+        "event_loop_required",
+        "invalid_progress",
+        "manager_not_empty",
+        "resources_still_owned",
+        "runtime_already_owned",
+    }
+)
+
+
+def _log_rejection(
+    command: str,
+    code: str,
+    message: str,
+    *,
+    job_id: str | None,
+    initiator: JobInitiator | None,
+    **extra_fields: object,
+) -> None:
+    """Log one command rejection so it leaves a trace beyond the HTTP body.
+
+    Every rejection composes an accurate outcome for the caller, but a caller
+    that discards the body (or a UI that only shows acceptance) leaves the
+    operator with no record of why nothing happened. This is the single log
+    site for all of them.
+    """
+    fields: dict[str, object] = {
+        "command": command,
+        "code": code,
+        "reason": message,
+    }
+    if job_id is not None:
+        fields["job_id"] = job_id
+    if initiator is not None:
+        fields["initiator_kind"] = initiator.kind
+        fields["initiator_command"] = initiator.command
+    fields.update(
+        {key: value for key, value in extra_fields.items() if value is not None}
+    )
+    log_event(
+        logger,
+        "service.job",
+        "rejected",
+        severity=(
+            logging.ERROR if code in _INTERNAL_REJECTION_CODES else logging.WARNING
+        ),
+        fields=fields,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _RequestAttribution:
+    """Who asked for a rejected command, and which resource they named.
+
+    Rejection logging needs both even when the target job does not exist or
+    the requester is not the job's original initiator; a rejection outcome
+    alone carries neither.
+    """
+
+    job_id: str | None = None
+    initiator: JobInitiator | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +139,7 @@ class JobManagerControl(JobManagerState):
                 "force_termination_unavailable",
                 "Per-job force termination is unavailable for this runtime.",
                 target,
+                attribution=_RequestAttribution(job_id=job_id),
             )
         if mode != "graceful":
             return None, self._error(
@@ -78,11 +147,13 @@ class JobManagerControl(JobManagerState):
                 "invalid_control_mode",
                 f"Unsupported control mode {mode!r}.",
                 target,
+                attribution=_RequestAttribution(job_id=job_id),
             )
         if managed is None:
             return None, self._terminal_control_target_outcome(
                 command,
                 terminal,
+                job_id=job_id,
                 desired_state=desired_state,
             )
         if managed.snapshot.desired_state is desired_state:
@@ -107,11 +178,17 @@ class JobManagerControl(JobManagerState):
         command: str,
         terminal: ManagedJob | None,
         *,
+        job_id: str,
         desired_state: DesiredJobState,
     ) -> JobOutcome:
         """Resolve a missing or terminal target without mutating manager state."""
         if terminal is None:
-            return self._error(command, "job_not_found", "The job was not found.")
+            return self._error(
+                command,
+                "job_not_found",
+                "The job was not found.",
+                attribution=_RequestAttribution(job_id=job_id),
+            )
         if (
             terminal.snapshot.state is JobState.CANCELLED
             and desired_state is DesiredJobState.CANCELLED
@@ -422,7 +499,12 @@ class JobManagerControl(JobManagerState):
     ) -> JobOutcome:
         terminal = self._get_terminal_locked(job_id)
         if terminal is None:
-            return self._error(command, "job_not_found", "The job was not found.")
+            return self._error(
+                command,
+                "job_not_found",
+                "The job was not found.",
+                attribution=_RequestAttribution(job_id=job_id),
+            )
         return JobOutcome(
             command=command,
             status=JobOutcomeStatus.OK,
@@ -513,7 +595,12 @@ class JobManagerControl(JobManagerState):
                         message="The first terminal outcome was preserved.",
                         job=self._snapshot_locked(archived_terminal),
                     )
-                return self._error(command, "job_not_found", "The job was not found.")
+                return self._error(
+                    command,
+                    "job_not_found",
+                    "The job was not found.",
+                    attribution=_RequestAttribution(job_id=job_id),
+                )
             if (
                 managed.snapshot.attempt.number != terminal.attempt
                 or managed.runtime.task is not terminal.task
@@ -543,6 +630,11 @@ class JobManagerControl(JobManagerState):
                 reuse=terminal.reuse,
             )
             self._archive_terminal_locked(managed)
+            if terminal.state is JobState.SUCCEEDED:
+                self._resolve_retry_ancestry_locked(
+                    managed.snapshot.attempt.parent_job_id,
+                    resolved_by=managed.snapshot.id,
+                )
             persistence_error = self._persist_locked()
             if persistence_error is not None:
                 return self._persistence_error(
@@ -574,7 +666,12 @@ class JobManagerControl(JobManagerState):
                         message="The first terminal outcome was preserved.",
                         job=self._snapshot_locked(terminal),
                     )
-                return self._error(command, "job_not_found", "The job was not found.")
+                return self._error(
+                    command,
+                    "job_not_found",
+                    "The job was not found.",
+                    attribution=_RequestAttribution(job_id=job_id),
+                )
             if (
                 managed.snapshot.state is not JobState.QUEUED
                 or managed.runtime.task is not None
@@ -626,13 +723,24 @@ class JobManagerControl(JobManagerState):
             backup = self._capture_state_locked()
             parent = self._get_terminal_locked(job_id)
             if parent is None:
-                return self._missing_retry_target_locked(command, job_id)
+                return self._missing_retry_target_locked(
+                    command,
+                    job_id,
+                    initiator=initiator,
+                )
             if not parent.snapshot.state.is_retryable:
                 return self._error(
                     command,
                     "job_not_retryable",
-                    "Succeeded jobs are recreated through ordinary job creation.",
+                    (
+                        "A linked retry already succeeded; superseded jobs are "
+                        "recreated through ordinary job creation."
+                        if parent.snapshot.state is JobState.SUPERSEDED
+                        else "Succeeded jobs are recreated through ordinary "
+                        "job creation."
+                    ),
                     parent,
+                    attribution=_RequestAttribution(initiator=initiator),
                 )
             if len(self._active) >= self._max_nonterminal:
                 return self._error(
@@ -643,14 +751,24 @@ class JobManagerControl(JobManagerState):
                         f"capacity ({self._max_nonterminal})."
                     ),
                     parent,
+                    attribution=_RequestAttribution(initiator=initiator),
                 )
             equivalent = self._find_equivalent_active_locked(parent.snapshot.spec)
             if equivalent is not None:
+                message = "Equivalent active work is already registered."
+                _log_rejection(
+                    command,
+                    "active_job_exists",
+                    message,
+                    job_id=job_id,
+                    initiator=initiator or parent.snapshot.initiator,
+                    equivalent_job_id=equivalent.id,
+                )
                 return JobOutcome(
                     command=command,
                     status=JobOutcomeStatus.ERROR,
                     code="active_job_exists",
-                    message="Equivalent active work is already registered.",
+                    message=message,
                     job=equivalent,
                 )
 
@@ -701,16 +819,72 @@ class JobManagerControl(JobManagerState):
                 job=retried,
             )
 
-    def _missing_retry_target_locked(self, command: str, job_id: str) -> JobOutcome:
+    def _missing_retry_target_locked(
+        self,
+        command: str,
+        job_id: str,
+        *,
+        initiator: JobInitiator | None,
+    ) -> JobOutcome:
         active = self._active.get(job_id)
         if active is None:
-            return self._error(command, "job_not_found", "The job was not found.")
+            return self._error(
+                command,
+                "job_not_found",
+                "The job was not found.",
+                attribution=_RequestAttribution(job_id=job_id, initiator=initiator),
+            )
         return self._error(
             command,
             "job_not_terminal",
             "Only terminal jobs can be retried.",
             active,
+            attribution=_RequestAttribution(initiator=initiator),
         )
+
+    def _resolve_retry_ancestry_locked(
+        self,
+        parent_job_id: str | None,
+        *,
+        resolved_by: str,
+    ) -> None:
+        """Mark every retryable terminal ancestor superseded after a retry wins.
+
+        A retryable parent that keeps advertising retry after its linked retry
+        succeeded sends the operator around a loop: they retry, the retry
+        finishes clean and scrolls away, and the parent still offers retry.
+        Resolution walks the whole lineage so a chain of failed retries is
+        settled by the one that finally succeeds. A retry that fails or is
+        cancelled resolves nothing - its parent honestly still has work to
+        offer. Only terminal records change here, so active-work equivalence
+        (which scans the active set alone) is untouched.
+        """
+        seen: set[str] = set()
+        while parent_job_id is not None and parent_job_id not in seen:
+            seen.add(parent_job_id)
+            parent = self._get_terminal_locked(parent_job_id)
+            if parent is None or not parent.snapshot.state.is_retryable:
+                return
+            # The persisted-clock contract reads the finish stamp as the
+            # final state change, so resolution keeps the parent's original
+            # finish clock instead of advancing either stamp.
+            finished_at = parent.snapshot.timestamps.finished_at
+            stamp = finished_at if finished_at is not None else time.time()
+            self._replace_snapshot_locked(
+                parent,
+                state=JobState.SUPERSEDED,
+                desired_state=parent.snapshot.desired_state,
+                now=stamp,
+                finished_at=stamp,
+            )
+            log_event(
+                logger,
+                "service.job",
+                "superseded",
+                job_id=parent_job_id,
+                resolved_by=resolved_by,
+            )
+            parent_job_id = parent.snapshot.attempt.parent_job_id
 
     def delete(self, job_id: str) -> JobOutcome:
         """Delete retained terminal history; never cancel nonterminal work."""
@@ -727,7 +901,12 @@ class JobManagerControl(JobManagerState):
                 )
             terminal = self._get_terminal_locked(job_id)
             if terminal is None:
-                return self._error(command, "job_not_found", "The job was not found.")
+                return self._error(
+                    command,
+                    "job_not_found",
+                    "The job was not found.",
+                    attribution=_RequestAttribution(job_id=job_id),
+                )
             self._terminal.remove(terminal)
             self._forget_idempotency_locked(job_id)
             persistence_error = self._persist_locked()
@@ -958,11 +1137,22 @@ class JobManagerControl(JobManagerState):
         code: str,
         message: str,
         managed: ManagedJob | None = None,
+        *,
+        attribution: _RequestAttribution | None = None,
     ) -> JobOutcome:
+        snapshot = self._snapshot_locked(managed) if managed is not None else None
+        job_id = attribution.job_id if attribution is not None else None
+        initiator = attribution.initiator if attribution is not None else None
+        if snapshot is not None:
+            if job_id is None:
+                job_id = snapshot.id
+            if initiator is None:
+                initiator = snapshot.initiator
+        _log_rejection(command, code, message, job_id=job_id, initiator=initiator)
         return JobOutcome(
             command=command,
             status=JobOutcomeStatus.ERROR,
             code=code,
             message=message,
-            job=self._snapshot_locked(managed) if managed is not None else None,
+            job=snapshot,
         )

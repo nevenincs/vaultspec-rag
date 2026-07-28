@@ -79,15 +79,26 @@ class JobState(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+    #: A retryable terminal record whose linked retry has since succeeded.
+    #: The record is preserved as history, but it no longer advertises
+    #: retryability: the work it represents got through, so offering retry
+    #: again would send an operator around a loop that can never resolve.
+    SUPERSEDED = "superseded"
 
     @property
     def is_terminal(self) -> bool:
-        """Return whether no transition may rewrite this job resource."""
+        """Return whether no attempt may ever run for this resource again.
+
+        A terminal record never returns to the active set. The one terminal
+        transition that remains is resolution: a retryable terminal record
+        becomes superseded when a linked retry succeeds.
+        """
         return self in {
             JobState.CANCELLED,
             JobState.SUCCEEDED,
             JobState.FAILED,
             JobState.INTERRUPTED,
+            JobState.SUPERSEDED,
         }
 
     @property
@@ -111,7 +122,8 @@ class JobState(StrEnum):
         """Return whether a finished attempt in this state may be retried.
 
         Narrower than :attr:`is_terminal`: a succeeded job is terminal and has
-        nothing to retry. One of the two call sites already called its result
+        nothing to retry, and a superseded job's work already succeeded
+        through a linked retry. One of the two call sites already called its result
         `retryable`; the other described the same set as "terminal" in an
         error message it shows an operator, which is the imprecision that
         having no name for the grouping produces.
