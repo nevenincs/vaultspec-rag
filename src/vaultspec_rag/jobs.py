@@ -1106,16 +1106,18 @@ def machine_pressure(
     forwards: list[dict[str, object] | None],
     project_root: str | None,
     source: str,
+    store_failures: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """The machine-wide pressure block served on the jobs envelope.
 
     Samples the same seams the degradation evidence reads - the forward
     window, the cached read-only GPU probe, the bounded backend probe -
-    plus the encode-admission queue, and folds them through the hysteresis
-    evaluator into one tier. The backend is probed only when running work
-    names a store (*project_root*), so an idle machine pays no probe and
-    an unprobed store reads as absence, never as a verdict. Surfacing
-    only: nothing consumes the tier to defer, shrink, or refuse work.
+    plus the encode-admission queue and the typed failures of jobs that
+    died recently, and folds them through the hysteresis evaluator into one
+    tier. The backend is probed only when running work names a store
+    (*project_root*), so an idle machine pays no probe and an unprobed
+    store reads as absence, never as a verdict. Surfacing only: nothing
+    consumes the tier to defer, shrink, or refuse work.
     """
     from .concurrency import limiter_stats
     from .pressure import MachinePressureSignals, get_pressure_evaluator
@@ -1150,6 +1152,7 @@ def machine_pressure(
         backend_latency_seconds=_signal_measure(backend.get("latency_seconds")),
         backend_probe_bound_seconds=_BACKEND_PROBE_TIMEOUT_SECONDS if probed else None,
         encode_waiters=waiting,
+        store_failures=store_failures,
     )
     verdict = get_pressure_evaluator().observe(signals, now=now)
     return {
@@ -1160,6 +1163,7 @@ def machine_pressure(
             "gpu": gpu,
             "backend": backend,
             "encode_waiters": waiting,
+            "store_failures": list(store_failures),
         },
     }
 

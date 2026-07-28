@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ._job_errors import DEGRADED_THRESHOLD_SECONDS
+from .logging_config import log_event
 
 __all__ = [
     "PRESSURE_TIERS",
@@ -73,6 +74,26 @@ _GPU_SATURATION_FRACTION = 0.9
 #: burning half its bound on one is far outside the healthy band.
 _BACKEND_SLOW_FRACTION = 0.5
 
+#: A verdict nothing has refreshed for this long lapses to ``nominal``. The
+#: asset protected here is the availability of foreground work, not data, so
+#: uncertainty must release the verdict rather than extend it - the inverse
+#: of a protection clock. Three missed samples is the shortest gap that
+#: cannot be one slow render on a surface that is still polling.
+_STALE_AFTER_SECONDS = _SAMPLE_INTERVAL_SECONDS * 3
+
+#: Store-side failures that make a machine ``critical`` on one sighting. A
+#: full or preflight-refused disk is neither transient nor recoverable by
+#: waiting, and - the reason the probe cannot stand alone here - a backend
+#: whose disk is full still answers a read probe perfectly well.
+_CRITICAL_STORE_FAILURES: frozenset[str] = frozenset(
+    {"disk_full", "disk_preflight_failed"}
+)
+
+#: Failures that are critical only in repetition: either can be one transient
+#: blip, so a single sighting must not outrank a working store.
+_REPEATED_STORE_FAILURES: frozenset[str] = frozenset({"timeout", "unavailable"})
+_REPEATED_STORE_FAILURE_MINIMUM = 2
+
 
 @dataclass(frozen=True, slots=True)
 class MachinePressureSignals:
@@ -94,6 +115,11 @@ class MachinePressureSignals:
     backend_latency_seconds: float | None = None
     backend_probe_bound_seconds: float | None = None
     encode_waiters: int | None = None
+    #: Typed failure kinds recorded by jobs that finished recently, one entry
+    #: per failed job. Read as store-side evidence the live probe cannot
+    #: give: a job already killed by a full disk is a harder fact about the
+    #: store than a read that still answers.
+    store_failures: tuple[str, ...] = field(default_factory=tuple)
 
 
 def _gpu_saturated(signals: MachinePressureSignals) -> bool:
@@ -134,7 +160,25 @@ def _critical_findings(signals: MachinePressureSignals) -> tuple[str, ...]:
         )
     if signals.forward_in_flight and signals.forward_thread_alive is False:
         findings.append("encode_thread_dead")
+    findings.extend(sorted(_store_failure_findings(signals)))
     return tuple(findings)
+
+
+def _store_failure_findings(signals: MachinePressureSignals) -> set[str]:
+    """Typed job failures that make the store's condition critical."""
+    findings: set[str] = set()
+    repeated: dict[str, int] = {}
+    for kind in signals.store_failures:
+        if kind in _CRITICAL_STORE_FAILURES:
+            findings.add(f"store_{kind}")
+        elif kind in _REPEATED_STORE_FAILURES:
+            repeated[kind] = repeated.get(kind, 0) + 1
+    findings.update(
+        f"store_{kind}_repeated"
+        for kind, count in repeated.items()
+        if count >= _REPEATED_STORE_FAILURE_MINIMUM
+    )
+    return findings
 
 
 def _elevated_findings(signals: MachinePressureSignals) -> tuple[str, ...]:
@@ -197,9 +241,14 @@ class PressureEvaluator:
 
         Calls closer together than the sample interval return the standing
         verdict without consuming a sample, so several concurrent pollers
-        cannot make the tier move faster than one.
+        cannot make the tier move faster than one. A verdict nothing has
+        refreshed for longer than the staleness window lapses to ``nominal``
+        before this sample is taken: an unwatched machine is an unmeasured
+        one, and an unmeasured one is not under a verdict.
         """
         with self._lock:
+            if self._stale(now):
+                self._lapse(now)
             if self._accepts(now):
                 self._last_sample_at = now
                 if self._entered_at is None:
@@ -210,6 +259,26 @@ class PressureEvaluator:
                 "tier": PRESSURE_TIERS[self._tier],
                 "entered_at": self._entered_at,
             }
+
+    def _stale(self, now: float) -> bool:
+        """Whether too long has passed since the standing verdict was fed.
+
+        A clock that went backwards is stale for the same reason a long gap
+        is: the elapsed time since the last sample is unknowable, and an
+        unknowable gap must release the verdict rather than preserve it.
+        """
+        last = self._last_sample_at
+        if last is None:
+            return False
+        return now < last or now - last >= _STALE_AFTER_SECONDS
+
+    def _lapse(self, now: float) -> None:
+        """Drop a verdict nothing refreshed back to ``nominal``."""
+        if self._tier != _NOMINAL:
+            self._transition(_NOMINAL, now, ("evidence_stale",))
+        self._streak_count = 0
+        self._streak_tier = _NOMINAL
+        self._clear_started_at = None
 
     def _accepts(self, now: float) -> bool:
         last = self._last_sample_at
@@ -248,16 +317,22 @@ class PressureEvaluator:
 
     def _transition(self, tier: int, now: float, findings: tuple[str, ...]) -> None:
         previous = self._tier
+        held_for = (
+            None if self._entered_at is None else round(now - self._entered_at, 3)
+        )
         self._tier = tier
         self._entered_at = now
-        detail = f" ({', '.join(findings)})" if findings else ""
-        # Transitions land in the service log so tier history accumulates
-        # against job outcomes - the evidence future threshold tuning needs.
-        logger.info(
-            "machine pressure %s -> %s%s",
-            PRESSURE_TIERS[previous],
-            PRESSURE_TIERS[tier],
-            detail,
+        # Transitions land in the service log as parseable events so tier
+        # history can be read back against job outcomes - that history is
+        # what makes the thresholds deferred here settable later.
+        log_event(
+            logger,
+            "service.pressure",
+            "tier_changed",
+            previous=PRESSURE_TIERS[previous],
+            tier=PRESSURE_TIERS[tier],
+            held_seconds=held_for,
+            findings=",".join(findings) if findings else None,
         )
 
 

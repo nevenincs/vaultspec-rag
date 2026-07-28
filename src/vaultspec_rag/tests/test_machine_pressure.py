@@ -9,6 +9,7 @@ the production route composition.
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
@@ -38,7 +39,7 @@ _T0 = 100_000.0
 _ATTACK = 3
 
 _PRESSURE_KEYS = {"tier", "entered_at", "evidence"}
-_EVIDENCE_KEYS = {"forward", "gpu", "backend", "encode_waiters"}
+_EVIDENCE_KEYS = {"forward", "gpu", "backend", "encode_waiters", "store_failures"}
 _FORWARD_KEYS = {"in_flight", "age_seconds", "slice_ordinal", "items", "thread_alive"}
 _GPU_KEYS = {"available", "utilization_percent", "memory_used_mb", "memory_total_mb"}
 _BACKEND_KEYS = {"probed", "alive", "latency_seconds", "detail"}
@@ -316,11 +317,102 @@ class TestHysteresis:
         first = evaluator.observe(MachinePressureSignals(), now=_T0)
         assert first["entered_at"] == _T0
         _drive(evaluator, pressured, count=3, start=_T0 + _STEP)
-        held = evaluator.observe(pressured, now=_T0 + 10 * _STEP)
+        # Kept on the sample cadence rather than jumped forward: a gap wide
+        # enough to skip samples is a stale verdict, which is a different
+        # rule being exercised - here the tier must simply hold.
+        held = _drive(evaluator, pressured, count=7, start=_T0 + 4 * _STEP)
         assert held["tier"] == "elevated"
         assert held["entered_at"] == _T0 + 3 * _STEP, (
             "entered_at is the escalation moment and must hold while the tier holds"
         )
+
+
+class TestStaleVerdictsFailOpen:
+    """An unmeasured machine is not a machine under a verdict."""
+
+    def test_a_verdict_nothing_refreshed_lapses_to_nominal(self) -> None:
+        """Proven able to fail: making ``_stale`` always return ``False`` -
+        so a verdict is carried forward across any gap - holds ``critical``
+        and fails the assertion below by name; restored, it passes."""
+        evaluator = PressureEvaluator()
+        failed = MachinePressureSignals(backend_probed=True, backend_alive=False)
+        assert _drive(evaluator, failed, count=_ATTACK)["tier"] == "critical"
+        resumed = _T0 + _ATTACK * _STEP + 3600.0
+        assert evaluator.observe(MachinePressureSignals(), now=resumed)["tier"] == (
+            "nominal"
+        ), "an hour of silence must release the verdict, not preserve it"
+
+    def test_a_backwards_clock_releases_the_verdict(self) -> None:
+        """An unknowable gap fails open the same way a long one does."""
+        evaluator = PressureEvaluator()
+        failed = MachinePressureSignals(backend_probed=True, backend_alive=False)
+        assert _drive(evaluator, failed, count=_ATTACK)["tier"] == "critical"
+        assert evaluator.observe(failed, now=_T0 - 500.0)["tier"] == "nominal"
+
+    def test_a_polled_surface_never_trips_the_staleness_window(self) -> None:
+        """The window must not fire under a surface that is still polling."""
+        evaluator = PressureEvaluator()
+        failed = MachinePressureSignals(backend_probed=True, backend_alive=False)
+        moment = _T0
+        seen: list[object] = []
+        for _ in range(20):
+            seen.append(evaluator.observe(failed, now=moment)["tier"])
+            moment += _STEP
+        assert seen[-1] == "critical", "a verdict fed on the sample cadence must stand"
+
+
+class TestStoreFailuresReachCritical:
+    """A full disk answers a read probe; the dead jobs are the evidence."""
+
+    def test_a_disk_failure_is_critical_on_one_sighting(self) -> None:
+        block = _drive(
+            PressureEvaluator(),
+            MachinePressureSignals(
+                backend_probed=True,
+                backend_alive=True,
+                backend_latency_seconds=0.01,
+                backend_probe_bound_seconds=2.0,
+                store_failures=("disk_full",),
+            ),
+            count=_ATTACK,
+        )
+        assert block["tier"] == "critical", (
+            "a live probe must not outrank a job the store already killed"
+        )
+
+    @pytest.mark.parametrize("kind", ["timeout", "unavailable"])
+    def test_one_transient_failure_is_not_critical(self, kind: str) -> None:
+        """Proven able to fail: treating these as critical on one sighting -
+        dropping the repetition minimum - lands ``critical`` and fails the
+        assertion below by name; restored, it passes."""
+        block = _drive(
+            PressureEvaluator(),
+            MachinePressureSignals(store_failures=(kind,)),
+            count=_ATTACK,
+        )
+        assert block["tier"] == "nominal", (
+            "a single transient failure must not condemn a working store"
+        )
+
+    @pytest.mark.parametrize("kind", ["timeout", "unavailable"])
+    def test_a_repeated_transient_failure_is_critical(self, kind: str) -> None:
+        block = _drive(
+            PressureEvaluator(),
+            MachinePressureSignals(store_failures=(kind, kind)),
+            count=_ATTACK,
+        )
+        assert block["tier"] == "critical"
+
+    def test_an_unrelated_failure_kind_is_not_store_evidence(self) -> None:
+        """A job killed by its own corpus limit says nothing about the store."""
+        block = _drive(
+            PressureEvaluator(),
+            MachinePressureSignals(
+                store_failures=("corpus_limit_exceeded", "corpus_limit_exceeded")
+            ),
+            count=_ATTACK,
+        )
+        assert block["tier"] == "nominal"
 
 
 class TestGpuNeverCritical:
@@ -501,3 +593,60 @@ class TestPlainFeedRendering:
 
         line = _machine_pressure_line({"pressure": {"tier": tier}})
         assert line == f"Machine pressure: {tier}"
+
+
+class TestSampleClockTracksTheProbeCaches:
+    """The evaluator's clock is the probe-cache period, not a copy of it."""
+
+    def test_the_sample_interval_matches_the_probe_cache_period(self) -> None:
+        """A faster clock would only resample a cache and let the number of
+        pollers, rather than elapsed time, decide how fast the tier moves.
+
+        The two constants live in different modules because the evaluator
+        must not import the probing one, so this equality is the binding
+        that stops them drifting apart under a later tuning pass.
+        """
+        from .. import pressure as pressure_module
+        from ..jobs import _BACKEND_PROBE_CACHE_SECONDS, _GPU_SNAPSHOT_CACHE_SECONDS
+
+        assert pressure_module._SAMPLE_INTERVAL_SECONDS == _BACKEND_PROBE_CACHE_SECONDS
+        assert pressure_module._SAMPLE_INTERVAL_SECONDS == _GPU_SNAPSHOT_CACHE_SECONDS
+
+
+class TestTransitionsAreParseableEvents:
+    """Tier history is the deliverable, so it has to be machine-readable."""
+
+    def test_a_transition_emits_a_structured_event(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from ..pressure import logger as pressure_logger
+
+        evaluator = PressureEvaluator()
+        failed = MachinePressureSignals(backend_probed=True, backend_alive=False)
+        with caplog.at_level(logging.INFO, logger=pressure_logger.name):
+            _drive(evaluator, failed, count=_ATTACK)
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "service.pressure event=tier_changed" in message
+            and "previous=nominal" in message
+            and "tier=critical" in message
+            and "backend_failed" in message
+            for message in messages
+        ), f"a transition must be parseable, got {messages}"
+
+    def test_a_lapsed_verdict_names_staleness_as_its_cause(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A verdict released for want of evidence must not read as recovery."""
+        from ..pressure import logger as pressure_logger
+
+        evaluator = PressureEvaluator()
+        failed = MachinePressureSignals(backend_probed=True, backend_alive=False)
+        _drive(evaluator, failed, count=_ATTACK)
+        with caplog.at_level(logging.INFO, logger=pressure_logger.name):
+            evaluator.observe(
+                MachinePressureSignals(), now=_T0 + _ATTACK * _STEP + 3600.0
+            )
+        assert any(
+            "evidence_stale" in record.getMessage() for record in caplog.records
+        ), "a stale release is a different fact from a measured recovery"
