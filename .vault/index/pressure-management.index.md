@@ -1,0 +1,21 @@
+---
+generated: true
+tags:
+  - '#index'
+  - '#pressure-management'
+date: '2026-07-28'
+modified: '2026-07-28'
+body_schema: 'body-v1'
+related:
+  - '[[2026-07-28-pressure-management-research]]'
+---
+
+# `pressure-management` feature index
+
+Auto-generated index of all documents tagged with `#pressure-management`.
+
+## Documents
+
+### research
+
+- `2026-07-28-pressure-management-research` - `pressure-management` research: `Tiered pressure management and managed degradation`
