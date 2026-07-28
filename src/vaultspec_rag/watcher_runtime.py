@@ -411,6 +411,10 @@ def _log_managed_transition(
             pending_paths=context.pending_count,
         )
     else:
+        # An ERROR event whose error field is null names neither a cause nor
+        # a remediation, so this event always carries one: the exception, the
+        # job's own result text, or an explicit statement that the terminal
+        # state arrived without either.
         log_event(
             logger,
             "service.watcher",
@@ -420,7 +424,9 @@ def _log_managed_transition(
             source=slot.source.value,
             job_id=snapshot.id,
             state=snapshot.state.value,
-            error=context.error or snapshot.result,
+            error=context.error
+            or snapshot.result
+            or f"job reached {snapshot.state.value} without recording an error",
             pending_paths=context.pending_count,
         )
 

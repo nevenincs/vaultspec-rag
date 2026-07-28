@@ -37,6 +37,7 @@ __all__ = [
     "MemoryProbe",
     "MemorySample",
     "cuda_forward_peak_capture",
+    "cuda_pressure",
     "current_cuda_mb",
     "current_rss_mb",
     "is_enabled",
@@ -203,6 +204,36 @@ def cuda_free_memory_mb() -> float | None:
         return bytes_to_mib(_torch_module.cuda.mem_get_info()[0])
     except (RuntimeError, AssertionError):
         return None
+
+
+def cuda_pressure() -> tuple[float | None, float | None, float | None]:
+    """Machine-wide GPU pressure: ``(utilization %, used MiB, total MiB)``.
+
+    A read-only observability probe, never a gate and never a consumer. Every
+    element is ``None`` on a torch-free host, a CPU-only build, or a process
+    whose CUDA context is not already initialized - the probe reports absence
+    rather than initializing a context the calling path does not own. The
+    memory figures are device-wide (``mem_get_info``), so they see pressure
+    from every process on the card, not just this one. Utilization degrades
+    independently: it needs the NVML bindings, whose absence must not blank
+    the memory figures that are still measurable.
+    """
+    _measure_cuda_mb()
+    if _torch_module is None or not _torch_has_cuda:
+        return (None, None, None)
+    try:
+        if not _torch_module.cuda.is_initialized():
+            return (None, None, None)
+        free_bytes, total_bytes = _torch_module.cuda.mem_get_info()
+        total_mb = bytes_to_mib(int(total_bytes))
+        used_mb = bytes_to_mib(int(total_bytes) - int(free_bytes))
+    except (RuntimeError, AssertionError):
+        return (None, None, None)
+    try:
+        utilization = float(_torch_module.cuda.utilization())
+    except Exception:  # NVML may be absent entirely or refuse the query
+        utilization = None
+    return (utilization, used_mb, total_mb)
 
 
 def resolve_index_cuda_ceiling_mb(

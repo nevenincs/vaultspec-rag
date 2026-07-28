@@ -35,6 +35,12 @@ class CountingProgressReporter:
     def log(self, message: str) -> None:
         self.events.append(("log", message))
 
+    def forward_started(self, *, ordinal: int, items: int) -> None:
+        self.events.append(("forward_started", (ordinal, items)))
+
+    def forward_finished(self, *, ordinal: int, items: int) -> None:
+        self.events.append(("forward_finished", (ordinal, items)))
+
 
 def _make_non_tty_console() -> tuple[Console, io.StringIO]:
     buf = io.StringIO()

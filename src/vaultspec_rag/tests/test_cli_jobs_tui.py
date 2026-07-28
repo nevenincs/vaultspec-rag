@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import http.server
 import json
+import re
 import threading
 import time
 import typing
@@ -420,7 +421,12 @@ class TestRenderedRows:
             painted = _screen_text(app)
 
         assert "1m15s" in painted, "elapsed runtime must be on the row"
-        assert "2m20s left" in painted, "the estimate must be on the row"
+        # The row counts the service's 140s estimate down between polls, so
+        # the painted value depends on how long the first paint took; any
+        # value within a few ticked seconds proves the estimate is on the row.
+        assert re.search(r"2m(?:1[5-9]|20)s left", painted), (
+            "the estimate must be on the row"
+        )
 
     @pytest.mark.asyncio
     async def test_an_absent_estimate_is_not_rendered_as_zero(
@@ -1736,4 +1742,109 @@ class TestOlderServiceCompatibility:
 
         assert control_service.control_paths() == [], (
             "a capability published as false must still block the request"
+        )
+
+
+class TestRemainingTimeOnTheRow:
+    """The row answers "how much longer", or says plainly that it cannot."""
+
+    @pytest.mark.asyncio
+    async def test_a_declined_estimate_is_said_on_the_row(
+        self, control_service: _JobService
+    ) -> None:
+        """Published null on working work reads as unknown, not as nothing.
+
+        A bare dash on a running row reads as "nothing to know here", when
+        the truth is the service measured and declined. Saying so is what
+        stops an operator refreshing forever waiting for a dash to change.
+
+        Proven able to fail: collapsing the published-null branch of
+        ``_time_cell`` into the dash - the rendering before this change -
+        never paints the marker and fails on the assertion below by name;
+        restored, it passes.
+        """
+        app = _app(control_service, [_job("abc123def456", remaining=None, rate=None)])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "ETA unknown" in painted, (
+            "a published null on a running row must read as an explicit unknown"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_pre_estimate_daemon_row_does_not_claim_unknown(
+        self, control_service: _JobService
+    ) -> None:
+        """Absent stays a different answer from null on the row itself.
+
+        Proven able to fail: making ``_time_cell`` treat an absent key the
+        same as a published null paints the marker on every row of an older
+        daemon and fails on the not-painted assertion below by name;
+        restored, it passes and the header note carries the version gap.
+        """
+        job = _job("abc123def456")
+        del job["estimated_remaining_seconds"]
+        del job["progress_rate_per_second"]
+
+        app = _app(control_service, [job])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "ETA unknown" not in painted, (
+            "a daemon that never estimates must not read as declining each job"
+        )
+        assert "does not report time estimates" in painted
+
+    @pytest.mark.asyncio
+    async def test_inert_work_does_not_claim_unknown(
+        self, control_service: _JobService
+    ) -> None:
+        """Finished work has no remaining time to be unsure about."""
+        app = _app(control_service, [_finished_job("job00000")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "ETA unknown" not in painted, (
+            "an unknown marker on finished work claims a question it never had"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_countdown_ticks_between_polls_and_snaps_to_the_service(
+        self, control_service: _JobService
+    ) -> None:
+        """Between polls the row counts down; each poll re-anchors it.
+
+        The refresh interval here is an hour, so every movement below is the
+        display ticking the last service value down locally - and the manual
+        refresh proves a fresh payload snaps the row back to what the
+        service says rather than continuing from the local count.
+
+        Proven able to fail two ways, each on its own assertion: removing
+        the time-cell update from ``_repaint_animated_cells`` leaves the row
+        frozen on the applied value and fails awaiting the ticked-down
+        paint; stamping entries only when absent in ``_record_estimates``
+        (instead of rebuilding the map) keeps the countdown falling through
+        the refresh and fails on the snapped-back assertion. Restored, both
+        pass.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            # The service said 140s; a strictly lower painted value can only
+            # come from the local tick-down.
+            await _await_painted_when(
+                pilot,
+                app,
+                lambda text: re.search(r"2m1[0-8]s left", text) is not None,
+                "a countdown ticked below the service estimate",
+            )
+
+            app.refresh_jobs()
+            snapped = await _await_painted(pilot, app, "2m20s left")
+
+        assert "2m20s left" in snapped, (
+            "a fresh service payload must snap the countdown back to its value"
         )
