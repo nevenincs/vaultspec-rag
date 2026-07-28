@@ -116,6 +116,12 @@ See the [getting started guide](docs/getting-started.md) for the full walkthroug
 <img src="assets/term-search-code.svg" alt="vaultspec-rag code search - the reranker implementation surfaced from a plain-English description" width="880" />
 </p>
 
+Watch that reindexing as it happens. `server jobs --watch` opens a full-screen interface over the running service: live progress per job, the jobs queued behind the GPU slot, what the watcher started versus what you did, per-row pause, retry and cancel, and the selected job's log beside the table.
+
+<p align="center">
+<img src="assets/term-jobs-watch.svg" alt="vaultspec-rag server jobs --watch - the live jobs interface showing an active vault index, two jobs waiting on the GPU slot, and the selected job's service log" width="880" />
+</p>
+
 See [search and index](docs/search-and-index.md) for the full filter set, [MCP integration](docs/mcp.md) for client setup, and [preprocessing hooks](docs/preprocessing-hooks.md) for the extraction rule syntax and its trust model.
 
 ## The vaultspec family
