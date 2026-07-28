@@ -98,6 +98,21 @@ def _command_label(raw: object) -> str:
     return value.replace("_", " ")
 
 
+def _job_superseded(job: dict[str, object]) -> bool:
+    """Whether the service resolved this job through a later successful retry.
+
+    Judged from the payload's own state strings, not a local enum: the wire
+    value is the contract, and older payloads simply never carry it. A
+    superseded row is resolved history - its work was delivered by a linked
+    retry - so it must read as neither a failure awaiting action nor a job
+    that did the work itself.
+    """
+    return "superseded" in (
+        str(job.get("phase", "")).strip().lower(),
+        str(job.get("state", "")).strip().lower(),
+    )
+
+
 def phase_label(job: dict[str, object]) -> str:
     phase = str(job.get("phase", "not-reported"))
     if phase in ("error", "failed"):
@@ -515,6 +530,11 @@ def _job_summary_detail(job: dict[str, object]) -> str:
     if phase in ("error", "failed"):
         result = _human_result(job.get("result"), failed=True)
         return f"error: {result}" if result else "error reported"
+    if _job_superseded(job):
+        # The stored result predates resolution (typically the original
+        # interruption text), so rendering it would read as a failure
+        # still awaiting action; the lineage note names the retry.
+        return "resolved: a linked retry succeeded"
     result = _human_result(job.get("result"))
     if result:
         return result
@@ -595,7 +615,9 @@ def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int
         phase = str(job.get("phase", ""))
         if phase in ("error", "failed"):
             failed += 1
-        elif phase == "done":
+        elif phase == "done" or _job_superseded(job):
+            # Superseded is resolved history: counting it anywhere else
+            # would report either a phantom failure or uncounted work.
             finished += 1
         elif job_is_waiting(job):
             waiting += 1
@@ -944,6 +966,11 @@ def _render_job_resilience_detail(job: dict[str, object]) -> None:
 
 
 def _render_job_result_detail(job: dict[str, object]) -> None:
+    if _job_superseded(job):
+        # The stored result predates resolution; printing it would read as
+        # a failure still awaiting action.
+        _cli.console.print("Resolution: a linked retry succeeded")
+        return
     result = job.get("result")
     if not result:
         return
