@@ -19,9 +19,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 import uvicorn
+from mcp import Client, UriTemplate
+from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError
 from starlette.applications import Starlette
 
 from ..mcp._mcp import mcp
+from ..serviceclient._compat import local_package_version
 from ..serviceclient._transport import _do_http_call
 from ._http_stubs import QuietHandler
 from ._ports import free_loopback_port
@@ -276,6 +279,74 @@ def empty_404_port() -> Iterator[int]:
     finally:
         server.shutdown()
         server.server_close()
+
+
+class TestVaultResourceTemplate:
+    """The document resource addresses real stems, and refuses to escape."""
+
+    def _template(self) -> str:
+        templates = asyncio.run(mcp.list_resource_templates())
+        return next(
+            t.uri_template for t in templates if t.uri_template.startswith("vault://")
+        )
+
+    def test_a_nested_document_stem_matches_the_template(self) -> None:
+        """Every real stem carries its directory, so the template must keep it.
+
+        Plain expansion stops at the path separator and captures nothing here,
+        which silently unaddresses the whole resource; reserved expansion is
+        what makes a directory-qualified stem reachable at all.
+        """
+        match = UriTemplate.parse(self._template()).match("vault://adr/overview")
+
+        assert match == {"doc_id": "adr/overview"}
+
+    def test_a_bare_stem_still_matches(self) -> None:
+        match = UriTemplate.parse(self._template()).match("vault://overview")
+
+        assert match == {"doc_id": "overview"}
+
+    @pytest.mark.parametrize("uri", ["vault://../../etc/passwd", "vault://a%00b"])
+    def test_an_escaping_stem_never_reaches_the_handler(self, uri: str) -> None:
+        """Reserved expansion admits separators, so refusal is load-bearing.
+
+        The handler forwards its stem to the daemon's document route, so a
+        traversal or an embedded null that got this far would be forwarded
+        too. Refusal must land before the handler, and the distinct exception
+        types are what prove which side of it the read stopped on:
+        ``ResourceNotFoundError`` is refusal at the template, while a stem
+        that does reach the handler surfaces the handler's own
+        ``ResourceError``.
+        """
+        with pytest.raises(ResourceNotFoundError):
+            asyncio.run(mcp.read_resource(uri))
+
+    def test_a_legitimate_nested_stem_does_reach_the_handler(self) -> None:
+        """The counterpart that keeps the refusal test honest.
+
+        Without this, a template that matched nothing at all would satisfy the
+        refusal assertions above while leaving the resource unreachable.
+        """
+        with pytest.raises(ResourceError) as excinfo:
+            asyncio.run(mcp.read_resource("vault://adr/overview"))
+
+        assert not isinstance(excinfo.value, ResourceNotFoundError)
+
+
+class TestServerIdentity:
+    """Every result identifies the build that answered it."""
+
+    def test_the_advertised_version_is_this_install(self) -> None:
+        async def _server_info() -> object:
+            async with Client(mcp) as client:
+                result = await client.list_tools()
+                assert result.meta is not None, "the result carried no _meta at all"
+                return result.meta.get("io.modelcontextprotocol/serverInfo")
+
+        assert asyncio.run(_server_info()) == {
+            "name": "VaultSpec Search",
+            "version": local_package_version(),
+        }
 
 
 class TestLegibleTransportError:
