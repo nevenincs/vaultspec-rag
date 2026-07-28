@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING, cast
 from rich.text import Text
 from textual.widgets import RichLog
 
+from ._jobs_tui_palette import semantic_tones
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
@@ -45,7 +47,6 @@ __all__ = [
     "LogEntry",
     "parse_log_line",
     "sanitize_log_text",
-    "semantic_tones",
 ]
 
 # Terminal escape sequences, in every shape a hostile line can carry them:
@@ -130,35 +131,6 @@ _LEVEL_TONES: dict[str, tuple[str, bool]] = {
     "DEBUG": ("muted", False),
     "TRACE": ("muted", False),
 }
-
-# Semantic tone -> (the theme variable it resolves from, the ANSI name used
-# only when no theme is in reach - a bare render outside a running app). The
-# variables are the readable status variants every shipped theme generates
-# from its own palette, so no colour is ever stated here.
-_TONE_VARIABLES: dict[str, tuple[str, str]] = {
-    "good": ("text-success", "green"),
-    "attention": ("text-warning", "yellow"),
-    "bad": ("text-error", "red"),
-    "neutral": ("text-accent", "cyan"),
-}
-
-
-def semantic_tones(variables: Mapping[str, str]) -> dict[str, str]:
-    """Resolve the interface's semantic tones from a theme's variables.
-
-    One mapping for every status colour the interface paints: ``good``,
-    ``attention``, ``bad``, ``neutral``, and ``muted``. The colours come
-    from the active theme's generated readable text variants - the palette
-    the scheme's designers published - never from names chosen here.
-    ``muted`` stays the terminal's dim attribute: it is luminance, not a
-    colour, and is right in both schemes.
-    """
-    tones = {
-        token: str(variables.get(variable) or fallback)
-        for token, (variable, fallback) in _TONE_VARIABLES.items()
-    }
-    tones["muted"] = "dim"
-    return tones
 
 
 # Fixed leading columns, so every entry's content starts on the same cell:
@@ -475,7 +447,7 @@ def render_entry(
     Returns:
         The lines to write, at least one. A raw entry is its sanitized text.
     """
-    resolved = tones if tones is not None else semantic_tones({})
+    resolved = tones if tones is not None else semantic_tones("")
     if entry.kind == "raw":
         lines = [Text(entry.raw or " ")]
     else:
@@ -623,9 +595,9 @@ class JobsLogView(RichLog):
             self._render_entries()
 
     def _tones(self) -> dict[str, str]:
-        """The active theme's semantic tones, resolved fresh per render."""
+        """The active palette variant's tones, resolved fresh per render."""
         app = cast("App[object]", self.app)
-        return semantic_tones(app.theme_variables)
+        return semantic_tones(app.theme)
 
     def _render_entries(self) -> None:
         self.clear()

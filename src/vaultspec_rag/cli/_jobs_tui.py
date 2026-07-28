@@ -15,7 +15,6 @@ including its refusal - is shown on the row that asked for it.
 from __future__ import annotations
 
 import math
-import os
 import time
 from typing import TYPE_CHECKING, ClassVar, NamedTuple, cast
 
@@ -37,7 +36,14 @@ from ..serviceclient._transport import (
     _try_http_set_job_desired_state,
 )
 from ._cli_format import compact_duration
-from ._jobs_tui_log import JobsLogView, semantic_tones
+from ._jobs_tui_log import JobsLogView
+from ._jobs_tui_palette import (
+    DARK_THEME_NAME,
+    LIGHT_THEME_NAME,
+    build_themes,
+    semantic_tones,
+    tone_style,
+)
 from ._jobs_tui_status import (
     ServiceStatusBar,
     ServiceStatusHeader,
@@ -194,16 +200,6 @@ _SUMMARY_BUCKETS: tuple[tuple[str, str], ...] = (
     ("succeeded", "succeeded"),
 )
 
-# The two colour schemes this interface ships, both taken whole from
-# palettes the design community already maintains rather than named ANSI
-# colours chosen here: Nord for the dark scheme and Solarized Light for the
-# light one, exactly as the framework distributes them. Every status colour
-# below is expressed as a semantic tone resolved from the active theme's own
-# readable text variants, so switching scheme restyles every cell
-# consistently and nothing in this module states a colour of its own.
-_DARK_THEME = "nord"
-_LIGHT_THEME = "solarized-light"
-
 # Header pills. One anatomy for every pill - glyph, count, then (width
 # permitting) a label - so no cell has to be decoded differently from its
 # neighbours, and the glyph is never the only signal. Tone is one mapping
@@ -253,15 +249,18 @@ _CONDITION_TONES: dict[str, tuple[str, bool]] = {
     "reachable": ("muted", False),
 }
 
-_STATE_STYLES: dict[str, str] = {
-    "active": "bold green",
-    "waiting": "yellow",
-    "failed": "bold red",
-    "paused": "cyan",
-    "pausing": "cyan",
-    "cancelling": "magenta",
-    "cancelled": "magenta",
-    "finished": "dim",
+# Row phase-label tones: motion and success are good, waiting is attention,
+# failure is bad, every deliberate operator state (paused, cancelled and the
+# transitions into them) is neutral, and finished work recedes to muted.
+_STATE_TONES: dict[str, tuple[str, bool]] = {
+    "active": ("good", True),
+    "waiting": ("attention", False),
+    "failed": ("bad", True),
+    "paused": ("neutral", False),
+    "pausing": ("neutral", False),
+    "cancelling": ("neutral", False),
+    "cancelled": ("neutral", False),
+    "finished": ("muted", False),
 }
 
 
@@ -376,25 +375,34 @@ class _Tombstone(NamedTuple):
 # to a width that cuts the distinguishing word off, and every stage of a
 # control then paints the same truncated stem. The header carries the full
 # sentence, where there is room for one.
-_PENDING_LINES: dict[str, tuple[str, str]] = {
-    "requested": (" {action} requested", "italic yellow"),
-    "sent": (" {action} sent", "italic yellow"),
-    "refused": (" {action} refused", "bold red"),
-    "gone": (" no longer listed", "bold red"),
+_PENDING_LINES: dict[str, tuple[str, str, bool, bool]] = {
+    # outcome -> (template, tone, bold, italic)
+    "requested": (" {action} requested", "attention", False, True),
+    "sent": (" {action} sent", "attention", False, True),
+    "refused": (" {action} refused", "bad", True, False),
+    "gone": (" no longer listed", "bad", True, False),
 }
+
+
+class _PaintContext(NamedTuple):
+    """Per-repaint paint state every row cell shares: frame and tones."""
+
+    frame: str
+    tones: dict[str, str]
 
 
 def _state_cell(
     job: dict[str, object],
-    frame: str,
+    paint: _PaintContext,
     pending: _Pending | None,
     cells: int,
     *,
     deleted: bool = False,
 ) -> Text:
     """Render the state cell: phase, a live glyph, and any pending request."""
+    tones = paint.tones
     label = phase_label(job)
-    glyph = f"{frame} " if _row_animates(job) else "  "
+    glyph = f"{paint.frame} " if _row_animates(job) else "  "
     if deleted:
         # The row the operator acted on, held on screen long enough to be seen
         # leaving. Without this the freed slot is backfilled from the
@@ -404,7 +412,7 @@ def _state_cell(
             " ✗ deleted",
             cells,
             top_style="strike dim",
-            bottom_style="bold red",
+            bottom_style=tone_style(tones, "bad", bold=True),
         )
     desired = job.get("desired_state")
     state = job.get("state")
@@ -412,8 +420,9 @@ def _state_cell(
         # A requested control is not an observed one. Saying so keeps the
         # view honest across the window where the service has not yet
         # acknowledged the request.
-        template, second_style = _PENDING_LINES[pending.outcome]
+        template, tone, bold, italic = _PENDING_LINES[pending.outcome]
         second = template.format(action=pending.action)
+        second_style = tone_style(tones, tone, bold=bold, italic=italic)
     elif (
         isinstance(desired, str)
         and desired
@@ -425,14 +434,16 @@ def _state_cell(
         # happen, on work that is already over.
         and str(state) not in _TERMINAL_STATES
     ):
-        second, second_style = f" → {desired}", "italic yellow"
+        second = f" → {desired}"
+        second_style = tone_style(tones, "attention", italic=True)
     else:
         second, second_style = "", "dim"
+    top_tone, top_bold = _STATE_TONES.get(label, ("", False))
     return _two_line(
         f"{glyph}{label}",
         second,
         cells,
-        top_style=_STATE_STYLES.get(label, ""),
+        top_style=tone_style(tones, top_tone, bold=top_bold),
         bottom_style=second_style,
     )
 
@@ -466,12 +477,19 @@ def _path_cell(job: dict[str, object], cells: int) -> Text:
     return _two_line(project_label(job), shown, cells)
 
 
-def _progress_cell(job: dict[str, object], cells: int, bar_cells: int) -> Text:
+def _progress_cell(
+    job: dict[str, object],
+    cells: int,
+    bar_cells: int,
+    tones: dict[str, str],
+) -> Text:
     """Render the progress cell, sizing the bar to the column it lands in."""
     detail = human_progress(job) or "—"
     stale = stale_progress_label(job)
     if stale:
-        return _two_line(detail, stale, cells, bottom_style="bold red")
+        return _two_line(
+            detail, stale, cells, bottom_style=tone_style(tones, "bad", bold=True)
+        )
     progress = job.get("progress")
     bar = ""
     if isinstance(progress, dict) and bar_cells > 0:
@@ -581,7 +599,7 @@ class JobsTuiApp(App[None]):
         Binding("d", "job_delete", "Delete"),
         Binding("l", "toggle_log", "Log"),
         Binding("z", "toggle_zoom", "Zoom"),
-        Binding("ctrl+t", "toggle_theme", "Theme", show=False),
+        Binding("ctrl+t", "toggle_theme", "Dark/light", show=False),
         Binding("x", "log_noise", "Noise"),
         Binding("n", "log_next_error", "Next error"),
         Binding("N", "log_prev_error", "Prev error", show=False),
@@ -621,6 +639,12 @@ class JobsTuiApp(App[None]):
         # it, a daemon on a host that cannot measure sends null measurements.
         self._gpu: dict[str, object] | None = None
         self._gpu_reported = False
+        # The release the connected daemon reports, never the local
+        # package's own: the two differ exactly when the difference matters.
+        # ``checked`` separates "no daemon has answered yet" from "the
+        # daemon answered and predates version reporting".
+        self._service_version: str | None = None
+        self._service_version_checked = False
         self._last_refresh: float | None = None
         self._last_error: str | None = None
         # The outcome of the last control, kept in the header until another
@@ -660,11 +684,11 @@ class JobsTuiApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        # The dark scheme is the default; both schemes are shipped palettes,
-        # and an operator's own choice through the framework's TEXTUAL_THEME
-        # variable always wins over either.
-        if not os.environ.get("TEXTUAL_THEME"):
-            self.theme = _DARK_THEME
+        # One palette, two variants. Both are registered and one is active;
+        # nothing else is selectable, and no scheme name is ever surfaced.
+        for theme in build_themes():
+            self.register_theme(theme)
+        self.theme = DARK_THEME_NAME
         table = cast("DataTable[Text]", self.query_one("#jobs", DataTable))
         table.border_title = "Jobs"
         for key, label in (
@@ -683,6 +707,14 @@ class JobsTuiApp(App[None]):
         self.call_after_refresh(self._relayout)
         self.set_interval(_SPINNER_INTERVAL, self._tick)
         self.set_interval(self._interval, self.refresh_jobs)
+        # The service itself changes far more slowly than its job list, so
+        # its beat runs at a multiple of the jobs interval - but the first
+        # read happens now, because the header's identity cell is empty
+        # until a daemon has answered.
+        self.set_interval(
+            self._interval * _STATUS_REFRESH_MULTIPLE, self.refresh_service_status
+        )
+        self.refresh_service_status()
         self.refresh_jobs()
 
     def on_resize(self) -> None:
@@ -810,7 +842,7 @@ class JobsTuiApp(App[None]):
         table = self._table()
         if table is None:
             return
-        frame = _SPINNER_FRAMES[self._frame]
+        paint = _PaintContext(_SPINNER_FRAMES[self._frame], semantic_tones(self.theme))
         for job in self._jobs:
             job_id = _job_id(job)
             if _row_animates(job) and job_id in table.rows:
@@ -818,7 +850,7 @@ class JobsTuiApp(App[None]):
                     job_id,
                     "state",
                     _state_cell(
-                        job, frame, self._pending.get(job_id), self._cells("state")
+                        job, paint, self._pending.get(job_id), self._cells("state")
                     ),
                 )
                 # The countdown only moves between polls if this repaint
@@ -857,6 +889,12 @@ class JobsTuiApp(App[None]):
         self.call_from_thread(self._apply_service_status, result)
 
     def _apply_service_status(self, result: ServiceStatusHeader) -> None:
+        if result.reachable:
+            # Only a daemon that answered can say which daemon it is; an
+            # unreachable beat keeps the last learned identity beside the
+            # staleness the header already reports.
+            self._service_version = result.version
+            self._service_version_checked = True
         bar = self.query("#servicestatus")
         if bar:
             bar.only_one(ServiceStatusBar).show(result)
@@ -1057,17 +1095,18 @@ class JobsTuiApp(App[None]):
         deleted: bool = False,
     ) -> None:
         job_id = _job_id(job)
+        tones = semantic_tones(self.theme)
         table.add_row(
             _state_cell(
                 job,
-                frame,
+                _PaintContext(frame, tones),
                 self._pending.get(job_id),
                 self._cells("state"),
                 deleted=deleted,
             ),
             _job_cell(job, self._cells("job")),
             _path_cell(job, self._cells("path")),
-            _progress_cell(job, self._cells("progress"), self._bar_cells),
+            _progress_cell(job, self._cells("progress"), self._bar_cells, tones),
             _time_cell(job, self._cells("time"), ticked=self._ticked_remaining(job)),
             height=2,
             key=job_id,
@@ -1082,17 +1121,20 @@ class JobsTuiApp(App[None]):
         deleted: bool = False,
     ) -> None:
         job_id = _job_id(job)
+        tones = semantic_tones(self.theme)
         cells = {
             "state": _state_cell(
                 job,
-                frame,
+                _PaintContext(frame, tones),
                 self._pending.get(job_id),
                 self._cells("state"),
                 deleted=deleted,
             ),
             "job": _job_cell(job, self._cells("job")),
             "path": _path_cell(job, self._cells("path")),
-            "progress": _progress_cell(job, self._cells("progress"), self._bar_cells),
+            "progress": _progress_cell(
+                job, self._cells("progress"), self._bar_cells, tones
+            ),
             "time": _time_cell(
                 job, self._cells("time"), ticked=self._ticked_remaining(job)
             ),
@@ -1150,12 +1192,6 @@ class JobsTuiApp(App[None]):
         encoding = str(getattr(self.console, "encoding", "") or "")
         return "utf" in encoding.lower()
 
-    @staticmethod
-    def _tone_style(tones: dict[str, str], tone: str, *, bold: bool = False) -> str:
-        """Resolve one semantic tone to a style, with an optional bold."""
-        colour = tones.get(tone, "")
-        return f"bold {colour}".strip() if bold else colour
-
     def _append_separator(self, line: Text, *, unicode_ok: bool) -> None:
         """A dim divider, so each header group reads as its own cell run."""
         glyph, fallback = _GROUP_SEPARATORS
@@ -1186,7 +1222,7 @@ class JobsTuiApp(App[None]):
             line.append("  ")
             line.append(
                 pill,
-                style=self._tone_style(tones, tone, bold=bold) if count else "dim",
+                style=tone_style(tones, tone, bold=bold) if count else "dim",
             )
 
     def _append_health_pills(
@@ -1216,7 +1252,7 @@ class JobsTuiApp(App[None]):
                 line.append("  ")
             line.append(
                 pill,
-                style=self._tone_style(tones, tone, bold=bold) if count else "dim",
+                style=tone_style(tones, tone, bold=bold) if count else "dim",
             )
 
     def _service_condition(self) -> str:
@@ -1293,7 +1329,18 @@ class JobsTuiApp(App[None]):
         made by the caller; the condition and GPU cells are never dropped.
         """
         unicode_ok = self._unicode_glyphs()
-        line = Text(f"{self._header_glyph()} Jobs on port {self._port}", style="bold")
+        # The leading cell is identity: which daemon, at which release, on
+        # which port. Identity is not signal, so it carries no semantic
+        # tone - the version is the connected daemon's own report, and an
+        # answering daemon that predates the field reads as unknown rather
+        # than being filled from the local package.
+        line = Text(f"{self._header_glyph()} vaultspec-rag", style="bold")
+        if self._service_version:
+            line.append(f" {self._service_version}")
+        elif self._service_version_checked:
+            line.append(" v?", style=tone_style(tones, "muted"))
+        line.append(" · ", style="dim")
+        line.append(f"port {self._port}", style="bold")
         self._append_state_pills(
             line, tones, labelled=state_labels, unicode_ok=unicode_ok
         )
@@ -1305,11 +1352,11 @@ class JobsTuiApp(App[None]):
         tone, bold = _CONDITION_TONES[verdict]
         line.append(
             f"{'●' if unicode_ok else '*'} svc {verdict}",
-            style=self._tone_style(tones, tone, bold=bold),
+            style=tone_style(tones, tone, bold=bold),
         )
         self._append_separator(line, unicode_ok=unicode_ok)
         gpu_text, gpu_tone, gpu_bold = self._gpu_cell()
-        line.append(gpu_text, style=self._tone_style(tones, gpu_tone, bold=gpu_bold))
+        line.append(gpu_text, style=tone_style(tones, gpu_tone, bold=gpu_bold))
         self._append_separator(line, unicode_ok=unicode_ok)
         shown = len(self._jobs)
         if self._total is None:
@@ -1321,7 +1368,7 @@ class JobsTuiApp(App[None]):
             # slot is immediately backfilled from the remainder.
             line.append(
                 f"showing {shown} of {self._total}",
-                style=self._tone_style(tones, "attention", bold=True)
+                style=tone_style(tones, "attention", bold=True)
                 if self._total > shown
                 else "",
             )
@@ -1335,7 +1382,7 @@ class JobsTuiApp(App[None]):
         return found.only_one(Static).content_size.width
 
     def _render_summary(self) -> None:
-        tones = semantic_tones(self.theme_variables)
+        tones = semantic_tones(self.theme)
         width = self._summary_width()
         # Widest fitting form wins: labels leave the state pills first, then
         # the health tallies. Counts, the condition cell and the GPU cell
@@ -1363,12 +1410,12 @@ class JobsTuiApp(App[None]):
             if age > max(5.0, self._interval * 3):
                 line.append(
                     f" ({compact_duration(age)} ago)",
-                    style=self._tone_style(tones, "attention", bold=True),
+                    style=tone_style(tones, "attention", bold=True),
                 )
         if self._last_error is not None:
             line.append(
                 f"  ·  {self._last_error}",
-                style=self._tone_style(tones, "bad", bold=True),
+                style=tone_style(tones, "bad", bold=True),
             )
         if not self._service_estimates:
             # Said once in the header rather than implied by every row's
@@ -1376,14 +1423,14 @@ class JobsTuiApp(App[None]):
             # an older daemon.
             line.append("  ·  this service does not report time estimates", style="dim")
         if self._last_outcome is not None:
-            text, style = self._last_outcome
-            line.append(f"\n{text}", style=style)
-        self._append_selected_degradation(line)
+            text, token = self._last_outcome
+            line.append(f"\n{text}", style=tone_style(tones, token, bold=True))
+        self._append_selected_degradation(line, tones)
         summary = self.query("#summary")
         if summary:
             summary.only_one(Static).update(line)
 
-    def _append_selected_degradation(self, line: Text) -> None:
+    def _append_selected_degradation(self, line: Text, tones: dict[str, str]) -> None:
         """Show the selected job's unhealthy verdict and evidence in the header.
 
         The verdict and every finding come verbatim from the service payload
@@ -1397,10 +1444,12 @@ class JobsTuiApp(App[None]):
         verdict = degradation_verdict(job)
         if verdict is None or verdict == "healthy":
             return
-        line.append(f"\n{_short_id(job)} {verdict}", style="bold red")
+        line.append(
+            f"\n{_short_id(job)} {verdict}", style=tone_style(tones, "bad", bold=True)
+        )
         evidence = "  ·  ".join(degradation_evidence_lines(job))
         if evidence:
-            line.append(f"  ·  {evidence}", style="red")
+            line.append(f"  ·  {evidence}", style=tone_style(tones, "bad"))
 
     # -- selection and logs -------------------------------------------------
 
@@ -1469,7 +1518,7 @@ class JobsTuiApp(App[None]):
             if hidden:
                 title.append(
                     f"  ·  {hidden} polling hidden (x shows)",
-                    style=semantic_tones(self.theme_variables)["attention"],
+                    style=semantic_tones(self.theme)["attention"],
                 )
             elif log.polling_shown and log.polling_count:
                 title.append("  ·  polling shown (x hides)", style="dim")
@@ -1554,12 +1603,15 @@ class JobsTuiApp(App[None]):
         return _ACTION_REASONS.get(action, "This job cannot take that action.")
 
     def action_toggle_theme(self) -> None:
-        """Switch between the shipped dark and light colour schemes."""
-        self.theme = _LIGHT_THEME if self.theme == _DARK_THEME else _DARK_THEME
+        """Flip between the dark and light variants of the one palette."""
+        self.theme = (
+            LIGHT_THEME_NAME if self.theme == DARK_THEME_NAME else DARK_THEME_NAME
+        )
 
     def _on_theme_changed(self, _theme: object) -> None:
-        """Repaint the tone-carrying surfaces under the new scheme."""
+        """Repaint the tone-carrying surfaces under the new variant."""
         self._render_summary()
+        self._render_rows()
         log = self._log_view()
         if log is not None:
             log.repaint_theme()
@@ -1804,7 +1856,9 @@ class JobsTuiApp(App[None]):
             self._generation,
         )
         failed = outcome in {"refused", "gone"}
-        self._last_outcome = (detail, "bold red" if failed else "bold green")
+        # The tone token, not a resolved style: the outcome outlives theme
+        # flips, so its colour is resolved at each render, never stored.
+        self._last_outcome = (detail, "bad" if failed else "good")
         self.notify(detail, severity="error" if failed else "information")
 
 
