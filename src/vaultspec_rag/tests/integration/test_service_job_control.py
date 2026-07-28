@@ -424,11 +424,11 @@ def test_reindex_compatibility_keeps_mcp_refresh_distinct_from_clean(
             "reindex_all",
         }:
             continue
-        assert "clean" not in tool.inputSchema.get("properties", {})
+        assert "clean" not in tool.input_schema.get("properties", {})
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.idempotent_hint is True
 
     with _real_job_control_server(tmp_path):
         get_job_manager().begin_shutdown()

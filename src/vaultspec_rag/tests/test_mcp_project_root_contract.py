@@ -237,9 +237,9 @@ def test_optional_root_tool_still_declares_the_parameter(name: str) -> None:
     from ..mcp import _tools
 
     tool = getattr(_tools, name)
-    # FastMCP wraps the coroutine; the underlying function carries the schema.
-    func = getattr(tool, "fn", tool)
-    signature = inspect.signature(func)
+    # The @mcp.tool() decorator returns the function unchanged, so the module
+    # attribute is the coroutine function that carries the schema.
+    signature = inspect.signature(tool)
 
     assert "project_root" in signature.parameters, name
     assert signature.parameters["project_root"].default is None, name

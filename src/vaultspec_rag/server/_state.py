@@ -4,7 +4,7 @@ Split out of the original ``server.py`` monolith. This module is the canonical h
 the daemon's process-wide globals (registry, watcher bookkeeping,
 identity token, HTTP-mode flag). The package ``__init__`` re-imports
 these names so they live in the ``vaultspec_rag.server`` namespace,
-which is where every consumer reads them. The MCP ``FastMCP`` instance
+which is where every consumer reads them. The MCP ``MCPServer`` instance
 is not owned here - after the thin-client rework it lives only in
 ``vaultspec_rag.mcp._mcp`` and is served by the standalone stdio
 forwarder.

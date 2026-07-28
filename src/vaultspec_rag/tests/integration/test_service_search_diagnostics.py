@@ -13,7 +13,6 @@ import urllib.error
 import urllib.request
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -593,7 +592,7 @@ async def _mcp_search_after_concurrent_admission_async(
                     "top_k": 5,
                     "project_root": str(request.root),
                 },
-                read_timeout_seconds=timedelta(seconds=300),
+                read_timeout_seconds=300,
             ),
             timeout=310,
         )
@@ -948,13 +947,13 @@ def _assert_mcp_unavailable_response(
     *,
     evidence: str,
 ) -> None:
-    assert response.isError is True, evidence
+    assert response.is_error is True, evidence
     text = " ".join(
         block.text for block in response.content if isinstance(block, TextContent)
     )
     assert "index_unavailable" in text, evidence
     assert "vaultspec-rag server jobs" in text, evidence
-    structured = response.structuredContent
+    structured = response.structured_content
     assert structured is None or "results" not in structured, evidence
 
 

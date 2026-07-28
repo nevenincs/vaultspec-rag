@@ -4,7 +4,7 @@ These are **not** MCP tools. The MCP search surface is narrowed to search,
 index-refresh, and read-only retrieval; the
 mutating and observability admin verbs - project listing/eviction, watcher
 control, service-state, storage survey, jobs, and logs - are CLI-only on the
-public surface and are not registered on the FastMCP instance.
+public surface and are not registered on the MCPServer instance.
 
 The thin async wrappers below survive only as a programmatic client over the
 daemon's admin routes (the same ``/admin`` routes the CLI uses through
