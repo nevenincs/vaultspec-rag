@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._index_breadth import GENERATION_ID_KEY
 from ..indexer._code_meta import (
     CONTENT_EPOCH_KEY,
-    GENERATION_ID_KEY,
     MEMBERSHIP_EPOCH_KEY,
     load_meta,
     publish_meta_from_file_states,

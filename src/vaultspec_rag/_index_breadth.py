@@ -40,18 +40,28 @@ PUBLISHED_POINTS_KEY = "__code_published_points__"
 #: names, and no comparison of point counts can see that.
 PUBLISHED_FILES_KEY = "__code_published_files__"
 
+#: Reserved sidecar key naming the generation whose publication wrote the
+#: sidecar. Lives here rather than behind the indexer package because the
+#: serve path reads it as evidence beside the published counts: a breadth
+#: verdict that names the claiming generation lets an operator tie the figures
+#: to one publication.
+GENERATION_ID_KEY = "__code_generation_id__"
+
 __all__ = [
+    "GENERATION_ID_KEY",
     "PUBLISHED_FILES_KEY",
     "PUBLISHED_POINTS_KEY",
     "SHORTFALL_CONSEQUENCE",
     "SHORTFALL_REMEDIATION",
     "BreadthShortfall",
+    "CodeBreadthClaim",
     "FileBreadthShortfall",
     "ShortfallWarning",
     "code_breadth_shortfall",
     "code_file_breadth_shortfall",
     "code_meta_path",
     "parse_reserved_count",
+    "read_code_breadth_claim",
     "read_reserved_count",
     "shortfall_warnings",
 ]
@@ -261,6 +271,37 @@ def read_reserved_count(root: pathlib.Path, key: str) -> int | None:
     """
     raw = _read_meta(root)
     return None if raw is None else parse_reserved_count(raw, key)
+
+
+class CodeBreadthClaim(NamedTuple):
+    """What one code publication claims, read from the sidecar in one parse.
+
+    ``published_points`` is ``None`` when the sidecar predates the key or
+    carries an unusable value; ``generation_id`` is ``None`` on the same
+    terms. Both are "cannot tell", never a claim of zero.
+    """
+
+    published_points: int | None
+    generation_id: str | None
+
+
+def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
+    """Return *root*'s published code breadth claim, or ``None`` for no sidecar.
+
+    One parse for both figures, so a caller can never observe the count and
+    the generation from different reads of a file another process is
+    replacing - the pair always describes a single publication.
+    """
+    raw = _read_meta(root)
+    if raw is None:
+        return None
+    generation = raw.get(GENERATION_ID_KEY)
+    return CodeBreadthClaim(
+        published_points=parse_reserved_count(raw, PUBLISHED_POINTS_KEY),
+        generation_id=(
+            generation if isinstance(generation, str) and generation else None
+        ),
+    )
 
 
 def code_breadth_shortfall(

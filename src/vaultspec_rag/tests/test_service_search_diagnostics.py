@@ -222,7 +222,7 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
     respelling that moved both.
     """
     from .._index_breadth import BreadthShortfall
-    from .._search_state import search_index_state
+    from .._search_state import BreadthFindings, search_index_state
     from ..server._routes_search import SearchIndexStateInput, _search_index_state
 
     routed = _search_index_state(
@@ -238,7 +238,7 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
         indexed_count=4,
         requested_root="C:/work/project",
         search_type="codebase",
-        shortfall=BreadthShortfall(published=421, live=4),
+        findings=BreadthFindings(shortfall=BreadthShortfall(published=421, live=4)),
     )
     assert set(routed) == {
         "source",
@@ -248,6 +248,52 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
         "target_matches",
         "status",
         "shortfall",
+    }
+
+
+def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
+    """The route renders the service-domain integrity block, owning no key.
+
+    The verdict is settled by one evaluator and projected by one method, so
+    the route must pass it through untouched: a route that respelled or
+    filtered the block would show the daemon surface a different verdict
+    vocabulary than the in-process path renders.
+
+    Proven able to fail: neutering the classification (tolerance widened to
+    infinity) fails the shrunken-direction tests on their verdict assertions,
+    and dropping the ``integrity=input.integrity`` pass-through fails this
+    test on the block lookup below, not on a setup error.
+    """
+    from .._index_integrity import IndexIntegrity
+    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+
+    verdict = IndexIntegrity(
+        verdict="shrunken",
+        source="code",
+        claimed_count=421,
+        live_count=4,
+        generation_id="generation-route",
+        reason=None,
+    )
+    state = _search_index_state(
+        SearchIndexStateInput(
+            indexed_count=4,
+            requested_root="C:/work/project",
+            search_type="codebase",
+            integrity=verdict,
+        )
+    )
+
+    # The literal block pins the key names a renderer looks up on the daemon
+    # surface; comparing against as_block() alone would move with a respelling.
+    assert state["index_integrity"] == {
+        "verdict": "shrunken",
+        "source": "code",
+        "claimed_count": 421,
+        "live_count": 4,
+        "generation_id": "generation-route",
+        "reason": None,
+        "missing_count": 417,
     }
 
 

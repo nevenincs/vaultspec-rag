@@ -783,6 +783,7 @@ def _assert_unavailable_index_identity(
         "requested_target_root",
         "target_matches",
         "status",
+        "index_integrity",
         "matching_jobs",
         "matching_jobs_truncated",
     }, evidence
@@ -880,9 +881,16 @@ def _assert_stable_missing_index_response(
         "requested_target_root",
         "target_matches",
         "status",
+        "index_integrity",
     }, evidence
     assert index_state["source"] == source, evidence
     assert index_state["indexed_count"] == 0, evidence
+    # A fresh root has no publication to reconcile against, and the daemon
+    # must say so rather than blessing the empty collection as checked-fine.
+    raw_integrity = index_state["index_integrity"]
+    assert isinstance(raw_integrity, dict), evidence
+    integrity = cast("dict[str, object]", raw_integrity)
+    assert integrity["verdict"] == "unverifiable", evidence
     assert index_state["indexed_target_root"] == str(root), evidence
     assert index_state["requested_target_root"] == str(root), evidence
     assert index_state["target_matches"] is True, evidence
@@ -1300,6 +1308,7 @@ def test_empty_service_search_reports_missing_index(
         "requested_target_root",
         "target_matches",
         "status",
+        "index_integrity",
     }
     assert index_state["requested_target_root"] == str(root)
     assert index_state["target_matches"] is True
@@ -1348,6 +1357,7 @@ def test_direct_http_code_search_reports_code_index_state(
         "requested_target_root",
         "target_matches",
         "status",
+        "index_integrity",
     }
     empty = cast("dict[str, object]", result["empty"])
     assert isinstance(empty, dict)
