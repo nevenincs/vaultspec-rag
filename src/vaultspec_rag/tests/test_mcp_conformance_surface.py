@@ -1,8 +1,8 @@
 """MCP conformance: closed-domain adapters, annotations, and legible errors.
 
-Introspects the real FastMCP instance (no mocks) to assert the surface decided
+Introspects the real MCPServer instance (no mocks) to assert the surface decided
 for the narrowed surface - exactly the search, index-refresh, and
-read-only retrieval tools, carrying spec-correct 2025-11-25 annotations and
+read-only retrieval tools, carrying spec-correct 2026-07-28 annotations and
 titles - and exercises the transport's legible-error contract against a real
 local HTTP server returning an empty-body 404 (the opaque failure the grounding
 research recorded).
@@ -136,32 +136,32 @@ class TestNarrowedSurface:
         for tool in _tools():
             if tool.name in _READ_ONLY_TOOLS:
                 assert tool.annotations is not None
-                assert tool.annotations.readOnlyHint is True
-                assert tool.annotations.idempotentHint is True
-                assert tool.annotations.openWorldHint is False
+                assert tool.annotations.read_only_hint is True
+                assert tool.annotations.idempotent_hint is True
+                assert tool.annotations.open_world_hint is False
 
     def test_refresh_tools_are_non_destructive_and_idempotent(self) -> None:
         for tool in _tools():
             if tool.name in _REFRESH_TOOLS:
                 assert tool.annotations is not None
-                assert tool.annotations.readOnlyHint is False
-                assert tool.annotations.destructiveHint is False
-                assert tool.annotations.idempotentHint is True
-                assert tool.annotations.openWorldHint is False
+                assert tool.annotations.read_only_hint is False
+                assert tool.annotations.destructive_hint is False
+                assert tool.annotations.idempotent_hint is True
+                assert tool.annotations.open_world_hint is False
 
     def test_clean_tools_are_explicitly_destructive_and_idempotent(self) -> None:
         for tool in _tools():
             if tool.name in _CLEAN_TOOLS:
                 assert tool.annotations is not None
-                assert tool.annotations.readOnlyHint is False
-                assert tool.annotations.destructiveHint is True
-                assert tool.annotations.idempotentHint is True
-                assert tool.annotations.openWorldHint is False
+                assert tool.annotations.read_only_hint is False
+                assert tool.annotations.destructive_hint is True
+                assert tool.annotations.idempotent_hint is True
+                assert tool.annotations.open_world_hint is False
 
     def test_refresh_tools_expose_no_destructive_clean_input(self) -> None:
         for tool in _tools():
             if tool.name in _REFRESH_TOOLS:
-                props = tool.inputSchema.get("properties", {})
+                props = tool.input_schema.get("properties", {})
                 assert "clean" not in props, (
                     f"{tool.name} exposes the destructive clean rebuild; it must be "
                     "CLI-only"
@@ -186,7 +186,7 @@ class TestNarrowedSurface:
             "search_combined",
         ):
             tool = next(t for t in _tools() if t.name == name)
-            props = tool.inputSchema.get("properties", {})
+            props = tool.input_schema.get("properties", {})
             assert props["top_k"].get("default") == _DEFAULT_TOP_K
 
     def test_search_tools_declare_a_result_output_schema(self) -> None:
@@ -202,8 +202,8 @@ class TestNarrowedSurface:
                 "search_documents",
                 "search_combined",
             }:
-                assert tool.outputSchema is not None, tool.name
-                props = set(tool.outputSchema.get("properties", {}))
+                assert tool.output_schema is not None, tool.name
+                props = set(tool.output_schema.get("properties", {}))
                 assert {"results", "summary"} <= props, tool.name
                 assert {"results", "summary"} <= model_props
 

@@ -8,7 +8,6 @@ import shlex
 import sys
 import textwrap
 import time
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -123,7 +122,7 @@ def _assert_document_tool_catalog(tools: list[Any]) -> None:
     } <= names
     tools_by_name = {tool.name: tool for tool in tools}
     for tool_name in ("search_documents", "search_combined"):
-        properties = tools_by_name[tool_name].inputSchema["properties"]
+        properties = tools_by_name[tool_name].input_schema["properties"]
         assert "like_ids" not in properties
         assert "unlike_ids" not in properties
         assert "source_path" in properties
@@ -133,12 +132,10 @@ async def _call_mcp_tool(
     session: ClientSession, name: str, arguments: dict[str, Any]
 ) -> Any:
     result = await asyncio.wait_for(
-        session.call_tool(
-            name, arguments=arguments, read_timeout_seconds=timedelta(seconds=60)
-        ),
+        session.call_tool(name, arguments=arguments, read_timeout_seconds=60),
         timeout=70,
     )
-    assert result.isError is not True, (name, result)
+    assert result.is_error is not True, (name, result)
     return result
 
 
@@ -155,7 +152,7 @@ async def _assert_mcp_searches(
                 "source_path": source_path,
             },
         )
-        payload = cast("dict[str, Any]", result.structuredContent)
+        payload = cast("dict[str, Any]", result.structured_content)
         results = cast("list[dict[str, Any]]", payload["results"])
         assert results, (name, payload)
         assert {item["path"] for item in results} == {source_path}
@@ -164,7 +161,7 @@ async def _assert_mcp_searches(
 async def _assert_mcp_read_tools(session: ClientSession, root: Path) -> None:
     for name in ("clean_documents", "clean_all", "get_index_status"):
         result = await _call_mcp_tool(session, name, {"project_root": str(root)})
-        assert isinstance(result.structuredContent, dict), (name, result)
+        assert isinstance(result.structured_content, dict), (name, result)
 
 
 async def _assert_empty_document_status(session: ClientSession, root: Path) -> None:
@@ -172,7 +169,7 @@ async def _assert_empty_document_status(session: ClientSession, root: Path) -> N
         session, "get_index_status", {"project_root": str(root)}
     )
     index = cast(
-        "dict[str, Any]", cast("dict[str, Any]", result.structuredContent)["index"]
+        "dict[str, Any]", cast("dict[str, Any]", result.structured_content)["index"]
     )
     assert index["document_chunks"] == 0
     assert set(index["support_profile"]["domains"]) == {"code", "document"}
@@ -181,7 +178,7 @@ async def _assert_empty_document_status(session: ClientSession, root: Path) -> N
 async def _request_mcp_reindexes(session: ClientSession, root: Path) -> None:
     for name in ("reindex_documents", "reindex_all"):
         result = await _call_mcp_tool(session, name, {"project_root": str(root)})
-        assert isinstance(result.structuredContent, dict), (name, result)
+        assert isinstance(result.structured_content, dict), (name, result)
 
 
 def _assert_partial_reindex(partial: dict[str, Any], port: int) -> None:

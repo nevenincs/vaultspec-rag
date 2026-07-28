@@ -136,7 +136,7 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
 
 
 class TestToolRegistration:
-    """Verify all expected tools are registered on the FastMCP instance."""
+    """Verify all expected tools are registered on the MCPServer instance."""
 
     def test_expected_tools_registered(self):
         tools = _run(mcp.list_tools())
@@ -185,7 +185,7 @@ class TestToolRegistration:
         }
         for tool in tools:
             if tool.name in tools_with_project_root:
-                param_names = set(tool.inputSchema.get("properties", {}).keys())
+                param_names = set(tool.input_schema.get("properties", {}).keys())
                 assert "project_root" in param_names, (
                     f"Tool {tool.name} missing project_root parameter"
                 )
@@ -194,14 +194,14 @@ class TestToolRegistration:
         """search_vault must expose doc_type/feature/date/tag explicit params."""
         tools = _run(mcp.list_tools())
         sv = next(t for t in tools if t.name == "search_vault")
-        params = set(sv.inputSchema.get("properties", {}).keys())
+        params = set(sv.input_schema.get("properties", {}).keys())
         assert {"doc_type", "feature", "date", "tag"}.issubset(params)
 
     def test_search_codebase_exposes_path_param(self):
         """search_codebase must expose path as an explicit filter param."""
         tools = _run(mcp.list_tools())
         sc = next(t for t in tools if t.name == "search_codebase")
-        params = set(sc.inputSchema.get("properties", {}).keys())
+        params = set(sc.input_schema.get("properties", {}).keys())
         assert "path" in params
         # And the original four code filters stay exposed.
         assert {"language", "node_type", "function_name", "class_name"}.issubset(params)
@@ -209,7 +209,7 @@ class TestToolRegistration:
     def test_search_documents_exposes_provenance_filters(self):
         tools = _run(mcp.list_tools())
         search = next(t for t in tools if t.name == "search_documents")
-        params = set(search.inputSchema.get("properties", {}))
+        params = set(search.input_schema.get("properties", {}))
         assert {
             "source_path",
             "extractor_id",
@@ -221,10 +221,10 @@ class TestToolRegistration:
         """search_codebase must expose include_paths/exclude_paths list[str]."""
         tools = _run(mcp.list_tools())
         sc = next(t for t in tools if t.name == "search_codebase")
-        properties = sc.inputSchema.get("properties", {})
+        properties = sc.input_schema.get("properties", {})
         assert "include_paths" in properties
         assert "exclude_paths" in properties
-        # FastMCP renders list[str] | None as anyOf [array, null]; accept
+        # The SDK renders list[str] | None as anyOf [array, null]; accept
         # either that or a direct array schema for forward compatibility.
         for key in ("include_paths", "exclude_paths"):
             schema = properties[key]
@@ -799,10 +799,6 @@ class TestServiceRegistryIntegration:
         from ..server import _registry
 
         assert isinstance(_registry.gpu_lock, threading.Lock)
-
-    def test_stateless_http_enabled(self):
-        """FastMCP instance should have stateless_http=True."""
-        assert mcp.settings.stateless_http is True
 
 
 class TestHealthHandler:

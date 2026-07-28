@@ -89,13 +89,13 @@ version = "0.3.12"
   # daemon never import `mcp`, so a base install must not drag it (and, on
   # Windows, its `pywin32` transitive). Install `vaultspec-rag[mcp]` to run the
   # MCP server.
-  mcp = ["mcp>=1.28.1,<2"]
+  mcp = ["mcp>=2,<3"]
 
 [dependency-groups]
 dev = [
   # The test suite imports `mcp` (it tests the optional MCP server surface), so
   # the dev environment provides it even though it is not a core dependency.
-  "mcp>=1.28.1,<2",
+  "mcp>=2,<3",
   "bandit>=1.9.4",
   "basedpyright>=1.39",
   # Cognitive complexity. Implements the Sonar cognitive-complexity
