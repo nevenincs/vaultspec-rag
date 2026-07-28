@@ -93,7 +93,8 @@ def test_maintenance_cycle_reclaims_only_time_confirmed_orphans(
     from ...cli._process import _spawn_service, _terminate_pid
     from ...cli._service_status import _write_service_status
     from ...config._settings import get_config
-    from ._helpers import _get_ephemeral_port, _poll_health, _service_env
+    from .._ports import free_loopback_port
+    from ._helpers import _poll_health, _service_env
 
     with _service_env(
         tmp_path,
@@ -113,7 +114,7 @@ def test_maintenance_cycle_reclaims_only_time_confirmed_orphans(
             record_root(root, backend="server")
             prefixes[name] = root_collection_prefix(root)
 
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))

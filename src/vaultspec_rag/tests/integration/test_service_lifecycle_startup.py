@@ -35,8 +35,8 @@ from .._model_setup import (
     ensure_model_snapshots,
     model_setup_timeout_seconds,
 )
+from .._ports import free_loopback_port
 from ._helpers import (
-    _get_ephemeral_port,
     _poll_health,
     _service_env,
     _wait_for_exit,
@@ -68,7 +68,7 @@ pytestmark = [pytest.mark.integration]
 
 def test_poll_health_honours_subsecond_deadline() -> None:
     """A real unreachable endpoint cannot overrun the caller's short budget."""
-    port = _get_ephemeral_port()
+    port = free_loopback_port()
     started = time.monotonic()
     with pytest.raises(TimeoutError, match=r"not ready after 0\.050s"):
         _poll_health(port, timeout=0.05)
@@ -198,7 +198,7 @@ def test_running_phase_status_failure_rolls_back_all_started_components(
         EnvVar.TRANSFORMERS_OFFLINE.value: "1",
     }
     with _service_env(tmp_path, env_overrides=offline_env):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "running-phase-failure.log"
         ready_path = tmp_path / "status-lock.ready"
         holder = _spawn_running_phase_lock_holder(
@@ -290,7 +290,7 @@ def test_startup_expiry_reaps_pre_readiness_qdrant(
         EnvVar.TRANSFORMERS_OFFLINE.value: "1",
     }
     with _service_env(tmp_path, env_overrides=offline_env):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "startup-expiry.log"
         pid = _spawn_service(port, log_path, watch=False)
         owned_pids = [pid]
@@ -356,7 +356,7 @@ if sys.platform == "win32":
     ) -> None:
         """The exact late-Popen branch cannot strand an unreturned daemon PID."""
         with _service_env(tmp_path):
-            port = _get_ephemeral_port()
+            port = free_loopback_port()
             log_path = tmp_path / "late-spawn-timeout.log"
             started = time.monotonic()
             with pytest.raises(TimeoutError) as caught:
@@ -403,7 +403,7 @@ if sys.platform == "win32":
             EnvVar.TRANSFORMERS_OFFLINE.value: "1",
         }
         with _service_env(tmp_path, env_overrides=offline_env):
-            port = _get_ephemeral_port()
+            port = free_loopback_port()
             log_path = tmp_path / "late-spawn-cleanup.log"
             launcher_pid = _spawn_service(port, log_path, watch=False)
             owned_pids = [launcher_pid]
@@ -442,7 +442,7 @@ if sys.platform == "win32":
         from ...cli._process import _cleanup_late_service_spawn
 
         with _service_env(tmp_path):
-            port = _get_ephemeral_port()
+            port = free_loopback_port()
             owned_token = "owned-" + os.urandom(12).hex()
             unrelated_token = "unrelated-" + os.urandom(12).hex()
             sleeper = "import time; time.sleep(60)"
@@ -587,7 +587,7 @@ if sys.platform != "win32":
             try:
                 attached = start_supervised_from_config()
                 assert attached.pid is None
-                server_state._service_port = _get_ephemeral_port()
+                server_state._service_port = free_loopback_port()
                 server_state._SERVICE_TOKEN = "attached-qdrant-test-token"
                 _stamp_qdrant_identity(attached, discovery)
                 status = read_service_status()

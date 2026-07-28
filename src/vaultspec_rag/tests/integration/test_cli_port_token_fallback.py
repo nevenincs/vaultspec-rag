@@ -18,8 +18,8 @@ import pytest
 from ...cli._process import _spawn_service, _terminate_pid
 from ...serviceclient._discovery import _status_file
 from ...serviceclient._transport import _do_http_call
+from .._ports import free_loopback_port
 from ._helpers import (
-    _get_ephemeral_port,
     _poll_health,
     _service_env,
     _wait_for_exit,
@@ -46,7 +46,7 @@ def test_jobs_via_port_authenticates_via_health_when_status_token_absent(
     elsewhere), so the only source of the token is the live ``/health``.
     """
     with _service_env(tmp_path, _LOCAL_ONLY):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         pid = _spawn_service(port, tmp_path / "service.log")
         try:
             _poll_health(port)
@@ -76,7 +76,7 @@ def test_jobs_via_port_refreshes_stale_status_token_from_health(
     refetch the live token from ``/health`` and retry once, transparently.
     """
     with _service_env(tmp_path, _LOCAL_ONLY):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         pid = _spawn_service(port, tmp_path / "service.log")
         try:
             _poll_health(port)

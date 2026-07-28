@@ -39,7 +39,6 @@ __all__ = [
     "_content_kind_indexers",
     "_document_policy",
     "_full_index_code_then_document",
-    "_get_ephemeral_port",
     "_get_ephemeral_qdrant_port",
     "_make_root",
     "_mirror_managed_qdrant_binary",
@@ -239,13 +238,6 @@ def _mirror_managed_qdrant_binary(status_dir: Path, source: tuple[Path, Path]) -
     shutil.copy2(manifest_src, dest_dir / MANIFEST_FILENAME)
 
 
-def _get_ephemeral_port() -> int:
-    """Bind to port 0 to get an OS-assigned free port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 #: Absolute indexing CUDA ceiling, in MiB, pinned for every integration run.
 #:
 #: Left unset, the ceiling is derived from FREE device memory at the moment the
@@ -281,9 +273,7 @@ def _get_ephemeral_qdrant_port() -> int:
     back to whatever the OS assigned.
     """
     for _ in range(20):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            http_port = int(s.getsockname()[1])
+        http_port = free_loopback_port()
         if http_port <= 1:
             continue
         try:
@@ -292,7 +282,7 @@ def _get_ephemeral_qdrant_port() -> int:
         except OSError:
             continue
         return http_port
-    return _get_ephemeral_port()
+    return free_loopback_port()
 
 
 def _poll_health(port: int, timeout: float = 90.0) -> dict[str, Any]:
@@ -332,7 +322,7 @@ def _poll_own_health(
 
     Returns the health body once a response carries ``service_token == token`` -
     proof it is this exact child, not a squatter, a sibling fixture, or a stray
-    service that grabbed the ephemeral port after ``_get_ephemeral_port`` released
+    service that grabbed the ephemeral port after ``free_loopback_port`` released
     it. Returns ``None`` when the child exits first (a bind failure records its
     error in the child log) or the deadline passes, so the caller can re-roll a
     fresh port instead of trusting a foreign responder or hanging on a lost race.

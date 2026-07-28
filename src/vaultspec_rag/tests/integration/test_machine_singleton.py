@@ -27,7 +27,8 @@ from ..._machine_lock import (
     release_machine_lock_lease,
 )
 from ...config._types import EnvVar
-from ._helpers import _get_ephemeral_port, _get_ephemeral_qdrant_port
+from .._ports import free_loopback_port
+from ._helpers import _get_ephemeral_qdrant_port
 from ._machine_lock_holder import spawn_foreign_machine_lock_holder
 from ._service_lifecycle_helpers import _ports_listening
 
@@ -214,7 +215,7 @@ class TestLosingDaemonBoundary:
         pointer = machine_discovery_path()
         status_dir = tmp_path / "loser-status"
         status_dir.mkdir()
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
 
         incumbent = spawn_foreign_machine_lock_holder(storage)
         try:
