@@ -88,6 +88,8 @@ from ._cli_format import compact_duration
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from textual.app import App
+
 __all__ = [
     "SeatPool",
     "ServiceStatusBar",
@@ -302,7 +304,8 @@ def _project_slots(
     raw_projects = payload.get("projects")
     if not isinstance(raw_projects, list):
         return None, _opt_int(payload.get("max_projects")), None
-    entries = [_mapping(entry) for entry in raw_projects]
+    raw_entries: list[object] = raw_projects
+    entries = [_mapping(entry) for entry in raw_entries]
     leases = [_opt_int(entry.get("ref_count")) for entry in entries]
     held = sum(count for count in leases if count is not None) if leases else 0
     return len(entries), _opt_int(payload.get("max_projects")), held
@@ -314,7 +317,10 @@ def _watching_count(port: int, timeout: float | None) -> int | None:
         _try_http_admin("get_watcher_state", {}, port, timeout=timeout)
     )
     watching = payload.get("watching")
-    return len(watching) if isinstance(watching, list) else None
+    if not isinstance(watching, list):
+        return None
+    roots: list[object] = watching
+    return len(roots)
 
 
 def fetch_service_status(
@@ -352,11 +358,8 @@ def fetch_service_status(
     token = health.get("service_token")
     qdrant = _mapping(health.get("qdrant"))
     raw_reasons = health.get("degraded_reasons")
-    reasons = (
-        tuple(str(reason) for reason in raw_reasons)
-        if isinstance(raw_reasons, list)
-        else ()
-    )
+    listed_reasons: list[object] = raw_reasons if isinstance(raw_reasons, list) else []
+    reasons = tuple(str(reason) for reason in listed_reasons) if listed_reasons else ()
     totals = _survey_totals(port, timeout)
     loaded, cap, leases = _project_slots(port, timeout)
     seats = _parse_seat_pools(
@@ -508,7 +511,8 @@ class ServiceStatusBar(Static):
 
     def repaint_status(self) -> None:
         """Re-render the held result at the width now reported."""
-        width = self.size.width or self.app.size.width
+        app: App[object] = self.app
+        width = self.size.width or app.size.width
         self.update(render_status_header(self._status, width))
 
     def on_mount(self) -> None:

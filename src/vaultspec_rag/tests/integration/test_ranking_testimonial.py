@@ -7,43 +7,28 @@ document declared *before* the search runs. Because the expectation is
 pre-committed (not read off the retriever's output), a satisfied verdict is
 evidence, and a failing one carries the full ranked list for diagnosis.
 
-The recorded testimonials are the human-credible qualitative gate; the
-assertions are the machine gate. They are the same data viewed
-two ways.
+The searches run in the shared bounded worker (see ``_frozen_corpus_evidence``),
+which declares the personas and their authorities and reports only what it
+observed; the verdicts are reached here. The recorded testimonials are the
+human-credible qualitative gate; the assertions are the machine gate. They are
+the same data viewed two ways.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ..quality._frozen_corpus import materialize_frozen_vault
+from ._frozen_corpus_evidence import TESTIMONIAL_TOP_K
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
-    from sentence_transformers import CrossEncoder
-
-    from ... import VaultSearcher
-    from ...embeddings import EmbeddingModel
+    from ._frozen_corpus_evidence import FrozenCorpusEvidence, TestimonialEvidence
 
 pytestmark = [pytest.mark.integration, pytest.mark.quality]
 
-_TOP_K = 5
 _SATISFIED_RANK = 3
-
-
-@dataclass
-class _Scenario:
-    """A persona's pre-declared search expectation."""
-
-    persona: str
-    intent: str
-    query: str
-    expected_authority: str  # doc_id that should lead for this persona
 
 
 @dataclass
@@ -59,87 +44,22 @@ class _Testimonial:
     note: str = field(default="")
 
 
-# Personas map one-to-one to intents. Each expected_authority is the document
-# the persona expects to lead, declared before any search runs.
-_SCENARIOS: list[_Scenario] = [
-    _Scenario(
-        persona="orienting newcomer",
-        intent="orientation",
-        query="decision on gpu lock scope",
-        expected_authority="adr/2026-06-12-service-concurrency-adr",
-    ),
-    _Scenario(
-        persona="orienting newcomer",
-        intent="orientation",
-        query="qdrant server mode with provisioned binary verification",
-        expected_authority="adr/2026-06-12-qdrant-server-provisioning-adr",
-    ),
-    _Scenario(
-        persona="debugging maintainer",
-        intent="debugging",
-        query="narrow the gpu lock to model forward calls in the search path",
-        expected_authority=(
-            "exec/2026-06-12-service-concurrency/"
-            "2026-06-12-service-concurrency-W03-P06-S15"
-        ),
-    ),
-]
-
-
-def _repo_root() -> Path:
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / ".vault").is_dir():
-            return parent
-    msg = "could not locate project .vault/ above the test module"
-    raise RuntimeError(msg)
-
-
-@pytest.fixture(scope="session")
-def testimonial_searcher(
-    embedding_model: EmbeddingModel,
-    shared_reranker: CrossEncoder,
-    tmp_path_factory: pytest.TempPathFactory,
-) -> Generator[VaultSearcher]:
-    """Index a hermetic frozen-reference vault and yield a searcher.
-
-    The corpus is pinned to the gold-calibration commit (see _frozen_corpus)
-    so the pre-declared authorities cannot be outranked by documents added to
-    the live vault after they were calibrated.
-    """
-    from ... import VaultSearcher
-    from ..conftest import _index_corpus
-
-    root = tmp_path_factory.mktemp("testimonial-vault")
-    materialize_frozen_vault(root, repo_root=_repo_root())
-    (root / ".vaultspec").mkdir(parents=True, exist_ok=True)
-    components = _index_corpus(root, embedding_model)
-    searcher = VaultSearcher(
-        root, components["model"], components["store"], reranker=shared_reranker
-    )
-    try:
-        yield searcher
-    finally:
-        components["store"].close()
-
-
-def _run_scenario(searcher: VaultSearcher, scenario: _Scenario) -> _Testimonial:
-    results = searcher.search_vault(
-        scenario.query, top_k=_TOP_K, intent=scenario.intent
-    )
-    observed = [r.id for r in results]
-    if scenario.expected_authority not in observed:
+def _testimonial(observed: TestimonialEvidence) -> _Testimonial:
+    """Reach a verdict on one persona's observed ranking."""
+    observed_top = observed["observed_top"]
+    expected_authority = observed["expected_authority"]
+    if expected_authority not in observed_top:
         verdict, note = "off-topic", "expected authority absent from the top results"
-    elif observed.index(scenario.expected_authority) < _SATISFIED_RANK:
+    elif observed_top.index(expected_authority) < _SATISFIED_RANK:
         verdict, note = "satisfied", "expected authority led the results"
     else:
         verdict, note = "wrong-role", "expected authority present but ranked low"
     return _Testimonial(
-        persona=scenario.persona,
-        intent=scenario.intent,
-        query=scenario.query,
-        expected_authority=scenario.expected_authority,
-        observed_top=observed,
+        persona=observed["persona"],
+        intent=observed["intent"],
+        query=observed["query"],
+        expected_authority=expected_authority,
+        observed_top=observed_top,
         verdict=verdict,
         note=note,
     )
@@ -148,13 +68,18 @@ def _run_scenario(searcher: VaultSearcher, scenario: _Scenario) -> _Testimonial:
 class TestRankingTestimonials:
     """Each persona's pre-declared authority must lead its query."""
 
-    def test_personas_are_satisfied(self, testimonial_searcher: VaultSearcher) -> None:
-        testimonials = [_run_scenario(testimonial_searcher, s) for s in _SCENARIOS]
+    def test_personas_are_satisfied(
+        self,
+        frozen_corpus_evidence: FrozenCorpusEvidence,
+    ) -> None:
+        observations = frozen_corpus_evidence["testimonials"]
+        assert observations, "the persona scenario set must not be empty"
+        testimonials = [_testimonial(observed) for observed in observations]
         unsatisfied = [t for t in testimonials if t.verdict != "satisfied"]
         assert not unsatisfied, "\n".join(
             f"[{t.persona} / {t.intent}] {t.verdict}: {t.note}\n"
             f"  query: {t.query}\n"
             f"  expected: {t.expected_authority}\n"
-            f"  observed top {_TOP_K}: {t.observed_top}"
+            f"  observed top {TESTIMONIAL_TOP_K}: {t.observed_top}"
             for t in unsatisfied
         )

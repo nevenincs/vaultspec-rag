@@ -226,7 +226,7 @@ def _thaw_float(payload: object) -> float:
 
 def _thaw_scalar(tag: _ScalarTag, payload: object) -> object:
     """Validate and materialize one canonical scalar."""
-    if tag in {"date", "time", "datetime"}:
+    if tag == "date" or tag == "time" or tag == "datetime":
         return _thaw_temporal(
             tag,
             payload,

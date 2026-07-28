@@ -380,8 +380,14 @@ def _service_env(
     env_overrides: Mapping[str, str | None] | None = None,
     *,
     qdrant_source: tuple[Path, Path] | None = None,
-) -> Generator[None]:
+) -> Generator[dict[str, str | None]]:
     """Isolate service state files to *tmp_path*.
+
+    Yields the exact environment mapping it applied. A caller that outlives one
+    test - a module-scoped daemon whose clients are re-pointed at it per test -
+    needs to re-apply precisely these values rather than recompute them, because
+    recomputation would draw a fresh ephemeral Qdrant port that the running
+    daemon is not listening on.
 
     Sets ``VAULTSPEC_RAG_STATUS_DIR`` (and any additional
     *env_overrides* the caller provides) so the spawned subprocess
@@ -446,7 +452,7 @@ def _service_env(
 
         reset_config()  # pyright: ignore[reportMissingTypeStubs]
         reset_rag_config()
-        yield
+        yield updates
     finally:
         for k, prev in saved.items():
             if prev is None:

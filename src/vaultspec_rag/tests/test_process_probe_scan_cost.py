@@ -44,7 +44,10 @@ def _scan_for(marker: str) -> Mapping[str, Any] | None:
     """
     for info in iter_process_info(["pid", "ppid", "cmdline"]):
         raw = info.get("cmdline")
-        if isinstance(raw, list) and any(marker == str(item) for item in raw):
+        if not isinstance(raw, list):
+            continue
+        parts: list[object] = raw
+        if any(marker == str(item) for item in parts):
             return info
     return None
 

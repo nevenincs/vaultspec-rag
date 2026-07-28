@@ -135,7 +135,7 @@ class TestEverySpawnedDaemonIsAnchored:
         # forward into a helper that does the spawning, and a guard pinned to a
         # single function goes blind the moment it does.
         called: set[str] = set()
-        pending, seen = ["_spawn_service"], set()
+        pending, seen = ["_spawn_service"], set[str]()
         while pending:
             name = pending.pop()
             if name in seen or name not in functions:
