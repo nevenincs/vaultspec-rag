@@ -30,10 +30,13 @@ import vaultspec_rag.server as _m
 from ... import server
 from ...server._routes import ROUTES
 from ._helpers import _make_root
+from .conftest import _attach_live_service, _live_service_context
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from pytest import TempPathFactory
 
 
 @pytest.fixture
@@ -145,6 +148,50 @@ async def _reindex_vault_to_completion(root: Path) -> None:
         await asyncio.sleep(0.1)
 
 
+@pytest.fixture(scope="module")
+def _metrics_daemon(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: TempPathFactory,
+) -> Iterator[tuple[int, Path, dict[str, str | None]]]:
+    """Hold a daemon whose global counters nothing outside this module moves.
+
+    ``/metrics`` exposes whole-process counters with no per-root breakdown, so
+    the two GPU tests below can only be written as a delta over the daemon's
+    entire workload. The session-wide daemon is shared with modules that start
+    reindex jobs without waiting for them, and those land inside this module's
+    measurement window - a single reindex was observed moving the shared
+    counter by six. A test that measures a process-global number has to own the
+    process, so this module pays one extra spawn rather than assert a total it
+    does not control.
+    """
+    with _live_service_context(tmp_path_factory.mktemp("metrics-service")) as service:
+        yield service
+
+
+@pytest.fixture
+def metrics_service(
+    _metrics_daemon: tuple[int, Path, dict[str, str | None]],
+) -> Iterator[tuple[int, Path]]:
+    """Point this test's clients at the module's own counter-isolated daemon."""
+    with _attach_live_service(_metrics_daemon) as service:
+        yield service
+
+
+def _counter_value(text: str, name: str) -> float:
+    """Read one counter's current value out of a Prometheus exposition.
+
+    Parsed by exact key rather than matched as a substring. A counter that has
+    served earlier work in the same daemon renders a multi-digit value, and
+    ``"..._total 1" in text`` is satisfied by ``11`` - so a substring assertion
+    keeps passing however far the real count has drifted from the expected one.
+    """
+    prefixed = f"vaultspec_rag_{name}"
+    for line in text.splitlines():
+        key, _, raw = line.partition(" ")
+        if key == prefixed:
+            return float(raw)
+    raise AssertionError(f"{prefixed} absent from metrics exposition:\n{text}")
+
+
 async def _fetch_daemon_metrics(port: int, token: str) -> str:
     async with httpx.AsyncClient() as client:
         resp = await client.get(
@@ -160,49 +207,56 @@ async def _fetch_daemon_metrics(port: int, token: str) -> str:
 @pytest.mark.subprocess_gpu
 async def test_search_vault_increments_counter(
     tmp_path: Path,
-    live_service: tuple[int, Path],
+    metrics_service: tuple[int, Path],
 ) -> None:
     root = _make_root(tmp_path)
-    port, _status_dir = live_service
+    port, _status_dir = metrics_service
 
     from ._helpers import _poll_health
 
     health = _poll_health(port)
     token = health["service_token"]
 
+    baseline = await _fetch_daemon_metrics(port, token)
+    reindexes = _counter_value(baseline, "reindex_total")
+    searches = _counter_value(baseline, "search_total")
+
     await _reindex_vault_to_completion(root)
 
     before = await _fetch_daemon_metrics(port, token)
-    # the search shouldn't be incremented yet, though prometheus only adds keys on first use  # noqa: E501
-    # if it hasn't been searched, it might not be in the output, or might be 0.
-    # We just ensure it is not > 0
-    # The reindex above bumped the reindex counter inline.
-    assert "vaultspec_rag_reindex_total" in before
+    # The reindex is credited inline, and it must move only its own counter:
+    # a reindex that also bumped the search counter would make every later
+    # search assertion pass for the wrong reason.
+    assert _counter_value(before, "reindex_total") == reindexes + 1
+    assert _counter_value(before, "search_total") == searches
 
     await tools.search_vault("body", top_k=3, project_root=str(root))
 
     after = await _fetch_daemon_metrics(port, token)
-    assert "vaultspec_rag_search_total 1" in after
+    assert _counter_value(after, "search_total") == searches + 1
 
 
 @pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_reindex_vault_increments_counter(
     tmp_path: Path,
-    live_service: tuple[int, Path],
+    metrics_service: tuple[int, Path],
 ) -> None:
     root = _make_root(tmp_path)
-    port, _status_dir = live_service
+    port, _status_dir = metrics_service
 
     from ._helpers import _poll_health
 
     health = _poll_health(port)
     token = health["service_token"]
 
+    before = await _fetch_daemon_metrics(port, token)
+    reindexes = _counter_value(before, "reindex_total")
+
     await _reindex_vault_to_completion(root)
 
-    text = await _fetch_daemon_metrics(port, token)
-    assert "vaultspec_rag_reindex_total 1" in text
+    after = await _fetch_daemon_metrics(port, token)
+    assert _counter_value(after, "reindex_total") == reindexes + 1
 
 
 # --------------------------------------------------------------------------- #

@@ -718,23 +718,30 @@ def _live_service_context(
 
 
 @contextmanager
-def _module_live_service(
+def _shared_live_service(
     tmp_path_factory: TempPathFactory,
     name: str,
     *,
     watch: bool,
 ) -> Generator[tuple[int, Path, dict[str, str | None]]]:
-    """Hold one real daemon for a whole module.
+    """Hold one real daemon for every test that asks for this daemon flavour.
 
-    Spawning a daemon costs a full model load plus Qdrant startup and health
-    readiness - by far the most expensive per-test setup in the suite - and the
-    modules that use it drive many tests against one unchanging daemon. So the
-    daemon is spawned once per module and each test is re-pointed at it (see
-    ``_attach_live_service``) instead of paying for a private one.
+    Spawning a daemon is by far the most expensive setup in the suite: a
+    measured 17s, of which 13s is the production model set reaching health
+    readiness and 3s is Qdrant publication. None of that is reducible without
+    spawning the daemon under a weaker configuration than the one under test,
+    so the only honest saving is to spawn fewer times. The consumers drive many
+    tests against one unchanging daemon, so it is spawned once and each test is
+    re-pointed at it (see ``_attach_live_service``) instead of paying for a
+    private one.
 
     Per-test isolation is preserved where it does the work: every test still
     supplies its own project root, and the daemon's own state is the subject
-    under test rather than a fixture the tests mutate destructively.
+    under test rather than a fixture the tests mutate destructively. That is
+    what lets the spawn amortise across modules and not just within one -
+    accumulated jobs and namespaces are visible to later tests, and every
+    assertion over those views is written against a root-scoped or filtered
+    query rather than a whole-daemon count.
     """
     with _live_service_context(
         tmp_path_factory.mktemp(name),
@@ -747,7 +754,7 @@ def _module_live_service(
 def _attach_live_service(
     service: tuple[int, Path, dict[str, str | None]],
 ) -> Generator[tuple[int, Path]]:
-    """Point this test's in-process clients at the module's running daemon.
+    """Point this test's in-process clients at the shared running daemon.
 
     The autouse machine-singleton re-arm restores the session-wide status and
     storage dirs at every test boundary, which is exactly what stops a stray
@@ -755,7 +762,7 @@ def _attach_live_service(
     strand a daemon that outlives one test: discovery would resolve the session
     dirs and simply not find it. Re-applying the daemon's own captured mapping
     inside each test reconciles the two - the re-arm still owns both boundaries,
-    and the window in between resolves the daemon this module actually started.
+    and the window in between resolves the daemon the run actually started.
 
     The mapping is replayed verbatim rather than rebuilt because rebuilding
     would allocate a fresh ephemeral Qdrant port the running daemon never bound.
@@ -765,12 +772,17 @@ def _attach_live_service(
         yield port, status_dir
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def _live_service_daemon(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: TempPathFactory,
 ) -> Generator[tuple[int, Path, dict[str, str | None]]]:
-    """Hold one cache-prepared, offline real service for the module."""
-    with _module_live_service(
+    """Hold one cache-prepared, offline real service for the session.
+
+    Five modules in the serialized subprocess-GPU invocation request this
+    daemon. Scoped per module they paid five full spawns for five identical
+    daemons; scoped per session they share one.
+    """
+    with _shared_live_service(
         tmp_path_factory,
         "live-service",
         watch=False,
@@ -791,8 +803,14 @@ def live_service(
 def _live_service_with_watch_daemon(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: TempPathFactory,
 ) -> Generator[tuple[int, Path, dict[str, str | None]]]:
-    """Hold one watcher-enabled real service for the module."""
-    with _module_live_service(
+    """Hold one watcher-enabled real service for the module.
+
+    Stays module-scoped where the plain daemon is session-scoped: exactly one
+    module asks for a watcher-enabled daemon, so widening the scope would save
+    no spawn and would instead hold a second full model set resident alongside
+    the session daemon for the rest of the run.
+    """
+    with _shared_live_service(
         tmp_path_factory,
         "live-service-watch",
         watch=True,
