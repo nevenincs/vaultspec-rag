@@ -65,11 +65,11 @@ uv sync
 To install as a standalone tool instead, pin the GPU torch wheel in the tool receipt so `uv tool upgrade` keeps the CUDA build. A bare `uv tool install` re-resolves torch to a CPU-only wheel on every upgrade, and `--index` is not recorded in tool receipts, so the `--with` pin is the durable fix:
 
 ```bash
-uv tool install "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
+uv tool install --python 3.13 "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
 uvx vaultspec-rag install
 ```
 
-On Linux, use the matching `manylinux_2_28_x86_64` wheel from the same index.
+The `--python` request must match the wheel's `cp3XX` tag; without it, uv resolves the tool env on its default python, and a default that differs from the wheel's interpreter fails the install on a tag mismatch. On Linux, use the matching `manylinux_2_28_x86_64` wheel from the same index.
 
 See the [installation guide](docs/installation.md) for tool-environment repair and upgrade caveats.
 
