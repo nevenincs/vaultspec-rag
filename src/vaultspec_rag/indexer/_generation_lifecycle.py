@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from .._index_breadth import PUBLISHED_POINTS_KEY, parse_reserved_count
+from .._store_models import generation_code_collection, publish_generation_as_served
 from ._content_policy import ContentKind
 from ._drift_owner import CodeDriftOwner
 from ._route_migration import reconcile_generation_storage
@@ -209,6 +210,23 @@ class CodeGenerationLifecycle:
         )
         return has_evidence and not self._store.code_collection_exists()
 
+    def _live_code_points(self) -> int | None:
+        """Return the served code collection's point count, or ``None`` if unknown.
+
+        A count that could not be taken is ignorance, never loss: reporting it
+        as zero would drive a rebuild of every root whose storage was briefly
+        unreachable.
+        """
+        try:
+            return self._store.count_code()
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not count the code collection to verify published "
+                "breadth; trusting the carried evidence for this run",
+                exc_info=True,
+            )
+            return None
+
     def published_evidence_lost(self) -> bool:
         """Return whether the store fails to back the carried incremental evidence.
 
@@ -239,23 +257,30 @@ class CodeGenerationLifecycle:
         evidence of loss, and escalating on ignorance would rebuild every root
         written by an older build.
         """
-        if not self._load_meta():
+        named = self._load_meta()
+        if not named:
             return False
         if not self._store.code_collection_exists():
             return True
-        claimed = parse_reserved_count(self._read_meta_raw(), PUBLISHED_POINTS_KEY)
-        if claimed is None:
+        live = self._live_code_points()
+        if live is None:
             return False
-        try:
-            live = self._store.count_code()
-        except (OSError, RuntimeError):
+        if live == 0:
+            # An empty served collection cannot back a single named file, so
+            # this is loss whatever the published count says - including a
+            # published count of zero, which compares equal to an empty
+            # collection and would otherwise latch the outage forever:
+            # incrementals diff clean against the named files, republish zero,
+            # and no comparison of counts ever escalates again.
             logger.warning(
-                "Could not count the code collection to verify published "
-                "breadth; trusting the carried evidence for this run",
-                exc_info=True,
+                "Code collection holds no points at all while the published "
+                "metadata names %d file(s); escalating to a full failure-safe "
+                "reconciliation instead of trusting the carried evidence",
+                len(named),
             )
-            return False
-        if live >= claimed:
+            return True
+        claimed = parse_reserved_count(self._read_meta_raw(), PUBLISHED_POINTS_KEY)
+        if claimed is None or live >= claimed:
             return False
         logger.warning(
             "Code collection holds %d of the %d points its published metadata "
@@ -266,6 +291,92 @@ class CodeGenerationLifecycle:
         )
         return True
 
+    def build_collection(self, checkpoint: CodeRunCheckpoint) -> str | None:
+        """Return the collection *checkpoint* populates, or ``None`` for in-place.
+
+        A generation opened ``clean`` builds beside the served collection under
+        a name minted from the served one and its own identifier, so the name
+        is a pure function of two things a resuming run still has. Every other
+        generation writes into the served collection and has no build target at
+        all.
+
+        Deriving it here rather than remembering it is what lets a run that
+        died before publication finish the generation it left behind: the
+        served pointer has not moved - that is precisely what the crash
+        prevented - so the same input yields the same name.
+        """
+        if not checkpoint.generation.signature.clean:
+            return None
+        return generation_code_collection(
+            self._store.CODE_TABLE_NAME,
+            checkpoint.generation_id,
+        )
+
+    def publish(
+        self,
+        checkpoint: CodeRunCheckpoint,
+        *,
+        build_target: str | None,
+        reporter: ProgressReporter,
+        phase_label: str,
+    ) -> None:
+        """Publish one finished code generation, breadth first and pointer second.
+
+        The single publication for every code run - a rebuild into a
+        generation collection, an in-place incremental, and a run resuming a
+        generation whose ingestion already finished. A second copy of this is
+        what let a resumed publication count one collection while claiming
+        another, so the ordering, the counted target, and the pointer move all
+        live here and nowhere else.
+
+        ``build_target`` is the collection the generation actually populated.
+        BOTH published figures are counted from it, never from whatever the
+        served pointer currently resolves to: a claim measured against a
+        different collection than the one it describes is not a claim about
+        anything.
+
+        The pointer moves only after the breadth of that same collection is on
+        disk, and the store is rebound to it in the same step, so no reader can
+        resolve a generation whose published figure is missing and no later run
+        inherits a served name the publication never certified.
+        """
+        reporter.phase_start(phase_label, 1)
+        try:
+            reconcile_generation_storage(
+                self._store,
+                checkpoint,
+                checkpoint.policy,
+                ContentKind.CODE,
+            )
+
+            def _record_breadth() -> None:
+                checkpoint.publish_metadata(
+                    self._meta_path,
+                    published_points=self._store.count_code(build_target),
+                    published_files=self._store.count_code_files(build_target),
+                )
+
+            if build_target is None:
+                _record_breadth()
+            else:
+                # Breadth first, pointer second - a reader must never resolve a
+                # generation whose published figure is missing.
+                publish_generation_as_served(
+                    self._root_dir,
+                    collection=build_target,
+                    record_breadth=_record_breadth,
+                )
+                # Both collections are complete at this instant: the old one
+                # served throughout and the new one has just reconciled. A
+                # reader mid-flight sees one or the other, never a partial
+                # index, which is what makes this assignment the swap rather
+                # than a race.
+                self._store.CODE_TABLE_NAME = build_target
+            checkpoint.publish_generation()
+            reporter.advance(1)
+        finally:
+            reporter.phase_end()
+
     def publish_pending_finalization(
         self,
         checkpoint: CodeRunCheckpoint,
@@ -274,28 +385,46 @@ class CodeGenerationLifecycle:
     ) -> bool:
         """Finish an ingestion-complete generation without re-entering writes.
 
+        A generation that built beside the served collection is publishable
+        only while that collection is still there. Absent, it has nothing left
+        to publish - certifying it anyway would stamp its identifier over
+        whatever the served pointer happens to name and claim breadth measured
+        from a collection the generation never wrote - so it is retired and the
+        caller re-encodes from scratch.
+
         Returns:
             ``True`` when the generation was published, ``False`` when it is
-            still ingesting and the caller must run the ordinary path.
+            still ingesting or was retired, and the caller must run the
+            ordinary path.
         """
         if checkpoint.generation.finalization_phase is FinalizationPhase.INGESTING:
             return False
-        reporter.phase_start("resume publication", 1)
-        try:
-            reconcile_generation_storage(
-                self._store,
-                checkpoint,
-                checkpoint.policy,
-                ContentKind.CODE,
+        build_target = self.build_collection(checkpoint)
+        if build_target is not None and not self._store.code_collection_exists(
+            build_target
+        ):
+            logger.warning(
+                "generation %s finished ingesting into a collection that is no "
+                "longer in storage; retiring it rather than publishing a claim "
+                "over an index that does not exist",
+                checkpoint.generation_id,
             )
-            checkpoint.publish_metadata(
-                self._meta_path,
-                published_points=self._store.count_code(),
+            checkpoint.ledger.finish_generation(
+                checkpoint.generation_id,
+                RunTerminalState.INVALIDATED,
+                detail=(
+                    "the generation's own code collection is missing from "
+                    "storage; its finished ingestion no longer describes "
+                    "anything to publish"
+                ),
             )
-            checkpoint.publish_generation()
-            reporter.advance(1)
-        finally:
-            reporter.phase_end()
+            return False
+        self.publish(
+            checkpoint,
+            build_target=build_target,
+            reporter=reporter,
+            phase_label="resume publication",
+        )
         return True
 
     @staticmethod

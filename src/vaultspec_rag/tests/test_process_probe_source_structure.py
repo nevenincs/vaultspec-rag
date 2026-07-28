@@ -234,11 +234,22 @@ class TestNoStructurallyIdenticalFunctions:
         "which is the enumeration these properties exist to remove."
     )
 
+    _CONSTRUCTOR_BINDING = (
+        "Two unrelated constructors binding their own parameters to their own "
+        "attributes. What matches is the run of `self._x = x` lines and the "
+        "count of them; the classes share no base, no collaborator, and no "
+        "behaviour, so there is nothing to merge - only a coincidence of arity."
+    )
+
     _ALLOWED_SHAPES: ClassVar[dict[tuple[str, ...], str]] = {
         (
             "job_models.py:is_live_attempt",
             "job_models.py:is_retryable",
         ): _NAMED_SUBSET,
+        (
+            "indexer/_incremental_commit.py:__init__",
+            "server/_stdio_lifetime.py:__init__",
+        ): _CONSTRUCTOR_BINDING,
         (
             "cli/_search.py:_render_breadth_shortfall",
             "cli/_search.py:_render_file_breadth_shortfall",
