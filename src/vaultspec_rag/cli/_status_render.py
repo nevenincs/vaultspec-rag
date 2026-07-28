@@ -67,10 +67,10 @@ from ._process import (
 )
 from ._render import _emit_json, _plain, _print_next_action, address_line
 from ._service_jobs_presentation import (
-    _human_progress,
-    _operation_label,
-    _project_label,
-    _stale_progress_label,
+    human_progress,
+    operation_label,
+    project_label,
+    stale_progress_label,
 )
 from ._service_lifecycle import (
     _print_detail_line,
@@ -379,10 +379,10 @@ def _render_status_json(
 
 def _job_progress_summary(job: dict[str, object]) -> str:
     parts: list[str] = []
-    progress = _human_progress(job)
+    progress = human_progress(job)
     if progress:
         parts.append(progress)
-    stale_progress = _stale_progress_label(job)
+    stale_progress = stale_progress_label(job)
     if stale_progress:
         parts.append(stale_progress)
     return f", {', '.join(parts)}" if parts else ""
@@ -395,7 +395,7 @@ def _job_project(job: dict[str, object]) -> str:
     otherwise repeat the comparison against that exact phrase - and a reword of
     the sentinel would silently start printing it as if it were a project name.
     """
-    project = _project_label(job)
+    project = project_label(job)
     return "" if project == "project not reported" else project
 
 
@@ -408,7 +408,7 @@ def _job_runtime_label(job: dict[str, object]) -> str:
 
 
 def _job_command_name(job: dict[str, object]) -> str:
-    operation = _operation_label(job)
+    operation = operation_label(job)
     project = _job_project(job)
     return f"{operation} for {project}" if project else operation
 
@@ -471,14 +471,14 @@ def _current_job_detail_lines(jobs: dict[str, object] | None) -> list[str]:
 
 
 def _single_job_detail_lines(job: dict[str, object]) -> list[str]:
-    lines = ["Current job:", f"  Operation: {_operation_label(job)}"]
+    lines = ["Current job:", f"  Operation: {operation_label(job)}"]
     project = _job_project(job)
     if project:
         lines.append(f"  Project: {project}")
     lines.append(f"  Runtime: {_job_runtime_label(job)}")
     for label, value in (
-        ("Progress", _human_progress(job)),
-        ("Warning", _stale_progress_label(job)),
+        ("Progress", human_progress(job)),
+        ("Warning", stale_progress_label(job)),
     ):
         if value:
             lines.append(f"  {label}: {value}")

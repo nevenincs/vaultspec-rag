@@ -19,6 +19,7 @@ from ... import server
 from ...config._settings import get_config, reset_config
 from ...config._types import EnvVar
 from ...server import WatcherStartOutcome
+from ...watcher_intake import watch_and_reindex
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -72,10 +73,17 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
     ]
     try:
         reset_config()
-        with caplog.at_level(logging.INFO, logger="vaultspec_rag.watcher"):
+        # Bind the capture to the module that owns the startup log rather than
+        # a literal: the level has to be raised on the emitting logger itself,
+        # so a stale name captures nothing and the values look unwired.
+        with caplog.at_level(logging.INFO, logger=watch_and_reindex.__module__):
             server._ensure_watcher(root)
-            # Yield so the freshly created task runs its startup log line.
-            await asyncio.sleep(0.1)
+            # The startup line lands after retry-state initialization, which
+            # touches disk; poll rather than betting on one yield.
+            for _ in range(40):
+                await asyncio.sleep(0.05)
+                if "service.watcher event=started" in caplog.text:
+                    break
         assert root.resolve() in server._watcher_tasks
         assert "service.watcher event=started" in caplog.text
         assert "debounce_ms=123" in caplog.text

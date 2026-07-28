@@ -29,7 +29,7 @@ from .watcher_retry import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .watcher_runtime import _ObservedSource
+    from .watcher_runtime import ObservedSource
 
 
 logger = logging.getLogger(__name__)
@@ -373,7 +373,7 @@ def _collect_persist_outcomes(
 
 
 async def persist_observed_sources(
-    observed_sources: tuple[_ObservedSource, ...],
+    observed_sources: tuple[ObservedSource, ...],
     *,
     root_dir: Path,
 ) -> bool:

@@ -79,11 +79,11 @@ from .._units import human_bytes
 from ..concurrency import LIMITER_STAT_FIELDS
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
-    _read_service_response,
     _try_http_admin,
     _try_http_health,
+    read_service_response,
 )
-from ._cli_format import _compact_duration
+from ._cli_format import compact_duration
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -272,7 +272,7 @@ def _fetch_metrics_text(port: int, token: str, timeout: float | None) -> str:
         with LOOPBACK_OPENER.open(
             request, timeout=timeout or DEFAULT_ADMIN_TIMEOUT_SECONDS
         ) as response:
-            return _read_service_response(response).decode("utf-8", "replace")
+            return read_service_response(response).decode("utf-8", "replace")
     except Exception:
         # Every failure here - refused, gated, timed out, truncated - means
         # the same thing to the header: the seat gauges are unreported. The
@@ -452,7 +452,7 @@ def _segments(status: ServiceStatusHeader) -> Iterator[tuple[str, str, str]]:
     if index_pool is not None:
         yield "index", _pair(index_pool.used, index_pool.total), ""
     yield "watching", _count(status.watching), ""
-    yield "up", _compact_duration(status.uptime_seconds), "dim"
+    yield "up", compact_duration(status.uptime_seconds), "dim"
 
 
 def render_status_header(status: ServiceStatusHeader | None, width: int) -> Text:

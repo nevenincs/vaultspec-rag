@@ -12,7 +12,7 @@ from ..serviceclient._transport import _try_http_admin
 from ._render import _display_service_not_running, _emit_json_error_and_exit, _plain
 
 
-def _job_awaiting_admission(job: dict[str, object]) -> bool:
+def job_awaiting_admission(job: dict[str, object]) -> bool:
     """Report whether a running job has not yet won its admission slot.
 
     Only one encode-bearing index job may execute at a time, because a single
@@ -39,7 +39,7 @@ def _job_awaiting_admission(job: dict[str, object]) -> bool:
     return job["admission_acquired_at"] is None
 
 
-def _job_is_waiting(job: dict[str, object]) -> bool:
+def job_is_waiting(job: dict[str, object]) -> bool:
     """Report whether a running job is waiting rather than working.
 
     Covers both waits, which are distinct and both invisible in the phase:
@@ -47,7 +47,7 @@ def _job_is_waiting(job: dict[str, object]) -> bool:
     """
     if str(job.get("phase", "")) != "running":
         return False
-    if _job_awaiting_admission(job):
+    if job_awaiting_admission(job):
         return True
     progress = job.get("progress")
     return (
@@ -79,7 +79,7 @@ def _exit_invalid_jobs_filter_value(
     _exit_invalid_jobs_filter(json_mode, message)
 
 
-def _resolve_jobs_filters(
+def resolve_jobs_filters(
     phase: str | None,
     failed: bool,
     json_mode: bool,
@@ -116,7 +116,7 @@ def _jobs_phase_value(phase: str | None) -> str | None:
     return value
 
 
-def _jobs_state_filter(
+def jobs_state_filter(
     state: str | None,
     json_mode: bool,
 ) -> tuple[str | None, str | None]:
@@ -136,7 +136,7 @@ def _jobs_state_filter(
     )
 
 
-def _jobs_started_by_filter(
+def jobs_started_by_filter(
     started_by: str | None,
     json_mode: bool,
 ) -> str | None:
@@ -153,7 +153,7 @@ def _jobs_started_by_filter(
     )
 
 
-def _jobs_index_filter(
+def jobs_index_filter(
     index: str | None,
     json_mode: bool,
 ) -> str | None:
@@ -173,7 +173,7 @@ def _jobs_index_filter(
 
 
 @dataclass(frozen=True, slots=True)
-class _JobsQuery:
+class JobsQuery:
     """One resolved ``server jobs`` filter set bound to a service port.
 
     Carried as a value so the filter names are written once at the command
@@ -193,7 +193,7 @@ class _JobsQuery:
     since: float | None = None
 
 
-def _jobs_args(spec: _JobsQuery) -> dict[str, object]:
+def _jobs_args(spec: JobsQuery) -> dict[str, object]:
     args: dict[str, object] = {"limit": spec.limit}
     optional_args = {
         "phase": _jobs_phase_value(spec.phase),
@@ -215,7 +215,7 @@ def _jobs_args(spec: _JobsQuery) -> dict[str, object]:
     return args
 
 
-def _exit_jobs_not_running(json_mode: bool, port: int | None = None) -> NoReturn:
+def exit_jobs_not_running(json_mode: bool, port: int | None = None) -> NoReturn:
     message = SERVICE_NOT_RUNNING_MESSAGE
     if json_mode:
         _emit_json_error_and_exit("service.jobs", "service_not_running", message, 3)
@@ -223,7 +223,7 @@ def _exit_jobs_not_running(json_mode: bool, port: int | None = None) -> NoReturn
     raise typer.Exit(3)
 
 
-def _jobs_from_result(result: dict[str, object]) -> list[object]:
+def jobs_from_result(result: dict[str, object]) -> list[object]:
     raw_jobs = result.get("jobs")
     return cast("list[object]", raw_jobs) if isinstance(raw_jobs, list) else []
 
@@ -235,7 +235,7 @@ def job_revision(job: dict[str, object]) -> int | None:
     return revision
 
 
-def _filter_is_set(value: object) -> bool:
+def filter_is_set(value: object) -> bool:
     """Report whether a filter value narrows the job list at all.
 
     An unset filter arrives three ways - absent as ``None``, empty as ``""``,
@@ -247,7 +247,7 @@ def _filter_is_set(value: object) -> bool:
     return value not in (None, "", False)
 
 
-def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
+def empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
     message = "No jobs have been reported by this service yet."
     if job_id:
         message = "No job matched that id."
@@ -265,32 +265,32 @@ def _empty_jobs_message(result: dict[str, object], job_id: str | None) -> str:
         ):
             message = "There are no active or waiting jobs."
         elif any(
-            key != "limit" and _filter_is_set(value) for key, value in filters.items()
+            key != "limit" and filter_is_set(value) for key, value in filters.items()
         ):
             message = "No jobs matched these filters."
     return message
 
 
-def _fetch_jobs_result(spec: _JobsQuery) -> dict[str, object] | None:
+def fetch_jobs_result(spec: JobsQuery) -> dict[str, object] | None:
     return _try_http_admin("get_jobs", _jobs_args(spec), spec.port)
 
 
 def _client_state_matches(job: dict[str, object], state: str | None) -> bool:
     if state == "active":
-        return str(job.get("phase", "")) == "running" and not _job_is_waiting(job)
+        return str(job.get("phase", "")) == "running" and not job_is_waiting(job)
     if state == "waiting":
-        return _job_is_waiting(job)
+        return job_is_waiting(job)
     return True
 
 
-def _apply_client_state_filter(
+def apply_client_state_filter(
     result: dict[str, object],
     state: str | None,
 ) -> dict[str, object]:
     if state not in ("active", "waiting"):
         return result
     jobs: list[dict[str, object]] = []
-    for job in _jobs_from_result(result):
+    for job in jobs_from_result(result):
         if not isinstance(job, dict):
             continue
         job_dict = cast("dict[str, object]", job)

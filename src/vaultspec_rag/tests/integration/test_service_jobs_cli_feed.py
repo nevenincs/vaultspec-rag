@@ -263,10 +263,10 @@ def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
 
 @pytest.mark.unit
 def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> None:
-    from ...cli._service_jobs_presentation import _render_jobs_result
+    from ...cli._service_jobs_presentation import render_jobs_result
 
     now = time.time()
-    _render_jobs_result(
+    render_jobs_result(
         {
             "jobs": [
                 {
@@ -318,10 +318,10 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
 def test_jobs_filtered_header_separates_matches_from_service_total(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from ...cli._service_jobs_presentation import _render_jobs_result
+    from ...cli._service_jobs_presentation import render_jobs_result
 
     now = time.time()
-    _render_jobs_result(
+    render_jobs_result(
         {
             "jobs": [
                 {

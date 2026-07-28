@@ -10,8 +10,8 @@ import pytest
 from ... import jobs as _jobs
 from ...job_models import JobSource
 from ._jobs_registry_support import (
-    _assert_done_job_snapshot,
-    _assert_running_job_snapshot,
+    assert_done_job_snapshot,
+    assert_running_job_snapshot,
 )
 
 
@@ -21,13 +21,13 @@ def test_record_start_then_finish_produces_done_snapshot(_clean_jobs: None) -> N
 
     running = _jobs.snapshot()
     assert len(running) == 1
-    _assert_running_job_snapshot(running[0], job_id)
+    assert_running_job_snapshot(running[0], job_id)
 
     _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
 
     finished = _jobs.snapshot()
     assert len(finished) == 1
-    _assert_done_job_snapshot(finished[0], job_id)
+    assert_done_job_snapshot(finished[0], job_id)
 
 
 @pytest.mark.unit

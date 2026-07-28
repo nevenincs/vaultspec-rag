@@ -39,11 +39,11 @@ _MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
 
 from ._index_job_control_support import (
-    _AbortAfterFirstCommitReporter,
+    AbortAfterFirstCommitReporter,
+    CancelAfterCheckpoints,
     _assert_code_resources_released,
-    _assert_current_code_state,
-    _CancelAfterCheckpoints,
     _write_code_files,
+    assert_current_code_state,
 )
 
 
@@ -72,7 +72,7 @@ def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
         with pytest.raises(RuntimeError, match="injected mid-rebuild crash"):
             indexer.full_index(
                 clean=True,
-                reporter=_AbortAfterFirstCommitReporter(indexer),
+                reporter=AbortAfterFirstCommitReporter(indexer),
                 preflight=indexer.preflight_content(),
             )
         interrupted = indexer.last_checkpoint
@@ -94,7 +94,7 @@ def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
         # its committed units (resumed_units > 0, zero re-encode) and the
         # store is missing exactly those files' chunks while the run still
         # reports success.
-        _assert_current_code_state(indexer, store, paths, "ledger-stale")
+        assert_current_code_state(indexer, store, paths, "ledger-stale")
         fresh = indexer.last_checkpoint
         assert fresh is not None
         assert fresh.resumed_units == 0
@@ -144,7 +144,7 @@ def test_incremental_reencodes_when_collection_vanished_under_published_metadata
         # Binds the incremental staleness guard: without it the unchanged
         # scan trusts the carried metadata, skips every file, and reports a
         # mutation-free success while the store holds zero points.
-        _assert_current_code_state(indexer, store, paths, "meta-stale")
+        assert_current_code_state(indexer, store, paths, "meta-stale")
         assert store.count_code() == published.added
     _assert_code_resources_released()
 
@@ -206,7 +206,7 @@ def test_an_unattended_gate_publishes_a_generation_without_emptying_the_served_o
             indexer.incremental_index(
                 reporter=NullProgressReporter(),
                 preflight=indexer.preflight_content(),
-                run_control=_CancelAfterCheckpoints(40),
+                run_control=CancelAfterCheckpoints(40),
             )
 
         # The point of the whole change: the gate published a new generation
@@ -225,7 +225,7 @@ def test_an_unattended_gate_publishes_a_generation_without_emptying_the_served_o
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
-        _assert_current_code_state(indexer, store, paths, "unattended-gate-republish")
+        assert_current_code_state(indexer, store, paths, "unattended-gate-republish")
         # Asserted after a run that actually republishes the sidecar. Placed
         # after the cancelled run above it proved nothing: a cancelled run
         # never rewrites the sidecar, so the marker could not have appeared
@@ -288,7 +288,7 @@ def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
                 clean=True,
                 reporter=NullProgressReporter(),
                 preflight=indexer.preflight_content(),
-                run_control=_CancelAfterCheckpoints(40),
+                run_control=CancelAfterCheckpoints(40),
             )
 
         # The served collection answered throughout and still holds everything
@@ -306,5 +306,5 @@ def test_an_interrupted_rebuild_leaves_the_served_index_fully_readable(
         )
         assert rebuilt.added > 0
         assert read_served_code_collection(tmp_path) == store.CODE_TABLE_NAME
-        _assert_current_code_state(indexer, store, paths, "interrupted-rebuild")
+        assert_current_code_state(indexer, store, paths, "interrupted-rebuild")
     _assert_code_resources_released()

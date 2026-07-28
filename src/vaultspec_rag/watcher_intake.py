@@ -33,7 +33,7 @@ from .watcher_durability import (
     raise_if_cancellation_requested,
     run_durable_retry_transaction,
 )
-from .watcher_execution import _submit_watcher_job
+from .watcher_execution import submit_watcher_job
 from .watcher_policy import (
     CONFIG_FILENAMES,
     is_code_change,
@@ -46,14 +46,14 @@ from .watcher_retry import (
     WatcherSource,
 )
 from .watcher_runtime import (
+    ObservedSource,
+    WatcherChangeRouting,
     WatcherConfiguration,
-    _observe_managed_job,
-    _ObservedSource,
-    _release_missing_job,
-    _sync_legacy_snapshot,
-    _WatcherChangeRouting,
-    _WatcherConvergenceSlot,
-    _WatcherReconciliation,
+    WatcherConvergenceSlot,
+    WatcherReconciliation,
+    observe_managed_job,
+    release_missing_job,
+    sync_legacy_snapshot,
 )
 
 if TYPE_CHECKING:
@@ -78,7 +78,7 @@ _WATCH_IDLE_TICK_MS = 1000
 def _record_watcher_changes(
     changes: Iterable[tuple[Change, str]],
     *,
-    routing: _WatcherChangeRouting,
+    routing: WatcherChangeRouting,
 ) -> tuple[bool, bool, bool]:
     """Classify one intake batch once and record each domain's dirty paths."""
     observed = [False, False, False]
@@ -117,8 +117,8 @@ def _record_deleted_prior_owners(
     path: Path,
     *,
     root_dir: Path,
-    code_slot: _WatcherConvergenceSlot,
-    document_slot: _WatcherConvergenceSlot | None,
+    code_slot: WatcherConvergenceSlot,
+    document_slot: WatcherConvergenceSlot | None,
 ) -> tuple[bool, bool]:
     """Schedule a missing path from its last durable per-kind ownership."""
     try:
@@ -142,11 +142,11 @@ def _record_deleted_prior_owners(
 
 
 async def _reconcile_watcher_slots(
-    vault_slot: _WatcherConvergenceSlot,
-    code_slot: _WatcherConvergenceSlot,
-    document_slot: _WatcherConvergenceSlot | None,
+    vault_slot: WatcherConvergenceSlot,
+    code_slot: WatcherConvergenceSlot,
+    document_slot: WatcherConvergenceSlot | None,
     *,
-    reconciliation: _WatcherReconciliation,
+    reconciliation: WatcherReconciliation,
 ) -> None:
     """Give each domain an independent convergence opportunity."""
     await _reconcile_watcher_slot(
@@ -276,20 +276,20 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     owner_registry = (
         configuration.registry if configuration.registry is not None else get_registry()
     )
-    vault_slot = _WatcherConvergenceSlot(
+    vault_slot = WatcherConvergenceSlot(
         JobSource.VAULT,
         resolved_root,
         owner_registry,
         vault_retry,
     )
-    code_slot = _WatcherConvergenceSlot(
+    code_slot = WatcherConvergenceSlot(
         JobSource.CODE,
         resolved_root,
         owner_registry,
         code_retry,
     )
     document_slot = (
-        _WatcherConvergenceSlot(
+        WatcherConvergenceSlot(
             JobSource.DOCUMENT,
             resolved_root,
             owner_registry,
@@ -340,7 +340,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 document_events_observed,
             ) = _record_watcher_changes(
                 changes,
-                routing=_WatcherChangeRouting(
+                routing=WatcherChangeRouting(
                     root_dir=root_dir,
                     vault_dir=vault_dir,
                     policy=code_policy[0],
@@ -352,15 +352,15 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
 
             cancellation_requested = await persist_observed_sources(
                 (
-                    _ObservedSource(
+                    ObservedSource(
                         vault_events_observed, WatcherSource.VAULT, vault_retry
                     ),
-                    _ObservedSource(
+                    ObservedSource(
                         code_events_observed, WatcherSource.CODE, code_retry
                     ),
                     *(
                         (
-                            _ObservedSource(
+                            ObservedSource(
                                 document_events_observed,
                                 WatcherSource.DOCUMENT,
                                 document_retry,
@@ -382,7 +382,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 vault_slot,
                 code_slot,
                 document_slot,
-                reconciliation=_WatcherReconciliation(
+                reconciliation=WatcherReconciliation(
                     cooldown=configuration.cooldown,
                     now=now,
                     graph_cache=configuration.graph_cache,
@@ -406,7 +406,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
 
 
 async def _await_slot_settlement(
-    slot: _WatcherConvergenceSlot,
+    slot: WatcherConvergenceSlot,
     settlement: asyncio.Task[None] | None,
 ) -> bool:
     """Wait out a pending settlement, reporting whether to continue.
@@ -428,7 +428,7 @@ async def _await_slot_settlement(
 
 
 def _observe_slot_owner(
-    slot: _WatcherConvergenceSlot,
+    slot: WatcherConvergenceSlot,
     manager: _jobs.JobManager,
     job_id: str,
     *,
@@ -437,16 +437,16 @@ def _observe_slot_owner(
     """Fold the canonical job's current state back into the slot."""
     snapshot = manager.get(job_id)
     if snapshot is None:
-        _release_missing_job(slot, job_id, now=now)
+        release_missing_job(slot, job_id, now=now)
         return
     with slot.lock:
         watcher_owned = slot.watcher_owned
-    if _observe_managed_job(slot, snapshot, now=now) and watcher_owned:
-        _sync_legacy_snapshot(snapshot, result=None, error=None)
+    if observe_managed_job(slot, snapshot, now=now) and watcher_owned:
+        sync_legacy_snapshot(snapshot, result=None, error=None)
 
 
 async def _reconcile_watcher_slot(
-    slot: _WatcherConvergenceSlot,
+    slot: WatcherConvergenceSlot,
     *,
     cooldown: float,
     now: float,
@@ -518,7 +518,7 @@ async def _reconcile_watcher_slot(
         return
     if decision.attempt_generation is None:
         raise WatcherRetryStateError("admitted watcher attempt has no generation")
-    await _submit_watcher_job(
+    await submit_watcher_job(
         slot,
         now=now,
         retry_decision=decision,

@@ -19,8 +19,8 @@ from ..serviceclient._transport import (
 )
 from ._app import JobIdArgument, JsonEnvelopeMode, PortOption, server_job_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
-from ._service_jobs_presentation import _render_job_detail
-from ._service_jobs_query import _jobs_from_result, job_revision
+from ._service_jobs_presentation import render_job_detail
+from ._service_jobs_query import job_revision, jobs_from_result
 
 #: The desired state each ``server job`` control verb asks the service for.
 #: Stated once so a verb cannot request a state its own name contradicts.
@@ -128,7 +128,7 @@ def _human_exact_job_id(
         _job_control_result_failure(command, result, json_mode=False)
     matches = [
         cast("dict[str, object]", job)
-        for job in _jobs_from_result(result)
+        for job in jobs_from_result(result)
         if isinstance(job, dict)
     ]
     if not matches:
@@ -335,7 +335,7 @@ def service_job_show(
     if json_mode:
         _emit_json(True, command, data={"status": "ok", "job": job})
         return
-    _render_job_detail(job, port=resolved_port)
+    render_job_detail(job, port=resolved_port)
 
 
 @server_job_app.command("pause")

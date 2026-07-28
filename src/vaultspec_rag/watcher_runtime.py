@@ -29,8 +29,6 @@ from .watcher_retry import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from .graph_cache import GraphCache
     from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from .indexer._codebase_indexer import CodeExecutionPreflight
@@ -47,17 +45,7 @@ _WATCH_REPLACEMENT_BACKOFF_MAX_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
-class _DurableTransactionRequest:
-    """Durability identity and recovery behavior for one state operation."""
-
-    source: WatcherSource
-    root_dir: Path
-    action: str
-    cancellation_fallback: Callable[[], object] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _ObservedSource:
+class ObservedSource:
     """One watcher domain's observed-event persistence request."""
 
     observed: bool
@@ -66,19 +54,19 @@ class _ObservedSource:
 
 
 @dataclass(frozen=True, slots=True)
-class _WatcherChangeRouting:
+class WatcherChangeRouting:
     """Immutable routing dependencies for one watcher intake batch."""
 
     root_dir: Path
     vault_dir: Path
     policy: ResolvedIndexPolicy | None
-    vault_slot: _WatcherConvergenceSlot
-    code_slot: _WatcherConvergenceSlot
-    document_slot: _WatcherConvergenceSlot | None
+    vault_slot: WatcherConvergenceSlot
+    code_slot: WatcherConvergenceSlot
+    document_slot: WatcherConvergenceSlot | None
 
 
 @dataclass(frozen=True, slots=True)
-class _WatcherReconciliation:
+class WatcherReconciliation:
     """Timing and cache dependencies shared by one convergence pass."""
 
     cooldown: float
@@ -87,7 +75,7 @@ class _WatcherReconciliation:
 
 
 @dataclass(frozen=True, slots=True)
-class _UnstartedFailure:
+class UnstartedFailure:
     """The manager and durable-retry identity of one dispatch failure."""
 
     manager: _jobs.JobManager
@@ -109,7 +97,7 @@ class _TransitionLogContext:
 
 
 @dataclass(frozen=True, slots=True)
-class _ManagedAttemptInputs:
+class ManagedAttemptInputs:
     """Admission proof and shared cache for one watcher manager dispatch."""
 
     initial_attempt: int
@@ -120,7 +108,7 @@ class _ManagedAttemptInputs:
 
 
 @dataclass(frozen=True, slots=True)
-class _ManagedAttemptScope:
+class ManagedAttemptScope:
     """Resolved execution authority for one manager attempt number."""
 
     paths: frozenset[Path] | None
@@ -147,7 +135,7 @@ class WatcherConfiguration:
 
 
 @dataclass(slots=True)
-class _WatcherConvergenceSlot:
+class WatcherConvergenceSlot:
     """Thread-safe ownership of one root/source convergence generation."""
 
     source: JobSource
@@ -235,7 +223,7 @@ class _WatcherConvergenceSlot:
             return captured
 
 
-def _sync_legacy_snapshot(
+def sync_legacy_snapshot(
     snapshot: JobSnapshot,
     *,
     result: JobExecutionResult | None,
@@ -278,8 +266,8 @@ def _sync_legacy_snapshot(
         _jobs.record_progress(snapshot.id, snapshot.state.value)
 
 
-def _schedule_replacement(
-    slot: _WatcherConvergenceSlot,
+def schedule_replacement(
+    slot: WatcherConvergenceSlot,
     *,
     now: float,
     reason: str,
@@ -302,8 +290,8 @@ def _schedule_replacement(
     )
 
 
-def _observe_managed_job(
-    slot: _WatcherConvergenceSlot,
+def observe_managed_job(
+    slot: WatcherConvergenceSlot,
     snapshot: JobSnapshot,
     *,
     now: float,
@@ -366,7 +354,7 @@ def _observe_managed_job(
 
 
 def _log_managed_transition(
-    slot: _WatcherConvergenceSlot,
+    slot: WatcherConvergenceSlot,
     snapshot: JobSnapshot,
     context: _TransitionLogContext,
 ) -> None:
@@ -437,8 +425,8 @@ def _log_managed_transition(
         )
 
 
-def _release_missing_job(
-    slot: _WatcherConvergenceSlot,
+def release_missing_job(
+    slot: WatcherConvergenceSlot,
     job_id: str,
     *,
     now: float,

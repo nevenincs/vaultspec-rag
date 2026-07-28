@@ -12,8 +12,8 @@ from .._env_values import parse_bool
 
 PreprocessMode = Literal["default", "off"]
 
-_VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off"})
-_VALID_INDEX_SUPPORT_PROFILES: frozenset[str] = frozenset(
+VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off"})
+VALID_INDEX_SUPPORT_PROFILES: frozenset[str] = frozenset(
     {"managed-service", "embedded-local"}
 )
 

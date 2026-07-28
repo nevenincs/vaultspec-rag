@@ -55,24 +55,24 @@ _MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
 
 from ._index_job_control_support import (
-    _assert_cancel_wins_at_the_write_gate,
-    _assert_cancelled_job_is_absorbing,
-    _assert_cancelled_vault_stops_writes,
     _assert_code_resources_released,
-    _assert_current_code_state,
     _assert_manager_resources_released,
-    _cancel_managed_attempt,
     _code_consumer_threads,
-    _code_pipeline_published,
-    _pause_managed_attempt,
-    _prepare_empty_code_collection,
-    _request_after_first_code_upsert,
-    _request_cancel_at_the_write_gate,
-    _resume_managed_attempt,
-    _vault_attempt_published,
     _wait_for_managed_job,
     _write_code_files,
-    _write_vault_documents,
+    assert_cancel_wins_at_the_write_gate,
+    assert_cancelled_job_is_absorbing,
+    assert_cancelled_vault_stops_writes,
+    assert_current_code_state,
+    cancel_managed_attempt,
+    code_pipeline_published,
+    pause_managed_attempt,
+    prepare_empty_code_collection,
+    request_after_first_code_upsert,
+    request_cancel_at_the_write_gate,
+    resume_managed_attempt,
+    vault_attempt_published,
+    write_vault_documents,
 )
 
 
@@ -99,7 +99,7 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
         indexer = CodebaseIndexer(tmp_path, cpu_embedding_model, store)
         with ThreadPoolExecutor(max_workers=1) as executor:
             requester = executor.submit(
-                _request_after_first_code_upsert,
+                request_after_first_code_upsert,
                 store,
                 token,
                 control_request,
@@ -129,7 +129,7 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
             run_control=RunControlToken(),
         )
         assert reconciled.files == len(paths)
-        _assert_current_code_state(indexer, store, paths, "initial")
+        assert_current_code_state(indexer, store, paths, "initial")
 
     _assert_code_resources_released()
 
@@ -155,7 +155,7 @@ def test_code_clean_rebuild_defers_pause_until_publication_is_current(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
-        _assert_current_code_state(indexer, store, paths, "seed")
+        assert_current_code_state(indexer, store, paths, "seed")
         metadata_before = indexer._load_meta()
         paths = _write_code_files(tmp_path, len(paths), "clean-current")
 
@@ -207,7 +207,7 @@ def test_code_clean_rebuild_defers_pause_until_publication_is_current(
                 if gpu_lock.locked():
                     gpu_lock.release()
 
-        _assert_current_code_state(indexer, store, paths, "clean-current")
+        assert_current_code_state(indexer, store, paths, "clean-current")
         metadata_after = indexer._load_meta()
         assert metadata_after.keys() == metadata_before.keys()
         assert all(
@@ -281,7 +281,7 @@ def test_code_scoped_replacement_defers_pause_until_data_and_metadata_are_curren
         new_ids = set(store.get_code_ids_by_paths({rel_path}))
         assert new_ids
         assert new_ids.isdisjoint(old_ids)
-        _assert_current_code_state(indexer, store, paths, "scoped-current")
+        assert_current_code_state(indexer, store, paths, "scoped-current")
         metadata_after = indexer._load_meta()
         assert metadata_after.keys() == metadata_before.keys()
         assert all(
@@ -303,7 +303,7 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
 ) -> None:
     """The public facade pauses only after release, then resumes the same ID."""
     root = tmp_path / "managed-vault"
-    documents = _write_vault_documents(root, 128)
+    documents = write_vault_documents(root, 128)
     expected_ids = {document.id for document in documents}
     slot = managed_facade_registry.peek_project(root)
 
@@ -311,7 +311,7 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
-        partial(_vault_attempt_published, slot=slot),
+        partial(vault_attempt_published, slot=slot),
         "vault attempt did not publish while owning its execution resources",
     )
     assert live.attempt.number == 1
@@ -319,10 +319,10 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     # Encode-bearing jobs borrow the machine-wide encode admission
     # slot rather than the wider index partition.
     assert limiter_stats()["encode"]["borrowed_tokens"] == 1
-    first_task, paused = await _pause_managed_attempt(managed_job_manager, job_id)
+    first_task, paused = await pause_managed_attempt(managed_job_manager, job_id)
     _assert_manager_resources_released(paused, slot, code=False)
 
-    succeeded = await _resume_managed_attempt(
+    succeeded = await resume_managed_attempt(
         managed_job_manager,
         job_id,
         first_task,
@@ -348,7 +348,7 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
-        partial(_code_pipeline_published, slot=slot),
+        partial(code_pipeline_published, slot=slot),
         "code pipeline did not publish before pause",
     )
     assert live.attempt.number == 1
@@ -357,18 +357,18 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     # slot rather than the wider index partition.
     assert limiter_stats()["encode"]["borrowed_tokens"] == 1
 
-    first_task, paused = await _pause_managed_attempt(managed_job_manager, job_id)
+    first_task, paused = await pause_managed_attempt(managed_job_manager, job_id)
     _assert_manager_resources_released(paused, slot, code=True)
-    _assert_current_code_state(slot.code_indexer, slot.store, paths, "initial")
+    assert_current_code_state(slot.code_indexer, slot.store, paths, "initial")
 
-    succeeded = await _resume_managed_attempt(
+    succeeded = await resume_managed_attempt(
         managed_job_manager,
         job_id,
         first_task,
         "fresh code reconciliation attempt did not start",
     )
     _assert_manager_resources_released(succeeded, slot, code=True)
-    _assert_current_code_state(slot.code_indexer, slot.store, paths, "initial")
+    assert_current_code_state(slot.code_indexer, slot.store, paths, "initial")
 
 
 @pytest.mark.timeout(300)
@@ -379,27 +379,27 @@ async def test_managed_vault_cancel_is_absorbing_and_stops_all_writes(
 ) -> None:
     """A public vault cancellation acknowledges after every writer exits."""
     root = tmp_path / "managed-vault-cancel"
-    _write_vault_documents(root, 128)
+    write_vault_documents(root, 128)
     slot = managed_facade_registry.peek_project(root)
 
     job_id = jobs.start_reindex_vault(root, clean=False)
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
-        partial(_vault_attempt_published, slot=slot),
+        partial(vault_attempt_published, slot=slot),
         "vault attempt did not publish before cancellation",
     )
     assert live.attempt.number == 1
-    cancelled = await _cancel_managed_attempt(managed_job_manager, job_id)
+    cancelled = await cancel_managed_attempt(managed_job_manager, job_id)
     _assert_manager_resources_released(cancelled, slot, code=False)
-    await _assert_cancelled_vault_stops_writes(
+    await assert_cancelled_vault_stops_writes(
         managed_job_manager,
         job_id,
         cancelled,
         slot,
         root,
     )
-    _assert_cancelled_job_is_absorbing(managed_job_manager, job_id)
+    assert_cancelled_job_is_absorbing(managed_job_manager, job_id)
     assert managed_job_manager.get(job_id) == cancelled
 
 
@@ -430,15 +430,15 @@ async def test_managed_cancel_at_write_gate_wins_without_spurious_failure(
     assert initial is not None
     assert initial.state is JobState.SUCCEEDED
 
-    slot = _prepare_empty_code_collection(
+    slot = prepare_empty_code_collection(
         managed_facade_registry,
         root,
         file_count=len(paths),
     )
-    cancelled_id = await _request_cancel_at_the_write_gate(
+    cancelled_id = await request_cancel_at_the_write_gate(
         managed_job_manager,
         managed_facade_registry,
         root,
         slot,
     )
-    await _assert_cancel_wins_at_the_write_gate(managed_job_manager, cancelled_id, slot)
+    await assert_cancel_wins_at_the_write_gate(managed_job_manager, cancelled_id, slot)

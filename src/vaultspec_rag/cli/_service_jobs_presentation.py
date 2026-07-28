@@ -14,11 +14,11 @@ from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediat
 from ._cli_format import _format_mb, _format_milliseconds, _format_seconds, _path_label
 from ._render import _plain, address_line
 from ._service_jobs_query import (
-    _empty_jobs_message,
-    _filter_is_set,
-    _job_awaiting_admission,
-    _job_is_waiting,
-    _jobs_from_result,
+    empty_jobs_message,
+    filter_is_set,
+    job_awaiting_admission,
+    job_is_waiting,
+    jobs_from_result,
 )
 
 _RESULT_RE = re.compile(
@@ -82,11 +82,11 @@ def _command_label(raw: object) -> str:
     return value.replace("_", " ")
 
 
-def _phase_label(job: dict[str, object]) -> str:
+def phase_label(job: dict[str, object]) -> str:
     phase = str(job.get("phase", "not-reported"))
     if phase in ("error", "failed"):
         return "failed"
-    if _job_is_waiting(job):
+    if job_is_waiting(job):
         return "waiting"
     if phase == "running":
         return "active"
@@ -97,7 +97,7 @@ def _phase_label(job: dict[str, object]) -> str:
 
 def _job_prefix(job: dict[str, object]) -> str:
     phase = str(job.get("phase", ""))
-    if _job_is_waiting(job):
+    if job_is_waiting(job):
         return "~"
     if phase == "running":
         return "*"
@@ -118,7 +118,7 @@ def _job_time_label(job: dict[str, object]) -> str:
     return time.strftime("%H:%M:%S", time.localtime(timestamp))
 
 
-def _project_label(job: dict[str, object]) -> str:
+def project_label(job: dict[str, object]) -> str:
     initiator = job.get("initiator")
     if not isinstance(initiator, dict):
         return "project not reported"
@@ -130,13 +130,13 @@ def _project_label(job: dict[str, object]) -> str:
 
 
 def _project_phrase(job: dict[str, object]) -> str:
-    project = _project_label(job)
+    project = project_label(job)
     if project == "project not reported":
         return ""
     return f" for {project}"
 
 
-def _project_root(job: dict[str, object]) -> str | None:
+def project_root(job: dict[str, object]) -> str | None:
     initiator = job.get("initiator")
     if not isinstance(initiator, dict):
         return None
@@ -153,7 +153,7 @@ def _source_label(job: dict[str, object]) -> str:
     return source
 
 
-def _operation_label(job: dict[str, object]) -> str:
+def operation_label(job: dict[str, object]) -> str:
     source = _source_label(job)
     trigger = str(job.get("trigger", ""))
     initiator = job.get("initiator")
@@ -199,7 +199,7 @@ def _progress_step_label(step: str, source: str) -> str:
     return labels.get(step, step.replace("_", " "))
 
 
-def _human_progress(job: dict[str, object]) -> str:
+def human_progress(job: dict[str, object]) -> str:
     raw_progress = job.get("progress")
     if not isinstance(raw_progress, dict):
         return ""
@@ -217,8 +217,8 @@ def _human_progress(job: dict[str, object]) -> str:
     return label
 
 
-def _stale_progress_label(job: dict[str, object]) -> str:
-    if str(job.get("phase", "")) != "running" or _job_is_waiting(job):
+def stale_progress_label(job: dict[str, object]) -> str:
+    if str(job.get("phase", "")) != "running" or job_is_waiting(job):
         return ""
     raw_age = job.get("last_progress_age_seconds")
     if not isinstance(raw_age, int | float):
@@ -299,18 +299,18 @@ def _admission_wait_detail(raw_runtime: object) -> str:
 
 
 def _running_job_detail(job: dict[str, object]) -> str:
-    detail = _human_progress(job)
+    detail = human_progress(job)
     raw_runtime = job.get("runtime_seconds")
-    if _job_awaiting_admission(job):
+    if job_awaiting_admission(job):
         return _admission_wait_detail(raw_runtime)
-    if _job_is_waiting(job):
+    if job_is_waiting(job):
         return _waiting_job_detail(detail, raw_runtime)
     runtime_detail = (
         f"running for {_format_seconds(raw_runtime)}"
         if isinstance(raw_runtime, int | float)
         else "runtime not reported"
     )
-    stale_progress = _stale_progress_label(job)
+    stale_progress = stale_progress_label(job)
     parts = [p for p in (detail, runtime_detail, stale_progress) if p]
     return "; ".join(parts) if parts else runtime_detail
 
@@ -325,7 +325,7 @@ def _job_summary_detail(job: dict[str, object]) -> str:
     result = _human_result(job.get("result"))
     if result:
         return result
-    return _human_progress(job)
+    return human_progress(job)
 
 
 def _human_sorted_jobs(jobs: list[object]) -> list[dict[str, object]]:
@@ -366,7 +366,7 @@ def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int
             failed += 1
         elif phase == "done":
             finished += 1
-        elif _job_is_waiting(job):
+        elif job_is_waiting(job):
             waiting += 1
         elif phase == "running":
             active += 1
@@ -398,14 +398,14 @@ def _filters_label(result: dict[str, object]) -> str:
         visible.append("state active")
     elif state == "waiting":
         visible.append("state waiting")
-    elif _filter_is_set(state):
+    elif filter_is_set(state):
         visible.append(f"state {state}")
 
     for key in ("phase", "source", "trigger", "query", "job_id", "since"):
         if key == "phase" and state in ("active", "waiting"):
             continue
         value = filters.get(key)
-        if _filter_is_set(value):
+        if filter_is_set(value):
             value_text = values.get(str(value), str(value))
             visible.append(f"{labels[key]} {value_text}")
     if filters.get("failed") is True:
@@ -511,8 +511,8 @@ def _render_jobs_feed(
     for index, job in enumerate(sorted_jobs):
         job_id = job_id_labels[index]
         _cli.console.print(
-            f"{_job_prefix(job)} {_job_time_label(job)} {_phase_label(job)} "
-            f"{_operation_label(job)}{_project_phrase(job)} (job {job_id}) - "
+            f"{_job_prefix(job)} {_job_time_label(job)} {phase_label(job)} "
+            f"{operation_label(job)}{_project_phrase(job)} (job {job_id}) - "
             f"{_job_summary_detail(job)}",
             soft_wrap=True,
         )
@@ -537,7 +537,7 @@ def _render_empty_jobs_result(
     )
     _plain("Order: latest job appears last")
     _render_filter_and_watch(filter_text, monitoring=monitoring, watch_text=watch_text)
-    _cli.console.print(_empty_jobs_message(result, job_id))
+    _cli.console.print(empty_jobs_message(result, job_id))
     _plain("Next actions:")
     _plain(f"  vaultspec-rag server status --port {port}")
     _plain(f"  vaultspec-rag server logs --limit 20 --port {port}")
@@ -549,11 +549,11 @@ def _render_job_progress_detail(job: dict[str, object]) -> None:
             "Last progress update: "
             f"{_format_seconds(job.get('last_progress_age_seconds'))} ago"
         )
-    stale_progress = _stale_progress_label(job)
+    stale_progress = stale_progress_label(job)
     if stale_progress:
         _cli.console.print(f"Progress warning: {stale_progress}")
     if isinstance(job.get("progress"), dict):
-        _cli.console.print(f"Progress: {_human_progress(job)}")
+        _cli.console.print(f"Progress: {human_progress(job)}")
 
 
 def _render_job_initiator_detail(job: dict[str, object]) -> None:
@@ -660,16 +660,16 @@ def _render_job_result_detail(job: dict[str, object]) -> None:
     _cli.console.print(f"{label}: {_human_result(result, failed=is_failed)}")
 
 
-def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> None:
+def render_job_detail(job: dict[str, object], *, port: int | None = None) -> None:
     if port is not None:
         _plain(address_line(port))
     _cli.console.print(f"Job {job.get('id', '')!s}")
-    _cli.console.print(f"Operation: {_operation_label(job)}")
-    _cli.console.print(f"Project: {_project_label(job)}")
-    root = _project_root(job)
+    _cli.console.print(f"Operation: {operation_label(job)}")
+    _cli.console.print(f"Project: {project_label(job)}")
+    root = project_root(job)
     if root:
         _plain(f"Path: {root}")
-    _cli.console.print(f"Status: {_phase_label(job)}")
+    _cli.console.print(f"Status: {phase_label(job)}")
     _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
     _render_job_progress_detail(job)
     _render_job_initiator_detail(job)
@@ -679,7 +679,7 @@ def _render_job_detail(job: dict[str, object], *, port: int | None = None) -> No
     _render_job_result_detail(job)
 
 
-def _render_jobs_result(
+def render_jobs_result(
     result: dict[str, object],
     *,
     job_id: str | None,
@@ -687,7 +687,7 @@ def _render_jobs_result(
     monitoring: bool = False,
     watch_text: str | None = None,
 ) -> None:
-    jobs = _jobs_from_result(result)
+    jobs = jobs_from_result(result)
     if not jobs:
         _render_empty_jobs_result(
             result,
@@ -706,7 +706,7 @@ def _render_jobs_result(
             _render_jobs_feed(result, jobs, port=port)
             raise typer.Exit(2)
         first = jobs[0]
-        _render_job_detail(
+        render_job_detail(
             cast("dict[str, object]", first) if isinstance(first, dict) else {},
             port=port,
         )

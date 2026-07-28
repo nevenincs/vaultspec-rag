@@ -15,7 +15,6 @@ from ._cli_helpers import (
     _empty_search_contract_server,
     _expected_code_search_request,
     _invoke_search_contract,
-    _invoke_timed_out_search,
     _label_values,
     _plain_lines,
     _search_output_contract_server,
@@ -23,6 +22,7 @@ from ._cli_helpers import (
     _slow_search_contract_server,
     _sparse_search_output_contract_server,
     app,
+    invoke_timed_out_search,
     runner,
     store_locked_by_another_process,
 )
@@ -461,7 +461,7 @@ class TestSearchSafetyContract:
         self, tmp_path: Path
     ) -> None:
         """Default search timeout output is natural text, not a backend table."""
-        result, port = _invoke_timed_out_search(tmp_path)
+        result, port = invoke_timed_out_search(tmp_path)
 
         assert result.exit_code == 1, result.output
         labels = _label_values(result.output)
@@ -500,7 +500,7 @@ class TestSearchSafetyContract:
     def test_search_timeout_missing_health_status_is_reported_absence(
         self, tmp_path: Path
     ) -> None:
-        result, _port = _invoke_timed_out_search(
+        result, _port = invoke_timed_out_search(
             tmp_path,
             health_payload={
                 "project_count": 1,
@@ -523,7 +523,7 @@ class TestSearchSafetyContract:
     def test_search_timeout_jobs_error_is_reported_absence(
         self, tmp_path: Path
     ) -> None:
-        result, _port = _invoke_timed_out_search(
+        result, _port = invoke_timed_out_search(
             tmp_path,
             jobs_payload={
                 "ok": False,
@@ -547,7 +547,7 @@ class TestSearchSafetyContract:
         self, tmp_path: Path
     ) -> None:
         """JSON timeout output keeps full diagnostic fields for agents."""
-        result, _port = _invoke_timed_out_search(tmp_path, "--json")
+        result, _port = invoke_timed_out_search(tmp_path, "--json")
 
         assert result.exit_code == 1, result.output
         envelope = json.loads(result.output)

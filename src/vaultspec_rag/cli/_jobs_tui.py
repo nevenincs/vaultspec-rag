@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING, ClassVar, NamedTuple, cast
 from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, RichLog, Static
+from textual.widgets.data_table import ColumnKey
 from textual.worker import WorkerState
 
 from ..job_models import DesiredJobState, JobState
@@ -33,21 +34,21 @@ from ..serviceclient._transport import (
     _try_http_retry_job,
     _try_http_set_job_desired_state,
 )
-from ._cli_format import _compact_duration
+from ._cli_format import compact_duration
 from ._jobs_tui_status import (
     ServiceStatusBar,
     ServiceStatusHeader,
     fetch_service_status,
 )
 from ._service_jobs_presentation import (
-    _human_progress,
-    _operation_label,
-    _phase_label,
-    _project_label,
-    _project_root,
-    _stale_progress_label,
+    human_progress,
+    operation_label,
+    phase_label,
+    project_label,
+    project_root,
+    stale_progress_label,
 )
-from ._service_jobs_query import _job_is_waiting, job_revision
+from ._service_jobs_query import job_is_waiting, job_revision
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -257,8 +258,8 @@ def _row_animates(job: dict[str, object]) -> bool:
     """
     return (
         str(job.get("phase", "")) == "running"
-        and not _job_is_waiting(job)
-        and not _stale_progress_label(job)
+        and not job_is_waiting(job)
+        and not stale_progress_label(job)
     )
 
 
@@ -290,7 +291,7 @@ class _Tombstone(NamedTuple):
     """A deleted row, and where it sat before it went."""
 
     job: dict[str, object]
-    index: int
+    position: int
     until: float
 
 
@@ -316,7 +317,7 @@ def _state_cell(
     deleted: bool = False,
 ) -> Text:
     """Render the state cell: phase, a live glyph, and any pending request."""
-    label = _phase_label(job)
+    label = phase_label(job)
     glyph = f"{frame} " if _row_animates(job) else "  "
     if deleted:
         # The row the operator acted on, held on screen long enough to be seen
@@ -366,7 +367,7 @@ def _job_cell(job: dict[str, object], cells: int) -> Text:
     if isinstance(initiator, dict):
         kind = str(cast("dict[str, object]", initiator).get("kind") or "")
     subtitle = f"{_short_id(job)} · {kind}" if kind else _short_id(job)
-    return _two_line(_operation_label(job), subtitle, cells, top_style="bold")
+    return _two_line(operation_label(job), subtitle, cells, top_style="bold")
 
 
 def _elide_left(value: str, cells: int) -> str:
@@ -384,15 +385,15 @@ def _elide_left(value: str, cells: int) -> str:
 
 def _path_cell(job: dict[str, object], cells: int) -> Text:
     """Render the project and its root, tail-first when the root is long."""
-    root = _project_root(job)
+    root = project_root(job)
     shown = _elide_left(root, cells) if root else "path not reported"
-    return _two_line(_project_label(job), shown, cells)
+    return _two_line(project_label(job), shown, cells)
 
 
 def _progress_cell(job: dict[str, object], cells: int, bar_cells: int) -> Text:
     """Render the progress cell, sizing the bar to the column it lands in."""
-    detail = _human_progress(job) or "—"
-    stale = _stale_progress_label(job)
+    detail = human_progress(job) or "—"
+    stale = stale_progress_label(job)
     if stale:
         return _two_line(detail, stale, cells, bottom_style="bold red")
     progress = job.get("progress")
@@ -417,12 +418,12 @@ def _progress_cell(job: dict[str, object], cells: int, bar_cells: int) -> Text:
 def _time_cell(job: dict[str, object], cells: int) -> Text:
     remaining = job.get(_ESTIMATE_KEY)
     estimate = (
-        f"~{_compact_duration(remaining)} left"
+        f"~{compact_duration(remaining)} left"
         if isinstance(remaining, int | float) and not isinstance(remaining, bool)
         # No estimate is not a zero estimate.
         else "—"
     )
-    return _two_line(_compact_duration(job.get("runtime_seconds")), estimate, cells)
+    return _two_line(compact_duration(job.get("runtime_seconds")), estimate, cells)
 
 
 class JobsTuiApp(App[None]):
@@ -456,7 +457,7 @@ class JobsTuiApp(App[None]):
         (_SPLIT_MIN_CELLS, "-wide"),
     ]
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh_now", "Refresh"),
         Binding("p", "job_pause", "Pause"),
@@ -529,7 +530,7 @@ class JobsTuiApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#jobs", DataTable)
+        table: DataTable[Text] = self.query_one("#jobs", DataTable)
         for key, label in (
             ("state", "State"),
             ("job", "Job"),
@@ -582,7 +583,7 @@ class JobsTuiApp(App[None]):
         self._divided_width = table.size.width
         total_weight = sum(_COLUMN_WEIGHTS.values())
         for key, weight in _COLUMN_WEIGHTS.items():
-            column = table.columns.get(key)
+            column = table.columns.get(ColumnKey(key))
             if column is None:
                 continue
             column.width = max(
@@ -599,7 +600,7 @@ class JobsTuiApp(App[None]):
         """Return the current width of *column*, or zero before layout."""
         return self._column_cells.get(column, 0)
 
-    def _table(self) -> DataTable | None:
+    def _table(self) -> DataTable[Text] | None:
         """Return the table, or ``None`` when it is not mounted.
 
         The timers outlive composition at both ends: one can fire before the
@@ -609,7 +610,10 @@ class JobsTuiApp(App[None]):
         service having died.
         """
         found = self.query("#jobs")
-        return found.only_one(DataTable) if found else None
+        if not found:
+            return None
+        table: DataTable[Text] = found.only_one(DataTable)
+        return table
 
     def _tick(self) -> None:
         """Advance whatever is genuinely moving, and nothing else.
@@ -807,8 +811,8 @@ class JobsTuiApp(App[None]):
         rows: list[tuple[dict[str, object], bool]] = [
             (job, False) for job in self._jobs
         ]
-        for stone in sorted(self._tombstones.values(), key=lambda s: s.index):
-            rows.insert(min(stone.index, len(rows)), (stone.job, True))
+        for stone in sorted(self._tombstones.values(), key=lambda s: s.position):
+            rows.insert(min(stone.position, len(rows)), (stone.job, True))
         return rows
 
     def _render_rows(self) -> None:
@@ -827,7 +831,7 @@ class JobsTuiApp(App[None]):
 
     def _rebuild_rows(
         self,
-        table: DataTable,
+        table: DataTable[Text],
         rows: list[tuple[dict[str, object], bool]],
         wanted: list[str],
         frame: str,
@@ -857,7 +861,7 @@ class JobsTuiApp(App[None]):
 
     def _add_row(
         self,
-        table: DataTable,
+        table: DataTable[Text],
         job: dict[str, object],
         frame: str,
         *,
@@ -882,7 +886,7 @@ class JobsTuiApp(App[None]):
 
     def _update_row(
         self,
-        table: DataTable,
+        table: DataTable[Text],
         job: dict[str, object],
         frame: str,
         *,
@@ -905,7 +909,7 @@ class JobsTuiApp(App[None]):
         for column, value in cells.items():
             table.update_cell(job_id, column, value)
 
-    def _sync_selection(self, table: DataTable) -> None:
+    def _sync_selection(self, table: DataTable[Text]) -> None:
         if table.row_count == 0:
             self.selected_id = ""
             # Nothing is selected, so the pane must stop claiming to show a
@@ -978,7 +982,7 @@ class JobsTuiApp(App[None]):
             age = time.time() - self._last_refresh
             line.append(f"\nrefreshed {stamp}", style="dim")
             if age > max(5.0, self._interval * 3):
-                line.append(f" ({_compact_duration(age)} ago)", style="bold yellow")
+                line.append(f" ({compact_duration(age)} ago)", style="bold yellow")
         if self._last_error is not None:
             line.append(f"  ·  {self._last_error}", style="bold red")
         if not self._service_estimates:

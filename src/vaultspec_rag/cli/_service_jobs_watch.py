@@ -14,14 +14,14 @@ from typing import TYPE_CHECKING, NoReturn
 import typer
 
 from ._render import _emit_json_error_and_exit, _plain
-from ._service_jobs_query import _apply_client_state_filter
+from ._service_jobs_query import apply_client_state_filter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 
 @dataclass(frozen=True, slots=True)
-class _JobsWatchRequest:
+class JobsWatchRequest:
     """The resolved query and display settings for the interactive view."""
 
     fetch: Callable[[], dict[str, object] | None]
@@ -31,7 +31,7 @@ class _JobsWatchRequest:
     client_state: str | None
 
 
-def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
+def exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
     message = "--watch is human-only and --interval must be greater than zero."
     if interval > 0:
         message = "--watch cannot be combined with --json."
@@ -41,7 +41,7 @@ def _exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
     raise typer.Exit(2)
 
 
-def _watch_jobs(request: _JobsWatchRequest) -> None:
+def watch_jobs(request: JobsWatchRequest) -> None:
     """Run the interactive interface until the operator leaves it.
 
     The client-side state filter is applied to every fetch here rather than
@@ -56,6 +56,6 @@ def _watch_jobs(request: _JobsWatchRequest) -> None:
         result = request.fetch()
         if result is None:
             return None
-        return _apply_client_state_filter(result, request.client_state)
+        return apply_client_state_filter(result, request.client_state)
 
     run_jobs_tui(watched_fetch, port=request.port, interval=request.interval)

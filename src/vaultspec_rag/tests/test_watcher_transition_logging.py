@@ -37,9 +37,9 @@ from ..job_models import (
 from ..service import ServiceRegistry
 from ..watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
 from ..watcher_runtime import (
+    WatcherConvergenceSlot,
     _log_managed_transition,
     _TransitionLogContext,
-    _WatcherConvergenceSlot,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -120,7 +120,7 @@ def _log(
     caplog: pytest.LogCaptureFixture,
 ) -> list[tuple[str, int]]:
     root = Path("/tmp/root")
-    slot = _WatcherConvergenceSlot(
+    slot = WatcherConvergenceSlot(
         source=JobSource.CODE,
         root=root,
         registry=ServiceRegistry(),

@@ -560,7 +560,7 @@ def _slow_search_contract_server(
     return server, thread
 
 
-def _invoke_timed_out_search(
+def invoke_timed_out_search(
     tmp_path: Path,
     *extra: str,
     health_payload: dict[str, object] | None = None,
@@ -1152,7 +1152,7 @@ def store_locked_by_another_process(root: Path) -> typing.Generator[None]:
 
     holder = textwrap.dedent(f"""
         import pathlib, time
-        from ..store_runtime import VaultStore
+        from vaultspec_rag.store_runtime import VaultStore  # absolute-import-ok
         VaultStore(pathlib.Path(r"{root}"))
         print("held", flush=True)
         time.sleep(120)
