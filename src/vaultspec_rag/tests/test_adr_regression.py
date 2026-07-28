@@ -362,8 +362,7 @@ class TestGraphCacheInvalidation:
         src = inspect.getsource(job_dispatch._run_vault_attempt)
         assert "graph_cache" in src and "invalidate" in src, (
             "the vault index attempt must call slot.graph_cache.invalidate() "
-            "after indexing to prevent stale graph re-ranking "
-            "(R29-H3 fix, unified in D3)"
+            "after indexing to prevent stale graph re-ranking"
         )
 
 

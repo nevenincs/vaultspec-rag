@@ -566,8 +566,8 @@ def test_dependency_install_leaves_no_rag_runtime_noise_in_worktree(
     """
     import subprocess
 
-    # Isolate the machine-global paths per the managed-singleton rule so the
-    # install can never touch the operator's real service state.
+    # Isolate the machine-global paths so the install can never touch the
+    # operator's real service state.
     monkeypatch.setenv(EnvVar.STATUS_DIR.value, str(tmp_path / "status"))
     monkeypatch.setenv(
         EnvVar.QDRANT_STORAGE_DIR.value, str(tmp_path / "qdrant" / "storage")
