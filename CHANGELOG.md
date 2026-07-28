@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.3.14](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.13...vaultspec-rag-v0.3.14) (2026-07-28)
+
+
+### Features
+
+* **runtime:** support CPython 3.14 ([b4bb5f7](https://github.com/nevenincs/vaultspec-rag/commit/b4bb5f7cdf45851bae103d1556234d1ad60191db))
+* **runtime:** support CPython 3.14 ([84677d0](https://github.com/nevenincs/vaultspec-rag/commit/84677d0d2bcb37377e902d31044a9cd583968d41))
+
+
+### Bug Fixes
+
+* **cli:** name the free-threaded ABI in the torch repair command ([f19f062](https://github.com/nevenincs/vaultspec-rag/commit/f19f0623dbd7edcd2325de77a866f9bb72102933))
+* **cli:** name the free-threaded ABI in the torch repair command ([912e464](https://github.com/nevenincs/vaultspec-rag/commit/912e464870d0fb60f0e47654e8db4708ada078ba))
+* **cli:** render superseded jobs as resolved history ([12ec8e0](https://github.com/nevenincs/vaultspec-rag/commit/12ec8e01bcc4902747e421e467e9ce775c04216b))
+* **jobs:** log control rejections and resolve retried parents ([bdbb095](https://github.com/nevenincs/vaultspec-rag/commit/bdbb095b13e64252295d53498625da7321226e03))
+* **jobs:** log control rejections and resolve retried parents ([7b5644d](https://github.com/nevenincs/vaultspec-rag/commit/7b5644df62e5f5348affddaffde0969e9f32de10))
+* **jobs:** make progress, degradation evidence, and retry lineage tell the truth ([3b38a97](https://github.com/nevenincs/vaultspec-rag/commit/3b38a978e88b1c6014ac819bf074116829d73ca5))
+* **jobs:** make progress, degradation evidence, and retry lineage tell the truth ([910cef7](https://github.com/nevenincs/vaultspec-rag/commit/910cef7e6fc31998348d0552922ebc74e7990db5))
+
+
+### Performance
+
+* **indexer:** pin retained-point join order; make OOM batch ceiling sticky ([bad146c](https://github.com/nevenincs/vaultspec-rag/commit/bad146c6117f0c03a68767e9090fd0d69fba8b10))
+* **indexer:** pin retained-point join order; make OOM batch ceiling sticky ([232a055](https://github.com/nevenincs/vaultspec-rag/commit/232a055a93382c13fd14f91aed130d2778b95f0e))
+
 ## [0.3.13](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.12...vaultspec-rag-v0.3.13) (2026-07-28)
 
 
