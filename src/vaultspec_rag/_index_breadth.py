@@ -279,18 +279,33 @@ class CodeBreadthClaim(NamedTuple):
     ``published_points`` is ``None`` when the sidecar predates the key or
     carries an unusable value; ``generation_id`` is ``None`` on the same
     terms. Both are "cannot tell", never a claim of zero.
+
+    ``named_files`` is how many indexed paths the same sidecar lists. It is
+    carried alongside the point figure because the two together say something
+    neither says alone: a publication counts the collection after storage
+    reconciliation, so a point claim of zero over a non-zero number of named
+    files is a manifest contradicting itself rather than a manifest that
+    happens to describe an empty index.
+
+    ``published_files`` is how many distinct files that publication found the
+    collection holding content for. ``None`` means the key is absent - an
+    older build that never recorded coverage - which is ignorance and must
+    never be read as a claim of zero. A recorded zero is the opposite: a
+    publication actively stating it covered nothing.
     """
 
     published_points: int | None
     generation_id: str | None
+    named_files: int = 0
+    published_files: int | None = None
 
 
 def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
     """Return *root*'s published code breadth claim, or ``None`` for no sidecar.
 
-    One parse for both figures, so a caller can never observe the count and
-    the generation from different reads of a file another process is
-    replacing - the pair always describes a single publication.
+    One parse for every figure, so a caller can never observe the count, the
+    named files, and the generation from different reads of a file another
+    process is replacing - they always describe a single publication.
     """
     raw = _read_meta(root)
     if raw is None:
@@ -301,6 +316,8 @@ def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
         generation_id=(
             generation if isinstance(generation, str) and generation else None
         ),
+        named_files=sum(1 for key in raw if not key.startswith("__")),
+        published_files=parse_reserved_count(raw, PUBLISHED_FILES_KEY),
     )
 
 
