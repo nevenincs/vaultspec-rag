@@ -330,7 +330,7 @@ def rag_components_with_code(
     yield cast(
         "RagComponentsWithManifest",
         components.__class__(  # type: ignore[call-arg]
-            **components,  # type: ignore[misc]
+            **components,
             manifest=manifest,
             reranker=shared_reranker,
         ),
