@@ -27,8 +27,8 @@ trigger: always_on
 
 - Collections are independent locally, and a remote server handles its own
   concurrency; client-side locking there only caps throughput.
-- One store-wide lock dragged a four-second search to a ninety-five-second
-  median by sharing a mutex with unrelated scans.
+- A store-wide lock sharing a mutex with unrelated scans collapses search
+  latency by more than an order of magnitude.
 - Maintenance sharing a process with lifecycle verbs reads as the cause whenever
   a daemon dies in the same window.
 - A valid root can transiently not exist: an unplugged drive, an offline share,
