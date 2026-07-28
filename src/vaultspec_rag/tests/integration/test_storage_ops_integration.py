@@ -702,6 +702,19 @@ def test_reconcile_dry_run_changes_nothing(ops_qdrant: QdrantSupervisor) -> None
 def test_reconcile_cap_defers_remaining_collections(
     ops_qdrant: QdrantSupervisor,
 ) -> None:
+    """The cap reconciles one drifted collection and defers the rest.
+
+    Both convergence intervals are handed in shortened. What is under test
+    is selection - drift is ``segment_target != target`` so both
+    collections qualify, the cap takes exactly one, and the other is
+    reported still outstanding - and no step of that reads the clock. The
+    number of agreeing samples convergence requires is deliberately left
+    alone: that is mechanism, and the pass below still satisfies it in
+    full. Only the spacing between them, and the budget for an optimizer
+    that may have no work at all to pick up, are shortened. Awaited
+    convergence over a collection carrying real points, where the wait
+    itself is the subject, keeps the shipped defaults.
+    """
     from qdrant_client import QdrantClient
 
     from ...storage_reconciliation import reconcile_collections
@@ -713,11 +726,21 @@ def test_reconcile_cap_defers_remaining_collections(
             _make_legacy_collection(client, f"rfeedfacefeed_{suffix}", segments=6)
 
         batch = reconcile_collections(
-            client, storage_dir=storage, cap=1, budget_s=300.0
+            client,
+            storage_dir=storage,
+            cap=1,
+            budget_s=300.0,
+            poll_s=0.25,
+            start_budget_s=2.0,
         )
 
         assert len(batch.results) == 1
         assert batch.drifted_remaining == 1
+        # The pass must have actually converged the one it took: a
+        # "converging" status here would mean the shortened start budget
+        # cut the wait off early rather than reaching the no-work branch,
+        # and drifted_remaining would be counting it as still outstanding.
+        assert batch.results[0].status == "reconciled"
     finally:
         client.close()
 
