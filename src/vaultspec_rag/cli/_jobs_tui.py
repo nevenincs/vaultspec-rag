@@ -728,7 +728,7 @@ class JobsTuiApp(App[None]):
         payload = cast("dict[str, object]", result)
         raw_jobs = payload.get("jobs")
         previous = self._jobs
-        entries: list[object] = raw_jobs if isinstance(raw_jobs, list) else []
+        entries = cast("list[object]", raw_jobs) if isinstance(raw_jobs, list) else []
         jobs = [
             cast("dict[str, object]", job)
             for job in entries

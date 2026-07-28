@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -46,7 +46,7 @@ def _scan_for(marker: str) -> Mapping[str, Any] | None:
         raw = info.get("cmdline")
         if not isinstance(raw, list):
             continue
-        parts: list[object] = raw
+        parts = cast("list[object]", raw)
         if any(marker == str(item) for item in parts):
             return info
     return None
