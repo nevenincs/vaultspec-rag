@@ -164,6 +164,10 @@ class CodebaseIndexer:
         self._data_root = root_dir / cfg.data_dir
         self._meta_path = self._data_root / cfg.code_index_metadata_file
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
+        # Resident between runs; every acquire/retain pair runs under
+        # ``self._writer_lock``, which is the serialization the cache's
+        # single-threaded contract relies on.
+        self._stat_gate_cache = _stat_gate.ResidentGateCache(self._stat_gate_path)
         # Per-run document-preprocessing state (#185). Both are reset at the
         # start of each full/incremental run; the writer lock serialises runs
         # so instance-scoped state is safe. ``_prep_ctx`` is the context handed
@@ -884,6 +888,7 @@ class CodebaseIndexer:
             # completed slices, so the GPU never idles waiting for the whole tree
             # to be chunked (#155). The workers return the content hash
             # from the same read, so ``meta`` needs no separate hash pass.
+            pipeline_started_ns = time.time_ns()
             new_ids, total_chunks, meta = self._pipeline_chunk_and_embed(
                 paths,
                 CodePipelineRun(
@@ -895,6 +900,18 @@ class CodebaseIndexer:
                     ingest_wait=False,
                     run_control=run_control,
                 ),
+            )
+            # Bank the worker-computed hashes as stat evidence before the
+            # preserved rows join ``meta``: preserved hashes were carried, not
+            # computed this run, so they cannot be honestly bound to a stat.
+            _stat_gate.record_computed_hashes(
+                self._stat_gate_cache,
+                (
+                    (rel, self.root_dir / pathlib.PurePosixPath(rel), content_hash)
+                    for rel, content_hash in meta.items()
+                ),
+                computed_not_before_ns=pipeline_started_ns,
+                keep=meta.keys(),
             )
             new_ids.update(
                 existing_ids_before if preserved_ids is None else preserved_ids
@@ -1286,24 +1303,25 @@ class CodebaseIndexer:
         files that no longer exist.
         """
         run_control.checkpoint()
-        gate = _stat_gate.StatEvidenceGate.load(self._stat_gate_path)
+        gate = self._stat_gate_cache.acquire()
         reporter.phase_start("hash files", len(to_hash))
-        changed_hashes: dict[str, str] = {}
         try:
-            for rel, path in to_hash.items():
-                run_control.checkpoint()
-                try:
-                    changed_hashes[rel] = gate.hash_file(rel, path)
-                except OSError:
-                    logger.warning("Cannot hash file, skipping: %s", rel)
-                reporter.advance()
-                run_control.checkpoint()
+            outcome = _stat_gate.hash_paths(
+                gate,
+                list(to_hash.items()),
+                reporter=reporter,
+                run_control=run_control,
+            )
         finally:
             reporter.phase_end()
         run_control.checkpoint()
+        changed_hashes = outcome.hashes
+        for rel, _error in outcome.failures:
+            logger.warning("Cannot hash file, skipping: %s", rel)
         if full_membership:
             gate.prune(to_hash.keys())
         gate.persist()
+        self._stat_gate_cache.retain(gate)
         if gate.reused:
             logger.debug(
                 "stat gate reused %d code hashes, rehashed %d",
@@ -1334,6 +1352,12 @@ class CodebaseIndexer:
             policy,
             run_control=run_control,
         )
+        # A scoped run bypasses discovery, but the events it carries are the
+        # membership truth a cached walk cannot see: a deleted path or a path
+        # absent from the published manifest (a create) invalidates the cache
+        # so the next unscoped walk re-observes the tree.
+        if delete_files or any(rel not in previous_metadata for rel in to_hash):
+            self._discovery.invalidate_scan_cache()
         changed_hashes = self._hash_changed_paths(
             to_hash, reporter, run_control=run_control
         )
