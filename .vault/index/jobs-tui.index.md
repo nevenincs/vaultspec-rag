@@ -4,7 +4,7 @@ tags:
   - '#index'
   - '#jobs-tui'
 date: '2026-07-27'
-modified: '2026-07-27'
+modified: '2026-07-28'
 related:
   - '[[2026-07-27-jobs-tui-adr]]'
   - '[[2026-07-27-jobs-tui-audit]]'
