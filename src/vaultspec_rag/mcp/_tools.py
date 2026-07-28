@@ -173,9 +173,9 @@ def _require_port() -> int:
 
     Two preconditions for every tool call, both mapped to a single
     ``RuntimeError`` here so neither contract is restated per tool: the daemon
-    must be reachable (the no-local-fallback rule), and it must be the same
-    release as this client. The version travels in the discovery pointer this
-    call already reads, so confirming it costs no extra round trip.
+    must be reachable (a tool never falls back to a local backend), and it must
+    be the same release as this client. The version travels in the discovery
+    pointer this call already reads, so confirming it costs no extra round trip.
 
     Driving a foreign release is exactly the silent-degradation this refuses: an
     unrecognised request field is dropped rather than rejected, so a newer

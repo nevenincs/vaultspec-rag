@@ -16,8 +16,11 @@ data keyword argument, a TOML value - and the product's own domain vocabulary
 structurally is what lets the gate fire on a citation without firing on the
 corpus the indexer is tested against.
 
-Which prose surfaces are inspected, and why each. Every one of these was reached
-only after a coverage probe showed the gate blind to it, so none is speculative:
+Which prose surfaces are inspected, and why each. Every one was reached after a
+probe showed the gate blind to that construct, never by guessing. A surface the
+tree also held a live citation in is marked ``(live)``, because a surface backed
+by a finding is a stronger claim than one backed by a probe alone, and a reader
+weighing whether to keep a surface deserves to know which it is:
 
 * docstrings at every position - module (including the very first statement),
   class, function, async function, nested function and method;
@@ -26,23 +29,65 @@ only after a coverage probe showed the gate blind to it, so none is speculative:
   than a bare ``Constant`` and so escaped an ``isinstance`` check;
 * every comment form, including a trailing comment and a Sphinx ``#:`` comment;
 * documentary keyword arguments (``help``, ``description``, ``epilog``,
-  ``short_help``) - these render to an operator as documentation, so a citation
-  there escapes the codebase entirely;
+  ``short_help``, ``reason``) - these render to an operator as documentation,
+  so a citation there escapes the codebase entirely;
 * exception messages raised from source, for the same reason;
+* assert messages (live) - the prose a failing test shows its reader, and the
+  one construct that was still hiding real citations when this scan was widened;
+* the message argument of a logging call, ``warnings.warn``, and a pytest
+  ``fail``/``skip``/``xfail`` - each renders to an operator's log or a
+  developer's terminal, so it is prose exactly as an exception message is.
+  Probe-backed only: the tree held none, and the surface is kept because the
+  construct is reachable, not because it had already been reached.
+  Only the MESSAGE argument is prose: the substitution arguments after a log
+  format string are values and stay unscanned;
 * product documentation and product config as raw text - ``README.md``,
-  ``docs/``, ``pyproject.toml``, the justfile, CI workflows.
+  ``docs/``, ``pyproject.toml``, the justfile, CI workflows, JSON config,
+  PowerShell scripts, and the comment-bearing dotfiles (``.env.example``,
+  ``.gitignore``, ``.gitattributes``, ``.vaultragignore``).
 
 What is deliberately NOT inspected. A plain string VALUE is not scanned for
 citations, because vault-shaped fixture data is legitimate and indistinguishable
-from a citation once its structural position is discarded. Harness-owned trees
-are skipped whole: the harness IS the development record, so naming a rule or a
-``.vault/`` path there is its subject matter, not a leak.
+from a citation once its structural position is discarded. For the same reason
+an operator-print call (``print``, ``typer.echo``) is not a prose surface: what
+it renders is usually computed data, and its literal segments carry no
+documentation contract the way a ``help=`` string does. File NAMES are not
+scanned either - the convention itself sanctions vault-shaped fixture
+filenames, and a name scan cannot tell a fixture from a citation.
+Harness-owned trees are skipped whole: the harness IS the development record,
+so naming a rule or a ``.vault/`` path there is its subject matter, not a
+leak. ``uv.lock``, ``.python-version`` and ``LICENSE`` carry generated or
+third-party content, not project prose.
+
+The rendered terminal captures under ``assets/`` are the one KNOWN unscanned
+prose surface, recorded here rather than quietly omitted. They are generated
+SVG, but what they render is a real session, so they carry whatever that session
+displayed - and one of them, embedded in the README, shows a workstation root
+today: the hard-fail class everywhere else in this tree. They stay out of the
+walk because the fix is to re-record the capture, not to match a pattern.
+Admitting them would park a finding no edit to the file can honestly clear, and
+would then fire a second time on a different capture, where the vault document
+names on screen are the product's own search output rather than a citation.
 
 What it cannot do, and why the convention half exists. This gate enforces "no
 citation token remains". It cannot enforce "the sentence still parses once the
 token is gone" - a citation that is the grammatical head or object of its clause
 leaves a broken fragment when deleted, and that is a human or model read, not a
 pattern. See the Code Stands Alone rule.
+
+The rest of the blind spot, measured by probe rather than asserted, so nobody
+has to rediscover it: a citation reached only through an interpolated NAME
+(``f"See {STEM}"``) is invisible, because the literal segments carry no token
+and the gate never resolves a value; a token deliberately split across a
+concatenation (``"2026-01-01-" + "thing"``) survives, because blocks join on a
+space; an identifier is never prose, so a citation spelled as a function name
+survives; and a positional message the calling convention does not name - the
+second argument of ``skipif``, the cause of a ``raise ... from`` - is not
+reached, only the keyword and leading-message forms are. None of these is
+reachable by accident: each takes an author working around the gate rather than
+writing prose, which is why the boundary sits here and not at scanning values.
+Line endings are NOT part of this: decoding is universal-newline and matching
+runs on stripped text, so a CRLF file matches exactly as an LF one does.
 
 Usage:
     uv run python tools/citation_gate.py [--report-only]
@@ -96,9 +141,18 @@ EXCLUDED_FILES: frozenset[str] = frozenset(
 #: Non-Python product surfaces scanned as raw text. Prose and value are not
 #: separable in markdown or TOML, so the whole line is scanned; these files hold
 #: no vault-shaped fixture data, which is what makes that safe. Matched by suffix
-#: or by exact filename.
-TEXT_SUFFIXES: tuple[str, ...] = (".md", ".toml", ".yaml", ".yml")
-TEXT_FILENAMES: tuple[str, ...] = ("justfile",)
+#: or by exact filename. JSON and the dotfile configs are here because a comment
+#: or a documentary field there is config exactly as TOML is, and a benchmark
+#: baseline recording a workstation root would be a real leak this scan is the
+#: only one positioned to catch.
+TEXT_SUFFIXES: tuple[str, ...] = (".md", ".toml", ".yaml", ".yml", ".json", ".ps1")
+TEXT_FILENAMES: tuple[str, ...] = (
+    "justfile",
+    ".env.example",
+    ".gitignore",
+    ".gitattributes",
+    ".vaultragignore",
+)
 
 #: The single sanctioned prose-embedded data case: a docstring that names a
 #: synthetic fixture filename to describe the fixture, not to cite a record.
@@ -121,23 +175,7 @@ ALLOWLIST: frozenset[tuple[str, int]] = frozenset(
 #: The cost is stated plainly: deferral is per FILE, so a new citation added to
 #: one of these is also unreported until the entry goes. That is why the set is
 #: a handoff list with an owner, not a parking space.
-DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset(
-    {
-        # ``is_temp_rooted`` - points at a rule for the report-only guarantee.
-        # Owned by the consolidation effort, whose repair also has to correct the
-        # claim itself: the flag now does feed a destructive path.
-        "src/vaultspec_rag/storage_survey.py",
-        # GPU error rendering - debug-logging pointer. Uncommitted work present.
-        "src/vaultspec_rag/cli/_gpu_errors.py",
-        # Service-reachability tool docstring - parenthesised rule pointer.
-        # Uncommitted work present, staged and unstaged both.
-        "src/vaultspec_rag/mcp/_tools.py",
-        # Install integration test - points at the no-mocks convention.
-        "src/vaultspec_rag/tests/integration/test_install.py",
-        # Install-mode test - points at the managed-singleton convention.
-        "src/vaultspec_rag/tests/test_install_mode.py",
-    }
-)
+DEFERRED_PENDING_FOLLOWUP: frozenset[str] = frozenset()
 
 #: The project's own codified rule stems. A rule name is an artefact of how the
 #: project is governed, not of how the code works, and the tree carrying it is
@@ -326,12 +364,59 @@ class Finding(tuple[str, int, str, str]):
 
 
 #: Keyword arguments whose string value is documentation by construction: an
-#: argument parser renders each of these to an operator. A citation there has
+#: argument parser renders each of these to an operator. ``reason`` is by far
+#: the widest and the one to weigh honestly - this tree uses it overwhelmingly
+#: as a product field carrying the explanation shown beside a status, and only
+#: incidentally as a pytest skip mark. What admits it is that both render to a
+#: reader, not the pytest form on its own. A citation in any of these has
 #: escaped the codebase into the product's own user interface, so unlike an
 #: ordinary string value these are prose and are scanned.
 DOC_KEYWORDS: frozenset[str] = frozenset(
-    {"help", "description", "epilog", "short_help"}
+    {"help", "description", "epilog", "short_help", "reason"}
 )
+
+#: Call names whose leading argument is a MESSAGE rendered to an operator's log
+#: or a developer's terminal: the logging methods, ``warnings.warn``, and the
+#: pytest outcome helpers. Matched on the attribute or bare function name, so
+#: ``logger.warning(...)``, ``self._log.error(...)`` and a bare
+#: ``warn(...)`` all count. Only the message argument is scanned - the
+#: substitution arguments after a log format string are data values, which is
+#: what keeps a vault-shaped path interpolated into a log line legitimate.
+MESSAGE_CALL_NAMES: frozenset[str] = frozenset(
+    {
+        "debug",
+        "info",
+        "warning",
+        "error",
+        "critical",
+        "exception",
+        "log",
+        "warn",
+        "fail",
+        "skip",
+        "xfail",
+    }
+)
+
+
+def _message_args(node: ast.Call) -> list[ast.expr]:
+    """Return the message argument(s) of *node* when it is a message call.
+
+    ``logger.log(level, msg)`` carries its message second, behind the level, so
+    the first two positions are taken for ``log`` and only the first otherwise.
+    A non-message call returns nothing and stays a value.
+    """
+    func = node.func
+    name = (
+        func.attr
+        if isinstance(func, ast.Attribute)
+        else func.id
+        if isinstance(func, ast.Name)
+        else None
+    )
+    if name not in MESSAGE_CALL_NAMES:
+        return []
+    return list(node.args[:2] if name == "log" else node.args[:1])
 
 
 def _string_lines(node: ast.AST) -> list[tuple[int, str]]:
@@ -385,9 +470,10 @@ def _iter_prose(path: Path) -> list[list[tuple[int, str]]]:
     """Return the prose of *path* as blocks of (line, text).
 
     Prose is a docstring at any position, a comment in any form, a documentary
-    keyword argument, or an exception message. Every other string in the file is
-    a value and is deliberately ignored - that is the distinction which keeps
-    vault-shaped fixture data legitimate.
+    keyword argument, an exception message, an assert message, or the message
+    argument of a logging, warn, or pytest-outcome call. Every other string in
+    the file is a value and is deliberately ignored - that is the distinction
+    which keeps vault-shaped fixture data legitimate.
 
     A BLOCK rather than a line is the unit, because prose is hard-wrapped and a
     citation does not respect the wrap. "per the" can end one line and the record
@@ -397,34 +483,42 @@ def _iter_prose(path: Path) -> list[list[tuple[int, str]]]:
     reports the line the citation starts on.
     """
     source = path.read_text(encoding="utf-8")
-    blocks: list[list[tuple[int, str]]] = []
-
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        # A bare string-valued statement is a docstring wherever it appears -
-        # module (including the file's first statement), class, function, async
-        # function, nested function, method - or a string used as a comment.
-        # Either way it is prose. ``JoinedStr`` and ``BinOp`` are admitted
-        # alongside ``Constant`` because an f-string docstring and a
-        # ``+``-concatenated one are still docstrings; excluding them was a hole.
-        if isinstance(node, ast.Expr) and isinstance(
-            node.value, ast.Constant | ast.JoinedStr | ast.BinOp
-        ):
-            if not isinstance(node.value, ast.Constant) or isinstance(
-                node.value.value, str
-            ):
-                blocks.append(_string_lines(node.value))
-            continue
-        if isinstance(node, ast.Call):
-            for keyword in node.keywords:
-                if keyword.arg in DOC_KEYWORDS:
-                    blocks.append(_string_lines(keyword.value))
-            continue
-        if isinstance(node, ast.Raise) and node.exc is not None:
-            blocks.append(_string_lines(node.exc))
-
+    blocks = [
+        _string_lines(prose)
+        for node in ast.walk(ast.parse(source))
+        for prose in _prose_nodes(node)
+    ]
     blocks.extend(_comment_blocks(source))
     return [block for block in blocks if block]
+
+
+def _prose_nodes(node: ast.AST) -> list[ast.expr]:
+    """Return the prose-position expressions carried by *node*, if any.
+
+    A bare string-valued statement is a docstring wherever it appears - module
+    (including the file's first statement), class, function, async function,
+    nested function, method - or a string used as a comment. Either way it is
+    prose. ``JoinedStr`` and ``BinOp`` are admitted alongside ``Constant``
+    because an f-string docstring and a ``+``-concatenated one are still
+    docstrings; excluding them was a hole. A call contributes its documentary
+    keywords and its message argument, and an assert or a raise contributes the
+    message its reader is shown.
+    """
+    if isinstance(node, ast.Expr) and isinstance(
+        node.value, ast.Constant | ast.JoinedStr | ast.BinOp
+    ):
+        is_string = not isinstance(node.value, ast.Constant) or isinstance(
+            node.value.value, str
+        )
+        return [node.value] if is_string else []
+    if isinstance(node, ast.Call):
+        documentary = [k.value for k in node.keywords if k.arg in DOC_KEYWORDS]
+        return documentary + _message_args(node)
+    if isinstance(node, ast.Assert):
+        return [node.msg] if node.msg is not None else []
+    if isinstance(node, ast.Raise):
+        return [node.exc] if node.exc is not None else []
+    return []
 
 
 def _iter_values_and_comments(path: Path) -> list[tuple[int, str]]:
@@ -690,8 +784,9 @@ def main() -> int:
     mode = "REPORT-ONLY" if args.report_only else "GATE"
     print(
         f"[citation-gate] {mode} - {len(py_files)} python and {len(text_files)} "
-        "text file(s): docstrings, comments, documentary strings, exception "
-        "messages, documentation, config, and string values (paths)"
+        "text file(s): docstrings, comments, documentary strings, exception, "
+        "assert and log messages, documentation, config, and string values "
+        "(paths)"
     )
 
     if deferred:

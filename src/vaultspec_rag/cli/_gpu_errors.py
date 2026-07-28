@@ -320,7 +320,7 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
             # CUDA state failed in an unexpected way (driver
             # mismatch, opaque ABI error). Treat as "no torch" for
             # diagnosis purposes; debug-log so the swallow stays
-            # observable per the no-swallow rule.
+            # observable.
             logger.debug("torch CUDA diagnosis failed: %s", _diag_exc, exc_info=True)
             diagnosis = TorchDiagnosis.NO_TORCH
 
