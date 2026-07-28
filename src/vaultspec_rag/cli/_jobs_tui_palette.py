@@ -36,6 +36,7 @@ __all__ = [
     "DARK_THEME_NAME",
     "LIGHT_THEME_NAME",
     "build_themes",
+    "pill_fill",
     "semantic_tones",
     "tone_style",
 ]
@@ -237,6 +238,35 @@ def semantic_tones(theme_name: str) -> dict[str, str]:
     return {
         token: _step(variant, scale, step)
         for token, (scale, step) in _TONE_STEPS.items()
+    }
+
+
+# The spec pairs its solid steps (9-10) with a contrast foreground: most
+# solids take light text, and the bright amber solid is one of the scales
+# the spec documents as taking dark text. Both foregrounds are in-scale
+# values - the slate scales' own high-contrast text steps - never colours
+# invented here. The solid steps are published identical across the light
+# and dark scales for these hues, so a solid pill reads the same in both
+# variants; only the muted pill follows the variant, as the component
+# background (step 3) behind low-contrast text (step 11).
+_SOLID_TEXT_LIGHT = _SLATE_DARK[11]
+_SOLID_TEXT_DARK = _SLATE_LIGHT[11]
+
+
+def pill_fill(theme_name: str) -> dict[str, tuple[str, str]]:
+    """Resolve each semantic token's pill fill as ``(background, text)``.
+
+    Solid fills per the specification's solid-step semantics; the muted
+    token is the quiet component-background pairing so an empty or unknown
+    pill recedes instead of shouting.
+    """
+    variant = "light" if theme_name == LIGHT_THEME_NAME else "dark"
+    return {
+        "good": (_step(variant, "green", 9), _SOLID_TEXT_LIGHT),
+        "attention": (_step(variant, "amber", 9), _SOLID_TEXT_DARK),
+        "bad": (_step(variant, "red", 9), _SOLID_TEXT_LIGHT),
+        "neutral": (_step(variant, "blue", 9), _SOLID_TEXT_LIGHT),
+        "muted": (_step(variant, "slate", 3), _step(variant, "slate", 11)),
     }
 
 
