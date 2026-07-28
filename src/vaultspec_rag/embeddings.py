@@ -21,7 +21,7 @@ from .job_control import timed_gpu_lock
 
 if TYPE_CHECKING:
     import numpy as np
-    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import SentenceTransformer, SparseEncoder
     from torch import Tensor
 
 logger = logging.getLogger(__name__)
@@ -378,7 +378,6 @@ class EmbeddingModel:
         _check_rag_deps()
 
         import torch
-        from sentence_transformers import SparseEncoder
 
         from .config._settings import get_config
 
@@ -440,6 +439,67 @@ class EmbeddingModel:
             int(max_seq_len),
         )
 
+        # Every consumer of the sparse model already asks whether sparse is
+        # enabled before reaching for it: the streaming indexer guards its
+        # encode on ``sparse_enabled``, the searcher passes ``None`` instead of
+        # a sparse query vector, and ``effective_sparse_dim`` returns the
+        # placeholder width 1 without touching the model at all. Loading it
+        # regardless was the one place that did not ask, so a deployment with
+        # sparse off still put SPLADE on the device and held its VRAM for the
+        # process lifetime - and resident VRAM is exactly what the indexing CUDA
+        # ceiling is derived net of, so the unused model narrowed every budget
+        # computed after it.
+        if not bool(cfg.sparse_enabled):
+            self._sparse_model = None
+            self.sparse_dimension = None
+            logger.info("Sparse model not loaded: sparse vectors are disabled")
+        else:
+            self._load_sparse_model(sparse_name, local_files_only=local_files_only)
+
+        self.dimension: int = (
+            cfg.embedding_dimension
+            if hasattr(cfg, "embedding_dimension")
+            else self.DEFAULT_DIMENSION
+        )
+        self._device = "cuda"
+        self.query_cache = QueryEmbeddingCache()
+
+        gpu_name = torch.cuda.get_device_name(0)
+        logger.info(
+            "Embedding models loaded on %s (dense=%s, sparse=%s, dense_dim=%d, "
+            "sparse_dim=%s)",
+            gpu_name,
+            dense_name,
+            sparse_name if self._sparse_model is not None else "disabled",
+            self.dimension,
+            self.sparse_dimension,
+        )
+
+    def _require_sparse_model(self) -> SparseEncoder:
+        """Return the loaded SPLADE model, or say plainly why there is none.
+
+        Reaching a sparse encode with sparse disabled means a caller skipped the
+        ``sparse_enabled`` check every other call path makes. That is a wiring
+        bug, and it should name itself rather than surface as an attribute error
+        on ``None`` several frames deeper.
+        """
+        if self._sparse_model is None:
+            raise RuntimeError(
+                "sparse encoding was requested while sparse vectors are "
+                "disabled; the sparse model was never loaded"
+            )
+        return self._sparse_model
+
+    def _load_sparse_model(
+        self,
+        sparse_name: str,
+        *,
+        local_files_only: bool,
+    ) -> None:
+        """Load SPLADE onto the GPU and record the width a run will write."""
+        import torch
+        from sentence_transformers import SparseEncoder
+
         t0 = time.perf_counter()
         try:
             self._sparse_model = SparseEncoder(
@@ -477,25 +537,6 @@ class EmbeddingModel:
             "Sparse model loaded in %.2fs (max_seq_length=%d, dimension=%d)",
             time.perf_counter() - t0,
             sparse_max,
-            self.sparse_dimension,
-        )
-
-        self._device = "cuda"
-        self.query_cache = QueryEmbeddingCache()
-        self.dimension: int = (
-            cfg.embedding_dimension
-            if hasattr(cfg, "embedding_dimension")
-            else self.DEFAULT_DIMENSION
-        )
-
-        gpu_name = torch.cuda.get_device_name(0)
-        logger.info(
-            "Embedding models loaded on %s (dense=%s, sparse=%s, dense_dim=%d, "
-            "sparse_dim=%d)",
-            gpu_name,
-            dense_name,
-            sparse_name,
-            self.dimension,
             self.sparse_dimension,
         )
 
@@ -743,6 +784,7 @@ class EmbeddingModel:
         """Run one sparse forward, then move and convert it outside the GPU lock."""
         from .memory_probe import cuda_forward_peak_capture
 
+        sparse_model = self._require_sparse_model()
         accelerator_tensor = None
         cpu_tensor = None
         cpu_sparse_tensor = None
@@ -750,7 +792,7 @@ class EmbeddingModel:
             if gpu_lock is None:
                 accelerator_tensor = cast(
                     "Tensor",
-                    self._sparse_model.encode_document(
+                    sparse_model.encode_document(
                         texts_batch,
                         batch_size=batch_size,
                         show_progress_bar=False,
@@ -763,7 +805,7 @@ class EmbeddingModel:
                 with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
                     accelerator_tensor = cast(
                         "Tensor",
-                        self._sparse_model.encode_document(
+                        sparse_model.encode_document(
                             texts_batch,
                             batch_size=batch_size,
                             show_progress_bar=False,
@@ -799,6 +841,6 @@ class EmbeddingModel:
             torch.cuda.OutOfMemoryError: If the GPU runs out of memory.
         """
         max_chars = self._default_max_embed_chars()
-        sparse_tensor = self._sparse_model.encode_query([query[:max_chars]])
+        sparse_tensor = self._require_sparse_model().encode_query([query[:max_chars]])
         results = _sparse_tensor_to_results(sparse_tensor)
         return results[0]
