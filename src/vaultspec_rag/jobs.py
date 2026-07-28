@@ -63,12 +63,16 @@ __all__ = [
     "JobProgressReporter",
     "activate_index_job",
     "active_index_support_profiles",
+    "degradation_evidence",
     "delete_job",
     "find_job",
+    "forward_telemetry",
     "get_job_manager",
     "index_job_status",
     "progress_rate",
     "record_finish",
+    "record_forward_entry",
+    "record_forward_exit",
     "record_progress",
     "record_start",
     "register_on_job_complete",
@@ -147,6 +151,16 @@ _MIN_RATE_SPAN_SECONDS = 1.0
 # spanning a real interval, without discarding the current count: the
 # newest sample always carries it.
 _PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS = 0.25
+# Bounded backend-liveness probe for degradation evidence. The count runs on
+# its own daemon thread and the caller waits at most the timeout, so a dead or
+# wedged backend can never wedge the jobs surface that is reporting on it. The
+# short cache keeps a polling operator view (the TUI refreshes every couple of
+# seconds) from stacking one probe thread per poll against a backend that has
+# stopped answering.
+_BACKEND_PROBE_TIMEOUT_SECONDS = 2.0
+_BACKEND_PROBE_CACHE_SECONDS = 5.0
+_backend_probe_lock = threading.Lock()
+_backend_probe_cache: dict[tuple[str, str], tuple[float, dict[str, object]]] = {}
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
 _manager_lock = threading.Lock()
 _job_manager: JobManager | None = None
@@ -547,6 +561,63 @@ def record_progress(
         log_event(logger, "service.job", "progress", fields=log_fields)
 
 
+def record_forward_entry(record_id: str, *, ordinal: int, items: int) -> None:
+    """Publish that the encode thread is entering one model forward pass.
+
+    Written before the forward begins, so a pass that runs for minutes under
+    GPU contention is visible as an in-flight forward (``exited_at`` still
+    ``None``) rather than as silence. Progress only ticks at slice
+    boundaries; this is the only signal inside one. The calling thread's
+    identity is recorded so the read surface can report whether the encode
+    thread is still alive while the pass looks stuck.
+    """
+    now = time.time()
+    thread = threading.current_thread()
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                record["forward"] = {
+                    "entered_at": now,
+                    "exited_at": None,
+                    "slice_ordinal": ordinal,
+                    "items": items,
+                    "thread_ident": thread.ident,
+                    "thread_name": thread.name,
+                }
+                break
+
+
+def record_forward_exit(record_id: str, *, ordinal: int, items: int) -> None:
+    """Close the in-flight forward window ``record_forward_entry`` opened."""
+    now = time.time()
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                forward = record.get("forward")
+                if isinstance(forward, dict):
+                    data = cast("dict[str, object]", forward)
+                    data["exited_at"] = now
+                    data["slice_ordinal"] = ordinal
+                    data["items"] = items
+                break
+
+
+def forward_telemetry(record_id: str) -> dict[str, object] | None:
+    """Return a detached copy of one job's newest forward-pass telemetry.
+
+    ``None`` means the job is unknown or its run never reached a forward
+    pass; the read surface treats that as no signal, never as a stall.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                forward = record.get("forward")
+                if isinstance(forward, dict):
+                    return dict(cast("dict[str, object]", forward))
+                return None
+    return None
+
+
 def _finish_record(
     record: dict[str, object],
     *,
@@ -686,6 +757,9 @@ def _copied_record(record: dict[str, object]) -> dict[str, object]:
     prog = record.get("progress")
     if isinstance(prog, dict):
         item["progress"] = dict(cast("dict[str, object]", prog))
+    forward = record.get("forward")
+    if isinstance(forward, dict):
+        item["forward"] = dict(cast("dict[str, object]", forward))
     failures = record.get("preprocess_failures")
     if isinstance(failures, list):
         item["preprocess_failures"] = list(cast("list[object]", failures))
@@ -801,6 +875,150 @@ def delete_job(job_id: str) -> JobOutcome:
 def _activity_record_terminal(record: dict[str, object]) -> bool:
     """Return whether an activity record has reached a terminal phase."""
     return str(record.get("phase", "")).strip().lower() in TERMINAL_PHASES
+
+
+def _forward_evidence(
+    forward: dict[str, object] | None,
+    *,
+    now: float,
+) -> dict[str, object]:
+    """Shape one job's forward telemetry into its evidence block.
+
+    ``age_seconds`` is how long the current forward has been running when one
+    is in flight, otherwise how long ago the last one finished. Thread
+    liveness distinguishes a starved-but-alive encode (thread alive, forward
+    in flight) from a genuinely dead worker.
+    """
+    if forward is None:
+        return {
+            "in_flight": False,
+            "age_seconds": None,
+            "slice_ordinal": None,
+            "items": None,
+            "thread_alive": None,
+        }
+    entered = forward.get("entered_at")
+    exited = forward.get("exited_at")
+    entered_at = float(entered) if isinstance(entered, int | float) else None
+    exited_at = float(exited) if isinstance(exited, int | float) else None
+    in_flight = entered_at is not None and exited_at is None
+    reference = entered_at if in_flight else exited_at
+    ident = forward.get("thread_ident")
+    thread_alive = (
+        any(thread.ident == ident for thread in threading.enumerate())
+        if isinstance(ident, int) and not isinstance(ident, bool)
+        else None
+    )
+    return {
+        "in_flight": in_flight,
+        "age_seconds": max(0.0, now - reference) if reference is not None else None,
+        "slice_ordinal": forward.get("slice_ordinal"),
+        "items": forward.get("items"),
+        "thread_alive": thread_alive,
+    }
+
+
+def _gpu_evidence() -> dict[str, object]:
+    """Sample machine-wide GPU pressure through the read-only probe.
+
+    ``available`` is ``False`` on a torch-free host, a CPU-only build, or a
+    process whose CUDA context is not initialized - the probe reports absence
+    rather than raising or initializing anything.
+    """
+    from .memory_probe import cuda_pressure
+
+    utilization, used_mb, total_mb = cuda_pressure()
+    return {
+        "available": total_mb is not None,
+        "utilization_percent": utilization,
+        "memory_used_mb": round(used_mb, 1) if used_mb is not None else None,
+        "memory_total_mb": round(total_mb, 1) if total_mb is not None else None,
+    }
+
+
+def _probe_backend_once(root: Path, source: str) -> dict[str, object]:
+    """Run one time-bounded store count against *root*'s backend.
+
+    The count is the cheapest read that proves the whole write path's
+    substrate is answering: it reaches the same client, collection, and
+    retry policy the indexer writes through. A warm project slot's store is
+    reused; the probe never runs on the caller's thread past the bound.
+    """
+    outcome: dict[str, object] = {}
+    started = time.perf_counter()
+
+    def _count() -> None:
+        try:
+            with get_registry().lease_store(root) as store:
+                if source == "code":
+                    store.count_code()
+                elif source == "document":
+                    store.count_document()
+                else:
+                    store.count()
+        except Exception as exc:  # any backend failure is the finding itself
+            outcome["alive"] = False
+            outcome["detail"] = str(exc) or type(exc).__name__
+        else:
+            outcome["alive"] = True
+            outcome["detail"] = None
+        outcome["latency_seconds"] = round(time.perf_counter() - started, 3)
+
+    probe = threading.Thread(target=_count, name="jobs-backend-probe", daemon=True)
+    probe.start()
+    probe.join(_BACKEND_PROBE_TIMEOUT_SECONDS)
+    if probe.is_alive():
+        # The thread may still settle later; never read its dict again. An
+        # unanswered probe is reported as unknown, not dead: the backend may
+        # be alive but blocked behind a long write.
+        return {
+            "alive": None,
+            "latency_seconds": round(time.perf_counter() - started, 3),
+            "detail": (f"no response within {_BACKEND_PROBE_TIMEOUT_SECONDS:.1f}s"),
+        }
+    return outcome
+
+
+def _backend_evidence(project_root: str | None, source: str) -> dict[str, object]:
+    """Return cached-or-fresh backend liveness for one job's store."""
+    if not project_root:
+        return {
+            "alive": None,
+            "latency_seconds": None,
+            "detail": "the job records no project root to probe",
+        }
+    key = (os.path.normcase(project_root), source)
+    now = time.monotonic()
+    with _backend_probe_lock:
+        cached = _backend_probe_cache.get(key)
+        if cached is not None and now - cached[0] < _BACKEND_PROBE_CACHE_SECONDS:
+            return dict(cached[1])
+    result = _probe_backend_once(Path(project_root), source)
+    with _backend_probe_lock:
+        _backend_probe_cache[key] = (time.monotonic(), result)
+    return dict(result)
+
+
+def degradation_evidence(
+    *,
+    now: float,
+    forward: dict[str, object] | None,
+    project_root: str | None,
+    source: str,
+) -> dict[str, object]:
+    """Attach sampled cause attribution to one unhealthy job verdict.
+
+    One shape, three independent findings: the forward-pass window and encode
+    thread (is the work alive), machine-wide GPU pressure (is the card
+    starved), and a bounded backend probe (is the store answering). Each
+    section degrades to explicit absence on hosts or processes that cannot
+    answer it, so the block's shape is stable for every renderer.
+    """
+    return {
+        "forward": _forward_evidence(forward, now=now),
+        "gpu": _gpu_evidence(),
+        "backend": _backend_evidence(project_root, source),
+    }
 
 
 def _job_snapshot_stalled(job: JobSnapshot, *, now: float) -> bool:
@@ -928,6 +1146,8 @@ def reset() -> None:
     global _job_manager
     with _lock:
         _records.clear()
+    with _backend_probe_lock:
+        _backend_probe_cache.clear()
     with _manager_lock:
         _job_manager = None
 
@@ -967,6 +1187,12 @@ class JobProgressReporter:
 
     def log(self, message: str) -> None:
         pass
+
+    def forward_started(self, *, ordinal: int, items: int) -> None:
+        record_forward_entry(self.record_id, ordinal=ordinal, items=items)
+
+    def forward_finished(self, *, ordinal: int, items: int) -> None:
+        record_forward_exit(self.record_id, ordinal=ordinal, items=items)
 
     def _publish(self, step: str, *, completed: int, total: int | None) -> None:
         context = self._context

@@ -443,9 +443,23 @@ class _VectorEncodeRequest:
     sparse_enabled: bool
     encode_batch_size: int | None
     after_encode: Callable[[], None] | None = None
+    # Forward-pass boundary callbacks, called with the pass kind ("dense" or
+    # "sparse"). ``before_forward`` fires on the encoding thread immediately
+    # before the GPU lock is sought, so an in-flight forward - the only
+    # activity inside a slice - is observable while it runs, not only after.
+    before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
     on_cuda_oom: Callable[[BaseException], None] | None = None
     reuse: DonorReuseContext | None = None
+
+
+def _notify_forward_boundary(
+    callback: Callable[[str], None] | None,
+    kind: str,
+) -> None:
+    """Fire one optional forward-boundary callback."""
+    if callback is not None:
+        callback(kind)
 
 
 def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
@@ -476,23 +490,23 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
     dense_cpu: object | None = None
     sparse: Iterable[_SparseVectorLike | None] | None = None
     try:
+        _notify_forward_boundary(request.before_forward, "dense")
         with timed_gpu_lock(request.gpu_lock):
             dense_device = request.model.encode_documents_on_device(
                 slice_texts,
                 batch_size=request.encode_batch_size,
             )
-        if request.after_forward is not None:
-            request.after_forward("dense")
+        _notify_forward_boundary(request.after_forward, "dense")
         dense_cpu = _transfer_to_cpu(dense_device)
         dense_device = None
         if request.sparse_enabled:
+            _notify_forward_boundary(request.before_forward, "sparse")
             sparse = request.model.encode_documents_sparse(
                 slice_texts,
                 batch_size=request.encode_batch_size,
                 gpu_lock=request.gpu_lock,
             )
-            if request.after_forward is not None:
-                request.after_forward("sparse")
+            _notify_forward_boundary(request.after_forward, "sparse")
         else:
             sparse = [None] * len(slice_texts)
         if request.after_encode is not None:
@@ -693,6 +707,8 @@ class _VaultSliceRequest:
     reuse: DonorReuseContext | None = None
     writer: _SliceWriter | None = None
     release_cache: bool = True
+    before_forward: Callable[[str], None] | None = None
+    after_forward: Callable[[str], None] | None = None
 
 
 def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
@@ -728,6 +744,8 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
                 sparse_enabled=request.sparse_enabled,
                 encode_batch_size=None,
                 after_encode=_after_encode,
+                before_forward=request.before_forward,
+                after_forward=request.after_forward,
                 reuse=request.reuse,
             )
         )
@@ -757,6 +775,28 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
             _release_vector_fields(request.slice_chunks)
         if request.release_cache:
             _release_cuda_cache()
+
+
+def _report_forward_entry(
+    reporter: ProgressReporter,
+    ordinal: int,
+    items: int,
+    kind: str,
+) -> None:
+    """Adapt one slice's forward-entry boundary onto the progress reporter."""
+    del kind
+    reporter.forward_started(ordinal=ordinal, items=items)
+
+
+def _report_forward_exit(
+    reporter: ProgressReporter,
+    ordinal: int,
+    items: int,
+    kind: str,
+) -> None:
+    """Adapt one slice's forward-exit boundary onto the progress reporter."""
+    del kind
+    reporter.forward_finished(ordinal=ordinal, items=items)
 
 
 def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, int]:
@@ -831,6 +871,18 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                             writer=writer,
                             release_cache=(
                                 is_last or (slice_index + 1) % flush_slices == 0
+                            ),
+                            before_forward=partial(
+                                _report_forward_entry,
+                                request.reporter,
+                                slice_index,
+                                len(slice_chunks),
+                            ),
+                            after_forward=partial(
+                                _report_forward_exit,
+                                request.reporter,
+                                slice_index,
+                                len(slice_chunks),
                             ),
                         )
                     )

@@ -185,6 +185,33 @@ def test_a_failed_terminal_state_is_still_reported_as_a_failure(
     )
 
 
+@pytest.mark.parametrize("state", _FAILED)
+def test_a_failure_event_always_carries_a_populated_error(
+    state: JobState,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``reindex_failed`` must never fire with a null error again.
+
+    The snapshot here carries no result and no exception - the exact shape
+    that used to render ``error=null``, an error event naming neither cause
+    nor remediation on the one channel operators grep for real failures.
+
+    Mutation check: restoring the bare ``context.error or snapshot.result``
+    fallback (dropping the explicit no-recorded-error text) makes this fail
+    on the ``error=null`` assertion below, not on collection.
+    """
+    _log(state, caplog)
+    failed_lines = [
+        record.getMessage()
+        for record in caplog.records
+        if "event=reindex_failed" in record.getMessage()
+    ]
+    assert failed_lines, f"{state.value} produced no reindex_failed event"
+    for line in failed_lines:
+        assert "error=null" not in line, f"null error published: {line}"
+        assert re.search(r"\berror=\S", line), f"no error field at all: {line}"
+
+
 def test_every_job_state_has_an_explicit_outcome(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
