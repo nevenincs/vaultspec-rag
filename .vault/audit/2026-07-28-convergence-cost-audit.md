@@ -10,44 +10,49 @@ related:
   - "[[2026-07-28-convergence-cost-adr]]"
 ---
 
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #audit) and one feature tag.
-     Replace convergence-cost with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar]]'.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
 # `convergence-cost` audit: `Verification of the stat gate and scoped convergence retention`
 
-## Scope
-
-<!-- What was audited and why -->
+Verification of the stat-evidence rehash gate and the scoped-convergence retention
+change, executed against the plan and its accepted decision record. Both changes landed
+as `1bcde198`.
 
 ## Findings
 
-<!-- A rolling log of findings: append one subsection per finding, grouped or ordered by
-     severity, using the heading form
+### gate-verification | low | Every gate behavior is test-proven, including failure directions
 
-       ### Verification of the stat gate and scoped convergence retention | {level} | {summary}
+19 gate tests cover reuse, stat-visible change, racy refusal, corrupt and defective
+sidecar discard, schema-version discard, prune, unwritable-sidecar tolerance, OSError
+parity, and per-domain wiring for the code, document, and vault indexers. Reuse is
+proven without mocks by swapping file content under an identical stat identity. Three
+mutations - racy conjunct removed, validator made row-salvaging, reuse disabled - each
+failed exactly the naming assertions and passed restored, in uninterrupted cycles.
 
-     followed by a paragraph carrying the detail. Verification of the stat gate and scoped convergence retention is a concise kebab-case slug,
-     {level} is the severity (critical, high, medium, low), and {summary} is a one-line
-     statement. Append continuously as findings surface; do not rewrite settled entries. -->
+### retention-verification | low | Scoped retention holds and every escalation path still fires
+
+Interruption and mid-attempt-success retention are pinned by dedicated tests, and both
+were proven failable by restoring the forced escalation. Failure, crash-recovery,
+construction-over-pending, and cross-instance refresh promotion keep their original
+assertions and pass unchanged. The full retry module passes: 29 tests.
+
+### unit-tier-interference | low | Two Qdrant-supervision tests error only under parallel load
+
+The full unit tier reports 3214 passed, 1 skipped, with 2 setup errors in
+Qdrant-supervision tests that pass immediately when run alone; a live GPU daemon and
+service load shared the machine during the tier run. Untouched by this change's diff;
+tracked as environmental.
+
+### incident-during-verification | medium | Live incident exposed a separate observability gap
+
+During verification a vault index job froze at a slice boundary for over five minutes
+under external GPU saturation with no surface reporting cause. Grounded and decided
+separately: see the index-observability research and decision records; implementation
+is dispatched.
 
 ## Recommendations
 
-<!-- Actionable recommendations, each tied to a finding above. An
-     architecturally significant recommendation names the decision a
-     follow-on ADR must make; the decision itself is never recorded here. -->
+- Land the index-observability implementation so a starved encode pass, a backend
+  fault, and a hang stop looking identical (decision already accepted).
+- Extend gate evidence recording to full-index runs so the first incremental after a
+  rebuild is warm; ownership dispatched to the hashing-throughput work.
+- Re-run the two Qdrant-supervision tests in an isolated tier once to rule out an
+  ordering dependency independent of machine load.
