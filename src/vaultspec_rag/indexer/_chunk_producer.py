@@ -44,7 +44,6 @@ if TYPE_CHECKING:
 
     from .._store_models import CodeChunk
     from ..job_control import RunControl
-    from ..progress import ProgressReporter
     from ._chunk_worker import FileChunkResult
     from ._preprocess_config import PreprocessContext, PreprocessRule
     from ._streaming import CodeFileSegment
@@ -61,7 +60,6 @@ class _PoolDrainRequest:
     paths_iter: Iterator[pathlib.Path]
     publish_result: Callable[[FileChunkResult], bool]
     consumer_failed: Callable[[], bool]
-    reporter: ProgressReporter
     run_control: RunControl
 
 
@@ -75,7 +73,6 @@ class _PoolDrainPlan:
     window: int
     publish_result: Callable[[FileChunkResult], bool]
     consumer_failed: Callable[[], bool]
-    reporter: ProgressReporter
     run_control: RunControl = NO_RUN_CONTROL
 
 
@@ -85,7 +82,6 @@ class SingleProductionOptions:
 
     publish_result: Callable[[FileChunkResult], bool]
     consumer_failed: Callable[[], bool]
-    reporter: ProgressReporter
     total: list[int]
     run_control: RunControl = NO_RUN_CONTROL
 
@@ -382,7 +378,6 @@ class CodeChunkProducer:
     def run_batch_groups(
         self,
         batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
-        reporter: ProgressReporter,
         handle_group: Callable[[list[FileChunkResult]], None],
         *,
         run_control: RunControl = NO_RUN_CONTROL,
@@ -394,7 +389,7 @@ class CodeChunkProducer:
         workers = self.resolve_workers(len(batch_groups))
         if workers <= 1:
             self._run_batch_groups_serial(
-                batch_groups, reporter, handle_group, run_control=run_control
+                batch_groups, handle_group, run_control=run_control
             )
             return
 
@@ -436,7 +431,7 @@ class CodeChunkProducer:
                         run_control.checkpoint()
                         while done:
                             completed += self._process_batch_future(
-                                done.pop(), futures, reporter, handle_group
+                                done.pop(), futures, handle_group
                             )
                             run_control.checkpoint()
                             _submit_one()
@@ -455,14 +450,13 @@ class CodeChunkProducer:
                 "Batch process pool could not start; running batch groups serially"
             )
             self._run_batch_groups_serial(
-                batch_groups, reporter, handle_group, run_control=run_control
+                batch_groups, handle_group, run_control=run_control
             )
 
     def _process_batch_future(
         self,
         future: Future[list[FileChunkResult]],
         futures: dict[Future[list[FileChunkResult]], int],
-        reporter: ProgressReporter,
         handle_group: Callable[[list[FileChunkResult]], None],
     ) -> int:
         """Publish one completed worker group, propagating fatal failures."""
@@ -481,14 +475,11 @@ class CodeChunkProducer:
             )
             raise
         handle_group(results)
-        for _ in range(group_len):
-            reporter.advance()
         return group_len
 
     def _run_batch_groups_serial(
         self,
         batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
-        reporter: ProgressReporter,
         handle_group: Callable[[list[FileChunkResult]], None],
         *,
         run_control: RunControl = NO_RUN_CONTROL,
@@ -508,20 +499,16 @@ class CodeChunkProducer:
             )
             handle_group(results)
             run_control.checkpoint()
-            for _ in range(len(group)):
-                reporter.advance()
-            run_control.checkpoint()
 
     def _run_serial_chunk_producer(
         self,
         paths: list[pathlib.Path],
         publish_result: Callable[[FileChunkResult], bool],
-        reporter: ProgressReporter,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> int:
         """Produce file results serially into the bounded queue."""
-        advanced = 0
+        produced = 0
         for path in paths:
             run_control.checkpoint()
             try:
@@ -540,16 +527,14 @@ class CodeChunkProducer:
             if not publish_result(result):
                 run_control.checkpoint()
                 raise RuntimeError("code-index segment consumer terminated")
-            advanced += 1
-            reporter.advance()
+            produced += 1
             run_control.checkpoint()
-        return advanced
+        return produced
 
     def produce_batch_groups(
         self,
         batch_groups: list[tuple[PreprocessRule, list[pathlib.Path]]],
         publish_result: Callable[[FileChunkResult], bool],
-        reporter: ProgressReporter,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
@@ -563,9 +548,7 @@ class CodeChunkProducer:
                     raise RuntimeError("code-index segment consumer terminated")
                 run_control.checkpoint()
 
-        self.run_batch_groups(
-            batch_groups, reporter, _publish_group, run_control=run_control
-        )
+        self.run_batch_groups(batch_groups, _publish_group, run_control=run_control)
 
     def _drain_pool(
         self,
@@ -592,7 +575,6 @@ class CodeChunkProducer:
                             paths_iter=plan.paths_iter,
                             publish_result=plan.publish_result,
                             consumer_failed=plan.consumer_failed,
-                            reporter=plan.reporter,
                             run_control=plan.run_control,
                         )
                     )
@@ -672,7 +654,6 @@ class CodeChunkProducer:
             raise
         request.run_control.checkpoint()
         died = not request.publish_result(result)
-        request.reporter.advance()
         request.run_control.checkpoint()
         if died:
             return True, 1
@@ -702,7 +683,6 @@ class CodeChunkProducer:
             return self._run_serial_chunk_producer(
                 singles,
                 options.publish_result,
-                options.reporter,
                 run_control=options.run_control,
             )
         ctx = multiprocessing.get_context("spawn")
@@ -718,7 +698,6 @@ class CodeChunkProducer:
                 window=window,
                 publish_result=options.publish_result,
                 consumer_failed=options.consumer_failed,
-                reporter=options.reporter,
                 run_control=options.run_control,
             )
         )
@@ -738,7 +717,6 @@ class CodeChunkProducer:
         return self._run_serial_chunk_producer(
             singles,
             options.publish_result,
-            options.reporter,
             run_control=options.run_control,
         )
 

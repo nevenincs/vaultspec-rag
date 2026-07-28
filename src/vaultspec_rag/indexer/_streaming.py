@@ -158,6 +158,7 @@ class CodeSliceRequest:
     write_policy: StoreWritePolicy | None = None
     ingest_wait: bool = True
     on_storage_confirmed: Callable[[], None] | None = None
+    before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
     on_cuda_oom: Callable[[BaseException], None] | None = None
     run_control: RunControl = NO_RUN_CONTROL
@@ -1554,6 +1555,7 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
                 gpu_lock=request.gpu_lock,
                 sparse_enabled=bool(cfg.sparse_enabled),
                 encode_batch_size=request.encode_batch_size,
+                before_forward=request.before_forward,
                 after_forward=request.after_forward,
                 on_cuda_oom=request.on_cuda_oom,
                 reuse=request.reuse,

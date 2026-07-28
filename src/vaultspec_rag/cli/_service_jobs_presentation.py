@@ -209,7 +209,10 @@ def _progress_step_label(step: str, source: str) -> str:
         "embed + upsert chunks": f"embedding and writing {sections}",
         "embed + upsert documents": "embedding and writing documents",
         "index": "writing index",
-        "chunk + embed": "preparing and embedding files",
+        # The counter behind this step counts files whose chunks have been
+        # encoded and durably written, not files handed to the chunker, so
+        # the label names the completed work.
+        "chunk + embed": "embedding and writing files",
         "upsert": "writing vectors",
     }
     return labels.get(step, step.replace("_", " "))
@@ -287,7 +290,17 @@ def _encode_evidence_line(job: dict[str, object]) -> str | None:
     forward = _evidence_section(job, "forward")
     if forward is None:
         return None
-    phrase = _forward_evidence_phrase(job) or "no forward pass observed"
+    phrase = _forward_evidence_phrase(job)
+    if not phrase:
+        # A CPU-bound step runs no forward pass, so its absence is the
+        # expected shape of the phase there, not a finding against the job;
+        # only a step the service marked as encoding turns silence into
+        # "no forward pass observed".
+        phrase = (
+            "no forward pass expected in this phase"
+            if forward.get("expected") is False
+            else "no forward pass observed"
+        )
     ordinal = forward.get("slice_ordinal")
     items = forward.get("items")
     if ordinal is not None and items is not None:
@@ -296,6 +309,21 @@ def _encode_evidence_line(job: dict[str, object]) -> str | None:
     if alive is not None and forward.get("in_flight") is not True:
         phrase += "; encode thread " + ("alive" if alive is True else "dead")
     return f"Encode: {phrase}"
+
+
+def _cpu_evidence_line(job: dict[str, object]) -> str | None:
+    """The service process's own CPU reading - valid liveness in every phase."""
+    cpu = _evidence_section(job, "cpu")
+    if cpu is None:
+        return None
+    if cpu.get("available") is not True:
+        return "Process CPU: not measurable from the service process"
+    percent = cpu.get("utilization_percent")
+    if isinstance(percent, int | float) and not isinstance(percent, bool):
+        return f"Process CPU: {round(float(percent))}% of one core"
+    # The first sample only primes the counter; the next poll carries a
+    # number, so an empty reading is a warming probe, not an absent one.
+    return None
 
 
 def _gpu_evidence_line(job: dict[str, object]) -> str | None:
@@ -337,6 +365,7 @@ def degradation_evidence_lines(job: dict[str, object]) -> tuple[str, ...]:
     """
     lines = (
         _encode_evidence_line(job),
+        _cpu_evidence_line(job),
         _gpu_evidence_line(job),
         _backend_evidence_line(job),
     )
@@ -519,6 +548,44 @@ def _job_id_labels(jobs: list[dict[str, object]]) -> dict[int, str]:
     return labels
 
 
+def _retry_lineage_notes(
+    jobs: list[dict[str, object]],
+    labels: dict[int, str],
+) -> dict[int, str]:
+    """Per-row phrases linking a retry to the job it retried, by list index.
+
+    The service publishes the relationship as ``parent_job_id``; without
+    saying it out loud, a retry reads as an unrelated job that ran briefly
+    and vanished, and its interrupted parent reads as never retried. A
+    child row names its parent; a parent row reports its newest retry and
+    that retry's state, so an interrupted row whose retry succeeded says so.
+    """
+    ids = [str(job.get("id", "")) for job in jobs]
+    label_by_id = {job_id: labels[index] for index, job_id in enumerate(ids) if job_id}
+    notes: dict[int, str] = {}
+    newest_child_by_parent: dict[str, int] = {}
+    for index, job in enumerate(jobs):
+        parent = job.get("parent_job_id")
+        if not isinstance(parent, str) or not parent:
+            continue
+        notes[index] = f"retry of job {label_by_id.get(parent, parent[:8])}"
+        current = newest_child_by_parent.get(parent)
+        if current is None or _job_timestamp(job) >= _job_timestamp(jobs[current]):
+            newest_child_by_parent[parent] = index
+    for parent_id, child_index in newest_child_by_parent.items():
+        parent_index = next(
+            (index for index, job_id in enumerate(ids) if job_id == parent_id),
+            None,
+        )
+        if parent_index is None:
+            continue
+        child = jobs[child_index]
+        notes[parent_index] = (
+            f"retried as job {labels[child_index]} ({phase_label(child)})"
+        )
+    return notes
+
+
 def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int]:
     active = 0
     waiting = 0
@@ -695,12 +762,17 @@ def _render_jobs_feed(
     _plain("Scripting: use --json (this summary always contains the word 'active')")
     _render_filter_and_watch(filter_text, monitoring=monitoring, watch_text=watch_text)
     job_id_labels = _job_id_labels(sorted_jobs)
+    lineage_notes = _retry_lineage_notes(sorted_jobs, job_id_labels)
     for index, job in enumerate(sorted_jobs):
         job_id = job_id_labels[index]
+        detail = _job_summary_detail(job)
+        note = lineage_notes.get(index)
+        if note:
+            detail = f"{detail}; {note}" if detail else note
         _cli.console.print(
             f"{_job_prefix(job)} {_job_time_label(job)} {phase_label(job)} "
             f"{operation_label(job)}{_project_phrase(job)} (job {job_id}) - "
-            f"{_job_summary_detail(job)}",
+            f"{detail}",
             soft_wrap=True,
         )
 
@@ -885,6 +957,10 @@ def render_job_detail(job: dict[str, object], *, port: int | None = None) -> Non
         _plain(address_line(port))
     _cli.console.print(f"Job {job.get('id', '')!s}")
     _cli.console.print(f"Operation: {operation_label(job)}")
+    parent = job.get("parent_job_id")
+    if isinstance(parent, str) and parent:
+        # Without this line a retry's detail view reads as an unrelated job.
+        _cli.console.print(f"Retry of job: {parent}")
     _cli.console.print(f"Project: {project_label(job)}")
     root = project_root(job)
     if root:
