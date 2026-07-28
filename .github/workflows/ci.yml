@@ -169,11 +169,26 @@ jobs:
         run: just lint type-strict
 
   tests:
-    name: Tests
+    name: Tests (py${{ matrix.python-version }})
     concurrency:
-      group: ci-tests-${{ github.ref }}
+      # The matrix leg is part of the group, so the two interpreters queue
+      # independently. Without it both legs share one group and serialise.
+      group: ci-tests-${{ github.ref }}-${{ matrix.python-version }}
       cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
+    strategy:
+      # Both interpreters run to completion: when only one line breaks, the
+      # failure is the whole signal, and cancelling the other hides whether
+      # the break is version-specific.
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    env:
+      # `.python-version` pins the dev interpreter to the floor, and uv reads
+      # it in preference to whatever actions/setup-python put on PATH. Without
+      # this the 3.14 leg would silently sync and test 3.13 — a green matrix
+      # proving nothing.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -181,7 +196,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -193,6 +208,18 @@ jobs:
 
       - name: Install dependencies
         run: just deps sync
+
+      # Guards the env pin above: if UV_PYTHON stopped taking effect, the leg
+      # would test the floor twice and still report green.
+      - name: Verify the interpreter under test
+        run: |
+          uv run --no-sync python -c "
+          import sys
+          want = '${{ matrix.python-version }}'
+          got = f'{sys.version_info[0]}.{sys.version_info[1]}'
+          assert got == want, f'expected Python {want}, got {got}'
+          print(f'testing under Python {sys.version.split()[0]}')
+          "
 
       - name: Run tests
         run: just test python
@@ -230,11 +257,12 @@ jobs:
     permissions:
       contents: read
     env:
-      # requires-python admits newer interpreters, so uv would otherwise grab
-      # 3.14, whose native extension wheels crash this GPU stack on import.
-      # Pinning here makes uv provision 3.13 for both sync and run without
-      # actions/setup-python, whose MSI registry cleanup fails under the
-      # runner's service account (no HKLM write).
+      # requires-python admits a range, so uv would otherwise pick whichever
+      # interpreter it likes here and the CUDA wheel under test would drift
+      # between runs. This job exists to exercise ONE known GPU stack, so it
+      # pins the floor; the CPU `tests` matrix is what covers the range.
+      # Pinning here also avoids actions/setup-python, whose MSI registry
+      # cleanup fails under the runner's service account (no HKLM write).
       UV_PYTHON: "3.13"
     steps:
       - name: Checkout
