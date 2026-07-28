@@ -72,7 +72,7 @@ def _drop_all_collections(url: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def _ops_qdrant_server(
+def _ops_qdrant_server(  # pyright: ignore[reportUnusedFunction]
     _qdrant_binary: Path,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[QdrantSupervisor]:

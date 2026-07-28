@@ -7,11 +7,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from vaultspec_core.config import (
-    VaultSpecConfig as BaseConfig,  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    VaultSpecConfig as BaseConfig,
 )
-from vaultspec_core.config import (
-    get_config as get_base_config,  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    get_config as get_base_config,
 )
 
 from .._env_values import BOOL_SHAPE, parse_bool

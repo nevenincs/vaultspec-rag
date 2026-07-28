@@ -766,7 +766,7 @@ def _attach_live_service(
 
 
 @pytest.fixture(scope="module")
-def _live_service_daemon(
+def _live_service_daemon(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: TempPathFactory,
 ) -> Generator[tuple[int, Path, dict[str, str | None]]]:
     """Hold one cache-prepared, offline real service for the module."""
@@ -788,7 +788,7 @@ def live_service(
 
 
 @pytest.fixture(scope="module")
-def _live_service_with_watch_daemon(
+def _live_service_with_watch_daemon(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: TempPathFactory,
 ) -> Generator[tuple[int, Path, dict[str, str | None]]]:
     """Hold one watcher-enabled real service for the module."""
