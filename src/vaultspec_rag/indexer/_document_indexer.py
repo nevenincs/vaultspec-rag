@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import get_index_support_profile
 from ..job_control import NO_RUN_CONTROL
+from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
 from ._document_checkpoint import DocumentRunCheckpoint, DocumentRunConfiguration
@@ -1119,9 +1120,27 @@ class DocumentIndexer:
             else contextlib.nullcontext()
         )
         with checkpoint.preserve_incomplete_generation(), publication_span:
-            if effective_clean and not clean_has_confirmed_units:
+            # A clean rebuild replaces in place: every discovered file is
+            # republished over its live points and the stale remainder is
+            # purged only after the run proves itself, so an interruption at
+            # any instant leaves the previous complete collection answering
+            # searches under a manifest that still describes it. Dropping
+            # first would convert every interruption into a served husk
+            # under a full claim. The one recreation left is a stored
+            # geometry this configuration cannot write into, where in-place
+            # replacement is physically impossible and the old points were
+            # unservable for this configuration anyway.
+            try:
+                self.store.ensure_document_table()
+            except StorageGeometryError:
+                if not effective_clean or clean_has_confirmed_units:
+                    raise
+                logger.warning(
+                    "document collection geometry cannot hold this "
+                    "configuration; recreating it for the clean rebuild",
+                )
                 self.store.drop_document_table()
-            self.store.ensure_document_table()
+                self.store.ensure_document_table()
             publish_started_ns = time.time_ns()
             published, counts, failures, fresh_hashes = self._publish_full_paths(
                 paths,
@@ -1169,6 +1188,46 @@ class DocumentIndexer:
             ),
         )
 
+    def _published_evidence_lost(self, previous: DocumentIndexMetadata) -> bool:
+        """Return whether the store fails to back the carried manifest.
+
+        The manifest outlives the points it describes: destruction drops the
+        collection or part of it and leaves the sidecar behind, and an
+        incremental diff against that manifest then classifies every
+        surviving file as unchanged, skips all encoding, and reports success
+        over points that are no longer there. A complete manifest whose
+        claimed breadth exceeds the live count is therefore escalated to a
+        full failure-safe reconciliation - the same non-destructive rebuild
+        the compatibility check chooses - instead of being trusted.
+
+        An incomplete manifest claims nothing to hold the store to, and a
+        store that cannot be counted proves nothing about the collection
+        either way; both keep the ordinary incremental behaviour rather than
+        rebuilding on ignorance.
+        """
+        if not previous.complete:
+            return False
+        claimed = previous.claimed_points
+        try:
+            live = self.store.count_document()
+        except (OSError, RuntimeError):
+            logger.warning(
+                "Could not count the document collection to verify published "
+                "breadth; trusting the carried manifest for this run",
+                exc_info=True,
+            )
+            return False
+        if live >= claimed:
+            return False
+        logger.warning(
+            "Document collection holds %d of the %d points its published "
+            "manifest describes; escalating to a full failure-safe "
+            "reconciliation instead of trusting the carried evidence",
+            live,
+            claimed,
+        )
+        return True
+
     def incremental_index(
         self,
         *,
@@ -1201,6 +1260,8 @@ class DocumentIndexer:
                 membership_fingerprint=fingerprints.membership,
                 content_fingerprint=fingerprints.content,
             ):
+                previous = None
+            if previous is not None and self._published_evidence_lost(previous):
                 previous = None
         if previous is None:
             return self.full_index(

@@ -98,6 +98,7 @@ class SearchIndexStateInput:
     named_files: float | None = None
     covered_files: float | None = None
     integrity: IndexIntegrity | None = None
+    integrity_repair_job_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +187,7 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
             shortfall=shortfall,
             file_shortfall=file_shortfall,
             integrity=input.integrity,
+            integrity_repair_job_id=input.integrity_repair_job_id,
         ),
     )
 
@@ -193,7 +195,7 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
 def _search_integrity(
     request: SearchRequest,
     phase_timing: dict[str, float],
-) -> IndexIntegrity | None:
+) -> tuple[IndexIntegrity, str | None]:
     """Settle the serve-time breadth verdict for one dispatched search.
 
     Single-domain searches reconcile their own domain against the count the
@@ -202,21 +204,32 @@ def _search_integrity(
     is the domain with the richest published claim, and its per-domain count
     travels on the timing channel. A domain whose count never landed there -
     a failed combined leg - yields ``unverifiable``, never a claim of zero.
+
+    The verdict is also handed to the remediation registry here - the one
+    service-side seam every daemon search passes through - so a demonstrated
+    shrink turns into at most one supervised repair, whose job id (when known)
+    rides back on the envelope beside the verdict that motivated it.
     """
     from .._index_integrity import evaluate_index_integrity
+    from .._integrity_remediation import note_integrity_verdict
 
     if request.search_type is PublicSourceType.COMBINED:
         code_count = phase_timing.get("code_indexed_count")
-        return evaluate_index_integrity(
+        source = PublicSourceType.CODE
+        integrity = evaluate_index_integrity(
             request.root,
-            PublicSourceType.CODE,
+            source,
             None if code_count is None else int(code_count),
         )
-    return evaluate_index_integrity(
-        request.root,
-        request.search_type,
-        int(phase_timing["indexed_count"]),
-    )
+    else:
+        source = request.search_type
+        integrity = evaluate_index_integrity(
+            request.root,
+            source,
+            int(phase_timing["indexed_count"]),
+        )
+    repair_job_id = note_integrity_verdict(request.root, source, integrity.verdict)
+    return integrity, repair_job_id
 
 
 def _empty_search_diagnostics(
@@ -512,6 +525,7 @@ def _execute_search_request(request: SearchRequest) -> dict[str, object]:
             if request.search_type is PublicSourceType.COMBINED
             else int(phase_timing["indexed_count"])
         )
+        integrity, integrity_repair_job_id = _search_integrity(request, phase_timing)
         index_state = _search_index_state(
             SearchIndexStateInput(
                 indexed_count=indexed_count,
@@ -520,7 +534,8 @@ def _execute_search_request(request: SearchRequest) -> dict[str, object]:
                 published_points=phase_timing.get("published_points"),
                 named_files=phase_timing.get("named_files"),
                 covered_files=phase_timing.get("covered_files"),
-                integrity=_search_integrity(request, phase_timing),
+                integrity=integrity,
+                integrity_repair_job_id=integrity_repair_job_id,
             )
         )
         index_state_seconds = time.perf_counter() - phase_started

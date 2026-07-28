@@ -172,6 +172,48 @@ class _VaultCatalogMixin:
             )
         logger.info("Deleted chunk tail of %s from ordinal %d", doc_id, from_ordinal)
 
+    def delete_prechunk_vault_points(self) -> int:
+        """Delete every vault point written before heading-aware chunking.
+
+        Points from the one-point-per-document layout carry no
+        ``chunk_ordinal``, so they are invisible to both replacement paths:
+        an upsert writes chunk-keyed points beside them, and the tail purge
+        matches only ordinal ranges. After an in-place clean rebuild they
+        would therefore survive as duplicate content, which is exactly the
+        debris the old drop-first rebuild existed to remove - this deletes
+        them by the payload shape only that layout produces, so a clean
+        rebuild can replace in place without destroying anything first.
+
+        Returns:
+            The number of pre-chunking points that were present and removed.
+        """
+        from qdrant_client import models
+
+        # ``IsEmpty`` matches points where the key is absent as well as null,
+        # and absent is precisely how the pre-chunking layout looks.
+        prechunk_filter = models.Filter(
+            must=[
+                models.IsEmptyCondition(
+                    is_empty=models.PayloadField(key="chunk_ordinal"),
+                ),
+            ],
+        )
+        self.ensure_table()
+        with self._point_lock(self.TABLE_NAME):
+            stale = self.client.count(
+                collection_name=self.TABLE_NAME,
+                count_filter=prechunk_filter,
+                exact=True,
+            ).count
+            if stale:
+                self._delete_points(
+                    collection_name=self.TABLE_NAME,
+                    points_selector=models.FilterSelector(filter=prechunk_filter),
+                )
+        if stale:
+            logger.info("Deleted %d pre-chunking vault point(s)", stale)
+        return int(stale)
+
     def get_all_code_ids(self, collection: str | None = None) -> set[str]:
         """Return the set of all code chunk ``id`` values in the store.
 

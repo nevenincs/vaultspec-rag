@@ -84,6 +84,7 @@ __all__ = [
     "scan_code_index_preflight",
     "snapshot",
     "start_reindex_codebase",
+    "start_reindex_documents",
     "start_reindex_vault",
     "validate_code_index_policy",
     "validate_code_job_admission",
@@ -1156,6 +1157,22 @@ def index_job_status(
                     "error_kind": job.error_kind,
                 }
             )
+    # A serve-time shrunken verdict degrades a domain even when its latest job
+    # is green: the loss happened to the collection, not to a run. Carrying the
+    # repair job id (or the disabled state) here is what turns "mystery
+    # reindex" into "shrunken, repair in flight" for an operator.
+    from ._integrity_remediation import shrunken_observations
+
+    for source_name, observation in shrunken_observations(root).items():
+        degraded.append(
+            {
+                "source": source_name,
+                "job_id": observation["repair_job_id"],
+                "reason": "shrunken",
+                "error_kind": None,
+                "auto_repair": observation["auto_repair"],
+            }
+        )
     return {"sources": sources, "degraded_reasons": degraded}
 
 
@@ -1253,7 +1270,12 @@ def _admit_index_job(
 ) -> tuple[JobManager, str, bool]:
     manager = get_job_manager()
     resolved_root = root.resolve()
-    command = "reindex_vault" if source is JobSource.VAULT else "reindex_codebase"
+    commands = {
+        JobSource.VAULT: "reindex_vault",
+        JobSource.CODE: "reindex_codebase",
+        JobSource.DOCUMENT: "reindex_documents",
+    }
+    command = commands[source]
     requested_id = uuid.uuid4().hex
     outcome = manager.create(
         JobSpec(
@@ -1690,24 +1712,19 @@ def restore_managed_jobs(*, registry: ServiceRegistry) -> tuple[int, int]:
     return len(restored), dispatched
 
 
-def start_reindex_vault(
-    root: Path, clean: bool, *, initiator_kind: str = "service"
+def _bind_and_dispatch_admitted(
+    manager: JobManager,
+    job_id: str,
+    *,
+    code_preflight: CodeIndexPreflight | None = None,
+    document_preflight: DocumentIndexPreflight | None = None,
 ) -> str:
-    """Start a background vault reindexing task and return the job_id."""
-    manager, job_id, created = _admit_index_job(
-        root,
-        source=JobSource.VAULT,
-        clean=clean,
-        initiator_kind=initiator_kind,
-    )
-    if not created:
-        return job_id
-
+    """Bind one freshly created index job and dispatch it, failing it durably."""
     bound = _bind_index_dispatch(
         manager,
         job_id,
-        code_preflight=None,
-        document_preflight=None,
+        code_preflight=code_preflight,
+        document_preflight=document_preflight,
     )
     if bound.status is JobOutcomeStatus.ERROR:
         manager.fail_unstarted(job_id, result=bound.message)
@@ -1721,6 +1738,21 @@ def start_reindex_vault(
         record_finish(job_id, error=dispatched.message)
         raise RuntimeError(dispatched.message)
     return job_id
+
+
+def start_reindex_vault(
+    root: Path, clean: bool, *, initiator_kind: str = "service"
+) -> str:
+    """Start a background vault reindexing task and return the job_id."""
+    manager, job_id, created = _admit_index_job(
+        root,
+        source=JobSource.VAULT,
+        clean=clean,
+        initiator_kind=initiator_kind,
+    )
+    if not created:
+        return job_id
+    return _bind_and_dispatch_admitted(manager, job_id)
 
 
 def start_reindex_codebase(
@@ -1739,22 +1771,25 @@ def start_reindex_codebase(
     )
     if not created:
         return job_id
+    return _bind_and_dispatch_admitted(manager, job_id, code_preflight=code_preflight)
 
-    bound = _bind_index_dispatch(
-        manager,
-        job_id,
-        code_preflight=code_preflight,
-        document_preflight=None,
+
+def start_reindex_documents(
+    root: Path,
+    clean: bool,
+    *,
+    initiator_kind: str = "service",
+) -> str:
+    """Start a background document reindexing task and return the job_id."""
+    document_preflight = validate_document_job_admission(root)
+    manager, job_id, created = _admit_index_job(
+        root,
+        source=JobSource.DOCUMENT,
+        clean=clean,
+        initiator_kind=initiator_kind,
     )
-    if bound.status is JobOutcomeStatus.ERROR:
-        manager.fail_unstarted(job_id, result=bound.message)
-        record_finish(job_id, error=bound.message)
-        raise RuntimeError(bound.message)
-    dispatched = manager.dispatch(job_id)
-    if dispatched.status is JobOutcomeStatus.ERROR:
-        if dispatched.code == "dispatch_stopped":
-            return job_id
-        manager.fail_unstarted(job_id, result=dispatched.message)
-        record_finish(job_id, error=dispatched.message)
-        raise RuntimeError(dispatched.message)
-    return job_id
+    if not created:
+        return job_id
+    return _bind_and_dispatch_admitted(
+        manager, job_id, document_preflight=document_preflight
+    )

@@ -23,6 +23,7 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from ..job_control import NO_RUN_CONTROL
+from ..store_runtime import StorageGeometryError
 from . import _config_epoch, _stat_gate
 from ._index_lifecycle import run_index_lifecycle
 from ._streaming import VaultStreamRequest, _stream_encode_and_upsert_vault
@@ -237,19 +238,18 @@ class VaultIndexer:
         Emits phase events through ``reporter`` at every pipeline step.
 
         Args:
-            clean: When ``True``, drop and recreate the vault
-                collection up front so schema-level changes (e.g.
-                a new embedding dimension) take effect (#68). On the
-                ``clean=True`` path an
-                interrupted run (CUDA OOM, process kill, Qdrant
-                I/O failure mid-stream) may leave the collection
-                empty until the next successful run - this is
-                the explicit user opt-in to destructive semantics.
-                The default ``clean=False`` path is failure-safe:
-                it streams upserts in place and purges only the
-                stale doc IDs after a successful rebuild, so an
-                interrupted run never leaves the collection empty.
-                Both modes deliver the "no stale documents persist"
+            clean: When ``True``, additionally purge points that only a
+                superseded point layout can leave behind, so the rebuild
+                delivers a fully replaced collection. Both modes replace in
+                place: they stream upserts over the live points and purge
+                what the new corpus no longer contains only after the stream
+                succeeds, so an interruption at any instant leaves the old
+                complete collection still answering searches. The one
+                destructive branch left is a stored geometry the new
+                configuration cannot write into (e.g. a changed embedding
+                dimension), where recreation is the only possible path and
+                the old points were unservable for this configuration
+                anyway. Both modes deliver the "no stale documents persist"
                 contract on successful completion.
             reporter: Required progress reporter. Callers without a UI
                 should pass ``NullProgressReporter``.
@@ -297,23 +297,20 @@ class VaultIndexer:
         # ``full_index(clean=True)`` on a now-empty vault still
         # purges every previously-indexed row.
 
-        # Failure-safe rebuild: ensure the table exists, snapshot the
-        # current ID set, stream upsert (idempotent by doc_id - existing
-        # rows are overwritten in place), then purge only the IDs that
-        # no longer exist in the new corpus. If any slice raises we have
-        # not destroyed the old collection. clean=True preserves its
-        # documented contract ("no stale documents persist") via the
-        # final purge step.
-        #
-        # When ``clean=True`` is explicitly passed, we ALSO drop the
-        # collection up front so that schema-level changes (e.g. a
-        # new embedding dimension) take effect (#68).
-        # This re-introduces a narrow data-loss window between the
-        # drop and the streaming upsert - but only on the explicit
-        # opt-in path. ``clean=False`` (the default + watcher path)
-        # remains failure-safe.
+        # Failure-safe rebuild, clean or not: ensure the table exists,
+        # snapshot the current ID set, stream upsert (idempotent by doc_id -
+        # existing rows are overwritten in place), then purge only the IDs
+        # that no longer exist in the new corpus. If any slice raises we
+        # have not destroyed the old collection, so a crash at any instant
+        # leaves the old complete index answering searches. ``clean=True``
+        # keeps its "no stale documents persist" contract through the final
+        # purge steps rather than through an up-front drop, because a drop
+        # that precedes the build converts every interruption into a served
+        # husk. The only recreation left is the geometry-incompatible case
+        # inside ``_prepare_collection``, where in-place replacement is
+        # physically impossible.
         # A cooperative request already pending is delivered before a clean
-        # collection can be dropped. Once the drop begins, defer new requests
+        # publication span begins; within it, new requests are deferred
         # through streaming, stale cleanup, and metadata publication so a
         # deliberate pause/cancel never exposes a partial replacement.
         publication_span = (
@@ -347,6 +344,27 @@ class VaultIndexer:
                 run_control=run_control,
             )
 
+            stale_counts: dict[str, int] = existing_counts
+            if clean:
+                # Points from a superseded layout carry no ordinal, so the
+                # upserts wrote beside them and neither replacement purge can
+                # see them; only the clean rebuild promises their removal.
+                # Like the tail purge above, this runs only after the stream
+                # proved the replacement whole - an interruption before this
+                # point leaves the old collection fully intact. Removing
+                # them changes what the barrier below must expect for the
+                # stale documents, so the counts are re-taken when any went.
+                with _controlled_phase(
+                    reporter,
+                    run_control,
+                    "purge superseded-layout points",
+                    1,
+                ):
+                    run_control.checkpoint()
+                    if self.store.delete_prechunk_vault_points():
+                        stale_counts = self.store.get_chunk_counts()
+                    reporter.advance(1)
+
             # Streaming completed successfully - now it is safe to delete
             # the rows that were in the collection before but are absent
             # from the freshly-indexed corpus.
@@ -359,7 +377,7 @@ class VaultIndexer:
             # hold exactly the new corpus's chunks plus the untouched
             # chunks of documents that will be purged as stale below.
             expected_points = sum(new_counts.values()) + sum(
-                existing_counts[doc_id] for doc_id in stale_ids
+                stale_counts.get(doc_id, 0) for doc_id in stale_ids
             )
             run_control.checkpoint()
             self.store.apply_ingest_barrier(
@@ -386,12 +404,6 @@ class VaultIndexer:
                         raise
                     run_control.checkpoint()
                     reporter.advance(len(stale_ids))
-            # Removed a dead `if clean and not stale_ids and
-            # existing_ids_before` debug log: clean=True drops the
-            # collection up front, so existing_ids_before is always empty
-            # on that path and the condition could never fire. The
-            # non-clean path with no stale_ids is the no-op case and
-            # doesn't need a log line.
 
             with _controlled_phase(reporter, run_control, "write metadata", 1):
                 self._save_meta(docs, run_control=run_control)
@@ -1005,24 +1017,47 @@ class VaultIndexer:
         reporter: ProgressReporter,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> dict[str, int]:
-        """Drop/ensure the collection and snapshot stored chunk counts.
+        """Ensure the collection and snapshot stored chunk counts.
 
         The snapshot drives both the stale-document purge and the
         shrunk-tail purge after streaming. A failed snapshot degrades
         to skipping those purges rather than failing the rebuild.
+
+        The collection is never dropped here for an ordinary clean rebuild -
+        the served points must outlive the build that replaces them. The one
+        exception is a stored geometry the current configuration cannot
+        write into, where recreation is the only path and nothing servable
+        is lost.
         """
         with _controlled_phase(reporter, run_control, "prepare collection", 1):
-            if clean:
+            run_control.checkpoint()
+            try:
+                self.store.ensure_table()
+            except StorageGeometryError:
+                if not clean:
+                    raise
+                # The stored vectors cannot hold this configuration's
+                # geometry, so replacing points in place is impossible and
+                # recreation is the only path forward. This is the single
+                # remaining destructive branch of a clean rebuild: the old
+                # points were unusable for this configuration anyway, so
+                # nothing servable is being destroyed. Every other clean
+                # rebuild replaces in place - upsert over the live points,
+                # purge what the new corpus no longer contains after the
+                # stream succeeds - so an interrupted run leaves the old
+                # complete collection still answering searches.
+                logger.warning(
+                    "vault collection geometry cannot hold this "
+                    "configuration; recreating it for the clean rebuild",
+                )
                 run_control.checkpoint()
                 self.store.drop_table()
                 self.store.ensure_table()
                 run_control.checkpoint()
-                # The collection was just dropped: the snapshot is empty
+                # The collection was just recreated: the snapshot is empty
                 # by construction, and scanning would only burn CPU.
                 reporter.advance(1)
                 return {}
-            run_control.checkpoint()
-            self.store.ensure_table()
             run_control.checkpoint()
             try:
                 existing_counts: dict[str, int] = self.store.get_chunk_counts()
