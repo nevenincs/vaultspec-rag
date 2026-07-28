@@ -8,7 +8,6 @@ chunks, tracking content hashes for incremental re-indexing.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import logging
 import pathlib
 import time
@@ -22,7 +21,7 @@ from .._store_models import (
     publish_generation_as_served,
 )
 from ..job_control import NO_RUN_CONTROL
-from . import _chunk_worker, _code_meta, _preprocess_glue
+from . import _chunk_worker, _code_meta, _preprocess_glue, _stat_gate
 from ._chunk_producer import CodeChunkProducer
 from ._code_meta import (
     CODE_EMBED_SCHEMA,
@@ -164,6 +163,7 @@ class CodebaseIndexer:
         cfg = get_config()
         self._data_root = root_dir / cfg.data_dir
         self._meta_path = self._data_root / cfg.code_index_metadata_file
+        self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Per-run document-preprocessing state (#185). Both are reset at the
         # start of each full/incremental run; the writer lock serialises runs
         # so instance-scoped state is safe. ``_prep_ctx`` is the context handed
@@ -640,6 +640,7 @@ class CodebaseIndexer:
             current_files,
             reporter,
             run_control=run_control,
+            full_membership=True,
         )
         return current_files, current_hashes
 
@@ -1270,24 +1271,29 @@ class CodebaseIndexer:
         reporter: ProgressReporter,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
+        full_membership: bool = False,
     ) -> dict[str, str]:
         """Hash a path mapping, pruning entries that cannot be read.
 
         ``to_hash`` is pruned in place so it stays keyed exactly like the
         returned digests; callers index one by the other.
+
+        Hashing runs behind the stat-evidence gate, so a file whose
+        ``(size, mtime_ns)`` still matches the identity its hash was computed
+        against is answered from a stat call instead of a full read. Only a
+        caller passing the complete current membership sets
+        ``full_membership``, which additionally prunes gate evidence for
+        files that no longer exist.
         """
         run_control.checkpoint()
+        gate = _stat_gate.StatEvidenceGate.load(self._stat_gate_path)
         reporter.phase_start("hash files", len(to_hash))
         changed_hashes: dict[str, str] = {}
         try:
             for rel, path in to_hash.items():
                 run_control.checkpoint()
                 try:
-                    with open(path, "rb") as f:
-                        changed_hashes[rel] = hashlib.file_digest(
-                            f,
-                            "blake2b",
-                        ).hexdigest()
+                    changed_hashes[rel] = gate.hash_file(rel, path)
                 except OSError:
                     logger.warning("Cannot hash file, skipping: %s", rel)
                 reporter.advance()
@@ -1295,6 +1301,15 @@ class CodebaseIndexer:
         finally:
             reporter.phase_end()
         run_control.checkpoint()
+        if full_membership:
+            gate.prune(to_hash.keys())
+        gate.persist()
+        if gate.reused:
+            logger.debug(
+                "stat gate reused %d code hashes, rehashed %d",
+                gate.reused,
+                gate.rehashed,
+            )
         for rel in set(to_hash) - set(changed_hashes):
             del to_hash[rel]
         return changed_hashes

@@ -1107,7 +1107,7 @@ async def test_watcher_cancellation_releases_real_admitted_claim(
     tmp_path: Path,
     managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """Operator cancellation settles the admitted durable generation as dirty."""
+    """Operator cancellation settles the admitted generation as dirty and scoped."""
     registry, manager = managed_watcher_runtime
     root = tmp_path.resolve()
     _slot, _trigger, target = _build_watched_code_project(root, registry)
@@ -1161,9 +1161,11 @@ async def test_watcher_cancellation_releases_real_admitted_claim(
         terminal.id,
         active_state["attempt_generation"] is not None,
         interrupted["convergence_pending"],
+        # The live watcher slot retains the exact dirty paths across the
+        # cancellation, so the durable intent stays scoped.
         interrupted["unscoped_required"],
         interrupted["consecutive_failures"],
-    ) == (running.id, True, True, True, 0)
+    ) == (running.id, True, True, False, 0)
     await _stop_watcher(root)
 
 

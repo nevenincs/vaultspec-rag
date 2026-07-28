@@ -24,7 +24,7 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from ..job_control import NO_RUN_CONTROL
-from . import _config_epoch
+from . import _config_epoch, _stat_gate
 from ._index_lifecycle import run_index_lifecycle
 from ._streaming import VaultStreamRequest, _stream_encode_and_upsert_vault
 from ._vault_meta import (
@@ -170,6 +170,7 @@ class VaultIndexer:
 
         self._writer_lock: _threading.Lock = _threading.Lock()
         self._meta_path = root_dir / cfg.data_dir / cfg.index_metadata_file
+        self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
 
     def _resolve_reuse(
         self,
@@ -546,6 +547,7 @@ class VaultIndexer:
                 current_docs,
                 reporter,
                 run_control=run_control,
+                full_membership=True,
             )
 
         modified_ids = {
@@ -636,20 +638,27 @@ class VaultIndexer:
         reporter: ProgressReporter,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
+        full_membership: bool = False,
     ) -> dict[str, str]:
+        """Hash documents behind the stat-evidence gate.
+
+        Only a caller passing the complete current membership sets
+        ``full_membership``, which additionally prunes gate evidence for
+        documents that no longer exist.
+        """
+        gate = _stat_gate.StatEvidenceGate.load(self._stat_gate_path)
         current_hashes: dict[str, str] = {}
         for doc_id, path in current_docs.items():
             run_control.checkpoint()
             try:
-                with open(path, "rb") as f:
-                    current_hashes[doc_id] = hashlib.file_digest(
-                        f,
-                        "blake2b",
-                    ).hexdigest()
+                current_hashes[doc_id] = gate.hash_file(doc_id, path)
             except OSError:
                 logger.warning("Cannot hash file, skipping: %s", doc_id)
             reporter.advance()
             run_control.checkpoint()
+        if full_membership:
+            gate.prune(current_docs.keys())
+        gate.persist()
         return current_hashes
 
     def _parse_documents(

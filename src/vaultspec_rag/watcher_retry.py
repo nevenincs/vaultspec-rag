@@ -541,7 +541,15 @@ class WatcherRetryPolicy:
                     next_retry_at=0.0,
                     circuit_state=WatcherCircuitState.CLOSED,
                     convergence_pending=newer_generation_pending,
-                    unscoped_required=newer_generation_pending,
+                    # A generation marked mid-attempt keeps its exact paths in
+                    # the live convergence slot, so success preserves rather
+                    # than forces the unscoped requirement; construction over
+                    # a loaded pending bit and scope refresh still escalate
+                    # for any instance that cannot scope the pending
+                    # generation.
+                    unscoped_required=(
+                        newer_generation_pending and state.unscoped_required
+                    ),
                     attempt_generation=None,
                     attempt_token=None,
                     attempt_started_at=None,
@@ -581,7 +589,14 @@ class WatcherRetryPolicy:
                         else WatcherCircuitState.CLOSED
                     ),
                     convergence_pending=True,
-                    unscoped_required=True,
+                    # An interruption in a live process - a coalesced
+                    # admission or an operator cancel - leaves the exact
+                    # dirty paths in the convergence slot, so the unscoped
+                    # requirement is preserved, not forced. Process loss is
+                    # covered elsewhere: construction over the durable
+                    # pending bit and scope refresh both escalate for any
+                    # instance that cannot scope the pending generation.
+                    unscoped_required=state.unscoped_required,
                     attempt_generation=None,
                     attempt_token=None,
                     attempt_started_at=None,
