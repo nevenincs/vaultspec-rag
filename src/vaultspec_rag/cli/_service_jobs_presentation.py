@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from typing import cast
@@ -11,7 +12,13 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediation
-from ._cli_format import _format_mb, _format_milliseconds, _format_seconds, _path_label
+from ._cli_format import (
+    _format_mb,
+    _format_milliseconds,
+    _format_seconds,
+    _path_label,
+    compact_duration,
+)
 from ._render import _plain, address_line
 from ._service_jobs_query import (
     empty_jobs_message,
@@ -233,6 +240,28 @@ def stale_progress_label(job: dict[str, object]) -> str:
     return f"no progress for {_format_seconds(raw_age)}"
 
 
+def remaining_estimate_label(job: dict[str, object]) -> str:
+    """Say how much longer the service expects this job to run.
+
+    Three answers, kept distinct. A published value renders as a coarse
+    countdown; a published null is the service declining to estimate this
+    job and reads as an explicit unknown; an absent key is a daemon that
+    predates the estimate and yields nothing here at all - rendering that
+    as unknown would tell the operator their work is unmeasurable when
+    the truth is their service does not measure. The service owns the
+    number: nothing here derives a rate from raw progress.
+    """
+    if "estimated_remaining_seconds" not in job:
+        return ""
+    remaining = job.get("estimated_remaining_seconds")
+    if isinstance(remaining, int | float) and not isinstance(remaining, bool):
+        # Ceiling, not truncation: a countdown must never read below what
+        # the service just said, and the coarse two-unit rendering already
+        # removes any precision the estimate does not have.
+        return f"~{compact_duration(math.ceil(max(0.0, float(remaining))))} remaining"
+    return "ETA unknown"
+
+
 def _human_result(raw: object, *, failed: bool = False) -> str:
     if not raw:
         return ""
@@ -311,7 +340,11 @@ def _running_job_detail(job: dict[str, object]) -> str:
         else "runtime not reported"
     )
     stale_progress = stale_progress_label(job)
-    parts = [p for p in (detail, runtime_detail, stale_progress) if p]
+    # A stalled job's estimate is measured over a window whose newest
+    # samples predate the stall, so a countdown beside "no progress for
+    # five minutes" is two contradictory claims; the stall wins.
+    estimate = remaining_estimate_label(job) if not stale_progress else ""
+    parts = [p for p in (detail, runtime_detail, estimate, stale_progress) if p]
     return "; ".join(parts) if parts else runtime_detail
 
 
@@ -554,6 +587,20 @@ def _render_job_progress_detail(job: dict[str, object]) -> None:
         _cli.console.print(f"Progress warning: {stale_progress}")
     if isinstance(job.get("progress"), dict):
         _cli.console.print(f"Progress: {human_progress(job)}")
+    # Only work that is actually doing something now carries the line:
+    # queued and admission-parked jobs have nothing to count down, and a
+    # stalled job's countdown would contradict the warning above.
+    if (
+        str(job.get("phase", "")) == "running"
+        and not job_is_waiting(job)
+        and not job_awaiting_admission(job)
+        and not stale_progress
+    ):
+        estimate = remaining_estimate_label(job)
+        if estimate:
+            # The exact phrase the feed uses, so the two views cannot drift
+            # into naming the same estimate differently.
+            _cli.console.print(estimate)
 
 
 def _render_job_initiator_detail(job: dict[str, object]) -> None:
