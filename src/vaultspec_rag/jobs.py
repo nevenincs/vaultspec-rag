@@ -68,6 +68,7 @@ __all__ = [
     "find_job",
     "forward_telemetry",
     "get_job_manager",
+    "gpu_pressure_snapshot",
     "index_job_status",
     "progress_rate",
     "record_finish",
@@ -161,6 +162,11 @@ _BACKEND_PROBE_TIMEOUT_SECONDS = 2.0
 _BACKEND_PROBE_CACHE_SECONDS = 5.0
 _backend_probe_lock = threading.Lock()
 _backend_probe_cache: dict[tuple[str, str], tuple[float, dict[str, object]]] = {}
+# The whole-machine GPU pressure reading served on the jobs listing, held a
+# few seconds so a polling operator view does not pay the probe per poll.
+_GPU_SNAPSHOT_CACHE_SECONDS = 5.0
+_gpu_snapshot_lock = threading.Lock()
+_gpu_snapshot_cache: tuple[float, dict[str, object]] | None = None
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
 _manager_lock = threading.Lock()
 _job_manager: JobManager | None = None
@@ -916,6 +922,41 @@ def _forward_evidence(
         "items": forward.get("items"),
         "thread_alive": thread_alive,
     }
+
+
+def gpu_pressure_snapshot(*, now: float | None = None) -> dict[str, object]:
+    """The machine-wide GPU pressure block, cached for a few seconds.
+
+    The jobs listing is polled every couple of seconds by every open operator
+    view, and each poll would otherwise pay the probe again for a reading
+    that cannot meaningfully change between polls. The block is the same
+    shape the degradation evidence carries, sampled through the same
+    read-only probe, so a header and an evidence block can never disagree
+    about what was measured.
+
+    Args:
+        now: The moment cache freshness is judged against; defaults to the
+            wall clock. Injectable so freshness is testable without sleeping.
+
+    Returns:
+        ``{"available", "utilization_percent", "memory_used_mb",
+        "memory_total_mb"}``, every measurement ``None`` where this host
+        cannot measure it. Callers receive a copy; mutating it cannot
+        poison the cache.
+    """
+    global _gpu_snapshot_cache
+    moment = time.time() if now is None else now
+    with _gpu_snapshot_lock:
+        cached = _gpu_snapshot_cache
+        if (
+            cached is not None
+            and 0.0 <= moment - cached[0] < _GPU_SNAPSHOT_CACHE_SECONDS
+        ):
+            return dict(cached[1])
+    snapshot = _gpu_evidence()
+    with _gpu_snapshot_lock:
+        _gpu_snapshot_cache = (moment, snapshot)
+    return dict(snapshot)
 
 
 def _gpu_evidence() -> dict[str, object]:

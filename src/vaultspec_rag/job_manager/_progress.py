@@ -103,7 +103,17 @@ class JobManagerProgress(JobManagerState):
         job_id: str,
         update: ProgressUpdate,
     ) -> JobOutcome:
-        """Publish progress only from the exact task owning the current attempt."""
+        """Publish progress only from the exact task owning the current attempt.
+
+        Progress is an advisory, high-frequency signal: the mutation lands in
+        memory immediately and its durable write is coalesced onto the flush
+        budget rather than paid per call, so loops that publish per item never
+        pay a per-call fsync. Lifecycle transitions remain synchronously
+        durable and carry any deferred progress with them. When a coalesced
+        flush does run here, only the write happens outside the manager lock;
+        a flush failure is surfaced on the publish that attempted it while the
+        in-memory progress stays authoritative for the retrying flush.
+        """
         command = "update_progress"
         raw_step = cast("object", update.step)
         raw_completed = cast("object", update.completed)
@@ -117,7 +127,6 @@ class JobManagerProgress(JobManagerState):
             )
         normalized_step, normalized_completed, normalized_total = normalized_progress
         with self._lock:
-            backup = self._capture_state_locked()
             managed = self._active.get(job_id)
             if managed is None:
                 return self._error(command, "job_not_found", "The job was not found.")
@@ -150,25 +159,27 @@ class JobManagerProgress(JobManagerState):
                     last_updated=time.time(),
                 ),
             )
-            persistence_error = self._persist_locked()
-            if persistence_error is not None:
-                if not persistence_error.published:
-                    self._restore_state_locked(backup)
-                return self._persistence_error(
-                    command,
-                    persistence_error,
-                    self._get_locked(job_id),
-                )
-            return JobOutcome(
+            self._note_progress_mutation_locked()
+            updated = JobOutcome(
                 command=command,
                 status=JobOutcomeStatus.OK,
                 code="progress_updated",
                 message="The current attempt progress was updated.",
                 job=self._snapshot_locked(managed),
             )
+            pending = self._begin_progress_flush_locked()
+        if pending is not None:
+            flush_error = self._complete_progress_flush(pending)
+            if flush_error is not None:
+                return self._persistence_error(
+                    command,
+                    flush_error,
+                    self.get(job_id),
+                )
+        return updated
 
     def flush_persistence(self) -> JobOutcome:
-        """Idempotently retry the latest dirty manager generation."""
+        """Idempotently flush the latest dirty or deferred manager generation."""
         command = "flush_persistence"
         with self._lock:
             if self._state_path is None:
@@ -178,7 +189,10 @@ class JobManagerProgress(JobManagerState):
                     code="persistence_disabled",
                     message="This job manager has no persistence path.",
                 )
-            if not self._persistence_dirty:
+            if (
+                not self._persistence_dirty
+                and self._flushed_generation == self._state_generation
+            ):
                 return JobOutcome(
                     command=command,
                     status=JobOutcomeStatus.OK,

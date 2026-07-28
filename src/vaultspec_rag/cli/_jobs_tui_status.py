@@ -512,9 +512,14 @@ class ServiceStatusBar(Static):
         self.repaint_status()
 
     def repaint_status(self) -> None:
-        """Re-render the held result at the width now reported."""
+        """Re-render the held result at the width now reported.
+
+        The content region, not the outer size: any padding the app's
+        stylesheet gives this bar comes out of the line's room, and measuring
+        against the outer width would admit a segment the padding then clips.
+        """
         app = cast("App[object]", self.app)
-        width = self.size.width or app.size.width
+        width = self.content_size.width or self.size.width or app.size.width
         self.update(render_status_header(self._status, width))
 
     def on_mount(self) -> None:

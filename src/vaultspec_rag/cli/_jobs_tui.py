@@ -15,6 +15,7 @@ including its refusal - is shown on the row that asked for it.
 from __future__ import annotations
 
 import math
+import os
 import time
 from typing import TYPE_CHECKING, ClassVar, NamedTuple, cast
 
@@ -24,7 +25,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, RichLog, Static
+from textual.widgets import DataTable, Footer, Static
 from textual.widgets.data_table import ColumnKey
 from textual.worker import WorkerState
 
@@ -36,6 +37,7 @@ from ..serviceclient._transport import (
     _try_http_set_job_desired_state,
 )
 from ._cli_format import compact_duration
+from ._jobs_tui_log import JobsLogView, semantic_tones
 from ._jobs_tui_status import (
     ServiceStatusBar,
     ServiceStatusHeader,
@@ -156,6 +158,12 @@ _ACTION_KEYS: dict[str, str] = {
     "k": "job_stop",
     "y": "job_retry",
     "d": "job_delete",
+    "x": "log_noise",
+    "n": "log_next_error",
+    "N": "log_prev_error",
+    "g": "log_top",
+    "G": "log_end",
+    "f": "log_expand",
 }
 
 # Why each action is unavailable, in the operator's terms rather than the
@@ -166,7 +174,13 @@ _ACTION_REASONS: dict[str, str] = {
     "job_stop": "Only running work can be cancelled.",
     "job_retry": "Only a finished or failed job can be retried.",
     "job_delete": "Only a finished or failed job can be deleted.",
+    "log_next_error": "This log has no error entries.",
+    "log_prev_error": "This log has no error entries.",
 }
+
+# What every log action answers with while the pane is closed. The keys must
+# not go dead just because the pane is not on screen.
+_LOG_CLOSED_REASON = "The log pane is closed - press l to open it."
 
 # Header counters, as (label, the canonical state they count). The service
 # tallies these over every record matching the filter; the same names index
@@ -179,6 +193,65 @@ _SUMMARY_BUCKETS: tuple[tuple[str, str], ...] = (
     ("failed", "failed"),
     ("succeeded", "succeeded"),
 )
+
+# The two colour schemes this interface ships, both taken whole from
+# palettes the design community already maintains rather than named ANSI
+# colours chosen here: Nord for the dark scheme and Solarized Light for the
+# light one, exactly as the framework distributes them. Every status colour
+# below is expressed as a semantic tone resolved from the active theme's own
+# readable text variants, so switching scheme restyles every cell
+# consistently and nothing in this module states a colour of its own.
+_DARK_THEME = "nord"
+_LIGHT_THEME = "solarized-light"
+
+# Header pills. One anatomy for every pill - glyph, count, then (width
+# permitting) a label - so no cell has to be decoded differently from its
+# neighbours, and the glyph is never the only signal. Tone is one mapping
+# across the whole header: good, attention, bad, neutral, muted - and a
+# pill's tone drops to muted at zero so colour always means signal. The
+# ASCII fallback carries the same meaning on a terminal that cannot paint
+# the glyph, and moves with the glyph whenever one changes.
+#
+# The glyph families keep the categories apart at a glance: activity states
+# use playback marks (▶ run, ⋯ queued, ‖ paused) and outcome marks (✖ ✓),
+# while the job-health tallies use an escalating warning-triangle family
+# (△ hollow for degraded, ▲ solid for stalled) that cannot be misread as a
+# state.
+_STATE_PILLS: dict[str, tuple[str, str, str, str, bool]] = {
+    # state -> (glyph, ASCII fallback, label, tone, bold)
+    "running": ("▶", ">", "running", "good", True),
+    "queued": ("⋯", "..", "queued", "neutral", False),
+    "paused": ("‖", "||", "paused", "neutral", False),
+    "failed": ("✖", "x", "failed", "bad", True),
+    "succeeded": ("✓", "v", "succeeded", "good", False),
+}
+# The residue bucket for states without a pill of their own; the label is
+# the state name the tally reported.
+_OTHER_PILL_GLYPHS = ("□", "?")
+
+# Job-health tallies the service publishes beside the state counts. Shown
+# only when the summary carries the key: a daemon older than the tally is
+# absent, not zero.
+_HEALTH_PILLS: tuple[tuple[str, str, str, str, str, bool], ...] = (
+    # key -> (glyph, ASCII fallback, label, tone, bold)
+    ("degraded", "△", "!", "degraded", "attention", False),
+    ("stalled", "▲", "!!", "stalled", "bad", True),
+)
+
+# The dim divider between header groups: states, health, service, GPU, and
+# the page count each read as their own cell run rather than one cramped row.
+_GROUP_SEPARATORS = ("│", "|")
+
+# The service-condition pill's vocabulary, worst-last, and its tones.
+# ``reachable`` is what an older daemon that stamps no verdicts can claim.
+_CONDITION_ORDER = ("healthy", "degraded", "stalled")
+_CONDITION_TONES: dict[str, tuple[str, bool]] = {
+    "healthy": ("good", False),
+    "degraded": ("attention", False),
+    "stalled": ("bad", True),
+    "unreachable": ("bad", True),
+    "reachable": ("muted", False),
+}
 
 _STATE_STYLES: dict[str, str] = {
     "active": "bold green",
@@ -447,26 +520,46 @@ def _time_cell(
     return _two_line(compact_duration(job.get("runtime_seconds")), estimate, cells)
 
 
+class _LogPane(Vertical):
+    """The log pane's container, allowed to fill the screen on request.
+
+    A plain container refuses maximization, and maximizing the log widget
+    alone would take it from under its own title bar - the zoom would drop
+    the line saying whose log this is and what the noise filter hides.
+    """
+
+    ALLOW_MAXIMIZE: ClassVar[bool | None] = True
+
+
 class JobsTuiApp(App[None]):
     """The live jobs interface."""
 
     # Every size here is relative: fractional shares for the panes, content
     # height for the bars. Nothing is expressed as a fixed cell count, so the
     # layout follows whatever the terminal reports at any moment.
+    #
+    # Each pane wears a rounded border, and the border is how focus is told:
+    # the pane holding the keyboard lights its frame with the accent colour,
+    # every other frame stays muted. The focus ring is the one visual answer
+    # to "where will my next keypress land", so it is carried by the pane's
+    # own frame rather than by anything inside it.
     CSS = """
-    #summary { height: auto; padding: 0 1; background: $panel; color: $text; }
-    #body { height: 1fr; width: 1fr; }
-    #jobs { width: 1fr; height: 1fr; }
-    #logpane { display: none; }
+    #summary { height: auto; padding: 0 2; background: $panel; color: $text; }
+    #servicestatus { height: auto; padding: 0 2; background: $panel; }
+    #body { height: 1fr; width: 1fr; padding: 0 1; }
+    #jobs { width: 1fr; height: 1fr; border: round $panel-lighten-2; }
+    #jobs:focus { border: round $accent; }
+    #logpane { display: none; border: round $panel-lighten-2; }
+    #logpane:focus-within { border: round $accent; }
     #logtitle { height: auto; padding: 0 1; background: $panel-darken-1; }
-    #joblog { height: 1fr; }
+    #joblog { height: 1fr; padding: 0 1; }
 
     /* One state drives the log in both layouts, so the toggle always does
        something. Width only decides whether showing it splits the screen or
        takes it over. */
     Screen.-showlog #logpane { display: block; }
     Screen.-wide.-showlog #jobs { width: 3fr; }
-    Screen.-wide.-showlog #logpane { width: 2fr; }
+    Screen.-wide.-showlog #logpane { width: 2fr; margin-left: 1; }
     Screen.-narrow.-showlog #jobs { display: none; }
     Screen.-narrow.-showlog #logpane { width: 1fr; }
     """
@@ -487,6 +580,14 @@ class JobsTuiApp(App[None]):
         Binding("y", "job_retry", "Retry"),
         Binding("d", "job_delete", "Delete"),
         Binding("l", "toggle_log", "Log"),
+        Binding("z", "toggle_zoom", "Zoom"),
+        Binding("ctrl+t", "toggle_theme", "Theme", show=False),
+        Binding("x", "log_noise", "Noise"),
+        Binding("n", "log_next_error", "Next error"),
+        Binding("N", "log_prev_error", "Prev error", show=False),
+        Binding("g", "log_top", "Log top", show=False),
+        Binding("G", "log_end", "Log end", show=False),
+        Binding("f", "log_expand", "Full values", show=False),
     ]
 
     # ``bindings=True`` re-evaluates ``check_action`` whenever the selection
@@ -515,6 +616,11 @@ class JobsTuiApp(App[None]):
         # The service's own tally over every record matching the filter, which
         # is the only count that describes more than the page on screen.
         self._summary: object = None
+        # The machine-wide GPU pressure block riding the jobs payload.
+        # Absent-vs-null matters: a daemon older than the field never sends
+        # it, a daemon on a host that cannot measure sends null measurements.
+        self._gpu: dict[str, object] | None = None
+        self._gpu_reported = False
         self._last_refresh: float | None = None
         self._last_error: str | None = None
         # The outcome of the last control, kept in the header until another
@@ -548,15 +654,19 @@ class JobsTuiApp(App[None]):
         yield ServiceStatusBar(id="servicestatus")
         with Horizontal(id="body"):
             yield DataTable(id="jobs", cursor_type="row", zebra_stripes=True)
-            with Vertical(id="logpane"):
+            with _LogPane(id="logpane"):
                 yield Static("Log", id="logtitle")
-                yield RichLog(
-                    id="joblog", wrap=True, markup=False, max_lines=_LOG_LINES
-                )
+                yield JobsLogView(id="joblog")
         yield Footer()
 
     def on_mount(self) -> None:
+        # The dark scheme is the default; both schemes are shipped palettes,
+        # and an operator's own choice through the framework's TEXTUAL_THEME
+        # variable always wins over either.
+        if not os.environ.get("TEXTUAL_THEME"):
+            self.theme = _DARK_THEME
         table = cast("DataTable[Text]", self.query_one("#jobs", DataTable))
+        table.border_title = "Jobs"
         for key, label in (
             ("state", "State"),
             ("job", "Job"),
@@ -565,6 +675,9 @@ class JobsTuiApp(App[None]):
             ("time", "Time"),
         ):
             table.add_column(label, key=key)
+        # Status colours resolve from the active theme, so a scheme change
+        # must repaint the surfaces that carry them.
+        self.theme_changed_signal.subscribe(self, self._on_theme_changed)
         # The table has no width until the first layout pass completes, and
         # dividing zero width would leave every column at its label size.
         self.call_after_refresh(self._relayout)
@@ -601,7 +714,11 @@ class JobsTuiApp(App[None]):
         if table is None:
             return False
         padding = table.cell_padding * 2 * len(_COLUMN_WEIGHTS)
-        available = table.size.width - padding
+        # The scrollable content region, not the outer size: the pane's
+        # border and any scrollbar come out of the cells the columns can
+        # actually paint into, and dividing the outer width lays the last
+        # column partly under the frame.
+        available = table.scrollable_content_region.width - padding
         # A hidden table reports no width. That is not a new division to
         # record; recording it would skip the real one when it reappears.
         if available <= 0 or table.size.width == self._divided_width:
@@ -782,6 +899,11 @@ class JobsTuiApp(App[None]):
         self._jobs = jobs
         self._total = _count(payload.get("total"))
         self._summary = payload.get("summary")
+        self._gpu_reported = "gpu" in payload
+        raw_gpu = payload.get("gpu")
+        self._gpu = (
+            cast("dict[str, object]", raw_gpu) if isinstance(raw_gpu, dict) else None
+        )
         self._reconcile_pending(generation, previous)
         self._layout_columns()
         self._render_rows()
@@ -1023,21 +1145,209 @@ class JobsTuiApp(App[None]):
             counts.append(("other", other))
         return counts
 
-    def _render_summary(self) -> None:
+    def _unicode_glyphs(self) -> bool:
+        """Whether the console's encoding can carry the pill glyphs."""
+        encoding = str(getattr(self.console, "encoding", "") or "")
+        return "utf" in encoding.lower()
+
+    @staticmethod
+    def _tone_style(tones: dict[str, str], tone: str, *, bold: bool = False) -> str:
+        """Resolve one semantic tone to a style, with an optional bold."""
+        colour = tones.get(tone, "")
+        return f"bold {colour}".strip() if bold else colour
+
+    def _append_separator(self, line: Text, *, unicode_ok: bool) -> None:
+        """A dim divider, so each header group reads as its own cell run."""
+        glyph, fallback = _GROUP_SEPARATORS
+        line.append("  ")
+        line.append(glyph if unicode_ok else fallback, style="dim")
+        line.append(" ")
+
+    def _append_state_pills(
+        self,
+        line: Text,
+        tones: dict[str, str],
+        *,
+        labelled: bool,
+        unicode_ok: bool,
+    ) -> None:
+        """One pill per state bucket: glyph, count, and (wide) its label."""
+        for key, count in self._header_counts():
+            spec = _STATE_PILLS.get(key)
+            if spec is None:
+                # The residue bucket, in the same anatomy as its neighbours.
+                glyph, fallback = _OTHER_PILL_GLYPHS
+                label, tone, bold = key, "", False
+            else:
+                glyph, fallback, label, tone, bold = spec
+            pill = f"{glyph if unicode_ok else fallback} {count}"
+            if labelled:
+                pill += f" {label}"
+            line.append("  ")
+            line.append(
+                pill,
+                style=self._tone_style(tones, tone, bold=bold) if count else "dim",
+            )
+
+    def _append_health_pills(
+        self,
+        line: Text,
+        tones: dict[str, str],
+        *,
+        labelled: bool,
+        unicode_ok: bool,
+    ) -> None:
+        """The service's job-health tallies, in their own group."""
+        summary = self._summary
+        if not isinstance(summary, dict):
+            return
+        counted = cast("dict[str, object]", summary)
+        present = [spec for spec in _HEALTH_PILLS if spec[0] in counted]
+        if not present:
+            # A daemon older than the tally; absent is not zero.
+            return
+        self._append_separator(line, unicode_ok=unicode_ok)
+        for index, (key, glyph, fallback, label, tone, bold) in enumerate(present):
+            count = _count(counted.get(key)) or 0
+            pill = f"{glyph if unicode_ok else fallback} {count}"
+            if labelled:
+                pill += f" {label}"
+            if index:
+                line.append("  ")
+            line.append(
+                pill,
+                style=self._tone_style(tones, tone, bold=bold) if count else "dim",
+            )
+
+    def _service_condition(self) -> str:
+        """The service's condition verdict for the header pill.
+
+        Reachability first, then the worst active degradation verdict the
+        service has stamped - taken from the service's own tally where the
+        summary carries one, from the stamped records on the page otherwise.
+        Nothing is computed here; the service is the authority on both.
+        """
+        if self._last_error is not None:
+            return "unreachable"
+        summary = self._summary
+        if isinstance(summary, dict):
+            counted = cast("dict[str, object]", summary)
+            if "stalled" in counted or "degraded" in counted:
+                if _count(counted.get("stalled")):
+                    return "stalled"
+                if _count(counted.get("degraded")):
+                    return "degraded"
+                return "healthy"
+        stamped = [
+            verdict
+            for verdict in (degradation_verdict(job) for job in self._jobs)
+            if isinstance(verdict, str) and verdict in _CONDITION_ORDER
+        ]
+        if not stamped:
+            # An older daemon stamps no verdicts; reachable is all it claims.
+            return "reachable"
+        return max(stamped, key=_CONDITION_ORDER.index)
+
+    def _gpu_cell(self) -> tuple[str, str, bool]:
+        """The GPU pressure cell as (text, tone, bold), honest about absence.
+
+        Never fake numbers: a daemon that does not send the block renders as
+        a muted dash, and one that probed an unmeasurable host as ``n/a``.
+        The tone shift at high pressure is presentation only; any verdict
+        about what the pressure means stays with the service.
+        """
+        if not self._gpu_reported:
+            return "gpu —", "muted", False
+        gpu = self._gpu or {}
+        utilization = _measurement(gpu.get("utilization_percent"))
+        used = _measurement(gpu.get("memory_used_mb"))
+        total = _measurement(gpu.get("memory_total_mb"))
+        parts: list[str] = []
+        pressure = 0.0
+        if utilization is not None:
+            parts.append(f"{utilization:.0f}%")
+            pressure = max(pressure, utilization / 100.0)
+        if used is not None and total is not None and total > 0:
+            parts.append(f"{used / 1024:.1f}/{total / 1024:.1f}G")
+            pressure = max(pressure, used / total)
+        if not parts:
+            return "gpu n/a", "muted", False
+        if pressure >= 0.9:
+            return f"gpu {' '.join(parts)}", "bad", True
+        if pressure >= 0.75:
+            return f"gpu {' '.join(parts)}", "attention", False
+        return f"gpu {' '.join(parts)}", "good", False
+
+    def _compose_header_line(
+        self,
+        tones: dict[str, str],
+        *,
+        state_labels: bool,
+        health_labels: bool,
+    ) -> Text:
+        """Build the header row: grouped pills, condition, GPU, page count.
+
+        The groups - state pills, health tallies, service condition, GPU,
+        and the page count - are divided by dim separators so the row reads
+        as cells rather than one cramped run. Labels are a width decision
+        made by the caller; the condition and GPU cells are never dropped.
+        """
+        unicode_ok = self._unicode_glyphs()
         line = Text(f"{self._header_glyph()} Jobs on port {self._port}", style="bold")
-        for label, count in self._header_counts():
-            line.append(f"   {label} {count}")
+        self._append_state_pills(
+            line, tones, labelled=state_labels, unicode_ok=unicode_ok
+        )
+        self._append_health_pills(
+            line, tones, labelled=health_labels, unicode_ok=unicode_ok
+        )
+        self._append_separator(line, unicode_ok=unicode_ok)
+        verdict = self._service_condition()
+        tone, bold = _CONDITION_TONES[verdict]
+        line.append(
+            f"{'●' if unicode_ok else '*'} svc {verdict}",
+            style=self._tone_style(tones, tone, bold=bold),
+        )
+        self._append_separator(line, unicode_ok=unicode_ok)
+        gpu_text, gpu_tone, gpu_bold = self._gpu_cell()
+        line.append(gpu_text, style=self._tone_style(tones, gpu_tone, bold=gpu_bold))
+        self._append_separator(line, unicode_ok=unicode_ok)
         shown = len(self._jobs)
         if self._total is None:
-            line.append(f"   showing {shown}")
+            line.append(f"showing {shown}")
         else:
             # A page onto a longer list is marked, because every count above
             # is a count of the page rather than of the service's work - and
             # because it is the only place a deletion shows when the freed
             # slot is immediately backfilled from the remainder.
             line.append(
-                f"   showing {shown} of {self._total}",
-                style="bold yellow" if self._total > shown else "",
+                f"showing {shown} of {self._total}",
+                style=self._tone_style(tones, "attention", bold=True)
+                if self._total > shown
+                else "",
+            )
+        return line
+
+    def _summary_width(self) -> int:
+        """The header bar's content width, or zero before its first layout."""
+        found = self.query("#summary")
+        if not found:
+            return 0
+        return found.only_one(Static).content_size.width
+
+    def _render_summary(self) -> None:
+        tones = semantic_tones(self.theme_variables)
+        width = self._summary_width()
+        # Widest fitting form wins: labels leave the state pills first, then
+        # the health tallies. Counts, the condition cell and the GPU cell
+        # are never shed; past the narrowest form the bar wraps.
+        line = self._compose_header_line(tones, state_labels=True, health_labels=True)
+        if 0 < width < line.cell_len:
+            line = self._compose_header_line(
+                tones, state_labels=False, health_labels=True
+            )
+        if 0 < width < line.cell_len:
+            line = self._compose_header_line(
+                tones, state_labels=False, health_labels=False
             )
         # The age of the data is reported whether or not the last fetch
         # failed - it is exactly when the service stops answering that an
@@ -1051,9 +1361,15 @@ class JobsTuiApp(App[None]):
             age = time.time() - self._last_refresh
             line.append(f"\nrefreshed {stamp}", style="dim")
             if age > max(5.0, self._interval * 3):
-                line.append(f" ({compact_duration(age)} ago)", style="bold yellow")
+                line.append(
+                    f" ({compact_duration(age)} ago)",
+                    style=self._tone_style(tones, "attention", bold=True),
+                )
         if self._last_error is not None:
-            line.append(f"  ·  {self._last_error}", style="bold red")
+            line.append(
+                f"  ·  {self._last_error}",
+                style=self._tone_style(tones, "bad", bold=True),
+            )
         if not self._service_estimates:
             # Said once in the header rather than implied by every row's
             # empty estimate, which reads as unmeasurable work instead of
@@ -1099,10 +1415,9 @@ class JobsTuiApp(App[None]):
     def watch_selected_id(self, job_id: str) -> None:
         if not job_id:
             return
-        title = self.query("#logtitle")
-        if not title:
+        if not self.query("#logtitle"):
             return
-        title.only_one(Static).update(f"Log · {job_id[:8]}")
+        self._refresh_log_title()
         self.fetch_logs(job_id)
 
     @work(thread=True, exclusive=True, group=_LOG_GROUP)
@@ -1120,24 +1435,52 @@ class JobsTuiApp(App[None]):
         if result is None or result.get("ok") is False:
             self._clear_log("Logs unavailable: the service did not answer.")
             return
+        log = self._log_view()
+        if log is None:
+            return
+        log.show_lines(_log_lines(result))
+        # The window just changed, so what the noise filter hides and where
+        # the errors sit changed with it - both the title's indicator and the
+        # error-jump keys in the footer have to follow.
+        self._refresh_log_title()
+        self.refresh_bindings()
+
+    def _log_view(self) -> JobsLogView | None:
+        """Return the log pane's body, or ``None`` when it is not mounted."""
         found = self.query("#joblog")
         if not found:
+            return None
+        return found.only_one(JobsLogView)
+
+    def _refresh_log_title(self) -> None:
+        """Repaint the pane's title: whose log, and what is being hidden.
+
+        The noise filter must be visible whenever it is active. Lines
+        silently missing from a log pane read as lines that never happened,
+        which is precisely the degradation an operator cannot detect.
+        """
+        found = self.query("#logtitle")
+        if not found:
             return
-        log = found.only_one(RichLog)
-        log.clear()
-        for line in _log_lines(result):
-            log.write(line)
+        title = Text(f"Log · {self.selected_id[:8]}" if self.selected_id else "Log")
+        log = self._log_view()
+        if log is not None:
+            hidden = log.hidden_polling_count
+            if hidden:
+                title.append(
+                    f"  ·  {hidden} polling hidden (x shows)",
+                    style=semantic_tones(self.theme_variables)["attention"],
+                )
+            elif log.polling_shown and log.polling_count:
+                title.append("  ·  polling shown (x hides)", style="dim")
+        found.only_one(Static).update(title)
 
     def _clear_log(self, message: str) -> None:
-        """Replace the log pane's body and title with *message*."""
-        title = self.query("#logtitle")
-        if title:
-            title.only_one(Static).update("Log")
-        found = self.query("#joblog")
-        if found:
-            log = found.only_one(RichLog)
-            log.clear()
-            log.write(message)
+        """Replace the log pane's body with *message* and re-title it."""
+        self._refresh_log_title()
+        log = self._log_view()
+        if log is not None:
+            log.show_message(message)
 
     # -- actions ------------------------------------------------------------
 
@@ -1156,12 +1499,29 @@ class JobsTuiApp(App[None]):
         """
         # Named to match the override; these actions take no parameters.
         del parameters
+        if action.startswith("log_"):
+            return self._check_log_action(action)
         flag = _action_capability(action)
         if flag is None:
             return True
         job = self.selected_job()
         if job is None or not _capability(job, flag):
             return None
+        return True
+
+    def _check_log_action(self, action: str) -> bool | None:
+        """Disable a log action the pane cannot take right now.
+
+        Every log action needs the pane on screen; the error jumps also need
+        an error to jump to. ``None`` greys the key rather than hiding it,
+        the same reading the row actions already use.
+        """
+        if not self._log_visible():
+            return None
+        if action in ("log_next_error", "log_prev_error"):
+            log = self._log_view()
+            if log is None or log.error_count == 0:
+                return None
         return True
 
     def on_key(self, event: events.Key) -> None:
@@ -1183,9 +1543,41 @@ class JobsTuiApp(App[None]):
 
     def _refusal(self, action: str) -> str:
         """Say why *action* is unavailable, in the operator's terms."""
+        if action.startswith("log_"):
+            if not self._log_visible():
+                return _LOG_CLOSED_REASON
+            return _ACTION_REASONS.get(
+                action, "The log cannot take that action right now."
+            )
         if self.selected_job() is None:
             return "No job is selected."
         return _ACTION_REASONS.get(action, "This job cannot take that action.")
+
+    def action_toggle_theme(self) -> None:
+        """Switch between the shipped dark and light colour schemes."""
+        self.theme = _LIGHT_THEME if self.theme == _DARK_THEME else _DARK_THEME
+
+    def _on_theme_changed(self, _theme: object) -> None:
+        """Repaint the tone-carrying surfaces under the new scheme."""
+        self._render_summary()
+        log = self._log_view()
+        if log is not None:
+            log.repaint_theme()
+
+    def action_toggle_zoom(self) -> None:
+        """Fill the screen with the focused pane, or restore the split.
+
+        The zoom follows the focus ring: whichever pane's frame is lit is
+        the one that grows, so the two answers to "where am I" and "what
+        will z do" are the same answer. A pane that cannot be maximized
+        answers the press rather than ignoring it.
+        """
+        if self.screen.maximized is not None:
+            self.screen.minimize()
+            return
+        focused = self.focused
+        if focused is None or not self.screen.maximize(focused):
+            self.notify("This pane cannot be zoomed.", severity="warning")
 
     def action_toggle_log(self) -> None:
         # One state, applied the same way in both layouts, so the key always
@@ -1193,6 +1585,44 @@ class JobsTuiApp(App[None]):
         # splits the screen or takes it over.
         self._show_log = not self._log_visible()
         self.screen.set_class(self._show_log, "-showlog")
+        # The log keys gate on the pane being on screen, and the footer only
+        # re-evaluates them when told to.
+        self.refresh_bindings()
+
+    def action_log_noise(self) -> None:
+        """Toggle the polling-noise filter, and say so in the title."""
+        log = self._log_view()
+        if log is None:
+            return
+        log.toggle_polling()
+        self._refresh_log_title()
+        self.refresh_bindings()
+
+    def action_log_expand(self) -> None:
+        """Toggle full values in place of middle-elided ones."""
+        log = self._log_view()
+        if log is not None:
+            log.toggle_expanded()
+
+    def action_log_next_error(self) -> None:
+        log = self._log_view()
+        if log is not None:
+            log.jump_next_error()
+
+    def action_log_prev_error(self) -> None:
+        log = self._log_view()
+        if log is not None:
+            log.jump_previous_error()
+
+    def action_log_top(self) -> None:
+        log = self._log_view()
+        if log is not None:
+            log.jump_top()
+
+    def action_log_end(self) -> None:
+        log = self._log_view()
+        if log is not None:
+            log.jump_end()
 
     def _log_visible(self) -> bool:
         return self.screen.has_class("-showlog")
@@ -1383,6 +1813,17 @@ def _count(raw: object) -> int | None:
     if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
         return None
     return raw
+
+
+def _measurement(raw: object) -> float | None:
+    """Read a published measurement, or ``None`` when there is none.
+
+    ``None`` is the probe saying it could not measure; anything non-numeric
+    is read the same way rather than invented into a number.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw < 0:
+        return None
+    return float(raw)
 
 
 def _fetch_error(result: dict[str, object] | None) -> str | None:

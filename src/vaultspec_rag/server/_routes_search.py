@@ -68,6 +68,8 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
 
+    from .._index_integrity import IndexIntegrity
+
 logger = logging.getLogger("vaultspec_rag.server")
 
 __all__ = ["search_route"]
@@ -95,6 +97,7 @@ class SearchIndexStateInput:
     published_points: float | None = None
     named_files: float | None = None
     covered_files: float | None = None
+    integrity: IndexIntegrity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +163,7 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
     domain builder expects, and renders whatever that returns.
     """
     from .._index_breadth import BreadthShortfall, FileBreadthShortfall
-    from .._search_state import search_index_state
+    from .._search_state import BreadthFindings, search_index_state
 
     count = int(input.indexed_count)
     shortfall = (
@@ -179,8 +182,40 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
         indexed_count=count,
         requested_root=input.requested_root,
         search_type=input.search_type,
-        shortfall=shortfall,
-        file_shortfall=file_shortfall,
+        findings=BreadthFindings(
+            shortfall=shortfall,
+            file_shortfall=file_shortfall,
+            integrity=input.integrity,
+        ),
+    )
+
+
+def _search_integrity(
+    request: SearchRequest,
+    phase_timing: dict[str, float],
+) -> IndexIntegrity | None:
+    """Settle the serve-time breadth verdict for one dispatched search.
+
+    Single-domain searches reconcile their own domain against the count the
+    dispatch already took. A combined search reconciles the code domain,
+    mirroring how the combined envelope already carries the code shortfall: it
+    is the domain with the richest published claim, and its per-domain count
+    travels on the timing channel. A domain whose count never landed there -
+    a failed combined leg - yields ``unverifiable``, never a claim of zero.
+    """
+    from .._index_integrity import evaluate_index_integrity
+
+    if request.search_type is PublicSourceType.COMBINED:
+        code_count = phase_timing.get("code_indexed_count")
+        return evaluate_index_integrity(
+            request.root,
+            PublicSourceType.CODE,
+            None if code_count is None else int(code_count),
+        )
+    return evaluate_index_integrity(
+        request.root,
+        request.search_type,
+        int(phase_timing["indexed_count"]),
     )
 
 
@@ -264,6 +299,7 @@ def _classify_collection_disappearance(
     context: SearchAvailabilityContext,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
+    from .._index_integrity import evaluate_index_integrity
     from ._routes import canonical_job_snapshot
 
     return classify_qdrant_collection_disappearance(
@@ -277,6 +313,16 @@ def _classify_collection_disappearance(
             SearchIndexStateInput(
                 indexed_count=0,
                 requested_root=context.root,
+                # The collection vanished mid-flight, so there is no live
+                # count to reconcile: the verdict is honestly unverifiable,
+                # and carrying it keeps the daemon envelope uniform - every
+                # route response has the block, so absence still means only
+                # "old daemon".
+                integrity=evaluate_index_integrity(
+                    context.root,
+                    PublicSourceType(context.source),
+                    None,
+                ),
                 search_type=context.source,
             )
         ),
@@ -474,6 +520,7 @@ def _execute_search_request(request: SearchRequest) -> dict[str, object]:
                 published_points=phase_timing.get("published_points"),
                 named_files=phase_timing.get("named_files"),
                 covered_files=phase_timing.get("covered_files"),
+                integrity=_search_integrity(request, phase_timing),
             )
         )
         index_state_seconds = time.perf_counter() - phase_started
