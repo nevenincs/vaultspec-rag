@@ -30,6 +30,7 @@ from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
 from ._run_ledger_models import FinalizationPhase, RunOperation
 from ._run_policy import RunPolicy
+from ._scan_cache import MembershipScanCache
 from ._streaming import (
     DocumentSliceRequest,
     DocumentSliceStreamRequest,
@@ -309,6 +310,17 @@ class DocumentIndexer:
         self._data_root = self.root_dir / get_config().data_dir
         self._meta_path = document_metadata_path(self.root_dir)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
+        # Resident between runs; every acquire/retain pair runs under
+        # ``self._writer_lock``, which is the serialization the cache's
+        # single-threaded contract relies on.
+        self._stat_gate_cache = _stat_gate.ResidentGateCache(self._stat_gate_path)
+        # Bounded-staleness cache of the document discovery walk, keyed by
+        # policy fingerprint. Scoped runs bypass discovery and invalidate it,
+        # because the events they carry are membership truth a cached walk
+        # cannot see.
+        self._discover_cache: MembershipScanCache[tuple[pathlib.Path, ...]] = (
+            MembershipScanCache()
+        )
         self._last_checkpoint: DocumentRunCheckpoint | None = None
         self._memory_budget: MemoryBudget | None = None
         # Per-run donor reuse state: resolved once per public run entry and
@@ -370,6 +382,10 @@ class DocumentIndexer:
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> tuple[pathlib.Path, ...]:
         """Return only file paths owned by the document domain."""
+        fingerprint = policy.fingerprints.snapshot
+        cached = self._discover_cache.get(fingerprint)
+        if cached is not None:
+            return cached
         discovered: list[pathlib.Path] = []
         root_text = str(self.root_dir)
         for directory, dirs, files in os.walk(self.root_dir, topdown=True):
@@ -388,7 +404,9 @@ class DocumentIndexer:
                 if disposition.admitted and disposition.kind is ContentKind.DOCUMENT:
                     discovered.append(pathlib.Path(directory) / name)
             run_control.checkpoint()
-        return tuple(sorted(discovered, key=lambda path: path.as_posix()))
+        result = tuple(sorted(discovered, key=lambda path: path.as_posix()))
+        self._discover_cache.put(fingerprint, result)
+        return result
 
     def preflight_content(
         self,
@@ -815,11 +833,19 @@ class DocumentIndexer:
         paths: tuple[pathlib.Path, ...],
         previous_files: dict[str, DocumentFileMetadata],
         request: _DocumentPublishRequest,
-    ) -> tuple[list[DocumentFileMetadata], _DocumentRunCounts, list[str]]:
-        """Publish a full discovered set while retaining failed prior points."""
+    ) -> tuple[
+        list[DocumentFileMetadata], _DocumentRunCounts, list[str], dict[str, str]
+    ]:
+        """Publish a full discovered set while retaining failed prior points.
+
+        The final mapping carries only the hashes this run computed itself -
+        retained prior rows are excluded, because a carried hash cannot be
+        honestly bound to the file's current stat identity.
+        """
         published: list[DocumentFileMetadata] = []
         counts = _DocumentRunCounts()
         failures: list[str] = []
+        fresh_hashes: dict[str, str] = {}
         for path in paths:
             rel = path.relative_to(self.root_dir).as_posix()
             if (
@@ -845,13 +871,14 @@ class DocumentIndexer:
                 continue
             assert metadata is not None
             published.append(metadata)
+            fresh_hashes[rel] = metadata.content_fingerprint
             if rel in previous_files:
                 counts.updated += chunk_count
             else:
                 counts.added += chunk_count
             if request.policy.match_preprocess(rel) is not None:
                 counts.preprocess_ok += 1
-        return published, counts, failures
+        return published, counts, failures, fresh_hashes
 
     def _reconcile_full_stale(
         self,
@@ -895,15 +922,24 @@ class DocumentIndexer:
         # The unscoped selection sees the full discovered membership, so it
         # both consults the stat-evidence gate and prunes its evidence for
         # files that no longer exist.
-        gate = _stat_gate.StatEvidenceGate.load(self._stat_gate_path)
+        gate = self._stat_gate_cache.acquire()
+        outcome = _stat_gate.hash_paths(
+            gate,
+            [(rel, path) for rel, path in discovered.items() if rel in previous_files],
+        )
+        if outcome.failures:
+            # The ungated selection raised on the first unreadable file;
+            # surface the same failure rather than silently deselecting it.
+            raise outcome.failures[0][1]
         selected = {
             rel
-            for rel, path in discovered.items()
+            for rel in discovered
             if rel not in previous_files
-            or gate.hash_file(rel, path) != previous_files[rel].content_fingerprint
+            or outcome.hashes[rel] != previous_files[rel].content_fingerprint
         }
         gate.prune(discovered.keys())
         gate.persist()
+        self._stat_gate_cache.retain(gate)
         if gate.reused:
             logger.debug(
                 "stat gate reused %d document hashes, rehashed %d",
@@ -1086,10 +1122,24 @@ class DocumentIndexer:
             if effective_clean and not clean_has_confirmed_units:
                 self.store.drop_document_table()
             self.store.ensure_document_table()
-            published, counts, failures = self._publish_full_paths(
+            publish_started_ns = time.time_ns()
+            published, counts, failures, fresh_hashes = self._publish_full_paths(
                 paths,
                 previous_files=previous_files,
                 request=request,
+            )
+            # Bank the hashes this run computed as stat evidence so the first
+            # incremental after a full rebuild answers unchanged files from a
+            # stat. Pruned to the full discovered membership, which this run
+            # is by construction.
+            _stat_gate.record_computed_hashes(
+                self._stat_gate_cache,
+                (
+                    (rel, self.root_dir / pathlib.PurePosixPath(rel), content_hash)
+                    for rel, content_hash in fresh_hashes.items()
+                ),
+                computed_not_before_ns=publish_started_ns,
+                keep={path.relative_to(self.root_dir).as_posix() for path in paths},
             )
             removed = self._reconcile_full_stale(
                 previous_files,
@@ -1129,6 +1179,12 @@ class DocumentIndexer:
     ) -> IndexResult:
         """Reconcile changed documents, or discover changes when scope is omitted."""
         started = time.monotonic()
+        if changed_paths is not None:
+            # A scoped run bypasses discovery, but the creates, deletes, and
+            # renames it carries are membership truth a cached walk cannot
+            # see; dropping the cache keeps staleness bounded by the events
+            # actually observed rather than only by the TTL.
+            self._discover_cache.invalidate()
         policy, authorized_paths = self._accept_preflight(
             preflight,
             changed_paths=changed_paths,
