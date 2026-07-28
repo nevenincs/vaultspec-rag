@@ -64,7 +64,7 @@ license = { file = "LICENSE" }
 name = "vaultspec-rag"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
-version = "0.3.12"
+version = "0.3.13"
 
   [project.scripts]
   vaultspec-rag = "vaultspec_rag.__main__:main"
