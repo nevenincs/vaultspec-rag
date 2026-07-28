@@ -692,6 +692,10 @@ class JobsTuiApp(App[None]):
         # it, a daemon on a host that cannot measure sends null measurements.
         self._gpu: dict[str, object] | None = None
         self._gpu_reported = False
+        # The machine pressure tier riding the jobs payload. A daemon that
+        # predates the tier sends no key, and must not be rendered as if it
+        # had computed one.
+        self._pressure: dict[str, object] | None = None
         # The release the connected daemon reports, never the local
         # package's own: the two differ exactly when the difference matters.
         # ``checked`` separates "no daemon has answered yet" from "the
@@ -995,6 +999,12 @@ class JobsTuiApp(App[None]):
         raw_gpu = payload.get("gpu")
         self._gpu = (
             cast("dict[str, object]", raw_gpu) if isinstance(raw_gpu, dict) else None
+        )
+        raw_pressure = payload.get("pressure")
+        self._pressure = (
+            cast("dict[str, object]", raw_pressure)
+            if isinstance(raw_pressure, dict)
+            else None
         )
         self._reconcile_pending(generation, previous)
         self._layout_columns()
@@ -1379,6 +1389,25 @@ class JobsTuiApp(App[None]):
             return f"gpu {' '.join(parts)}", "attention", False
         return f"gpu {' '.join(parts)}", "good", False
 
+    def _pressure_cell(self) -> tuple[str, str] | None:
+        """The machine pressure pill as (text, tone), or nothing to show.
+
+        Three answers, the same three the plain feed gives, so the two
+        surfaces can never disagree: a daemon that sends no tier says
+        nothing, a nominal tier is the healthy steady state and says
+        nothing either, and any other tier is a verdict an operator must
+        see. Silence is not a claim of health - the condition and GPU cells
+        still report - and it keeps the steady-state header at the width it
+        already had, so a pill nobody needs never costs a label somebody
+        does. The tier is rendered verbatim: a tier this build has no tone
+        for is still shown, because a newer daemon naming a worse state
+        must never be swallowed.
+        """
+        tier = (self._pressure or {}).get("tier")
+        if not isinstance(tier, str) or tier in ("", "nominal"):
+            return None
+        return f"pressure {tier}", "bad" if tier == "critical" else "attention"
+
     def _compose_header_line(
         self,
         tones: dict[str, str],
@@ -1439,6 +1468,13 @@ class JobsTuiApp(App[None]):
         self._append_separator(line, unicode_ok=unicode_ok)
         gpu_text, gpu_tone, _gpu_bold = self._gpu_cell()
         _append_pill(line, gpu_text, fills[gpu_tone], unicode_ok=unicode_ok)
+        pressure_cell = self._pressure_cell()
+        if pressure_cell is not None:
+            pressure_text, pressure_tone = pressure_cell
+            self._append_separator(line, unicode_ok=unicode_ok)
+            _append_pill(
+                line, pressure_text, fills[pressure_tone], unicode_ok=unicode_ok
+            )
         self._append_separator(line, unicode_ok=unicode_ok)
         shown = len(self._jobs)
         if self._total is None:
@@ -1467,8 +1503,9 @@ class JobsTuiApp(App[None]):
         tones = semantic_tones(self.theme)
         width = self._summary_width()
         # Widest fitting form wins: labels leave the state pills first, then
-        # the health tallies. Counts, the condition cell and the GPU cell
-        # are never shed; past the narrowest form the bar wraps.
+        # the health tallies. Counts, the condition and the GPU cell are
+        # never shed, and neither is the pressure pill on the occasions it
+        # is painted at all; past the narrowest form the bar wraps.
         line = self._compose_header_line(tones, state_labels=True, health_labels=True)
         if 0 < width < _widest_line(line):
             line = self._compose_header_line(

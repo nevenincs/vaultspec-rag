@@ -537,6 +537,26 @@ def _shown_job_counts(jobs: list[dict[str, object]]) -> tuple[int, int, int, int
     return active, waiting, finished, failed
 
 
+def _machine_pressure_line(result: dict[str, object]) -> str:
+    """One line naming the machine pressure tier, or nothing to say.
+
+    Three answers, kept distinct: an absent key is a daemon that predates
+    the tier and yields no line at all; a nominal tier is the healthy
+    steady state and earns no line either; elevated and critical are the
+    verdicts an operator must see without asking. The tier is rendered
+    verbatim - the service owns the verdict.
+    """
+    if "pressure" not in result:
+        return ""
+    block = result.get("pressure")
+    if not isinstance(block, dict):
+        return ""
+    tier = cast("dict[str, object]", block).get("tier")
+    if not isinstance(tier, str) or tier in ("", "nominal"):
+        return ""
+    return f"Machine pressure: {tier}"
+
+
 def _filters_label(result: dict[str, object]) -> str:
     raw_filters = result.get("filters")
     if not isinstance(raw_filters, dict):
@@ -662,6 +682,9 @@ def _render_jobs_feed(
         total=result.get("total", len(jobs)),
         counts_line=_job_counts_line(*_shown_job_counts(sorted_jobs)),
     )
+    pressure = _machine_pressure_line(result)
+    if pressure:
+        _plain(pressure)
     if not filter_text:
         _plain("Showing: active, waiting, failed, then latest finished")
     _plain("Order: latest job appears last")
@@ -699,6 +722,11 @@ def _render_empty_jobs_result(
         total=result.get("total", 0),
         counts_line=_job_counts_line(0, 0, 0, 0),
     )
+    pressure = _machine_pressure_line(result)
+    if pressure:
+        # An empty page must still surface a pressured machine: the tier is
+        # a machine verdict, not a property of any listed job.
+        _plain(pressure)
     _plain("Order: latest job appears last")
     _render_filter_and_watch(filter_text, monitoring=monitoring, watch_text=watch_text)
     _cli.console.print(empty_jobs_message(result, job_id))
