@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import gc
 import hashlib
-import io
 import os
 import shlex
 import sys
@@ -27,7 +26,6 @@ from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from rich.console import Console
 
 from .. import CodebaseIndexer
 from ..config._settings import reset_config
@@ -42,7 +40,6 @@ from ..indexer._preprocess_config import (
 )
 from ..indexer._preprocess_runner import PreprocessAbortError
 from ..indexer._run_ledger_models import CommitUnit, CommitUnitKind
-from ..progress import RichProgressReporter
 from ._chunk_production import produce_chunks
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
@@ -281,16 +278,13 @@ class TestSingleFileScheduler:
             release_dir,
         )
 
-        output = io.StringIO()
-        reporter = RichProgressReporter(Console(file=output, force_terminal=False))
-        reporter.phase_start("chunk singles", len(paths))
         baseline_futures = _pending_futures()
         chunks: list[CodeChunk] = []
         failures: list[BaseException] = []
 
         def _run() -> None:
             try:
-                chunks.extend(produce_chunks(indexer, paths, reporter=reporter))
+                chunks.extend(produce_chunks(indexer, paths))
             except BaseException as exc:
                 failures.append(exc)
 
@@ -323,7 +317,6 @@ class TestSingleFileScheduler:
         assert failures == []
         assert {chunk.path for chunk in chunks} == {path.name for path in paths}
         assert indexer._prep_ok == len(paths)
-        assert reporter._phase_count == len(paths)
 
     def test_pool_propagates_fatal_preprocess_error(self, tmp_path: Path) -> None:
         script = tmp_path / "fatal_preprocessor.py"

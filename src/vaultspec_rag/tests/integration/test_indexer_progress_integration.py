@@ -178,8 +178,9 @@ class TestCodebaseIndexerProgress:
             names = reporter.phase_names()
             # The codebase full index reads each file once (#155): the
             # separate "hash files" phase is gone, and chunking + embedding are
-            # pipelined into a single "chunk + embed" phase (#155) that
-            # advances once per file as workers complete.
+            # pipelined into a single "chunk + embed" phase (#155) whose
+            # counter the GPU consumer advances as files finish encoding
+            # and upserting.
             expected = [
                 "scan codebase",
                 "prepare collection",
@@ -205,7 +206,8 @@ class TestCodebaseIndexerProgress:
             n_chunks = result.added
             if n_chunks > 0:
                 assert phase_totals["prepare collection"] == 1
-                # The pipelined phase advances once per scanned file.
+                # A fresh full index confirms every scanned file through the
+                # consumer, so the phase's advances sum to the file count.
                 assert phase_totals["chunk + embed"] == result.files
                 assert phase_totals["purge stale chunks"] == 0
                 assert phase_totals["write metadata"] == 1

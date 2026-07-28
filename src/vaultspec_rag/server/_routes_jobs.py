@@ -572,6 +572,7 @@ def _job_with_liveness(
             forward=forward,
             project_root=_job_project_root(record),
             source=job_source(record),
+            step=_job_progress_step(record) or None,
         )
         if verdict != "healthy"
         else None

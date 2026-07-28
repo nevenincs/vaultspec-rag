@@ -37,6 +37,8 @@ from ._streaming import (
     CodeFileSegmentRequest,
     CodeSliceRequest,
     _release_cuda_cache,
+    _report_forward_entry,
+    _report_forward_exit,
     encode_and_upsert_code_slice,
     iter_code_file_segments,
     iter_weighted_code_slices,
@@ -175,6 +177,7 @@ class _WeightedConsumerRun:
     run_control: RunControl
     code_build_target: str | None
     donor_reuse: DonorReuseContext | None
+    reporter: ProgressReporter
 
 
 class CodeConsumerPipeline:
@@ -285,6 +288,9 @@ class CodeConsumerPipeline:
             len(paths) * _CHUNKS_PER_FILE_ESTIMATE + duplicate_points
         )
         run_control.checkpoint()
+        # The total is the file count; the counter is advanced by the GPU
+        # consumer as files finish encoding and upserting, so N of M reads
+        # as pipeline output, never as files merely handed to the queue.
         reporter.phase_start("chunk + embed", len(paths))
         try:
             if not paths:
@@ -307,6 +313,7 @@ class CodeConsumerPipeline:
                 run_control=run_control,
                 code_build_target=run.code_build_target,
                 donor_reuse=donor_reuse,
+                reporter=reporter,
             )
             consumer = self._spawn_weighted_consumer(consumer_run)
 
@@ -326,7 +333,6 @@ class CodeConsumerPipeline:
                     self._producer.produce_batch_groups(
                         batch_groups,
                         _publish_result,
-                        reporter,
                         run_control=run_control,
                     )
                 if singles:
@@ -337,7 +343,6 @@ class CodeConsumerPipeline:
                             consumer_failed=lambda: (
                                 bool(consumer_exceptions) or not consumer.is_alive()
                             ),
-                            reporter=reporter,
                             total=total,
                             run_control=run_control,
                         ),
@@ -543,6 +548,7 @@ class CodeConsumerPipeline:
         try:
             probe.checkpoint(f"slice-{slice_index}-before-encode")
             completed_slice_index = slice_index + 1
+            slice_items = len(slice_chunks)
             on_storage_confirmed = (
                 partial(
                     self._record_confirmed_slice,
@@ -552,8 +558,20 @@ class CodeConsumerPipeline:
                 if checkpoint is not None
                 else None
             )
+            before_forward = partial(
+                _report_forward_entry,
+                consumer_run.reporter,
+                slice_index,
+                slice_items,
+            )
 
             def _after_forward(kind: str) -> None:
+                _report_forward_exit(
+                    consumer_run.reporter,
+                    slice_index,
+                    slice_items,
+                    kind,
+                )
                 run_control.checkpoint()
                 self._sample_memory_budget(
                     f"slice-{completed_slice_index}-after-{kind}-forward"
@@ -588,6 +606,7 @@ class CodeConsumerPipeline:
                         ingest_wait=consumer_run.ingest_wait,
                         collection=consumer_run.code_build_target,
                         on_storage_confirmed=on_storage_confirmed,
+                        before_forward=before_forward,
                         after_forward=_after_forward,
                         on_cuda_oom=_on_cuda_oom,
                         run_control=run_control,
@@ -597,6 +616,17 @@ class CodeConsumerPipeline:
             run_control.checkpoint()
             consumer_run.new_ids.update(chunk.id for chunk in slice_chunks)
             consumer_run.total[0] += len(slice_chunks)
+            # Progress counts a file only once its final segment has been
+            # encoded and upserted: the counter measures what the pipeline
+            # has finished, not what the producer has queued, so it keeps
+            # moving while the GPU drains a backlog the producer already
+            # handed off. A resumed run's already-committed files emit no
+            # pending segments and are simply not re-counted.
+            completed_files = sum(
+                1 for segment in weighted_slice.segments if segment.is_file_end
+            )
+            if completed_files:
+                consumer_run.reporter.advance(completed_files)
             probe.checkpoint(f"slice-{completed_slice_index}-after-store")
             self._sample_memory_budget(f"slice-{completed_slice_index}-after-store")
         finally:

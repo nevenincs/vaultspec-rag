@@ -502,7 +502,12 @@ async def request_cancel_at_the_write_gate(
         assert blocked.state is JobState.RUNNING
         assert blocked.progress is not None
         assert blocked.progress.step == "chunk + embed"
-        assert blocked.progress.completed == blocked.progress.total == 4
+        # The counter measures consumer-confirmed files, and the parked
+        # consumer has confirmed nothing: everything is produced, nothing
+        # is counted done. Progress at the total here would mean the count
+        # regressed to measuring queue handoff again.
+        assert blocked.progress.total == 4
+        assert blocked.progress.completed == 0
         assert registry.gpu_lock.locked() is False
         cancel = manager.set_desired_state(cancelled_id, DesiredJobState.CANCELLED)
         assert cancel.status is JobOutcomeStatus.ACCEPTED
