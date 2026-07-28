@@ -32,6 +32,11 @@ if TYPE_CHECKING:
 #: drifted live vault.
 FROZEN_VAULT_REF = "c02c12cff9505f5283dc9c37b08696416a791fe8"
 
+#: Wall-clock bound on each git read below. Both are local reads of a pinned
+#: ref and measure ~1.5s, so this is headroom rather than a tuned figure; it
+#: exists so a wedged git can never park a session fixture indefinitely.
+_GIT_READ_TIMEOUT_SECONDS = 120.0
+
 
 def materialize_frozen_vault(dest_root: Path, *, repo_root: Path) -> Path:
     """Extract ``.vault/`` at :data:`FROZEN_VAULT_REF` under *dest_root*.
@@ -53,6 +58,7 @@ def materialize_frozen_vault(dest_root: Path, *, repo_root: Path) -> Path:
         ],
         check=True,
         capture_output=True,
+        timeout=_GIT_READ_TIMEOUT_SECONDS,
     ).stdout
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(dest_root, filter="data")
@@ -81,6 +87,7 @@ def frozen_vault_document_count(*, repo_root: Path) -> int:
         check=True,
         capture_output=True,
         text=True,
+        timeout=_GIT_READ_TIMEOUT_SECONDS,
     ).stdout
     return sum(
         1
