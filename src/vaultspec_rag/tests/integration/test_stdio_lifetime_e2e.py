@@ -380,6 +380,31 @@ time.sleep(600)
 """
 
 
+def _veto_diagnosis(orphan_pid: int) -> str:
+    """Name what the watchdog would still be seeing above an unreaped orphan.
+
+    A withheld reap has two shapes and the process table tells them apart.
+    An EMPTY chain here means nothing above the orphan was visible and it
+    should have reaped - a real regression in the re-arm path. A non-empty
+    one means the orphan's dead ancestor's pid slot was taken by some
+    unrelated live process, which the watchdog deliberately reads as a live
+    ancestor and refuses to reap under; that is the documented safe
+    direction to be wrong in, and an environmental flake rather than a
+    defect. Without this the two are one indistinguishable timeout.
+    """
+    from ...server._stdio_lifetime import _snapshot_processes, _walk_ancestor_pids
+
+    parents, names = _snapshot_processes()
+    chain = [
+        f"{pid}({names.get(pid, '?')})"
+        for pid in _walk_ancestor_pids(orphan_pid, parents)
+        if pid in parents
+    ]
+    if not chain:
+        return "No live ancestor was visible, so the reap was owed."
+    return f"Live ancestors vetoing the reap (recycled pid slots?): {chain}"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ancestry semantics")
 def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
     tmp_path: Path,
@@ -479,9 +504,9 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
             if line.startswith("{")
         ]
         assert not _pid_alive(orphan_pid), (
-            f"orphaned worker {orphan_pid} survived {budget:.0f}s with no live "
-            f"ancestor; the watchdog disarmed instead of re-arming. Events: "
-            f"{events}"
+            f"orphaned worker {orphan_pid} survived {budget:.0f}s; the watchdog "
+            f"disarmed instead of re-arming. Events: {events}. "
+            f"{_veto_diagnosis(orphan_pid)}"
         )
 
         kinds = [event.get("event") for event in events]
