@@ -7,7 +7,7 @@ before accepting connections, and serves a raw ``/health`` endpoint
 alongside the native REST routes.
 
 The MCP protocol surface no longer lives here. After the thin-client
-rework, the ``mcp`` FastMCP instance is defined only in
+rework, the ``mcp`` MCPServer instance is defined only in
 ``vaultspec_rag.mcp._mcp`` and is served by the standalone stdio
 forwarder; the daemon exposes native REST only and no longer mounts an
 MCP app.

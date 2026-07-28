@@ -64,7 +64,7 @@ _SERVICE_DOWN_MESSAGE = (
 #: on both surfaces.
 _DEFAULT_TOP_K = 10
 
-# Behavioral hints advertised to clients (MCP 2025-11-25 tool annotations). The
+# Behavioral hints advertised to clients (MCP 2026-07-28 tool annotations). The
 # search and retrieval tools only read and are repeatable. The index-refresh
 # tools reconcile to the current files and expose no clean flag, so this surface
 # cannot request a drop-and-recreate rebuild.
@@ -79,19 +79,19 @@ _DEFAULT_TOP_K = 10
 # None of these tools reach an open world of external entities - they talk to
 # one local daemon.
 _READ_ONLY = ToolAnnotations(
-    readOnlyHint=True, idempotentHint=True, openWorldHint=False
+    read_only_hint=True, idempotent_hint=True, open_world_hint=False
 )
 _INDEX_REFRESH = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 _CLEAN = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 
 

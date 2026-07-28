@@ -1,3 +1,3 @@
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-mcp = FastMCP("VaultSpec Search", stateless_http=True)
+mcp = MCPServer("VaultSpec Search")
