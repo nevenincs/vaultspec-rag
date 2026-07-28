@@ -16,10 +16,6 @@ from typing import TYPE_CHECKING
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
-from .._store_models import (
-    generation_code_collection,
-    publish_generation_as_served,
-)
 from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _code_meta, _preprocess_glue, _stat_gate
 from ._chunk_producer import CodeChunkProducer
@@ -57,7 +53,6 @@ from ._incremental_commit import (
     IncrementalReplacementRequest,
 )
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
-from ._route_migration import reconcile_generation_storage
 from ._run_ledger_models import RunLedgerCompatibilityError, RunOperation
 from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
@@ -231,7 +226,6 @@ class CodebaseIndexer:
         self._incremental_commit = CodeIncrementalCommit(
             self.store,
             self._lifecycle,
-            self._meta_path,
             self._pipeline_chunk_and_embed,
             self._write_meta,
         )
@@ -846,14 +840,12 @@ class CodebaseIndexer:
             is not None
         )
 
-        if effective_clean:
-            # Build beside the served collection, never into it. The served one
-            # keeps answering searches for the whole build, and an interrupted
-            # build leaves this collection unreferenced rather than leaving the
-            # served one truncated.
-            self._code_build_target = generation_code_collection(
-                self.store.CODE_TABLE_NAME, checkpoint.generation_id
-            )
+        # Build beside the served collection, never into it. The served one
+        # keeps answering searches for the whole build, and an interrupted
+        # build leaves this collection unreferenced rather than leaving the
+        # served one truncated. The name is minted by the lifecycle, which is
+        # also what a later run resuming this generation derives it from.
+        self._code_build_target = self._lifecycle.build_collection(checkpoint)
 
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
@@ -941,43 +933,12 @@ class CodebaseIndexer:
                 )
             )
 
-            reporter.phase_start("write metadata", 1)
-            try:
-                reconcile_generation_storage(
-                    self.store,
-                    checkpoint,
-                    policy,
-                    ContentKind.CODE,
-                )
-                build_target = self._code_build_target
-
-                def _record_breadth() -> None:
-                    checkpoint.publish_metadata(
-                        self._meta_path,
-                        published_points=self.store.count_code(build_target),
-                        published_files=self.store.count_code_files(build_target),
-                    )
-
-                if build_target is None:
-                    _record_breadth()
-                else:
-                    # Breadth first, pointer second - a reader must never
-                    # resolve a generation whose published figure is missing.
-                    publish_generation_as_served(
-                        self.root_dir,
-                        collection=build_target,
-                        record_breadth=_record_breadth,
-                    )
-                    # Both collections are complete at this instant: the old one
-                    # served throughout and the new one has just reconciled. A
-                    # reader mid-flight sees one or the other, never a partial
-                    # index, which is what makes this assignment the swap rather
-                    # than a race.
-                    self.store.CODE_TABLE_NAME = build_target
-                checkpoint.publish_generation()
-                reporter.advance(1)
-            finally:
-                reporter.phase_end()
+            self._lifecycle.publish(
+                checkpoint,
+                build_target=self._code_build_target,
+                reporter=reporter,
+                phase_label="write metadata",
+            )
         run_control.checkpoint()
 
         duration_ms = int((time.time() - start) * 1000)
