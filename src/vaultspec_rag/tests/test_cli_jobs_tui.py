@@ -1376,7 +1376,7 @@ class TestHeaderCounts:
             painted = _screen_text(app)
 
         assert "✓ 1" in painted
-        assert "other 2" in painted, (
+        assert "□ 2 other" in painted, (
             "states without a counter of their own must still be accounted for"
         )
 
@@ -1401,10 +1401,13 @@ class TestHeaderCounts:
             await _ready(pilot, app)
             painted = _screen_text(app)
 
-        assert "▶ 1" in painted, "running renders as its pill with its count"
-        assert "✖ 1" in painted, "failed renders as its pill with its count"
-        assert "✓ 2" in painted, "succeeded renders as its pill with its count"
-        assert "○ 0" in painted, "an empty bucket is still accounted for"
+        # At this width the uniform anatomy is glyph, count, label - every
+        # state pill alike, so no cell is decoded differently from its
+        # neighbours.
+        assert "▶ 1 running" in painted, "running renders as its full pill"
+        assert "✖ 1 failed" in painted, "failed renders as its full pill"
+        assert "✓ 2 succeeded" in painted, "succeeded renders as its full pill"
+        assert "⋯ 0 queued" in painted, "an empty bucket is still accounted for"
 
     @pytest.mark.asyncio
     async def test_the_condition_pill_reports_the_worst_stamped_verdict(
@@ -1418,10 +1421,10 @@ class TestHeaderCounts:
             await _ready(pilot, app)
             painted = _screen_text(app)
 
-        assert "● stalled" in painted, (
+        assert "● svc stalled" in painted, (
             "the worst service-stamped verdict must sit in the header"
         )
-        assert "⊘ 1" in painted, "the stalled tally rides beside the states"
+        assert "▲ 1 stalled" in painted, "the stalled tally rides beside the states"
 
     @pytest.mark.asyncio
     async def test_a_healthy_service_says_so_in_the_header(
@@ -1432,7 +1435,7 @@ class TestHeaderCounts:
             await _ready(pilot, app)
             painted = _screen_text(app)
 
-        assert "● healthy" in painted
+        assert "● svc healthy" in painted
 
     @pytest.mark.asyncio
     async def test_gpu_pressure_renders_from_the_payload(
@@ -1449,7 +1452,7 @@ class TestHeaderCounts:
             await _ready(pilot, app)
             painted = _screen_text(app)
 
-        assert "GPU 97% 15.4/16.0G" in painted, (
+        assert "gpu 97% 15.4/16.0G" in painted, (
             "the card's pressure must be readable in the header at all times"
         )
 
@@ -1461,7 +1464,7 @@ class TestHeaderCounts:
 
         Proven able to fail: making the absent branch of ``_gpu_cell``
         return a zeroed reading - the shape inventing a default would take -
-        paints ``GPU 0%`` and fails both assertions below by name; restored,
+        paints ``gpu 0%`` and fails both assertions below by name; restored,
         it passes.
         """
         app = _app(control_service, [_job("abc123def456")])
@@ -1470,7 +1473,7 @@ class TestHeaderCounts:
             painted = _screen_text(app)
 
         assert "gpu —" in painted, "an unreported card reads as a dim dash"
-        assert "GPU 0" not in painted, "absence must never be painted as a zero reading"
+        assert "gpu 0" not in painted, "absence must never be painted as a zero reading"
 
     @pytest.mark.asyncio
     async def test_a_probed_but_unmeasurable_host_reads_na(
@@ -1494,6 +1497,21 @@ class TestHeaderCounts:
         )
 
     @pytest.mark.asyncio
+    async def test_a_narrow_bar_sheds_labels_before_counts_or_cells(
+        self, control_service: _JobService
+    ) -> None:
+        """Width takes the pill labels first; nothing else is ever shed."""
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_NARROW, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "▶ 1" in painted, "the count survives every width"
+        assert "▶ 1 running" not in painted, "labels are the first thing shed"
+        assert "svc" in painted, "the condition cell is never shed"
+        assert "gpu" in painted, "the GPU cell is never shed"
+
+    @pytest.mark.asyncio
     async def test_a_service_publishing_no_total_claims_none(
         self, control_service: _JobService
     ) -> None:
@@ -1509,6 +1527,30 @@ class TestHeaderCounts:
 
         assert "showing 1" in painted
         assert "of 0" not in painted, "an unpublished total must not read as zero"
+
+
+class TestColourScheme:
+    """Both schemes are shipped palettes, switched as wholes."""
+
+    @pytest.mark.asyncio
+    async def test_the_schemes_are_the_shipped_palettes_and_toggle(
+        self, control_service: _JobService
+    ) -> None:
+        """Dark by default, light one keypress away, both official."""
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            default_theme = app.theme
+            await pilot.press("ctrl+t")
+            await pilot.pause()
+            toggled = app.theme
+            await pilot.press("ctrl+t")
+            await pilot.pause()
+            restored = app.theme
+
+        assert default_theme == "nord", "the dark scheme is the shipped palette"
+        assert toggled == "solarized-light", "the light scheme is the shipped palette"
+        assert restored == "nord"
 
 
 class TestLogPane:

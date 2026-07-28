@@ -29,17 +29,24 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
 from textual.widgets import RichLog
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
+    from textual.app import App
     from textual.events import Resize
 
-__all__ = ["JobsLogView", "LogEntry", "parse_log_line", "sanitize_log_text"]
+__all__ = [
+    "JobsLogView",
+    "LogEntry",
+    "parse_log_line",
+    "sanitize_log_text",
+    "semantic_tones",
+]
 
 # Terminal escape sequences, in every shape a hostile line can carry them:
 # CSI (colours, cursor movement), OSC (titles, hyperlinks), and the remaining
@@ -110,16 +117,49 @@ _POLLING_ROUTES = (
 
 _ERROR_LEVELS = frozenset({"ERROR", "CRITICAL", "FATAL"})
 
-_LEVEL_STYLES: dict[str, str] = {
-    "ERROR": "bold red",
-    "CRITICAL": "bold red",
-    "FATAL": "bold red",
-    "WARNING": "yellow",
-    "WARN": "yellow",
-    "INFO": "dim",
-    "DEBUG": "dim",
-    "TRACE": "dim",
+# Level -> (semantic tone, bold). Tones, not colours: every status colour on
+# this surface resolves from the active theme's palette so the same badge is
+# right in the dark and the light scheme alike.
+_LEVEL_TONES: dict[str, tuple[str, bool]] = {
+    "ERROR": ("bad", True),
+    "CRITICAL": ("bad", True),
+    "FATAL": ("bad", True),
+    "WARNING": ("attention", False),
+    "WARN": ("attention", False),
+    "INFO": ("muted", False),
+    "DEBUG": ("muted", False),
+    "TRACE": ("muted", False),
 }
+
+# Semantic tone -> (the theme variable it resolves from, the ANSI name used
+# only when no theme is in reach - a bare render outside a running app). The
+# variables are the readable status variants every shipped theme generates
+# from its own palette, so no colour is ever stated here.
+_TONE_VARIABLES: dict[str, tuple[str, str]] = {
+    "good": ("text-success", "green"),
+    "attention": ("text-warning", "yellow"),
+    "bad": ("text-error", "red"),
+    "neutral": ("text-accent", "cyan"),
+}
+
+
+def semantic_tones(variables: Mapping[str, str]) -> dict[str, str]:
+    """Resolve the interface's semantic tones from a theme's variables.
+
+    One mapping for every status colour the interface paints: ``good``,
+    ``attention``, ``bad``, ``neutral``, and ``muted``. The colours come
+    from the active theme's generated readable text variants - the palette
+    the scheme's designers published - never from names chosen here.
+    ``muted`` stays the terminal's dim attribute: it is luminance, not a
+    colour, and is right in both schemes.
+    """
+    tones = {
+        token: str(variables.get(variable) or fallback)
+        for token, (variable, fallback) in _TONE_VARIABLES.items()
+    }
+    tones["muted"] = "dim"
+    return tones
+
 
 # Fixed leading columns, so every entry's content starts on the same cell:
 # an eight-cell local time, a space, then an eight-cell level badge.
@@ -300,12 +340,12 @@ def _elide_middle(value: str, cells: int) -> str:
     return f"{value[:head]}…{value[-tail:]}" if tail else f"{value[:head]}…"
 
 
-def _status_style(status: str) -> str:
+def _status_style(status: str, tones: Mapping[str, str]) -> str:
     if status.startswith("5"):
-        return "bold red"
+        return f"bold {tones['bad']}"
     if status.startswith("4"):
-        return "yellow"
-    return "green"
+        return tones["attention"]
+    return tones["good"]
 
 
 def _duration_label(duration_ms: float) -> str:
@@ -314,18 +354,27 @@ def _duration_label(duration_ms: float) -> str:
     return f"{duration_ms:.0f}ms"
 
 
-def _lead(entry: LogEntry) -> Text:
+def _lead(entry: LogEntry, tones: Mapping[str, str]) -> Text:
     """The fixed columns every entry starts with: time, then a level badge."""
     line = Text()
     line.append(f"{entry.timestamp or '':<{_TIME_CELLS}}", style="dim")
     line.append(" ")
     level = entry.level or ""
-    style = _LEVEL_STYLES.get(level.upper(), "")
+    tone, bold = _LEVEL_TONES.get(level.upper(), ("", False))
+    colour = tones.get(tone, "") if tone else ""
+    style = f"bold {colour}".strip() if bold else colour
     line.append(f"{level:<{_BADGE_CELLS}}"[:_BADGE_CELLS], style=style)
     return line
 
 
-def _append_request(line: Text, entry: LogEntry, *, width: int, expanded: bool) -> None:
+def _append_request(
+    line: Text,
+    entry: LogEntry,
+    tones: Mapping[str, str],
+    *,
+    width: int,
+    expanded: bool,
+) -> None:
     """Append the request summary: method, path, status, timing."""
     if entry.method is not None:
         line.append(entry.method, style="bold")
@@ -338,7 +387,7 @@ def _append_request(line: Text, entry: LogEntry, *, width: int, expanded: bool) 
         line.append(shown)
     if entry.status is not None:
         line.append(" → ", style="dim")
-        line.append(entry.status, style=_status_style(entry.status))
+        line.append(entry.status, style=_status_style(entry.status, tones))
     if entry.reason is not None:
         line.append(f" {entry.reason}", style="dim")
     if entry.duration_ms is not None:
@@ -347,15 +396,24 @@ def _append_request(line: Text, entry: LogEntry, *, width: int, expanded: bool) 
         line.append(f"  · {entry.origin}", style="dim")
 
 
-def _header_line(entry: LogEntry, *, width: int, expanded: bool) -> Text:
-    line = _lead(entry)
+def _header_line(
+    entry: LogEntry,
+    tones: Mapping[str, str],
+    *,
+    width: int,
+    expanded: bool,
+) -> Text:
+    line = _lead(entry, tones)
     line.append(" ")
     if entry.method is not None or entry.status is not None:
-        _append_request(line, entry, width=width, expanded=expanded)
+        _append_request(line, entry, tones, width=width, expanded=expanded)
         return line
     prominent = entry.event or entry.message
     if prominent is not None:
-        line.append(prominent, style="bold red" if entry.is_error else "bold")
+        line.append(
+            prominent,
+            style=f"bold {tones['bad']}" if entry.is_error else "bold",
+        )
     if entry.origin is not None:
         line.append(f"  · {entry.origin}", style="dim")
     return line
@@ -402,6 +460,7 @@ def render_entry(
     width: int,
     expanded: bool = False,
     quiet: bool = False,
+    tones: Mapping[str, str] | None = None,
 ) -> list[Text]:
     """Render one entry as its formatted lines.
 
@@ -410,14 +469,17 @@ def render_entry(
         width: Cells available to a line; detail pairs are packed to it.
         expanded: Show values whole instead of middle-elided.
         quiet: Dim the whole entry - polling noise an operator chose to see.
+        tones: The active theme's semantic tones; ``None`` resolves the
+            no-theme fallbacks, for a render outside a running app.
 
     Returns:
         The lines to write, at least one. A raw entry is its sanitized text.
     """
+    resolved = tones if tones is not None else semantic_tones({})
     if entry.kind == "raw":
         lines = [Text(entry.raw or " ")]
     else:
-        lines = [_header_line(entry, width=width, expanded=expanded)]
+        lines = [_header_line(entry, resolved, width=width, expanded=expanded)]
         lines.extend(_pair_lines(entry.pairs, width=width, expanded=expanded))
     if quiet:
         for line in lines:
@@ -555,6 +617,16 @@ class JobsLogView(RichLog):
         width = self.scrollable_content_region.width or self.content_size.width
         return max(24, width)
 
+    def repaint_theme(self) -> None:
+        """Re-render the held window under the active theme's tones."""
+        if self._entries or self._message is not None:
+            self._render_entries()
+
+    def _tones(self) -> dict[str, str]:
+        """The active theme's semantic tones, resolved fresh per render."""
+        app = cast("App[object]", self.app)
+        return semantic_tones(app.theme_variables)
+
     def _render_entries(self) -> None:
         self.clear()
         self._error_offsets = []
@@ -564,6 +636,7 @@ class JobsLogView(RichLog):
         if self._message is not None:
             self.write(Text(self._message))
             return
+        tones = self._tones()
         hidden = 0
         for entry in self._entries:
             if entry.is_polling and not self._show_polling:
@@ -577,6 +650,7 @@ class JobsLogView(RichLog):
                 width=width,
                 expanded=self._expanded,
                 quiet=entry.is_polling,
+                tones=tones,
             ):
                 self.write(line)
         self._flush_hidden(hidden)
