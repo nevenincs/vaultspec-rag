@@ -184,3 +184,10 @@ actions-runner-*.tar.gz
 
 # stray provider-mirror lock artifacts
 .agents/*.lock
+
+# The workspace sync regenerates a pre-commit hook config from its own
+# templates on every run. This project runs its gates explicitly and has no
+# commit hooks, so the file has been deleted from history more than once and
+# comes straight back. Ignoring it stops the next sweep-style `add` from
+# recommitting the hooks. The adjacent `.lock` is already ignored above.
+/.pre-commit-config.yaml
