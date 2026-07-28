@@ -1,11 +1,15 @@
 """Job-snapshot filtering and shaping helpers for the ``/jobs`` route.
 
-Pure, GPU-free transforms over the :mod:`._jobs` registry snapshot: query
+GPU-consumer-free transforms over the :mod:`._jobs` registry snapshot: query
 filter normalisation, per-record liveness enrichment, predicate matching,
-aggregate summary, and the running-first ordering. The ``jobs_route`` handler
-in :mod:`._routes` composes these; they are factored out here to keep the route
-module bounded. Bounded/filterable operator-view semantics live in the
-handler, which applies the clamp and predicate this module provides.
+aggregate summary, and the running-first ordering. The one non-pure step is
+deliberate: an unhealthy degradation verdict attaches sampled evidence
+(read-only GPU pressure, a bounded backend probe) through the jobs registry,
+so cause attribution rides the same projection every adapter reads. The
+``jobs_route`` handler in :mod:`._routes` composes these; they are factored
+out here to keep the route module bounded. Bounded/filterable operator-view
+semantics live in the handler, which applies the clamp and predicate this
+module provides.
 """
 
 from __future__ import annotations
@@ -14,11 +18,16 @@ from dataclasses import asdict, dataclass, field
 from typing import cast
 
 from .. import jobs as _jobs
-from .._job_errors import STALL_THRESHOLD_SECONDS, remediation
+from .._job_errors import (
+    DEGRADED_THRESHOLD_SECONDS,
+    STALL_THRESHOLD_SECONDS,
+    remediation,
+)
 from ..job_models import JobCapabilities, JobState
 
 __all__ = [
     "_clamp_limit",
+    "_job_degradation",
     "_job_matches",
     "_job_number",
     "_job_resilience",
@@ -326,6 +335,72 @@ def _job_stalled(record: dict[str, object], now: float) -> bool:
     return age is not None and age >= STALL_THRESHOLD_SECONDS
 
 
+def _job_forward(record: dict[str, object]) -> dict[str, object] | None:
+    """Return one job's forward-pass telemetry from whichever registry has it.
+
+    Legacy activity records carry the block themselves; canonical manager
+    snapshots do not, so it is resolved by id from the activity registry -
+    the same read-through the completion estimate uses for its rate window.
+    """
+    raw = record.get("forward")
+    if isinstance(raw, dict):
+        return cast("dict[str, object]", raw)
+    identifier = record.get("id")
+    if isinstance(identifier, str) and identifier:
+        return _jobs.forward_telemetry(identifier)
+    return None
+
+
+def _forward_signal_age(
+    forward: dict[str, object] | None,
+    now: float,
+) -> float | None:
+    """Age of the newest forward-pass boundary, or ``None`` without one."""
+    if forward is None:
+        return None
+    stamps = [
+        float(value)
+        for key in ("entered_at", "exited_at")
+        if isinstance(value := forward.get(key), int | float)
+        and not isinstance(value, bool)
+    ]
+    return _age_seconds(max(stamps), now) if stamps else None
+
+
+def _job_degradation(record: dict[str, object], now: float) -> str:
+    """Return the three-way service verdict: healthy, degraded, or stalled.
+
+    ``stalled`` keeps the existing hard threshold and semantics unchanged.
+    ``degraded`` fires earlier, from the freshest of two signals: the last
+    progress tick and the last forward-pass boundary. A forward that entered
+    recently keeps a job healthy through an old progress stamp (slices only
+    tick progress at their boundary), while a forward that has been running -
+    or a job that has shown neither signal - beyond the short threshold is
+    degraded. Queued, paused, and terminal work is inert, not degraded.
+    """
+    if _job_stalled(record, now):
+        return "stalled"
+    state = job_state(record)
+    if state in _TRANSITIONAL_STATES:
+        control_age = _control_pending_age_seconds(record, now)
+        if control_age is not None and control_age >= DEGRADED_THRESHOLD_SECONDS:
+            return "degraded"
+        return "healthy"
+    if state != JobState.RUNNING.value or _job_is_waiting(record):
+        return "healthy"
+    ages = [
+        age
+        for age in (
+            _job_last_progress_age_seconds(record, now),
+            _forward_signal_age(_job_forward(record), now),
+        )
+        if age is not None
+    ]
+    if not ages:
+        return "healthy"
+    return "degraded" if min(ages) >= DEGRADED_THRESHOLD_SECONDS else "healthy"
+
+
 def _countable_progress(record: dict[str, object]) -> tuple[int, int] | None:
     """Return ``(completed, total)`` when the job reports countable work.
 
@@ -482,6 +557,24 @@ def _job_with_liveness(
     )
     enriched["control_pending_age_seconds"] = _control_pending_age_seconds(record, now)
     enriched["stalled"] = _job_stalled(record, now)
+    forward = _job_forward(record)
+    if forward is not None:
+        enriched["forward"] = dict(forward)
+    verdict = _job_degradation(record, now)
+    enriched["degradation"] = verdict
+    # Present-and-null when healthy: absent means a daemon that predates the
+    # verdict, and renderers read that difference the same way they do for
+    # the completion estimate.
+    enriched["degradation_evidence"] = (
+        _jobs.degradation_evidence(
+            now=now,
+            forward=forward,
+            project_root=_job_project_root(record),
+            source=job_source(record),
+        )
+        if verdict != "healthy"
+        else None
+    )
     rate, remaining = _job_completion_estimate(record)
     enriched["progress_rate_per_second"] = rate
     enriched["estimated_remaining_seconds"] = remaining
@@ -609,6 +702,7 @@ class _JobSummaryTally:
     active_initiators: dict[str, int] = field(default_factory=dict)
     users: dict[str, int] = field(default_factory=dict)
     stalled: int = 0
+    degraded: int = 0
     controllable: int = 0
     control_pending: int = 0
     retryable: int = 0
@@ -641,6 +735,8 @@ def _tally_job(tally: _JobSummaryTally, record: dict[str, object], now: float) -
     """Fold one job record's counts into the running summary tally."""
     if _job_stalled(record, now):
         tally.stalled += 1
+    if _job_degradation(record, now) == "degraded":
+        tally.degraded += 1
     if _job_controllable(record):
         tally.controllable += 1
     if _control_pending_age_seconds(record, now) is not None:
@@ -697,6 +793,7 @@ def _job_summary(
         "cancelled": states.get("cancelled", 0),
         "interrupted": states.get("interrupted", 0),
         "stalled": tally.stalled,
+        "degraded": tally.degraded,
         "control_pending": tally.control_pending,
         "controllable": tally.controllable,
         "retryable": tally.retryable,

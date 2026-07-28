@@ -57,6 +57,19 @@ class ProgressReporter(Protocol):
     def log(self, message: str) -> None:
         """Emit an informational message outside of any phase bar."""
 
+    def forward_started(self, *, ordinal: int, items: int) -> None:
+        """Record entering one model forward pass for a bounded slice.
+
+        A slice's forward pass can legitimately run for minutes under GPU
+        contention, and ``advance`` only ticks at slice boundaries - so
+        without this boundary signal a slow forward is indistinguishable
+        from a hang on every progress surface. ``ordinal`` is the slice's
+        zero-based position in its stream and ``items`` its chunk count.
+        """
+
+    def forward_finished(self, *, ordinal: int, items: int) -> None:
+        """Record leaving the forward pass ``forward_started`` opened."""
+
 
 class NullProgressReporter:
     """No-op ``ProgressReporter`` implementation."""
@@ -72,6 +85,12 @@ class NullProgressReporter:
 
     def log(self, message: str) -> None:
         del message
+
+    def forward_started(self, *, ordinal: int, items: int) -> None:
+        del ordinal, items
+
+    def forward_finished(self, *, ordinal: int, items: int) -> None:
+        del ordinal, items
 
 
 class RichProgressReporter:
@@ -188,3 +207,11 @@ class RichProgressReporter:
             self._progress.console.log(message)
         else:
             self._console.print(message)
+
+    def forward_started(self, *, ordinal: int, items: int) -> None:
+        # Forward-pass boundaries feed the service's job telemetry; the
+        # interactive bar already animates, so there is nothing to add here.
+        del ordinal, items
+
+    def forward_finished(self, *, ordinal: int, items: int) -> None:
+        del ordinal, items
