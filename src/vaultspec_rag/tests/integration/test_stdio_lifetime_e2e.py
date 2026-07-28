@@ -308,7 +308,8 @@ def test_shim_reaps_instantly_when_its_serving_client_dies(tmp_path: Path) -> No
 # truncates the orphan's ancestor walk below the (immortal) pytest process;
 # without it the walk finds a live anchor and correctly never re-arms.
 # argv: [1] second-generation source, [2] interpreter for the orphan,
-# [3] orphan source, [4] pid file, [5] stderr log.
+# [3] orphan source, [4] pid file, [5] stderr log, [6] grace seconds,
+# [7] re-arm seconds.
 _FIRST_LAUNCHER = """
 import os
 import subprocess
@@ -316,19 +317,25 @@ import sys
 
 subprocess.Popen(
     [sys.executable, "-c", sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4],
-     sys.argv[5], str(os.getpid())],
+     sys.argv[5], str(os.getpid()), sys.argv[6], sys.argv[7]],
     stdin=subprocess.DEVNULL,
 )
 """
 
-# Second generation: waits out the first, spawns the orphan, then exits
-# inside the grace window so every discovered ancestor is pruned as a
-# transient spawn helper. argv: [1] interpreter, [2] orphan source,
-# [3] pid file, [4] stderr log, [5] first-generation pid.
+# Second generation: waits out the first, spawns the orphan, then exits the
+# moment the orphan reports its watchdog installed - inside the grace
+# window, so every discovered ancestor is pruned as a transient spawn
+# helper. Leaving on the orphan's own signal rather than a fixed sleep is
+# what keeps that ordering deterministic: the window it has to beat starts
+# at the install this waits for, so shortening the window cannot narrow the
+# margin. argv: [1] interpreter, [2] orphan source, [3] pid file,
+# [4] stderr log, [5] first-generation pid, [6] grace seconds,
+# [7] re-arm seconds.
 _SECOND_LAUNCHER = """
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from vaultspec_rag.server import _stdio_lifetime as w  # absolute-import-ok
 
@@ -337,18 +344,24 @@ deadline = time.monotonic() + 60
 while first_pid in w._snapshot_processes()[0] and time.monotonic() < deadline:
     time.sleep(0.2)
 
+pid_file = Path(sys.argv[3])
 with open(sys.argv[4], "w", encoding="utf-8") as log:
     subprocess.Popen(
-        [sys.argv[1], "-c", sys.argv[2], sys.argv[3]],
+        [sys.argv[1], "-c", sys.argv[2], sys.argv[3], sys.argv[6], sys.argv[7]],
         stdin=subprocess.DEVNULL,
         stderr=log,
     )
-    time.sleep(2)
+    deadline = time.monotonic() + 60
+    while not pid_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
 """
 
 # The orphan: installs the real watchdog, then blocks forever WITHOUT ever
 # reading stdin - the reported shape exactly, where the client's inherited
-# write handle outlives it so EOF never arrives.
+# write handle outlives it so EOF never arrives. Both intervals are handed
+# in shortened; the state machine they pace is the shipped one, untouched.
+# The pid file is published by rename so neither poller can read it empty.
+# argv: [1] pid file, [2] grace seconds, [3] re-arm seconds.
 _ORPHAN_WORKER = """
 import os
 import sys
@@ -357,8 +370,12 @@ from pathlib import Path
 
 from vaultspec_rag.server import _stdio_lifetime as w  # absolute-import-ok
 
-w.install_stdio_lifetime_watchdog()
-Path(sys.argv[1]).write_text(str(os.getpid()), encoding="utf-8")
+w._REARM_SECONDS = float(sys.argv[3])
+w.install_stdio_lifetime_watchdog(grace_seconds=float(sys.argv[2]))
+pid_file = Path(sys.argv[1])
+staged = pid_file.with_suffix(".staged")
+staged.write_text(str(os.getpid()), encoding="utf-8")
+os.replace(staged, pid_file)
 time.sleep(600)
 """
 
@@ -380,10 +397,33 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
     beneath it.
 
     The structured stderr events are the proof of MECHANISM: without them a
-    worker that merely died with its launcher would pass. Timing is the
-    real thing rather than a shortened stand-in, hence the generous budget.
+    worker that merely died with its launcher would pass, and they are what
+    lets the two interval constants be shortened below without weakening
+    anything - the events show the full shipped count of confirming rounds
+    ran before the reap.
     """
-    from ...server._stdio_lifetime import _ORPHAN_CONFIRM_ROUNDS, _REARM_SECONDS
+    from ...server._stdio_lifetime import (
+        _GRACE_SECONDS,
+        _ORPHAN_CONFIRM_ROUNDS,
+        _REARM_SECONDS,
+    )
+
+    # The orphan gets shortened intervals. What is under test is the state
+    # machine - the discovered chain pruned as transient, re-discovery
+    # finding nothing above, the reap withheld until _ORPHAN_CONFIRM_ROUNDS
+    # consecutive rounds agree - and no step of it reads the clock for
+    # anything but how long to sleep between rounds. The shipped cadence is
+    # ~55s of pure sleep per run, which bought no assertion the events do
+    # not already make. The round COUNT is deliberately not shortened: it is
+    # mechanism, not pacing.
+    grace_seconds = 5.0
+    rearm_seconds = 2.0
+
+    # The one thing waiting out the real cadence did cover: a shipped
+    # cadence so slow the backstop fires long after an operator has written
+    # the shim off. That is a property of the constants, so assert it
+    # directly instead of spending a minute of sleep re-observing it.
+    assert _GRACE_SECONDS + _REARM_SECONDS * _ORPHAN_CONFIRM_ROUNDS <= 120.0
 
     base_python = getattr(sys, "_base_executable", None) or sys.executable
     src_root = Path(__file__).resolve().parents[3]
@@ -410,6 +450,8 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
             _ORPHAN_WORKER,
             str(pid_file),
             str(log_file),
+            str(grace_seconds),
+            str(rearm_seconds),
         ],
         stdin=subprocess.DEVNULL,
         env=env,
@@ -427,26 +469,50 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
     try:
         assert _pid_alive(orphan_pid)
 
-        budget = 10.0 + _REARM_SECONDS * (_ORPHAN_CONFIRM_ROUNDS + 2) + 30.0
+        budget = grace_seconds + rearm_seconds * (_ORPHAN_CONFIRM_ROUNDS + 2) + 30.0
         deadline = time.monotonic() + budget
         while _pid_alive(orphan_pid) and time.monotonic() < deadline:
-            time.sleep(1.0)
-        assert not _pid_alive(orphan_pid), (
-            f"orphaned worker {orphan_pid} survived {budget:.0f}s with no live "
-            "ancestor; the watchdog disarmed instead of re-arming"
-        )
-
+            time.sleep(0.25)
         events = [
             json.loads(line)
             for line in log_file.read_text(encoding="utf-8").splitlines()
             if line.startswith("{")
         ]
+        assert not _pid_alive(orphan_pid), (
+            f"orphaned worker {orphan_pid} survived {budget:.0f}s with no live "
+            f"ancestor; the watchdog disarmed instead of re-arming. Events: "
+            f"{events}"
+        )
+
         kinds = [event.get("event") for event in events]
         assert "stdio_watchdog_unanchored" in kinds, (
             f"the orphan never reported losing its anchor: {kinds}"
         )
-        assert "stdio_watchdog_exit" in kinds, (
+        assert kinds[-1] == "stdio_watchdog_exit", (
             f"the orphan died without reaping itself: {kinds}"
+        )
+
+        # The reap must follow a full run of CONSECUTIVE confirming rounds,
+        # numbered from zero: the counter restarting on a live-but-unopenable
+        # ancestor (or a recycled pid slot) is the safety valve that keeps a
+        # live session from being reaped, so a reap that never counted up to
+        # the shipped total means the valve is not holding. A benign restart
+        # mid-run is tolerated; only the run ending in the reap is asserted.
+        unanchored = [
+            event
+            for event in events
+            if event.get("event") == "stdio_watchdog_unanchored"
+        ]
+        rounds = [event.get("round") for event in unanchored]
+        confirming_run = list(range(_ORPHAN_CONFIRM_ROUNDS))
+        assert rounds[-_ORPHAN_CONFIRM_ROUNDS:] == confirming_run, (
+            f"the reap did not follow {_ORPHAN_CONFIRM_ROUNDS} consecutive "
+            f"confirming rounds: {rounds}"
+        )
+        totals = {event.get("reap_after_rounds") for event in unanchored}
+        assert totals == {_ORPHAN_CONFIRM_ROUNDS}, (
+            f"the orphan counted toward a different total than the shipped "
+            f"{_ORPHAN_CONFIRM_ROUNDS}: {totals}"
         )
     finally:
         if _pid_alive(orphan_pid):
