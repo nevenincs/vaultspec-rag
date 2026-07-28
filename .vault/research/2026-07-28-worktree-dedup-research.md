@@ -86,8 +86,8 @@ and no lock at all in server mode, and treats every form of absence - missing
 collection, missing point, missing dense vector - as a silent miss rather than
 an error.
 
-Per collection: an identity stamp records what produced a collection's vectors
-- models, width, distance, vector names - written once at creation and read back
+Per collection: an identity stamp records what produced a collection's vectors -
+models, width, distance, vector names - written once at creation and read back
 through one accessor with two backend-specific homes, the manifest entry in
 server mode and a per-root sidecar in local mode
 (`src/vaultspec_rag/storage_identity.py:84`,
@@ -152,8 +152,8 @@ Immediately before acting, three further gates run in order: an active-index
 liveness probe defers the namespace outright, points are re-counted because the
 survey reading can be minutes stale, and any movement since the survey defers
 (`src/vaultspec_rag/storage_reclamation.py:729`). A point-bearing namespace is
-archived before it is destroyed, and if the point count moved during the archive
-- meaning the snapshot is torn - the delete is skipped and the archive is
+archived before it is destroyed, and if the point count moved during the archive -
+meaning the snapshot is torn - the delete is skipped and the archive is
 reported anyway (`src/vaultspec_rag/storage_reclamation.py:661`,
 `src/vaultspec_rag/storage_reclamation.py:379`). Path containment is proven by
 full resolution of both target and base before any filesystem removal, closing
@@ -179,15 +179,15 @@ namespace attributable to this repository's live tree is the one for `main`.
 The manifest's seven roots, checked for existence read-only at the time of
 writing:
 
-| Prefix | Root | Verdict | Collections | Footprint |
-| --- | --- | --- | --- | --- |
-| `r01fa8eefb788_` | a second project's main tree | live | 4 | 2,087 MB |
-| `rea7120f40662_` | this repository's main tree | live | 4 | 1,237 MB |
-| `r181a619b05b0_` | a deleted worktree of this repository | orphaned | 3 | 967 MB |
-| `raba11d8547a9_` | a third project's main tree | live | 2 | 583 MB |
-| `ra79c89ada258_` | harness temp directory | live, temp-rooted | 1 | 255 MB |
-| `rb922ad924764_` | harness temp directory | live, temp-rooted | 1 | 255 MB |
-| `rb1d848af2c20_` | harness temp directory | live, temp-rooted | 0 | 0 |
+| Prefix           | Root                                  | Verdict           | Collections | Footprint |
+| ---------------- | ------------------------------------- | ----------------- | ----------- | --------- |
+| `r01fa8eefb788_` | a second project's main tree          | live              | 4           | 2,087 MB  |
+| `rea7120f40662_` | this repository's main tree           | live              | 4           | 1,237 MB  |
+| `r181a619b05b0_` | a deleted worktree of this repository | orphaned          | 3           | 967 MB    |
+| `raba11d8547a9_` | a third project's main tree           | live              | 2           | 583 MB    |
+| `ra79c89ada258_` | harness temp directory                | live, temp-rooted | 1           | 255 MB    |
+| `rb922ad924764_` | harness temp directory                | live, temp-rooted | 1           | 255 MB    |
+| `rb1d848af2c20_` | harness temp directory                | live, temp-rooted | 0           | 0         |
 
 Fifteen collections, 5.3 GB total measured on the collections tree. Verdicts are
 this document's own application of the classification rules above to observed
