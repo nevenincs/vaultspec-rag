@@ -60,7 +60,7 @@ from . import (
     _status_render,
     _store,
 )
-from ._app import app, run_cli
+from ._app import app
 from ._core import console
 from ._process import TerminationResult
 
@@ -87,5 +87,4 @@ __all__ = [
     "_store",
     "app",
     "console",
-    "run_cli",
 ]
