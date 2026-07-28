@@ -10,6 +10,7 @@ initialization in ``api.py`` and the RAG daemon (``server/_main.py``).
 from __future__ import annotations
 
 import contextlib
+import gc
 import logging
 import threading
 import time
@@ -916,6 +917,19 @@ class ServiceRegistry:
             self._model = None
             self._reranker = None
             self._shutdown_complete = True
+
+        # Dropping the references is not enough: both stacks are reachable only
+        # through reference cycles, so their device memory survives until a
+        # collection runs. Until it does the process holds gigabytes it no
+        # longer has a handle on, and the recorded resident baseline keeps
+        # describing them - which would put every later index ceiling out of
+        # reach, since enforcement clamps a job's peak net of that figure at
+        # zero. Collect, then re-establish the baseline from what is genuinely
+        # left resident.
+        from .memory_probe import rebase_resident_cuda_baseline
+
+        gc.collect()
+        rebase_resident_cuda_baseline()
         logger.info("ServiceRegistry shut down")
 
     # -- introspection -----------------------------------------------------

@@ -40,6 +40,7 @@ __all__ = [
     "current_cuda_mb",
     "current_rss_mb",
     "is_enabled",
+    "rebase_resident_cuda_baseline",
     "record_forward_peaks",
     "reset_cuda_peak_memory_stats",
     "resident_cuda_baseline_mb",
@@ -360,8 +361,10 @@ def sample_resident_cuda_baseline() -> float:
     Called after each shared model finishes loading - the embedding stack
     eagerly, the reranker lazily on first use - so a late lazy load raises
     the recorded baseline instead of leaving it understated. The baseline
-    only ever grows: a transient dip (eviction mid-run) must not shrink the
-    figure an in-flight job's budget was constructed against.
+    only ever grows here: a transient dip (eviction mid-run) must not shrink the
+    figure an in-flight job's budget was constructed against. A definitive
+    release is the other case and is not a dip;
+    :func:`rebase_resident_cuda_baseline` owns it.
 
     Returns:
         The updated baseline in MiB (``0.0`` off the GPU path).
@@ -374,6 +377,37 @@ def sample_resident_cuda_baseline() -> float:
     with _resident_baseline_lock:
         if allocated > _resident_baseline_mb:
             _resident_baseline_mb = allocated
+        return _resident_baseline_mb
+
+
+def rebase_resident_cuda_baseline() -> float:
+    """Re-establish the baseline after resident models are released.
+
+    The recorded figure only ratchets while models load, which is right for a
+    transient dip but wrong for a definitive release: a registry that closes
+    its stack leaves the baseline describing memory nothing holds. Enforcement
+    clamps a job's peak net of that figure at zero, so an overstated baseline
+    does not merely skew the comparison - it puts every ceiling out of reach
+    and silently retires the guard for the rest of the process.
+
+    Measuring rather than subtracting is what makes this safe: whatever remains
+    allocated is genuinely resident, whether that is a sibling registry's stack
+    or nothing at all. In-flight jobs are unaffected, because each budget
+    captures the baseline it enforces against when it is constructed.
+
+    Callers must release their references AND collect first; a model held only
+    by a reference cycle is still allocated when this measures, which would
+    re-adopt the very figure the release was meant to retire.
+
+    Returns:
+        The re-established baseline in MiB (unchanged off the GPU path).
+    """
+    global _resident_baseline_mb
+    measured = _measure_cuda_mb()
+    if measured is None:
+        return resident_cuda_baseline_mb()
+    with _resident_baseline_lock:
+        _resident_baseline_mb = measured[0]
         return _resident_baseline_mb
 
 
