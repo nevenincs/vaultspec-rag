@@ -6,13 +6,15 @@ for the remediation campaign, not a gate. Gates live in:
 
 - ``[tool.complexipy]``         (cognitive complexity, baseline-calibrated)
 - ``[tool.pylint]``             (module length + class shape, baseline-calibrated)
-- ``[tool.ruff.lint.pylint]``   (function-size limits, baseline-calibrated)
+- ``[tool.ruff.lint]``          (function-size limits, at upstream defaults)
 - ``ty`` / ``basedpyright``     (type checking, gating)
 
 Every gate is configured declaratively in ``pyproject.toml`` and invoked
 directly by a ``just lint`` recipe. This module is the one place that
 composes them, and it exists to rank offenders across dimensions — not to
 re-implement any threshold, which would let the report and the gate disagree.
+Thresholds this report names are therefore READ from pyproject.toml rather
+than restated in a string literal, which is how three of them went stale.
 
 Dimensions reported here:
 
@@ -42,6 +44,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections import Counter
 from pathlib import Path
 
@@ -49,14 +52,30 @@ from complexipy import file_complexity
 from radon.complexity import cc_rank, cc_visit
 from radon.metrics import mi_rank, mi_visit
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = REPO_ROOT / "src" / "vaultspec_rag"
 
-COGNITIVE_REPORT_FLOOR = 10  # report functions above this; the gate is at 20
+COGNITIVE_REPORT_FLOOR = 10  # report functions above this, whatever the gate is
 
 console = Console()
+
+
+def _gate_limit(table: str, key: str) -> int:
+    """Read one numeric gate threshold out of pyproject.toml.
+
+    Read rather than restated. Every threshold this report names went stale
+    the first time its gate was ratcheted: it announced a cognitive ceiling of
+    25 against a configured 20, a module ceiling of 3400 against 3000, and a
+    ``[tool.ruff.lint.pylint]`` baseline table that had been deleted in favour
+    of upstream defaults. A label nobody can trust is worse than no label.
+    """
+    config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    for segment in table.split("."):
+        config = config[segment]
+    return int(config[key])
 
 
 def _python_files() -> list[Path]:
@@ -72,7 +91,13 @@ def _rel(path: Path) -> str:
 
 
 def _section(title: str, mode: str) -> None:
-    console.rule(f"[bold]{title}[/bold]  [dim]({mode})[/dim]")
+    """Rule off one dimension, naming the gate that owns it.
+
+    Both arguments are escaped: a mode line names its gate's pyproject table,
+    and rich reads a bare ``[tool.complexipy]`` as a style tag and drops it,
+    so the label silently lost the very thing it was there to point at.
+    """
+    console.rule(f"[bold]{escape(title)}[/bold]  [dim]({escape(mode)})[/dim]")
 
 
 def report_cyclomatic(top: int) -> None:
@@ -106,8 +131,10 @@ def report_cognitive(top: int) -> None:
     """
     _section(
         "Cognitive complexity (complexipy)",
-        f"production gated at 25 via [tool.complexipy]; reporting > "
-        f"{COGNITIVE_REPORT_FLOOR} across the whole tree",
+        "production gated at "
+        f"{_gate_limit('tool.complexipy', 'max-complexity-allowed')} via "
+        f"[tool.complexipy]; reporting > {COGNITIVE_REPORT_FLOOR} "
+        "across the whole tree",
     )
     findings: list[tuple[int, str, str]] = []
     for path in _python_files():
@@ -133,10 +160,17 @@ def report_cognitive(top: int) -> None:
 
 
 def report_function_limits(top: int) -> None:
+    """Rank functions against ruff's UPSTREAM PLR091x limits, not the gate's.
+
+    The limits are forced below rather than inherited from ``[tool.ruff]``.
+    Today that changes nothing - the loosened override table was deleted and
+    the gate runs these rules at upstream defaults - but pinning them here
+    keeps the ranking honest if an override table is ever reintroduced.
+    """
     _section(
         "Function-size limits (ruff PLR091x / PLR1702 vs upstream defaults)",
-        "gated at baseline via [tool.ruff.lint.pylint] "
-        "(args<=23 returns<=10 statements<=58 nesting<=6)",
+        "PLR0911/0912/0913/0915 gated at upstream defaults by `just lint "
+        "python`; PLR1702 by `just lint nesting`",
     )
     defaults = {
         "lint.pylint.max-args": 5,
@@ -190,7 +224,8 @@ def report_function_limits(top: int) -> None:
 def report_module_length(top: int) -> None:
     _section(
         "Module length (physical LOC)",
-        "gated by pylint C0302 via [tool.pylint.format] (ceiling 3400)",
+        "gated by pylint C0302 via [tool.pylint.format] "
+        f"(ceiling {_gate_limit('tool.pylint.format', 'max-module-lines')})",
     )
     lengths: list[tuple[int, str]] = []
     for path in _python_files():
