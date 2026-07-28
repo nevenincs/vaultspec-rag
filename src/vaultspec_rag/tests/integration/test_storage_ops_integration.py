@@ -23,7 +23,12 @@ from ...qdrant_runtime._provision import provision
 from ...qdrant_runtime._resolve import resolve_binary
 from ...storage_manifest import record_root
 from ...storage_migration import migrate_collections
-from ...storage_survey_ops import delete_prefix, gather_survey, prune_orphaned
+from ...storage_survey_ops import (
+    delete_prefix,
+    directory_size_bytes,
+    gather_survey,
+    prune_orphaned,
+)
 from ._helpers import serve_qdrant
 
 if TYPE_CHECKING:
@@ -464,10 +469,6 @@ def test_migrate_copies_multiple_pages(
 # reclaims bytes, preserves points, and leaves answers unchanged.
 
 
-def _dir_size(path: Path) -> int:
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-
-
 def _make_legacy_collection(
     client: QdrantClient,
     name: str,
@@ -555,7 +556,7 @@ def test_reconcile_reclaims_bytes_and_preserves_data(
         _make_legacy_collection(client, name, segments=6, points=200)
         storage = ops_qdrant.storage_dir / "collections"
 
-        before_bytes = _dir_size(storage / name)
+        before_bytes = directory_size_bytes(storage / name)
         before_hits = _dense_probe(client, name)
 
         batch = reconcile_collections(
@@ -575,7 +576,7 @@ def test_reconcile_reclaims_bytes_and_preserves_data(
         assert result.bytes_after is not None
         assert result.bytes_after < before_bytes
         assert result.reclaimed_bytes > 0
-        assert _dir_size(storage / name) < before_bytes
+        assert directory_size_bytes(storage / name) < before_bytes
         assert result.segments_after is not None
         assert result.segments_after <= 2
     finally:
@@ -637,7 +638,7 @@ def test_unwaited_reconcile_never_reports_a_reclaim_figure(
         name = "rfeedfacefeed_codebase_docs"
         _make_legacy_collection(client, name, segments=6, points=100)
         storage = ops_qdrant.storage_dir / "collections"
-        before_bytes = _dir_size(storage / name)
+        before_bytes = directory_size_bytes(storage / name)
 
         batch = reconcile_collections(
             client, storage_dir=storage, cap=10, budget_s=300.0, wait=False
@@ -652,12 +653,16 @@ def test_unwaited_reconcile_never_reports_a_reclaim_figure(
 
         # The target persisted, so no further pass is needed: the optimizer
         # converges on its own and the backend reports no remaining drift.
+        # This polls a directory the optimizer is actively rewriting, which
+        # unlinks segment dirs and atomic-write temp files between the walk
+        # and the stat, so the size must be read through the production
+        # best-effort measure rather than a bare stat-every-entry sum.
         deadline = time.monotonic() + 300.0
         while time.monotonic() < deadline:
-            if _dir_size(storage / name) < before_bytes:
+            if directory_size_bytes(storage / name) < before_bytes:
                 break
             time.sleep(1.0)
-        assert _dir_size(storage / name) < before_bytes
+        assert directory_size_bytes(storage / name) < before_bytes
 
         again = reconcile_collections(
             client, storage_dir=storage, cap=10, budget_s=300.0
