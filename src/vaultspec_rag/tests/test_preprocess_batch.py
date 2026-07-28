@@ -46,7 +46,6 @@ from ..indexer._preprocess_runner import (
     PreprocessAbortError,
     run_preprocessor_batch,
 )
-from ..progress import NullProgressReporter
 from ._chunk_production import produce_chunks
 
 pytestmark = [pytest.mark.unit]
@@ -775,7 +774,6 @@ def test_batch_pool_retains_only_one_worker_window(tmp_path: Path) -> None:
             try:
                 indexer._producer.run_batch_groups(
                     batch_groups,
-                    NullProgressReporter(),
                     _observe_window,
                 )
             except BaseException as exc:

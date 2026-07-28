@@ -41,8 +41,16 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-_EVIDENCE_KEYS = {"forward", "gpu", "backend"}
-_FORWARD_KEYS = {"in_flight", "age_seconds", "slice_ordinal", "items", "thread_alive"}
+_EVIDENCE_KEYS = {"forward", "cpu", "gpu", "backend"}
+_FORWARD_KEYS = {
+    "in_flight",
+    "age_seconds",
+    "slice_ordinal",
+    "items",
+    "thread_alive",
+    "expected",
+}
+_CPU_KEYS = {"available", "utilization_percent"}
 _GPU_KEYS = {"available", "utilization_percent", "memory_used_mb", "memory_total_mb"}
 _BACKEND_KEYS = {"alive", "latency_seconds", "detail"}
 
@@ -346,6 +354,108 @@ class TestDegradationVerdict:
         assert summary["stalled"] == 1
 
 
+class TestPhaseAwareEvidence:
+    """A CPU-bound phase is never judged by a signal it cannot produce."""
+
+    def test_a_cpu_bound_step_marks_the_forward_signal_not_expected(self) -> None:
+        """The hashing-phase incident: silence there is the phase's shape.
+
+        Mutation check: hard-coding ``expected`` to ``True`` in
+        ``degradation_evidence`` makes this fail on the ``expected is
+        False`` assertion below, not on an import; restoring the step
+        classifier returns it to green.
+        """
+        record = _running_record(progress_at=1000.0, step="hash files")
+        now = 1000.0 + DEGRADED_THRESHOLD_SECONDS + 30.0
+        shaped = _job_with_liveness(record, now=now)
+        assert shaped["degradation"] == "degraded"
+        evidence = _as_map(shaped["degradation_evidence"])
+        forward = _as_map(evidence["forward"])
+        assert forward["expected"] is False
+
+    def test_an_encoding_step_keeps_the_forward_signal_expected(self) -> None:
+        record = _running_record(progress_at=1000.0)
+        now = 1000.0 + DEGRADED_THRESHOLD_SECONDS + 30.0
+        shaped = _job_with_liveness(record, now=now)
+        evidence = _as_map(shaped["degradation_evidence"])
+        forward = _as_map(evidence["forward"])
+        assert forward["expected"] is True
+
+    def test_the_published_step_vocabulary_classifies_both_ways(self) -> None:
+        from ..jobs import _forward_pass_expected
+
+        encoding = {
+            "chunk + embed",
+            "embed",
+            "embed + upsert chunks",
+            "embed + upsert documents",
+            "embed + upsert document chunks",
+        }
+        cpu_bound = {
+            "queued",
+            "discover",
+            "scan codebase",
+            "scan changed",
+            "hash files",
+            "prepare collection",
+            "purge stale chunks",
+            "delete removed",
+            "write metadata",
+            "resolve workspace",
+            "resume document publication",
+        }
+        for step in encoding:
+            assert _forward_pass_expected(step) is True, step
+        for step in cpu_bound:
+            assert _forward_pass_expected(step) is False, step
+        # No step reported means no basis to suppress the signal.
+        assert _forward_pass_expected(None) is None
+        assert _forward_pass_expected("") is None
+
+    def test_the_cpu_section_reports_a_reading_after_priming(self) -> None:
+        import vaultspec_rag.jobs as jobs_module
+
+        from ..jobs import _process_cpu_evidence
+
+        jobs_module._cpu_snapshot_cache = None
+        jobs_module._cpu_probe_process = None
+        first = _process_cpu_evidence(now=1000.0)
+        assert set(first) == _CPU_KEYS
+        assert first["available"] is True
+        # The first sample only primes the interval counter; a fabricated
+        # zero here would read as a dead process.
+        assert first["utilization_percent"] is None
+        second = _process_cpu_evidence(now=1000.0 + 6.0)
+        assert second["available"] is True
+        percent = second["utilization_percent"]
+        assert isinstance(percent, float)
+        assert percent >= 0.0
+
+    def test_polling_inside_the_window_reuses_the_cpu_reading(self) -> None:
+        import vaultspec_rag.jobs as jobs_module
+
+        from ..jobs import _process_cpu_evidence
+
+        jobs_module._cpu_snapshot_cache = None
+        jobs_module._cpu_probe_process = None
+        _process_cpu_evidence(now=2000.0)
+        _process_cpu_evidence(now=2002.0)
+        cached = jobs_module._cpu_snapshot_cache
+        assert cached is not None
+        assert cached[0] == 2000.0, (
+            "a poll inside the window must not pay the probe again"
+        )
+
+    def test_evidence_carries_the_cpu_section_beside_the_others(self) -> None:
+        record = _running_record(progress_at=1000.0, step="hash files")
+        now = 1000.0 + DEGRADED_THRESHOLD_SECONDS + 30.0
+        shaped = _job_with_liveness(record, now=now)
+        evidence = _as_map(shaped["degradation_evidence"])
+        assert set(evidence.keys()) == _EVIDENCE_KEYS
+        cpu = _as_map(evidence["cpu"])
+        assert set(cpu.keys()) == _CPU_KEYS
+
+
 class TestGpuPressureSnapshot:
     """The listing-level GPU block: evidence-shaped, cached, unpoisonable."""
 
@@ -455,6 +565,7 @@ class TestBackendEvidence:
                 forward=None,
                 project_root=str(root),
                 source="vault",
+                step="embed + upsert documents",
             )
             backend = _as_map(evidence["backend"])
             assert backend["alive"] is True
@@ -470,6 +581,7 @@ class TestBackendEvidence:
                 forward=None,
                 project_root=str(root),
                 source="vault",
+                step="embed + upsert documents",
             )
             backend_again = _as_map(again["backend"])
             assert backend_again["latency_seconds"] == latency
