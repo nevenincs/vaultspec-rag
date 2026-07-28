@@ -1650,31 +1650,27 @@ class JobsTuiApp(App[None]):
         self._refresh_log_title()
         self.refresh_bindings()
 
+    def _drive_log(self, drive: Callable[[JobsLogView], object]) -> None:
+        """Run one log-view motion when the view exists; refuse silently else."""
+        log = self._log_view()
+        if log is not None:
+            drive(log)
+
     def action_log_expand(self) -> None:
         """Toggle full values in place of middle-elided ones."""
-        log = self._log_view()
-        if log is not None:
-            log.toggle_expanded()
+        self._drive_log(JobsLogView.toggle_expanded)
 
     def action_log_next_error(self) -> None:
-        log = self._log_view()
-        if log is not None:
-            log.jump_next_error()
+        self._drive_log(JobsLogView.jump_next_error)
 
     def action_log_prev_error(self) -> None:
-        log = self._log_view()
-        if log is not None:
-            log.jump_previous_error()
+        self._drive_log(JobsLogView.jump_previous_error)
 
     def action_log_top(self) -> None:
-        log = self._log_view()
-        if log is not None:
-            log.jump_top()
+        self._drive_log(JobsLogView.jump_top)
 
     def action_log_end(self) -> None:
-        log = self._log_view()
-        if log is not None:
-            log.jump_end()
+        self._drive_log(JobsLogView.jump_end)
 
     def _log_visible(self) -> bool:
         return self.screen.has_class("-showlog")

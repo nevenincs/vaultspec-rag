@@ -37,12 +37,21 @@ _RESULT_RE = re.compile(
 # for snapshots from an older service that lacks the flag.
 
 
-def _resource_at(job: dict[str, object], key: str) -> dict[str, object] | None:
-    resources = job.get("resources")
-    if not isinstance(resources, dict):
+def _nested_section(
+    job: dict[str, object],
+    outer: str,
+    inner: str,
+) -> dict[str, object] | None:
+    """One dict-valued *inner* section of the dict-valued *outer* block."""
+    container = job.get(outer)
+    if not isinstance(container, dict):
         return None
-    value = cast("dict[str, object]", resources).get(key)
+    value = cast("dict[str, object]", container).get(inner)
     return cast("dict[str, object]", value) if isinstance(value, dict) else None
+
+
+def _resource_at(job: dict[str, object], key: str) -> dict[str, object] | None:
+    return _nested_section(job, "resources", key)
 
 
 def _preferred_resource_snapshot(job: dict[str, object]) -> dict[str, object] | None:
@@ -238,11 +247,7 @@ def degradation_verdict(job: dict[str, object]) -> str | None:
 
 
 def _evidence_section(job: dict[str, object], name: str) -> dict[str, object] | None:
-    evidence = job.get("degradation_evidence")
-    if not isinstance(evidence, dict):
-        return None
-    section = cast("dict[str, object]", evidence).get(name)
-    return cast("dict[str, object]", section) if isinstance(section, dict) else None
+    return _nested_section(job, "degradation_evidence", name)
 
 
 def _forward_evidence_phrase(job: dict[str, object]) -> str:
