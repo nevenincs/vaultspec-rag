@@ -77,6 +77,7 @@ from textual.widgets import Static
 from .._loopback_http import LOOPBACK_OPENER
 from .._units import human_bytes
 from ..concurrency import LIMITER_STAT_FIELDS
+from ..serviceclient._compat import classify_service_version
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
     _try_http_admin,
@@ -84,9 +85,10 @@ from ..serviceclient._transport import (
     read_service_response,
 )
 from ._cli_format import compact_duration
+from ._jobs_tui_palette import semantic_tones, tone_style
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
     from textual.app import App
 
@@ -113,10 +115,12 @@ _POOL_INFIX = "_pool_"
 #: first, then the dispatch pools behind it.
 _POOL_ORDER = ("encode", "index", "search")
 
-_STATUS_STYLES = {
-    "ready": "bold green",
-    "degraded": "bold yellow",
-    "error": "bold red",
+# Verdict -> (semantic tone, bold), resolved through the palette so this
+# bar and the jobs header can never disagree about what a colour means.
+_STATUS_TONES: dict[str, tuple[str, bool]] = {
+    "ready": ("good", True),
+    "degraded": ("attention", True),
+    "error": ("bad", True),
 }
 
 
@@ -147,6 +151,10 @@ class ServiceStatusHeader:
 
     Attributes:
         reachable: Whether anything answered on the port.
+        version: The release the running daemon reports for compatibility
+            checking, or ``None`` when it predates version reporting. Never
+            filled from the local package: the two differ exactly when the
+            difference matters.
         status: The health verdict (``ready``, ``degraded``, ``error``).
         degraded_reasons: The structured reasons behind a degraded verdict.
         qdrant_alive: Whether the vector backend is live.
@@ -164,6 +172,7 @@ class ServiceStatusHeader:
     """
 
     reachable: bool = False
+    version: str | None = None
     status: str | None = None
     degraded_reasons: tuple[str, ...] = ()
     qdrant_alive: bool | None = None
@@ -370,6 +379,10 @@ def fetch_service_status(
     status = health.get("status")
     return ServiceStatusHeader(
         reachable=True,
+        # Read through the same classifier the compatibility check uses, so
+        # the header and the version gate can never disagree about what the
+        # daemon reported. ``None`` is a daemon that predates the field.
+        version=classify_service_version(health).service_version,
         status=str(status) if isinstance(status, str) else None,
         degraded_reasons=reasons,
         qdrant_alive=_opt_bool(qdrant.get("alive")),
@@ -400,18 +413,22 @@ def _count(value: int | None) -> str:
     return _ABSENT if value is None else str(value)
 
 
-def _status_segment(status: ServiceStatusHeader) -> tuple[str, str, str]:
+def _status_segment(
+    status: ServiceStatusHeader, tones: Mapping[str, str]
+) -> tuple[str, str, str]:
     """Render the health verdict, carrying the degraded-reason count."""
     if not status.reachable:
-        return "service", "unreachable", "bold red"
+        return "service", "unreachable", tone_style(tones, "bad", bold=True)
     verdict = status.status or _ABSENT
-    style = _STATUS_STYLES.get(verdict, "bold")
+    tone, bold = _STATUS_TONES.get(verdict, ("", True))
     if status.degraded_reasons:
         verdict = f"{verdict} ({len(status.degraded_reasons)})"
-    return "service", verdict, style
+    return "service", verdict, tone_style(tones, tone, bold=bold)
 
 
-def _seat_segment(status: ServiceStatusHeader) -> tuple[str, str, str]:
+def _seat_segment(
+    status: ServiceStatusHeader, tones: Mapping[str, str]
+) -> tuple[str, str, str]:
     """Render the machine-wide encode admission gate as the seat count."""
     pool = status.seat_pool("encode")
     if pool is None:
@@ -422,26 +439,32 @@ def _seat_segment(status: ServiceStatusHeader) -> tuple[str, str, str]:
     saturated = (
         pool.used is not None and pool.total is not None and pool.used >= pool.total
     )
-    return "seats", value, "bold yellow" if saturated or pool.waiting else ""
+    return (
+        "seats",
+        value,
+        tone_style(tones, "attention", bold=True) if saturated or pool.waiting else "",
+    )
 
 
-def _segments(status: ServiceStatusHeader) -> Iterator[tuple[str, str, str]]:
+def _segments(
+    status: ServiceStatusHeader, tones: Mapping[str, str]
+) -> Iterator[tuple[str, str, str]]:
     """Yield the header's segments in the order they are shed under pressure.
 
     Least droppable first: an operator who has room for one thing wants the
     verdict, and one who has room for two wants the footprint beside it.
     """
-    yield _status_segment(status)
+    yield _status_segment(status, tones)
     if not status.reachable:
         if status.error:
-            yield "", status.error, "red"
+            yield "", status.error, tone_style(tones, "bad")
         return
     yield (
         "store",
         (_ABSENT if status.store_bytes is None else human_bytes(status.store_bytes)),
         "",
     )
-    yield _seat_segment(status)
+    yield _seat_segment(status, tones)
     yield "clients", _count(status.clients), "dim" if status.clients is None else ""
     yield "in flight", _count(status.leases_held), ""
     yield "projects", _pair(status.projects_loaded, status.projects_cap), ""
@@ -451,7 +474,7 @@ def _segments(status: ServiceStatusHeader) -> Iterator[tuple[str, str, str]]:
         yield (
             "qdrant",
             ("live" if status.qdrant_alive else "down"),
-            "" if status.qdrant_alive else "bold red",
+            "" if status.qdrant_alive else tone_style(tones, "bad", bold=True),
         )
     index_pool = status.seat_pool("index")
     if index_pool is not None:
@@ -460,7 +483,12 @@ def _segments(status: ServiceStatusHeader) -> Iterator[tuple[str, str, str]]:
     yield "up", compact_duration(status.uptime_seconds), "dim"
 
 
-def render_status_header(status: ServiceStatusHeader | None, width: int) -> Text:
+def render_status_header(
+    status: ServiceStatusHeader | None,
+    width: int,
+    *,
+    tones: Mapping[str, str] | None = None,
+) -> Text:
     """Render the header to at most *width* cells.
 
     Segments are measured and admitted while they fit; nothing is padded to a
@@ -480,9 +508,10 @@ def render_status_header(status: ServiceStatusHeader | None, width: int) -> Text
     """
     if status is None:
         return Text("service …", style="dim")
+    resolved = tones if tones is not None else semantic_tones("")
     line = Text()
     used = 0
-    for label, value, style in _segments(status):
+    for label, value, style in _segments(status, resolved):
         piece = f"{label} {value}".strip()
         cost = cell_len(piece) + (cell_len(_SEPARATOR) if line else 0)
         if line and width > 0 and used + cost > width:
@@ -520,7 +549,9 @@ class ServiceStatusBar(Static):
         """
         app = cast("App[object]", self.app)
         width = self.content_size.width or self.size.width or app.size.width
-        self.update(render_status_header(self._status, width))
+        self.update(
+            render_status_header(self._status, width, tones=semantic_tones(app.theme))
+        )
 
     def on_mount(self) -> None:
         self.repaint_status()
