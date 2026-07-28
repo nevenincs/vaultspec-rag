@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -18,12 +19,12 @@ import pytest
 from ... import server
 from ...config._settings import get_config, reset_config
 from ...config._types import EnvVar
+from ...registry import get_registry
 from ...server import WatcherStartOutcome
 from ...watcher_intake import watch_and_reindex
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from pathlib import Path
+    from collections.abc import AsyncGenerator
 
     from ...embeddings import EmbeddingModel
 
@@ -33,13 +34,37 @@ from ._helpers import _make_root
 pytestmark = [pytest.mark.integration]
 
 
+_WATCHER_CLEANUP_SECONDS = 60.0
+
+
 @pytest.fixture
-def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
-) -> Iterator[None]:
+async def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
+) -> AsyncGenerator[None]:
+    """Release both the watchers and the project slots these tests open.
+
+    ``_stop_all_watchers`` only *signals* the watchers; it hands back the
+    awaitables that join their drains. A synchronous fixture cannot await
+    those, so it leaves the drains outstanding and the slots each watcher
+    opened on the shared registry still open, which the next module inherits.
+    """
     reset_config()
-    yield
-    server._stop_all_watchers()
-    reset_config()
+    try:
+        yield
+    finally:
+        try:
+            cleanup_tasks = server._stop_all_watchers()
+            if cleanup_tasks:
+                assert all(await asyncio.gather(*cleanup_tasks))
+            assert await server._wait_for_watcher_cleanup(
+                timeout_seconds=_WATCHER_CLEANUP_SECONDS
+            )
+        finally:
+            # Close the slots even when a drain assertion above fails, so one
+            # failure here cannot strand the registry for every later module.
+            registry = get_registry()
+            for project in registry.health()["projects"]:
+                registry.close_project(Path(project))
+            reset_config()
 
 
 async def test_watch_disabled_starts_no_watcher(
@@ -64,8 +89,11 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
 ) -> None:
     root = _make_root(tmp_path)
     # Share the session model with the global registry so peek_project
-    # can build a slot without reloading GPU weights.
-    server._registry._model = embedding_model
+    # can build a slot without reloading GPU weights. Reach it through
+    # ``get_registry()``: the watcher resolves the same way, whereas
+    # ``server._registry`` can still name an instance an earlier module
+    # closed, leaving the model on an orphan the watcher never sees.
+    get_registry()._model = embedding_model  # pyright: ignore[reportPrivateUsage]
     saved = [
         (EnvVar.WATCH_ENABLED, set_env(EnvVar.WATCH_ENABLED, "1")),
         (EnvVar.WATCH_DEBOUNCE_MS, set_env(EnvVar.WATCH_DEBOUNCE_MS, "123")),
@@ -100,7 +128,7 @@ async def test_failed_watcher_task_is_removed_from_running_registry(
     _clean_watchers: None,
 ) -> None:
     root = _make_root(tmp_path)
-    server._registry._model = embedding_model
+    get_registry()._model = embedding_model  # pyright: ignore[reportPrivateUsage]
     previous = set_env(EnvVar.WATCH_ENABLED, "1")
     try:
         reset_config()

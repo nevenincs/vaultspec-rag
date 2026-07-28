@@ -175,17 +175,11 @@ async def _e2e_runtime(  # pyright: ignore[reportUnusedFunction]
     # and it makes this fixture's starting state a product of its own action
     # rather than a bet on every earlier module having tidied up.
     reset_registry()
-    # ``reset_registry()`` rebuilds the ``registry.get_registry()`` singleton
-    # but leaves the server package's cached ``_registry`` alias bound to the
-    # prior, now-closed instance. The job machinery dispatches through
-    # ``get_registry()`` while the watcher and this fixture read
-    # ``server._registry``; if the two diverge, a dispatched index job and this
-    # test open the same local-file Qdrant store from two different registries
-    # and collide on its non-parallel-safe file lock. Re-align the server alias
-    # with the authoritative singleton so the test, the watcher, and the
-    # dispatcher all drive one registry.
+    # ``get_registry()`` rebinds the server package's cached ``_registry``
+    # alias as it rebuilds, so the test, the watcher, and the job dispatcher
+    # all drive one registry rather than double-opening the same
+    # non-parallel-safe local store from two.
     registry = get_registry()
-    server._registry = registry
     registry._model = embedding_model  # pyright: ignore[reportPrivateUsage]
     manager = jobs.get_job_manager()
     try:
