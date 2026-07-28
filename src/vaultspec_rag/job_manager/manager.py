@@ -77,6 +77,20 @@ class JobManager(
         # ``None`` keeps tokens gateless (no hold behavior).
         self._quiesce_gate = quiesce_gate
         self._lock = threading.RLock()
+        # Serializes every state-file write. Synchronous transition persists
+        # write while holding both locks; deferred progress flushes serialize
+        # their generation under the manager lock, keep only this lock across
+        # the fsync, and skip when it is contended (single-flight), so no
+        # older serialization can ever replace a newer one on disk.
+        self._write_lock = threading.Lock()
+        # Monotonic bookkeeping for deferred progress durability. The
+        # generation counter advances on every progress-only mutation; the
+        # flushed generation trails it until some write carries the mutation
+        # to disk. Deliberately not part of the rollback backup: a spurious
+        # pending signal costs one redundant flush, never correctness.
+        self._state_generation = 0
+        self._flushed_generation = 0
+        self._last_flush_monotonic = float("-inf")
         self._active: dict[str, ManagedJob] = {}
         self._terminal: deque[ManagedJob] = deque()
         self._idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding] = (
@@ -172,6 +186,16 @@ class JobManager(
 
     @property
     def persistence_dirty(self) -> bool:
-        """Return whether the latest in-memory generation still needs flushing."""
+        """Return whether the latest in-memory generation still needs flushing.
+
+        True both after a failed write and while progress-only mutations are
+        deferred inside the flush budget; an in-memory manager never needs
+        flushing.
+        """
         with self._lock:
-            return self._persistence_dirty
+            if self._state_path is None:
+                return False
+            return (
+                self._persistence_dirty
+                or self._flushed_generation != self._state_generation
+            )
