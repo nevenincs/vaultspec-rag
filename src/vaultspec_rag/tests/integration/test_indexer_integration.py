@@ -380,14 +380,25 @@ class TestCodeIndexMemoryCeilings:
         from ..._job_errors import JobError, JobErrorKind
         from ...config._settings import get_config
         from ...job_dispatch import _code_resilience
-        from ...memory_probe import current_rss_mb, sample_resident_cuda_baseline
+        from ...memory_probe import (
+            current_cuda_mb,
+            current_rss_mb,
+            sample_resident_cuda_baseline,
+        )
         from ...store_runtime import VaultStore
 
         # The same call production makes once each shared model finishes
-        # loading; the fixture above loaded one. It ratchets, never shrinks.
+        # loading; the fixture above loaded one.
         baseline_mb = sample_resident_cuda_baseline()
         assert baseline_mb > 0.0, (
             "premise: the embedding model must be resident on the device"
+        )
+        # Stated because the whole guard rests on it, and because its absence is
+        # otherwise unreadable: enforcement clamps the peak net of this figure at
+        # zero, so a baseline describing memory already released puts every
+        # ceiling out of reach and this test fails with a bare DID NOT RAISE.
+        assert baseline_mb == pytest.approx(current_cuda_mb()[0], abs=1.0), (
+            "premise: the recorded baseline must describe memory still resident"
         )
         # Positive headroom, so admission admits the run; small enough that the
         # first real forward's activations cross it.
@@ -1094,8 +1105,9 @@ class TestNoCudaHeadroomRefusedAtAdmission:
         Run here rather than beside the ceiling arithmetic because the premise
         is a real resident baseline: the unit module loads no models, so its
         baseline is structurally zero and nothing can be pinned beneath it.
-        The baseline only ratchets upward, so a later sample can widen the
-        breach but never close it.
+        Pinning the ceiling AT whatever that sample reports needs no assumption
+        about how the figure moves afterwards: zero headroom is refused however
+        large or small the baseline turns out to be.
 
         Proven able to fail: returning early from ``_require_cuda_headroom``
         instead of raising lets admission succeed and this fails with DID NOT
@@ -1110,7 +1122,7 @@ class TestNoCudaHeadroomRefusedAtAdmission:
 
         # Production records the baseline after each shared model finishes
         # loading; the fixture above loaded one, so this is that same call
-        # rather than a figure invented here. It ratchets, never shrinks.
+        # rather than a figure invented here.
         baseline_mb = sample_resident_cuda_baseline()
         assert baseline_mb > 0.0, (
             "premise: the embedding model must be resident on the device"

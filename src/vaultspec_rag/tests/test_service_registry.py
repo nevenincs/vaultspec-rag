@@ -101,6 +101,79 @@ class TestLoadModel:
             _ = reg.model
 
 
+class TestClosingReleasesTheResidentBaseline:
+    """Closing a registry re-establishes the baseline its models raised."""
+
+    pytestmark: ClassVar = [pytest.mark.integration, pytest.mark.cuda]
+
+    def test_close_all_rebases_the_baseline_to_real_residency(
+        self,
+        embedding_model: EmbeddingModel,
+    ) -> None:
+        """Released device memory stops counting toward the enforced baseline.
+
+        The baseline is what index enforcement subtracts from both a job's
+        captured forward peak and its ceiling, and the net peak is clamped at
+        zero. A baseline left describing memory nothing holds therefore does
+        not skew the comparison - it puts every ceiling out of reach and
+        silently retires the CUDA ceiling for the rest of the process.
+
+        The allocation released here is a cycle-held CUDA tensor rather than the
+        registry's own model stack, for two reasons. It reproduces the property
+        that makes the collection load-bearing - a model stack is reachable only
+        through reference cycles, so dropping the reference does not return the
+        memory - and it releases deterministically. A real second model cannot:
+        its constructor logs a caught import error, and pytest's log capture
+        retains that record, whose traceback pins the constructor frame and with
+        it the model, for as long as the test that loaded it runs.
+
+        Proven able to fail, both directions on the same assertion: dropping the
+        rebase call leaves the baseline at ``raised_mb``, and dropping only the
+        ``gc.collect()`` leaves the cycle-held tensor still allocated for the
+        rebase to measure. Either way ``released_mb < raised_mb`` fails.
+        Restored, the baseline returns to the session model's own residency.
+        """
+        # Requested for its residency rather than its value: the session model
+        # is the figure the rebased baseline must come back down to.
+        del embedding_model
+        from .._gpu import load_torch
+        from ..memory_probe import (
+            current_cuda_mb,
+            resident_cuda_baseline_mb,
+            sample_resident_cuda_baseline,
+        )
+
+        torch = load_torch()
+        resident_mb = sample_resident_cuda_baseline()
+        assert resident_mb > 0.0, (
+            "premise: the session embedding model must be resident on the device"
+        )
+
+        # Reachable only through its own cycle, so refcounting alone cannot
+        # return it - exactly how a released model stack behaves.
+        holder: dict[str, object] = {}
+        holder["cycle"] = holder
+        holder["ballast"] = torch.empty(
+            48 * 1024 * 1024,
+            dtype=torch.float32,
+            device="cuda",
+        )
+        raised_mb = sample_resident_cuda_baseline()
+        assert raised_mb > resident_mb, (
+            "premise: the ballast must be a real added device allocation"
+        )
+        del holder
+
+        ServiceRegistry().close_all()
+
+        released_mb = resident_cuda_baseline_mb()
+        assert released_mb < raised_mb
+        # The figure describes what is still resident - the session model - and
+        # not the allocation that was released.
+        assert released_mb == pytest.approx(current_cuda_mb()[0], abs=1.0)
+        assert released_mb == pytest.approx(resident_mb, abs=1.0)
+
+
 class TestGetProject:
     """get_project() creates per-project components."""
 
