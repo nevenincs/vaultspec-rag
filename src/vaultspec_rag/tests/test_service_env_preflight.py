@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
+
+    from packaging.tags import Tag
 
 from ..cli._gpu_errors import (
     RuntimeEnvKind,
@@ -184,10 +187,49 @@ class TestRemediationCommands:
         # so the durable form must be the --with direct wheel URL.
         assert "--with" in cmd
         assert "--index" not in cmd
-        # The ABI tag tracks the RUNNING interpreter — a hardcoded tag hands a
+        # Both tags track the RUNNING interpreter — a hardcoded tag hands a
         # 3.13 wheel to a 3.14 install and uv rejects it on a tag mismatch.
-        abi = f"cp{sys.version_info[0]}{sys.version_info[1]}"
-        assert f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-{abi}-{abi}-" in cmd
+        # Compared against packaging rather than a re-derived f-string, so the
+        # assertion cannot restate the same mistake the implementation makes.
+        from packaging.tags import cpython_tags
+
+        tag = next(iter(cpython_tags()))
+        assert (
+            f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-{tag.interpreter}-{tag.abi}-"
+            in cmd
+        )
+
+    def test_durable_command_names_the_free_threaded_abi(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A free-threaded host must get the ``t`` wheel, not the GIL one.
+
+        The interpreter and ABI tags differ only on a free-threaded build
+        (``cp314-cp314t``), and ``sys.version_info`` is ``(3, 14)`` for both
+        builds, so an implementation that derives one tag and uses it twice
+        emits ``cp314-cp314`` here and uv refuses it on a tag mismatch. CI runs
+        a GIL interpreter, where the two tags are equal and the bug is
+        invisible, so the free-threaded tags are supplied explicitly. Only the
+        tag source is substituted; the URL assembly under test runs for real.
+        """
+        import packaging.tags
+        from packaging.tags import Tag
+
+        # Takes no parameters on purpose: the call under test passes none, so a
+        # signature drift there fails loudly here instead of silently binding.
+        def free_threaded_tags() -> Iterator[Tag]:
+            yield Tag("cp314", "cp314t", "win_amd64")
+
+        monkeypatch.setattr(packaging.tags, "cpython_tags", free_threaded_tags)
+
+        cmd = durable_tool_install_command()
+
+        assert "-cp314-cp314t-" in cmd, (
+            f"free-threaded host must be offered the cp314t wheel; command was: {cmd}"
+        )
+        assert "-cp314-cp314-" not in cmd, (
+            "the GIL wheel was named for a free-threaded interpreter"
+        )
 
 
 class TestEphemeralEnvWarning:
