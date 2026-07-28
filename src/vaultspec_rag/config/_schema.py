@@ -231,6 +231,8 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "storage_autoprune_ephemeral_idle_hours": (
         EnvVar.STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS
     ),
+    # Automatic shrunken-index repair knob.
+    "integrity_auto_repair": EnvVar.INTEGRITY_AUTO_REPAIR,
     # Geometry reconcile knobs.
     "storage_reconcile": EnvVar.STORAGE_RECONCILE,
     "storage_reconcile_max_per_cycle": EnvVar.STORAGE_RECONCILE_MAX_PER_CYCLE,

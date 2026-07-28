@@ -47,6 +47,10 @@ class BreadthFindings:
     shortfall: BreadthShortfall | None = None
     file_shortfall: FileBreadthShortfall | None = None
     integrity: IndexIntegrity | None = None
+    #: Id of the automatic repair job in flight for a shrunken verdict, set by
+    #: the service path that queued it. Rendered as an additive key inside the
+    #: integrity block, so surfaces that never queue repairs simply omit it.
+    integrity_repair_job_id: str | None = None
 
 
 def search_index_state(
@@ -80,5 +84,8 @@ def search_index_state(
     if found.file_shortfall is not None:
         state["file_shortfall"] = found.file_shortfall.as_index_state_block()
     if found.integrity is not None:
-        state["index_integrity"] = found.integrity.as_block()
+        block = found.integrity.as_block()
+        if found.integrity_repair_job_id is not None:
+            block["repair_job_id"] = found.integrity_repair_job_id
+        state["index_integrity"] = block
     return state

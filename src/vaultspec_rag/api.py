@@ -242,7 +242,10 @@ def index(
     Args:
         root_dir: Workspace root directory.
         full: If ``True``, perform a full re-index; otherwise incremental.
-        clean: If ``True``, drop and recreate the collection.
+        clean: If ``True``, fully replace the collection's contents. The
+            replacement happens in place and keeps the previous points
+            serving until the rebuild succeeds; only a collection whose
+            stored geometry cannot hold the new configuration is recreated.
         reporter: Optional progress reporter. A ``NullProgressReporter``
             is used when omitted so library consumers can call this
             facade without any UI.
@@ -725,12 +728,29 @@ def clean(
     registry = get_registry()
     registry.close_project(root)
 
+    combined = source_type is PublicSourceType.COMBINED
+    do_vault = source_type is PublicSourceType.VAULT or combined
+    do_code = source_type is PublicSourceType.CODE or combined
+    do_document = source_type is PublicSourceType.DOCUMENT or combined
+
+    # Sidecars go before collections, and the ordering is load-bearing: a
+    # sidecar is a breadth claim, and a crash between the two steps must
+    # never leave a claim standing over data that is already gone - a
+    # serve-time check would read that as a full index over an empty husk.
+    # The safe interruption is the reverse: intact data with no claim, which
+    # reads as honestly unverifiable.
+    data_dir = root / cfg.data_dir
+    if do_vault:
+        (data_dir / cfg.index_metadata_file).unlink(missing_ok=True)
+    if do_code:
+        (data_dir / cfg.code_index_metadata_file).unlink(missing_ok=True)
+    if do_document:
+        from .indexer._document_meta import DOCUMENT_META_FILENAME
+
+        (data_dir / DOCUMENT_META_FILENAME).unlink(missing_ok=True)
+
     store = VaultStore(root)
     try:
-        combined = source_type is PublicSourceType.COMBINED
-        do_vault = source_type is PublicSourceType.VAULT or combined
-        do_code = source_type is PublicSourceType.CODE or combined
-        do_document = source_type is PublicSourceType.DOCUMENT or combined
         if do_vault:
             store.drop_table()
             store.ensure_table()
@@ -745,19 +765,6 @@ def clean(
             cleared.append("document")
     finally:
         store.close()
-
-    data_dir = root / cfg.data_dir
-    if do_vault:
-        meta = data_dir / cfg.index_metadata_file
-        meta.unlink(missing_ok=True)
-    if do_code:
-        meta = data_dir / cfg.code_index_metadata_file
-        meta.unlink(missing_ok=True)
-    if do_document:
-        from .indexer._document_meta import DOCUMENT_META_FILENAME
-
-        meta = data_dir / DOCUMENT_META_FILENAME
-        meta.unlink(missing_ok=True)
 
     return cleared
 
