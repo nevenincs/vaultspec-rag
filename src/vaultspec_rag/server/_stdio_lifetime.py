@@ -20,11 +20,20 @@ torch, or the store: the shim is a thin service client, and this watchdog
 guards nothing in HTTP daemon mode, where outliving the spawner is by
 design.
 
-One deliberate blind spot remains in the FALLBACK shape only: discovered
-ancestors that die during the startup grace window are pruned as transient
-spawn helpers, so with no resolvable client an entire chain dying inside
-the grace disarms the backstop (stdin EOF remains). Precise anchors are
-exempt from pruning, so the common pipe-spawned case has no such window.
+Losing every anchor is a recoverable state, not a terminal one. Discovered
+ancestors that die during the startup grace window are still pruned as
+transient spawn helpers, but a chain pruned down to nothing no longer
+disarms the backstop permanently: the watchdog re-discovers the chain on an
+interval, arms on anything that survived, and reaps the shim once it has
+confirmed several rounds running that no live ancestor exists at all.
+Falling back to stdin EOF there is what strands shims for days - the
+inherited write handle outlives the client, so EOF never arrives.
+
+Re-discovery is ancestry-only, and deliberately so: once the transport's
+stdin reader has a read pending, any pipe query on that handle blocks
+behind it on the synchronous file object, forever. The pipe creator is
+therefore resolved exactly once, on the main thread, before the transport
+starts; the watchdog thread reads process ancestry, which locks nothing.
 """
 
 from __future__ import annotations
@@ -56,6 +65,14 @@ _GRACE_SECONDS = 10.0
 #: Coarse POSIX reparent-poll interval; the backstop does not need to be
 #: fast, only eventual.
 _POSIX_POLL_SECONDS = 15.0
+
+#: Interval between re-discovery rounds once every anchor has been lost.
+_REARM_SECONDS = 15.0
+
+#: Consecutive re-discovery rounds finding no live ancestor before the shim
+#: calls itself orphaned and reaps. Several rounds rather than one because
+#: the reap is unrecoverable, and the backstop only needs to be eventual.
+_ORPHAN_CONFIRM_ROUNDS = 3
 
 
 def watchdog_disabled() -> bool:
@@ -260,12 +277,28 @@ if sys.platform == "win32":
         the pipe-creating process: the MCP client itself, regardless of how
         many wrapper processes (``uv``, venv launchers) sit in between.
 
+        INSTALL-TIME ONLY, and only from the main thread. A pipe query is
+        an I/O operation on the stdin file object, and that object is
+        synchronous: once the transport's reader has a ``ReadFile``
+        pending on the same handle, this call blocks behind it and never
+        returns. Measured, not inferred - a watchdog thread calling this
+        after the transport starts hangs for the life of the process,
+        silently, which is worse than the disarm it would be trying to
+        repair. The off-main-thread guard below makes that unreachable
+        rather than a comment someone has to remember.
+
         Returns:
             The client PID, or ``None`` when stdin is not a pipe (console or
-            redirected-file stdin), the handle is unavailable, or the
-            resolved PID is this process itself. Fails open on anything
-            unexpected.
+            redirected-file stdin), the handle is unavailable, the resolved
+            PID is this process itself, or the caller is not the main
+            thread. Fails open on anything unexpected.
         """
+        if threading.current_thread() is not threading.main_thread():
+            logger.debug(
+                "stdio watchdog: refusing an off-main-thread pipe query; "
+                "it would block behind the transport's pending stdin read"
+            )
+            return None
         try:
             import msvcrt
 
@@ -342,6 +375,26 @@ if sys.platform == "win32":
             child_ctime = ancestor_ctime
         return watched
 
+    def live_ancestor_pids() -> list[int]:
+        """Ancestor PIDs still listed in a fresh snapshot, nearest first.
+
+        The veto side of the orphan verdict, and deliberately weaker than
+        ``open_ancestor_handles``: snapshot enumeration needs no rights on
+        the processes it lists, so an ancestor running at a higher
+        integrity level appears here even though ``OpenProcess`` refuses
+        it. A shim that cannot open its client must not read that as
+        orphanhood and reap a live session.
+
+        A recycled PID slot reads as a live ancestor here and vetoes the
+        reap, where the handle walk's creation-time check would reject it.
+        That leaves a recycled-slot orphan un-reaped, which is the safe
+        direction to be wrong in.
+        """
+        parents, _ = _snapshot_processes()
+        return [
+            pid for pid in _walk_ancestor_pids(os.getpid(), parents) if pid in parents
+        ]
+
     def _gather_windows_targets(
         parent_pid: int | None, client_pid: int | None
     ) -> list[WatchedAncestor]:
@@ -378,18 +431,18 @@ if sys.platform == "win32":
                     watched.append(target)
         return watched
 
-    def _windows_watchdog(watched: list[WatchedAncestor], grace_seconds: float) -> None:
-        """Grace-prune the prunable targets, then wait-any; hard-exit on death.
+    def _grace_prune(
+        watched: list[WatchedAncestor], grace_seconds: float
+    ) -> tuple[list[WatchedAncestor], WatchedAncestor | None]:
+        """Drop prunable targets that died in the grace window.
 
-        Runs on a daemon thread. Only discovered-chain targets are grace
-        prunable; the resolved client and an explicit override signal exit
-        immediately, preserving the instant reap of an already-dead client.
-        A failed wait disarms the backstop (stdin EOF remains) rather than
-        killing a live session.
+        Returns the survivors and the nearest pruned target, the latter
+        naming the dead ancestor if the shim goes on to reap itself.
         """
         if any(ancestor.grace_prunable for ancestor in watched):
             time.sleep(grace_seconds)
         survivors: list[WatchedAncestor] = []
+        nearest_dead: WatchedAncestor | None = None
         for ancestor in watched:
             if not ancestor.grace_prunable:
                 survivors.append(ancestor)
@@ -398,17 +451,79 @@ if sys.platform == "win32":
                 survivors.append(ancestor)
             else:
                 _kernel32.CloseHandle(ancestor.handle)
+                if nearest_dead is None:
+                    nearest_dead = ancestor
                 logger.info(
                     "stdio watchdog: dropping ancestor %d (%s) gone during grace",
                     ancestor.pid,
                     ancestor.exe,
                 )
-        if not survivors:
-            logger.warning(
-                "stdio watchdog: no ancestors survived the grace window; "
-                "backstop disarmed, stdin EOF is the only exit path"
+        return survivors, nearest_dead
+
+    def _rediscover_targets() -> list[WatchedAncestor]:
+        """Re-open the ancestor chain as precise anchors.
+
+        Ancestry only: the pipe creator cannot be re-resolved from this
+        thread without blocking behind the transport's pending stdin read.
+        Anything still alive this far past the grace window is not a
+        transient spawn helper, so re-armed targets are never prunable -
+        their death reaps immediately.
+        """
+        rediscovered = open_ancestor_handles()
+        for target in rediscovered:
+            target.grace_prunable = False
+        return rediscovered
+
+    def _windows_watchdog(watched: list[WatchedAncestor], grace_seconds: float) -> None:
+        """Hold an anchor at all times, or reap; hard-exit when one dies.
+
+        Runs on a daemon thread. Only discovered-chain targets are grace
+        prunable; the resolved client and an explicit override signal exit
+        immediately, preserving the instant reap of an already-dead client.
+
+        Losing every anchor no longer ends the watch. The thread re-arms on
+        an interval, and reaps the shim once ``_ORPHAN_CONFIRM_ROUNDS``
+        consecutive rounds have found no live ancestor - the shape that
+        left servers resident for a day, because stdin EOF never arrives
+        when the client's write handle outlives it. An ancestor that is
+        alive but unopenable holds the reap off indefinitely instead.
+
+        A failed wait disarms the backstop (stdin EOF remains) rather than
+        killing a live session.
+        """
+        survivors, nearest_dead = _grace_prune(watched, grace_seconds)
+        unanchored_rounds = 0
+        while not survivors:
+            if unanchored_rounds >= _ORPHAN_CONFIRM_ROUNDS:
+                pid = nearest_dead.pid if nearest_dead else os.getppid()
+                exe = nearest_dead.exe if nearest_dead else "?"
+                _exit_on_ancestor_death(pid, exe)
+            _emit_event(
+                {
+                    "event": "stdio_watchdog_unanchored",
+                    "shim_pid": os.getpid(),
+                    "round": unanchored_rounds,
+                    "reap_after_rounds": _ORPHAN_CONFIRM_ROUNDS,
+                }
             )
-            return
+            logger.warning(
+                "stdio watchdog: no anchor survives (round %d of %d); "
+                "re-discovering the ancestor chain in %.0fs",
+                unanchored_rounds,
+                _ORPHAN_CONFIRM_ROUNDS,
+                _REARM_SECONDS,
+            )
+            time.sleep(_REARM_SECONDS)
+            survivors = _rediscover_targets()
+            if not survivors:
+                # A live-but-unopenable ancestor, or a recycled slot, is
+                # evidence too weak to reap on: hold the backstop open and
+                # keep looking instead of counting toward the verdict.
+                unanchored_rounds = 0 if live_ancestor_pids() else unanchored_rounds + 1
+        logger.info(
+            "stdio watchdog waiting on: %s",
+            ", ".join(f"{a.pid}({a.exe})" for a in survivors),
+        )
         handles = (wintypes.HANDLE * len(survivors))(
             *[ancestor.handle for ancestor in survivors]
         )
@@ -417,16 +532,36 @@ if sys.platform == "win32":
         )
         index = result - _WAIT_OBJECT_0
         if not 0 <= index < len(survivors):
+            error = ctypes.get_last_error()
             logger.error(
                 "stdio watchdog: wait failed (result 0x%x, error %d); "
                 "backstop disarmed, stdin EOF is the only exit path",
                 result,
-                ctypes.get_last_error(),
+                error,
+            )
+            _emit_event(
+                {
+                    "event": "stdio_watchdog_disarmed",
+                    "shim_pid": os.getpid(),
+                    "reason": "wait_failed",
+                    "wait_result": result,
+                    "error": error,
+                }
             )
             for ancestor in survivors:
                 _kernel32.CloseHandle(ancestor.handle)
             return
         _exit_on_ancestor_death(survivors[index].pid, survivors[index].exe)
+
+
+def _emit_event(payload: dict[str, object]) -> None:
+    """Write one structured watchdog line to stderr.
+
+    Host tooling reads these to tell a reaped shim from a wedged one, so a
+    disarm has to be as visible on the wire as an exit is - finding the
+    survivors hours later in the process table is not a diagnostic.
+    """
+    print(json.dumps(payload), file=sys.stderr, flush=True)
 
 
 def _exit_on_ancestor_death(pid: int, exe: str) -> None:
@@ -436,18 +571,17 @@ def _exit_on_ancestor_death(pid: int, exe: str) -> None:
     thread that nothing in-process can cancel, so a graceful shutdown can
     hang forever. Exit code 0 because self-reaping after the spawning chain
     broke is the intended outcome, not a crash a broker should retry.
+
+    The payload is byte-compatible with the companion core watchdog's exit
+    event; host tooling parses both, so its keys do not move.
     """
-    print(
-        json.dumps(
-            {
-                "event": "stdio_watchdog_exit",
-                "dead_ancestor_pid": pid,
-                "dead_ancestor_exe": exe,
-                "shim_pid": os.getpid(),
-            }
-        ),
-        file=sys.stderr,
-        flush=True,
+    _emit_event(
+        {
+            "event": "stdio_watchdog_exit",
+            "dead_ancestor_pid": pid,
+            "dead_ancestor_exe": exe,
+            "shim_pid": os.getpid(),
+        }
     )
     os._exit(0)
 
@@ -493,19 +627,22 @@ def install_stdio_lifetime_watchdog(
     try:
         if sys.platform == "win32":
             watched = _gather_windows_targets(parent_pid, client_pid)
-            if not watched:
-                logger.warning(
-                    "stdio watchdog: no watchable targets; "
-                    "backstop disarmed, stdin EOF is the only exit path"
+            if watched:
+                logger.info(
+                    "stdio watchdog armed on: %s",
+                    ", ".join(
+                        f"{a.pid}({a.exe}{'' if a.grace_prunable else ', precise'})"
+                        for a in watched
+                    ),
                 )
-                return None
-            logger.info(
-                "stdio watchdog armed on: %s",
-                ", ".join(
-                    f"{a.pid}({a.exe}{'' if a.grace_prunable else ', precise'})"
-                    for a in watched
-                ),
-            )
+            else:
+                # Not a disarm: the thread starts anyway and re-discovers on
+                # its interval. A shim with nothing above it to watch is the
+                # orphan case, not a reason to stop looking for an anchor.
+                logger.warning(
+                    "stdio watchdog: no watchable targets at startup; "
+                    "re-discovery armed"
+                )
             thread = threading.Thread(
                 target=_windows_watchdog,
                 args=(watched, grace_seconds),

@@ -21,13 +21,12 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import time
-from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 pytestmark = [pytest.mark.integration]
 
@@ -303,3 +302,156 @@ def test_shim_reaps_instantly_when_its_serving_client_dies(tmp_path: Path) -> No
                     capture_output=True,
                     check=False,
                 )
+
+
+# First generation: spawns the second and exits at once. Its death is what
+# truncates the orphan's ancestor walk below the (immortal) pytest process;
+# without it the walk finds a live anchor and correctly never re-arms.
+# argv: [1] second-generation source, [2] interpreter for the orphan,
+# [3] orphan source, [4] pid file, [5] stderr log.
+_FIRST_LAUNCHER = """
+import os
+import subprocess
+import sys
+
+subprocess.Popen(
+    [sys.executable, "-c", sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4],
+     sys.argv[5], str(os.getpid())],
+    stdin=subprocess.DEVNULL,
+)
+"""
+
+# Second generation: waits out the first, spawns the orphan, then exits
+# inside the grace window so every discovered ancestor is pruned as a
+# transient spawn helper. argv: [1] interpreter, [2] orphan source,
+# [3] pid file, [4] stderr log, [5] first-generation pid.
+_SECOND_LAUNCHER = """
+import subprocess
+import sys
+import time
+
+from vaultspec_rag.server import _stdio_lifetime as w  # absolute-import-ok
+
+first_pid = int(sys.argv[5])
+deadline = time.monotonic() + 60
+while first_pid in w._snapshot_processes()[0] and time.monotonic() < deadline:
+    time.sleep(0.2)
+
+with open(sys.argv[4], "w", encoding="utf-8") as log:
+    subprocess.Popen(
+        [sys.argv[1], "-c", sys.argv[2], sys.argv[3]],
+        stdin=subprocess.DEVNULL,
+        stderr=log,
+    )
+    time.sleep(2)
+"""
+
+# The orphan: installs the real watchdog, then blocks forever WITHOUT ever
+# reading stdin - the reported shape exactly, where the client's inherited
+# write handle outlives it so EOF never arrives.
+_ORPHAN_WORKER = """
+import os
+import sys
+import time
+from pathlib import Path
+
+from vaultspec_rag.server import _stdio_lifetime as w  # absolute-import-ok
+
+w.install_stdio_lifetime_watchdog()
+Path(sys.argv[1]).write_text(str(os.getpid()), encoding="utf-8")
+time.sleep(600)
+"""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ancestry semantics")
+def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
+    tmp_path: Path,
+) -> None:
+    """The reported leak: every ancestor gone, and the process survives.
+
+    Reproducing it needs two launcher generations and a trampoline-free
+    interpreter for the orphan itself. The first generation exits before
+    the orphan starts, so the ancestor walk breaks there instead of
+    reaching pytest; the second exits inside the grace window, so the whole
+    discovered chain is pruned as transient. The orphan runs under the base
+    interpreter because a venv ``python.exe`` is a uv trampoline that stays
+    resident as the child's parent - a permanent live anchor, and one that
+    takes the child down with it when killed, so no orphan could form
+    beneath it.
+
+    The structured stderr events are the proof of MECHANISM: without them a
+    worker that merely died with its launcher would pass. Timing is the
+    real thing rather than a shortened stand-in, hence the generous budget.
+    """
+    from ...server._stdio_lifetime import _ORPHAN_CONFIRM_ROUNDS, _REARM_SECONDS
+
+    base_python = getattr(sys, "_base_executable", None) or sys.executable
+    src_root = Path(__file__).resolve().parents[3]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part
+        for part in (
+            str(src_root),
+            sysconfig.get_paths()["purelib"],
+            env.get("PYTHONPATH"),
+        )
+        if part
+    )
+
+    pid_file = tmp_path / "orphan.pid"
+    log_file = tmp_path / "orphan.stderr"
+    first = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            _FIRST_LAUNCHER,
+            _SECOND_LAUNCHER,
+            base_python,
+            _ORPHAN_WORKER,
+            str(pid_file),
+            str(log_file),
+        ],
+        stdin=subprocess.DEVNULL,
+        env=env,
+    )
+    first.wait(timeout=60)
+
+    deadline = time.monotonic() + 90
+    while not pid_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert pid_file.exists(), "the orphan worker never started; stderr: " + (
+        log_file.read_text(encoding="utf-8") if log_file.exists() else "(none)"
+    )
+    orphan_pid = int(pid_file.read_text(encoding="utf-8"))
+
+    try:
+        assert _pid_alive(orphan_pid)
+
+        budget = 10.0 + _REARM_SECONDS * (_ORPHAN_CONFIRM_ROUNDS + 2) + 30.0
+        deadline = time.monotonic() + budget
+        while _pid_alive(orphan_pid) and time.monotonic() < deadline:
+            time.sleep(1.0)
+        assert not _pid_alive(orphan_pid), (
+            f"orphaned worker {orphan_pid} survived {budget:.0f}s with no live "
+            "ancestor; the watchdog disarmed instead of re-arming"
+        )
+
+        events = [
+            json.loads(line)
+            for line in log_file.read_text(encoding="utf-8").splitlines()
+            if line.startswith("{")
+        ]
+        kinds = [event.get("event") for event in events]
+        assert "stdio_watchdog_unanchored" in kinds, (
+            f"the orphan never reported losing its anchor: {kinds}"
+        )
+        assert "stdio_watchdog_exit" in kinds, (
+            f"the orphan died without reaping itself: {kinds}"
+        )
+    finally:
+        if _pid_alive(orphan_pid):
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(orphan_pid)],
+                capture_output=True,
+                check=False,
+            )
