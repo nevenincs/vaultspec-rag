@@ -260,6 +260,12 @@ class _CountingReporter:
     def log(self, message: str) -> None:
         del message
 
+    def forward_started(self, *, ordinal: int, items: int) -> None:
+        del ordinal, items
+
+    def forward_finished(self, *, ordinal: int, items: int) -> None:
+        del ordinal, items
+
 
 class TestBatchHashing:
     """The batched loop matches the serial gate file for file."""
