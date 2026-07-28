@@ -803,7 +803,7 @@ class TestLifecycleShutdownLog:
             and "lifecycle log append failed" in r.getMessage()
         ]
         assert debug_records, (
-            "OSError on append must be debug-logged per the no-swallow rule"
+            "OSError on append must be debug-logged so the swallow stays observable"
         )
         # Nothing was written where the append failed - confirms the
         # exception path, not a silently relocated write.
