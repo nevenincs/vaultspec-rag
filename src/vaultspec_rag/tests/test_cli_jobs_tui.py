@@ -28,6 +28,7 @@ import pytest
 from textual.widgets import DataTable
 
 from ..cli._jobs_tui import _SPINNER_FRAMES, _SPINNER_INTERVAL, JobsTuiApp
+from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
 from ..serviceclient._transport import _try_http_admin
 
 pytestmark = [pytest.mark.unit]
@@ -163,6 +164,10 @@ class _JobService:
         # ``None`` the key is omitted entirely, which is how a daemon older
         # than the field answers.
         self.gpu: dict[str, object] | None = None
+        # What ``/health`` reports as the daemon's release. ``None`` omits
+        # the field, which is how a daemon that predates version reporting
+        # answers - not an empty string, and never the client's own number.
+        self.package_version: str | None = None
         # When set, every control is answered with this ``(code, message)``
         # rather than performed - the shape a service uses to decline a
         # request it understood.
@@ -193,43 +198,14 @@ class _JobService:
 
             def do_GET(self) -> None:
                 path, query = self._record("GET")
+                if path == "/health":
+                    self._answer(_health_payload(service))
+                    return
                 if path.startswith("/logs"):
-                    # Scoped to the job asked for, so a pane still showing the
-                    # previous job's lines is distinguishable from one that
-                    # refetched. A fixture answering every id identically
-                    # cannot tell those two apart.
-                    scope = query.get("job_id", ["none"])[0]
-                    with service._lock:
-                        lines = (
-                            list(service.log_lines)
-                            if service.log_lines is not None
-                            else [f"a logged line for {scope}"]
-                        )
-                    self._answer(
-                        {
-                            "ok": True,
-                            "groups": [{"source": "service", "lines": lines}],
-                        }
-                    )
+                    self._answer(_log_payload(service, query))
                     return
                 time.sleep(service.fetch_delay)
-                limit = int(query.get("limit", ["20"])[0])
-                with service._lock:
-                    held = list(service.jobs)
-                    gpu = service.gpu
-                page = held[:limit]
-                payload: dict[str, object] = {
-                    "ok": True,
-                    "jobs": page,
-                    "total": len(held),
-                    "returned": len(page),
-                    # Tallied over everything held, exactly as the service
-                    # does - the page is not the population.
-                    "summary": _summarise(held),
-                }
-                if gpu is not None:
-                    payload["gpu"] = gpu
-                self._answer(payload)
+                self._answer(_jobs_payload(service, query))
 
             def _mutate(self, method: str) -> None:
                 path, _query = self._record(method)
@@ -309,6 +285,57 @@ class _JobService:
             return [path for method, path in self.requests if method != "GET"]
 
 
+def _jobs_payload(
+    service: _JobService, query: dict[str, list[str]]
+) -> dict[str, object]:
+    """Answer the jobs listing: the page, the tallies, and the GPU block."""
+    limit = int(query.get("limit", ["20"])[0])
+    with service._lock:
+        held = list(service.jobs)
+        gpu = service.gpu
+    page = held[:limit]
+    payload: dict[str, object] = {
+        "ok": True,
+        "jobs": page,
+        "total": len(held),
+        "returned": len(page),
+        # Tallied over everything held, exactly as the service does - the
+        # page is not the population.
+        "summary": _summarise(held),
+    }
+    if gpu is not None:
+        payload["gpu"] = gpu
+    return payload
+
+
+def _health_payload(service: _JobService) -> dict[str, object]:
+    """Answer ``/health`` the way the real daemon does.
+
+    The version field is present exactly when the fixture was given one;
+    a daemon that predates version reporting omits the field entirely.
+    """
+    with service._lock:
+        version = service.package_version
+    payload: dict[str, object] = {"ok": True, "status": "ready"}
+    if version is not None:
+        payload["package_version"] = version
+    return payload
+
+
+def _log_payload(
+    service: _JobService, query: dict[str, list[str]]
+) -> dict[str, object]:
+    """Answer ``/logs`` with the configured lines, scoped to the job asked."""
+    scope = query.get("job_id", ["none"])[0]
+    with service._lock:
+        lines = (
+            list(service.log_lines)
+            if service.log_lines is not None
+            else [f"a logged line for {scope}"]
+        )
+    return {"ok": True, "groups": [{"source": "service", "lines": lines}]}
+
+
 def _requested_state(handler: http.server.BaseHTTPRequestHandler) -> object:
     """Read the desired state out of a control request's body."""
     length = int(handler.headers.get("Content-Length") or 0)
@@ -361,7 +388,7 @@ def _header_line(app: JobsTuiApp) -> str:
     business. An index would silently start asserting about a neighbour.
     """
     for line in _screen_text(app).splitlines():
-        if "Jobs on port" in line:
+        if "vaultspec-rag" in line:
             return line
     return ""
 
@@ -894,7 +921,7 @@ class TestMotionMeansSomething:
                 await pilot.pause()
                 frames.append(_header_line(app))
 
-        assert all("· Jobs on port" in frame for frame in frames), (
+        assert all("· vaultspec-rag" in frame for frame in frames), (
             "a settled view must show a still glyph, not an animation"
         )
         assert not any(char in frame for frame in frames for char in _SPINNER_FRAMES), (
@@ -916,13 +943,14 @@ class TestMotionMeansSomething:
                 pilot,
                 app,
                 lambda text: any(
-                    char in _line_with(text, "Jobs on port") for char in _SPINNER_FRAMES
+                    char in _line_with(text, "vaultspec-rag")
+                    for char in _SPINNER_FRAMES
                 ),
                 "an animated header glyph",
             )
             await _settle(pilot)
 
-        assert "Jobs on port" in _line_with(painted, "Jobs on port")
+        assert "vaultspec-rag" in _line_with(painted, "vaultspec-rag")
 
     @pytest.mark.asyncio
     async def test_a_row_whose_progress_has_stalled_does_not_animate(
@@ -1529,14 +1557,82 @@ class TestHeaderCounts:
         assert "of 0" not in painted, "an unpublished total must not read as zero"
 
 
-class TestColourScheme:
-    """Both schemes are shipped palettes, switched as wholes."""
+class TestServiceIdentity:
+    """The header leads with which daemon this is, at which release."""
 
     @pytest.mark.asyncio
-    async def test_the_schemes_are_the_shipped_palettes_and_toggle(
+    async def test_the_daemons_own_version_leads_the_header(
         self, control_service: _JobService
     ) -> None:
-        """Dark by default, light one keypress away, both official."""
+        """The version shown is the connected daemon's report, never local.
+
+        A stale daemon beside a fresh client is exactly when the number
+        matters, so the fixture reports a release the local package cannot
+        be - the assertion fails if the cell is filled from the client.
+        """
+        from ..serviceclient._compat import local_package_version
+
+        control_service.package_version = "9.9.9"
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = await _await_painted(pilot, app, "vaultspec-rag 9.9.9")
+
+        assert "vaultspec-rag 9.9.9" in painted, (
+            "the running daemon's release must lead the header"
+        )
+        assert f"vaultspec-rag {local_package_version()}" not in painted, (
+            "the cell must never be filled from the local package"
+        )
+        assert "port" in _line_with(painted, "vaultspec-rag 9.9.9"), (
+            "identity and port share the leading cell"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_unversioned_daemon_reads_unknown_not_a_number(
+        self, control_service: _JobService
+    ) -> None:
+        """A daemon that predates version reporting is said to be unknown.
+
+        Proven able to fail: filling the absent branch from the local
+        package - the fabrication this guards against - paints the local
+        release and fails both assertions below by name; restored, it
+        passes.
+        """
+        from ..serviceclient._compat import local_package_version
+
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            # Wait on the fact, not the rendering, so a mutation that paints
+            # the wrong thing fails on the assertions below by name rather
+            # than timing out the wait.
+            await _await_painted_when(
+                pilot,
+                app,
+                lambda _text: app._service_version_checked,
+                "the daemon's identity answer",
+            )
+            await asyncio.sleep(_SPINNER_INTERVAL)
+            await pilot.pause()
+            painted = _screen_text(app)
+
+        assert "vaultspec-rag v?" in painted, (
+            "an answering daemon without a version reads as unknown"
+        )
+        assert f"vaultspec-rag {local_package_version()}" not in painted, (
+            "unknown must never be papered over with the local release"
+        )
+
+
+class TestColourScheme:
+    """One palette, two variants; nothing else is selectable."""
+
+    @pytest.mark.asyncio
+    async def test_the_variants_toggle_between_the_palette_themes(
+        self, control_service: _JobService
+    ) -> None:
+        """Dark by default, the light variant one keypress away."""
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
@@ -1548,9 +1644,9 @@ class TestColourScheme:
             await pilot.pause()
             restored = app.theme
 
-        assert default_theme == "nord", "the dark scheme is the shipped palette"
-        assert toggled == "solarized-light", "the light scheme is the shipped palette"
-        assert restored == "nord"
+        assert default_theme == DARK_THEME_NAME, "the dark variant is the default"
+        assert toggled == LIGHT_THEME_NAME, "the toggle flips to the light variant"
+        assert restored == DARK_THEME_NAME
 
 
 class TestLogPane:
