@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.3.13](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.12...vaultspec-rag-v0.3.13) (2026-07-28)
+
+
+### Features
+
+* **cli:** open the jobs interface from `server --watch` ([3c06c20](https://github.com/nevenincs/vaultspec-rag/commit/3c06c2069d5e9aeec19a2f4a4912c8258e690493))
+* **indexer:** publish the vault index's breadth so truncation is detectable ([fca2376](https://github.com/nevenincs/vaultspec-rag/commit/fca23760f0368cc7e3757fea2b576cd3e3b7e4b6))
+* **integrity:** reconcile served breadth against the published claim on every search ([3bc96eb](https://github.com/nevenincs/vaultspec-rag/commit/3bc96eb843aefc10adb36fb2d30d7b9ec2b9330a))
+* **jobs:** render the remaining-time estimate everywhere operators look ([96a55d7](https://github.com/nevenincs/vaultspec-rag/commit/96a55d7edb1e97eb6355581a6833bc41ff6c2875))
+* **mcp:** move onto the mcp 2.x server surface and lift the version cap ([a7e312b](https://github.com/nevenincs/vaultspec-rag/commit/a7e312b97c28745273ffa5ac1ed72f258733f572))
+* **observability:** give long encode phases a verdict, a cause, and an honest error channel ([bdbe9d6](https://github.com/nevenincs/vaultspec-rag/commit/bdbe9d6b17e99d6b257d0e5d1b6fe479b2f7daf6))
+* **service:** surface a machine pressure tier over the telemetry already sampled ([d4d8cc5](https://github.com/nevenincs/vaultspec-rag/commit/d4d8cc52aed008ee442cc9a09f44d2f55a919530))
+* **tui:** one verbatim design-token palette, and the daemon names itself ([a7b8a7b](https://github.com/nevenincs/vaultspec-rag/commit/a7b8a7b3f7a501e23a70156b3f812ac0cc318e40))
+* **tui:** pill header with service condition and always-on GPU pressure ([28e56d7](https://github.com/nevenincs/vaultspec-rag/commit/28e56d704f7daad322aab93a9856fe5326ef070b))
+* **tui:** rounded filled pills inside a unified rounded header ([79276ec](https://github.com/nevenincs/vaultspec-rag/commit/79276ecdb98753c2a5804cb56afe4b81c0b0d99d))
+* **tui:** structured, sanitized, navigable log pane with focus-lit panes ([4cd54c3](https://github.com/nevenincs/vaultspec-rag/commit/4cd54c3b8a20d002ce0d666be8e11aa2484540d9))
+* **tui:** uniform pill header on shipped Nord and Solarized palettes ([9e5348a](https://github.com/nevenincs/vaultspec-rag/commit/9e5348a8082c5573b6e02f65bd90d5d08a2f28a0))
+
+
+### Bug Fixes
+
+* **ci:** call the recipes the justfile actually defines ([816dd55](https://github.com/nevenincs/vaultspec-rag/commit/816dd55e9c06636d9596f0aef1fbdc21839380f9))
+* **citation-gate:** see the assert message, the last construct hiding citations ([0dde3bc](https://github.com/nevenincs/vaultspec-rag/commit/0dde3bc75ef40044ee1ed34607d1d9e849b5a48f))
+* **deps:** cap mcp below 2 until the fastmcp surface is migrated ([2be2389](https://github.com/nevenincs/vaultspec-rag/commit/2be2389da6f2ef9c6774c1eeae5699f06320f53c))
+* **indexer:** discover donors that have published a rebuild ([9641755](https://github.com/nevenincs/vaultspec-rag/commit/9641755a42dd5fbad93577b2bd94f53d1919ba67))
+* **index:** never publish a code claim over a collection that is not there ([09d859c](https://github.com/nevenincs/vaultspec-rag/commit/09d859c917b9ecdd4549cddd3a8ddfb952ce0931))
+* **index:** rebuilds never destroy what they serve, and a shrink heals itself ([fabd2c6](https://github.com/nevenincs/vaultspec-rag/commit/fabd2c67d8d7078fc18a033fbcf086d2367da339))
+* **mcp:** address a nested document stem, and advertise the release ([f9cab2d](https://github.com/nevenincs/vaultspec-rag/commit/f9cab2d82041454dad46fda5cab3427e9ca31d52))
+* **mcp:** resolve the worktree build without a platform-specific path ([48e3046](https://github.com/nevenincs/vaultspec-rag/commit/48e3046e72f53dfe019fd9037c0ec242ed350988))
+* name the cross-module helpers what they are, and repair two driver scripts ([cd98312](https://github.com/nevenincs/vaultspec-rag/commit/cd983122739973b56ed4f886506d4e7a7a4a0320))
+* **server:** re-arm the stdio watchdog rather than disarm on a lost anchor ([393753b](https://github.com/nevenincs/vaultspec-rag/commit/393753b213276a8fa0f8ff55fa19047e3539fbea)), closes [#288](https://github.com/nevenincs/vaultspec-rag/issues/288)
+* **service:** fail the pressure verdict open, and let dead jobs speak for the store ([7f52d9b](https://github.com/nevenincs/vaultspec-rag/commit/7f52d9be35e357418aff3fa080ca223c8c425cd6))
+* **service:** re-establish the resident CUDA baseline when a registry closes ([f7f1729](https://github.com/nevenincs/vaultspec-rag/commit/f7f1729a26a1d1674a467cee1608f08359375bc9))
+* **tests:** base the cuda ceiling guard on the enforced baseline ([6a80892](https://github.com/nevenincs/vaultspec-rag/commit/6a808920e858543c933fb660e7b4b970c1023783))
+* **tests:** clear the two gates the dead CI step was hiding ([5e406dc](https://github.com/nevenincs/vaultspec-rag/commit/5e406dc58239dcdbe381fe3fdecf1eb682e6c07d))
+* **tests:** follow the spawn call path in the daemon-anchor guard ([7ccf6f6](https://github.com/nevenincs/vaultspec-rag/commit/7ccf6f6fcc42e88a738b4931aa704510eb63d767))
+* **tests:** hold the jobs watch interrupt to the interface contract ([96e0819](https://github.com/nevenincs/vaultspec-rag/commit/96e0819985b2a76e700231b109e914247a664db2))
+* **tests:** measure collection size through the guarded production walk ([3822943](https://github.com/nevenincs/vaultspec-rag/commit/3822943bfbee905b8906d810042729cf8a4cb225))
+* **tests:** seed the clean-resume guard where a rebuild actually builds ([d857a24](https://github.com/nevenincs/vaultspec-rag/commit/d857a24c35bee47fb604c22c63bc5d7dd546f66b))
+* **tests:** stop funding a teardown courtesy Windows cannot use ([1d01ec4](https://github.com/nevenincs/vaultspec-rag/commit/1d01ec42917e4c27655116d80c8a74a59e5a3c73))
+* **tests:** stop the jobs since-filter guard racing its own timestamp ([79a06fa](https://github.com/nevenincs/vaultspec-rag/commit/79a06fa6a712808a45baf0a4db0d7e0dc8e39305))
+* **tests:** stop the watcher fixture stranding drains and slots ([a2f46c2](https://github.com/nevenincs/vaultspec-rag/commit/a2f46c20774260dcd230065fddd7fb71bb8c19e0))
+* **tests:** stop two checks reading state they do not control ([77d14ab](https://github.com/nevenincs/vaultspec-rag/commit/77d14ab52271f0951ae60838b976d165d48cce1d))
+* **tests:** teach the counting reporter the forward-boundary protocol ([04c398b](https://github.com/nevenincs/vaultspec-rag/commit/04c398be620f3913112e08f353762741bfaa4812))
+* **tooling:** make the health report read its thresholds instead of restating them ([dc87ddf](https://github.com/nevenincs/vaultspec-rag/commit/dc87ddf99ffc85c8df588152b6e455bb7f689c5a))
+* **types:** return both type gates to zero findings ([578d3cc](https://github.com/nevenincs/vaultspec-rag/commit/578d3ccca4c5e4aa3c2b2e15dc8a57fb9e8caae7))
+
+
+### Performance
+
+* **embeddings:** load SPLADE only when sparse vectors are enabled ([555a5df](https://github.com/nevenincs/vaultspec-rag/commit/555a5df003831638debcbb52589abf346d4a49bc))
+* **index:** answer unchanged files from stat evidence and keep live interruptions scoped ([1bcde19](https://github.com/nevenincs/vaultspec-rag/commit/1bcde1986c28ae75ff49da4e142ca887e20f2c3a))
+* **indexer:** amortize per-file overhead out of the hashing loops ([8b46410](https://github.com/nevenincs/vaultspec-rag/commit/8b464109249e701d328d861830cd8ef83ff94695))
+* **jobs:** coalesce progress durability so a loop publish stops paying an fsync ([8c264a6](https://github.com/nevenincs/vaultspec-rag/commit/8c264a66d0570f8bcc0208eae5b413e655e0bfca))
+* **tests:** share one live daemon across the modules that only read it ([04cc613](https://github.com/nevenincs/vaultspec-rag/commit/04cc613ddef64ebd9d8cc401f8b4d5fa67623a5e))
+* **tests:** share one qdrant server across the storage-ops module ([989803f](https://github.com/nevenincs/vaultspec-rag/commit/989803f6927427cc9bf262dca552612f39a236e6))
+
 ## [0.3.12](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.11...vaultspec-rag-v0.3.12) (2026-07-27)
 
 
