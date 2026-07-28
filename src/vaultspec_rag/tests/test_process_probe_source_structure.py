@@ -265,6 +265,10 @@ class TestNoStructurallyIdenticalFunctions:
             "watcher_runtime.py:pending_count",
         ): _SMALL_GUARD,
         (
+            "embeddings.py:_require_sparse_model",
+            "service.py:model",
+        ): _SMALL_GUARD,
+        (
             "commands/_provision.py:to_dict",
             "indexer/_drift_owner.py:snapshot",
         ): _SERIALISATION,
