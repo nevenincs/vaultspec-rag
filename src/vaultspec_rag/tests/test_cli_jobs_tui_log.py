@@ -9,11 +9,13 @@ content, because log lines are adversarial input.
 
 from __future__ import annotations
 
+import re
 import typing
 from datetime import datetime
 
 import pytest
 
+from ..cli import _jobs_tui, _jobs_tui_log, _jobs_tui_status
 from ..cli._jobs_tui_log import (
     _MAX_LINE_CHARS,
     _VALUE_CELLS,
@@ -21,6 +23,10 @@ from ..cli._jobs_tui_log import (
     parse_log_line,
     render_entry,
     sanitize_log_text,
+)
+from ..cli._jobs_tui_palette import (
+    DARK_THEME_NAME,
+    LIGHT_THEME_NAME,
     semantic_tones,
 )
 from .test_cli_jobs_tui import (
@@ -228,51 +234,84 @@ class TestValueTruncation:
 
 
 class TestSemanticTones:
-    """Status colours resolve from the active palette, never invented here."""
+    """Status colours resolve from the copied specification, per variant."""
 
-    def test_tones_resolve_from_the_theme_variables(self) -> None:
-        variables = {
-            "text-success": "#C2D4B3",
-            "text-warning": "#F1DCB2",
-            "text-error": "#D4969C",
-            "text-accent": "#CDB4C8",
-        }
-        tones = semantic_tones(variables)
+    def test_dark_tones_are_the_published_text_steps(self) -> None:
+        tones = semantic_tones(DARK_THEME_NAME)
 
-        # Catches the resolver ignoring the theme and answering with the
-        # ANSI fallbacks: every tone would come back as a colour name
-        # instead of the palette's own value.
-        assert tones["good"] == "#C2D4B3"
-        assert tones["attention"] == "#F1DCB2"
-        assert tones["bad"] == "#D4969C"
-        assert tones["neutral"] == "#CDB4C8"
-        assert tones["muted"] == "dim", (
-            "muted is luminance, not a colour, in either scheme"
+        # The specification's dark-scale step-11 values, byte for byte.
+        # Catches a palette value drifting from the published spec and the
+        # resolver reading the wrong scale or step alike.
+        assert tones["good"] == "#3dd68c"
+        assert tones["attention"] == "#ffca16"
+        assert tones["bad"] == "#ff9592"
+        assert tones["neutral"] == "#70b8ff"
+        assert tones["muted"] == "#b0b4ba"
+
+    def test_light_tones_are_the_published_text_steps(self) -> None:
+        tones = semantic_tones(LIGHT_THEME_NAME)
+
+        # The same tokens against the light scales' published step-11
+        # values. Catches the resolver ignoring the variant and answering
+        # with one scale for both.
+        assert tones["good"] == "#218358"
+        assert tones["attention"] == "#ab6400"
+        assert tones["bad"] == "#ce2c31"
+        assert tones["neutral"] == "#0d74ce"
+        assert tones["muted"] == "#60646c"
+
+    def test_an_unknown_name_resolves_the_dark_variant(self) -> None:
+        """A render outside the app still styles by meaning, on the default."""
+        assert semantic_tones("") == semantic_tones(DARK_THEME_NAME)
+
+
+class TestPaletteDiscipline:
+    """One palette module; a colour literal anywhere else is a defect."""
+
+    def test_no_colour_literal_outside_the_palette_module(self) -> None:
+        import ast
+        from pathlib import Path
+
+        hex_re = re.compile(r"#[0-9a-fA-F]{6}\b")
+        ansi_re = re.compile(
+            r"^(?:(?:bold|italic|dim|strike)\s+)*"
+            r"(?:red|green|yellow|blue|magenta|cyan|white|black)"
+            r"(?:\s+(?:bold|italic|dim|strike))*$"
         )
+        offenders: list[tuple[str, int, str]] = []
+        for module in (_jobs_tui, _jobs_tui_log, _jobs_tui_status):
+            source_path = Path(str(module.__file__))
+            tree = ast.parse(source_path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    value = node.value
+                    if hex_re.search(value) or ansi_re.match(value.strip()):
+                        offenders.append((source_path.name, node.lineno, value))
 
-    def test_a_render_with_no_theme_still_styles_by_meaning(self) -> None:
-        tones = semantic_tones({})
-
-        assert tones["bad"] == "red"
-        assert tones["good"] == "green"
-        assert tones["attention"] == "yellow"
-        assert tones["neutral"] == "cyan"
+        # Catches a colour stated outside the palette module - a planted
+        # ``style="bold red"`` or a bare hex - which would fork the palette
+        # into a second source the variants cannot switch together.
+        assert offenders == [], f"colour literals outside the palette: {offenders}"
 
 
 class TestLevelColours:
-    """The badge carries the level's colour; errors read as errors."""
+    """The badge carries the level's tone; errors read as errors."""
 
-    def test_an_error_badge_is_painted_bold_red(self) -> None:
+    def test_an_error_badge_carries_the_bad_tone(self) -> None:
+        tones = semantic_tones(DARK_THEME_NAME)
         header = render_entry(parse_log_line(_APP_ERROR_LINE), width=120)[0]
         styles = [str(span.style) for span in header.spans]
 
-        assert "bold red" in styles, "an ERROR badge must be bold red"
+        assert f"bold {tones['bad']}" in styles, (
+            "an ERROR badge must carry the palette's bad tone, emboldened"
+        )
 
-    def test_an_info_badge_is_painted_dim(self) -> None:
+    def test_an_info_badge_recedes_to_the_muted_tone(self) -> None:
+        tones = semantic_tones(DARK_THEME_NAME)
         header = render_entry(parse_log_line(_ACCESS_SIGNAL_LINE), width=120)[0]
         styles = [str(span.style) for span in header.spans]
 
-        assert "dim" in styles, "an INFO badge must recede, not compete"
+        assert tones["muted"] in styles, "an INFO badge must recede, not compete"
 
 
 class TestNoiseCollapse:
