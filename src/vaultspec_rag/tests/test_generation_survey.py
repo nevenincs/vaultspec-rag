@@ -43,6 +43,48 @@ class TestGenerationSurvey:
         assert reports[0].unreferenced == (f"{_DERIVED}_gold",)
         assert reports[0].has_debt is True
 
+    def test_the_generation_the_sidecar_names_is_never_unreferenced(
+        self, tmp_path: Path
+    ) -> None:
+        """A published manifest is a reference, exactly as the pointer is.
+
+        Publication records the generation in the sidecar before it moves the
+        pointer, so a run that dies between those two writes leaves a
+        generation named by the manifest and not by the pointer. Reclaiming it
+        there destroys the collection the published breadth describes and
+        leaves the claim standing over nothing.
+        """
+        from .._index_breadth import code_meta_path
+        from .._store_models import (
+            generation_code_collection,
+            publish_served_code_collection,
+        )
+        from ..generation_survey import survey_generations
+        from ..indexer._code_meta import publish_meta_from_file_states
+
+        sidecar_generation = "a" * 32
+        publish_meta_from_file_states(
+            code_meta_path(tmp_path),
+            [],
+            generation_id=sidecar_generation,
+            membership_epoch="membership-epoch",
+            content_epoch="content-epoch",
+            published_points_count=11,
+            published_files_count=3,
+        )
+        published = generation_code_collection(_DERIVED, sidecar_generation)
+        publish_served_code_collection(tmp_path, f"{_DERIVED}_gold")
+
+        reports = survey_generations(
+            {str(tmp_path): _DERIVED},
+            [_DERIVED, f"{_DERIVED}_gold", published, f"{_DERIVED}_gstray"],
+        )
+
+        # Catches the sidecar reference being dropped from the protected set:
+        # without it ``published`` joins the unreferenced tuple and this fires.
+        assert published not in reports[0].unreferenced
+        assert reports[0].unreferenced == (f"{_DERIVED}_gstray",)
+
     def test_a_root_that_never_published_carries_no_debt(self, tmp_path: Path) -> None:
         """No pointer means the derived name serves, and nothing is stranded."""
         from ..generation_survey import survey_generations
