@@ -131,20 +131,34 @@ def durable_tool_install_command() -> str:
     only re-resolution-proof pin. The service must be stopped first: a forced
     reinstall while it runs fails mid-removal on the locked Scripts dir.
 
-    A direct wheel URL has to name one ABI, so the CPython tag is derived from
-    the running interpreter rather than written down. Hardcoding it hands a
-    3.13 wheel to whoever is running 3.14, and uv rejects the mismatch with a
-    tag error that says nothing about why the command was wrong.
+    A direct wheel URL has to name one interpreter and one ABI, so both tags
+    are read off the running interpreter rather than written down. Hardcoding
+    them hands a 3.13 wheel to whoever is running 3.14, and uv rejects the
+    mismatch with a tag error that says nothing about why the command was wrong.
+
+    The two tags are NOT interchangeable: a free-threaded build is
+    ``cp314-cp314t``, and ``sys.version_info`` is ``(3, 14)`` for both the
+    free-threaded and the GIL build, so deriving one tag and using it twice
+    silently names the GIL wheel on a free-threaded host. ``packaging`` already
+    resolves this from ``Py_GIL_DISABLED`` and is a direct dependency, so ask it
+    instead of re-deriving the rule here. Its first tag is the most specific one
+    for this interpreter.
+
+    The platform tag stays hand-picked: it must match what PyTorch actually
+    publishes (``manylinux_2_28_x86_64``), which is not necessarily the first
+    platform tag ``packaging`` yields for the host.
     """
     import sys
+
+    from packaging.tags import cpython_tags
 
     from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
 
     platform_tag = "win_amd64" if sys.platform == "win32" else "manylinux_2_28_x86_64"
-    abi = f"cp{sys.version_info[0]}{sys.version_info[1]}"
+    tag = next(iter(cpython_tags()))
     wheel = (
         f"{CU130_INDEX_URL}/torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130"
-        f"-{abi}-{abi}-{platform_tag}.whl"
+        f"-{tag.interpreter}-{tag.abi}-{platform_tag}.whl"
     )
     return f'uv tool install --force "vaultspec-rag[mcp]" --with "torch @ {wheel}"'
 
