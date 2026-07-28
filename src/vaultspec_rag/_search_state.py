@@ -17,14 +17,36 @@ lacked it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._source_types import PublicSourceType, parse_source_type
 
 if TYPE_CHECKING:
     from ._index_breadth import BreadthShortfall, FileBreadthShortfall
+    from ._index_integrity import IndexIntegrity
 
-__all__ = ["search_index_state"]
+__all__ = ["BreadthFindings", "search_index_state"]
+
+
+@dataclass(frozen=True, slots=True)
+class BreadthFindings:
+    """Completeness conclusions one search settled, attached to its block.
+
+    ``shortfall`` and ``file_shortfall`` are present only over a demonstrated
+    deficit and carry the figures, so a renderer names them without comparing
+    counts for itself. Absence means complete or unknowable; a consumer must
+    not read it as either one alone.
+
+    ``integrity`` follows the opposite discipline: emitted whenever the
+    serve-time check ran, ``consistent`` included, so an absent block means
+    only that the surface predates the check - never that the collection was
+    checked and found fine.
+    """
+
+    shortfall: BreadthShortfall | None = None
+    file_shortfall: FileBreadthShortfall | None = None
+    integrity: IndexIntegrity | None = None
 
 
 def search_index_state(
@@ -32,15 +54,12 @@ def search_index_state(
     indexed_count: int | float,
     requested_root: object,
     search_type: PublicSourceType | str,
-    shortfall: BreadthShortfall | None = None,
-    file_shortfall: FileBreadthShortfall | None = None,
+    findings: BreadthFindings | None = None,
 ) -> dict[str, object]:
     """Return the canonical ``index_state`` block for one search response.
 
-    ``shortfall`` is present only over a demonstrated deficit and carries the
-    figures, so a renderer names it without comparing counts for itself.
-    Absence means complete or unknowable; a consumer must not read it as
-    either one alone.
+    ``findings`` carries the completeness conclusions the search settled; see
+    :class:`BreadthFindings` for the presence discipline of each field.
     """
     requested_target = str(requested_root)
     source = parse_source_type(search_type, allow_aliases=True).value
@@ -53,10 +72,13 @@ def search_index_state(
         "target_matches": True,
         "status": "missing" if count == 0 else "available",
     }
-    if shortfall is not None:
-        state["shortfall"] = shortfall.as_index_state_block()
+    found = findings or BreadthFindings()
+    if found.shortfall is not None:
+        state["shortfall"] = found.shortfall.as_index_state_block()
     # Independent of the point comparison: a republished fragment stamps a
     # point count that agrees with itself, so only the file figures disagree.
-    if file_shortfall is not None:
-        state["file_shortfall"] = file_shortfall.as_index_state_block()
+    if found.file_shortfall is not None:
+        state["file_shortfall"] = found.file_shortfall.as_index_state_block()
+    if found.integrity is not None:
+        state["index_integrity"] = found.integrity.as_block()
     return state

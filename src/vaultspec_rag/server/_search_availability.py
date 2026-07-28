@@ -232,6 +232,12 @@ def _build_index_unavailable_response(
         "matching_jobs": [job.to_dict() for job in matching_jobs],
         "matching_jobs_truncated": matching_jobs_truncated,
     }
+    # The breadth verdict rides through the unavailability rewrite untouched:
+    # an index mid-change is exactly when a caller needs to know whether the
+    # collection it just read was reconcilable with its publication.
+    integrity = context.index_state.get("index_integrity")
+    if integrity is not None:
+        response_index_state["index_integrity"] = integrity
     return {
         "ok": False,
         "error": "index_unavailable",

@@ -446,7 +446,8 @@ def _try_in_process_search(
             code_breadth_shortfall,
             code_file_breadth_shortfall,
         )
-        from .._search_state import search_index_state
+        from .._index_integrity import evaluate_index_integrity
+        from .._search_state import BreadthFindings, search_index_state
 
         # Breadth is published for the code index alone, so a vault- or
         # document-only search has no claim to fall short of.
@@ -460,6 +461,18 @@ def _try_in_process_search(
             if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED)
             else None
         )
+        # A combined search reconciles the code domain, mirroring the combined
+        # shortfall above; single-domain searches reconcile their own.
+        integrity_source = (
+            PublicSourceType.CODE
+            if search_type is PublicSourceType.COMBINED
+            else search_type
+        )
+        integrity = evaluate_index_integrity(
+            target,
+            integrity_source,
+            counts[integrity_source],
+        )
         envelope["index_state"] = search_index_state(
             indexed_count=(
                 sum(counts.values())
@@ -468,8 +481,11 @@ def _try_in_process_search(
             ),
             requested_root=target,
             search_type=search_type,
-            shortfall=shortfall,
-            file_shortfall=file_shortfall,
+            findings=BreadthFindings(
+                shortfall=shortfall,
+                file_shortfall=file_shortfall,
+                integrity=integrity,
+            ),
         )
     try:
         status_ctx = (
