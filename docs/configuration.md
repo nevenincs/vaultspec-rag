@@ -136,6 +136,7 @@ The CUDA ceiling is derived from the real device by default rather than fixed: a
 | `VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS`            | integer | `512`                 | Chunks buffered in the producer-to-consumer index queue                    | -        |
 | `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`             | integer | `134217728` (128 MiB) | Byte cap on the buffered index queue, applying backpressure                | -        |
 | `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float   | `900`                 | Seconds without index progress before the run is failed                    | -        |
+| `VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR`             | boolean | `1` (true)            | Queue one failure-safe reindex when a search finds the served index shrunken below its published claim | -        |
 | `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB`              | float   | `16384`               | Resident-memory ceiling enforced at index checkpoints (MiB)                | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`             | float   | `0` (auto-derive)     | CUDA-memory ceiling override in MiB; `0` derives one from the device       | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`            | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB) | -        |

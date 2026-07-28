@@ -70,6 +70,4 @@ class MembershipScanCache[T]:
     def invalidate(self) -> None:
         """Drop the slot; the next walk re-establishes membership truth."""
         with self._lock:
-            self._fingerprint = None
-            self._value = None
-            self._deadline = 0.0
+            self._fingerprint, self._value, self._deadline = None, None, 0.0

@@ -218,21 +218,25 @@ def cuda_pressure() -> tuple[float | None, float | None, float | None]:
     independently: it needs the NVML bindings, whose absence must not blank
     the memory figures that are still measurable.
     """
+    utilization: float | None = None
+    used_mb: float | None = None
+    total_mb: float | None = None
     _measure_cuda_mb()
     if _torch_module is None or not _torch_has_cuda:
-        return (None, None, None)
+        return (utilization, used_mb, total_mb)
     try:
-        if not _torch_module.cuda.is_initialized():
-            return (None, None, None)
-        free_bytes, total_bytes = _torch_module.cuda.mem_get_info()
-        total_mb = bytes_to_mib(int(total_bytes))
-        used_mb = bytes_to_mib(int(total_bytes) - int(free_bytes))
+        if _torch_module.cuda.is_initialized():
+            free_bytes, total_bytes = _torch_module.cuda.mem_get_info()
+            total_mb = bytes_to_mib(int(total_bytes))
+            used_mb = bytes_to_mib(int(total_bytes) - int(free_bytes))
     except (RuntimeError, AssertionError):
-        return (None, None, None)
-    try:
-        utilization = float(_torch_module.cuda.utilization())
-    except Exception:  # NVML may be absent entirely or refuse the query
-        utilization = None
+        used_mb = None
+        total_mb = None
+    if total_mb is not None:
+        try:
+            utilization = float(_torch_module.cuda.utilization())
+        except Exception:  # NVML may be absent entirely or refuse the query
+            utilization = None
     return (utilization, used_mb, total_mb)
 
 

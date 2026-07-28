@@ -28,12 +28,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
 from textual.widgets import RichLog
 
+from .._timestamps import parse_iso_timestamp
 from ._jobs_tui_palette import semantic_tones
 
 if TYPE_CHECKING:
@@ -222,9 +222,8 @@ def _split_pairs(rest: str) -> tuple[str, tuple[tuple[str, str], ...]]:
 
 def _local_time(stamp: str) -> str | None:
     """Convert an ISO UTC stamp to local wall-clock, or ``None`` unparsed."""
-    try:
-        parsed = datetime.fromisoformat(stamp)
-    except ValueError:
+    parsed = parse_iso_timestamp(stamp, field="qdrant log stamp")
+    if parsed is None:
         return None
     return parsed.astimezone().strftime("%H:%M:%S")
 
@@ -527,15 +526,18 @@ class JobsLogView(RichLog):
 
     def toggle_polling(self) -> bool:
         """Flip the noise filter and repaint. Returns the new shown-state."""
-        self._show_polling = not self._show_polling
-        self._render_entries()
-        return self._show_polling
+        return self._flip_mode("_show_polling")
 
     def toggle_expanded(self) -> bool:
         """Flip full-value rendering and repaint. Returns the new state."""
-        self._expanded = not self._expanded
+        return self._flip_mode("_expanded")
+
+    def _flip_mode(self, flag: str) -> bool:
+        """Invert one display-mode attribute, repaint, return the new state."""
+        state = not bool(getattr(self, flag))
+        setattr(self, flag, state)
         self._render_entries()
-        return self._expanded
+        return state
 
     # -- navigation ---------------------------------------------------------
 
@@ -582,8 +584,7 @@ class JobsLogView(RichLog):
         Writes issued while the widget is hidden are deferred with no line
         accounting, so the error offsets recorded then describe nothing.
         """
-        if self._entries or self._message is not None:
-            self._render_entries()
+        self._render_if_content()
 
     def _content_width(self) -> int:
         width = self.scrollable_content_region.width or self.content_size.width
@@ -591,6 +592,10 @@ class JobsLogView(RichLog):
 
     def repaint_theme(self) -> None:
         """Re-render the held window under the active theme's tones."""
+        self._render_if_content()
+
+    def _render_if_content(self) -> None:
+        """Repaint only when something is actually held for display."""
         if self._entries or self._message is not None:
             self._render_entries()
 
