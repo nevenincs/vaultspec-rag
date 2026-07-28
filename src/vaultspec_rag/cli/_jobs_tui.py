@@ -14,6 +14,7 @@ including its refusal - is shown on the row that asked for it.
 
 from __future__ import annotations
 
+import math
 import time
 from typing import TYPE_CHECKING, ClassVar, NamedTuple, cast
 
@@ -42,6 +43,8 @@ from ._jobs_tui_status import (
     fetch_service_status,
 )
 from ._service_jobs_presentation import (
+    degradation_evidence_lines,
+    degradation_verdict,
     human_progress,
     operation_label,
     phase_label,
@@ -428,14 +431,32 @@ def _progress_cell(job: dict[str, object], cells: int, bar_cells: int) -> Text:
     return _two_line(detail, bar, cells)
 
 
-def _time_cell(job: dict[str, object], cells: int) -> Text:
+def _time_cell(
+    job: dict[str, object],
+    cells: int,
+    *,
+    ticked: float | None = None,
+) -> Text:
     remaining = job.get(_ESTIMATE_KEY)
-    estimate = (
-        f"~{compact_duration(remaining)} left"
-        if isinstance(remaining, int | float) and not isinstance(remaining, bool)
-        # No estimate is not a zero estimate.
-        else "—"
-    )
+    if isinstance(remaining, int | float) and not isinstance(remaining, bool):
+        shown = ticked if ticked is not None else max(0.0, float(remaining))
+        # Ceiling, not truncation: the countdown must never read below the
+        # value the service just published, and the coarse two-unit
+        # rendering already strips any precision the estimate lacks.
+        estimate = f"~{compact_duration(math.ceil(shown))} left"
+    elif (
+        _ESTIMATE_KEY in job
+        and str(job.get("phase", "")) == "running"
+        and not job_is_waiting(job)
+    ):
+        # Published null on working work is the service declining to
+        # estimate this job - said on the row, because a bare dash there
+        # reads as "nothing to know" rather than "measured and unknown".
+        estimate = "ETA unknown"
+    else:
+        # No estimate is not a zero estimate: the key is absent (a daemon
+        # that predates it; the header says so once) or the work is inert.
+        estimate = "—"
     return _two_line(compact_duration(job.get("runtime_seconds")), estimate, cells)
 
 
@@ -541,6 +562,11 @@ class JobsTuiApp(App[None]):
         # lifetime is a refusal they will miss.
         self._last_outcome: tuple[str, str] | None = None
         self._service_estimates = True
+        # job id -> (last service estimate in seconds, monotonic stamp of the
+        # payload that carried it). Display-side only: between polls the row
+        # counts these down linearly, and every applied payload rebuilds the
+        # whole map so the countdown snaps to each fresh service value.
+        self._estimates: dict[str, tuple[float, float]] = {}
         self._frame = 0
         # Fetches are stamped and applied newest-first. Cancelling a thread
         # worker does not stop the OS thread it is running on, so a poll the
@@ -721,6 +747,16 @@ class JobsTuiApp(App[None]):
                         job, frame, self._pending.get(job_id), self._cells("state")
                     ),
                 )
+                # The countdown only moves between polls if this repaint
+                # carries it; the same moving rows the glyph animates are
+                # exactly the ones whose estimate is allowed to tick.
+                table.update_cell(
+                    job_id,
+                    "time",
+                    _time_cell(
+                        job, self._cells("time"), ticked=self._ticked_remaining(job)
+                    ),
+                )
 
     # -- data ---------------------------------------------------------------
 
@@ -785,6 +821,7 @@ class JobsTuiApp(App[None]):
         # A service that publishes the key for no job at all predates the
         # estimate. Saying so once beats every row reading as unmeasurable.
         self._service_estimates = not jobs or any(_ESTIMATE_KEY in job for job in jobs)
+        self._record_estimates(jobs)
         self._jobs = jobs
         self._total = _count(payload.get("total"))
         self._summary = payload.get("summary")
@@ -795,6 +832,36 @@ class JobsTuiApp(App[None]):
         # Capabilities can flip under a refresh, and the footer only
         # re-evaluates when the selection moves.
         self.refresh_bindings()
+
+    def _record_estimates(self, jobs: list[dict[str, object]]) -> None:
+        """Stamp each published estimate for display-side tick-down.
+
+        Rebuilt whole from every applied payload: a job whose fresh record
+        carries no numeric estimate loses its entry, so a countdown never
+        keeps falling from a number the service has stopped standing behind.
+        """
+        now = time.monotonic()
+        estimates: dict[str, tuple[float, float]] = {}
+        for job in jobs:
+            value = job.get(_ESTIMATE_KEY)
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                estimates[_job_id(job)] = (max(0.0, float(value)), now)
+        self._estimates = estimates
+
+    def _ticked_remaining(self, job: dict[str, object]) -> float | None:
+        """Count the last service estimate down by the seconds since it landed.
+
+        Presentation only: the service owns the estimate; this subtracts wall
+        time from it between polls and clamps at zero, and every applied
+        payload replaces the entry so the display snaps to each fresh value.
+        Gated on the row actually moving - ticking a countdown over stalled
+        or waiting work would claim motion the view has no evidence for.
+        """
+        entry = self._estimates.get(_job_id(job))
+        if entry is None or not _row_animates(job):
+            return None
+        remaining, stamped_at = entry
+        return max(0.0, remaining - (time.monotonic() - stamped_at))
 
     def _reconcile_pending(
         self,
@@ -922,7 +989,7 @@ class JobsTuiApp(App[None]):
             _job_cell(job, self._cells("job")),
             _path_cell(job, self._cells("path")),
             _progress_cell(job, self._cells("progress"), self._bar_cells),
-            _time_cell(job, self._cells("time")),
+            _time_cell(job, self._cells("time"), ticked=self._ticked_remaining(job)),
             height=2,
             key=job_id,
         )
@@ -947,7 +1014,9 @@ class JobsTuiApp(App[None]):
             "job": _job_cell(job, self._cells("job")),
             "path": _path_cell(job, self._cells("path")),
             "progress": _progress_cell(job, self._cells("progress"), self._bar_cells),
-            "time": _time_cell(job, self._cells("time")),
+            "time": _time_cell(
+                job, self._cells("time"), ticked=self._ticked_remaining(job)
+            ),
         }
         for column, value in cells.items():
             table.update_cell(job_id, column, value)
@@ -1036,9 +1105,29 @@ class JobsTuiApp(App[None]):
         if self._last_outcome is not None:
             text, style = self._last_outcome
             line.append(f"\n{text}", style=style)
+        self._append_selected_degradation(line)
         summary = self.query("#summary")
         if summary:
             summary.only_one(Static).update(line)
+
+    def _append_selected_degradation(self, line: Text) -> None:
+        """Show the selected job's unhealthy verdict and evidence in the header.
+
+        The verdict and every finding come verbatim from the service payload
+        through the same presentation helpers the CLI detail view renders -
+        the header is the one place this view has room for whole sentences,
+        and the row's own progress cell already carries the short form.
+        """
+        job = self.selected_job()
+        if job is None:
+            return
+        verdict = degradation_verdict(job)
+        if verdict is None or verdict == "healthy":
+            return
+        line.append(f"\n{_short_id(job)} {verdict}", style="bold red")
+        evidence = "  ·  ".join(degradation_evidence_lines(job))
+        if evidence:
+            line.append(f"  ·  {evidence}", style="red")
 
     # -- selection and logs -------------------------------------------------
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from typing import cast
@@ -11,7 +12,13 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediation
-from ._cli_format import _format_mb, _format_milliseconds, _format_seconds, _path_label
+from ._cli_format import (
+    _format_mb,
+    _format_milliseconds,
+    _format_seconds,
+    _path_label,
+    compact_duration,
+)
 from ._render import _plain, address_line
 from ._service_jobs_query import (
     empty_jobs_message,
@@ -217,20 +224,168 @@ def human_progress(job: dict[str, object]) -> str:
     return label
 
 
+def degradation_verdict(job: dict[str, object]) -> str | None:
+    """The service's three-way health verdict, or ``None`` from an older daemon.
+
+    Absent is not the same answer as present: a daemon that publishes the
+    field is the authority on the verdict, while one that never publishes it
+    predates the classification and falls back to the local stall reading.
+    """
+    value = job.get("degradation")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _evidence_section(job: dict[str, object], name: str) -> dict[str, object] | None:
+    evidence = job.get("degradation_evidence")
+    if not isinstance(evidence, dict):
+        return None
+    section = cast("dict[str, object]", evidence).get(name)
+    return cast("dict[str, object]", section) if isinstance(section, dict) else None
+
+
+def _forward_evidence_phrase(job: dict[str, object]) -> str:
+    """One phrase for the forward-pass finding, empty without evidence."""
+    forward = _evidence_section(job, "forward")
+    if forward is None:
+        return ""
+    age = forward.get("age_seconds")
+    aged = isinstance(age, int | float) and not isinstance(age, bool)
+    if forward.get("in_flight") is True:
+        phrase = (
+            f"GPU forward pass running {_format_seconds(age)}"
+            if aged
+            else "GPU forward pass running"
+        )
+        if forward.get("thread_alive") is False:
+            phrase += " (encode thread dead)"
+        return phrase
+    if aged:
+        return f"last GPU forward finished {_format_seconds(age)} ago"
+    return ""
+
+
+def _unhealthy_summary(job: dict[str, object], verdict: str) -> str:
+    """One line naming the verdict and its leading cause, service words only."""
+    raw_age = job.get("last_progress_age_seconds")
+    base = (
+        f"no progress for {_format_seconds(raw_age)}"
+        if isinstance(raw_age, int | float)
+        else "no recent progress"
+    )
+    forward = _forward_evidence_phrase(job)
+    return f"{verdict}: {'; '.join(part for part in (base, forward) if part)}"
+
+
+def _encode_evidence_line(job: dict[str, object]) -> str | None:
+    forward = _evidence_section(job, "forward")
+    if forward is None:
+        return None
+    phrase = _forward_evidence_phrase(job) or "no forward pass observed"
+    ordinal = forward.get("slice_ordinal")
+    items = forward.get("items")
+    if ordinal is not None and items is not None:
+        phrase += f" (slice {ordinal}, {items} items)"
+    alive = forward.get("thread_alive")
+    if alive is not None and forward.get("in_flight") is not True:
+        phrase += "; encode thread " + ("alive" if alive is True else "dead")
+    return f"Encode: {phrase}"
+
+
+def _gpu_evidence_line(job: dict[str, object]) -> str | None:
+    gpu = _evidence_section(job, "gpu")
+    if gpu is None:
+        return None
+    if gpu.get("available") is not True:
+        return "GPU: not measurable from the service process"
+    parts: list[str] = []
+    utilization = gpu.get("utilization_percent")
+    if isinstance(utilization, int | float):
+        parts.append(f"{round(float(utilization))}% busy")
+    used = gpu.get("memory_used_mb")
+    total = gpu.get("memory_total_mb")
+    if used is not None or total is not None:
+        parts.append(f"{_format_mb(used)} used of {_format_mb(total)}")
+    return f"GPU: {', '.join(parts) if parts else 'no reading'}"
+
+
+def _backend_evidence_line(job: dict[str, object]) -> str | None:
+    backend = _evidence_section(job, "backend")
+    if backend is None:
+        return None
+    alive = backend.get("alive")
+    detail = backend.get("detail")
+    if alive is True:
+        return f"Backend: answered in {_format_seconds(backend.get('latency_seconds'))}"
+    if alive is False:
+        return f"Backend: failed: {detail}"
+    return f"Backend: {detail or 'not probed'}"
+
+
+def degradation_evidence_lines(job: dict[str, object]) -> tuple[str, ...]:
+    """Render the service's evidence block, one finding per line, verbatim.
+
+    Values are shown as the service sampled them - no local thresholds and
+    no re-derivation - so the CLI and the TUI cannot tell an operator two
+    different stories about the same unhealthy job.
+    """
+    lines = (
+        _encode_evidence_line(job),
+        _gpu_evidence_line(job),
+        _backend_evidence_line(job),
+    )
+    return tuple(line for line in lines if line is not None)
+
+
 def stale_progress_label(job: dict[str, object]) -> str:
     if str(job.get("phase", "")) != "running" or job_is_waiting(job):
         return ""
+    verdict = degradation_verdict(job)
+    if verdict is not None:
+        # The service verdict is authoritative: render it and its evidence,
+        # never a locally recomputed threshold.
+        return "" if verdict == "healthy" else _unhealthy_summary(job, verdict)
+    return _fallback_stale_label(job)
+
+
+def _fallback_stale_label(job: dict[str, object]) -> str:
+    """The pre-verdict stall reading, kept only for daemons that lack it.
+
+    Prefers the service-computed ``stalled`` flag, then the local threshold
+    for snapshots from an older service that lacks even that.
+    """
     raw_age = job.get("last_progress_age_seconds")
     if not isinstance(raw_age, int | float):
         return ""
-    # Prefer the service-computed flag; fall back to the local threshold
-    # for snapshots from an older service that lacks it.
     stalled = job.get("stalled")
     if stalled is False:
         return ""
     if stalled is not True and float(raw_age) < STALL_THRESHOLD_SECONDS:
         return ""
     return f"no progress for {_format_seconds(raw_age)}"
+
+
+def remaining_estimate_label(job: dict[str, object]) -> str:
+    """Say how much longer the service expects this job to run.
+
+    Three answers, kept distinct. A published value renders as a coarse
+    countdown; a published null is the service declining to estimate this
+    job and reads as an explicit unknown; an absent key is a daemon that
+    predates the estimate and yields nothing here at all - rendering that
+    as unknown would tell the operator their work is unmeasurable when
+    the truth is their service does not measure. The service owns the
+    number: nothing here derives a rate from raw progress.
+    """
+    if "estimated_remaining_seconds" not in job:
+        return ""
+    remaining = job.get("estimated_remaining_seconds")
+    if isinstance(remaining, int | float) and not isinstance(remaining, bool):
+        # Ceiling, not truncation: a countdown must never read below what
+        # the service just said, and the coarse two-unit rendering already
+        # removes any precision the estimate does not have.
+        return f"~{compact_duration(math.ceil(max(0.0, float(remaining))))} remaining"
+    return "ETA unknown"
 
 
 def _human_result(raw: object, *, failed: bool = False) -> str:
@@ -311,7 +466,11 @@ def _running_job_detail(job: dict[str, object]) -> str:
         else "runtime not reported"
     )
     stale_progress = stale_progress_label(job)
-    parts = [p for p in (detail, runtime_detail, stale_progress) if p]
+    # A stalled job's estimate is measured over a window whose newest
+    # samples predate the stall, so a countdown beside "no progress for
+    # five minutes" is two contradictory claims; the stall wins.
+    estimate = remaining_estimate_label(job) if not stale_progress else ""
+    parts = [p for p in (detail, runtime_detail, estimate, stale_progress) if p]
     return "; ".join(parts) if parts else runtime_detail
 
 
@@ -554,6 +713,34 @@ def _render_job_progress_detail(job: dict[str, object]) -> None:
         _cli.console.print(f"Progress warning: {stale_progress}")
     if isinstance(job.get("progress"), dict):
         _cli.console.print(f"Progress: {human_progress(job)}")
+    # Only work that is actually doing something now carries the line:
+    # queued and admission-parked jobs have nothing to count down, and a
+    # stalled job's countdown would contradict the warning above.
+    if (
+        str(job.get("phase", "")) == "running"
+        and not job_is_waiting(job)
+        and not job_awaiting_admission(job)
+        and not stale_progress
+    ):
+        estimate = remaining_estimate_label(job)
+        if estimate:
+            # The exact phrase the feed uses, so the two views cannot drift
+            # into naming the same estimate differently.
+            _cli.console.print(estimate)
+
+
+def _render_job_degradation_detail(job: dict[str, object]) -> None:
+    """Print the service verdict and its evidence, verbatim.
+
+    Silent for a healthy job and for a daemon that predates the verdict -
+    the stale-progress warning above already covers the older fallback.
+    """
+    verdict = degradation_verdict(job)
+    if verdict is None or verdict == "healthy":
+        return
+    _cli.console.print(f"Health: {verdict}")
+    for line in degradation_evidence_lines(job):
+        _cli.console.print(f"  {line}")
 
 
 def _render_job_initiator_detail(job: dict[str, object]) -> None:
@@ -672,6 +859,7 @@ def render_job_detail(job: dict[str, object], *, port: int | None = None) -> Non
     _cli.console.print(f"Status: {phase_label(job)}")
     _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
     _render_job_progress_detail(job)
+    _render_job_degradation_detail(job)
     _render_job_initiator_detail(job)
     _render_job_runtime_detail(job)
     _render_job_resource_detail(job)
