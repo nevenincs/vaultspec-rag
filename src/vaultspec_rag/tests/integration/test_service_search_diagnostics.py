@@ -1240,7 +1240,7 @@ def test_search_index_unavailable_during_matching_rebuild(tmp_path: Path) -> Non
     unrelated_root = unrelated_root.resolve()
     assert unrelated_root != root
 
-    with _live_service_context(tmp_path) as (port, status_dir):
+    with _live_service_context(tmp_path) as (port, status_dir, _env):
         token = _live_service_token(port)
         _run_clean_rebuild_availability_phase(
             port,
@@ -1255,7 +1255,7 @@ def test_search_index_unavailable_during_matching_rebuild(tmp_path: Path) -> Non
         root,
     )
     known_doc = manifest.docs[0]
-    with _live_service_context(tmp_path) as (port, _status_dir):
+    with _live_service_context(tmp_path) as (port, _status_dir, _env):
         token = _live_service_token(port)
         _assert_nonempty_search_with_paused_rebuild(
             port,

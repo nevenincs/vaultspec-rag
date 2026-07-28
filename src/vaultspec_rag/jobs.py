@@ -199,7 +199,7 @@ def _persist_active_snapshot() -> None:
                 # every process on the machine, so the reader needs this to
                 # tell a job its own prior life abandoned from one still
                 # running under somebody else.
-                "pid": runtime.get("pid")
+                "pid": cast("dict[str, object]", runtime).get("pid")
                 if isinstance(runtime := record.get("runtime"), dict)
                 else None,
                 "progress": dict(cast("dict[str, object]", progress))
@@ -434,7 +434,7 @@ def _sample_progress(
     interval however fast the step reports.
     """
     window = record.get(_PROGRESS_WINDOW_KEY)
-    samples = (
+    samples: deque[tuple[float, int]] = (
         cast("deque[tuple[float, int]]", window)
         if isinstance(window, deque)
         else deque(maxlen=_PROGRESS_WINDOW_SAMPLES)

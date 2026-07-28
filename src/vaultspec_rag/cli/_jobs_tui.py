@@ -530,7 +530,7 @@ class JobsTuiApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        table: DataTable[Text] = self.query_one("#jobs", DataTable)
+        table = cast("DataTable[Text]", self.query_one("#jobs", DataTable))
         for key, label in (
             ("state", "State"),
             ("job", "Job"),
@@ -612,8 +612,7 @@ class JobsTuiApp(App[None]):
         found = self.query("#jobs")
         if not found:
             return None
-        table: DataTable[Text] = found.only_one(DataTable)
-        return table
+        return cast("DataTable[Text]", found.only_one(DataTable))
 
     def _tick(self) -> None:
         """Advance whatever is genuinely moving, and nothing else.
@@ -729,9 +728,10 @@ class JobsTuiApp(App[None]):
         payload = cast("dict[str, object]", result)
         raw_jobs = payload.get("jobs")
         previous = self._jobs
+        entries: list[object] = raw_jobs if isinstance(raw_jobs, list) else []
         jobs = [
             cast("dict[str, object]", job)
-            for job in (raw_jobs if isinstance(raw_jobs, list) else [])
+            for job in entries
             if isinstance(job, dict)
             # A record with no id cannot be addressed, and two of them collide
             # on the table's row key and take the interface down.

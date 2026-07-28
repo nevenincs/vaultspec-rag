@@ -130,9 +130,9 @@ def _finished_job(job_id: str) -> dict[str, object]:
 def _summarise(records: list[dict[str, object]]) -> dict[str, object]:
     """Tally records by canonical state, in the shape the service publishes."""
     states = [str(record.get("state", "")) for record in records]
-    return {name: states.count(name) for name in set(states)} | {
-        "states": {name: states.count(name) for name in set(states)}
-    }
+    tally: dict[str, object] = {name: states.count(name) for name in set(states)}
+    tally["states"] = {name: states.count(name) for name in set(states)}
+    return tally
 
 
 class _JobService:
@@ -298,7 +298,10 @@ def _requested_state(handler: http.server.BaseHTTPRequestHandler) -> object:
     if length <= 0:
         return None
     payload = json.loads(handler.rfile.read(length).decode("utf-8"))
-    return payload.get("state") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    fields: dict[str, object] = payload
+    return fields.get("state")
 
 
 def _app(
@@ -863,7 +866,7 @@ class TestMotionMeansSomething:
             await _ready(pilot, app)
             await _settle(pilot)
             # Several frame intervals, so a glyph that still turns is caught.
-            frames = []
+            frames: list[str] = []
             for _ in range(6):
                 await asyncio.sleep(_SPINNER_INTERVAL)
                 await pilot.pause()

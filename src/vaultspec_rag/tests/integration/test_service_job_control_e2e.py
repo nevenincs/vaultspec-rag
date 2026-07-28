@@ -33,7 +33,7 @@ from ...job_models import (
     JobSpec,
     JobState,
 )
-from ...registry import get_registry
+from ...registry import get_registry, reset_registry
 from ...server import WatcherStartOutcome
 from ...server import _lifespan as server_lifespan
 from ...server._routes import ROUTES
@@ -168,49 +168,60 @@ async def _e2e_runtime(  # pyright: ignore[reportUnusedFunction]
             "watch_retry_jitter_fraction": 0.0,
         }
     )
-    # An earlier module may have called ``reset_registry()``, which rebuilds
-    # the ``registry.get_registry()`` singleton but leaves the server package's
-    # cached ``_registry`` alias bound to the prior, now-closed instance. The
-    # job machinery dispatches through ``get_registry()`` while the watcher and
-    # this fixture read ``server._registry``; if the two diverge, a dispatched
-    # index job and this test open the same local-file Qdrant store from two
-    # different registries and collide on its non-parallel-safe file lock.
-    # Re-align the server alias with the authoritative singleton so the test,
-    # the watcher, and the dispatcher all drive one registry.
+    # ``get_registry()`` is a process-wide singleton, so a module whose
+    # teardown was cut short hands this one its still-open project slots.
+    # Claim a fresh registry instead of inheriting whatever the run left
+    # behind: closing an ownerless registry is the cleanup its owner skipped,
+    # and it makes this fixture's starting state a product of its own action
+    # rather than a bet on every earlier module having tidied up.
+    reset_registry()
+    # ``reset_registry()`` rebuilds the ``registry.get_registry()`` singleton
+    # but leaves the server package's cached ``_registry`` alias bound to the
+    # prior, now-closed instance. The job machinery dispatches through
+    # ``get_registry()`` while the watcher and this fixture read
+    # ``server._registry``; if the two diverge, a dispatched index job and this
+    # test open the same local-file Qdrant store from two different registries
+    # and collide on its non-parallel-safe file lock. Re-align the server alias
+    # with the authoritative singleton so the test, the watcher, and the
+    # dispatcher all drive one registry.
     registry = get_registry()
     server._registry = registry
-    registry.prepare_startup()
-    assert registry.health()["project_count"] == 0
     registry._model = embedding_model  # pyright: ignore[reportPrivateUsage]
     manager = jobs.get_job_manager()
     try:
         yield registry, manager
     finally:
-        watcher_cleanup = server._stop_all_watchers()
-        if watcher_cleanup:
-            assert all(await asyncio.gather(*watcher_cleanup))
-        assert await server._wait_for_watcher_cleanup(
-            timeout_seconds=_E2E_TIMEOUT_SECONDS
-        )
-        owned_managers = {manager, jobs.get_job_manager()}
-        for owned_manager in owned_managers:
-            for snapshot in owned_manager.active():
-                outcome = owned_manager.set_desired_state(
-                    snapshot.id,
-                    DesiredJobState.CANCELLED,
-                )
-                assert outcome.status is not JobOutcomeStatus.ERROR
-            for snapshot in owned_manager.active():
-                if snapshot.runtime.task_active:
-                    joined = await owned_manager.wait_for_attempt(
+        try:
+            watcher_cleanup = server._stop_all_watchers()
+            if watcher_cleanup:
+                assert all(await asyncio.gather(*watcher_cleanup))
+            assert await server._wait_for_watcher_cleanup(
+                timeout_seconds=_E2E_TIMEOUT_SECONDS
+            )
+            owned_managers = {manager, jobs.get_job_manager()}
+            for owned_manager in owned_managers:
+                for snapshot in owned_manager.active():
+                    outcome = owned_manager.set_desired_state(
                         snapshot.id,
-                        timeout_seconds=_E2E_TIMEOUT_SECONDS,
+                        DesiredJobState.CANCELLED,
                     )
-                    assert joined.code == "attempt_released"
-            assert owned_manager.active() == []
-        registry.close_all()
-        jobs.reset()
-        reset_limiters()
+                    assert outcome.status is not JobOutcomeStatus.ERROR
+                for snapshot in owned_manager.active():
+                    if snapshot.runtime.task_active:
+                        joined = await owned_manager.wait_for_attempt(
+                            snapshot.id,
+                            timeout_seconds=_E2E_TIMEOUT_SECONDS,
+                        )
+                        assert joined.code == "attempt_released"
+                assert owned_manager.active() == []
+        finally:
+            # Release the process-global singletons even when a drain
+            # assertion above fails. These assertions report on the test that
+            # just ran; letting one of them skip the release turns a single
+            # failure into a setup error for every test that follows it.
+            registry.close_all()
+            jobs.reset()
+            reset_limiters()
 
 
 def _write_vault_corpus(root: Path, *, start: int, count: int) -> None:
@@ -272,6 +283,38 @@ async def _wait_for_job(
             return snapshot
         await asyncio.sleep(_E2E_POLL_SECONDS)
     raise AssertionError(f"{description}; last snapshot={manager.get(job_id)!r}")
+
+
+async def _request_control_on_moving_job(
+    manager: JobManager,
+    observed: JobSnapshot,
+    desired_state: DesiredJobState,
+) -> JobOutcome:
+    """Land one compare-and-set against a job that is still publishing.
+
+    A running job bumps its revision on every progress publication, so the
+    revision read to seed ``expected_revision`` can go stale before the
+    compare-and-set consumes it and the request loses the race. Re-read and
+    retry the way a real client does, rather than dropping the revision guard
+    and giving up the optimistic-concurrency coverage along with the flake.
+    """
+    deadline = asyncio.get_running_loop().time() + _E2E_TIMEOUT_SECONDS
+    while asyncio.get_running_loop().time() < deadline:
+        outcome = manager.set_desired_state(
+            observed.id,
+            desired_state,
+            expected_revision=observed.revision,
+        )
+        if outcome.code != "revision_conflict":
+            return outcome
+        await asyncio.sleep(_E2E_POLL_SECONDS)
+        refreshed = manager.get(observed.id)
+        assert refreshed is not None
+        observed = refreshed
+    raise AssertionError(
+        f"{desired_state} never won the revision race for {observed.id}; "
+        f"last snapshot={manager.get(observed.id)!r}"
+    )
 
 
 def _watcher_jobs(manager: JobManager, root: Path) -> list[JobSnapshot]:
@@ -582,10 +625,10 @@ async def _pause_and_resume_large_job(
         ),
         "large vault job never published a durable slice",
     )
-    pause = manager.set_desired_state(
-        job_id,
+    pause = await _request_control_on_moving_job(
+        manager,
+        live,
         DesiredJobState.PAUSED,
-        expected_revision=live.revision,
     )
     assert pause.code == "pause_requested"
     assert (

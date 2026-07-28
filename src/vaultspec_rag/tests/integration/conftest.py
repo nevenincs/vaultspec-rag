@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from ...embeddings import EmbeddingModel
     from ..conftest import RagComponentsWithManifest
+    from ._frozen_corpus_evidence import FrozenCorpusEvidence
 
 from ..._machine_lock import (
     machine_lock_live_holder,
@@ -41,7 +42,7 @@ from .._model_setup import (
     model_setup_timeout_seconds,
     models_are_cached,
 )
-from ..conftest import _index_corpus
+from ..conftest import _index_corpus, managed_env
 from ..corpus import build_synthetic_vault
 
 _MAX_STARTUP_CLEANUP_RESERVE_SECONDS = 15.0
@@ -250,6 +251,23 @@ def _verify_offline_service_startup(log_path: Path, stages: list[str]) -> str:
         f"offline verification endpoint={hf_endpoint!r} metadata_requests=0 "
         f"markers={expected_markers!r}"
     )
+
+
+@pytest.fixture(scope="session")
+def frozen_corpus_evidence(
+    tmp_path_factory: TempPathFactory,
+) -> FrozenCorpusEvidence:
+    """Real ranking observations over one shared index of the frozen vault.
+
+    Every frozen-corpus gate consumes this one fixture, so the pinned vault is
+    materialised and embedded exactly once per session rather than once per
+    gate. See :mod:`._frozen_corpus_evidence` for the bounded worker that
+    produces it.
+    """
+    from ._frozen_corpus_evidence import build_frozen_corpus_evidence
+
+    output_path = tmp_path_factory.mktemp("frozen-corpus") / "evidence.json"
+    return build_frozen_corpus_evidence(output_path)
 
 
 @pytest.fixture
@@ -558,8 +576,13 @@ def _live_service_context(
     startup_budget: float | None = None,
     model_ids: tuple[str, ...] | None = None,
     watch: bool = False,
-) -> Generator[tuple[int, Path]]:
-    """Start the real service under one model-to-readiness deadline envelope."""
+) -> Generator[tuple[int, Path, dict[str, str | None]]]:
+    """Start the real service under one model-to-readiness deadline envelope.
+
+    Yields the port, the isolated status dir, and the environment mapping the
+    daemon was started under, so a caller outliving a single test can re-point
+    each test's client at this exact daemon.
+    """
     from ...cli._process import _spawn_service
     from ...cli._service_status import _write_service_status
     from ._helpers import (
@@ -589,7 +612,7 @@ def _live_service_context(
         }
         startup.current_stage = "offline environment entry"
         stage_started = time.monotonic()
-        with _service_env(tmp_path, env_overrides=offline_env):
+        with _service_env(tmp_path, env_overrides=offline_env) as applied_env:
             startup.stages.append(
                 "offline environment entry "
                 f"elapsed={time.monotonic() - stage_started:.3f}s "
@@ -657,14 +680,24 @@ def _live_service_context(
 
             yielded = True
             try:
-                yield port, tmp_path
+                yield port, tmp_path, applied_env
             finally:
-                _cleanup_service_process(
-                    pid=pid,
-                    port=port,
-                    log_path=startup.log_path,
-                    timeout=15.0,
-                )
+                # Re-assert the daemon's own environment before resolving what
+                # to terminate. Entering this context set those variables, but
+                # it does not keep re-asserting them, and a caller that outlives
+                # one test hands control back to the autouse machine-singleton
+                # re-arm, which restores the session-wide dirs at every test
+                # boundary. Cleanup would then read the session status file,
+                # find no record for this port, and fall back to the spawned pid
+                # with no qdrant pid at all - terminating the daemon but never
+                # confirming its Qdrant child followed it out.
+                with managed_env(**applied_env):
+                    _cleanup_service_process(
+                        pid=pid,
+                        port=port,
+                        log_path=startup.log_path,
+                        timeout=15.0,
+                    )
     except BaseException as exc:
         if yielded:
             raise
@@ -677,18 +710,92 @@ def _live_service_context(
         ) from exc
 
 
+@contextmanager
+def _module_live_service(
+    tmp_path_factory: TempPathFactory,
+    name: str,
+    *,
+    watch: bool,
+) -> Generator[tuple[int, Path, dict[str, str | None]]]:
+    """Hold one real daemon for a whole module.
+
+    Spawning a daemon costs a full model load plus Qdrant startup and health
+    readiness - by far the most expensive per-test setup in the suite - and the
+    modules that use it drive many tests against one unchanging daemon. So the
+    daemon is spawned once per module and each test is re-pointed at it (see
+    ``_attach_live_service``) instead of paying for a private one.
+
+    Per-test isolation is preserved where it does the work: every test still
+    supplies its own project root, and the daemon's own state is the subject
+    under test rather than a fixture the tests mutate destructively.
+    """
+    with _live_service_context(
+        tmp_path_factory.mktemp(name),
+        watch=watch,
+    ) as service:
+        yield service
+
+
+@contextmanager
+def _attach_live_service(
+    service: tuple[int, Path, dict[str, str | None]],
+) -> Generator[tuple[int, Path]]:
+    """Point this test's in-process clients at the module's running daemon.
+
+    The autouse machine-singleton re-arm restores the session-wide status and
+    storage dirs at every test boundary, which is exactly what stops a stray
+    test from reaching the operator's real service. That same restore would
+    strand a daemon that outlives one test: discovery would resolve the session
+    dirs and simply not find it. Re-applying the daemon's own captured mapping
+    inside each test reconciles the two - the re-arm still owns both boundaries,
+    and the window in between resolves the daemon this module actually started.
+
+    The mapping is replayed verbatim rather than rebuilt because rebuilding
+    would allocate a fresh ephemeral Qdrant port the running daemon never bound.
+    """
+    port, status_dir, applied_env = service
+    with managed_env(**applied_env):
+        yield port, status_dir
+
+
+@pytest.fixture(scope="module")
+def _live_service_daemon(
+    tmp_path_factory: TempPathFactory,
+) -> Generator[tuple[int, Path, dict[str, str | None]]]:
+    """Hold one cache-prepared, offline real service for the module."""
+    with _module_live_service(
+        tmp_path_factory,
+        "live-service",
+        watch=False,
+    ) as service:
+        yield service
+
+
 @pytest.fixture
 def live_service(
-    tmp_path: Path,
+    _live_service_daemon: tuple[int, Path, dict[str, str | None]],
 ) -> Generator[tuple[int, Path]]:
     """Provide a cache-prepared, offline real service with bounded startup."""
-    with _live_service_context(tmp_path) as service:
+    with _attach_live_service(_live_service_daemon) as service:
+        yield service
+
+
+@pytest.fixture(scope="module")
+def _live_service_with_watch_daemon(
+    tmp_path_factory: TempPathFactory,
+) -> Generator[tuple[int, Path, dict[str, str | None]]]:
+    """Hold one watcher-enabled real service for the module."""
+    with _module_live_service(
+        tmp_path_factory,
+        "live-service-watch",
+        watch=True,
+    ) as service:
         yield service
 
 
 @pytest.fixture
 def live_service_with_watch(
-    tmp_path: Path,
+    _live_service_with_watch_daemon: tuple[int, Path, dict[str, str | None]],
 ) -> Generator[tuple[int, Path]]:
     """Provide a real service spawned with the file watcher enabled.
 
@@ -698,5 +805,5 @@ def live_service_with_watch(
     ``_ensure_watcher`` actually admits a watcher, which requires the
     watcher enabled at spawn.
     """
-    with _live_service_context(tmp_path, watch=True) as service:
+    with _attach_live_service(_live_service_with_watch_daemon) as service:
         yield service

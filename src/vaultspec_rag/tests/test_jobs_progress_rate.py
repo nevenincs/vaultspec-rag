@@ -397,5 +397,5 @@ class TestRealisticProgressCadence:
         record = next(e for e in snapshot() if e["id"] == job_id)
         shaped = _job_with_liveness(record, now=time.time())
         assert isinstance(shaped["progress_rate_per_second"], float)
-        assert cast("float", shaped["progress_rate_per_second"]) > 0
+        assert shaped["progress_rate_per_second"] > 0
         assert shaped["estimated_remaining_seconds"] is None
