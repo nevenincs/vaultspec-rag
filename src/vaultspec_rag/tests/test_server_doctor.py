@@ -67,10 +67,21 @@ def _install_rag_workspace(tmp_path: Path, mode: InstallMode) -> Path:
 
 def test_doctor_json_envelope_carries_both_axes(
     isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With no discovery file the envelope carries the dependency snapshot
     verbatim and a not-started live-service axis."""
     _ = isolated_status_dir
+    # The mode-and-floor axis is read from the CWD's workspace declaration, so
+    # without an isolated CWD this asserts the exit code of whichever workspace
+    # the suite happens to run in - and rag's own worktree declares tool mode
+    # while launching from source, which is a legitimate mismatch and lifts the
+    # exit to 1. A bare directory IS the pre-install condition under test.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    monkeypatch.chdir(bare)
+
     result = runner.invoke(app, ["server", "doctor", "--json"])
     envelope = json.loads(result.stdout)
     assert envelope["command"] == "server doctor"
@@ -86,6 +97,10 @@ def test_doctor_json_envelope_carries_both_axes(
     # No daemon expected => top-line tracks installed dependencies.
     assert data["ready"] == bool(snapshot["ready"])
     assert envelope["ok"] == data["ready"]
+    # Nothing declared here, so the provisioning axis stays silent and cannot
+    # contribute to the exit code - the sibling tests below drive it from real
+    # installed workspaces.
+    assert data["mode"] is None
     # No daemon expected => exit 0 regardless of dependency readiness (the
     # pre-install informational contract); the non-zero exit is reserved for a
     # daemon that is expected but dead.
