@@ -59,6 +59,7 @@ from ._routes_jobs import (
     _job_matches,
     _job_summary,
     _job_with_liveness,
+    _machine_pressure,
     _normalise_filter_value,
     _normalise_job_source_filter,
     _parse_since_seconds,
@@ -588,6 +589,11 @@ async def jobs_route(request: Request) -> JSONResponse:
             # host cannot measure, and the key itself marks a daemon that
             # reports at all.
             "gpu": _jobs.gpu_pressure_snapshot(now=now),
+            # The machine-wide pressure tier beside the GPU reading: same
+            # probes, folded through hysteresis into one verdict. Additive -
+            # the key's absence marks a daemon that predates the tier - and
+            # purely informational: nothing acts on it.
+            "pressure": _machine_pressure(records, now=now),
             "filters": {
                 "phase": phase,
                 "state": state,

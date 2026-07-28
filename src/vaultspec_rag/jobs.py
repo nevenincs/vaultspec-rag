@@ -70,6 +70,7 @@ __all__ = [
     "get_job_manager",
     "gpu_pressure_snapshot",
     "index_job_status",
+    "machine_pressure",
     "progress_rate",
     "record_finish",
     "record_forward_entry",
@@ -1060,6 +1061,106 @@ def degradation_evidence(
         "forward": _forward_evidence(forward, now=now),
         "gpu": _gpu_evidence(),
         "backend": _backend_evidence(project_root, source),
+    }
+
+
+def _signal_measure(value: object) -> float | None:
+    """Read one evidence value as a measurement; ``bool`` is malformed."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _signal_flag(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _worst_forward_evidence(
+    forwards: list[dict[str, object] | None],
+    *,
+    now: float,
+) -> dict[str, object]:
+    """Shape and pick the machine's worst forward window.
+
+    A dead encode thread under an open window outranks everything; among
+    live in-flight forwards the oldest wins; a machine with no in-flight
+    forward reports the newest exit it has. One job's block is chosen whole
+    rather than merged, so the evidence stays a real observation.
+    """
+    worst = _forward_evidence(None, now=now)
+    worst_rank = (-1, -1.0)
+    for forward in forwards:
+        evidence = _forward_evidence(forward, now=now)
+        in_flight = evidence["in_flight"] is True
+        dead = in_flight and evidence["thread_alive"] is False
+        age = _signal_measure(evidence["age_seconds"])
+        rank = (2 if dead else 1 if in_flight else 0, age if age is not None else -1.0)
+        if rank > worst_rank:
+            worst_rank, worst = rank, evidence
+    return worst
+
+
+def machine_pressure(
+    *,
+    now: float,
+    forwards: list[dict[str, object] | None],
+    project_root: str | None,
+    source: str,
+) -> dict[str, object]:
+    """The machine-wide pressure block served on the jobs envelope.
+
+    Samples the same seams the degradation evidence reads - the forward
+    window, the cached read-only GPU probe, the bounded backend probe -
+    plus the encode-admission queue, and folds them through the hysteresis
+    evaluator into one tier. The backend is probed only when running work
+    names a store (*project_root*), so an idle machine pays no probe and
+    an unprobed store reads as absence, never as a verdict. Surfacing
+    only: nothing consumes the tier to defer, shrink, or refuse work.
+    """
+    from .concurrency import limiter_stats
+    from .pressure import MachinePressureSignals, get_pressure_evaluator
+
+    forward_block = _worst_forward_evidence(forwards, now=now)
+    gpu = gpu_pressure_snapshot(now=now)
+    probed = bool(project_root)
+    backend: dict[str, object] = {
+        "probed": probed,
+        **_backend_evidence(project_root, source),
+    }
+    if not probed:
+        # The declined-probe reading is shaped by the same reader, so only
+        # the reason differs: on this axis no job named a store, rather than
+        # one job having failed to record one.
+        backend["detail"] = "no running index job names a store to probe"
+    raw_waiting = limiter_stats()["encode"].get("waiting")
+    waiting = (
+        raw_waiting
+        if isinstance(raw_waiting, int) and not isinstance(raw_waiting, bool)
+        else None
+    )
+    signals = MachinePressureSignals(
+        forward_in_flight=forward_block["in_flight"] is True,
+        forward_age_seconds=_signal_measure(forward_block["age_seconds"]),
+        forward_thread_alive=_signal_flag(forward_block["thread_alive"]),
+        gpu_utilization_percent=_signal_measure(gpu.get("utilization_percent")),
+        gpu_memory_used_mb=_signal_measure(gpu.get("memory_used_mb")),
+        gpu_memory_total_mb=_signal_measure(gpu.get("memory_total_mb")),
+        backend_probed=probed,
+        backend_alive=_signal_flag(backend.get("alive")),
+        backend_latency_seconds=_signal_measure(backend.get("latency_seconds")),
+        backend_probe_bound_seconds=_BACKEND_PROBE_TIMEOUT_SECONDS if probed else None,
+        encode_waiters=waiting,
+    )
+    verdict = get_pressure_evaluator().observe(signals, now=now)
+    return {
+        "tier": verdict["tier"],
+        "entered_at": verdict["entered_at"],
+        "evidence": {
+            "forward": forward_block,
+            "gpu": gpu,
+            "backend": backend,
+            "encode_waiters": waiting,
+        },
     }
 
 
