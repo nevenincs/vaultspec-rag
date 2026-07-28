@@ -213,7 +213,14 @@ async def _e2e_runtime(  # pyright: ignore[reportUnusedFunction]
             # assertion above fails. These assertions report on the test that
             # just ran; letting one of them skip the release turns a single
             # failure into a setup error for every test that follows it.
-            registry.close_all()
+            #
+            # Drop the singleton rather than closing it in place: ``close_all``
+            # latches ``_shutting_down`` and only ``prepare_startup`` clears it,
+            # so a closed-but-retained registry makes every later
+            # ``get_registry()`` hand back an instance that raises on the first
+            # slot it is asked for. ``reset_registry`` closes this one and clears
+            # the reference, so the next caller builds a live registry.
+            reset_registry()
             jobs.reset()
             reset_limiters()
 

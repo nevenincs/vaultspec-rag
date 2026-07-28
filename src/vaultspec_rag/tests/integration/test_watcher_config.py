@@ -19,7 +19,7 @@ import pytest
 from ... import server
 from ...config._settings import get_config, reset_config
 from ...config._types import EnvVar
-from ...registry import get_registry
+from ...registry import get_registry, reset_registry
 from ...server import WatcherStartOutcome
 from ...watcher_intake import watch_and_reindex
 
@@ -46,8 +46,14 @@ async def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
     awaitables that join their drains. A synchronous fixture cannot await
     those, so it leaves the drains outstanding and the slots each watcher
     opened on the shared registry still open, which the next module inherits.
+
+    Claim a fresh singleton rather than inherit whatever the run left behind.
+    An earlier module that closed the process-wide registry in place leaves
+    ``_shutting_down`` latched on it, and every ``peek_project`` here would
+    then raise instead of building the slot the watcher needs.
     """
     reset_config()
+    reset_registry()
     try:
         yield
     finally:
