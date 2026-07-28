@@ -21,6 +21,7 @@ from types import MappingProxyType
 from typing import Final
 
 __all__ = [
+    "DEGRADED_THRESHOLD_SECONDS",
     "STALL_THRESHOLD_SECONDS",
     "JobError",
     "JobErrorKind",
@@ -32,6 +33,16 @@ __all__ = [
 #: reported ``stalled`` on every surface. Matches the CLI's historical
 #: advisory threshold.
 STALL_THRESHOLD_SECONDS = 300.0
+
+#: A running, non-waiting job with no progress tick and no forward-pass
+#: boundary newer than this is reported ``degraded``. Sixty seconds because an
+#: uncontended encode slice finishes in single-digit seconds, so a minute
+#: without either signal is an order of magnitude beyond any healthy
+#: slice-boundary gap - while short legitimate pauses (model load, a store
+#: flush, one slow slice) stay well under it, so the verdict does not flap.
+#: Deliberately a fifth of the hard stall threshold above: ``degraded`` is the
+#: early, cause-attributed tier and ``stalled`` remains the hard verdict.
+DEGRADED_THRESHOLD_SECONDS = 60.0
 
 
 class JobErrorKind(StrEnum):

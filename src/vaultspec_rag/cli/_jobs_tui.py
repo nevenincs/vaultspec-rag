@@ -42,6 +42,8 @@ from ._jobs_tui_status import (
     fetch_service_status,
 )
 from ._service_jobs_presentation import (
+    degradation_evidence_lines,
+    degradation_verdict,
     human_progress,
     operation_label,
     phase_label,
@@ -1060,9 +1062,29 @@ class JobsTuiApp(App[None]):
         if self._last_outcome is not None:
             text, style = self._last_outcome
             line.append(f"\n{text}", style=style)
+        self._append_selected_degradation(line)
         summary = self.query("#summary")
         if summary:
             summary.only_one(Static).update(line)
+
+    def _append_selected_degradation(self, line: Text) -> None:
+        """Show the selected job's unhealthy verdict and evidence in the header.
+
+        The verdict and every finding come verbatim from the service payload
+        through the same presentation helpers the CLI detail view renders -
+        the header is the one place this view has room for whole sentences,
+        and the row's own progress cell already carries the short form.
+        """
+        job = self.selected_job()
+        if job is None:
+            return
+        verdict = degradation_verdict(job)
+        if verdict is None or verdict == "healthy":
+            return
+        line.append(f"\n{_short_id(job)} {verdict}", style="bold red")
+        evidence = "  ·  ".join(degradation_evidence_lines(job))
+        if evidence:
+            line.append(f"  ·  {evidence}", style="red")
 
     # -- selection and logs -------------------------------------------------
 
