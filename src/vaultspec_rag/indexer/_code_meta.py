@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .._atomic_write import replace_atomically
-from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
+from .._index_breadth import (
+    GENERATION_ID_KEY,
+    PUBLISHED_FILES_KEY,
+    PUBLISHED_POINTS_KEY,
+)
 from . import _config_epoch
 
 if TYPE_CHECKING:
@@ -69,7 +73,6 @@ EMBED_SCHEMA_KEY = "__code_embed_schema__"
 #: (preprocess invocation fields and ``html_strip``).
 MEMBERSHIP_EPOCH_KEY = "__code_membership_epoch__"
 CONTENT_EPOCH_KEY = "__code_content_epoch__"
-GENERATION_ID_KEY = "__code_generation_id__"
 
 
 def compute_code_epochs(
