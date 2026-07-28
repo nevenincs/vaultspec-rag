@@ -435,44 +435,21 @@ class RunLedgerCommitMethods:
             validate_rel_path(rel_path)
         last_key: tuple[str, int, int, str] | None = None
         while True:
-            condition = ""
             parameters: tuple[object, ...] = (
                 CommitUnitKind.UPSERT.value,
                 generation_id,
                 FileStateKind.INDEXED.value,
             )
-            path_condition = ""
             if rel_path is not None:
-                path_condition = " AND states.rel_path = ?"
                 parameters = (*parameters, rel_path)
             if last_key is not None:
-                condition = """
-                  AND (states.rel_path, units.segment_ordinal,
-                       points.point_ordinal, points.point_id) > (?, ?, ?, ?)
-                """
                 parameters = (*parameters, *last_key)
             with self._connect() as connection:
                 rows = connection.execute(
-                    f"""
-                    SELECT points.point_id, points.point_ordinal,
-                           states.rel_path, units.segment_ordinal
-                    FROM file_states AS states
-                    JOIN commit_units AS units
-                      ON units.generation_id = states.evidence_generation_id
-                     AND units.rel_path = states.rel_path
-                     AND units.unit_kind = ?
-                     AND units.source_digest = states.content_hash
-                    JOIN commit_point_ids AS points
-                      ON points.generation_id = units.generation_id
-                     AND points.unit_id = units.unit_id
-                    WHERE states.generation_id = ?
-                      AND states.state = ?
-                    {path_condition}
-                    {condition}
-                    ORDER BY states.rel_path, units.segment_ordinal,
-                             points.point_ordinal, points.point_id
-                    LIMIT ?
-                    """,
+                    retained_point_ids_sql(
+                        scoped_to_path=rel_path is not None,
+                        keyset=last_key is not None,
+                    ),
                     (*parameters, batch_size),
                 ).fetchall()
             if not rows:
@@ -486,6 +463,57 @@ class RunLedgerCommitMethods:
                 int(last["point_ordinal"]),
                 str(last["point_id"]),
             )
+
+
+def retained_point_ids_sql(*, scoped_to_path: bool, keyset: bool) -> str:
+    """Build one retained-point batch query with a pinned join order.
+
+    ``CROSS JOIN`` is load-bearing: without ``ANALYZE`` statistics - and the
+    ledger never runs ``ANALYZE`` - SQLite's planner reorders the plain-JOIN
+    form of this three-way join to visit ``commit_point_ids`` before
+    ``commit_units``, reaching it on ``generation_id`` alone. That scans every
+    committed point in the generation for every file row and re-sorts through
+    a temp B-tree, which turns each keyset batch into a full-corpus pass and
+    the whole iteration into minutes of CPU on a corpus of tens of thousands
+    of points. Pinning states -> units -> points keeps every batch on pure
+    index seeks (the file-state primary key, the commit-unit uniqueness
+    index, and the point primary key) and the iteration linear in the number
+    of retained points.
+
+    Args:
+        scoped_to_path: Restrict the manifest walk to one relative path.
+        keyset: Resume after a ``(rel_path, segment_ordinal, point_ordinal,
+            point_id)`` cursor row.
+    """
+    path_condition = " AND states.rel_path = ?" if scoped_to_path else ""
+    keyset_condition = (
+        """
+          AND (states.rel_path, units.segment_ordinal,
+               points.point_ordinal, points.point_id) > (?, ?, ?, ?)
+        """
+        if keyset
+        else ""
+    )
+    return f"""
+        SELECT points.point_id, points.point_ordinal,
+               states.rel_path, units.segment_ordinal
+        FROM file_states AS states
+        CROSS JOIN commit_units AS units
+          ON units.generation_id = states.evidence_generation_id
+         AND units.rel_path = states.rel_path
+         AND units.unit_kind = ?
+         AND units.source_digest = states.content_hash
+        CROSS JOIN commit_point_ids AS points
+          ON points.generation_id = units.generation_id
+         AND points.unit_id = units.unit_id
+        WHERE states.generation_id = ?
+          AND states.state = ?
+        {path_condition}
+        {keyset_condition}
+        ORDER BY states.rel_path, units.segment_ordinal,
+                 points.point_ordinal, points.point_id
+        LIMIT ?
+        """
 
 
 def _commit_unit_from_row(row: Mapping[str, Any]) -> CommitUnit:
