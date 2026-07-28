@@ -7,11 +7,21 @@ import sys
 
 _RECORD_JOB_AND_EXIT = """
 import sys
+import time
 
 from vaultspec_rag.job_models import JobSource  # absolute-import-ok
-from vaultspec_rag.jobs import record_finish, record_start  # absolute-import-ok
+from vaultspec_rag.jobs import (  # absolute-import-ok
+    record_finish,
+    record_progress,
+    record_start,
+)
 
 job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+# Mid-phase progress past both write throttles, so the persisted snapshot
+# carries a nonzero count the way a real long-running job's does.
+t0 = time.time()
+record_progress(job_id, "chunk + embed", 0, 4703, now=t0)
+record_progress(job_id, "chunk + embed", 137, 4703, now=t0 + 31.0)
 if "finish" in sys.argv:
     record_finish(job_id, result="ok")
 print(job_id)

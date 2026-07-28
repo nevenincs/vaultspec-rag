@@ -17,6 +17,7 @@ import pytest
 from ..cli._service_jobs_presentation import (
     degradation_evidence_lines,
     degradation_verdict,
+    human_progress,
     render_job_detail,
     stale_progress_label,
 )
@@ -150,3 +151,100 @@ class TestEvidenceRendering:
         render_job_detail(_job(degradation="healthy", evidence=None))
         out = capsys.readouterr().out
         assert "Health:" not in out
+
+
+def _cpu_phase_evidence(
+    *,
+    expected: object = False,
+    cpu: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Evidence as the service samples it during a CPU-bound phase."""
+    forward: dict[str, object] = {
+        "in_flight": False,
+        "age_seconds": None,
+        "slice_ordinal": None,
+        "items": None,
+        "thread_alive": None,
+        "expected": expected,
+    }
+    evidence: dict[str, object] = {
+        "forward": forward,
+        "gpu": {
+            "available": True,
+            "utilization_percent": 2.0,
+            "memory_used_mb": 4915.0,
+            "memory_total_mb": 16376.0,
+        },
+        "backend": {"alive": True, "latency_seconds": 0.4, "detail": None},
+    }
+    if cpu is not None:
+        evidence["cpu"] = cpu
+    return evidence
+
+
+class TestPhaseAwareEvidenceRendering:
+    def test_a_cpu_phase_names_the_absent_forward_as_expected(self) -> None:
+        """The hashing-phase incident line must stop reading as a finding.
+
+        Mutation check: dropping the ``expected is False`` branch from
+        ``_encode_evidence_line`` falls back to "no forward pass observed"
+        and this fails on the exact-phrase assertion below; restoring the
+        branch returns it to green.
+        """
+        lines = degradation_evidence_lines(
+            _job(degradation="degraded", evidence=_cpu_phase_evidence())
+        )
+        assert "Encode: no forward pass expected in this phase" in lines
+
+    def test_an_unclassified_phase_keeps_the_conservative_reading(self) -> None:
+        # ``expected`` null (or absent, from an older daemon): silence stays
+        # reportable rather than being suppressed on no information.
+        lines = degradation_evidence_lines(
+            _job(degradation="degraded", evidence=_cpu_phase_evidence(expected=None))
+        )
+        assert "Encode: no forward pass observed" in lines
+
+    def test_the_cpu_reading_is_rendered_beside_the_others(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_cpu_phase_evidence(
+                    cpu={"available": True, "utilization_percent": 101.3}
+                ),
+            )
+        )
+        assert "Process CPU: 101% of one core" in lines
+
+    def test_a_warming_cpu_probe_renders_no_line(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_cpu_phase_evidence(
+                    cpu={"available": True, "utilization_percent": None}
+                ),
+            )
+        )
+        assert not any(line.startswith("Process CPU:") for line in lines)
+
+    def test_an_unmeasurable_cpu_probe_is_named_not_hidden(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_cpu_phase_evidence(
+                    cpu={"available": False, "utilization_percent": None}
+                ),
+            )
+        )
+        assert "Process CPU: not measurable from the service process" in lines
+
+
+class TestProgressLabels:
+    def test_the_code_pipeline_label_names_completed_work(self) -> None:
+        # The counter behind "chunk + embed" counts files whose chunks were
+        # encoded and durably written, so the label must not claim it counts
+        # files being prepared.
+        job: dict[str, object] = {
+            "source": "code",
+            "progress": {"step": "chunk + embed", "completed": 3, "total": 10},
+        }
+        assert human_progress(job) == "embedding and writing files 3 of 10"
