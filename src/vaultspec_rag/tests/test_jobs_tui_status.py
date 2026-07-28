@@ -197,7 +197,7 @@ class _StatusService:
 
             def _health(self) -> None:
                 if isinstance(health, dict):
-                    self._json(health_status, health)
+                    self._json(health_status, typing.cast("dict[str, object]", health))
                     return
                 self._json(health_status, {"ok": False})
 

@@ -304,7 +304,7 @@ def _project_slots(
     raw_projects = payload.get("projects")
     if not isinstance(raw_projects, list):
         return None, _opt_int(payload.get("max_projects")), None
-    raw_entries: list[object] = raw_projects
+    raw_entries = cast("list[object]", raw_projects)
     entries = [_mapping(entry) for entry in raw_entries]
     leases = [_opt_int(entry.get("ref_count")) for entry in entries]
     held = sum(count for count in leases if count is not None) if leases else 0
@@ -319,7 +319,7 @@ def _watching_count(port: int, timeout: float | None) -> int | None:
     watching = payload.get("watching")
     if not isinstance(watching, list):
         return None
-    roots: list[object] = watching
+    roots = cast("list[object]", watching)
     return len(roots)
 
 
@@ -358,7 +358,9 @@ def fetch_service_status(
     token = health.get("service_token")
     qdrant = _mapping(health.get("qdrant"))
     raw_reasons = health.get("degraded_reasons")
-    listed_reasons: list[object] = raw_reasons if isinstance(raw_reasons, list) else []
+    listed_reasons = (
+        cast("list[object]", raw_reasons) if isinstance(raw_reasons, list) else []
+    )
     reasons = tuple(str(reason) for reason in listed_reasons) if listed_reasons else ()
     totals = _survey_totals(port, timeout)
     loaded, cap, leases = _project_slots(port, timeout)
@@ -511,7 +513,7 @@ class ServiceStatusBar(Static):
 
     def repaint_status(self) -> None:
         """Re-render the held result at the width now reported."""
-        app: App[object] = self.app
+        app = cast("App[object]", self.app)
         width = self.size.width or app.size.width
         self.update(render_status_header(self._status, width))
 

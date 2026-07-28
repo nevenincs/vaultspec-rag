@@ -300,7 +300,7 @@ def _requested_state(handler: http.server.BaseHTTPRequestHandler) -> object:
     payload = json.loads(handler.rfile.read(length).decode("utf-8"))
     if not isinstance(payload, dict):
         return None
-    fields: dict[str, object] = payload
+    fields = typing.cast("dict[str, object]", payload)
     return fields.get("state")
 
 
@@ -919,7 +919,7 @@ class TestMotionMeansSomething:
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
             await _settle(pilot)
-            rows = []
+            rows: list[str] = []
             for _ in range(6):
                 await asyncio.sleep(_SPINNER_INTERVAL)
                 await pilot.pause()
