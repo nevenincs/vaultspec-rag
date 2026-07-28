@@ -18,6 +18,7 @@ import math
 import time
 from typing import TYPE_CHECKING, ClassVar, NamedTuple, cast
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
@@ -41,6 +42,7 @@ from ._jobs_tui_palette import (
     DARK_THEME_NAME,
     LIGHT_THEME_NAME,
     build_themes,
+    pill_fill,
     semantic_tones,
     tone_style,
 )
@@ -237,6 +239,53 @@ _HEALTH_PILLS: tuple[tuple[str, str, str, str, str, bool], ...] = (
 # The dim divider between header groups: states, health, service, GPU, and
 # the page count each read as their own cell run rather than one cramped row.
 _GROUP_SEPARATORS = ("│", "|")
+
+# Rounded end-caps for the pills: half-circle glyphs painted in the pill's
+# own fill colour, so a background-filled span reads as an actual pill
+# rather than a hard-edged block. On a console whose encoding cannot carry
+# them, the pill degrades to a space-padded filled span - soft, bracket
+# free, and still a pill.
+_PILL_CAP_LEFT = "\ue0b6"
+_PILL_CAP_RIGHT = "\ue0b4"
+
+# The blank cell that joins a pill's words. It is a glyph, not whitespace:
+# both text wrappers on this path break at any Unicode whitespace - the
+# no-break space included - so only a non-space blank keeps a pill in one
+# piece at every width. It renders as an empty cell in the same braille
+# block the busy spinner already draws from.
+_PILL_JOINER = "\u2800"
+
+
+def _widest_line(line: Text) -> int:
+    """The widest row of a possibly multi-row header, in cells."""
+    return max(cell_len(part) for part in line.plain.split("\n"))
+
+
+def _append_pill(
+    line: Text,
+    content: str,
+    fill: tuple[str, str],
+    *,
+    unicode_ok: bool,
+) -> None:
+    """Append one rounded pill: *content* on its fill, capped or padded.
+
+    The content's spaces become blank joiner cells, so a pill wraps as one
+    unit: a line break inside a filled span would tear the pill across two
+    rows. The ASCII degradation keeps plain spaces - it carries no glyphs
+    at all, by definition.
+    """
+    background, foreground = fill
+    if unicode_ok:
+        line.append(_PILL_CAP_LEFT, style=background)
+        line.append(
+            content.replace(" ", _PILL_JOINER),
+            style=f"{foreground} on {background}",
+        )
+        line.append(_PILL_CAP_RIGHT, style=background)
+        return
+    line.append(f" {content} ", style=f"{foreground} on {background}")
+
 
 # The service-condition pill's vocabulary, worst-last, and its tones.
 # ``reachable`` is what an older daemon that stamps no verdicts can claim.
@@ -562,8 +611,12 @@ class JobsTuiApp(App[None]):
     # to "where will my next keypress land", so it is carried by the pane's
     # own frame rather than by anything inside it.
     CSS = """
-    #summary { height: auto; padding: 0 2; background: $panel; color: $text; }
-    #servicestatus { height: auto; padding: 0 2; background: $panel; }
+    /* The header is a rounded panel like the panes below it, so the whole
+       surface reads as one composed set of cards rather than bare bars
+       above a framed table. */
+    #header { height: auto; border: round $panel-lighten-2; padding: 0 1; }
+    #summary { height: auto; padding: 0 1; color: $text; }
+    #servicestatus { height: auto; padding: 0 1; color: $text-muted; }
     #body { height: 1fr; width: 1fr; padding: 0 1; }
     #jobs { width: 1fr; height: 1fr; border: round $panel-lighten-2; }
     #jobs:focus { border: round $accent; }
@@ -674,8 +727,9 @@ class JobsTuiApp(App[None]):
         self._divided_width = 0
 
     def compose(self) -> ComposeResult:
-        yield Static(id="summary")
-        yield ServiceStatusBar(id="servicestatus")
+        with Vertical(id="header"):
+            yield Static(id="summary")
+            yield ServiceStatusBar(id="servicestatus")
         with Horizontal(id="body"):
             yield DataTable(id="jobs", cursor_type="row", zebra_stripes=True)
             with _LogPane(id="logpane"):
@@ -1202,36 +1256,44 @@ class JobsTuiApp(App[None]):
     def _append_state_pills(
         self,
         line: Text,
-        tones: dict[str, str],
+        fills: dict[str, tuple[str, str]],
         *,
         labelled: bool,
         unicode_ok: bool,
     ) -> None:
-        """One pill per state bucket: glyph, count, and (wide) its label."""
+        """One pill per state bucket: glyph, count, and (wide) its label.
+
+        A pill with work in it wears its token's solid fill; an empty one
+        wears the muted fill so colour always means signal.
+        """
         for key, count in self._header_counts():
             spec = _STATE_PILLS.get(key)
             if spec is None:
                 # The residue bucket, in the same anatomy as its neighbours.
                 glyph, fallback = _OTHER_PILL_GLYPHS
-                label, tone, bold = key, "", False
+                label, tone = key, "muted"
             else:
-                glyph, fallback, label, tone, bold = spec
-            pill = f"{glyph if unicode_ok else fallback} {count}"
+                glyph, fallback, label, tone, _bold = spec
+            content = f"{glyph if unicode_ok else fallback} {count}"
             if labelled:
-                pill += f" {label}"
-            line.append("  ")
-            line.append(
-                pill,
-                style=tone_style(tones, tone, bold=bold) if count else "dim",
+                content += f" {label}"
+            # One cell of air: the caps already separate pill from pill.
+            line.append(" ")
+            _append_pill(
+                line,
+                content,
+                fills[tone if count else "muted"],
+                unicode_ok=unicode_ok,
             )
 
     def _append_health_pills(
         self,
         line: Text,
-        tones: dict[str, str],
+        fills: dict[str, tuple[str, str]],
         *,
         labelled: bool,
         unicode_ok: bool,
+        lead_separator: bool = True,
     ) -> None:
         """The service's job-health tallies, in their own group."""
         summary = self._summary
@@ -1242,17 +1304,20 @@ class JobsTuiApp(App[None]):
         if not present:
             # A daemon older than the tally; absent is not zero.
             return
-        self._append_separator(line, unicode_ok=unicode_ok)
-        for index, (key, glyph, fallback, label, tone, bold) in enumerate(present):
+        if lead_separator:
+            self._append_separator(line, unicode_ok=unicode_ok)
+        for index, (key, glyph, fallback, label, tone, _bold) in enumerate(present):
             count = _count(counted.get(key)) or 0
-            pill = f"{glyph if unicode_ok else fallback} {count}"
+            content = f"{glyph if unicode_ok else fallback} {count}"
             if labelled:
-                pill += f" {label}"
+                content += f" {label}"
             if index:
-                line.append("  ")
-            line.append(
-                pill,
-                style=tone_style(tones, tone, bold=bold) if count else "dim",
+                line.append(" ")
+            _append_pill(
+                line,
+                content,
+                fills[tone if count else "muted"],
+                unicode_ok=unicode_ok,
             )
 
     def _service_condition(self) -> str:
@@ -1320,6 +1385,8 @@ class JobsTuiApp(App[None]):
         *,
         state_labels: bool,
         health_labels: bool,
+        split_before_service: bool = False,
+        split_before_health: bool = False,
     ) -> Text:
         """Build the header row: grouped pills, condition, GPU, page count.
 
@@ -1327,6 +1394,9 @@ class JobsTuiApp(App[None]):
         and the page count - are divided by dim separators so the row reads
         as cells rather than one cramped run. Labels are a width decision
         made by the caller; the condition and GPU cells are never dropped.
+        ``split_before_service`` is the last width fallback: the row breaks
+        deliberately at the service-group boundary instead of wherever the
+        wrapper would land - never through the middle of a pill.
         """
         unicode_ok = self._unicode_glyphs()
         # The leading cell is identity: which daemon, at which release, on
@@ -1341,22 +1411,34 @@ class JobsTuiApp(App[None]):
             line.append(" v?", style=tone_style(tones, "muted"))
         line.append(" · ", style="dim")
         line.append(f"port {self._port}", style="bold")
+        fills = pill_fill(self.theme)
         self._append_state_pills(
-            line, tones, labelled=state_labels, unicode_ok=unicode_ok
+            line, fills, labelled=state_labels, unicode_ok=unicode_ok
         )
+        if split_before_health:
+            line.append("\n")
         self._append_health_pills(
-            line, tones, labelled=health_labels, unicode_ok=unicode_ok
+            line,
+            fills,
+            labelled=health_labels,
+            unicode_ok=unicode_ok,
+            lead_separator=not split_before_health,
         )
-        self._append_separator(line, unicode_ok=unicode_ok)
+        if split_before_service:
+            line.append("\n")
+        else:
+            self._append_separator(line, unicode_ok=unicode_ok)
         verdict = self._service_condition()
-        tone, bold = _CONDITION_TONES[verdict]
-        line.append(
+        condition_tone, _bold = _CONDITION_TONES[verdict]
+        _append_pill(
+            line,
             f"{'●' if unicode_ok else '*'} svc {verdict}",
-            style=tone_style(tones, tone, bold=bold),
+            fills[condition_tone],
+            unicode_ok=unicode_ok,
         )
         self._append_separator(line, unicode_ok=unicode_ok)
-        gpu_text, gpu_tone, gpu_bold = self._gpu_cell()
-        line.append(gpu_text, style=tone_style(tones, gpu_tone, bold=gpu_bold))
+        gpu_text, gpu_tone, _gpu_bold = self._gpu_cell()
+        _append_pill(line, gpu_text, fills[gpu_tone], unicode_ok=unicode_ok)
         self._append_separator(line, unicode_ok=unicode_ok)
         shown = len(self._jobs)
         if self._total is None:
@@ -1388,13 +1470,32 @@ class JobsTuiApp(App[None]):
         # the health tallies. Counts, the condition cell and the GPU cell
         # are never shed; past the narrowest form the bar wraps.
         line = self._compose_header_line(tones, state_labels=True, health_labels=True)
-        if 0 < width < line.cell_len:
+        if 0 < width < _widest_line(line):
             line = self._compose_header_line(
                 tones, state_labels=False, health_labels=True
             )
-        if 0 < width < line.cell_len:
+        if 0 < width < _widest_line(line):
             line = self._compose_header_line(
                 tones, state_labels=False, health_labels=False
+            )
+        if 0 < width < _widest_line(line):
+            # Narrower than even the unlabelled row: break it deliberately
+            # at the service-group boundary, never through a pill.
+            line = self._compose_header_line(
+                tones,
+                state_labels=False,
+                health_labels=False,
+                split_before_service=True,
+            )
+        if 0 < width < _widest_line(line):
+            # Still too narrow: the health group takes its own row too, so
+            # every row of the header holds whole groups of whole pills.
+            line = self._compose_header_line(
+                tones,
+                state_labels=False,
+                health_labels=False,
+                split_before_service=True,
+                split_before_health=True,
             )
         # The age of the data is reported whether or not the last fetch
         # failed - it is exactly when the service stops answering that an

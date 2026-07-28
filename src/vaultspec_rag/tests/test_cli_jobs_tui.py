@@ -368,8 +368,16 @@ def _app(
 
 
 def _screen_text(app: JobsTuiApp) -> str:
-    """Return what the interface actually painted, as text."""
-    return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+    """Return what the interface actually painted, as text.
+
+    Pill contents use non-breaking spaces so a pill wraps as one unit; they
+    read as ordinary spaces, so they are normalised here and every
+    assertion matches what an operator sees.
+    """
+    return "\n".join(
+        strip.text.replace("\u2800", " ")
+        for strip in app.screen._compositor.render_strips()
+    )
 
 
 def _line_with(painted: str, needle: str) -> str:
@@ -1623,6 +1631,61 @@ class TestServiceIdentity:
         assert f"vaultspec-rag {local_package_version()}" not in painted, (
             "unknown must never be papered over with the local release"
         )
+
+
+class TestPillShape:
+    """Pills are rounded, background-filled spans, not coloured text runs."""
+
+    _FILL = ("#123456", "#654321")
+
+    def test_a_pill_is_capped_in_its_own_fill_colour(self) -> None:
+        from rich.text import Text
+
+        from ..cli._jobs_tui import _PILL_CAP_LEFT, _PILL_CAP_RIGHT, _append_pill
+
+        line = Text()
+        _append_pill(line, "> 2 running", self._FILL, unicode_ok=True)
+        spans = [(line.plain[s.start : s.end], str(s.style)) for s in line.spans]
+
+        background, foreground = self._FILL
+        assert spans[0] == (_PILL_CAP_LEFT, background), (
+            "the left cap's foreground is the pill's background, so the "
+            "half-circle completes the fill"
+        )
+        assert spans[-1] == (_PILL_CAP_RIGHT, background)
+        # Interior spaces are non-breaking, so the pill wraps as one unit.
+        assert spans[1] == (
+            "> 2 running".replace(" ", "\u2800"),
+            f"{foreground} on {background}",
+        ), "the span between the caps is background-filled"
+
+    def test_the_ascii_degradation_is_a_soft_filled_span(self) -> None:
+        """No caps a font cannot carry, and no brackets pretending to be.
+
+        Proven able to fail: making the ASCII branch emit the cap glyphs
+        anyway - the degradation this guards - fails the no-cap assertion
+        by name; restored, it passes.
+        """
+        from rich.text import Text
+
+        from ..cli._jobs_tui import _PILL_CAP_LEFT, _PILL_CAP_RIGHT, _append_pill
+
+        line = Text()
+        _append_pill(line, "> 2 running", self._FILL, unicode_ok=False)
+
+        assert _PILL_CAP_LEFT not in line.plain, (
+            "an ASCII console must never be sent the cap glyphs"
+        )
+        assert _PILL_CAP_RIGHT not in line.plain
+        assert "[" not in line.plain and "]" not in line.plain, (
+            "the degradation is padding, not brackets"
+        )
+        # Non-breaking padding throughout, so the pill wraps as one unit.
+        assert line.plain == " > 2 running ", (
+            "the filled span is space-padded so it still reads as a pill"
+        )
+        background, foreground = self._FILL
+        assert str(line.spans[0].style) == f"{foreground} on {background}"
 
 
 class TestColourScheme:
