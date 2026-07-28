@@ -112,6 +112,7 @@ class ReconcileBatch:
 class _ConvergenceOptions(TypedDict, total=False):
     budget_s: float
     poll_s: float
+    start_budget_s: float
     sleep: Callable[[float], None]
     monotonic: Callable[[], float]
     stop: threading.Event | None
@@ -122,6 +123,7 @@ class _CollectionOptions(TypedDict, total=False):
     target: int
     budget_s: float
     poll_s: float
+    start_budget_s: float
     wait: bool
     sleep: Callable[[float], None]
     monotonic: Callable[[], float]
@@ -133,6 +135,8 @@ class _BatchOptions(TypedDict, total=False):
     target: int
     cap: int
     budget_s: float
+    poll_s: float
+    start_budget_s: float
     dry_run: bool
     wait: bool
     stop: threading.Event | None
@@ -146,6 +150,7 @@ class _ConvergenceRequest:
     path: Path | None
     budget_s: float
     poll_s: float = _CONVERGENCE_POLL_SECONDS
+    start_budget_s: float = _OPTIMIZER_START_BUDGET_SECONDS
     sleep: Callable[[float], None] = time.sleep
     monotonic: Callable[[], float] = time.monotonic
     stop: threading.Event | None = None
@@ -159,6 +164,7 @@ class _CollectionRequest:
     budget_s: float
     target: int = store_schema.SERVER_SEGMENT_NUMBER
     poll_s: float = _CONVERGENCE_POLL_SECONDS
+    start_budget_s: float = _OPTIMIZER_START_BUDGET_SECONDS
     wait: bool = True
     sleep: Callable[[float], None] = time.sleep
     monotonic: Callable[[], float] = time.monotonic
@@ -172,6 +178,8 @@ class _BatchRequest:
     cap: int
     budget_s: float
     target: int = store_schema.SERVER_SEGMENT_NUMBER
+    poll_s: float = _CONVERGENCE_POLL_SECONDS
+    start_budget_s: float = _OPTIMIZER_START_BUDGET_SECONDS
     dry_run: bool = False
     wait: bool = True
     stop: threading.Event | None = None
@@ -353,12 +361,23 @@ def _await_convergence_request(
         requested first.
     """
 
-    client, collection, path, budget_s, poll_s, sleep, monotonic, stop = (
+    (
+        client,
+        collection,
+        path,
+        budget_s,
+        poll_s,
+        start_budget_s,
+        sleep,
+        monotonic,
+        stop,
+    ) = (
         request.client,
         request.collection,
         request.path,
         request.budget_s,
         request.poll_s,
+        request.start_budget_s,
         request.sleep,
         request.monotonic,
         request.stop,
@@ -380,7 +399,7 @@ def _await_convergence_request(
         return segments, (size if path is not None else None)
 
     deadline = monotonic() + budget_s
-    start_deadline = min(deadline, monotonic() + _OPTIMIZER_START_BUDGET_SECONDS)
+    start_deadline = min(deadline, monotonic() + start_budget_s)
     tracker = _StabilityTracker()
     started = False
     while monotonic() < deadline:
@@ -430,6 +449,10 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
         target: The bounded-geometry segment target.
         budget_s: Seconds to wait for convergence.
         poll_s: Seconds between convergence samples.
+        start_budget_s: Seconds to wait for the optimizer to pick the work
+            up before concluding there was none to do. A collection with
+            nothing to merge always spends this in full, so a caller that
+            expects no work can hand in a short one.
         wait: When False, issue the update and return ``converging``
             without waiting.
         sleep: Injected for tests; defaults to :func:`time.sleep`.
@@ -448,6 +471,7 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
         target,
         budget_s,
         poll_s,
+        start_budget_s,
         wait,
         sleep,
         monotonic,
@@ -459,6 +483,7 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
         request.target,
         request.budget_s,
         request.poll_s,
+        request.start_budget_s,
         request.wait,
         request.sleep,
         request.monotonic,
@@ -524,6 +549,7 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
         path,
         budget_s=budget_s,
         poll_s=poll_s,
+        start_budget_s=start_budget_s,
         sleep=sleep,
         monotonic=monotonic,
         stop=stop,
@@ -569,6 +595,11 @@ def _reconcile_collections(request: _BatchRequest) -> ReconcileBatch:
         target: The bounded-geometry segment target.
         cap: Maximum collections to reconcile this pass.
         budget_s: Per-collection convergence budget in seconds.
+        poll_s: Seconds between convergence samples. The number of agreeing
+            samples convergence requires is fixed; this is only how far
+            apart they are taken.
+        start_budget_s: Per-collection budget for the optimizer to pick the
+            work up before it counts as having none.
         dry_run: Preview the selection without mutating anything.
         wait: When False, issue updates without awaiting convergence.
         on_progress: Sink for progress lines. With ``wait`` set, each
@@ -584,6 +615,8 @@ def _reconcile_collections(request: _BatchRequest) -> ReconcileBatch:
         target,
         cap,
         budget_s,
+        poll_s,
+        start_budget_s,
         dry_run,
         wait,
         stop,
@@ -594,6 +627,8 @@ def _reconcile_collections(request: _BatchRequest) -> ReconcileBatch:
         request.target,
         request.cap,
         request.budget_s,
+        request.poll_s,
+        request.start_budget_s,
         request.dry_run,
         request.wait,
         request.stop,
@@ -639,6 +674,8 @@ def _reconcile_collections(request: _BatchRequest) -> ReconcileBatch:
                 storage_dir=storage_dir,
                 target=target,
                 budget_s=budget_s,
+                poll_s=poll_s,
+                start_budget_s=start_budget_s,
                 wait=wait,
                 stop=stop,
             )
