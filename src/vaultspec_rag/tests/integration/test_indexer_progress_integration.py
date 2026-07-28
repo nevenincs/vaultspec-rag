@@ -67,6 +67,12 @@ class CountingProgressReporter:
     def log(self, message: str) -> None:
         self.events.append(LogEvent(message=message))
 
+    def forward_started(self, *, ordinal: int, items: int) -> None:
+        del ordinal, items
+
+    def forward_finished(self, *, ordinal: int, items: int) -> None:
+        del ordinal, items
+
     def phase_names(self) -> list[str]:
         return [e.name for e in self.events if isinstance(e, PhaseStartEvent)]
 

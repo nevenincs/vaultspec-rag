@@ -217,14 +217,140 @@ def human_progress(job: dict[str, object]) -> str:
     return label
 
 
+def degradation_verdict(job: dict[str, object]) -> str | None:
+    """The service's three-way health verdict, or ``None`` from an older daemon.
+
+    Absent is not the same answer as present: a daemon that publishes the
+    field is the authority on the verdict, while one that never publishes it
+    predates the classification and falls back to the local stall reading.
+    """
+    value = job.get("degradation")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _evidence_section(job: dict[str, object], name: str) -> dict[str, object] | None:
+    evidence = job.get("degradation_evidence")
+    if not isinstance(evidence, dict):
+        return None
+    section = cast("dict[str, object]", evidence).get(name)
+    return cast("dict[str, object]", section) if isinstance(section, dict) else None
+
+
+def _forward_evidence_phrase(job: dict[str, object]) -> str:
+    """One phrase for the forward-pass finding, empty without evidence."""
+    forward = _evidence_section(job, "forward")
+    if forward is None:
+        return ""
+    age = forward.get("age_seconds")
+    aged = isinstance(age, int | float) and not isinstance(age, bool)
+    if forward.get("in_flight") is True:
+        phrase = (
+            f"GPU forward pass running {_format_seconds(age)}"
+            if aged
+            else "GPU forward pass running"
+        )
+        if forward.get("thread_alive") is False:
+            phrase += " (encode thread dead)"
+        return phrase
+    if aged:
+        return f"last GPU forward finished {_format_seconds(age)} ago"
+    return ""
+
+
+def _unhealthy_summary(job: dict[str, object], verdict: str) -> str:
+    """One line naming the verdict and its leading cause, service words only."""
+    raw_age = job.get("last_progress_age_seconds")
+    base = (
+        f"no progress for {_format_seconds(raw_age)}"
+        if isinstance(raw_age, int | float)
+        else "no recent progress"
+    )
+    forward = _forward_evidence_phrase(job)
+    return f"{verdict}: {'; '.join(part for part in (base, forward) if part)}"
+
+
+def _encode_evidence_line(job: dict[str, object]) -> str | None:
+    forward = _evidence_section(job, "forward")
+    if forward is None:
+        return None
+    phrase = _forward_evidence_phrase(job) or "no forward pass observed"
+    ordinal = forward.get("slice_ordinal")
+    items = forward.get("items")
+    if ordinal is not None and items is not None:
+        phrase += f" (slice {ordinal}, {items} items)"
+    alive = forward.get("thread_alive")
+    if alive is not None and forward.get("in_flight") is not True:
+        phrase += "; encode thread " + ("alive" if alive is True else "dead")
+    return f"Encode: {phrase}"
+
+
+def _gpu_evidence_line(job: dict[str, object]) -> str | None:
+    gpu = _evidence_section(job, "gpu")
+    if gpu is None:
+        return None
+    if gpu.get("available") is not True:
+        return "GPU: not measurable from the service process"
+    parts: list[str] = []
+    utilization = gpu.get("utilization_percent")
+    if isinstance(utilization, int | float):
+        parts.append(f"{round(float(utilization))}% busy")
+    used = gpu.get("memory_used_mb")
+    total = gpu.get("memory_total_mb")
+    if used is not None or total is not None:
+        parts.append(f"{_format_mb(used)} used of {_format_mb(total)}")
+    return f"GPU: {', '.join(parts) if parts else 'no reading'}"
+
+
+def _backend_evidence_line(job: dict[str, object]) -> str | None:
+    backend = _evidence_section(job, "backend")
+    if backend is None:
+        return None
+    alive = backend.get("alive")
+    detail = backend.get("detail")
+    if alive is True:
+        return f"Backend: answered in {_format_seconds(backend.get('latency_seconds'))}"
+    if alive is False:
+        return f"Backend: failed: {detail}"
+    return f"Backend: {detail or 'not probed'}"
+
+
+def degradation_evidence_lines(job: dict[str, object]) -> tuple[str, ...]:
+    """Render the service's evidence block, one finding per line, verbatim.
+
+    Values are shown as the service sampled them - no local thresholds and
+    no re-derivation - so the CLI and the TUI cannot tell an operator two
+    different stories about the same unhealthy job.
+    """
+    lines = (
+        _encode_evidence_line(job),
+        _gpu_evidence_line(job),
+        _backend_evidence_line(job),
+    )
+    return tuple(line for line in lines if line is not None)
+
+
 def stale_progress_label(job: dict[str, object]) -> str:
     if str(job.get("phase", "")) != "running" or job_is_waiting(job):
         return ""
+    verdict = degradation_verdict(job)
+    if verdict is not None:
+        # The service verdict is authoritative: render it and its evidence,
+        # never a locally recomputed threshold.
+        return "" if verdict == "healthy" else _unhealthy_summary(job, verdict)
+    return _fallback_stale_label(job)
+
+
+def _fallback_stale_label(job: dict[str, object]) -> str:
+    """The pre-verdict stall reading, kept only for daemons that lack it.
+
+    Prefers the service-computed ``stalled`` flag, then the local threshold
+    for snapshots from an older service that lacks even that.
+    """
     raw_age = job.get("last_progress_age_seconds")
     if not isinstance(raw_age, int | float):
         return ""
-    # Prefer the service-computed flag; fall back to the local threshold
-    # for snapshots from an older service that lacks it.
     stalled = job.get("stalled")
     if stalled is False:
         return ""
@@ -556,6 +682,20 @@ def _render_job_progress_detail(job: dict[str, object]) -> None:
         _cli.console.print(f"Progress: {human_progress(job)}")
 
 
+def _render_job_degradation_detail(job: dict[str, object]) -> None:
+    """Print the service verdict and its evidence, verbatim.
+
+    Silent for a healthy job and for a daemon that predates the verdict -
+    the stale-progress warning above already covers the older fallback.
+    """
+    verdict = degradation_verdict(job)
+    if verdict is None or verdict == "healthy":
+        return
+    _cli.console.print(f"Health: {verdict}")
+    for line in degradation_evidence_lines(job):
+        _cli.console.print(f"  {line}")
+
+
 def _render_job_initiator_detail(job: dict[str, object]) -> None:
     initiator = job.get("initiator")
     if not isinstance(initiator, dict):
@@ -672,6 +812,7 @@ def render_job_detail(job: dict[str, object], *, port: int | None = None) -> Non
     _cli.console.print(f"Status: {phase_label(job)}")
     _cli.console.print(f"Runtime: {_format_seconds(job.get('runtime_seconds'))}")
     _render_job_progress_detail(job)
+    _render_job_degradation_detail(job)
     _render_job_initiator_detail(job)
     _render_job_runtime_detail(job)
     _render_job_resource_detail(job)
