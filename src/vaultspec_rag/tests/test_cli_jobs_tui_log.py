@@ -21,6 +21,7 @@ from ..cli._jobs_tui_log import (
     parse_log_line,
     render_entry,
     sanitize_log_text,
+    semantic_tones,
 )
 from .test_cli_jobs_tui import (
     _app,
@@ -224,6 +225,38 @@ class TestValueTruncation:
         assert token in lines[1].plain, (
             "the full entry must be reachable, not only the elided view"
         )
+
+
+class TestSemanticTones:
+    """Status colours resolve from the active palette, never invented here."""
+
+    def test_tones_resolve_from_the_theme_variables(self) -> None:
+        variables = {
+            "text-success": "#C2D4B3",
+            "text-warning": "#F1DCB2",
+            "text-error": "#D4969C",
+            "text-accent": "#CDB4C8",
+        }
+        tones = semantic_tones(variables)
+
+        # Catches the resolver ignoring the theme and answering with the
+        # ANSI fallbacks: every tone would come back as a colour name
+        # instead of the palette's own value.
+        assert tones["good"] == "#C2D4B3"
+        assert tones["attention"] == "#F1DCB2"
+        assert tones["bad"] == "#D4969C"
+        assert tones["neutral"] == "#CDB4C8"
+        assert tones["muted"] == "dim", (
+            "muted is luminance, not a colour, in either scheme"
+        )
+
+    def test_a_render_with_no_theme_still_styles_by_meaning(self) -> None:
+        tones = semantic_tones({})
+
+        assert tones["bad"] == "red"
+        assert tones["good"] == "green"
+        assert tones["attention"] == "yellow"
+        assert tones["neutral"] == "cyan"
 
 
 class TestLevelColours:
