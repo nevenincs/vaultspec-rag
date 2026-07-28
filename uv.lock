@@ -1211,12 +1211,32 @@ wheels = [
 name = "phart"
 version = "1.1.4"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "(python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')",
+    "python_full_version < '3.14' and sys_platform != 'linux' and sys_platform != 'win32'",
+]
 dependencies = [
     { name = "networkx" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/14/f4/ab90e7d22b38cc1bad5a72683f8739137fa42f9e2336c92b82dee4cea87e/phart-1.1.4.tar.gz", hash = "sha256:2691e31152a938f48d51d5236715811ede80142a5c8b59d24568435f11ba9f2c", size = 264815, upload-time = "2025-01-25T12:59:36.687Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c5/20/dc20da33dd3f3fffa5584d35bdfe0dd31847d4f0443495dba6b2cd4ae70a/phart-1.1.4-py3-none-any.whl", hash = "sha256:b34fd91dfb61fc60a2704d9ee2e12bc89a95291efe6e114c7b191244bc5ad8f1", size = 19542, upload-time = "2025-01-25T12:59:35.107Z" },
+]
+
+[[package]]
+name = "phart"
+version = "2.0.6"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "(python_full_version >= '3.14' and sys_platform == 'linux') or (python_full_version >= '3.14' and sys_platform == 'win32')",
+    "python_full_version >= '3.14' and sys_platform != 'linux' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "networkx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/41/ca/f587424a41e860e97ef6a1e75fd9d33594370130fca3ed343dcf671a0e21/phart-2.0.6.tar.gz", hash = "sha256:3d262d879425c6f4a6acc21e848012e0fbf7d3bc7a5e5b8c83424c4aad536671", size = 645804, upload-time = "2026-06-03T01:22:00.613Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/57/c64cfa798a4af43003c702c08eeedd94aad6c675ecd29ee5523e7fbaa06b/phart-2.0.6-py3-none-any.whl", hash = "sha256:c2ac6da5d60408cf29630f88b18bdc1e56d8862390dd27936ce920d24e4dc0b2", size = 110906, upload-time = "2026-06-03T01:21:58.999Z" },
 ]
 
 [[package]]
@@ -2499,7 +2519,8 @@ dependencies = [
     { name = "httpx" },
     { name = "mcp" },
     { name = "networkx" },
-    { name = "phart" },
+    { name = "phart", version = "1.1.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "phart", version = "2.0.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "rich" },
