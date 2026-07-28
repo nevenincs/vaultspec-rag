@@ -6,7 +6,10 @@ import logging
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from .. import job_persistence as _job_persistence
 from ..job_models import (
@@ -28,6 +31,25 @@ from .state import (
 )
 
 logger = logging.getLogger("vaultspec_rag.jobs")
+
+# Progress-only publications defer their durable write onto this budget: the
+# mutation lands in memory immediately, and the next publish after the budget
+# expires (or any synchronous transition persist, whichever comes first)
+# carries it to disk. A full state persist measures ~5.5 ms on a near-empty
+# state file, so an unbatched loop publishing per item would otherwise pay a
+# per-call fsync; at this budget the durable cost is at most five writes per
+# second however fast callers publish. 0.2 s matches the tick budget the
+# hashing loops already batch on, keeping one coalescing cadence across layers.
+#
+# Crash staleness bound: every publish arriving more than one budget after the
+# last durable write triggers a flush, so the progress on disk lags the newest
+# published progress by less than one budget (plus at most one in-flight write
+# skipped by the single-flight guard). That is acceptable because an
+# interrupted job's exact progress number is advisory - restore surfaces the
+# job as interrupted and the next attempt reconciles from durable checkpoints -
+# while its state transitions, which are the contract, always persist
+# synchronously before their call returns.
+PROGRESS_FLUSH_BUDGET_SECONDS = 0.2
 
 
 class JobManagerPersistence(JobManagerState):
@@ -295,18 +317,13 @@ class JobManagerPersistence(JobManagerState):
         self._dispatchers = backup.dispatchers
         self._persistence_dirty = backup.persistence_dirty
 
-    def _persist_locked(
-        self,
-    ) -> _job_persistence.PersistenceWriteError | None:
-        path = self._state_path
-        if path is None:
-            self._persistence_dirty = False
-            return None
+    def _persisted_generation_locked(self) -> _job_persistence.PersistedManagerState:
+        """Serialize the complete current manager generation for one write."""
         retained_ids = {
             *self._active,
             *(managed.snapshot.id for managed in self._terminal),
         }
-        persisted = _job_persistence.PersistedManagerState(
+        return _job_persistence.PersistedManagerState(
             jobs=tuple(
                 self._snapshot_locked(managed)
                 for managed in [*self._active.values(), *self._terminal]
@@ -317,14 +334,103 @@ class JobManagerPersistence(JobManagerState):
                 if binding.job_id in retained_ids
             ),
         )
-        try:
-            _job_persistence.save_persisted_state(path, persisted)
-        except _job_persistence.PersistenceWriteError as exc:
-            self._persistence_dirty = True
-            logger.error("job state persistence failed: %s", exc)
-            return exc
+
+    def _persist_locked(
+        self,
+    ) -> _job_persistence.PersistenceWriteError | None:
+        """Synchronously write the full current generation before returning.
+
+        Every lifecycle transition funnels through here, so a transition is
+        durable before its call returns and unconditionally carries any
+        progress mutation still deferred inside the flush budget. The write
+        lock orders this write after any in-flight deferred progress flush;
+        waiting on it is bounded by that single write.
+        """
+        path = self._state_path
+        if path is None:
+            self._persistence_dirty = False
+            self._flushed_generation = self._state_generation
+            return None
+        persisted = self._persisted_generation_locked()
+        with self._write_lock:
+            try:
+                _job_persistence.save_persisted_state(path, persisted)
+            except _job_persistence.PersistenceWriteError as exc:
+                self._persistence_dirty = True
+                logger.error("job state persistence failed: %s", exc)
+                return exc
         self._persistence_dirty = False
+        self._flushed_generation = self._state_generation
+        self._last_flush_monotonic = time.monotonic()
         return None
+
+    def _note_progress_mutation_locked(self) -> None:
+        """Advance the in-memory generation past the last durable write."""
+        self._state_generation = self._state_generation + 1
+
+    def _begin_progress_flush_locked(self) -> _PendingProgressFlush | None:
+        """Claim and serialize one deferred progress flush, or decline.
+
+        Called with the manager lock held, immediately after a progress-only
+        mutation. Declines while nothing needs flushing, while the budget has
+        not expired, and while another thread's write is in flight (the
+        single-flight guard: that write's serialization predates this
+        mutation, so the pending bookkeeping stays behind and a later publish
+        retries). On a claim the write lock is acquired *before* the manager
+        lock is released, so no newer generation can reach the file first and
+        then be replaced by this older serialization.
+        """
+        path = self._state_path
+        if path is None:
+            return None
+        if (
+            not self._persistence_dirty
+            and self._flushed_generation == self._state_generation
+        ):
+            return None
+        if (
+            time.monotonic() - self._last_flush_monotonic
+            < PROGRESS_FLUSH_BUDGET_SECONDS
+        ):
+            return None
+        if not self._write_lock.acquire(blocking=False):
+            return None
+        return _PendingProgressFlush(
+            path=path,
+            state=self._persisted_generation_locked(),
+            generation=self._state_generation,
+        )
+
+    def _complete_progress_flush(
+        self,
+        pending: _PendingProgressFlush,
+    ) -> _job_persistence.PersistenceWriteError | None:
+        """Write one claimed serialization outside the manager lock.
+
+        The caller must have released the manager lock; the write lock claimed
+        by ``_begin_progress_flush_locked`` is released here in every path,
+        before the manager lock is retaken for bookkeeping, preserving the
+        manager-then-write acquisition order. Success never clears
+        ``_persistence_dirty``: that flag can record durability doubt about a
+        write that began after this serialization, and only the synchronous
+        paths own clearing it.
+        """
+        error: _job_persistence.PersistenceWriteError | None = None
+        try:
+            _job_persistence.save_persisted_state(pending.path, pending.state)
+        except _job_persistence.PersistenceWriteError as exc:
+            error = exc
+        finally:
+            self._write_lock.release()
+        with self._lock:
+            if error is None:
+                if pending.generation > self._flushed_generation:
+                    self._flushed_generation = pending.generation
+                self._last_flush_monotonic = time.monotonic()
+            elif self._flushed_generation < pending.generation:
+                self._persistence_dirty = True
+                logger.error("deferred job progress flush failed: %s", error)
+        return error
 
     @staticmethod
     def _persistence_error(
@@ -341,6 +447,15 @@ class JobManagerPersistence(JobManagerState):
             message=f"Job state could not be persisted: {detail}",
             job=job,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingProgressFlush:
+    """One claimed, serialized generation awaiting its out-of-lock write."""
+
+    path: Path
+    state: _job_persistence.PersistedManagerState
+    generation: int
 
 
 @dataclass(frozen=True, slots=True)
