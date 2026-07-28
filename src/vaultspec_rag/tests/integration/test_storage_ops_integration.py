@@ -21,17 +21,18 @@ from ..._sync_vocabulary import ProvisionAction
 from ...config._settings import reset_config
 from ...qdrant_runtime._provision import provision
 from ...qdrant_runtime._resolve import resolve_binary
-from ...qdrant_runtime._supervise import QdrantSupervisor
 from ...storage_manifest import record_root
 from ...storage_migration import migrate_collections
 from ...storage_survey_ops import delete_prefix, gather_survey, prune_orphaned
-from .._ports import free_loopback_port
+from ._helpers import serve_qdrant
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
     from qdrant_client import QdrantClient
+
+    from ...qdrant_runtime._supervise import QdrantSupervisor
 
 pytestmark = [pytest.mark.integration]
 
@@ -53,23 +54,49 @@ def _qdrant_binary() -> Path:  # pyright: ignore[reportUnusedFunction]
     return resolved.path
 
 
-@pytest.fixture
-def ops_qdrant(_qdrant_binary: Path, tmp_path: Path) -> Iterator[QdrantSupervisor]:
-    """A fresh, isolated qdrant server per test (no cross-test state).
+def _drop_all_collections(url: str) -> None:
+    """Remove every collection on the server, whoever created it."""
+    from qdrant_client import QdrantClient
 
-    Uses ``tmp_path`` so pytest reclaims the storage on teardown; a raw
-    ``mkdtemp`` here leaked its directory on every run.
+    client = QdrantClient(url=url)
+    try:
+        for collection in client.get_collections().collections:
+            client.delete_collection(collection.name)
+    finally:
+        client.close()
+
+
+@pytest.fixture(scope="module")
+def _ops_qdrant_server(
+    _qdrant_binary: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[QdrantSupervisor]:
+    """One real qdrant server for the module, on ephemeral ports in temp storage."""
+    yield from serve_qdrant(_qdrant_binary, tmp_path_factory.mktemp("ops-qdrant"))
+
+
+@pytest.fixture
+def ops_qdrant(_ops_qdrant_server: QdrantSupervisor) -> Iterator[QdrantSupervisor]:
+    """A qdrant server carrying no other test's collections.
+
+    These tests need a server whose entire collection list is theirs: several
+    drive ``prune_orphaned``, which surveys and deletes server-wide, and assert
+    on the exact set it touched. A leftover namespace from a neighbouring test
+    would both widen that set and be destroyed by it.
+
+    A fresh process per test bought that isolation at the cost of starting and
+    stopping a real server twenty-one times. Truncating the collection list buys
+    the same isolation, because collections are the only server-side state these
+    tests share - the manifest they read lives in the per-test
+    ``isolated_status_dir``, not on the server. Dropping on the way in as well as
+    the way out means a test that dies mid-body cannot hand its collections to
+    the next one.
     """
-    supervisor = QdrantSupervisor(
-        _qdrant_binary,
-        http_port=free_loopback_port(),
-        grpc_port=free_loopback_port(),
-        storage_dir=tmp_path / "storage",
-        log_path=tmp_path / "qdrant.log",
-    )
-    supervisor.start()
-    yield supervisor
-    supervisor.stop()
+    _drop_all_collections(_ops_qdrant_server.url)
+    try:
+        yield _ops_qdrant_server
+    finally:
+        _drop_all_collections(_ops_qdrant_server.url)
 
 
 def _make_collection(client: QdrantClient, name: str) -> None:
