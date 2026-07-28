@@ -9,6 +9,7 @@ related:
   - '[[2026-07-28-convergence-cost-adr]]'
   - '[[2026-07-28-convergence-cost-research]]'
 ---
+
 # `convergence-cost` plan
 
 ### Phase `P01` - Stat-evidence rehash gate
@@ -26,7 +27,7 @@ Stop the durable retry state from escalating benign interruptions and mid-attemp
 
 - [x] `P02.S05` - Preserve unscoped_required in record_interrupted and record_success instead of forcing escalation, keeping failure, recovery, load, and refresh promotion unchanged; `src/vaultspec_rag/watcher_retry.py`.
 - [x] `P02.S06` - Update retry-state tests pinning the old escalation and add tests proving scoped retention plus every preserved escalation path; `src/vaultspec_rag/tests`.
-- [ ] `P02.S07` - Run lint, format, type-check, and the targeted test set, then land the change; `src/vaultspec_rag`.
+- [x] `P02.S07` - Run lint, format, type-check, and the targeted test set, then land the change; `src/vaultspec_rag`.
 
 ## Description
 
