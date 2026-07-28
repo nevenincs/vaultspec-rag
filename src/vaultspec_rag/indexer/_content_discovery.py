@@ -13,6 +13,7 @@ or embedding resources.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import pathlib
 from dataclasses import dataclass, field
@@ -30,6 +31,7 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
+from ._scan_cache import MembershipScanCache
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -155,8 +157,10 @@ class CodeContentDiscovery:
 
     Constructed from the three inputs that fully determine which files a root
     admits - the root directory, the caller-authored content policy, and any
-    extra exclusion patterns - and holds no per-run mutable state, so a fresh
-    instance is interchangeable with any other built from the same inputs.
+    extra exclusion patterns. The only per-instance mutable state is a
+    bounded-staleness cache of the last walk, so instances built from the
+    same inputs stay interchangeable up to that cache's TTL: a fresh instance
+    walks at once, a warm one may answer from a walk taken seconds ago.
     """
 
     def __init__(
@@ -181,6 +185,16 @@ class CodeContentDiscovery:
             SourceProfileVersion.CONVENTIONAL_V1
         )
         self.extra_excludes = list(extra_excludes)
+        # Cached alongside the sample limit it was taken with: a wider-limit
+        # walk can serve any narrower request by truncating its samples, but
+        # a narrower one cannot invent the samples a wider request needs.
+        self._scan_cache: MembershipScanCache[tuple[int, ContentScanResult]] = (
+            MembershipScanCache()
+        )
+
+    def invalidate_scan_cache(self) -> None:
+        """Drop the cached walk after any membership-changing observation."""
+        self._scan_cache.invalidate()
 
     def resolve_policy(self) -> ResolvedIndexPolicy:
         """Resolve and validate one immutable snapshot before mutation authority.
@@ -417,6 +431,11 @@ class CodeContentDiscovery:
         if sample_limit < 0:
             raise ValueError("sample_limit must be non-negative")
 
+        fingerprint = policy.fingerprints.snapshot
+        cached = self._served_from_scan_cache(fingerprint, sample_limit)
+        if cached is not None:
+            return cached
+
         result: list[pathlib.Path] = []
         source_files = 0
         source_bytes = 0
@@ -460,11 +479,11 @@ class CodeContentDiscovery:
                 ),
             )
         )
-        return ContentScanResult(
+        scan = ContentScanResult(
             files=tuple(result),
             counts=ordered_counts,
             samples=tuple(samples),
-            policy_fingerprint=policy.fingerprints.snapshot,
+            policy_fingerprint=fingerprint,
             preprocess_mode=policy.execution_mode,
             preprocess_rule_count=len(policy.preprocess_rules),
             hooks_will_run=(
@@ -474,6 +493,34 @@ class CodeContentDiscovery:
                 source_files=source_files,
                 source_bytes=source_bytes,
             ),
+        )
+        self._scan_cache.put(fingerprint, (sample_limit, scan))
+        return scan
+
+    def _served_from_scan_cache(
+        self,
+        fingerprint: str,
+        sample_limit: int,
+    ) -> ContentScanResult | None:
+        """Serve *sample_limit* from the cached walk, or ``None`` to rescan.
+
+        A cached walk can answer any request whose sample budget it covers:
+        either the cached limit was at least as wide, or the walk produced
+        fewer samples than its limit allowed (so the sample set is complete
+        and truncation to any budget is exact).
+        """
+        cached = self._scan_cache.get(fingerprint)
+        if cached is None:
+            return None
+        cached_limit, cached_result = cached
+        samples_complete = len(cached_result.samples) < cached_limit
+        if sample_limit > cached_limit and not samples_complete:
+            return None
+        if len(cached_result.samples) <= sample_limit:
+            return cached_result
+        return dataclasses.replace(
+            cached_result,
+            samples=cached_result.samples[:sample_limit],
         )
 
     def _process_scan_files(self, request: _ScanFileRequest) -> tuple[int, int]:

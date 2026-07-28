@@ -8,7 +8,6 @@ tracking with a per-instance writer lock.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -171,6 +170,10 @@ class VaultIndexer:
         self._writer_lock: _threading.Lock = _threading.Lock()
         self._meta_path = root_dir / cfg.data_dir / cfg.index_metadata_file
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
+        # Resident between runs; every acquire/retain pair runs under
+        # ``self._writer_lock``, which is the serialization the cache's
+        # single-threaded contract relies on.
+        self._stat_gate_cache = _stat_gate.ResidentGateCache(self._stat_gate_path)
 
     def _resolve_reuse(
         self,
@@ -646,20 +649,20 @@ class VaultIndexer:
         ``full_membership``, which additionally prunes gate evidence for
         documents that no longer exist.
         """
-        gate = _stat_gate.StatEvidenceGate.load(self._stat_gate_path)
-        current_hashes: dict[str, str] = {}
-        for doc_id, path in current_docs.items():
-            run_control.checkpoint()
-            try:
-                current_hashes[doc_id] = gate.hash_file(doc_id, path)
-            except OSError:
-                logger.warning("Cannot hash file, skipping: %s", doc_id)
-            reporter.advance()
-            run_control.checkpoint()
+        gate = self._stat_gate_cache.acquire()
+        outcome = _stat_gate.hash_paths(
+            gate,
+            list(current_docs.items()),
+            reporter=reporter,
+            run_control=run_control,
+        )
+        for doc_id, _error in outcome.failures:
+            logger.warning("Cannot hash file, skipping: %s", doc_id)
         if full_membership:
             gate.prune(current_docs.keys())
         gate.persist()
-        return current_hashes
+        self._stat_gate_cache.retain(gate)
+        return outcome.hashes
 
     def _parse_documents(
         self,
@@ -963,9 +966,13 @@ class VaultIndexer:
     ) -> None:
         """Save index metadata (content hashes) from VaultDocument list.
 
-        Computes blake2b hashes for each document's file and delegates
-        to ``_write_meta`` for atomic persistence.  Individual file
-        read errors are suppressed.
+        Resolves each document's blake2b hash through the stat-evidence gate
+        and delegates to ``_write_meta`` for atomic persistence. Routing
+        through the gate both answers unchanged documents from a stat instead
+        of rereading every file the run just parsed, and records evidence so
+        the first incremental after a full rebuild reuses instead of
+        rehashing the whole corpus. Individual file read errors drop the
+        document from the metadata, as the ungated read did.
 
         Args:
             docs: List of indexed documents whose paths are used to
@@ -975,20 +982,21 @@ class VaultIndexer:
             OSError: If the metadata file cannot be written (propagated
                 from ``_write_meta``).
         """
-        meta: dict[str, str] = {}
         from ..config._settings import get_config
 
         docs_dir = self.root_dir / get_config().docs_dir
-        for doc in docs:
-            run_control.checkpoint()
-            path = docs_dir / doc.path
-            with contextlib.suppress(OSError), open(path, "rb") as f:
-                meta[doc.id] = hashlib.file_digest(
-                    f,
-                    "blake2b",
-                ).hexdigest()
-            run_control.checkpoint()
-        self._write_meta(meta, run_control=run_control)
+        gate = self._stat_gate_cache.acquire()
+        outcome = _stat_gate.hash_paths(
+            gate,
+            [(doc.id, docs_dir / doc.path) for doc in docs],
+            run_control=run_control,
+        )
+        # ``docs`` is the complete corpus this full save publishes, so
+        # evidence for departed documents is pruned with it.
+        gate.prune({doc.id for doc in docs})
+        gate.persist()
+        self._stat_gate_cache.retain(gate)
+        self._write_meta(outcome.hashes, run_control=run_control)
 
     def _prepare_collection(
         self,
