@@ -19,11 +19,17 @@ from ._tools import (
 )
 
 
-@mcp.resource("vault://{doc_id}")
+@mcp.resource("vault://{+doc_id}")
 async def get_vault_document(doc_id: str) -> str:
     """Retrieve the full content of a vault document by its stem ID.
 
     Delegates to the daemon's ``/vault-document`` REST endpoint.
+
+    The template uses reserved expansion (``{+doc_id}``) because a document
+    stem carries its directory - ``adr/overview``, not ``overview`` - and
+    plain expansion stops at the path separator, so every nested stem, which
+    is every real one, would fail to match the template at all. Traversal is
+    refused by the resource layer before this function is reached.
 
     Args:
         doc_id: Relative path without extension (e.g.,
