@@ -16,8 +16,8 @@ from vaultspec_core.config import (
 
 from .._env_values import BOOL_SHAPE, parse_bool
 from ._paths import read_persisted_local_only
-from ._schema import _ENV_OVERRIDE_MAP, _SETTING_BOUNDS, _rejection
-from ._types import _VALID_PREPROCESS_MODES, STATUS_DIR_DEFAULT, EnvVar, PreprocessMode
+from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS, setting_rejection
+from ._types import STATUS_DIR_DEFAULT, VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,7 +34,7 @@ class VaultSpecConfigWrapper:
 
     Resolution order for RAG keys:
     1. CLI override (stored via ``overrides`` dict at construction)
-    2. Environment variable (via ``_ENV_OVERRIDE_MAP``)
+    2. Environment variable (via ``ENV_OVERRIDE_MAP``)
     3. ``_RAG_DEFAULTS`` value
 
     The resolved value is then coerced and range-checked under the module's
@@ -43,7 +43,7 @@ class VaultSpecConfigWrapper:
     Attributes:
         _RAG_DEFAULTS: Default values for RAG-specific configuration
             keys not present on the base ``VaultSpecConfig``.
-        _SETTING_BOUNDS: Module-level table of admissible ranges, keyed by
+        SETTING_BOUNDS: Module-level table of admissible ranges, keyed by
             settings key; every numeric default must appear in it.
         _base: The underlying ``VaultSpecConfig`` instance that
             provides project-level settings.
@@ -482,7 +482,7 @@ class VaultSpecConfigWrapper:
         self._validate_settings()
 
     # Settings whose only constraint is a range resolve through the generic
-    # path and declare that range in ``_SETTING_BOUNDS``. The properties below
+    # path and declare that range in ``SETTING_BOUNDS``. The properties below
     # exist only where a value is constrained by ANOTHER setting, which a
     # per-key range cannot express.
 
@@ -667,14 +667,14 @@ class VaultSpecConfigWrapper:
         if isinstance(default, bool):
             flag = parse_bool(raw)
             if flag is None:
-                raise _rejection(name, BOOL_SHAPE, raw, source)
+                raise setting_rejection(name, BOOL_SHAPE, raw, source)
             return flag
-        bound = _SETTING_BOUNDS.get(name)
+        bound = SETTING_BOUNDS.get(name)
         if bound is not None:
             try:
                 return bound.parse(raw)
             except ValueError:
-                raise _rejection(name, bound.shape, raw, source) from None
+                raise setting_rejection(name, bound.shape, raw, source) from None
         return raw
 
     def _checked(self, name: str, value: object, source: EnvVar | None) -> object:
@@ -692,11 +692,11 @@ class VaultSpecConfigWrapper:
         Raises:
             ValueError: If the key declares a range and *value* is outside it.
         """
-        bound = _SETTING_BOUNDS.get(name)
+        bound = SETTING_BOUNDS.get(name)
         if bound is None:
             return value
         if not bound.admits(value):
-            raise _rejection(name, bound.shape, value, source)
+            raise setting_rejection(name, bound.shape, value, source)
         return bound.narrow(value)
 
     def _raw_rag_setting(self, name: str) -> tuple[object, EnvVar | None]:
@@ -717,7 +717,7 @@ class VaultSpecConfigWrapper:
             )
 
         # 2. Env var override
-        env_key = _ENV_OVERRIDE_MAP.get(name)
+        env_key = ENV_OVERRIDE_MAP.get(name)
         if env_key is not None:
             env_val = os.environ.get(env_key.value)
             if env_val is not None:
@@ -775,7 +775,7 @@ class VaultSpecConfigWrapper:
                 problems.append(message)
 
         keys = [
-            *_SETTING_BOUNDS,
+            *SETTING_BOUNDS,
             *(
                 key
                 for key, default in self._RAG_DEFAULTS.items()
@@ -856,7 +856,7 @@ class VaultSpecConfigWrapper:
         if off_raw is not None and off_raw.strip().lower() == "off":
             return "off"
         configured = str(self._resolve_rag_default("preprocess_mode"))
-        if configured not in _VALID_PREPROCESS_MODES:
+        if configured not in VALID_PREPROCESS_MODES:
             logger.warning(
                 "unrecognised preprocess_mode %r; falling back to 'default'",
                 configured,
@@ -869,7 +869,7 @@ class VaultSpecConfigWrapper:
 
         Resolution order for known RAG keys:
         1. Base config (may contain CLI overrides)
-        2. Environment variable (via ``_ENV_OVERRIDE_MAP``)
+        2. Environment variable (via ``ENV_OVERRIDE_MAP``)
         3. ``_RAG_DEFAULTS`` fallback
 
         Whichever source wins, the value is coerced and range-checked before it
@@ -983,13 +983,13 @@ _unbounded_numeric = sorted(
     for key, value in _all_defaults.items()
     if isinstance(value, (int, float))
     and not isinstance(value, bool)
-    and key not in _SETTING_BOUNDS
+    and key not in SETTING_BOUNDS
 )
 if _unbounded_numeric:
     raise RuntimeError(
         "numeric settings declare no admissible range: " + ", ".join(_unbounded_numeric)
     )
-_orphaned_bounds = sorted(set(_SETTING_BOUNDS) - set(_all_defaults))
+_orphaned_bounds = sorted(set(SETTING_BOUNDS) - set(_all_defaults))
 if _orphaned_bounds:
     raise RuntimeError(
         "bounds declared for unknown settings: " + ", ".join(_orphaned_bounds)

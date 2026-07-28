@@ -26,9 +26,9 @@ from ._service_jobs_support import (
 def test_job_detail_uses_plain_runtime_and_resource_language(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from ...cli._service_jobs_presentation import _render_job_detail
+    from ...cli._service_jobs_presentation import render_job_detail
 
-    _render_job_detail(
+    render_job_detail(
         {
             "id": "runjob12",
             "source": "code",
@@ -174,7 +174,7 @@ def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
 def test_job_detail_only_reports_progress_freshness_while_running(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from ...cli._service_jobs_presentation import _render_job_detail
+    from ...cli._service_jobs_presentation import render_job_detail
 
     base_job = {
         "id": "job1",
@@ -194,10 +194,10 @@ def test_job_detail_only_reports_progress_freshness_while_running(
         },
     }
 
-    _render_job_detail({**base_job, "phase": "running"})
+    render_job_detail({**base_job, "phase": "running"})
     running_output = capsys.readouterr().out
 
-    _render_job_detail(
+    render_job_detail(
         {
             **base_job,
             "id": "failed1",

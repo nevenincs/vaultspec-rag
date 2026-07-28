@@ -147,12 +147,12 @@ def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
 
 @pytest.mark.unit
 def test_jobs_waiting_progress_uses_user_language() -> None:
-    from ...cli._service_jobs_presentation import _human_progress
+    from ...cli._service_jobs_presentation import human_progress
 
-    waiting = _human_progress(
+    waiting = human_progress(
         {"phase": "running", "progress": {"step": "queued", "completed": 0}}
     )
-    compound = _human_progress(
+    compound = human_progress(
         {
             "phase": "running",
             "progress": {
@@ -174,9 +174,9 @@ def test_jobs_waiting_progress_uses_user_language() -> None:
 def test_jobs_missing_context_uses_reported_absence_language(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from ...cli._service_jobs_presentation import _render_jobs_result
+    from ...cli._service_jobs_presentation import render_jobs_result
 
-    _render_jobs_result(
+    render_jobs_result(
         {
             "jobs": [
                 {
@@ -211,10 +211,10 @@ def test_jobs_missing_context_uses_reported_absence_language(
 def test_jobs_humanizes_cancelled_automatic_update(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from ...cli._service_jobs_presentation import _render_jobs_result
+    from ...cli._service_jobs_presentation import render_jobs_result
 
     now = time.time()
-    _render_jobs_result(
+    render_jobs_result(
         {
             "jobs": [
                 {

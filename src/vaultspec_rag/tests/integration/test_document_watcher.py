@@ -35,7 +35,7 @@ from ...job_models import JobSource
 from ...service import ServiceRegistry
 from ...watcher_intake import _record_watcher_changes
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
-from ...watcher_runtime import _WatcherChangeRouting, _WatcherConvergenceSlot
+from ...watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -56,19 +56,19 @@ def _policy(root: Path):
 
 
 def _slots(root: Path, registry: ServiceRegistry):
-    vault = _WatcherConvergenceSlot(
+    vault = WatcherConvergenceSlot(
         JobSource.VAULT,
         root,
         registry,
         WatcherRetryPolicy.for_root(root, WatcherSource.VAULT),
     )
-    code = _WatcherConvergenceSlot(
+    code = WatcherConvergenceSlot(
         JobSource.CODE,
         root,
         registry,
         WatcherRetryPolicy.for_root(root, WatcherSource.CODE),
     )
-    document = _WatcherConvergenceSlot(
+    document = WatcherConvergenceSlot(
         JobSource.DOCUMENT,
         root,
         registry,
@@ -156,7 +156,7 @@ def _assert_deletion_routes_to_the_code_slot(root: Path, deleted: Path) -> None:
 
         observed = _record_watcher_changes(
             [(Change.deleted, str(deleted))],
-            routing=_WatcherChangeRouting(
+            routing=WatcherChangeRouting(
                 root_dir=root,
                 vault_dir=root / ".vault",
                 policy=_policy(root),
@@ -209,7 +209,7 @@ def test_policy_control_event_schedules_code_and_document_independently(
 
         observed = _record_watcher_changes(
             [(Change.modified, str(control))],
-            routing=_WatcherChangeRouting(
+            routing=WatcherChangeRouting(
                 root_dir=tmp_path,
                 vault_dir=tmp_path / ".vault",
                 policy=_policy(tmp_path),

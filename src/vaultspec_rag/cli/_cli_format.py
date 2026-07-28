@@ -92,7 +92,7 @@ def _format_seconds(raw: object) -> str:
     return _duration_phrase(int(raw_seconds), days=False)
 
 
-def _compact_duration(raw: object) -> str:
+def compact_duration(raw: object) -> str:
     """Render a duration for a fixed-width column, largest two units.
 
     The prose phrase is unusable in a table: "3 minutes 20 seconds" is wider

@@ -51,7 +51,7 @@ def _clean_jobs(  # pyright: ignore[reportUnusedFunction]
     _jobs.reset()
 
 
-async def _wait_for_terminal_job(
+async def wait_for_terminal_job(
     job_id: str,
     *,
     timeout: float = _JOB_COMPLETION_TIMEOUT_SECONDS,
@@ -115,7 +115,7 @@ def _assert_resource_snapshot(raw: object) -> dict[str, object]:
     return resources
 
 
-def _assert_running_job_snapshot(entry: dict[str, object], job_id: str) -> None:
+def assert_running_job_snapshot(entry: dict[str, object], job_id: str) -> None:
     assert entry["id"] == job_id
     assert entry["source"] == "vault"
     assert entry["trigger"] == "tool"
@@ -129,7 +129,7 @@ def _assert_running_job_snapshot(entry: dict[str, object], job_id: str) -> None:
     assert resources["finished"] is None
 
 
-def _assert_done_job_snapshot(entry: dict[str, object], job_id: str) -> None:
+def assert_done_job_snapshot(entry: dict[str, object], job_id: str) -> None:
     assert entry["id"] == job_id
     assert entry["phase"] == "done"
     finished_at = entry["finished_at"]

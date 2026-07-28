@@ -131,7 +131,7 @@ def _job_spec_value(record: dict[str, object], key: str) -> object | None:
     return _job_mapping(record, "spec").get(key)
 
 
-def _job_source(record: dict[str, object]) -> str:
+def job_source(record: dict[str, object]) -> str:
     source = _job_spec_value(record, "source")
     if source is None:
         source = record.get("source")
@@ -463,7 +463,7 @@ def _job_with_liveness(
     if "capabilities" not in record:
         enriched["capabilities"] = _activity_record_capabilities(state)
     enriched["phase"] = _job_phase(record, state)
-    enriched["source"] = _job_source(record)
+    enriched["source"] = job_source(record)
     enriched["trigger"] = _job_trigger(record)
     enriched["runtime_seconds"] = _job_runtime_seconds(record, now)
     enriched["last_progress_age_seconds"] = _job_last_progress_age_seconds(record, now)
@@ -529,7 +529,7 @@ def _job_search_text(record: dict[str, object]) -> str:
     return " ".join(
         [
             str(record.get("id", "")),
-            _job_source(record),
+            job_source(record),
             _job_trigger(record),
             _job_phase(record, job_state(record)),
             _job_desired_state(record),
@@ -564,7 +564,7 @@ def _job_matches(
             or _job_desired_state(record) == filters.desired_state,
             filters.controllable is None
             or _job_controllable(record) is filters.controllable,
-            filters.source is None or _job_source(record) == filters.source,
+            filters.source is None or job_source(record) == filters.source,
             filters.trigger is None or _job_trigger(record) == filters.trigger,
         )
     )
@@ -653,7 +653,7 @@ def _tally_job(tally: _JobSummaryTally, record: dict[str, object], now: float) -
     state = job_state(record)
     phase = _job_phase(record, state)
     desired_state = _job_desired_state(record)
-    source = _job_source(record)
+    source = job_source(record)
     trigger = _job_trigger(record)
     _increment(tally.phases, phase)
     _increment(tally.states, state)

@@ -586,7 +586,7 @@ class VaultSearcher:
         cap = int(get_config().vault_intent_type_cap)
         return apply_type_cap(results, cap)
 
-    def _search_vault_encoded(
+    def search_vault_encoded(
         self,
         encoded: _EncodedSearchQuery,
         options: VaultSearchOptions,
@@ -829,7 +829,7 @@ class VaultSearcher:
             logger.info("code search dropped noise-domain candidates: %s", dropped)
         return kept, dropped
 
-    def _search_codebase_encoded(
+    def search_codebase_encoded(
         self,
         encoded: _EncodedSearchQuery,
         options: CodebaseSearchOptions,
@@ -1029,7 +1029,7 @@ class VaultSearcher:
         """Search only the vault collection.
 
         Parses the query, encodes it, and delegates to
-        ``_search_vault_encoded``.
+        ``search_vault_encoded``.
 
         Args:
             raw_query: Natural language query, optionally with
@@ -1130,7 +1130,7 @@ class VaultSearcher:
         """Search only the independent document collection."""
         return self.search_document_timed(raw_query, top_k=top_k, **options)[0]
 
-    def _search_document_encoded(
+    def search_document_encoded(
         self,
         encoded: _EncodedSearchQuery,
         options: DocumentSearchOptions,
@@ -1224,7 +1224,7 @@ class VaultSearcher:
         vault_timings: dict[str, float] = {}
         code_timings: dict[str, float] = {}
         document_timings: dict[str, float] = {}
-        vault = self._search_vault_encoded(
+        vault = self.search_vault_encoded(
             _EncodedSearchQuery(
                 encoded.parsed,
                 encoded.text,
@@ -1235,7 +1235,7 @@ class VaultSearcher:
             ),
             combined_options.vault,
         )
-        code = self._search_codebase_encoded(
+        code = self.search_codebase_encoded(
             _EncodedSearchQuery(
                 encoded.parsed,
                 encoded.text,
@@ -1246,7 +1246,7 @@ class VaultSearcher:
             ),
             combined_options.codebase,
         )
-        documents = self._search_document_encoded(
+        documents = self.search_document_encoded(
             _EncodedSearchQuery(
                 encoded.parsed,
                 encoded.text,
@@ -1296,7 +1296,7 @@ _VAULT_SURFACE: _SearchSurface[
 ] = _SearchSurface(
     "vault",
     lambda arguments: VaultSearchOptions(**arguments),
-    VaultSearcher._search_vault_encoded,
+    VaultSearcher.search_vault_encoded,
 )
 
 _CODEBASE_SURFACE: _SearchSurface[
@@ -1304,7 +1304,7 @@ _CODEBASE_SURFACE: _SearchSurface[
 ] = _SearchSurface(
     "code",
     lambda arguments: CodebaseSearchOptions(**arguments),
-    VaultSearcher._search_codebase_encoded,
+    VaultSearcher.search_codebase_encoded,
 )
 
 _DOCUMENT_SURFACE: _SearchSurface[
@@ -1312,5 +1312,5 @@ _DOCUMENT_SURFACE: _SearchSurface[
 ] = _SearchSurface(
     "document",
     lambda arguments: DocumentSearchOptions(**arguments),
-    VaultSearcher._search_document_encoded,
+    VaultSearcher.search_document_encoded,
 )

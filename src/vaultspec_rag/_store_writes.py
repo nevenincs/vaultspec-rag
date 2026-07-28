@@ -405,7 +405,7 @@ def remaining_write_seconds(
     )
 
 
-def _free_bytes(storage_path: pathlib.Path) -> int | None:
+def free_bytes(storage_path: pathlib.Path) -> int | None:
     """Best-effort free-space probe of the store volume, ``None`` if unknown.
 
     A missing path (e.g. a remote Qdrant server with no local managed
@@ -534,7 +534,7 @@ def _read_volume(role: str, path: pathlib.Path) -> VolumeReading:
     for candidate in (path, *path.parents):
         if not candidate.exists():
             continue
-        free = _free_bytes(candidate)
+        free = free_bytes(candidate)
         if free is None:
             continue
         try:
@@ -591,7 +591,7 @@ def ensure_disk_headroom(
             records hit the CLI's friendly disk mapping; re-typing the
             phrasing here is what let the two drift apart before.
     """
-    free = _free_bytes(storage_path)
+    free = free_bytes(storage_path)
     if free is None:
         return
     needed = floor_bytes + new_points * BYTES_PER_POINT_ESTIMATE

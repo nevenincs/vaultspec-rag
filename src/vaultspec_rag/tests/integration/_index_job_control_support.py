@@ -143,7 +143,7 @@ def cpu_embedding_model(clean_config: None) -> EmbeddingModel:
     return model
 
 
-def _write_vault_documents(root: Path, count: int) -> list[VaultDocument]:
+def write_vault_documents(root: Path, count: int) -> list[VaultDocument]:
     """Create and parse a small real vault corpus through production code."""
     adr_dir = root / ".vault" / "adr"
     adr_dir.mkdir(parents=True, exist_ok=True)
@@ -164,7 +164,7 @@ def _write_vault_documents(root: Path, count: int) -> list[VaultDocument]:
     return documents
 
 
-def _request_after_first_upsert(
+def request_after_first_upsert(
     store: VaultStore,
     token: RunControlToken,
     control_request: ControlRequest,
@@ -199,7 +199,7 @@ def _write_code_files(root: Path, count: int, revision: str) -> list[Path]:
     return paths
 
 
-def _request_after_first_code_upsert(
+def request_after_first_code_upsert(
     store: VaultStore,
     token: RunControlToken,
     control_request: ControlRequest,
@@ -292,7 +292,7 @@ def _assert_manager_resources_released(
         _assert_code_resources_released()
 
 
-def _vault_attempt_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> bool:
+def vault_attempt_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> bool:
     return (
         snapshot.state is JobState.RUNNING
         and snapshot.runtime.task_active
@@ -304,7 +304,7 @@ def _vault_attempt_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> boo
     )
 
 
-def _code_pipeline_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> bool:
+def code_pipeline_published(snapshot: JobSnapshot, *, slot: ProjectSlot) -> bool:
     return (
         snapshot.state is JobState.RUNNING
         and snapshot.resources.pipeline_active
@@ -332,7 +332,7 @@ def _assert_reconciliation_lineage(snapshot: JobSnapshot, job_id: str) -> None:
     assert snapshot.attempt.resume_strategy is ResumeStrategy.RECONCILE
 
 
-async def _pause_managed_attempt(
+async def pause_managed_attempt(
     manager: JobManager,
     job_id: str,
 ) -> tuple[asyncio.Task[object], JobSnapshot]:
@@ -363,7 +363,7 @@ async def _pause_managed_attempt(
     return first_task, paused
 
 
-async def _resume_managed_attempt(
+async def resume_managed_attempt(
     manager: JobManager,
     job_id: str,
     first_task: asyncio.Task[object],
@@ -394,7 +394,7 @@ async def _resume_managed_attempt(
     return succeeded
 
 
-async def _cancel_managed_attempt(
+async def cancel_managed_attempt(
     manager: JobManager,
     job_id: str,
 ) -> JobSnapshot:
@@ -415,7 +415,7 @@ async def _cancel_managed_attempt(
     return cancelled
 
 
-async def _assert_cancelled_vault_stops_writes(
+async def assert_cancelled_vault_stops_writes(
     manager: JobManager,
     job_id: str,
     cancelled: JobSnapshot,
@@ -445,7 +445,7 @@ async def _assert_cancelled_vault_stops_writes(
     assert current_mtime == metadata_mtime
 
 
-def _assert_cancelled_job_is_absorbing(manager: JobManager, job_id: str) -> None:
+def assert_cancelled_job_is_absorbing(manager: JobManager, job_id: str) -> None:
     replay = manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
     assert replay.status is JobOutcomeStatus.OK
     assert replay.code == "already_satisfied"
@@ -454,7 +454,7 @@ def _assert_cancelled_job_is_absorbing(manager: JobManager, job_id: str) -> None
     assert rejected.code == "invalid_transition"
 
 
-def _prepare_empty_code_collection(
+def prepare_empty_code_collection(
     registry: ServiceRegistry,
     root: Path,
     *,
@@ -468,7 +468,7 @@ def _prepare_empty_code_collection(
     return registry.peek_project(root)
 
 
-async def _request_cancel_at_the_write_gate(
+async def request_cancel_at_the_write_gate(
     manager: JobManager,
     registry: ServiceRegistry,
     root: Path,
@@ -513,7 +513,7 @@ async def _request_cancel_at_the_write_gate(
     return cancelled_id
 
 
-async def _assert_cancel_wins_at_the_write_gate(
+async def assert_cancel_wins_at_the_write_gate(
     manager: JobManager,
     cancelled_id: str,
     slot: ProjectSlot,
@@ -623,7 +623,7 @@ def _stored_code_content(store: VaultStore) -> dict[str, str]:
     return {path: "\n".join(parts) for path, parts in content_by_path.items()}
 
 
-def _assert_current_code_state(
+def assert_current_code_state(
     indexer: CodebaseIndexer,
     store: VaultStore,
     paths: list[Path],
@@ -655,7 +655,7 @@ def _wait_for_clean_vault_publication(
     )
 
 
-def _pause_clean_vault_rebuild(
+def pause_clean_vault_rebuild(
     indexer: VaultIndexer,
     store: VaultStore,
     token: RunControlToken,
@@ -684,7 +684,7 @@ def _pause_clean_vault_rebuild(
                 gpu_lock.release()
 
 
-def _assert_revised_vault_publication(
+def assert_revised_vault_publication(
     indexer: VaultIndexer,
     store: VaultStore,
     publication: _RevisedVaultPublication,
@@ -705,7 +705,7 @@ def _assert_revised_vault_publication(
     assert final.protected_depth == 0
 
 
-class _AbortAfterFirstCommitReporter(NullProgressReporter):
+class AbortAfterFirstCommitReporter(NullProgressReporter):
     """Real reporter that crashes the run after durable indexing progress.
 
     Raising at the production progress boundary once the run ledger has
@@ -734,7 +734,7 @@ class _AbortAfterFirstCommitReporter(NullProgressReporter):
             raise RuntimeError("injected mid-rebuild crash after first commit")
 
 
-class _CancelAfterCheckpoints:
+class CancelAfterCheckpoints:
     """Trip cooperative cancellation after a fixed number of safe checkpoints.
 
     Implements the production ``RunControl`` protocol rather than standing in

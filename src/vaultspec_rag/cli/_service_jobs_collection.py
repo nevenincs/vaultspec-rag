@@ -11,21 +11,21 @@ from typer.core import TyperCommand, TyperOption
 from ..serviceclient._discovery import _default_service_port
 from ._app import JSON_OPTION_HELP, server_app
 from ._render import _emit_json
-from ._service_jobs_presentation import _render_jobs_result
+from ._service_jobs_presentation import render_jobs_result
 from ._service_jobs_query import (
-    _apply_client_state_filter,
-    _exit_jobs_not_running,
-    _fetch_jobs_result,
-    _jobs_index_filter,
-    _jobs_started_by_filter,
-    _jobs_state_filter,
-    _JobsQuery,
-    _resolve_jobs_filters,
+    JobsQuery,
+    apply_client_state_filter,
+    exit_jobs_not_running,
+    fetch_jobs_result,
+    jobs_index_filter,
+    jobs_started_by_filter,
+    jobs_state_filter,
+    resolve_jobs_filters,
 )
 from ._service_jobs_watch import (
-    _exit_invalid_watch_args,
-    _JobsWatchRequest,
-    _watch_jobs,
+    JobsWatchRequest,
+    exit_invalid_watch_args,
+    watch_jobs,
 )
 
 if TYPE_CHECKING:
@@ -173,20 +173,20 @@ def _run_service_jobs(options: _ServiceJobsOptions) -> None:
     """Show recent index update activity from the running service."""
     json_mode = options.json_mode
     interval = options.interval
-    phase, client_state = _jobs_state_filter(options.state, json_mode)
-    source = _jobs_index_filter(options.index, json_mode)
-    trigger = _jobs_started_by_filter(options.started_by, json_mode)
-    phase, failed = _resolve_jobs_filters(phase, options.failed, json_mode)
+    phase, client_state = jobs_state_filter(options.state, json_mode)
+    source = jobs_index_filter(options.index, json_mode)
+    trigger = jobs_started_by_filter(options.started_by, json_mode)
+    phase, failed = resolve_jobs_filters(phase, options.failed, json_mode)
     resolved_port = (
         options.port if options.port is not None else _default_service_port()
     )
     if resolved_port is None:
-        _exit_jobs_not_running(json_mode)
+        exit_jobs_not_running(json_mode)
     if interval <= 0:
-        _exit_invalid_watch_args(json_mode, interval)
+        exit_invalid_watch_args(json_mode, interval)
     if options.watch and json_mode:
-        _exit_invalid_watch_args(json_mode, interval)
-    spec = _JobsQuery(
+        exit_invalid_watch_args(json_mode, interval)
+    spec = JobsQuery(
         port=resolved_port,
         limit=options.limit,
         phase=phase,
@@ -197,10 +197,10 @@ def _run_service_jobs(options: _ServiceJobsOptions) -> None:
         job_id=options.job_id,
         since=options.since,
     )
-    fetch = functools.partial(_fetch_jobs_result, spec)
+    fetch = functools.partial(fetch_jobs_result, spec)
     if options.watch:
-        _watch_jobs(
-            _JobsWatchRequest(
+        watch_jobs(
+            JobsWatchRequest(
                 fetch=fetch,
                 job_id=options.job_id,
                 port=resolved_port,
@@ -212,11 +212,11 @@ def _run_service_jobs(options: _ServiceJobsOptions) -> None:
 
     result = fetch()
     if result is None:
-        _exit_jobs_not_running(json_mode, resolved_port)
-    result = _apply_client_state_filter(result, client_state)
+        exit_jobs_not_running(json_mode, resolved_port)
+    result = apply_client_state_filter(result, client_state)
 
     if json_mode:
         _emit_json(True, "service.jobs", data=result)
         return
 
-    _render_jobs_result(result, job_id=options.job_id, port=resolved_port)
+    render_jobs_result(result, job_id=options.job_id, port=resolved_port)

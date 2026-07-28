@@ -357,9 +357,9 @@ def test_empty_jobs_output_is_actionable(
     expected_filter: str | None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from ...cli._service_jobs_presentation import _render_jobs_result
+    from ...cli._service_jobs_presentation import render_jobs_result
 
-    _render_jobs_result(result, job_id=None, port=8766)
+    render_jobs_result(result, job_id=None, port=8766)
 
     output = capsys.readouterr().out
     lines = _plain_lines(output)

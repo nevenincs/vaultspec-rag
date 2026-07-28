@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from . import store_schema
 from ._store_writes import DISK_FLOOR_BYTES as _DISK_FLOOR_BYTES
-from ._store_writes import _free_bytes
+from ._store_writes import free_bytes
 from .storage_survey import is_canonical_prefix
 from .storage_survey_ops import directory_size_bytes
 
@@ -479,7 +479,7 @@ def _reconcile_collection(request: _CollectionRequest) -> ReconcileResult:
     # full disk into the ENOSPC/WAL-wedge class.
     if bytes_before and storage_dir is not None:
         needed = int(bytes_before * _RECONCILE_HEADROOM_FACTOR)
-        free = _free_bytes(storage_dir)
+        free = free_bytes(storage_dir)
         if free is not None and free < needed + _DISK_FLOOR_BYTES:
             return ReconcileResult(
                 entry.collection,

@@ -43,11 +43,11 @@ _MANAGED_WAIT_SECONDS = 240.0
 _CONTROL_POLL_SECONDS = 0.001
 
 from ._index_job_control_support import (
-    _assert_revised_vault_publication,
-    _pause_clean_vault_rebuild,
-    _request_after_first_upsert,
     _RevisedVaultPublication,
-    _write_vault_documents,
+    assert_revised_vault_publication,
+    pause_clean_vault_rebuild,
+    request_after_first_upsert,
+    write_vault_documents,
 )
 
 
@@ -65,14 +65,14 @@ def test_vault_stream_observes_control_between_published_slices(
     signal_type: type[RunControlSignal],
 ) -> None:
     """Pause and cancel stop real streaming only at a safe slice boundary."""
-    documents = _write_vault_documents(tmp_path, 128)
+    documents = write_vault_documents(tmp_path, 128)
     token = RunControlToken()
 
     with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
         store.ensure_table()
         with ThreadPoolExecutor(max_workers=1) as executor:
             requester = executor.submit(
-                _request_after_first_upsert,
+                request_after_first_upsert,
                 store,
                 token,
                 control_request,
@@ -101,7 +101,7 @@ def test_clean_rebuild_defers_pause_until_complete_publication(
     cpu_embedding_model: EmbeddingModel,
 ) -> None:
     """A clean rebuild publishes all points and metadata before pausing."""
-    documents = _write_vault_documents(tmp_path, 16)
+    documents = write_vault_documents(tmp_path, 16)
     expected_ids = {document.id for document in documents}
     token = RunControlToken()
     gpu_lock = threading.Lock()
@@ -128,8 +128,8 @@ def test_clean_rebuild_defers_pause_until_complete_publication(
             encoding="utf-8",
         )
 
-        _pause_clean_vault_rebuild(indexer, store, token, gpu_lock)
-        _assert_revised_vault_publication(
+        pause_clean_vault_rebuild(indexer, store, token, gpu_lock)
+        assert_revised_vault_publication(
             indexer,
             store,
             _RevisedVaultPublication(

@@ -1098,15 +1098,15 @@ def _failure_was_superseded(
     after it, and the operator is told the *latest* job failed while newer
     ones are visibly finishing clean.
     """
-    from ._routes_jobs import _job_source, job_state, job_updated_timestamp
+    from ._routes_jobs import job_source, job_state, job_updated_timestamp
 
     failed_at = job_updated_timestamp(failed)
     if failed_at is None:
         return False
-    source = _job_source(failed)
+    source = job_source(failed)
     return any(
         job_state(record) == "succeeded"
-        and _job_source(record) == source
+        and job_source(record) == source
         and (job_updated_timestamp(record) or float("-inf")) > failed_at
         for record in records
     )

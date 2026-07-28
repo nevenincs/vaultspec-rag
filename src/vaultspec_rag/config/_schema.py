@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from .._env_values import rejection
-from ._types import _VALID_INDEX_SUPPORT_PROFILES, EnvVar
+from ._types import VALID_INDEX_SUPPORT_PROFILES, EnvVar
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +101,7 @@ _OPEN_UNIT_INTERVAL = _NumericBound(
 )
 
 
-def _rejection(
+def setting_rejection(
     key: str, shape: str, value: object, source: EnvVar | None
 ) -> ValueError:
     """Build this module's rejection, naming both the variable and the key.
@@ -120,7 +120,7 @@ def _rejection(
 
 
 # Mapping from _RAG_DEFAULTS key → EnvVar member for env override lookup.
-_ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
+ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "data_dir": EnvVar.DATA_DIR,
     "qdrant_dir": EnvVar.QDRANT_DIR,
     "index_metadata_file": EnvVar.INDEX_META,
@@ -248,7 +248,7 @@ _ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
 # Zero is admitted only where it means something: an in-band "auto" or
 # "disabled" sentinel documented at the default, or a bound whose lower end is
 # genuinely nothing. Everywhere else it is refused along with the negatives.
-_SETTING_BOUNDS: dict[str, _SettingBound] = {
+SETTING_BOUNDS: dict[str, _SettingBound] = {
     # Service lifecycle. A zero idle TTL means "evict as soon as idle", which
     # is a coherent request; a negative one is not.
     "mcp_port": _TCP_PORT,
@@ -288,8 +288,8 @@ _SETTING_BOUNDS: dict[str, _SettingBound] = {
     "index_cuda_headroom_mb": _POSITIVE_NUMBER,
     "index_cuda_allocator_fraction": _OPEN_UNIT_INTERVAL,
     "index_support_profile": _ChoiceBound(
-        "one of " + ", ".join(sorted(_VALID_INDEX_SUPPORT_PROFILES)),
-        frozenset(_VALID_INDEX_SUPPORT_PROFILES),
+        "one of " + ", ".join(sorted(VALID_INDEX_SUPPORT_PROFILES)),
+        frozenset(VALID_INDEX_SUPPORT_PROFILES),
     ),
     # Embedding and reranking throughput. A zero batch encodes nothing.
     "embedding_dimension": _POSITIVE_INT,

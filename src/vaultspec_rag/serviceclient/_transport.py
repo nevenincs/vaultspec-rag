@@ -302,7 +302,7 @@ class ServiceResponseTooLargeError(ValueError):
     """Raised before a service response can exceed the client memory bound."""
 
 
-def _read_service_response(response: Any) -> bytes:
+def read_service_response(response: Any) -> bytes:
     """Read at most one byte beyond the finite service-response ceiling."""
     raw = cast("bytes", response.read(MAX_SERVICE_RESPONSE_BYTES + 1))
     if len(raw) > MAX_SERVICE_RESPONSE_BYTES:
@@ -443,7 +443,7 @@ def _try_http_health(
     url = f"http://127.0.0.1:{port}/health"
     try:
         with LOOPBACK_OPENER.open(url, timeout=timeout) as resp:
-            parsed: object = json.loads(_read_service_response(resp).decode("utf-8"))
+            parsed: object = json.loads(read_service_response(resp).decode("utf-8"))
         if not isinstance(parsed, dict):
             # Valid JSON that is not an object is not a health answer. Passing
             # it through would hand every caller a value they immediately treat
@@ -487,7 +487,7 @@ def _fetch_health_token(port: int, timeout: float | None = None) -> str:
         with LOOPBACK_OPENER.open(
             req, timeout=timeout or DEFAULT_ADMIN_TIMEOUT_SECONDS
         ) as resp:
-            data: object = json.loads(_read_service_response(resp).decode("utf-8"))
+            data: object = json.loads(read_service_response(resp).decode("utf-8"))
     except Exception as exc:
         if _is_timeout(exc):
             raise
@@ -536,11 +536,11 @@ def _send_call(
         with LOOPBACK_OPENER.open(req, timeout=timeout) as resp:
             body = cast(
                 "dict[str, object]",
-                json.loads(_read_service_response(resp).decode("utf-8")),
+                json.loads(read_service_response(resp).decode("utf-8")),
             )
             return int(resp.status), body
     except urllib.error.HTTPError as e:
-        raw = _read_service_response(e).decode("utf-8")
+        raw = read_service_response(e).decode("utf-8")
         try:
             return e.code, cast("dict[str, object]", json.loads(raw))
         except json.JSONDecodeError:
