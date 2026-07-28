@@ -1,17 +1,23 @@
-"""How much breadth a published code index claims, and where that claim lives.
+"""How much breadth a published index claims, and where that claim lives.
 
-A neutral leaf shared by the indexer that writes the claim and the search path
-that checks it. It exists as its own module so neither side has to import the
-other: the writer lives behind the tree-sitter-bearing indexer package, while
-the reader sits on a search path that is deliberately model-free and must stay
-importable on a host with no GPU.
+A neutral leaf shared by the indexers that write the claims and the search
+path that checks them. It exists as its own module so neither side has to
+import the other: the writers live behind the tree-sitter-bearing indexer
+package, while the reader sits on a search path that is deliberately
+model-free and must stay importable on a host with no GPU.
 
-The claim is a point count recorded when a code index publishes, taken after
-storage reconciliation so it is exactly the breadth the sidecar describes.
-Without it a truncated collection is indistinguishable from a small one - the
-file entries name which paths are indexed, but nothing says how many points
+A claim is a point count recorded when an index publishes, taken after storage
+reconciliation so it is exactly the breadth the sidecar describes. Without it
+a truncated collection is indistinguishable from a small one - the entries
+name which paths or documents are indexed, but nothing says how many points
 that should amount to, so a collection holding a fraction of its corpus reads
 as intact and answers searches as though it were whole.
+
+Two sidecars are covered, because both are flat key-to-hash maps whose
+reserved keys begin with ``__``: the code sidecar keyed by relative file path,
+and the vault sidecar keyed by document stem. They keep separate key names so
+one domain's figure can never be read as the other's, and share one parser so
+"cannot tell" means the same thing on both.
 """
 
 from __future__ import annotations
@@ -47,23 +53,42 @@ PUBLISHED_FILES_KEY = "__code_published_files__"
 #: to one publication.
 GENERATION_ID_KEY = "__code_generation_id__"
 
+#: Reserved vault-sidecar key carrying the published point count. Named apart
+#: from the code key so a sidecar of one domain can never be read as the
+#: other's, and prefixed with ``__`` so it stays out of the document-id set
+#: arithmetic the vault sidecar's other keys take part in.
+VAULT_PUBLISHED_POINTS_KEY = "__vault_published_points__"
+
+#: Reserved vault-sidecar key carrying the number of distinct documents the
+#: collection held points for when the publication was written. Recorded
+#: beside the point count for the same reason the code side records its file
+#: figure: the two fail independently, and a plausible number of points spread
+#: across a fraction of the documents the sidecar names is invisible to any
+#: comparison of point counts.
+VAULT_PUBLISHED_DOCUMENTS_KEY = "__vault_published_documents__"
+
 __all__ = [
     "GENERATION_ID_KEY",
     "PUBLISHED_FILES_KEY",
     "PUBLISHED_POINTS_KEY",
     "SHORTFALL_CONSEQUENCE",
     "SHORTFALL_REMEDIATION",
+    "VAULT_PUBLISHED_DOCUMENTS_KEY",
+    "VAULT_PUBLISHED_POINTS_KEY",
     "BreadthShortfall",
     "CodeBreadthClaim",
     "FileBreadthShortfall",
     "ShortfallWarning",
+    "VaultBreadthClaim",
     "code_breadth_shortfall",
     "code_file_breadth_shortfall",
     "code_meta_path",
     "parse_reserved_count",
     "read_code_breadth_claim",
     "read_reserved_count",
+    "read_vault_breadth_claim",
     "shortfall_warnings",
+    "vault_meta_path",
 ]
 
 #: What an incomplete index means for the reader, in one wording for every
@@ -226,14 +251,24 @@ def parse_reserved_count(raw: Mapping[str, object], key: str) -> int | None:
     if value is None:
         return None
     if not isinstance(value, (str, int)):
-        logger.debug("unusable %s %r in code sidecar", key, value)
+        logger.debug("unusable %s %r in index sidecar", key, value)
         return None
     try:
         count = int(value)
     except ValueError:
-        logger.debug("unusable %s %r in code sidecar", key, value)
+        logger.debug("unusable %s %r in index sidecar", key, value)
         return None
     return count if count >= 0 else None
+
+
+def _named_entry_count(raw: Mapping[str, object]) -> int:
+    """Return how many corpus entries a sidecar mapping names.
+
+    Reserved keys begin with ``__`` precisely so they can be excluded here:
+    every remaining key is one relative file path or one document stem the
+    publication declares indexed.
+    """
+    return sum(1 for key in raw if not key.startswith("__"))
 
 
 def code_meta_path(root: pathlib.Path) -> pathlib.Path:
@@ -244,18 +279,25 @@ def code_meta_path(root: pathlib.Path) -> pathlib.Path:
     return root / cfg.data_dir / cfg.code_index_metadata_file
 
 
-def _read_meta(root: pathlib.Path) -> dict[str, object] | None:
-    """Return *root*'s parsed code sidecar, or ``None`` when it cannot be read.
+def vault_meta_path(root: pathlib.Path) -> pathlib.Path:
+    """Return the vault index metadata sidecar path for *root*."""
+    from .config._settings import get_config
 
-    One reader, so a caller needing both a reserved count and the file entries
-    pays a single parse and cannot observe the two halves from different reads
-    of a file another process is replacing.
+    cfg = get_config()
+    return root / cfg.data_dir / cfg.index_metadata_file
+
+
+def _read_sidecar(path: pathlib.Path) -> dict[str, object] | None:
+    """Return the parsed sidecar at *path*, or ``None`` when it cannot be read.
+
+    One reader, so a caller needing both a reserved count and the corpus
+    entries pays a single parse and cannot observe the two halves from
+    different reads of a file another process is replacing.
     """
-    path = code_meta_path(root)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        logger.debug("code sidecar %s unreadable: %s", path, exc)
+        logger.debug("index sidecar %s unreadable: %s", path, exc)
         return None
     if not isinstance(raw, dict):
         return None
@@ -269,7 +311,7 @@ def read_reserved_count(root: pathlib.Path, key: str) -> int | None:
     Every such case is a "cannot tell" rather than a claim of zero, so a caller
     cannot mistake an unreadable sidecar for a destroyed index.
     """
-    raw = _read_meta(root)
+    raw = _read_sidecar(code_meta_path(root))
     return None if raw is None else parse_reserved_count(raw, key)
 
 
@@ -307,7 +349,7 @@ def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
     named files, and the generation from different reads of a file another
     process is replacing - they always describe a single publication.
     """
-    raw = _read_meta(root)
+    raw = _read_sidecar(code_meta_path(root))
     if raw is None:
         return None
     generation = raw.get(GENERATION_ID_KEY)
@@ -318,6 +360,48 @@ def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
         ),
         named_files=sum(1 for key in raw if not key.startswith("__")),
         published_files=parse_reserved_count(raw, PUBLISHED_FILES_KEY),
+    )
+
+
+class VaultBreadthClaim(NamedTuple):
+    """What one vault publication claims, read from the sidecar in one parse.
+
+    ``published_points`` and ``published_documents`` are ``None`` when the
+    sidecar predates the key or carries an unusable value - "cannot tell",
+    never a claim of zero, so a root written by an older build is neither
+    escalated nor quietly promoted to healthy. ``named_documents`` is the
+    count of document entries the same sidecar carries, and is a plain figure
+    rather than an optional: an entry is either there or it is not.
+
+    All three come from one parse, so a caller can never observe them from
+    different reads of a file another process is replacing - they always
+    describe a single publication.
+
+    The vault publication carries no generation identity: it replaces its
+    collection in place rather than building a generation beside the served
+    one, so there is no second name a claim could be tied to.
+    """
+
+    published_points: int | None
+    published_documents: int | None
+    named_documents: int
+
+
+def read_vault_breadth_claim(root: pathlib.Path) -> VaultBreadthClaim | None:
+    """Return *root*'s published vault breadth claim, or ``None`` for no sidecar.
+
+    The two published figures fail independently, which is why both are read
+    here rather than one standing in for the other: a collection can hold a
+    plausible number of points spread across a fraction of the documents the
+    same sidecar names, and only the document figures disagree in that case.
+    """
+    raw = _read_sidecar(vault_meta_path(root))
+    if raw is None:
+        return None
+    return VaultBreadthClaim(
+        published_points=parse_reserved_count(raw, VAULT_PUBLISHED_POINTS_KEY),
+        published_documents=parse_reserved_count(raw, VAULT_PUBLISHED_DOCUMENTS_KEY),
+        named_documents=_named_entry_count(raw),
     )
 
 
@@ -363,13 +447,13 @@ def code_file_breadth_shortfall(
     this key existed has nothing to compare against and must not be reported as
     incomplete for that reason.
     """
-    raw = _read_meta(root)
+    raw = _read_sidecar(code_meta_path(root))
     if raw is None:
         return None
     covered = parse_reserved_count(raw, PUBLISHED_FILES_KEY)
     if covered is None:
         return None
-    named = sum(1 for key in raw if not key.startswith("__"))
+    named = _named_entry_count(raw)
     if covered >= named:
         return None
     return FileBreadthShortfall(named=named, covered=covered)
