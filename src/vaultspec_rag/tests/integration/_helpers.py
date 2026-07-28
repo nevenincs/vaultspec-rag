@@ -356,13 +356,21 @@ def _poll_own_health(
         delay = min(delay * 2, 1.0)
 
 
+#: Gap between liveness reads while waiting a process out. The poll interval is
+#: pure detection overshoot: every caller here is a teardown or an assertion
+#: that a process is gone, so whatever is slept past the actual exit is charged
+#: to the test. ``pid_alive`` is one kernel handle open and one exit-code read,
+#: so reading it twenty times a second costs nothing worth saving.
+_EXIT_POLL_SECONDS = 0.05
+
+
 def _wait_for_exit(pid: int, timeout: float = 15.0) -> bool:
     """Wait for a process to exit.  Returns True if exited within timeout."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not pid_alive(pid):
             return True
-        time.sleep(0.3)
+        time.sleep(min(_EXIT_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
     return False
 
 

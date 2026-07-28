@@ -79,10 +79,10 @@ def pin_index_cuda_ceiling() -> Generator[None]:
 
 
 #: Upper bound on the graceful-exit courtesy wait during teardown before
-#: escalating to a hard, pid-targeted force-kill. Kept short because the
-#: graceful console signal often never reaches a stub-relaunched descendant
-#: daemon; the remainder of the teardown budget is reserved so the force-kill
-#: and its confirmation always have time to run.
+#: escalating to a hard, pid-targeted force-kill, on the platforms where the
+#: graceful signal can actually be delivered. The remainder of the teardown
+#: budget is reserved so the force-kill and its confirmation always have time
+#: to run.
 _TEARDOWN_GRACEFUL_COURTESY_SECONDS = 5.0
 
 #: Wall-clock always held back from the graceful courtesy so the pid-targeted
@@ -91,6 +91,40 @@ _TEARDOWN_GRACEFUL_COURTESY_SECONDS = 5.0
 #: startup reserve (a few seconds), so a fixed courtesy that consumed the whole
 #: budget would re-create the very starvation the courtesy cap exists to avoid.
 _TEARDOWN_FORCE_KILL_RESERVE_SECONDS = 4.0
+
+#: Upper bound on the wait for the launching process to follow the daemon out.
+#: The launcher is not the process the graceful signal was ever aimed at - on
+#: Windows the venv ``python.exe`` is a trampoline that runs the interpreter as
+#: a child, so it merely has to notice that child is gone. That takes a moment,
+#: not a shutdown, and funding it out of the graceful courtesy charged a
+#: multi-second window for a sub-second wait.
+_TEARDOWN_LAUNCHER_EXIT_SECONDS = 2.0
+
+
+def teardown_graceful_courtesy_seconds(platform: str) -> float:
+    """Return the graceful-exit courtesy worth waiting out on *platform*.
+
+    A daemon that can act on the termination signal exits on its own, and
+    waiting for it is free whenever it happens: the wait returns the moment the
+    process is gone. POSIX delivers ``SIGTERM`` to the daemon, so the courtesy
+    is real there.
+
+    Windows delivers nothing. The daemon is spawned with ``CREATE_NO_WINDOW``,
+    which puts it on a console of its own, and ``GenerateConsoleCtrlEvent``
+    only reaches processes sharing the sender's console - so the event never
+    arrives, the daemon never begins shutting down, and the wait is spent in
+    full, every time, before the force-kill that actually ends it. That is not
+    headroom that goes unused when things are healthy; it is a fixed cost paid
+    on every teardown. Windows therefore funds no courtesy and goes straight to
+    the pid-targeted force-kill.
+
+    The platform is an argument because the rule is about the platform, not
+    about the host running the code: both branches are statable anywhere, and a
+    host can only ever exercise one of them.
+    """
+    if platform == "win32":
+        return 0.0
+    return _TEARDOWN_GRACEFUL_COURTESY_SECONDS
 
 
 @dataclass
@@ -385,37 +419,28 @@ def _cleanup_service_process(
     def _budget_left() -> float:
         return max(0.0, timeout - (time.monotonic() - started))
 
-    def _graceful_window() -> float:
-        # The graceful Windows CTRL_BREAK is addressed to the group leader
-        # ``pid`` in the hope it propagates to the serving daemon. But a
-        # stub-relaunched daemon is a descendant that is not the console group
-        # leader, so the event frequently never reaches it and the daemon never
-        # begins shutting down. Waiting the whole budget for a graceful exit
-        # that cannot happen would starve the pid-targeted force-kill and its
-        # confirmation, spuriously failing teardown. So the graceful wait is a
-        # short courtesy only, and never longer than what leaves the force-kill
-        # reserve intact - otherwise a small budget (the failed-startup cleanup
-        # hands in only the startup reserve) is entirely consumed by the
-        # courtesy and the force-kill is starved again. Force-killing is safe
-        # here: state is a per-test tmp dir, the machine lock is OS-advisory
-        # (freed on exit), and the Qdrant child dies with the daemon via its
-        # kill-on-close job.
+    def _bounded(window: float) -> float:
+        # Never longer than what leaves the force-kill reserve intact -
+        # otherwise a small budget (the failed-startup cleanup hands in only
+        # the startup reserve) is entirely consumed by the wait and the
+        # force-kill that ends the process is starved.
         return max(
             0.0,
-            min(
-                _TEARDOWN_GRACEFUL_COURTESY_SECONDS,
-                _budget_left() - _TEARDOWN_FORCE_KILL_RESERVE_SECONDS,
-            ),
+            min(window, _budget_left() - _TEARDOWN_FORCE_KILL_RESERVE_SECONDS),
         )
 
-    # Send the bare graceful signal (as an operator-driven stop does), then
-    # escalate to a pid-targeted force-kill that never touches a console group.
-    with suppress(OSError):
-        if sys.platform == "win32":
-            os.kill(pid, signal.CTRL_BREAK_EVENT)
-        else:
+    graceful_window = teardown_graceful_courtesy_seconds(sys.platform)
+
+    # Send the graceful signal (as an operator-driven stop does) only where it
+    # can land; see ``teardown_graceful_courtesy_seconds`` for why Windows
+    # cannot receive one. Then escalate to a pid-targeted force-kill that never
+    # touches a console group. Force-killing is safe here: state is a per-test
+    # tmp dir, the machine lock is OS-advisory (freed on exit), and the Qdrant
+    # child dies with the daemon via its kill-on-close job.
+    if graceful_window > 0.0:
+        with suppress(OSError):
             os.kill(pid, signal.SIGTERM)
-    if not _wait_for_exit(daemon_pid, timeout=_graceful_window()):
+    if not _wait_for_exit(daemon_pid, timeout=_bounded(graceful_window)):
         _terminate_pid(
             daemon_pid,
             timeout=_budget_left(),
@@ -426,7 +451,9 @@ def _cleanup_service_process(
                 f"Test-owned service process {daemon_pid} did not exit.\n"
                 f"Service output:\n{_service_diagnostics(log_path)}"
             )
-    if daemon_pid != pid and not _wait_for_exit(pid, timeout=_graceful_window()):
+    if daemon_pid != pid and not _wait_for_exit(
+        pid, timeout=_bounded(_TEARDOWN_LAUNCHER_EXIT_SECONDS)
+    ):
         _terminate_pid(
             pid,
             timeout=_budget_left(),
