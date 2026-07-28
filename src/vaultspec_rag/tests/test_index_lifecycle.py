@@ -17,6 +17,7 @@ import inspect
 import logging
 import pathlib
 import pkgutil
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -31,6 +32,9 @@ from ..indexer._index_lifecycle import (
 from ..indexer._vault_prep import IndexResult
 from ..job_control import NO_RUN_CONTROL
 from ..storage_manifest import load_manifest, record_root
+from ..storage_reclamation import ReclaimPolicy, evaluate_reclaim
+from ..storage_survey import classify_namespaces, is_temp_rooted
+from ..store_schema import DOCUMENT_COLLECTION
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -267,6 +271,64 @@ class TestIndexEvents:
         events = _index_events(caplog)
         assert [name for name, _ in events] == ["started", "failed"]
         assert "chunker died" in str(events[1][1]["error"])
+
+
+class TestDocumentStampReachesReclamation:
+    def test_a_document_run_stamp_keeps_its_namespace_live_and_held(
+        self,
+        server_mode_store: VaultStore,
+    ) -> None:
+        """The stamp a document run writes is the clock reclamation reads.
+
+        A document domain that writes points without refreshing the
+        persisted activity clock looks eternally idle to the ephemeral
+        idle-TTL reclaim tier. This pins the whole visibility chain at the
+        store/manifest layer: a document-labelled run stamps the manifest,
+        the survey classifies the namespace live with its document points
+        counted, and the reclaim evaluation holds the namespace BECAUSE
+        that stamp is fresh - not merely because no stamp exists.
+        """
+        _run(server_mode_store, _result)
+
+        prefix = root_collection_prefix(server_mode_store.root_dir)
+        manifest = load_manifest()
+        entry = manifest.get(prefix)
+        # Removing the lifecycle's touch_manifest_last_indexed calls lands
+        # here: nothing else in this flow writes the manifest, so the entry
+        # is absent (or unstamped) the moment document runs stop stamping.
+        assert entry is not None and entry.last_indexed, (
+            "the document run left no activity stamp in the manifest, so its "
+            "namespace is invisible to the reclaim tier's idle clock"
+        )
+
+        document_collection = f"{prefix}{DOCUMENT_COLLECTION}"
+        survey = classify_namespaces(
+            [document_collection],
+            manifest,
+            point_counts={document_collection: 7},
+        )[0]
+        assert survey.status == "live"
+        assert survey.document_points == 7
+        # The ephemeral tier evaluates only temp-rooted live namespaces; the
+        # fixture root lives under pytest's tmp tree, so a failure here means
+        # the precondition broke, not the behaviour under test.
+        assert is_temp_rooted(survey.root)
+
+        decisions = evaluate_reclaim(
+            [survey],
+            {},
+            now=datetime.now(UTC),
+            policy=ReclaimPolicy(ephemeral_idle_hours=72.0),
+            last_indexed={prefix: entry.last_indexed},
+        )
+        assert len(decisions) == 1
+        decision = decisions[0]
+        assert decision.action == "pending"
+        assert decision.reason is not None
+        # The remaining-hours reason is reachable only through a parsable
+        # stamp: an absent stamp answers "ephemeral_no_activity_stamp"
+        # instead, so this matcher must not be loosened to the action alone.
+        assert decision.reason.startswith("ephemeral_idle_remaining_h=")
 
 
 def _indexer_run_entry_points() -> list[tuple[str, FunctionType]]:
