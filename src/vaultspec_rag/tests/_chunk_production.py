@@ -23,7 +23,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..indexer._chunk_producer import SingleProductionOptions
-from ..progress import NullProgressReporter
 
 if TYPE_CHECKING:
     import pathlib
@@ -31,14 +30,11 @@ if TYPE_CHECKING:
     from .. import CodebaseIndexer
     from .._store_models import CodeChunk
     from ..indexer._chunk_worker import FileChunkResult
-    from ..progress import ProgressReporter
 
 
 def produce_file_results(
     indexer: CodebaseIndexer,
     paths: list[pathlib.Path],
-    *,
-    reporter: ProgressReporter | None = None,
 ) -> list[FileChunkResult]:
     """Run *paths* through the production producers and collect the results.
 
@@ -52,13 +48,11 @@ def produce_file_results(
     Args:
         indexer: A chunk-capable indexer; needs no model or vector store.
         paths: Absolute file paths to produce results for.
-        reporter: Progress reporter, advanced once per file.
 
     Returns:
         Every file's result, ordered by relative path so a pooled run and a
         serial run of the same inputs are directly comparable.
     """
-    progress = NullProgressReporter() if reporter is None else reporter
     collected: list[FileChunkResult] = []
 
     def _publish(result: FileChunkResult) -> bool:
@@ -72,14 +66,13 @@ def produce_file_results(
     producer = indexer._producer
     batch_groups, singles = producer.partition_batch_work(paths)
     if batch_groups:
-        producer.produce_batch_groups(batch_groups, _publish, progress)
+        producer.produce_batch_groups(batch_groups, _publish)
     if singles:
         producer.produce_singles(
             singles,
             SingleProductionOptions(
                 publish_result=_publish,
                 consumer_failed=lambda: False,
-                reporter=progress,
                 total=[0],
             ),
         )
@@ -89,8 +82,6 @@ def produce_file_results(
 def produce_chunks(
     indexer: CodebaseIndexer,
     paths: list[pathlib.Path],
-    *,
-    reporter: ProgressReporter | None = None,
 ) -> list[CodeChunk]:
     """Return every chunk the production path produces for *paths*.
 
@@ -99,6 +90,6 @@ def produce_chunks(
     """
     return [
         chunk
-        for result in produce_file_results(indexer, paths, reporter=reporter)
+        for result in produce_file_results(indexer, paths)
         for chunk in result.chunks
     ]
