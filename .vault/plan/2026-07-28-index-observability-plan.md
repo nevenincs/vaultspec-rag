@@ -9,6 +9,7 @@ related:
   - '[[2026-07-28-index-observability-adr]]'
   - '[[2026-07-28-index-observability-research]]'
 ---
+
 # `index-observability` plan
 
 ### Phase `P01` - Truthful signals
