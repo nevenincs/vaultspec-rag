@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    import httpx
+
     from ..embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.unit]
@@ -342,6 +344,91 @@ class TestDegradationVerdict:
         summary = _job_summary([healthy, degraded, stalled], now=1010.0)
         assert summary["degraded"] == 1
         assert summary["stalled"] == 1
+
+
+class TestGpuPressureSnapshot:
+    """The listing-level GPU block: evidence-shaped, cached, unpoisonable."""
+
+    @staticmethod
+    def _reset_cache() -> None:
+        import vaultspec_rag.jobs as jobs_module
+
+        jobs_module._gpu_snapshot_cache = None
+
+    def test_the_snapshot_carries_the_evidence_shape(self) -> None:
+        from ..jobs import gpu_pressure_snapshot
+
+        self._reset_cache()
+        snapshot = gpu_pressure_snapshot(now=1000.0)
+        assert set(snapshot) == _GPU_KEYS, (
+            "the header block and the evidence block must be the same shape"
+        )
+
+    def test_polling_inside_the_window_reuses_the_reading(self) -> None:
+        """The stamp moves only when the probe actually re-runs."""
+        import vaultspec_rag.jobs as jobs_module
+
+        from ..jobs import gpu_pressure_snapshot
+
+        self._reset_cache()
+        gpu_pressure_snapshot(now=2000.0)
+        gpu_pressure_snapshot(now=2002.0)
+        cached = jobs_module._gpu_snapshot_cache
+        assert cached is not None
+        assert cached[0] == 2000.0, (
+            "a poll inside the window must not pay the probe again"
+        )
+        gpu_pressure_snapshot(now=2006.0)
+        cached = jobs_module._gpu_snapshot_cache
+        assert cached is not None
+        assert cached[0] == 2006.0, "the window's end re-runs the probe"
+
+    def test_a_caller_cannot_poison_the_cache(self) -> None:
+        """The snapshot handed out is a copy, never the cached mapping.
+
+        Proven able to fail: returning ``cached[1]`` and ``snapshot``
+        directly instead of copies hands every caller the cached mapping,
+        the mutation below lands in the cache, and the assertion fails by
+        name; restored, it passes.
+        """
+        from ..jobs import gpu_pressure_snapshot
+
+        self._reset_cache()
+        first = gpu_pressure_snapshot(now=3000.0)
+        first["available"] = "poisoned"
+        second = gpu_pressure_snapshot(now=3001.0)
+        assert second["available"] != "poisoned", (
+            "mutating a handed-out snapshot must not rewrite the cache"
+        )
+
+
+class TestJobsRouteGpuExposure:
+    """GET /jobs carries the GPU block beside the work list."""
+
+    def test_the_listing_envelope_carries_the_gpu_block(self) -> None:
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        from .. import server as server_package
+        from ..server._routes import jobs_route
+
+        token = "gpu-exposure-test-token"
+        previous_token = server_package._SERVICE_TOKEN
+        server_package._SERVICE_TOKEN = token
+        try:
+            app = Starlette(routes=[Route("/jobs", jobs_route)])
+            client: httpx.Client = cast("httpx.Client", TestClient(app))
+            response: httpx.Response = client.get(
+                "/jobs", headers={"Authorization": f"Bearer {token}"}
+            )
+            payload = _as_map(cast("object", response.json()))
+        finally:
+            server_package._SERVICE_TOKEN = previous_token
+        gpu = _as_map(payload["gpu"])
+        assert set(gpu) == _GPU_KEYS, (
+            "the polled listing is where the header reads GPU pressure from"
+        )
 
 
 class TestBackendEvidence:

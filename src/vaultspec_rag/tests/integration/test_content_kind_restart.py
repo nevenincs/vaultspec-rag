@@ -99,9 +99,10 @@ def test_completed_source_generation_exposes_route_migration_evidence(
     tmp_path: Path,
 ) -> None:
     from ... import store_schema
+    from ..._index_breadth import GENERATION_ID_KEY
     from ...config._settings import get_config
     from ...indexer import CodebaseIndexer
-    from ...indexer._code_meta import GENERATION_ID_KEY, read_meta_raw
+    from ...indexer._code_meta import read_meta_raw
     from ...indexer._content_policy import ContentKind
     from ...indexer._file_state import FileStateKind
     from ...indexer._run_ledger_models import (
