@@ -42,9 +42,11 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "MANIFEST_CLAIM_TTL_SECONDS",
     "REASON_COUNT_UNAVAILABLE",
+    "REASON_FILE_COVERAGE_SHORTFALL",
     "REASON_MANIFEST_INCOMPLETE",
     "REASON_NO_CLAIM",
     "REASON_NO_MANIFEST",
+    "REASON_ZERO_CLAIM_OVER_NAMED_FILES",
     "SHRUNKEN_LOG_INTERVAL_SECONDS",
     "VERDICT_CONSISTENT",
     "VERDICT_SHRUNKEN",
@@ -77,6 +79,21 @@ REASON_COUNT_UNAVAILABLE = "count_unavailable"
 #: publication, so its point figure is not a breadth claim to hold the
 #: collection to.
 REASON_MANIFEST_INCOMPLETE = "manifest_incomplete"
+
+#: The manifest names indexed files but claims zero points for them. Not
+#: ignorance - a publication counts the collection after storage
+#: reconciliation, so a complete one over N named files cannot record zero.
+#: The manifest is contradicting itself, and the collection it describes
+#: cannot be serving those files however many points it currently holds.
+REASON_ZERO_CLAIM_OVER_NAMED_FILES = "zero_claim_over_named_files"
+
+#: The manifest records covering fewer files than it names. Two figures from
+#: one publication disagreeing, which no comparison of point counts can see:
+#: a publication covering a fraction of its named files still stamps a
+#: self-consistent point total, because the total it stamps is the fragment's.
+#: An ABSENT coverage figure is not this case and never reaches here - that is
+#: an older build having recorded nothing, and ignorance never escalates.
+REASON_FILE_COVERAGE_SHORTFALL = "file_coverage_shortfall"
 
 #: How long one parsed claim answers for its root and domain before the
 #: sidecar is read again. Five seconds bounds the added cost to one small
@@ -113,6 +130,29 @@ class _BreadthClaim(NamedTuple):
     reason: str | None
     """Why ``claimed`` is ``None``; ``None`` itself when a claim is present."""
 
+    named_files: int = 0
+    """How many indexed files the same manifest names, ``0`` when unknown."""
+
+    covered_files: int | None = None
+    """How many the publication recorded covering; ``None`` when unrecorded."""
+
+    def self_contradiction(self) -> str | None:
+        """Return why this manifest disagrees with itself, or ``None``.
+
+        Both readings are about one publication's own figures, so neither
+        needs a live count and neither can be satisfied by one. They are
+        checked here rather than at the comparison so a manifest that already
+        admits it describes an incomplete index is never handed to a test that
+        an empty collection would pass.
+        """
+        if not self.named_files:
+            return None
+        if self.claimed == 0:
+            return REASON_ZERO_CLAIM_OVER_NAMED_FILES
+        if self.covered_files is not None and self.covered_files < self.named_files:
+            return REASON_FILE_COVERAGE_SHORTFALL
+        return None
+
 
 class IndexIntegrity(NamedTuple):
     """One serve-time breadth verdict, with the evidence that produced it.
@@ -127,6 +167,10 @@ class IndexIntegrity(NamedTuple):
     live_count: int | None
     generation_id: str | None
     reason: str | None
+    named_files: int | None = None
+    """Indexed files the manifest names, ``None`` where the domain has none."""
+    covered_files: int | None = None
+    """Files the publication recorded covering, ``None`` when unrecorded."""
 
     def as_block(self) -> dict[str, object]:
         """Return the canonical ``index_integrity`` envelope block.
@@ -136,8 +180,12 @@ class IndexIntegrity(NamedTuple):
         consumer can tell "checked and fine" from "surface predates the
         check", where the block is absent entirely. Unknown figures are
         ``null``, never invented; ``missing_count`` appears only over a
-        demonstrated deficit, mirroring how the shortfall block never renders
-        a zero deficit.
+        demonstrated point deficit, mirroring how the shortfall block never
+        renders a zero deficit - a manifest judged shrunken for contradicting
+        itself has no point deficit to name, and subtracting its figures would
+        print a zero or a negative one. ``named_files`` appears only where the
+        manifest names any, so a domain that records no file list renders no
+        figure for one.
         """
         block: dict[str, object] = {
             "verdict": self.verdict,
@@ -147,10 +195,14 @@ class IndexIntegrity(NamedTuple):
             "generation_id": self.generation_id,
             "reason": self.reason,
         }
+        if self.named_files:
+            block["named_files"] = self.named_files
+            block["covered_files"] = self.covered_files
         if (
             self.verdict == VERDICT_SHRUNKEN
             and self.claimed_count is not None
             and self.live_count is not None
+            and self.claimed_count > self.live_count
         ):
             block["missing_count"] = self.claimed_count - self.live_count
         return block
@@ -164,8 +216,20 @@ def _read_code_claim(root: pathlib.Path) -> _BreadthClaim:
     if claim is None:
         return _BreadthClaim(None, None, REASON_NO_MANIFEST)
     if claim.published_points is None:
-        return _BreadthClaim(None, claim.generation_id, REASON_NO_CLAIM)
-    return _BreadthClaim(claim.published_points, claim.generation_id, None)
+        return _BreadthClaim(
+            None,
+            claim.generation_id,
+            REASON_NO_CLAIM,
+            claim.named_files,
+            claim.published_files,
+        )
+    return _BreadthClaim(
+        claim.published_points,
+        claim.generation_id,
+        None,
+        claim.named_files,
+        claim.published_files,
+    )
 
 
 def _read_document_claim(root: pathlib.Path) -> _BreadthClaim:
@@ -252,6 +316,23 @@ def _log_shrunken(root: pathlib.Path, integrity: IndexIntegrity) -> None:
         if len(_ERROR_LAST_EMIT) >= _CACHE_MAX_ENTRIES:
             _ERROR_LAST_EMIT.clear()
         _ERROR_LAST_EMIT[key] = now
+    if integrity.reason in (
+        REASON_ZERO_CLAIM_OVER_NAMED_FILES,
+        REASON_FILE_COVERAGE_SHORTFALL,
+    ):
+        # A points-held-of-points-claimed line would read "0 of 0" here and
+        # send an operator looking for a deficit that is not what went wrong.
+        logger.error(
+            "%s publication (generation %s) for %s names %s indexed file(s) "
+            "but records covering only %s of them; searches still serve but "
+            "no result can be drawn from the rest",
+            integrity.source,
+            integrity.generation_id,
+            root,
+            integrity.named_files,
+            integrity.covered_files,
+        )
+        return
     logger.error(
         "%s collection for %s holds %s of the %s points its publication "
         "(generation %s) claims; searches still serve but results are drawn "
@@ -290,6 +371,23 @@ def evaluate_index_integrity(
     publication torn mid-replacement, and both deserve the loud verdict. Any
     tolerance wider than zero would mask exactly a loss of that size.
 
+    Some manifests are judged without comparing counts at all, because they
+    already disagree with themselves: zero points, or a recorded file
+    coverage below the file count, over a manifest that names indexed files.
+    Neither pair can be produced by a complete publication, which counts the
+    collection after storage reconciliation and records what it found, so
+    neither is the "no information" case ``unverifiable`` exists for - the
+    manifest is stating a figure and contradicting it in the same breath. A
+    zero point claim left to the count comparison would read ``consistent``
+    against any live count at all, most perversely against an empty
+    collection, and latch there: a claim of zero is satisfied forever, so
+    nothing would ever escalate and nothing would ever repair. ``shrunken``
+    is both the honest reading and the one the self-heal path acts on.
+
+    An ABSENT figure is the opposite and stays ``unverifiable``: a build that
+    never recorded coverage has told us nothing, and escalating on that would
+    rebuild every root written before the key existed.
+
     A ``shrunken`` verdict never blocks the search - partial results beat no
     results - but it is attached to the response and logged at ERROR with the
     figures and the claiming generation, rate-limited per root and domain.
@@ -305,6 +403,7 @@ def evaluate_index_integrity(
             live_count=None,
             generation_id=claim.generation_id,
             reason=REASON_COUNT_UNAVAILABLE,
+            named_files=claim.named_files or None,
         )
     elif claim.claimed is None:
         integrity = IndexIntegrity(
@@ -314,7 +413,20 @@ def evaluate_index_integrity(
             live_count=live_count,
             generation_id=claim.generation_id,
             reason=claim.reason,
+            named_files=claim.named_files or None,
         )
+    elif (contradiction := claim.self_contradiction()) is not None:
+        integrity = IndexIntegrity(
+            verdict=VERDICT_SHRUNKEN,
+            source=source.value,
+            claimed_count=claim.claimed,
+            live_count=live_count,
+            generation_id=claim.generation_id,
+            reason=contradiction,
+            named_files=claim.named_files,
+            covered_files=claim.covered_files,
+        )
+        _log_shrunken(root, integrity)
     elif live_count >= claim.claimed:
         integrity = IndexIntegrity(
             verdict=VERDICT_CONSISTENT,
@@ -323,6 +435,7 @@ def evaluate_index_integrity(
             live_count=live_count,
             generation_id=claim.generation_id,
             reason=None,
+            named_files=claim.named_files or None,
         )
     else:
         integrity = IndexIntegrity(
@@ -332,6 +445,7 @@ def evaluate_index_integrity(
             live_count=live_count,
             generation_id=claim.generation_id,
             reason=None,
+            named_files=claim.named_files or None,
         )
         _log_shrunken(root, integrity)
     return integrity

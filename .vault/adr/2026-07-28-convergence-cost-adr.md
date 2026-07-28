@@ -9,6 +9,7 @@ related:
   - "[[2026-03-07-blake2b-file-hashing-adr]]"
   - '[[2026-07-28-convergence-cost-research]]'
 ---
+
 # `convergence-cost` adr: `Stat-evidence rehash gate and scoped convergence retention` | (**status:** `accepted`)
 
 ## Problem Statement
@@ -34,8 +35,7 @@ cost proportional to actual change without weakening the content-hash authority 
 
 ## Considered options
 
-- Stat-evidence gate in an advisory sidecar (chosen): per-file `(size, mtime_ns,
-  hash, hashed_at)`; reuse the recorded hash only on exact stat match outside a racy
+- Stat-evidence gate in an advisory sidecar (chosen): per-file `(size, mtime_ns, hash, hashed_at)`; reuse the recorded hash only on exact stat match outside a racy
   window. Pro: unscoped cost drops to O(stat + changed bytes); authority unchanged;
   cache loss degrades to today's behavior. Con: one more sidecar to maintain.
 - Widen the published hash sidecar to carry stat evidence: rejected - the sidecar value

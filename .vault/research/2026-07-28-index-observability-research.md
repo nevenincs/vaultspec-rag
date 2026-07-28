@@ -42,8 +42,7 @@ reading raw JSON.
 
 ### The known failure channel logs an event with no error in it
 
-The service log carries repeated `service.watcher event=reindex_failed ... state=running
-error=null` ERROR lines (multiple occurrences on 2026-07-28 alone). An error event
+The service log carries repeated `service.watcher event=reindex_failed ... state=running error=null` ERROR lines (multiple occurrences on 2026-07-28 alone). An error event
 whose error field is null and whose state is `running` is the "hidden error condition"
 operators remember but cannot act on: it names neither a cause nor a remediation, and
 nothing correlates it to a job outcome surface.

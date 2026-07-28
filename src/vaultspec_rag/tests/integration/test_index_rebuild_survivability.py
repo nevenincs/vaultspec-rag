@@ -391,3 +391,384 @@ def _with_files(previous: Any, point_ids: tuple[str, ...]) -> Any:
         previous,
         files=(DocumentFileMetadata("docs/served.pdf", "hash", point_ids),),
     )
+
+
+def _embedding_dimension() -> int:
+    from ...config._settings import get_config
+
+    return int(get_config().embedding_dimension)
+
+
+def _code_chunks(ids: tuple[str, ...], *, prefix: str) -> list[Any]:
+    """Return one real zero-vector code chunk per id, one file per chunk."""
+    from ..._store_models import CodeChunk
+
+    dimension = _embedding_dimension()
+    return [
+        CodeChunk(
+            id=f"{prefix}-{chunk_id}",
+            path=f"src/{prefix}/{chunk_id}.py",
+            language="python",
+            content=f"value_{chunk_id} = True",
+            line_start=1,
+            line_end=1,
+            vector=[0.0] * dimension,
+        )
+        for chunk_id in ids
+    ]
+
+
+def _open_clean_code_generation(root: Path) -> Any:
+    """Open a real clean code generation against *root*'s run ledger."""
+    from ...indexer._content_policy import RootContentPolicy, SourceProfileVersion
+    from ...indexer._resolved_policy import (
+        IndexPolicyResolutionOptions,
+        resolve_index_policy,
+    )
+    from ...indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
+    from ...indexer._run_ledger_models import RunOperation
+    from ...indexer._run_policy import RunPolicy
+
+    policy = resolve_index_policy(
+        root,
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
+    )
+    return CodeRunCheckpoint.open(
+        data_root=root / ".state",
+        root_dir=root,
+        policy=policy,
+        run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
+        operation=RunOperation.FULL,
+        clean=True,
+        model_identity="model-v1",
+        dense_dimensions=_embedding_dimension(),
+        configuration=CodeRunConfiguration(
+            segment_max_chunks=1,
+            segment_max_bytes=1024,
+            queue_max_chunks=2,
+            queue_max_bytes=2048,
+            slice_max_chunks=2,
+            slice_max_bytes=2048,
+            sparse_enabled=False,
+            sparse_dimension=1,
+            encode_batch_size=2,
+            flush_slices=4,
+        ),
+    )
+
+
+def _lifecycle(root: Path, store: VaultStore) -> Any:
+    """Bind a real generation lifecycle to *root*'s sidecar and store."""
+    from ..._index_breadth import code_meta_path
+    from ...indexer._code_meta import load_meta, read_meta_raw
+    from ...indexer._generation_lifecycle import (
+        CodeGenerationBindings,
+        CodeGenerationLifecycle,
+    )
+
+    meta_path = code_meta_path(root)
+    return CodeGenerationLifecycle(
+        CodeGenerationBindings(
+            root_dir=root,
+            data_root=root / ".state",
+            meta_path=meta_path,
+            store=store,
+            load_meta=lambda: load_meta(meta_path),
+            read_meta_raw=lambda: read_meta_raw(meta_path),
+        )
+    )
+
+
+def _content_digest(value: str) -> str:
+    """Return the digest shape a real indexed file state carries."""
+    import hashlib
+
+    return hashlib.blake2b(value.encode("utf-8")).hexdigest()
+
+
+def _name_indexed_files(checkpoint: Any, rel_paths: tuple[str, ...]) -> None:
+    """Record real converged indexed evidence so a publication names files.
+
+    Routed through the production segment checkpoint rather than a direct file
+    state, because the ledger refuses an indexed state that no storage-
+    confirmed segment stands behind.
+    """
+    from ..._store_models import CodeChunk
+    from ...indexer._streaming import CodeFileSegment
+
+    for rel_path in rel_paths:
+        stem = rel_path.rpartition("/")[2].partition(".")[0]
+        chunk = CodeChunk(
+            id=f"unit-{stem}",
+            path=rel_path,
+            language="python",
+            content=f"value_{stem} = True",
+            line_start=1,
+            line_end=1,
+        )
+        checkpoint.record_confirmed_segment(
+            CodeFileSegment(rel_path, 0, (chunk,), 128, True),
+            _content_digest(rel_path),
+        )
+
+
+def _reach_ingestion_complete(checkpoint: Any) -> None:
+    """Advance the durable phase to where a crashed run leaves finalization."""
+    from ...indexer._run_ledger_models import FinalizationPhase
+
+    checkpoint.generation = checkpoint.ledger.advance_finalization(
+        checkpoint.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+
+
+class TestCodeReadsNeverMaterialiseAGhost:
+    """A read against an absent code collection must not create it."""
+
+    def test_counting_an_absent_collection_creates_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """Counting a served pointer that names nothing leaves nothing behind.
+
+        The loss shape this closes: a served pointer naming a collection that
+        is not in storage, and a count that answered by creating it. From that
+        instant the collection exists, holds zero points, and every guard that
+        compares counts sees a healthy empty index over a manifest naming
+        hundreds of files.
+        """
+        from ..._store_models import (
+            generation_code_collection,
+            publish_served_code_collection,
+        )
+        from ...store_runtime import VaultStore
+
+        probe = VaultStore(tmp_path)
+        try:
+            absent = generation_code_collection(probe.CODE_TABLE_NAME, "f" * 32)
+        finally:
+            probe.close()
+        publish_served_code_collection(tmp_path, absent)
+
+        store = VaultStore(tmp_path)
+        try:
+            assert absent == store.CODE_TABLE_NAME
+            assert not store.code_collection_exists()
+            assert store.count_code() == 0
+            assert store.count_code_files() == 0
+            assert store.get_all_code_ids() == set()
+            assert store.get_code_ids_by_paths({"src/a.py"}) == []
+            # Catches the read path creating what it failed to find: restore
+            # any ``ensure_code_table`` call inside the count/scan helpers and
+            # this assertion is the one that fires, because the collection is
+            # then present and permanently empty.
+            assert not store.code_collection_exists()
+        finally:
+            store.close()
+
+    def test_an_empty_collection_under_named_files_escalates(
+        self, tmp_path: Path
+    ) -> None:
+        """A zero claim over named files must not read as settled evidence.
+
+        Reproduces the latched state directly: the sidecar names files and
+        claims zero points, and the served collection holds zero. Every count
+        comparison is satisfied at zero, so only an explicit reading of
+        "empty under named files" can escalate.
+        """
+        from ..._index_breadth import code_meta_path
+        from ...indexer._code_meta import publish_meta_from_file_states
+        from ...indexer._content_policy import ContentKind
+        from ...indexer._file_state import FileState
+        from ...store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            publish_meta_from_file_states(
+                code_meta_path(tmp_path),
+                [
+                    FileState.indexed(
+                        f"src/named{index}.py",
+                        ContentKind.CODE,
+                        _content_digest(f"named{index}"),
+                    )
+                    for index in range(3)
+                ],
+                generation_id="f" * 32,
+                membership_epoch="membership-epoch",
+                content_epoch="content-epoch",
+                published_points_count=0,
+                published_files_count=0,
+            )
+            # Catches the guard being narrowed back to a count comparison:
+            # remove the empty-collection branch and the surviving
+            # ``live >= claimed`` test passes at 0 >= 0, so this fires.
+            assert _lifecycle(tmp_path, store).published_evidence_lost()
+        finally:
+            store.close()
+
+
+class TestResumedCodePublicationClaimsWhatItBuilt:
+    """A resumed finalization publishes its own generation, or nothing."""
+
+    def test_a_resumed_publication_counts_the_collection_it_built(
+        self, tmp_path: Path
+    ) -> None:
+        """Breadth and the pointer both follow the generation, not the pointer.
+
+        A run that dies between its stale reconcile and its pointer move
+        leaves a finished generation beside a still-served older one. The
+        resumed publication must measure the generation it built and hand the
+        pointer to it - measuring whatever the pointer currently resolves to
+        would stamp the older collection's figures under the new generation's
+        name.
+        """
+        from ..._index_breadth import read_code_breadth_claim
+        from ..._store_models import read_served_code_collection
+        from ...store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            checkpoint = _open_clean_code_generation(tmp_path)
+            lifecycle = _lifecycle(tmp_path, store)
+            build_target = lifecycle.build_collection(checkpoint)
+            assert build_target is not None
+            served_before = store.CODE_TABLE_NAME
+
+            store.ensure_code_table()
+            store.upsert_code_chunks(
+                _code_chunks(("old1", "old2"), prefix="old"),
+                write_policy=None,
+            )
+            store.ensure_code_table(build_target)
+            store.upsert_code_chunks(
+                _code_chunks(("n1", "n2", "n3", "n4", "n5"), prefix="new"),
+                write_policy=None,
+                collection=build_target,
+            )
+            _name_indexed_files(
+                checkpoint,
+                tuple(f"src/new/n{index}.py" for index in range(1, 6)),
+            )
+            _reach_ingestion_complete(checkpoint)
+
+            assert lifecycle.publish_pending_finalization(
+                checkpoint, reporter=NullProgressReporter()
+            )
+        finally:
+            store.close()
+
+        claim = read_code_breadth_claim(tmp_path)
+        assert claim is not None
+        # Catches the resumed publication counting the served pointer again:
+        # with ``count_code()`` restored in place of the build target, the
+        # figure recorded here is the older collection's, never five.
+        assert claim.published_points == 5
+        assert claim.named_files == 5
+        assert read_served_code_collection(tmp_path) == build_target
+        assert read_served_code_collection(tmp_path) != served_before
+
+    def test_a_resumed_publication_never_leaves_a_pointer_naming_another(
+        self, tmp_path: Path
+    ) -> None:
+        """The two writes of one publication must name the same generation.
+
+        The poisoned end-state is a sidecar and a served pointer naming
+        different generations, with the sidecar's generation having no
+        collection anywhere - the signature of a publication that recorded
+        breadth from one path and moved the pointer from another. Whatever
+        the run does, the manifest's generation must resolve to the served
+        collection when the publication returns.
+        """
+        from ..._index_breadth import read_code_breadth_claim
+        from ..._store_models import (
+            generation_code_collection,
+            publish_served_code_collection,
+            read_served_code_collection,
+        )
+        from ...store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            # A prior generation is already serving, exactly as one is when a
+            # replacement build begins.
+            prior = generation_code_collection(store.CODE_TABLE_NAME, "e" * 32)
+            store.ensure_code_table(prior)
+            publish_served_code_collection(tmp_path, prior)
+        finally:
+            store.close()
+
+        store = VaultStore(tmp_path)
+        try:
+            assert prior == store.CODE_TABLE_NAME
+            checkpoint = _open_clean_code_generation(tmp_path)
+            lifecycle = _lifecycle(tmp_path, store)
+            build_target = lifecycle.build_collection(checkpoint)
+            assert build_target is not None
+            assert build_target != prior
+            store.ensure_code_table(build_target)
+            store.upsert_code_chunks(
+                _code_chunks(("n1", "n2", "n3"), prefix="new"),
+                write_policy=None,
+                collection=build_target,
+            )
+            _name_indexed_files(
+                checkpoint,
+                tuple(f"src/new/n{index}.py" for index in range(1, 4)),
+            )
+            _reach_ingestion_complete(checkpoint)
+            assert lifecycle.publish_pending_finalization(
+                checkpoint, reporter=NullProgressReporter()
+            )
+        finally:
+            store.close()
+
+        claim = read_code_breadth_claim(tmp_path)
+        served = read_served_code_collection(tmp_path)
+        assert claim is not None
+        assert claim.generation_id is not None
+        assert served is not None
+        # Catches the pointer move being dropped from the resumed path: the
+        # sidecar would name this generation while the pointer still named
+        # the prior one, which is the live poisoned shape exactly.
+        assert generation_code_collection(prior, claim.generation_id) == served
+        # And no zero claim survives a publication that found its points.
+        assert claim.published_points == 3
+        assert claim.published_files == 3
+
+    def test_a_resumed_publication_over_a_missing_collection_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """A generation whose collection is gone is retired, never published.
+
+        This is the claim over a ghost: an ingestion-complete generation whose
+        build collection is not in storage, finalized anyway, leaving a
+        sidecar naming a generation storage has never held.
+        """
+        from ..._index_breadth import code_meta_path
+        from ...indexer._run_ledger_models import RunTerminalState
+        from ...store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            checkpoint = _open_clean_code_generation(tmp_path)
+            lifecycle = _lifecycle(tmp_path, store)
+            build_target = lifecycle.build_collection(checkpoint)
+            assert build_target is not None
+            assert not store.code_collection_exists(build_target)
+            _name_indexed_files(checkpoint, ("src/new/n1.py",))
+            _reach_ingestion_complete(checkpoint)
+
+            # Catches the refusal being dropped: publish unconditionally and
+            # this returns True, having written a sidecar that names a
+            # generation with no collection anywhere.
+            assert not lifecycle.publish_pending_finalization(
+                checkpoint, reporter=NullProgressReporter()
+            )
+            assert not code_meta_path(tmp_path).exists()
+            retired = checkpoint.ledger.generation(checkpoint.generation_id)
+            assert retired.terminal_state is RunTerminalState.INVALIDATED
+        finally:
+            store.close()

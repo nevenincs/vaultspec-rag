@@ -56,6 +56,8 @@ class _VaultCatalogMixin:
 
         def _code_collection(self, collection: str | None) -> str: ...
 
+        def _collection_exists(self, name: str) -> bool: ...
+
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
         def _scroll(self, **kwargs: Any) -> tuple[list[Record], Any]: ...
@@ -218,10 +220,13 @@ class _VaultCatalogMixin:
         """Return the set of all code chunk ``id`` values in the store.
 
         Returns:
-            Set of chunk IDs from the codebase_docs collection.
+            Set of chunk IDs from the targeted code collection, empty when it
+            does not exist. Creates nothing, for the same reason
+            :meth:`count_code` does not.
         """
         _target = self._code_collection(collection)
-        self.ensure_code_table()
+        if not self._collection_exists(_target):
+            return set()
         with self._point_lock(_target):
             return self._scroll_all_ids(_target, "chunk_id")
 
@@ -435,7 +440,8 @@ class _VaultCatalogMixin:
         if not rel_paths:
             return []
 
-        self.ensure_code_table()
+        if not self._collection_exists(_target):
+            return []
 
         scroll_filter = models.Filter(
             must=[
@@ -490,11 +496,19 @@ class _VaultCatalogMixin:
     def count_code(self, collection: str | None = None) -> int:
         """Return total number of indexed codebase chunks.
 
+        Reads the collection the call targets and creates nothing. An absent
+        collection counts zero, and stays absent: a read that created the name
+        it failed to find would convert "this index does not exist" into "this
+        index is empty", and every downstream guard compares counts, so the
+        fabricated empty collection then reads as a healthy small one.
+
         Returns:
-            Point count in the codebase_docs collection.
+            Point count in the targeted code collection, or ``0`` when it does
+            not exist.
         """
         _target = self._code_collection(collection)
-        self.ensure_code_table()
+        if not self._collection_exists(_target):
+            return 0
         return self._count_collection(_target)
 
     def count_code_files(self, collection: str | None = None) -> int:
@@ -507,10 +521,12 @@ class _VaultCatalogMixin:
         point count alone still looks self-consistent.
 
         Scans the collection, so it belongs on a publication path and not on a
-        query path.
+        query path. Creates nothing, for the same reason :meth:`count_code`
+        does not.
         """
         _target = self._code_collection(collection)
-        self.ensure_code_table()
+        if not self._collection_exists(_target):
+            return 0
         return len(self._scroll_all_ids(_target, "path"))
 
     def count_document(self) -> int:

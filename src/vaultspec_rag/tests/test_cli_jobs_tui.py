@@ -164,6 +164,9 @@ class _JobService:
         # ``None`` the key is omitted entirely, which is how a daemon older
         # than the field answers.
         self.gpu: dict[str, object] | None = None
+        # When set, the jobs listing carries this machine pressure block;
+        # ``None`` omits the key - a daemon that predates the tier.
+        self.pressure: dict[str, object] | None = None
         # What ``/health`` reports as the daemon's release. ``None`` omits
         # the field, which is how a daemon that predates version reporting
         # answers - not an empty string, and never the client's own number.
@@ -293,6 +296,7 @@ def _jobs_payload(
     with service._lock:
         held = list(service.jobs)
         gpu = service.gpu
+        pressure = service.pressure
     page = held[:limit]
     payload: dict[str, object] = {
         "ok": True,
@@ -305,6 +309,8 @@ def _jobs_payload(
     }
     if gpu is not None:
         payload["gpu"] = gpu
+    if pressure is not None:
+        payload["pressure"] = pressure
     return payload
 
 
@@ -1530,6 +1536,93 @@ class TestHeaderCounts:
         assert "gpu n/a" in painted
         assert "gpu —" not in painted, (
             "a probed host is a different answer from an unreporting daemon"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_pressured_machine_is_named_in_the_header(
+        self, control_service: _JobService
+    ) -> None:
+        control_service.pressure = {
+            "tier": "critical",
+            "entered_at": 1_000.0,
+            "evidence": {},
+        }
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "pressure critical" in painted, (
+            "the machine tier must be readable in the header while it is not nominal"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_nominal_machine_spends_no_header_width(
+        self, control_service: _JobService
+    ) -> None:
+        """The healthy steady state is the one that must stay silent.
+
+        Proven able to fail: dropping ``nominal`` from the silent set in
+        ``_pressure_cell`` - so the steady state claims a pill - paints
+        ``pressure nominal`` and fails the assertion below by name;
+        restored, it passes. The pill is not free: the header is already
+        at its widest fitting form, so a cell nobody needs sheds the state
+        labels somebody does.
+        """
+        control_service.pressure = {
+            "tier": "nominal",
+            "entered_at": 1_000.0,
+            "evidence": {},
+        }
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "pressure" not in painted, (
+            "a nominal machine must not spend header width saying so"
+        )
+        assert "▶ 1 running" in painted, (
+            "and the labels the pill would have cost must still be painted"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_daemon_without_the_tier_paints_no_pressure_cell(
+        self, control_service: _JobService
+    ) -> None:
+        """Absent is not a verdict, and must not be painted as any tier."""
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "pressure" not in painted, (
+            "a daemon that predates the tier must not grow a pressure cell"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_tier_this_build_does_not_know_is_still_painted(
+        self, control_service: _JobService
+    ) -> None:
+        """A newer daemon naming a worse state must not be swallowed.
+
+        Proven able to fail: matching ``_pressure_cell`` against a fixed set
+        of known tiers instead of rendering verbatim - the silence this
+        guards against - paints nothing and fails the assertion below by
+        name; restored, it passes.
+        """
+        control_service.pressure = {
+            "tier": "catastrophic",
+            "entered_at": 1_000.0,
+            "evidence": {},
+        }
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "pressure catastrophic" in painted, (
+            "an unrecognised tier is the service's verdict and is shown as given"
         )
 
     @pytest.mark.asyncio
