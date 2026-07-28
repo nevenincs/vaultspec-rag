@@ -449,7 +449,7 @@ class TestServiceTokenIdentity:
             "service_token absent" in r.getMessage()
             for r in caplog.records
             if r.name == "vaultspec_rag.cli"
-        ), "token-absent fallback must debug-log per the no-swallow rule"
+        ), "token-absent fallback must debug-log so the swallow stays observable"
         # Sanity: a result was returned (didn't raise).
         assert isinstance(result, bool)
 

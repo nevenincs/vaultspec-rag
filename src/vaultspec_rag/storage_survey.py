@@ -49,9 +49,10 @@ def is_temp_rooted(root: str | None) -> bool:
     A live temp-rooted namespace is the shared-backend leak signature: a test or
     demo harness indexed a throwaway directory into the shared server backend
     and never tore it down, and because the directory still exists it
-    classifies ``live`` and survives pruning forever. The flag is report-only
-    operator visibility - it never feeds any destructive path, per the
-    time-confirmed-danglingness rule.
+    classifies ``live`` and survives pruning forever. The flag feeds operator
+    reporting and selects the candidates for the ephemeral-idle reclamation
+    tier; deletion still requires the persisted idle window to elapse, never
+    this classification alone.
     """
     if root is None:
         return False

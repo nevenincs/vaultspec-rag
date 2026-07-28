@@ -134,11 +134,12 @@ def test_a_citation_is_reported_on_its_own_line_not_the_opening_quote(
 
 
 # Every construct a citation can sit in. The docstring positions and the comment
-# forms were already reached; the last five were not, and each was found blind by
-# probing rather than by reading the code - an f-string docstring and a
-# concatenated one parse to something other than a bare ``Constant``, and a
-# documentary argument and an exception message are strings the gate had no
-# reason to treat as prose until you notice an operator reads them.
+# forms were reached first; every row after them was found blind by probing
+# rather than by reading the code - an f-string docstring and a concatenated one
+# parse to something other than a bare ``Constant``, and a documentary argument,
+# an exception message, an assert message and a logging or warn or
+# outcome-helper message are strings the gate had no reason to treat as prose
+# until you notice an operator or a developer reads them.
 _CONSTRUCTS: tuple[tuple[str, str], ...] = (
     ("module docstring", '"""Head.\n\nSee {t}.\n"""\nX = 1\n'),
     ("module docstring first line", '"""Head {t}."""\nX = 1\n'),
@@ -165,6 +166,24 @@ _CONSTRUCTS: tuple[tuple[str, str], ...] = (
         'def o(**k: str) -> None: ...\no(help="See {t}.")\n',
     ),
     ("exception message", 'def f() -> None:\n    raise ValueError("See {t}.")\n'),
+    ("assert message", 'def f() -> None:\n    assert f, "See {t}."\n'),
+    (
+        "skip reason keyword",
+        'def o(**k: str) -> None: ...\no(reason="See {t}.")\n',
+    ),
+    (
+        "logging method message",
+        'import logging\nlogging.getLogger(__name__).warning("See {t}.")\n',
+    ),
+    (
+        "logger.log message behind the level",
+        'import logging\nlogging.getLogger(__name__).log(10, "See {t}.")\n',
+    ),
+    ("warn message", 'import warnings\nwarnings.warn("See {t}.")\n'),
+    (
+        "bare outcome-helper message",
+        'def fail(m: str) -> None: ...\nfail("See {t}.")\n',
+    ),
 )
 
 
@@ -175,8 +194,10 @@ def test_every_prose_construct_is_scanned(
     gate: ModuleType, tmp_path: Path, label: str, body: str
 ) -> None:
     """Mutation proving this can fail: drop ``ast.JoinedStr`` or ``ast.BinOp``
-    from the bare-statement check, or delete the documentary-keyword or the
-    ``ast.Raise`` branch. Each mutation reds exactly the rows it blinds.
+    from the bare-statement check, or delete the documentary-keyword branch,
+    the message-call scan, the ``ast.Assert`` branch, or the ``ast.Raise``
+    branch, or drop ``reason`` from ``DOC_KEYWORDS``. Each mutation reds
+    exactly the rows it blinds.
     """
     source = _write(tmp_path, "module.py", body.format(t=_STEM))
 
@@ -399,6 +420,30 @@ def test_a_vault_shaped_string_value_is_data_and_never_a_citation(
     assert gate.scan_file(source, repo_root=tmp_path) == []
 
 
+def test_a_log_substitution_argument_is_a_value_not_a_message(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """Only the message argument of a message call is prose.
+
+    The arguments after a log format string are the data being logged, and a
+    vault-shaped path routinely travels through one - that is the product
+    logging what it indexed. Scanning them would fail the gate on its own
+    telemetry, which is the same wholesale false-positive the value carve-out
+    exists to prevent.
+
+    Mutation proving this can fail: scan every positional argument of a message
+    call rather than only the message position.
+    """
+    source = _write(
+        tmp_path,
+        "module.py",
+        "import logging\n"
+        f'logging.getLogger(__name__).info("indexed %s", "adr/{_STEM}.md")\n',
+    )
+
+    assert gate.scan_file(source, repo_root=tmp_path) == []
+
+
 def test_product_vocabulary_and_instructional_prose_are_not_citations(
     gate: ModuleType, tmp_path: Path
 ) -> None:
@@ -440,6 +485,12 @@ _SURFACES: tuple[str, ...] = (
     "pyproject.toml",
     "justfile",
     ".github/workflows/ci.yml",
+    "scripts/run-recipe.ps1",
+    "config/settings.json",
+    ".env.example",
+    ".gitignore",
+    ".gitattributes",
+    ".vaultragignore",
 )
 
 
@@ -458,7 +509,17 @@ def test_every_product_surface_is_reached_by_the_walk(
     citations.
     """
     _git_tree(tmp_path)
-    comment = "#" if rel.endswith((".py", ".toml", ".yml", "justfile")) else ""
+    commented = (
+        ".py",
+        ".toml",
+        ".yml",
+        "justfile",
+        ".ps1",
+        ".example",
+        "ignore",
+        ".gitattributes",
+    )
+    comment = "#" if rel.endswith(commented) else ""
     _write(tmp_path, rel, f"{comment} See {_STEM} for why.\n")
 
     active, _deferred, _leaks, _smells = gate.collect_findings(tmp_path)
