@@ -31,18 +31,27 @@ class TestInterpreterIsSupported:
     @pytest.mark.parametrize(
         ("version", "supported"),
         [
-            ((3, 13, 11), True),
             ((3, 13, 0), True),
-            # 3.12 pre-dates the pinned floor, so it is rejected from below just
-            # as later lines are rejected from above.
+            ((3, 13, 11), True),
+            ((3, 14, 0), True),
+            ((3, 14, 6), True),
+            # 3.12 pre-dates the floor, so it is rejected from below just as
+            # untested later lines are rejected from above.
             ((3, 12, 0), False),
-            ((3, 14, 0), False),
             ((3, 15, 0), False),
             ((4, 0, 0), False),
         ],
-        ids=["3.13.11", "3.13.0", "3.12.0", "3.14.0", "3.15.0", "4.0.0"],
+        ids=[
+            "3.13.0",
+            "3.13.11",
+            "3.14.0",
+            "3.14.6",
+            "3.12.0",
+            "3.15.0",
+            "4.0.0",
+        ],
     )
-    def test_support_is_confined_to_the_pinned_line(
+    def test_support_spans_the_declared_range(
         self,
         version: tuple[int, int, int],
         supported: bool,
@@ -50,6 +59,41 @@ class TestInterpreterIsSupported:
         from ..store_runtime import _interpreter_is_supported
 
         assert _interpreter_is_supported(version) is supported
+
+    def test_guard_range_matches_requires_python(self) -> None:
+        """The guard and the packaging metadata must agree.
+
+        They are two halves of one declaration. If they drift, an interpreter
+        either installs and then refuses to run, or is locked out of an install
+        it could have served. Parsing the real ``requires-python`` is what makes
+        this a guard rather than a restatement of the constants.
+        """
+        import re
+        import tomllib
+        from pathlib import Path
+
+        from ..store_runtime import MAX_PYTHON_EXCLUSIVE, MIN_PYTHON
+
+        root = Path(__file__).resolve().parents[3]
+        pyproject = root / "pyproject.toml"
+        if not pyproject.is_file():  # installed without the source tree
+            pytest.skip("pyproject.toml is not present in this layout")
+
+        spec = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
+            "requires-python"
+        ]
+        floor = re.search(r">=\s*(\d+)\.(\d+)", spec)
+        ceiling = re.search(r"<\s*(\d+)\.(\d+)", spec)
+        assert floor is not None, f"no lower bound in requires-python: {spec!r}"
+        assert ceiling is not None, f"no upper bound in requires-python: {spec!r}"
+
+        assert (int(floor[1]), int(floor[2])) == MIN_PYTHON, (
+            f"requires-python floor {floor[0]!r} disagrees with MIN_PYTHON {MIN_PYTHON}"
+        )
+        assert (int(ceiling[1]), int(ceiling[2])) == MAX_PYTHON_EXCLUSIVE, (
+            f"requires-python ceiling {ceiling[0]!r} disagrees with "
+            f"MAX_PYTHON_EXCLUSIVE {MAX_PYTHON_EXCLUSIVE}"
+        )
 
 
 class TestStoreHelpers:

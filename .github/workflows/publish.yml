@@ -50,9 +50,24 @@ jobs:
           retention-days: 5
 
   smoke-test:
-    name: Smoke Test
+    name: Smoke Test (py${{ matrix.python-version }})
     needs: build
     runs-on: ubuntu-latest
+    strategy:
+      # One artifact, every supported interpreter. A leg that fails is the
+      # signal; cancelling the others hides whether the break is version-specific.
+      fail-fast: false
+      matrix:
+        # Must cover the whole `requires-python` range. This job installs the
+        # built artifact into a clean env and runs it, so it is the gate that
+        # catches "the wheel resolves but refuses to start on this interpreter"
+        # — the exact failure a single-version smoke test ships green.
+        python-version: ["3.13", "3.14"]
+    env:
+      # `--isolated` does not stop uv reading `.python-version` from the
+      # checkout, which pins the floor. Without this the 3.14 leg would
+      # silently smoke-test 3.13 and report success for a version it never ran.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -63,13 +78,25 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Install Python
-        run: uv python install 3.13
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Download dist artifacts
         uses: actions/download-artifact@v8.0.1
         with:
           name: dist
           path: dist/
+
+      # Guards the env pin above: without it a mis-set UV_PYTHON would test
+      # the floor twice and still go green.
+      - name: Verify the interpreter under test
+        run: |
+          uv run --isolated --no-project python -c "
+          import sys
+          want = '${{ matrix.python-version }}'
+          got = f'{sys.version_info[0]}.{sys.version_info[1]}'
+          assert got == want, f'expected Python {want}, got {got}'
+          print(f'smoke-testing under Python {sys.version.split()[0]}')
+          "
 
       - name: Smoke test (wheel)
         run: uv run --isolated --no-project --with dist/*.whl tests/smoke_check.py
