@@ -42,6 +42,8 @@ from .registry import get_registry
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import psutil
+
     from .index_profiles import SupportMeasurement
     from .indexer import CodebaseIndexer
     from .indexer._codebase_indexer import (
@@ -154,6 +156,22 @@ _MIN_RATE_SPAN_SECONDS = 1.0
 # spanning a real interval, without discarding the current count: the
 # newest sample always carries it.
 _PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS = 0.25
+# Mid-step progress writes are throttled per output, never gated on the step
+# name changing: a step-name gate admits exactly one write per phase, at the
+# instant the counter is zero by construction, so no advancing count ever
+# reaches the log or the durable snapshot. The two outputs want different
+# rates. The log line is one formatted string and ticks every few seconds,
+# giving a minutes-long phase a continuous signal at a bounded volume
+# (~12 lines/minute regardless of how fast the step reports). The snapshot
+# is an fsynced atomic file write, so it earns a longer interval: half a
+# minute bounds how much restored progress a daemon death can lose while
+# capping durable writes at two per minute per job. A step transition still
+# writes both immediately.
+_PROGRESS_LOG_MIN_INTERVAL_SECONDS = 5.0
+_PROGRESS_PERSIST_MIN_INTERVAL_SECONDS = 30.0
+# Last write times for the throttles above. Rides on the record like the
+# rate window, and is dropped from every copied projection the same way.
+_PROGRESS_EMIT_KEY = "progress_emitted"
 # Bounded backend-liveness probe for degradation evidence. The count runs on
 # its own daemon thread and the caller waits at most the timeout, so a dead or
 # wedged backend can never wedge the jobs surface that is reporting on it. The
@@ -169,6 +187,15 @@ _backend_probe_cache: dict[tuple[str, str], tuple[float, dict[str, object]]] = {
 _GPU_SNAPSHOT_CACHE_SECONDS = 5.0
 _gpu_snapshot_lock = threading.Lock()
 _gpu_snapshot_cache: tuple[float, dict[str, object]] | None = None
+# Service-process CPU utilisation for degradation evidence. ``cpu_percent``
+# measures the interval since its own previous call, so one persistent
+# process handle is kept and the reading is cached for a few seconds: polls
+# inside the window reuse the reading, and the gap between real samples is
+# what gives the measurement a meaningful span.
+_CPU_SNAPSHOT_CACHE_SECONDS = 5.0
+_cpu_snapshot_lock = threading.Lock()
+_cpu_snapshot_cache: tuple[float, dict[str, object]] | None = None
+_cpu_probe_process: psutil.Process | None = None
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
 _manager_lock = threading.Lock()
 _job_manager: JobManager | None = None
@@ -316,6 +343,20 @@ def restore_interrupted() -> int:
         with _lock:
             _records.append(record)
         restored += 1
+        # The record answers "why did this stop" and "who started it"; the
+        # log line must too, or the operator reading the log sees a bare
+        # interruption with no cause, no attribution, and no sense of how
+        # far the job had come or how long it had been running.
+        initiator = (
+            cast("dict[str, object]", raw_initiator)
+            if isinstance(raw_initiator := record.get("initiator"), dict)
+            else {}
+        )
+        progress = (
+            cast("dict[str, object]", raw_progress)
+            if isinstance(raw_progress := record.get("progress"), dict)
+            else {}
+        )
         log_event(
             logger,
             "service.job",
@@ -325,6 +366,14 @@ def restore_interrupted() -> int:
             source=record.get("source"),
             trigger=record.get("trigger"),
             phase="interrupted",
+            result=record.get("result"),
+            initiator_kind=initiator.get("kind"),
+            command=initiator.get("command"),
+            project_root=initiator.get("project_root"),
+            started_at=record.get("started_at"),
+            step=progress.get("step"),
+            completed=progress.get("completed"),
+            total=progress.get("total"),
         )
     # The prior life's snapshot is consumed; persist the (empty) current
     # running set so a second restart does not re-restore the same jobs.
@@ -518,16 +567,27 @@ def record_progress(
     step: str,
     completed: int = 0,
     total: int | None = None,
+    *,
+    now: float | None = None,
 ) -> None:
     """Update progress for an active running job.
+
+    Every call updates the in-memory record. The log line and the durable
+    snapshot are written immediately on a step transition and are otherwise
+    rate-limited independently, so an advancing counter stays visible in the
+    log and survives a daemon death without paying an fsync per batch.
 
     Args:
         record_id: The id returned by :func:`record_start`.
         step: Name of the current phase/step (e.g. "queued", "discover", "embed").
         completed: Count of items processed so far in this step.
         total: Total number of items to process, if known.
+        now: The moment the write throttles are judged against; defaults to
+            the wall clock. Injectable so throttling is testable without
+            sleeping.
     """
     log_fields: dict[str, object] | None = None
+    persist = False
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
@@ -536,21 +596,34 @@ def record_progress(
                 if isinstance(progress, dict):
                     progress_data = cast("dict[str, object]", progress)
                     progress_step = progress_data.get("step")
-                now = time.time()
+                moment = time.time() if now is None else now
                 record["progress"] = {
                     "step": step,
                     "completed": completed,
                     "total": total,
-                    "last_updated": now,
+                    "last_updated": moment,
                 }
                 _sample_progress(
                     record,
                     step=step,
                     previous_step=progress_step,
                     completed=completed,
-                    at=now,
+                    at=moment,
                 )
-                if progress_step != step:
+                step_changed = progress_step != step
+                raw_emitted = record.get(_PROGRESS_EMIT_KEY)
+                emitted = (
+                    cast("dict[str, float]", raw_emitted)
+                    if isinstance(raw_emitted, dict)
+                    else {}
+                )
+                last_logged = emitted.get("logged_at")
+                if (
+                    step_changed
+                    or last_logged is None
+                    or moment - last_logged >= _PROGRESS_LOG_MIN_INTERVAL_SECONDS
+                ):
+                    emitted["logged_at"] = moment
                     log_fields = {
                         "job_id": record_id,
                         "source": record.get("source"),
@@ -560,12 +633,19 @@ def record_progress(
                         "completed": completed,
                         "total": total,
                     }
+                last_persisted = emitted.get("persisted_at")
+                persist = (
+                    step_changed
+                    or last_persisted is None
+                    or moment - last_persisted >= _PROGRESS_PERSIST_MIN_INTERVAL_SECONDS
+                )
+                if persist:
+                    emitted["persisted_at"] = moment
+                record[_PROGRESS_EMIT_KEY] = emitted
                 break
-    if log_fields is not None:
-        # Step transitions are rare (a handful per run), so refreshing the
-        # durable snapshot here keeps restored progress meaningful without
-        # per-batch write churn.
+    if persist:
         _persist_active_snapshot()
+    if log_fields is not None:
         log_event(logger, "service.job", "progress", fields=log_fields)
 
 
@@ -757,11 +837,12 @@ def _copied_record(record: dict[str, object]) -> dict[str, object]:
     so no consumer can mutate live registry state through a returned view.
     """
     item = dict(record)
-    # Sampling state backs the rate estimate and is not part of the job
-    # resource. Dropping it in the shared copier keeps it off every
-    # projection built from a record, rather than relying on each caller
-    # to remember to exclude it.
+    # Sampling and write-throttle state back the rate estimate and the
+    # progress write cadence; neither is part of the job resource. Dropping
+    # them in the shared copier keeps them off every projection built from a
+    # record, rather than relying on each caller to remember to exclude them.
     item.pop(_PROGRESS_WINDOW_KEY, None)
+    item.pop(_PROGRESS_EMIT_KEY, None)
     prog = record.get("progress")
     if isinstance(prog, dict):
         item["progress"] = dict(cast("dict[str, object]", prog))
@@ -979,6 +1060,67 @@ def _gpu_evidence() -> dict[str, object]:
     }
 
 
+def _process_cpu_evidence(*, now: float | None = None) -> dict[str, object]:
+    """Sample this process's CPU utilisation for the evidence block.
+
+    A CPU- or I/O-bound step runs no forward pass, so during one the encode
+    window is structurally silent and its absence proves nothing. The service
+    process burning CPU is the liveness signal that is valid in every step,
+    and this is where it is measured. ``utilization_percent`` is relative to
+    one core and exceeds 100 when the process uses several. The first sample
+    only primes the counter and reports no reading rather than a fabricated
+    zero; ``available`` is ``False`` only when the process cannot be probed
+    at all.
+
+    Args:
+        now: The moment cache freshness is judged against; defaults to the
+            wall clock. Injectable so freshness is testable without sleeping.
+    """
+    global _cpu_snapshot_cache, _cpu_probe_process
+    moment = time.time() if now is None else now
+    with _cpu_snapshot_lock:
+        cached = _cpu_snapshot_cache
+        if (
+            cached is not None
+            and 0.0 <= moment - cached[0] < _CPU_SNAPSHOT_CACHE_SECONDS
+        ):
+            return dict(cached[1])
+        import psutil
+
+        reading: dict[str, object]
+        try:
+            process = _cpu_probe_process
+            primed = process is not None
+            if process is None:
+                process = psutil.Process()
+                _cpu_probe_process = process
+            percent = process.cpu_percent(interval=None)
+        except Exception:
+            reading = {"available": False, "utilization_percent": None}
+        else:
+            reading = {
+                "available": True,
+                "utilization_percent": round(float(percent), 1) if primed else None,
+            }
+        _cpu_snapshot_cache = (moment, reading)
+        return dict(reading)
+
+
+def _forward_pass_expected(step: str | None) -> bool | None:
+    """Whether the reported step runs model forward passes at all.
+
+    Encoding steps carry "embed" in their published names; every other step
+    is CPU- or I/O-bound work (scanning, hashing, purging, metadata writes)
+    in which an absent forward pass is the expected shape of the phase, not
+    evidence of a stall. ``None`` when the job has not reported a step, so a
+    renderer keeps the conservative reading rather than suppressing the
+    signal on no information.
+    """
+    if not isinstance(step, str) or not step.strip():
+        return None
+    return "embed" in step
+
+
 def _probe_backend_once(root: Path, source: str) -> dict[str, object]:
     """Run one time-bounded store count against *root*'s backend.
 
@@ -1048,17 +1190,28 @@ def degradation_evidence(
     forward: dict[str, object] | None,
     project_root: str | None,
     source: str,
+    step: str | None,
 ) -> dict[str, object]:
     """Attach sampled cause attribution to one unhealthy job verdict.
 
-    One shape, three independent findings: the forward-pass window and encode
-    thread (is the work alive), machine-wide GPU pressure (is the card
+    One shape, four independent findings: the forward-pass window and encode
+    thread (is the work alive), the service process's own CPU utilisation
+    (is anything running at all), machine-wide GPU pressure (is the card
     starved), and a bounded backend probe (is the store answering). Each
     section degrades to explicit absence on hosts or processes that cannot
     answer it, so the block's shape is stable for every renderer.
+
+    The forward section is phase-aware: ``expected`` says whether *step*
+    performs forward passes at all, so a CPU-bound phase is never judged by
+    the absence of a signal it structurally cannot produce - the CPU section
+    is the liveness reading that remains valid there.
     """
     return {
-        "forward": _forward_evidence(forward, now=now),
+        "forward": {
+            **_forward_evidence(forward, now=now),
+            "expected": _forward_pass_expected(step),
+        },
+        "cpu": _process_cpu_evidence(now=now),
         "gpu": _gpu_evidence(),
         "backend": _backend_evidence(project_root, source),
     }

@@ -529,6 +529,45 @@ class TestInterruptedJobRestore:
         assert isinstance(initiator, dict)
         assert cast("dict[str, object]", initiator)["command"] == "reindex_codebase"
 
+    def test_restore_logs_cause_attribution_and_progress(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The interruption log answers why, who, and how far it got.
+
+        The restored record always carried the explanatory result, the
+        initiator attribution, and the last known progress; the log line
+        used to discard all three, leaving an operator reading the log with
+        a bare interruption and no cause. Mutation check: reverting the
+        event to its bare four fields makes this fail on the ``result`` /
+        ``command`` / ``completed`` message assertions below, not on an
+        import; restoring the enriched fields returns it to green.
+        """
+        import logging
+
+        from ..jobs import restore_interrupted
+
+        job_id = job_recorded_by_a_now_dead_process()
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag.jobs"):
+            assert restore_interrupted() == 1
+        message = next(
+            record.getMessage()
+            for record in caplog.records
+            if "event=interrupted" in record.getMessage()
+        )
+        assert job_id in message
+        assert "daemon terminated while this job was running" in message
+        assert "initiator_kind=tool" in message
+        assert "command=reindex_codebase" in message
+        assert 'step="chunk + embed"' in message
+        assert "completed=137" in message
+        # The restored record reports the snapshot's mid-phase count, not
+        # zero: the durable snapshot now refreshes while a step advances.
+        restored = {r["id"]: r for r in snapshot()}[job_id]
+        progress = restored["progress"]
+        assert isinstance(progress, dict)
+        assert cast("dict[str, object]", progress)["completed"] == 137
+
     def test_finished_jobs_are_not_restored(self) -> None:
         from ..jobs import restore_interrupted
 
