@@ -198,20 +198,7 @@ def _apply_torch_install_state(
     elif state == TorchConfigState.CUSTOMISED:
         _handle_customised_state(pyproject, report)
     elif options.dry_run:
-        report.torch_config_action = TorchConfigAction.DRY_RUN
-        if not _direct_dep.has_direct_torch_dep(pyproject)[0]:
-            preview_location = (
-                f"[dependency-groups].{options.torch_group}"
-                if options.torch_group is not None
-                else "[project].dependencies"
-            )
-            report.warnings.append(
-                "(dry-run preview) torch-config would add "
-                f"direct dependency `{DIRECT_TORCH_REQUIREMENT}` to "
-                f"{preview_location} so uv applies the cu130 source pin."
-            )
-            if options.torch_group is not None:
-                report.warnings.append(_inert_pin_warning(options.torch_group))
+        _handle_dry_run_state(pyproject, report, options)
     elif _confirm_torch_patch(
         pyproject,
         report,
@@ -219,23 +206,57 @@ def _apply_torch_install_state(
         options.force,
         options.confirm,
     ):
-        try:
-            patch_report = _mutate.apply_patch(pyproject)
-        except Exception as exc:
-            logger.error("torch_config.apply_patch failed: %s", exc)
-            report.torch_config_action = TorchConfigAction.ERROR
-            report.warnings.append(f"torch-config write failed: {exc}")
-        else:
-            report.torch_config_action = patch_report.action
-            report.torch_config_conflicts = list(patch_report.conflicts)
-            if patch_report.action == "applied":
-                # The patch landed; now ensure uv applies its source pin.
-                _ensure_torch_direct_dep(pyproject, report, options.torch_group)
-                if options.sync_after and report.torch_direct_dep_action in {
-                    "already",
-                    "applied",
-                }:
-                    _run_uv_sync_torch(target=target, report=report)
+        _handle_confirmed_patch(pyproject, target, report, options)
+
+
+def _handle_dry_run_state(
+    pyproject: Path,
+    report: InstallReport,
+    options: TorchInstallOptions,
+) -> None:
+    """Preview the patch that would land, touching nothing on disk."""
+    report.torch_config_action = TorchConfigAction.DRY_RUN
+    if _direct_dep.has_direct_torch_dep(pyproject)[0]:
+        return
+    preview_location = (
+        f"[dependency-groups].{options.torch_group}"
+        if options.torch_group is not None
+        else "[project].dependencies"
+    )
+    report.warnings.append(
+        "(dry-run preview) torch-config would add "
+        f"direct dependency `{DIRECT_TORCH_REQUIREMENT}` to "
+        f"{preview_location} so uv applies the cu130 source pin."
+    )
+    if options.torch_group is not None:
+        report.warnings.append(_inert_pin_warning(options.torch_group))
+
+
+def _handle_confirmed_patch(
+    pyproject: Path,
+    target: Path,
+    report: InstallReport,
+    options: TorchInstallOptions,
+) -> None:
+    """Write the cu130 patch, then carry an applied patch through to uv."""
+    try:
+        patch_report = _mutate.apply_patch(pyproject)
+    except Exception as exc:
+        logger.error("torch_config.apply_patch failed: %s", exc)
+        report.torch_config_action = TorchConfigAction.ERROR
+        report.warnings.append(f"torch-config write failed: {exc}")
+        return
+    report.torch_config_action = patch_report.action
+    report.torch_config_conflicts = list(patch_report.conflicts)
+    if patch_report.action != "applied":
+        return
+    # The patch landed; now ensure uv applies its source pin.
+    _ensure_torch_direct_dep(pyproject, report, options.torch_group)
+    if options.sync_after and report.torch_direct_dep_action in {
+        "already",
+        "applied",
+    }:
+        _run_uv_sync_torch(target=target, report=report)
 
 
 def _inert_pin_warning(torch_group: str) -> str:

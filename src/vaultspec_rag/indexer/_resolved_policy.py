@@ -130,30 +130,18 @@ def _freeze_temporal(
     return ("time", value.isoformat())
 
 
-def _freeze_option(value: object) -> CanonicalOption:
-    """Freeze one option with explicit type tags for hashing and pickling."""
-    if value is None:
-        return ("none", None)
-    if isinstance(value, Mapping):
-        mapping = cast("Mapping[object, object]", value)
-        items: list[tuple[str, CanonicalOption]] = []
-        for key, nested in mapping.items():
-            if not isinstance(key, str):
-                raise TypeError("preprocess option mapping keys must be strings")
-            items.append((key, _freeze_option(nested)))
-        return ("mapping", tuple(sorted(items)))
-    if isinstance(value, list):
-        return (
-            "list",
-            tuple(_freeze_option(item) for item in cast("list[object]", value)),
-        )
-    if isinstance(value, tuple):
-        return (
-            "tuple",
-            tuple(_freeze_option(item) for item in cast("tuple[object, ...]", value)),
-        )
-    if isinstance(value, (datetime.date, datetime.time)):
-        return _freeze_temporal(value)
+def _freeze_mapping(mapping: Mapping[object, object]) -> CanonicalOption:
+    """Freeze one option mapping, rejecting any non-string key."""
+    items: list[tuple[str, CanonicalOption]] = []
+    for key, nested in mapping.items():
+        if not isinstance(key, str):
+            raise TypeError("preprocess option mapping keys must be strings")
+        items.append((key, _freeze_option(nested)))
+    return ("mapping", tuple(sorted(items)))
+
+
+def _freeze_scalar(value: object) -> CanonicalOption:
+    """Freeze one option scalar, rejecting any unsupported type."""
     scalar_tags: tuple[
         tuple[type[object], Literal["bool", "int", "float", "str"]], ...
     ] = (
@@ -170,6 +158,27 @@ def _freeze_option(value: object) -> CanonicalOption:
         f"unsupported preprocess option type {type(value).__module__}."
         f"{type(value).__qualname__}"
     )
+
+
+def _freeze_option(value: object) -> CanonicalOption:
+    """Freeze one option with explicit type tags for hashing and pickling."""
+    if value is None:
+        return ("none", None)
+    if isinstance(value, Mapping):
+        return _freeze_mapping(cast("Mapping[object, object]", value))
+    if isinstance(value, list):
+        return (
+            "list",
+            tuple(_freeze_option(item) for item in cast("list[object]", value)),
+        )
+    if isinstance(value, tuple):
+        return (
+            "tuple",
+            tuple(_freeze_option(item) for item in cast("tuple[object, ...]", value)),
+        )
+    if isinstance(value, (datetime.date, datetime.time)):
+        return _freeze_temporal(value)
+    return _freeze_scalar(value)
 
 
 def _thaw_temporal(
