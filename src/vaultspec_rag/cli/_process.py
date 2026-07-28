@@ -381,10 +381,10 @@ def _resolve_daemon_interpreter() -> str:
     keeps the spawn working in editable installs and bare-interpreter
     invocations at the cost of not guaranteeing the venv Python.
 
-    Why not ``sys.executable`` directly: on Windows, ``sys.executable``
-    can resolve to the system launcher (Python 3.14) rather than the
-    project-pinned venv (3.13), triggering a ``protobuf`` metaclass
-    ``TypeError`` on daemon import.
+    Why not ``sys.executable`` directly: on Windows it can resolve to the
+    system launcher rather than the project venv, so the daemon would run
+    against whatever interpreter is first on PATH and inherit none of the
+    venv's pinned, GPU-built dependencies.
     """
     scripts = sysconfig.get_path("scripts")
     if scripts:

@@ -13,7 +13,7 @@ import time
 import warnings
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from . import store_schema
 from ._store_locks import (
@@ -128,47 +128,63 @@ def suppress_local_qdrant_warnings() -> Generator[None]:
         yield
 
 
-def _interpreter_is_supported(version_info: Sequence[int | str]) -> bool:
-    """Return True when *version_info* is compatible with the pinned stack.
+# The interpreter range this stack is built and tested against, and the single
+# source of truth for the guard below. Keep in step with ``requires-python`` in
+# pyproject.toml: the guard is the runtime half of that declaration, and the two
+# disagreeing means an interpreter installs cleanly and then refuses to run.
+#
+# The floor is the oldest syntax and stdlib the code uses. The exclusive ceiling
+# is the first interpreter nobody has run the suite on — it is a statement about
+# what was tested, NOT about a known defect, so raising it is a matter of adding
+# the version to the CI matrix and moving this tuple.
+MIN_PYTHON: Final[tuple[int, int]] = (3, 13)
+MAX_PYTHON_EXCLUSIVE: Final[tuple[int, int]] = (3, 15)
 
-    The pinned stack requires CPython 3.13.x (``requires-python = ">=3.13"`` in
-    ``pyproject.toml``).  CPython 3.14+ breaks ``qdrant_client`` at import time via a
-    ``protobuf`` metaclass incompatibility; the guard in ``_check_rag_deps`` converts
-    that opaque ``TypeError`` into an actionable ``RuntimeError`` before the import is
-    ever attempted.
+
+def _format_version_range() -> str:
+    """Render the supported range the way ``requires-python`` spells it."""
+    return (
+        f">={MIN_PYTHON[0]}.{MIN_PYTHON[1]},"
+        f"<{MAX_PYTHON_EXCLUSIVE[0]}.{MAX_PYTHON_EXCLUSIVE[1]}"
+    )
+
+
+def _interpreter_is_supported(version_info: Sequence[int | str]) -> bool:
+    """Return True when *version_info* falls in the supported range.
 
     Args:
         version_info: A ``(major, minor, ...)`` tuple — pass ``sys.version_info`` or a
             plain ``(major, minor, micro)`` tuple in tests.
 
     Returns:
-        ``True`` for 3.13.x, ``False`` for anything < 3.13 or >= 3.14.
+        ``True`` for any interpreter in ``[MIN_PYTHON, MAX_PYTHON_EXCLUSIVE)``.
     """
-    major, minor = int(version_info[0]), int(version_info[1])
-    return major == 3 and minor == 13
+    version = (int(version_info[0]), int(version_info[1]))
+    return MIN_PYTHON <= version < MAX_PYTHON_EXCLUSIVE
 
 
 def _check_rag_deps() -> None:
     """Raise if the interpreter is unsupported or qdrant-client is not installed.
 
-    The guard runs *before* importing ``qdrant_client`` so that a CPython 3.14+
-    interpreter produces an actionable ``RuntimeError`` rather than the opaque
-    ``TypeError: Metaclasses with custom tp_new are not supported`` that protobuf
-    raises on import.
+    The guard runs *before* importing ``qdrant_client`` so that an out-of-range
+    interpreter names itself, rather than surfacing as whichever native extension
+    happens to lack a wheel for that ABI.
 
     Raises:
-        RuntimeError: If the running interpreter is not CPython 3.13.x.
+        RuntimeError: If the running interpreter is outside the supported range.
         ImportError: If ``qdrant-client`` is not available.
     """
     import sys
 
     if not _interpreter_is_supported(sys.version_info):
+        running = f"{sys.version_info[0]}.{sys.version_info[1]}"
         raise RuntimeError(
-            "vaultspec-rag requires CPython 3.13.x (>=3.13,<3.14); CPython 3.14+ "
-            "breaks qdrant-client at import.  The running interpreter is "
-            f"{sys.version!r}.  "
-            "Run the service via 'uv run vaultspec-rag ...' so that uv selects the "
-            "pinned interpreter from the project's virtual environment."
+            f"vaultspec-rag supports CPython {_format_version_range()}; the running "
+            f"interpreter is {running} ({sys.version.split()[0]}).  "
+            "Install under a supported interpreter — 'uv tool install --python "
+            f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]} vaultspec-rag[mcp]' for a tool "
+            "install, or run via 'uv run vaultspec-rag ...' inside a project so uv "
+            "selects the interpreter from its virtual environment."
         )
     try:
         import qdrant_client
