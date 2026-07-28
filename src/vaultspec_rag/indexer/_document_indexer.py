@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -16,7 +15,7 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import get_index_support_profile
 from ..job_control import NO_RUN_CONTROL
-from . import _chunk_worker, _preprocess_glue
+from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
 from ._document_checkpoint import DocumentRunCheckpoint, DocumentRunConfiguration
 from ._document_meta import (
@@ -309,6 +308,7 @@ class DocumentIndexer:
 
         self._data_root = self.root_dir / get_config().data_dir
         self._meta_path = document_metadata_path(self.root_dir)
+        self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         self._last_checkpoint: DocumentRunCheckpoint | None = None
         self._memory_budget: MemoryBudget | None = None
         # Per-run donor reuse state: resolved once per public run entry and
@@ -479,11 +479,6 @@ class DocumentIndexer:
         if normalized != authority.changed_paths:
             raise ValueError("document index scope does not match its preflight")
         return authority.policy, authority.changed_paths
-
-    @staticmethod
-    def _hash_path(path: pathlib.Path) -> str:
-        with path.open("rb") as stream:
-            return hashlib.file_digest(stream, "blake2b").hexdigest()
 
     @staticmethod
     def _support_limits() -> SupportProfileLimits:
@@ -897,12 +892,24 @@ class DocumentIndexer:
         }
         if scoped:
             return set(discovered)
+        # The unscoped selection sees the full discovered membership, so it
+        # both consults the stat-evidence gate and prunes its evidence for
+        # files that no longer exist.
+        gate = _stat_gate.StatEvidenceGate.load(self._stat_gate_path)
         selected = {
             rel
             for rel, path in discovered.items()
             if rel not in previous_files
-            or self._hash_path(path) != previous_files[rel].content_fingerprint
+            or gate.hash_file(rel, path) != previous_files[rel].content_fingerprint
         }
+        gate.prune(discovered.keys())
+        gate.persist()
+        if gate.reused:
+            logger.debug(
+                "stat gate reused %d document hashes, rehashed %d",
+                gate.reused,
+                gate.rehashed,
+            )
         selected.update(set(previous_files) - set(discovered))
         return selected
 

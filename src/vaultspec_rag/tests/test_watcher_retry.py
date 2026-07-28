@@ -344,7 +344,9 @@ async def test_cancelled_contended_admission_settles_committed_claim(
         assert holder.returncode == 0
         assert policy.state.attempt_generation is None
         assert policy.state.convergence_pending
-        assert policy.state.unscoped_required
+        # The cancelled admission settles in the live process, whose slot
+        # still holds the dirty paths, so the durable intent stays scoped.
+        assert not policy.state.unscoped_required
         next_attempt = policy.admit()
         assert next_attempt.admitted
         assert next_attempt.attempt_generation is not None
@@ -502,10 +504,13 @@ def test_restored_unknown_scope_is_not_narrowed_by_new_event(tmp_path: Path) -> 
     assert decision.requires_unscoped
 
 
-def test_interruption_releases_claim_and_preserves_unknown_scope(
+def test_interruption_retains_scoped_intent_for_the_marking_instance(
     tmp_path: Path,
 ) -> None:
-    policy = _policy(tmp_path / "code.json", tmp_path)
+    """A live interruption keeps scoped convergence; only a fresh instance
+    without the volatile paths is promoted to unscoped."""
+    state_path = tmp_path / "code.json"
+    policy = _policy(state_path, tmp_path)
     policy.mark_convergence_pending(now=0.0)
     attempt = policy.admit(now=0.0)
     assert attempt.attempt_generation is not None
@@ -514,8 +519,41 @@ def test_interruption_releases_claim_and_preserves_unknown_scope(
     assert state.attempt_generation is None
     assert state.consecutive_failures == 0
     assert state.convergence_pending
-    assert state.unscoped_required
-    assert policy.admit(now=1.0).admitted
+    # The marking instance still holds the exact dirty paths in its
+    # convergence slot, so the interruption must not force a full-tree pass.
+    assert not state.unscoped_required
+    retry = policy.admit(now=1.0)
+    assert retry.admitted
+    assert not retry.requires_unscoped
+    assert retry.attempt_generation is not None
+    policy.record_interrupted(retry.attempt_generation, now=2.0)
+
+    # A replacement instance never held those paths, so construction over the
+    # durable pending bit promotes the intent to unscoped.
+    replacement = _policy(state_path, tmp_path, now=3.0)
+    assert replacement.state.convergence_pending
+    assert replacement.state.unscoped_required
+    assert replacement.admit(now=3.0).requires_unscoped
+
+
+def test_success_with_mid_attempt_event_stays_scoped(tmp_path: Path) -> None:
+    """A generation marked mid-attempt by the same instance converges scoped."""
+    policy = _policy(tmp_path / "code.json", tmp_path)
+    policy.mark_convergence_pending(now=0.0)
+    attempt = policy.admit(now=0.0)
+    assert attempt.attempt_generation == 1
+
+    newer = policy.mark_convergence_pending(now=1.0)
+    assert newer.convergence_generation == 2
+    settled = policy.record_success(1, now=2.0)
+    assert settled.convergence_pending
+    # The instance that marked generation 2 still holds its exact paths, so
+    # the follow-up convergence must not be forced to a full-tree pass.
+    assert not settled.unscoped_required
+    follow_up = policy.admit(now=2.0)
+    assert follow_up.admitted
+    assert follow_up.attempt_generation == 2
+    assert not follow_up.requires_unscoped
 
 
 def test_malformed_state_fails_closed_without_overwrite(tmp_path: Path) -> None:
