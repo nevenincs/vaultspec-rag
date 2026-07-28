@@ -7,6 +7,7 @@ leaves behind - no hand-rolled stand-ins for the manifest shape.
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING
 
 import pytest
@@ -14,9 +15,11 @@ import pytest
 from .._index_breadth import code_meta_path
 from .._index_integrity import (
     REASON_COUNT_UNAVAILABLE,
+    REASON_FILE_COVERAGE_SHORTFALL,
     REASON_MANIFEST_INCOMPLETE,
     REASON_NO_CLAIM,
     REASON_NO_MANIFEST,
+    REASON_ZERO_CLAIM_OVER_NAMED_FILES,
     VERDICT_CONSISTENT,
     VERDICT_SHRUNKEN,
     VERDICT_UNVERIFIABLE,
@@ -24,12 +27,14 @@ from .._index_integrity import (
 )
 from .._source_types import PublicSourceType
 from ..indexer._code_meta import publish_meta_from_file_states
+from ..indexer._content_policy import ContentKind
 from ..indexer._document_meta import (
     DocumentFileMetadata,
     DocumentIndexMetadata,
     document_metadata_path,
     write_document_meta,
 )
+from ..indexer._file_state import FileState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,21 +42,36 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
+def _indexed_states(count: int) -> list[FileState]:
+    """Return *count* real converged indexed code states for the prod writer."""
+    return [
+        FileState.indexed(
+            f"src/named{index:05d}.py",
+            ContentKind.CODE,
+            hashlib.blake2b(f"named{index}".encode()).hexdigest(),
+        )
+        for index in range(count)
+    ]
+
+
 def _publish_code_claim(
     root: Path,
     *,
     points: int,
     generation_id: str = "generation-test",
+    named_files: int = 0,
+    covered_files: int | None = None,
 ) -> None:
     """Publish a real code sidecar claiming *points* through the prod writer."""
     meta_path = code_meta_path(root)
     publish_meta_from_file_states(
         meta_path,
-        [],
+        _indexed_states(named_files),
         generation_id=generation_id,
         membership_epoch="membership-epoch",
         content_epoch="content-epoch",
         published_points_count=points,
+        published_files_count=covered_files,
     )
 
 
@@ -127,6 +147,94 @@ class TestCodeClassification:
             tmp_path, PublicSourceType.CODE, 4, claim_ttl_seconds=0.0
         )
         assert verdict.verdict == VERDICT_SHRUNKEN
+
+    def test_a_zero_claim_over_named_files_is_shrunken(self, tmp_path: Path) -> None:
+        """The latched shape: zero points and zero coverage over named files.
+
+        A publication counts the collection after storage reconciliation, so
+        this pair cannot come from a complete one. Left to the count
+        comparison it satisfies ``live >= claimed`` at every live count there
+        is, most of all at zero, and stays satisfied forever.
+        """
+        _publish_code_claim(tmp_path, points=0, named_files=589, covered_files=0)
+        verdict = evaluate_index_integrity(
+            tmp_path, PublicSourceType.CODE, 0, claim_ttl_seconds=0.0
+        )
+        # Catches the self-contradiction branch being removed: without it the
+        # surviving ``live_count >= claim.claimed`` test passes at 0 >= 0 and
+        # the verdict comes back "consistent", which is what this fires on.
+        assert verdict.verdict == VERDICT_SHRUNKEN
+        assert verdict.reason == REASON_ZERO_CLAIM_OVER_NAMED_FILES
+        assert verdict.named_files == 589
+        assert verdict.covered_files == 0
+        block = verdict.as_block()
+        assert block["named_files"] == 589
+        assert block["covered_files"] == 0
+        # Catches a point deficit being invented from figures that never
+        # described one: claimed minus live is zero here, and negative
+        # whenever the collection holds anything at all.
+        assert "missing_count" not in block
+
+    def test_a_contradicted_manifest_names_no_point_deficit(
+        self, tmp_path: Path
+    ) -> None:
+        _publish_code_claim(tmp_path, points=0, named_files=4, covered_files=0)
+        block = evaluate_index_integrity(
+            tmp_path, PublicSourceType.CODE, 900, claim_ttl_seconds=0.0
+        ).as_block()
+        assert "missing_count" not in block
+
+    def test_a_zero_claim_is_shrunken_against_a_populated_collection(
+        self, tmp_path: Path
+    ) -> None:
+        # The contradiction is inside the manifest, so no live count can
+        # settle it - catches the branch being gated on an empty collection.
+        _publish_code_claim(tmp_path, points=0, named_files=4, covered_files=0)
+        verdict = evaluate_index_integrity(
+            tmp_path, PublicSourceType.CODE, 900, claim_ttl_seconds=0.0
+        )
+        assert verdict.verdict == VERDICT_SHRUNKEN
+        assert verdict.reason == REASON_ZERO_CLAIM_OVER_NAMED_FILES
+
+    def test_recorded_coverage_below_the_named_files_is_shrunken(
+        self, tmp_path: Path
+    ) -> None:
+        # A publication covering a fraction of its named files still stamps a
+        # self-consistent point total, so only the file figures disagree.
+        _publish_code_claim(tmp_path, points=7, named_files=5, covered_files=2)
+        verdict = evaluate_index_integrity(
+            tmp_path, PublicSourceType.CODE, 7, claim_ttl_seconds=0.0
+        )
+        assert verdict.verdict == VERDICT_SHRUNKEN
+        assert verdict.reason == REASON_FILE_COVERAGE_SHORTFALL
+
+    def test_an_unrecorded_coverage_figure_is_not_a_claim_of_zero(
+        self, tmp_path: Path
+    ) -> None:
+        """An absent coverage key is ignorance and must never escalate.
+
+        This is the distinction the recorded zero above turns on: a build that
+        never wrote the key has said nothing about coverage, and escalating
+        there would rebuild every root written before it existed.
+        """
+        _publish_code_claim(tmp_path, points=7, named_files=5, covered_files=None)
+        verdict = evaluate_index_integrity(
+            tmp_path, PublicSourceType.CODE, 7, claim_ttl_seconds=0.0
+        )
+        # Catches the absent figure being defaulted to zero anywhere between
+        # the sidecar parse and the verdict: it would read shrunken here.
+        assert verdict.verdict == VERDICT_CONSISTENT
+        assert verdict.covered_files is None
+
+    def test_a_zero_claim_over_no_named_files_is_consistent(
+        self, tmp_path: Path
+    ) -> None:
+        # A genuinely empty index claims zero over zero files and is whole.
+        _publish_code_claim(tmp_path, points=0, named_files=0, covered_files=0)
+        verdict = evaluate_index_integrity(
+            tmp_path, PublicSourceType.CODE, 0, claim_ttl_seconds=0.0
+        )
+        assert verdict.verdict == VERDICT_CONSISTENT
 
     def test_no_sidecar_is_unverifiable(self, tmp_path: Path) -> None:
         verdict = evaluate_index_integrity(

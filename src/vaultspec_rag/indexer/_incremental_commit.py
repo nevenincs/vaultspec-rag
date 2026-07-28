@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from ..job_control import NO_RUN_CONTROL, RunControlSignal
 from ._consumer_pipeline import UnsettledCodeConsumerError
-from ._route_migration import reconcile_generation_storage
 from ._run_ledger_models import CommitUnitKind
 
 if TYPE_CHECKING:
@@ -31,8 +30,6 @@ if TYPE_CHECKING:
     from ._generation_lifecycle import CodeGenerationLifecycle
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_checkpoint import CodeRunCheckpoint
-
-from ._content_policy import ContentKind
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +93,6 @@ class CodeIncrementalCommit:
         self,
         store: VaultStore,
         lifecycle: CodeGenerationLifecycle,
-        meta_path: pathlib.Path,
         chunk_and_embed: Callable[
             [list[pathlib.Path], CodePipelineRun], tuple[set[str], int, dict[str, str]]
         ],
@@ -107,10 +103,9 @@ class CodeIncrementalCommit:
         Args:
             store: Vector store the confirmed delta is deleted from and
                 counted against.
-            lifecycle: The root's generation lifecycle, for drift ownership
-                and checkpointed point-id evidence.
-            meta_path: Carried code-index metadata sidecar, stamped by a
-                checkpointed publication.
+            lifecycle: The root's generation lifecycle, which owns drift,
+                checkpointed point-id evidence, and the one publication a
+                checkpointed run stamps its sidecar through.
             chunk_and_embed: Streams changed paths through the chunk+embed
                 pipeline, returning the published ids, a count, and the
                 published content hashes.
@@ -118,7 +113,6 @@ class CodeIncrementalCommit:
         """
         self._store = store
         self._lifecycle = lifecycle
-        self._meta_path = meta_path
         self._chunk_and_embed = chunk_and_embed
         self._write_meta = write_meta
 
@@ -302,31 +296,29 @@ class CodeIncrementalCommit:
                     request.reporter.advance(request.files_count)
                 finally:
                     request.reporter.phase_end()
-                request.reporter.phase_start("write metadata", 1)
-                try:
-                    if request.checkpoint is None:
+                if request.checkpoint is None:
+                    request.reporter.phase_start("write metadata", 1)
+                    try:
                         self._write_meta(
                             request.metadata,
                             policy=request.policy,
                             published_points=self._store.count_code(),
                             published_files=self._store.count_code_files(),
                         )
-                    else:
-                        reconcile_generation_storage(
-                            self._store,
-                            request.checkpoint,
-                            request.policy,
-                            ContentKind.CODE,
-                        )
-                        request.checkpoint.publish_metadata(
-                            self._meta_path,
-                            published_points=self._store.count_code(),
-                            published_files=self._store.count_code_files(),
-                        )
-                        request.checkpoint.publish_generation()
-                    request.reporter.advance(1)
-                finally:
-                    request.reporter.phase_end()
+                        request.reporter.advance(1)
+                    finally:
+                        request.reporter.phase_end()
+                else:
+                    # An incremental writes into the served collection, so it
+                    # has no build target and moves no pointer - but it goes
+                    # through the one publication that owns the reconcile,
+                    # both counted figures, and the generation certification.
+                    self._lifecycle.publish(
+                        request.checkpoint,
+                        build_target=None,
+                        reporter=request.reporter,
+                        phase_label="write metadata",
+                    )
         except RunControlSignal:
             if not commit_started and request.checkpoint is None:
                 introduced_ids = sorted(request.published_ids - request.existing_ids)

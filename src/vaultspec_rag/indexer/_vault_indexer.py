@@ -22,6 +22,11 @@ from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs
 )
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
+from .._index_breadth import (
+    VAULT_PUBLISHED_DOCUMENTS_KEY,
+    VAULT_PUBLISHED_POINTS_KEY,
+    vault_meta_path,
+)
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _config_epoch, _stat_gate
@@ -152,10 +157,6 @@ class VaultIndexer:
                 expected - same-thread re-entry would deadlock; the
                 indexer never nests its own GPU acquisitions.
         """
-        from ..config._settings import get_config
-
-        cfg = get_config()
-
         self.root_dir = root_dir
         self.model = model
         self.store = store
@@ -169,7 +170,7 @@ class VaultIndexer:
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
-        self._meta_path = root_dir / cfg.data_dir / cfg.index_metadata_file
+        self._meta_path = vault_meta_path(root_dir)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
@@ -603,11 +604,11 @@ class VaultIndexer:
                 reporter.advance(len(deleted_ids))
 
         with _controlled_phase(reporter, run_control, "write metadata", 1):
-            self._write_meta(current_hashes, run_control=run_control)
+            # The publication's own count, so the reported total and the
+            # breadth claim beside it describe one instant of the collection.
+            total = self._write_meta(current_hashes, run_control=run_control)
             reporter.advance(1)
 
-        run_control.checkpoint()
-        total = self.store.count()
         run_control.checkpoint()
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
@@ -934,11 +935,11 @@ class VaultIndexer:
             run_control.checkpoint()
             new_meta.pop(doc_id, None)
         with _controlled_phase(reporter, run_control, "write metadata", 1):
-            self._write_meta(new_meta, run_control=run_control)
+            # The publication's own count, so the reported total and the
+            # breadth claim beside it describe one instant of the collection.
+            total = self._write_meta(new_meta, run_control=run_control)
             reporter.advance(1)
 
-        run_control.checkpoint()
-        total = self.store.count()
         run_control.checkpoint()
         duration_ms = int((time.time() - start) * 1000)
         return IndexResult(
@@ -975,7 +976,7 @@ class VaultIndexer:
         docs: list[VaultDocument],
         *,
         run_control: RunControl = NO_RUN_CONTROL,
-    ) -> None:
+    ) -> int:
         """Save index metadata (content hashes) from VaultDocument list.
 
         Resolves each document's blake2b hash through the stat-evidence gate
@@ -990,9 +991,13 @@ class VaultIndexer:
             docs: List of indexed documents whose paths are used to
                 compute hashes.
 
+        Returns:
+            The point count the publication claims, as ``_write_meta``
+            observed it.
+
         Raises:
-            OSError: If the metadata file cannot be written (propagated
-                from ``_write_meta``).
+            OSError: If the collection cannot be counted or the metadata file
+                cannot be written (propagated from ``_write_meta``).
         """
         from ..config._settings import get_config
 
@@ -1008,7 +1013,7 @@ class VaultIndexer:
         gate.prune({doc.id for doc in docs})
         gate.persist()
         self._stat_gate_cache.retain(gate)
-        self._write_meta(outcome.hashes, run_control=run_control)
+        return self._write_meta(outcome.hashes, run_control=run_control)
 
     def _prepare_collection(
         self,
@@ -1152,35 +1157,80 @@ class VaultIndexer:
             return False
         return stored != self._current_vault_content_epoch()
 
+    def _observe_published_breadth(self) -> tuple[int, int]:
+        """Return the collection's point count and distinct-document count.
+
+        Taken at the publication instant, after every upsert and delete this
+        run makes has landed, so the pair describes exactly the corpus the
+        sidecar published beside it names. Both are recorded because they fail
+        independently: a collection can hold a plausible number of points
+        spread across a fraction of the documents the same sidecar names, and
+        no comparison of point counts alone can see that.
+
+        The writer lock is held across both reads, so nothing this indexer
+        does can move the collection between them.
+
+        Raises:
+            OSError: The collection could not be counted.
+            RuntimeError: The store rejected the count (client error or lock
+                contention).
+        """
+        return self.store.count(), len(self.store.get_all_ids())
+
     def _write_meta(
         self,
         meta: dict[str, str],
         *,
         run_control: RunControl = NO_RUN_CONTROL,
-    ) -> None:
-        """Write content-hash metadata to the sidecar JSON file.
+    ) -> int:
+        """Publish content-hash metadata and this index's breadth claim.
 
-        Uses an atomic write (write-to-temp + os.replace) so a crash mid-write
-        never leaves the metadata file in a corrupt state. The current
-        point-layout version and the content epoch over ``vault_chunk_chars``
-        are stamped under reserved keys so later runs can detect layout and
-        chunk-boundary changes.
+        Uses an atomic write (write-to-temp + durable replace) so a crash
+        mid-write never leaves the metadata file in a corrupt state, and so a
+        publication that reports success has reached the disk. The current
+        point-layout version, the content epoch over ``vault_chunk_chars``,
+        and the observed breadth are stamped under reserved keys so later runs
+        can detect layout changes, chunk-boundary changes, and a collection
+        that has lost points since it was published.
+
+        The breadth figures and the hash entries land in one atomic
+        replacement, which is what makes the ordering safe: there is no
+        instant at which the new document set is the published one while the
+        breadth describing it is not. A caller that cannot obtain the figures
+        gets the exception rather than a sidecar, leaving the previous
+        publication in place - an index nobody can reconcile is worse than a
+        stale one that verifies.
 
         Args:
             meta: Mapping of document stem to blake2b hex digest.
+            run_control: Cooperative attempt control checked at both edges.
+
+        Returns:
+            The point count this publication claims, so a caller reporting a
+            collection total describes the same instant the claim does rather
+            than paying for a second count of its own.
 
         Raises:
-            OSError: If the metadata directory cannot be created or the
-                file cannot be written.
+            OSError: The collection could not be counted, or the metadata
+                directory could not be created or written.
+            RuntimeError: The store rejected the count.
         """
         run_control.checkpoint()
+        points, documents = self._observe_published_breadth()
         stamped = {
             **meta,
             VAULT_POINT_SCHEMA_KEY: VAULT_POINT_SCHEMA,
             VAULT_CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
+            VAULT_PUBLISHED_POINTS_KEY: str(points),
+            VAULT_PUBLISHED_DOCUMENTS_KEY: str(documents),
         }
-        write_json_atomically(self._meta_path, stamped, JsonWriteOptions(indent=2))
+        write_json_atomically(
+            self._meta_path,
+            stamped,
+            JsonWriteOptions(indent=2, durable=True),
+        )
         run_control.checkpoint()
+        return points
 
     def _read_meta_raw(self) -> dict[str, str]:
         """Load the sidecar JSON verbatim, reserved keys included."""

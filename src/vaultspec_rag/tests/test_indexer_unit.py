@@ -1496,7 +1496,36 @@ class TestPublishedEvidenceRequiresStoredBreadth:
         """An older sidecar claims no breadth, so ignorance must not escalate.
 
         Escalating here would rebuild every root written before the count was
-        recorded, so the absent key has to read as "cannot tell".
+        recorded, so the absent key has to read as "cannot tell" - over a
+        collection that is actually holding the content those files produced.
+        """
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            store.ensure_code_table()
+            indexer = self._indexer(tmp_path, store)
+            self._store_chunks(store, 2)
+            self._write_sidecar(
+                indexer,
+                files={"src/mod.py": "a" * 128},
+                published_points=None,
+            )
+
+            assert indexer._lifecycle.published_evidence_lost() is False
+        finally:
+            store.close()
+
+    def test_an_empty_collection_under_named_files_is_lost_without_a_count(
+        self, tmp_path: Path
+    ) -> None:
+        """No count key cannot excuse a collection holding nothing at all.
+
+        Only files that produced content reach the sidecar - a source with
+        nothing to index is recorded as a rejection, not as an indexed path -
+        so a named file always stands for points that must be there. An empty
+        collection under one is loss, and the absent count is ignorance about
+        how much, never about whether.
         """
         from ..store_runtime import VaultStore
 
@@ -1510,7 +1539,12 @@ class TestPublishedEvidenceRequiresStoredBreadth:
                 published_points=None,
             )
 
-            assert indexer._lifecycle.published_evidence_lost() is False
+            assert store.code_collection_exists()
+            assert store.count_code() == 0
+            # Catches the empty-collection branch being dropped: the surviving
+            # path returns False on an absent count and the root stays latched,
+            # diffing clean against a sidecar nothing backs.
+            assert indexer._lifecycle.published_evidence_lost() is True
         finally:
             store.close()
 

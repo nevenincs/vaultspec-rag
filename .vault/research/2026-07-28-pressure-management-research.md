@@ -110,13 +110,13 @@ entry points adapt to service-domain behaviour and never own it.
 Signals and proposed tier semantics (thresholds are ADR decisions; the
 *structure* is what the evidence supports):
 
-| Signal | Source | Elevated when | Critical when |
-| --- | --- | --- | --- |
-| Forward-pass age (in-flight, thread alive) | `src/vaultspec_rag/jobs.py:880` | >= 60 s (reuse `DEGRADED_THRESHOLD_SECONDS`) | >= 300 s (reuse `STALL_THRESHOLD_SECONDS`) |
-| GPU utilization AND device memory | `src/vaultspec_rag/memory_probe.py:209` | sustained high on both (incident: 100%, 15.5/16 GiB) | n/a alone - GPU saturation without forward-age evidence is foreign load, not our stall |
-| Backend probe latency | `src/vaultspec_rag/jobs.py:940` | latency above normal band (measured baseline needed) | probe unanswered (`alive: None`) or repeated `timeout`/`unavailable` classifications |
-| Encode-limiter waiters | `src/vaultspec_rag/concurrency.py:112` | waiting > 0 for a sustained window | n/a (bounded by design) |
-| Disk / typed failures | `src/vaultspec_rag/_job_errors.py:58` | n/a | any `disk_full`, `disk_preflight_failed` in the window |
+| Signal                                     | Source                                  | Elevated when                                        | Critical when                                                                          |
+| ------------------------------------------ | --------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Forward-pass age (in-flight, thread alive) | `src/vaultspec_rag/jobs.py:880`         | >= 60 s (reuse `DEGRADED_THRESHOLD_SECONDS`)         | >= 300 s (reuse `STALL_THRESHOLD_SECONDS`)                                             |
+| GPU utilization AND device memory          | `src/vaultspec_rag/memory_probe.py:209` | sustained high on both (incident: 100%, 15.5/16 GiB) | n/a alone - GPU saturation without forward-age evidence is foreign load, not our stall |
+| Backend probe latency                      | `src/vaultspec_rag/jobs.py:940`         | latency above normal band (measured baseline needed) | probe unanswered (`alive: None`) or repeated `timeout`/`unavailable` classifications   |
+| Encode-limiter waiters                     | `src/vaultspec_rag/concurrency.py:112`  | waiting > 0 for a sustained window                   | n/a (bounded by design)                                                                |
+| Disk / typed failures                      | `src/vaultspec_rag/_job_errors.py:58`   | n/a                                                  | any `disk_full`, `disk_preflight_failed` in the window                                 |
 
 Two structural points the incident forces:
 
@@ -128,7 +128,7 @@ Two structural points the incident forces:
    soft eviction thresholds require a sustained grace period, hard thresholds
    act immediately
    (https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/).
-2. Hysteresis must be asymmetric: fast attack, slow release. Escalate on M
+1. Hysteresis must be asymmetric: fast attack, slow release. Escalate on M
    consecutive samples over the enter threshold (the 5 s probe-cache cadence at
    `src/vaultspec_rag/jobs.py:161` is a natural sample clock); de-escalate only
    after a longer continuous clear window (order of 60 s). The repo already
@@ -188,7 +188,7 @@ persists, 5-6 at `critical`):
    Relief: stops new encode load at the source; large when agent fleets churn
    files. Risk: index staleness, bounded by the retry horizon and by the
    convergence-pending bit that already survives process loss.
-2. **Inter-slice yields proportional to tier.** Seam: the slice loops
+1. **Inter-slice yields proportional to tier.** Seam: the slice loops
    (`src/vaultspec_rag/indexer/_streaming.py:802` vault,
    `src/vaultspec_rag/indexer/_streaming.py:1580` codebase) already checkpoint
    run control at every slice boundary outside the GPU lock. A tier-read sleep
@@ -200,7 +200,7 @@ persists, 5-6 at `critical`):
    wall clock while elevated - which is the designed intent, and the
    degradation verdict plus forward telemetry keep it visible rather than
    silent.
-3. **Space or coalesce storage writes.** Seam: the single writer thread
+1. **Space or coalesce storage writes.** Seam: the single writer thread
    (`src/vaultspec_rag/indexer/_streaming.py:590`) is the one place every
    store mutation for a run already serializes; an inter-task pacing delay
    there (or a shared token-bucket consult, next finding) spreads write
@@ -213,7 +213,7 @@ persists, 5-6 at `critical`):
    does the rest. Risk: writer-queue fill stalls the encode thread sooner;
    acceptable because that stall is the *ordered, bounded* form of the same
    wait the backend would otherwise impose chaotically.
-4. **Shrink encode batch/slice sizes.** Seam: `encode_batch_size` is already
+1. **Shrink encode batch/slice sizes.** Seam: `encode_batch_size` is already
    threaded per-slice (`src/vaultspec_rag/indexer/_streaming.py:119`,
    `src/vaultspec_rag/indexer/_streaming.py:157`) and slice packing is
    config-bounded (`src/vaultspec_rag/indexer/_streaming.py:1431`). Smaller
@@ -224,12 +224,12 @@ persists, 5-6 at `critical`):
    tuned for and reduces throughput even after pressure clears unless
    recovery is explicit; hence it sits below the pure-pacing rungs and needs
    Stage-0 evidence before adoption.
-5. **Pause preprocess hooks and non-essential producers.** Seam: watcher
+1. **Pause preprocess hooks and non-essential producers.** Seam: watcher
    execution/intake, where hook batches are scheduled. CPU-side relief only;
    at `critical` the store side is the constraint, so this rung mostly stops
    feeding a pipeline that cannot drain. Reversibility: resume on
    de-escalation; the durable convergence intent already covers missed work.
-6. **Refuse new index admissions with an honest retry-after.** Seam:
+1. **Refuse new index admissions with an honest retry-after.** Seam:
    admission (`src/vaultspec_rag/jobs.py:1206`), which already refuses typed
    (`job_capacity_exceeded` at `src/vaultspec_rag/_job_errors.py:69`). A new
    typed refusal carrying the tier and a jittered retry-after keeps the
@@ -369,17 +369,17 @@ Decisions the follow-on ADR must settle:
    clear-window length - and whether `elevated` reuses
    `DEGRADED_THRESHOLD_SECONDS`/`STALL_THRESHOLD_SECONDS` as proposed or gets
    independent constants.
-2. Scope of automatic action: does the ladder ever act on operator-initiated
+1. Scope of automatic action: does the ladder ever act on operator-initiated
    jobs, or only watcher/automatic ones? (Initiator attribution exists at
    admission; the proposal above degrades only automatic work and informs
    operators.)
-3. Governor topology: in-daemon only, or in-daemon plus the durable ledger
+1. Governor topology: in-daemon only, or in-daemon plus the durable ledger
    for non-daemon processes - and the fail-open TTL.
-4. Surface contract: the `pressure` block's exact shape on the jobs envelope
+1. Surface contract: the `pressure` block's exact shape on the jobs envelope
    and whether tier transitions emit log events, metrics gauges, or both.
-5. Backoff parameters per rung: AIMD increase/decrease constants, yield cap,
+1. Backoff parameters per rung: AIMD increase/decrease constants, yield cap,
    deferral horizon cap, refill-rate schedule per tier.
-6. Confirmation that the one-GPU-consumer boundary is retained (recommended)
+1. Confirmation that the one-GPU-consumer boundary is retained (recommended)
    and that batch-size adaptation (rung 4) is in or out of the first
    implementation.
 
