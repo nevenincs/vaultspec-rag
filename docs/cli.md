@@ -370,7 +370,7 @@ Options:
 | `--watch`       | flag    | off                  | Open the interactive interface. Cannot combine with `--json`.                      |
 | `--interval`    | float   | `2.0`                | Seconds between refreshes in the interactive interface.                            |
 
-Exit/JSON: `0` on success; `2` on an invalid filter value (`invalid_filter`); `3` when the service is not running. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success, including leaving the interactive interface - by `q` or by Ctrl+C, which report alike; `2` on an invalid filter value (`invalid_filter`); `3` when the service is not running. With `--json`, the result is one envelope on stdout.
 
 ### The interactive interface
 
@@ -406,6 +406,11 @@ tail, which is the part that distinguishes one checkout from another.
 
 The interface only reads until you press a control key: refreshes are plain reads of
 the job registry, so leaving at any moment changes no job, lock, or service state.
+
+Ctrl+C leaves the view exactly as `q` does; on an owned screen it is a way out, not an
+abort of work in progress. However you leave, the interface hands the terminal back -
+the alternate screen and the cursor are restored before the process ends - so the shell
+you return to is the one you left.
 
 A time estimate is shown only while a job is doing countable work and the service has
 measured a steady enough rate to derive one. Queued, waiting, paused and finished jobs
