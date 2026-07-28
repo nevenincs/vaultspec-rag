@@ -180,7 +180,7 @@ async def _e2e_runtime(  # pyright: ignore[reportUnusedFunction]
     # all drive one registry rather than double-opening the same
     # non-parallel-safe local store from two.
     registry = get_registry()
-    registry._model = embedding_model  # pyright: ignore[reportPrivateUsage]
+    registry._model = embedding_model
     manager = jobs.get_job_manager()
     try:
         yield registry, manager
@@ -438,7 +438,7 @@ async def _capture_running_restart_generation(
     state_path = manager.state_path
     assert state_path is not None
     slot = registry.peek_project(root)
-    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    writer_lock = slot.vault_indexer._writer_lock
     assert writer_lock.acquire(blocking=False)
     cleanup_outcomes: list[JobOutcome] = []
     try:
@@ -495,7 +495,7 @@ async def _exercise_watcher_pause_coalescing(
 ) -> JobSnapshot:
     first_path = root / ".vault" / "adr" / "paused-first.md"
     second_path = root / ".vault" / "adr" / "paused-second.md"
-    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    writer_lock = slot.vault_indexer._writer_lock
     assert writer_lock.acquire(blocking=False)
     try:
         first_id = _write_watched_document(first_path, root, "paused first")
@@ -555,7 +555,7 @@ async def _exercise_watcher_cancel_replacement(
 ) -> JobSnapshot:
     third_path = root / ".vault" / "adr" / "cancelled-third.md"
     fourth_path = root / ".vault" / "adr" / "replacement-fourth.md"
-    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    writer_lock = slot.vault_indexer._writer_lock
     assert writer_lock.acquire(blocking=False)
     try:
         third_id = _write_watched_document(third_path, root, "cancelled third")
@@ -667,7 +667,7 @@ async def _cancel_large_job(
     before_ids = slot.store.get_all_ids()
     metadata_path = root / get_config().data_dir / get_config().index_metadata_file
     before_metadata = metadata_path.read_bytes()
-    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    writer_lock = slot.vault_indexer._writer_lock
     writer_lock.acquire()
     try:
         cancelled_id = jobs.start_reindex_vault(root, clean=False)
@@ -871,7 +871,7 @@ async def test_restart_dispatches_queued_preserves_pause_and_links_retry(
 
     jobs.reset()
     restarted = jobs.get_job_manager()
-    await server_lifespan._start_job_manager(restarted)  # pyright: ignore[reportPrivateUsage]
+    await server_lifespan._start_job_manager(restarted)
 
     restored_queued, restored_paused, restored_interrupted = (
         _assert_restored_restart_state(

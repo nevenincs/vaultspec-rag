@@ -93,7 +93,7 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
     # ``get_registry()``: the watcher resolves the same way, whereas
     # ``server._registry`` can still name an instance an earlier module
     # closed, leaving the model on an orphan the watcher never sees.
-    get_registry()._model = embedding_model  # pyright: ignore[reportPrivateUsage]
+    get_registry()._model = embedding_model
     saved = [
         (EnvVar.WATCH_ENABLED, set_env(EnvVar.WATCH_ENABLED, "1")),
         (EnvVar.WATCH_DEBOUNCE_MS, set_env(EnvVar.WATCH_DEBOUNCE_MS, "123")),
@@ -128,7 +128,7 @@ async def test_failed_watcher_task_is_removed_from_running_registry(
     _clean_watchers: None,
 ) -> None:
     root = _make_root(tmp_path)
-    get_registry()._model = embedding_model  # pyright: ignore[reportPrivateUsage]
+    get_registry()._model = embedding_model
     previous = set_env(EnvVar.WATCH_ENABLED, "1")
     try:
         reset_config()
