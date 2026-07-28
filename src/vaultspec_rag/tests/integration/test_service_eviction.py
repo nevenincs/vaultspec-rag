@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from ...cli._process import _spawn_service, _terminate_pid
+from .._ports import free_loopback_port
 from ._helpers import (
-    _get_ephemeral_port,
     _poll_health,
     _service_env,
     _wait_for_exit,
@@ -189,7 +189,7 @@ def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_SERVICE_MAX_PROJECTS": "4",
     }
     with _service_env(tmp_path, overrides):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         # Watch disabled: otherwise the async watcher would auto-index and
         # admit slots behind the test, and the admission accounting under test
@@ -236,7 +236,7 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS": "0",
     }
     with _service_env(tmp_path, overrides):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         # Watch disabled so no async watcher admits slots behind the test.
         pid = _spawn_service(port, log_path, watch=False)
@@ -287,7 +287,7 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_LOCAL_ONLY": "1",
     }
     with _service_env(tmp_path, overrides):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
         try:
@@ -334,7 +334,7 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_LOCAL_ONLY": "1",
     }
     with _service_env(tmp_path, overrides):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
         try:
@@ -399,7 +399,7 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
         "VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS": "0",
     }
     with _service_env(tmp_path, overrides):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
         try:

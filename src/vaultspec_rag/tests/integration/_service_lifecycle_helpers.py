@@ -36,8 +36,8 @@ from ...config._types import EnvVar
 from .._model_setup import (
     model_setup_timeout_seconds,
 )
+from .._ports import free_loopback_port
 from ._helpers import (
-    _get_ephemeral_port,
     _poll_health,
     _poll_own_health,
     _service_env,
@@ -310,7 +310,7 @@ def _signalable_live_service(
         env_overrides=offline_env,
         qdrant_source=qdrant_source,
     ):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         command = [
             sys.executable,
@@ -600,7 +600,7 @@ finally:
     with log_path.open("w", encoding="utf-8") as log_stream:
         failures: list[str] = []
         for _ in range(5):
-            port = _get_ephemeral_port()
+            port = free_loopback_port()
             child_env = os.environ.copy()
             child_env["VAULTSPEC_TEST_HEALTH_PORT"] = str(port)
             child_env["VAULTSPEC_TEST_HEALTH_TOKEN"] = token

@@ -585,8 +585,8 @@ def _live_service_context(
     """
     from ...cli._process import _spawn_service
     from ...cli._service_status import _write_service_status
+    from .._ports import free_loopback_port
     from ._helpers import (
-        _get_ephemeral_port,
         _poll_health,
         _service_env,
     )
@@ -619,7 +619,7 @@ def _live_service_context(
                 f"remaining={startup.remaining_budget('service spawn'):.3f}s "
                 f"offline_env={offline_env!r}"
             )
-            port = _get_ephemeral_port()
+            port = free_loopback_port()
             startup.current_stage = "service spawn"
             stage_started = time.monotonic()
             pid = _spawn_service(

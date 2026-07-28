@@ -27,8 +27,8 @@ from ...cli._service_status import (
     _status_file,
     _write_service_status,
 )
+from .._ports import free_loopback_port
 from ._helpers import (
-    _get_ephemeral_port,
     _poll_health,
     _service_env,
     _wait_for_exit,
@@ -149,7 +149,7 @@ def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
     repair_timeout = 50.0
 
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)
@@ -222,7 +222,7 @@ def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
     from ..._machine_lock import machine_discovery_path
 
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)
@@ -273,7 +273,7 @@ def test_reconcile_recovers_discovery_without_touching_the_daemon(
     from ..._machine_lock import machine_discovery_path
 
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)
@@ -395,7 +395,7 @@ def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
             if sys.platform == "win32"
             else 0
         )
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         # The daemon redirects its own captured output into the managed log at
         # this same path, so one file carries both the spawn pipe and the
         # daemon's own lines.

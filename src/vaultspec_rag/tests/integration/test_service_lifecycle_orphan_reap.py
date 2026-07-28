@@ -22,8 +22,8 @@ import pytest
 from typer.testing import CliRunner
 
 from ...cli import app
+from .._ports import free_loopback_port
 from ._helpers import (
-    _get_ephemeral_port,
     _service_env,
     _wait_for_exit,
 )
@@ -149,7 +149,7 @@ class TestOrphanReapStructuredStop:
         # The broker's idempotent case: asked to clear orphans where there are
         # none, the reap reports success rather than a fault a supervisor would
         # have to special-case.
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         with _service_env(tmp_path):
             result = runner.invoke(
                 app, ["server", "stop", "--orphans", "--port", str(port), "--json"]
@@ -174,7 +174,7 @@ class TestOrphanReapStructuredStop:
     def test_human_mode_reap_emits_no_envelope(self, tmp_path: Path) -> None:
         # The mode split: human output never leaks a machine envelope, and the
         # satisfied no-op still exits 0.
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         with _service_env(tmp_path):
             result = runner.invoke(
                 app, ["server", "stop", "--orphans", "--port", str(port)]
@@ -218,7 +218,7 @@ class TestOrphanReapStructuredStop:
         # and an in-process reap would spare it as the descendant of an anchor -
         # a confound absent in production, where the reap is never the orphans'
         # parent.
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         with _service_env(tmp_path):
             witness = _spawn_reap_witness(port)
             spawned: set[int] = set()

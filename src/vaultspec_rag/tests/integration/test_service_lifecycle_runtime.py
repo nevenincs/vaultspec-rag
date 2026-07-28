@@ -26,8 +26,8 @@ from ...cli._service_status import (
     _write_service_status,
     read_service_status,
 )
+from .._ports import free_loopback_port
 from ._helpers import (
-    _get_ephemeral_port,
     _poll_health,
     _service_env,
     _wait_for_exit,
@@ -175,7 +175,7 @@ def _assert_isolation_search_results(
 def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Spawn service, verify health, terminate, verify exit."""
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)
@@ -414,7 +414,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
 def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Second start on the same port reports 'already in use'."""
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)
@@ -436,7 +436,7 @@ def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -
 def test_stale_pid_recovery(tmp_path: Path) -> None:
     """Service start recovers from a stale PID in the status file."""
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
 
         # Write a stale status file with a dead PID
         status_path = tmp_path / "service.json"
@@ -495,7 +495,7 @@ def test_stop_when_not_running(tmp_path: Path) -> None:
 def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Stop a running service via CLI and verify cleanup."""
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)
@@ -528,7 +528,7 @@ def test_stop_running_service_by_port_without_status_file(
     serving pid and stop succeeds without ever reading the status file.
     """
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)
@@ -562,7 +562,7 @@ def test_service_status_running(
 ) -> None:
     """Status command shows running service details."""
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)
@@ -621,7 +621,7 @@ def test_multi_project_search_isolation(
     from ...synthetic import build_multi_project_fixture
 
     with _service_env(tmp_path):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
 
         pid = _spawn_service(port, log_path)

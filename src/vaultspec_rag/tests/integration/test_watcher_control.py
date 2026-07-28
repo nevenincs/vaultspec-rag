@@ -106,13 +106,14 @@ async def test_start_watcher_disabled_is_pull_only(
 ) -> None:
     from ...cli._process import _spawn_service
     from ...cli._service_status import _write_service_status
-    from ._helpers import _get_ephemeral_port, _poll_health, _service_env
+    from .._ports import free_loopback_port
+    from ._helpers import _poll_health, _service_env
     from .conftest import _cleanup_service_process
 
     root = _make_root(tmp_path)
 
     with _service_env(tmp_path, env_overrides={"VAULTSPEC_RAG_WATCH_ENABLED": "0"}):
-        port = _get_ephemeral_port()
+        port = free_loopback_port()
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
         request.addfinalizer(
