@@ -1115,7 +1115,7 @@ class TestDegradedFamilyRegistryHasOneEntryPerBehaviour:
         remediation is silently unreachable.
         """
         from ..cli._status_labels import (
-            _DEGRADED_FAMILIES,  # pyright: ignore[reportPrivateUsage]
+            _DEGRADED_FAMILIES,
         )
 
         stems = [stem for stem, _ in _DEGRADED_FAMILIES]
@@ -1130,7 +1130,7 @@ class TestDegradedFamilyRegistryHasOneEntryPerBehaviour:
         registry entries bind to the surviving function.
         """
         from ..cli._status_labels import (
-            _DEGRADED_FAMILIES,  # pyright: ignore[reportPrivateUsage]
+            _DEGRADED_FAMILIES,
         )
 
         names = [

@@ -821,7 +821,7 @@ class TestStoreBoundedForceClose:
         held = threading.Event()
         release = threading.Event()
         lock_name = store.CODE_TABLE_NAME
-        lock = store._collection_locks[lock_name]  # pyright: ignore[reportPrivateUsage]
+        lock = store._collection_locks[lock_name]
 
         def wedged_consumer() -> None:
             # A different thread holds the collection lock and does not release
@@ -842,7 +842,7 @@ class TestStoreBoundedForceClose:
             assert elapsed < 5.0, f"force close blocked for {elapsed:.1f}s"
             assert elapsed >= 1.0, "force close should honour its acquire bound"
             # The client is actually released - no leaked handle.
-            assert store._client is None  # pyright: ignore[reportPrivateUsage]
+            assert store._client is None
         finally:
             release.set()
             worker.join(timeout=5.0)
@@ -868,10 +868,10 @@ class TestStoreBoundedForceClose:
         def wedged_lifecycle() -> None:
             # A different thread holds the lifecycle lock (an in-flight
             # open/create/drop) and does not release it within the bound.
-            store._lifecycle_lock.acquire()  # pyright: ignore[reportPrivateUsage]
+            store._lifecycle_lock.acquire()
             held.set()
             release.wait(timeout=15.0)
-            store._lifecycle_lock.release()  # pyright: ignore[reportPrivateUsage]
+            store._lifecycle_lock.release()
 
         worker = threading.Thread(target=wedged_lifecycle)
         worker.start()
@@ -885,7 +885,7 @@ class TestStoreBoundedForceClose:
             # ``with self._lifecycle_lock:`` regression would hang here).
             assert elapsed < 5.0, f"force close blocked for {elapsed:.1f}s"
             assert elapsed >= 1.0, "force close should honour its acquire bound"
-            assert store._client is None  # pyright: ignore[reportPrivateUsage]
+            assert store._client is None
         finally:
             release.set()
             worker.join(timeout=5.0)
@@ -915,14 +915,14 @@ class TestEnsureTableBackfill:
         indexed: list[str] = []
 
         class RecordingStore(VaultStore):
-            def _ensure_payload_indexes(  # pyright: ignore[reportPrivateUsage]
+            def _ensure_payload_indexes(
                 self,
                 collection: str,
                 keyword_fields: Sequence[str],
                 integer_fields: Sequence[str],
             ) -> None:
                 indexed.append(collection)
-                super()._ensure_payload_indexes(  # pyright: ignore[reportPrivateUsage]
+                super()._ensure_payload_indexes(
                     collection, keyword_fields, integer_fields
                 )
 
@@ -955,7 +955,7 @@ class TestEnsureTableBackfill:
         try:
             getattr(store, ensure)()
             assert indexed == [name], "creation must apply the index set"
-            store._ensured.clear()  # pyright: ignore[reportPrivateUsage]
+            store._ensured.clear()
             indexed.clear()
 
             getattr(store, ensure)()

@@ -440,7 +440,7 @@ def _service_env(
         if host_qdrant is not None:
             _mirror_managed_qdrant_binary(tmp_path, host_qdrant)
 
-        reset_config()  # pyright: ignore[reportMissingTypeStubs]
+        reset_config()
         reset_rag_config()
         yield updates
     finally:
@@ -450,6 +450,6 @@ def _service_env(
             else:
                 os.environ[k] = prev
         try:
-            reset_config()  # pyright: ignore[reportMissingTypeStubs]
+            reset_config()
         finally:
             reset_rag_config()

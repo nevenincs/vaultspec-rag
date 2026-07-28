@@ -60,7 +60,7 @@ def _preproc_chunk(
 def _scroll_payloads(store: VaultStore) -> list[dict[str, Any]]:
     client = store._client
     assert client is not None
-    points, _ = client.scroll(  # pyright: ignore[reportUnknownMemberType]
+    points, _ = client.scroll(
         collection_name=store.CODE_TABLE_NAME,
         with_payload=True,
         limit=100,

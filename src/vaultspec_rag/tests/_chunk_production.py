@@ -64,14 +64,12 @@ def produce_file_results(
     def _publish(result: FileChunkResult) -> bool:
         # Mirror the pipeline's sink: it records the preprocess disposition and
         # raises the typed failure before anything reaches the queue.
-        indexer._record_preprocess_result(result)  # pyright: ignore[reportPrivateUsage]
-        indexer._consumer_pipeline.raise_code_result_failure(  # pyright: ignore[reportPrivateUsage]
-            result, None
-        )
+        indexer._record_preprocess_result(result)
+        indexer._consumer_pipeline.raise_code_result_failure(result, None)
         collected.append(result)
         return True
 
-    producer = indexer._producer  # pyright: ignore[reportPrivateUsage]
+    producer = indexer._producer
     batch_groups, singles = producer.partition_batch_work(paths)
     if batch_groups:
         producer.produce_batch_groups(batch_groups, _publish, progress)

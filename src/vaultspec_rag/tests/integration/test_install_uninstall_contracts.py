@@ -9,7 +9,7 @@ from pathlib import Path  # noqa: TC003
 
 import pytest
 from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
-    InstallMode,  # pyright: ignore[reportMissingTypeStubs]
+    InstallMode,
 )
 
 from ...commands._uninstall import uninstall_run

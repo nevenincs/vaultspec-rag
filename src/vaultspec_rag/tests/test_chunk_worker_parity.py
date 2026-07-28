@@ -98,7 +98,7 @@ def test_batch_passthrough_hashes_the_bytes_it_chunks(tmp_path: Path) -> None:
     source = tmp_path / "changed.py"
     source.write_text("original = True\n", encoding="utf-8")
     original_hash = hashlib.blake2b(source.read_bytes()).hexdigest()
-    member = _chunk_worker._BatchMember(  # pyright: ignore[reportPrivateUsage]
+    member = _chunk_worker._BatchMember(
         path=source,
         rel_path=source.name,
         content_hash=original_hash,
@@ -107,7 +107,7 @@ def test_batch_passthrough_hashes_the_bytes_it_chunks(tmp_path: Path) -> None:
 
     source.write_text("current = 'the bytes that are chunked'\n", encoding="utf-8")
     current_bytes = source.read_bytes()
-    result = _chunk_worker._passthrough_batch_member(  # pyright: ignore[reportPrivateUsage]
+    result = _chunk_worker._passthrough_batch_member(
         member,
         tmp_path,
     )

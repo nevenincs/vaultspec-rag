@@ -89,7 +89,7 @@ def _byte_bar(bar_class: type[Any], *, desc: str) -> Any:
     counting.
     """
     from huggingface_hub.utils.tqdm import (
-        _create_progress_bar,  # pyright: ignore[reportPrivateUsage, reportUnknownVariableType]  # huggingface_hub stubs partially unknown
+        _create_progress_bar,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
     )
 
     create = cast("Callable[..., Any]", _create_progress_bar)
@@ -120,7 +120,7 @@ def _drive_snapshot_bars(
     files: int = 3,
 ) -> None:
     """Run the hub's three bars through a download-shaped sequence."""
-    from tqdm.contrib.concurrent import (  # pyright: ignore[reportMissingTypeStubs]
+    from tqdm.contrib.concurrent import (
         thread_map,
     )
 

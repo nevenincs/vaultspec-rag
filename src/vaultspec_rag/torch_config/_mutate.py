@@ -380,7 +380,7 @@ def _drop_cu130_index(doc: TOMLDocument) -> None:
     # entries is preserved. Rebuilding the AoT from scratch would
     # strip that metadata.
     for i in range(len(indices) - 1, -1, -1):
-        raw_entry: object = cast("object", indices[i])  # pyright: ignore[reportUnknownMemberType]  # tomlkit AoT element
+        raw_entry: object = cast("object", indices[i])
         if not isinstance(raw_entry, _TABLE_LIKE_TYPES):
             continue
         if match_index_entry(raw_entry) == "canonical":
@@ -409,7 +409,7 @@ def _drop_canonical_torch_entry(sources: object) -> None:
                 isinstance(e, _TABLE_LIKE_TYPES)
                 and match_source_entry(e) == "canonical"
             ):
-                torch_list.pop(i)  # pyright: ignore[reportUnknownMemberType]  # tomlkit list
+                torch_list.pop(i)
         if len(torch_list) == 0:
             del sources["torch"]
 

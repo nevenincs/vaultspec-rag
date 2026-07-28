@@ -541,7 +541,7 @@ class TestInlinePathScopeToken:
         from ..search._searcher import CodebaseSearchOptions, VaultSearcher
 
         parsed = parse_query("lock ordering")
-        store_filters = VaultSearcher._build_codebase_store_filters(  # pyright: ignore[reportPrivateUsage]  # asserting the pushdown contract
+        store_filters = VaultSearcher._build_codebase_store_filters(
             parsed,
             CodebaseSearchOptions(path="src/pkg/a.py"),
         )

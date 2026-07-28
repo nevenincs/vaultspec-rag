@@ -224,9 +224,7 @@ def test_empty_path_env_falls_back_to_default_not_cwd() -> None:
     # The session-wide singleton isolation fixture deliberately supplies a
     # non-default status directory. Compare the blank override with the
     # production default itself, not with that outer test override.
-    default = VaultSpecConfigWrapper._RAG_DEFAULTS[  # pyright: ignore[reportPrivateUsage]
-        "status_dir"
-    ]
+    default = VaultSpecConfigWrapper._RAG_DEFAULTS["status_dir"]
     reset_config()
     prev = set_env(EnvVar.STATUS_DIR, "   ")
     reset_config()
@@ -273,8 +271,7 @@ def test_managed_log_environment_names_are_generic_only() -> None:
     )
     assert not any(name.startswith("SERVICE_LOG_") for name in EnvVar.__members__)
     assert not any(
-        name.startswith("service_log_")
-        for name in VaultSpecConfigWrapper._RAG_DEFAULTS  # pyright: ignore[reportPrivateUsage]
+        name.startswith("service_log_") for name in VaultSpecConfigWrapper._RAG_DEFAULTS
     )
 
 
@@ -1428,7 +1425,7 @@ def test_every_flag_rejects_an_unrecognised_token() -> None:
     # An unrecognised word used to read as false, so one typo silently turned a
     # feature off. Mutation: restoring membership in the truthy set as the whole
     # rule (unrecognised means false) turns this into DID NOT RAISE.
-    defaults: dict[str, object] = VaultSpecConfigWrapper._RAG_DEFAULTS  # pyright: ignore[reportPrivateUsage]
+    defaults: dict[str, object] = VaultSpecConfigWrapper._RAG_DEFAULTS
     flags = [key for key, value in defaults.items() if isinstance(value, bool)]
     assert flags, "expected the settings table to carry boolean flags"
     for key in flags:

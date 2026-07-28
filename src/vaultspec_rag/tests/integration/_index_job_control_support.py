@@ -286,8 +286,8 @@ def _assert_manager_resources_released(
         assert capacity["waiting"] == 0
     assert slot.ref_count == 0
     indexer = slot.code_indexer if code else slot.vault_indexer
-    assert indexer._writer_lock.acquire(blocking=False)  # pyright: ignore[reportPrivateUsage]
-    indexer._writer_lock.release()  # pyright: ignore[reportPrivateUsage]
+    assert indexer._writer_lock.acquire(blocking=False)
+    indexer._writer_lock.release()
     if code:
         _assert_code_resources_released()
 
@@ -474,7 +474,7 @@ async def request_cancel_at_the_write_gate(
     root: Path,
     slot: ProjectSlot,
 ) -> str:
-    point_lock = slot.store._collection_locks[slot.store.CODE_TABLE_NAME]  # pyright: ignore[reportPrivateUsage]
+    point_lock = slot.store._collection_locks[slot.store.CODE_TABLE_NAME]
     gpu_lock = registry.gpu_lock
     gpu_lock.acquire()
     try:

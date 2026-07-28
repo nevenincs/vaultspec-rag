@@ -44,7 +44,7 @@ def _force_machine_singleton_test_paths(paths: Mapping[str, str]) -> None:
 
     for var, value in paths.items():
         os.environ[var] = value
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
 
 
@@ -104,7 +104,7 @@ def isolated_machine_singleton_dirs(
                 os.environ.pop(var, None)
             else:
                 os.environ[var] = value
-        reset_config()  # pyright: ignore[reportMissingTypeStubs]
+        reset_config()
         reset_rag_config()
 
 
@@ -133,7 +133,7 @@ def _apply_env(values: Mapping[str, str | None]) -> None:
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
 
 
@@ -315,7 +315,7 @@ def rag_components(
 
     Indexes all 24 docs with real GPU embeddings.
     """
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
 
     components = _index_corpus(synthetic_vault.root, embedding_model)
@@ -344,7 +344,7 @@ def rag_components_full(
 
     Used by tests marked @pytest.mark.quality that need broader coverage.
     """
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
 
     root = tmp_path_factory.mktemp("vault-full")
@@ -382,11 +382,11 @@ def vaultspec_config() -> Generator[VaultSpecConfig]:
 
     Resets the singleton before and after to ensure test isolation.
     """
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
     cfg = get_config()
     yield cfg
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
 
 
@@ -408,15 +408,15 @@ def config_override() -> Generator[Callable[[dict[str, Any]], VaultSpecConfig]]:
         return cfg
 
     yield _make
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
 
 
 @pytest.fixture
 def clean_config() -> Generator[None]:
     """Reset the config singleton before and after the test."""
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
     yield
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()

@@ -44,7 +44,7 @@ _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 def _open_process_last_error(pid: int) -> int | None:
     """Return the error code ``OpenProcess`` sets for *pid*, or None if it opened."""
-    kernel32 = ctypes.windll.kernel32  # pyright: ignore[reportAttributeAccessIssue]
+    kernel32 = ctypes.windll.kernel32
     handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if handle:
         kernel32.CloseHandle(handle)

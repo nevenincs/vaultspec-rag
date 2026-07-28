@@ -95,10 +95,8 @@ async def managed_watcher_runtime(
     # tidying an orphan while the dispatcher opens slots on the live registry.
     reset_registry()
     registry = get_registry()
-    registry._model = embedding_model  # pyright: ignore[reportPrivateUsage]
-    assert (not server._watcher_tasks) and (
-        not watcher_lifecycle._watcher_drains  # pyright: ignore[reportPrivateUsage]
-    )
+    registry._model = embedding_model
+    assert (not server._watcher_tasks) and (not watcher_lifecycle._watcher_drains)
     manager = jobs.get_job_manager()
 
     try:
@@ -208,7 +206,7 @@ async def _stop_watcher(root: Path) -> None:
         timeout_seconds=_WATCHER_WAIT_SECONDS,
     )
     _assert_watcher_intake_disabled(resolved)
-    assert resolved not in watcher_lifecycle._watcher_drains  # pyright: ignore[reportPrivateUsage]
+    assert resolved not in watcher_lifecycle._watcher_drains
 
 
 def _assert_watcher_intake_disabled(root: Path) -> None:
@@ -349,10 +347,8 @@ def _assert_watcher_resources_released(
         snapshot.resources.pipeline_active,
         slot.ref_count,
     ) == (False, False, False, False, False, False, 0)
-    assert slot.vault_indexer._writer_lock.acquire(  # pyright: ignore[reportPrivateUsage]
-        blocking=False
-    )
-    slot.vault_indexer._writer_lock.release()  # pyright: ignore[reportPrivateUsage]
+    assert slot.vault_indexer._writer_lock.acquire(blocking=False)
+    slot.vault_indexer._writer_lock.release()
 
 
 async def _pause_blocked_watcher_attempt(
@@ -362,7 +358,7 @@ async def _pause_blocked_watcher_attempt(
     path: Path,
 ) -> tuple[JobSnapshot, str]:
     """Pause attempt one while it waits on the real writer lock."""
-    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    writer_lock = slot.vault_indexer._writer_lock
     assert writer_lock.acquire(blocking=False)
     try:
         document_id = _write_vault_document(path, "pause-first-generation")
@@ -405,7 +401,7 @@ async def _resume_blocked_watcher_and_stop(
     job_id: str,
 ) -> JobSnapshot:
     """Prove explicit stop waits for a naturally completing resumed attempt."""
-    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    writer_lock = slot.vault_indexer._writer_lock
     assert writer_lock.acquire(blocking=False)
     cleanup: asyncio.Task[bool] | None = None
     try:
@@ -464,7 +460,7 @@ async def _cancel_blocked_watcher_attempt(
     path: Path,
 ) -> tuple[JobSnapshot, str, float]:
     """Cancel attempt one while it waits on the real writer lock."""
-    writer_lock = slot.vault_indexer._writer_lock  # pyright: ignore[reportPrivateUsage]
+    writer_lock = slot.vault_indexer._writer_lock
     assert writer_lock.acquire(blocking=False)
     try:
         document_id = _write_vault_document(path, "cancel-first-generation")
@@ -922,7 +918,7 @@ async def test_watcher_pause_coalesces_and_explicit_stop_joins_cleanup(
         slot.store.get_by_id(first_id) is not None,
         slot.store.get_by_id(second_id) is not None,
     ) == (True, True)
-    assert root not in watcher_lifecycle._watcher_drains  # pyright: ignore[reportPrivateUsage]
+    assert root not in watcher_lifecycle._watcher_drains
 
 
 @pytest.mark.asyncio

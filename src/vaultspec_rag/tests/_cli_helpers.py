@@ -792,9 +792,7 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
     return server, thread, requests
 
 
-def _logs_contract_server() -> (  # pyright: ignore[reportUnusedFunction]
-    tuple[typing.Any, typing.Any, list[str]]
-):
+def _logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
     import threading
 
     requests: list[str] = []

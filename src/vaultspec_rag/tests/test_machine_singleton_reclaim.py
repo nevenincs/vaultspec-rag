@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._machine_lock import machine_lock_live_holder
-from ..cli._service_stop import (  # pyright: ignore[reportPrivateUsage]  # unit under test
+from ..cli._service_stop import (
     _reclaim_machine_singleton,
 )
 from ..config._settings import reset_config

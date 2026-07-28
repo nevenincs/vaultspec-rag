@@ -30,10 +30,10 @@ pytestmark = [pytest.mark.unit]
 @pytest.fixture(autouse=True)
 def _reset_cfg(  # pyright: ignore[reportUnusedFunction]
 ) -> Generator[None]:
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
     yield
-    reset_config()  # pyright: ignore[reportMissingTypeStubs]
+    reset_config()
     reset_rag_config()
 
 

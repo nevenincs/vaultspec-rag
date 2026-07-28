@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.unit]
 
 # pytest.approx's `expected` parameter is untyped in the stub; cast once so
 # every call-site resolves cleanly without per-line suppression comments.
-_approx = cast("type[Any]", pytest.approx)  # pyright: ignore[reportUnknownMemberType]
+_approx = cast("type[Any]", pytest.approx)
 
 
 class TestPrecisionAtK:

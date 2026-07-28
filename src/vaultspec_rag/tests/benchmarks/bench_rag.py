@@ -128,12 +128,12 @@ def test_bench_search_latency(
 @pytest.mark.performance
 def test_bench_memory(root: Path) -> dict[str, Any]:
     """Measure GPU VRAM and Qdrant disk size. Requires CUDA GPU."""
-    import torch  # pyright: ignore[reportMissingTypeStubs]  # torch ships no stubs
+    import torch
 
     result: dict[str, Any] = {}
-    result["gpu_name"] = torch.cuda.get_device_name(0)  # pyright: ignore[reportUnknownMemberType]  # torch stub incomplete
-    result["vram_allocated_mb"] = torch.cuda.memory_allocated(0) / (1024 * 1024)  # pyright: ignore[reportUnknownMemberType]
-    result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)  # pyright: ignore[reportUnknownMemberType]
+    result["gpu_name"] = torch.cuda.get_device_name(0)
+    result["vram_allocated_mb"] = torch.cuda.memory_allocated(0) / (1024 * 1024)
+    result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
 
     # Qdrant disk size
     from ...config._settings import get_config

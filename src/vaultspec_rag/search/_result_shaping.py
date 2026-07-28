@@ -18,7 +18,7 @@ from .._store_models import DocumentLocator, DocumentMetadata
 from ._postprocess import (
     PREFER_CATEGORIES,
     PREFER_SCORE_NUDGE,
-    _classify_chunk_type,  # pyright: ignore[reportPrivateUsage]  # intra-package intentional re-export
+    _classify_chunk_type,
 )
 
 if TYPE_CHECKING:

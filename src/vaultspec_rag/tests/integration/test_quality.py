@@ -294,15 +294,15 @@ class TestHelpfulness:
 
         assert len(results) >= 2, "Need at least 2 results to compare authority"
 
-        graph = VaultGraph(root)  # pyright: ignore[reportUnknownVariableType]  # vaultspec_core ships no stubs
+        graph = VaultGraph(root)
 
         linked: list[SearchResult] = []
         orphans: list[SearchResult] = []
         for r in results:
-            node = graph.nodes.get(r.id)  # pyright: ignore[reportUnknownMemberType]  # vaultspec_core ships no stubs
-            if node and len(node.in_links) >= 2:  # pyright: ignore[reportUnknownMemberType]  # vaultspec_core ships no stubs
+            node = graph.nodes.get(r.id)
+            if node and len(node.in_links) >= 2:
                 linked.append(r)
-            elif node and len(node.in_links) == 0:  # pyright: ignore[reportUnknownMemberType]  # vaultspec_core ships no stubs
+            elif node and len(node.in_links) == 0:
                 orphans.append(r)
 
         if linked and orphans:

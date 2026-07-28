@@ -41,11 +41,11 @@ from ..qdrant_runtime._store_format import (
 )
 from ..qdrant_runtime._supervise import (
     QdrantSupervisor,
-    _corrupt_collection_from_output,  # pyright: ignore[reportPrivateUsage]
+    _corrupt_collection_from_output,
     start_supervised_from_config,
 )
 from ..server._lifespan import (
-    _service_health_status,  # pyright: ignore[reportPrivateUsage]
+    _service_health_status,
 )
 from ..store_schema import CONFORMING, NONCONFORMING, UNVERIFIABLE
 from ._ports import free_loopback_port

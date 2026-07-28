@@ -204,7 +204,7 @@ def _reporting_tqdm_class(tracker: SnapshotProgress) -> type[Any] | None:
     so no bar outlives the download it was counting.
     """
     try:
-        from tqdm.auto import tqdm as _tqdm  # pyright: ignore[reportMissingTypeStubs]
+        from tqdm.auto import tqdm as _tqdm
     except ImportError as exc:  # tqdm arrives with the hub; absent is survivable
         logger.debug("tqdm unavailable, download progress falls back: %s", exc)
         return None
