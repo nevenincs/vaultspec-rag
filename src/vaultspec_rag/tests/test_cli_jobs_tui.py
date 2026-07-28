@@ -149,6 +149,10 @@ class _JobService:
         self.jobs: list[dict[str, object]] = []
         self.control_delay = 0.0
         self.fetch_delay = 0.0
+        # When set, ``/logs`` answers with these lines verbatim instead of the
+        # per-job placeholder, so a test can serve the service's real log
+        # dialects - including adversarial content - through the real route.
+        self.log_lines: list[str] | None = None
         # When set, every control is answered with this ``(code, message)``
         # rather than performed - the shape a service uses to decline a
         # request it understood.
@@ -185,15 +189,16 @@ class _JobService:
                     # refetched. A fixture answering every id identically
                     # cannot tell those two apart.
                     scope = query.get("job_id", ["none"])[0]
+                    with service._lock:
+                        lines = (
+                            list(service.log_lines)
+                            if service.log_lines is not None
+                            else [f"a logged line for {scope}"]
+                        )
                     self._answer(
                         {
                             "ok": True,
-                            "groups": [
-                                {
-                                    "source": "service",
-                                    "lines": [f"a logged line for {scope}"],
-                                }
-                            ],
+                            "groups": [{"source": "service", "lines": lines}],
                         }
                     )
                     return

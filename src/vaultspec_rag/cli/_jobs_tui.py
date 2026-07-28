@@ -23,7 +23,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, RichLog, Static
+from textual.widgets import DataTable, Footer, Static
 from textual.widgets.data_table import ColumnKey
 from textual.worker import WorkerState
 
@@ -35,6 +35,7 @@ from ..serviceclient._transport import (
     _try_http_set_job_desired_state,
 )
 from ._cli_format import compact_duration
+from ._jobs_tui_log import JobsLogView
 from ._jobs_tui_status import (
     ServiceStatusBar,
     ServiceStatusHeader,
@@ -153,6 +154,12 @@ _ACTION_KEYS: dict[str, str] = {
     "k": "job_stop",
     "y": "job_retry",
     "d": "job_delete",
+    "x": "log_noise",
+    "n": "log_next_error",
+    "N": "log_prev_error",
+    "g": "log_top",
+    "G": "log_end",
+    "f": "log_expand",
 }
 
 # Why each action is unavailable, in the operator's terms rather than the
@@ -163,7 +170,13 @@ _ACTION_REASONS: dict[str, str] = {
     "job_stop": "Only running work can be cancelled.",
     "job_retry": "Only a finished or failed job can be retried.",
     "job_delete": "Only a finished or failed job can be deleted.",
+    "log_next_error": "This log has no error entries.",
+    "log_prev_error": "This log has no error entries.",
 }
+
+# What every log action answers with while the pane is closed. The keys must
+# not go dead just because the pane is not on screen.
+_LOG_CLOSED_REASON = "The log pane is closed - press l to open it."
 
 # Header counters, as (label, the canonical state they count). The service
 # tallies these over every record matching the filter; the same names index
@@ -426,26 +439,46 @@ def _time_cell(job: dict[str, object], cells: int) -> Text:
     return _two_line(compact_duration(job.get("runtime_seconds")), estimate, cells)
 
 
+class _LogPane(Vertical):
+    """The log pane's container, allowed to fill the screen on request.
+
+    A plain container refuses maximization, and maximizing the log widget
+    alone would take it from under its own title bar - the zoom would drop
+    the line saying whose log this is and what the noise filter hides.
+    """
+
+    ALLOW_MAXIMIZE: ClassVar[bool | None] = True
+
+
 class JobsTuiApp(App[None]):
     """The live jobs interface."""
 
     # Every size here is relative: fractional shares for the panes, content
     # height for the bars. Nothing is expressed as a fixed cell count, so the
     # layout follows whatever the terminal reports at any moment.
+    #
+    # Each pane wears a rounded border, and the border is how focus is told:
+    # the pane holding the keyboard lights its frame with the accent colour,
+    # every other frame stays muted. The focus ring is the one visual answer
+    # to "where will my next keypress land", so it is carried by the pane's
+    # own frame rather than by anything inside it.
     CSS = """
-    #summary { height: auto; padding: 0 1; background: $panel; color: $text; }
-    #body { height: 1fr; width: 1fr; }
-    #jobs { width: 1fr; height: 1fr; }
-    #logpane { display: none; }
+    #summary { height: auto; padding: 0 2; background: $panel; color: $text; }
+    #servicestatus { height: auto; padding: 0 2; background: $panel; }
+    #body { height: 1fr; width: 1fr; padding: 0 1; }
+    #jobs { width: 1fr; height: 1fr; border: round $panel-lighten-2; }
+    #jobs:focus { border: round $accent; }
+    #logpane { display: none; border: round $panel-lighten-2; }
+    #logpane:focus-within { border: round $accent; }
     #logtitle { height: auto; padding: 0 1; background: $panel-darken-1; }
-    #joblog { height: 1fr; }
+    #joblog { height: 1fr; padding: 0 1; }
 
     /* One state drives the log in both layouts, so the toggle always does
        something. Width only decides whether showing it splits the screen or
        takes it over. */
     Screen.-showlog #logpane { display: block; }
     Screen.-wide.-showlog #jobs { width: 3fr; }
-    Screen.-wide.-showlog #logpane { width: 2fr; }
+    Screen.-wide.-showlog #logpane { width: 2fr; margin-left: 1; }
     Screen.-narrow.-showlog #jobs { display: none; }
     Screen.-narrow.-showlog #logpane { width: 1fr; }
     """
@@ -466,6 +499,13 @@ class JobsTuiApp(App[None]):
         Binding("y", "job_retry", "Retry"),
         Binding("d", "job_delete", "Delete"),
         Binding("l", "toggle_log", "Log"),
+        Binding("z", "toggle_zoom", "Zoom"),
+        Binding("x", "log_noise", "Noise"),
+        Binding("n", "log_next_error", "Next error"),
+        Binding("N", "log_prev_error", "Prev error", show=False),
+        Binding("g", "log_top", "Log top", show=False),
+        Binding("G", "log_end", "Log end", show=False),
+        Binding("f", "log_expand", "Full values", show=False),
     ]
 
     # ``bindings=True`` re-evaluates ``check_action`` whenever the selection
@@ -522,15 +562,14 @@ class JobsTuiApp(App[None]):
         yield ServiceStatusBar(id="servicestatus")
         with Horizontal(id="body"):
             yield DataTable(id="jobs", cursor_type="row", zebra_stripes=True)
-            with Vertical(id="logpane"):
+            with _LogPane(id="logpane"):
                 yield Static("Log", id="logtitle")
-                yield RichLog(
-                    id="joblog", wrap=True, markup=False, max_lines=_LOG_LINES
-                )
+                yield JobsLogView(id="joblog")
         yield Footer()
 
     def on_mount(self) -> None:
         table = cast("DataTable[Text]", self.query_one("#jobs", DataTable))
+        table.border_title = "Jobs"
         for key, label in (
             ("state", "State"),
             ("job", "Job"),
@@ -575,7 +614,11 @@ class JobsTuiApp(App[None]):
         if table is None:
             return False
         padding = table.cell_padding * 2 * len(_COLUMN_WEIGHTS)
-        available = table.size.width - padding
+        # The scrollable content region, not the outer size: the pane's
+        # border and any scrollbar come out of the cells the columns can
+        # actually paint into, and dividing the outer width lays the last
+        # column partly under the frame.
+        available = table.scrollable_content_region.width - padding
         # A hidden table reports no width. That is not a new division to
         # record; recording it would skip the real one when it reappears.
         if available <= 0 or table.size.width == self._divided_width:
@@ -1010,10 +1053,9 @@ class JobsTuiApp(App[None]):
     def watch_selected_id(self, job_id: str) -> None:
         if not job_id:
             return
-        title = self.query("#logtitle")
-        if not title:
+        if not self.query("#logtitle"):
             return
-        title.only_one(Static).update(f"Log · {job_id[:8]}")
+        self._refresh_log_title()
         self.fetch_logs(job_id)
 
     @work(thread=True, exclusive=True, group=_LOG_GROUP)
@@ -1031,24 +1073,49 @@ class JobsTuiApp(App[None]):
         if result is None or result.get("ok") is False:
             self._clear_log("Logs unavailable: the service did not answer.")
             return
+        log = self._log_view()
+        if log is None:
+            return
+        log.show_lines(_log_lines(result))
+        # The window just changed, so what the noise filter hides and where
+        # the errors sit changed with it - both the title's indicator and the
+        # error-jump keys in the footer have to follow.
+        self._refresh_log_title()
+        self.refresh_bindings()
+
+    def _log_view(self) -> JobsLogView | None:
+        """Return the log pane's body, or ``None`` when it is not mounted."""
         found = self.query("#joblog")
         if not found:
+            return None
+        return found.only_one(JobsLogView)
+
+    def _refresh_log_title(self) -> None:
+        """Repaint the pane's title: whose log, and what is being hidden.
+
+        The noise filter must be visible whenever it is active. Lines
+        silently missing from a log pane read as lines that never happened,
+        which is precisely the degradation an operator cannot detect.
+        """
+        found = self.query("#logtitle")
+        if not found:
             return
-        log = found.only_one(RichLog)
-        log.clear()
-        for line in _log_lines(result):
-            log.write(line)
+        title = Text(f"Log · {self.selected_id[:8]}" if self.selected_id else "Log")
+        log = self._log_view()
+        if log is not None:
+            hidden = log.hidden_polling_count
+            if hidden:
+                title.append(f"  ·  {hidden} polling hidden (x shows)", style="yellow")
+            elif log.polling_shown and log.polling_count:
+                title.append("  ·  polling shown (x hides)", style="dim")
+        found.only_one(Static).update(title)
 
     def _clear_log(self, message: str) -> None:
-        """Replace the log pane's body and title with *message*."""
-        title = self.query("#logtitle")
-        if title:
-            title.only_one(Static).update("Log")
-        found = self.query("#joblog")
-        if found:
-            log = found.only_one(RichLog)
-            log.clear()
-            log.write(message)
+        """Replace the log pane's body with *message* and re-title it."""
+        self._refresh_log_title()
+        log = self._log_view()
+        if log is not None:
+            log.show_message(message)
 
     # -- actions ------------------------------------------------------------
 
@@ -1067,12 +1134,29 @@ class JobsTuiApp(App[None]):
         """
         # Named to match the override; these actions take no parameters.
         del parameters
+        if action.startswith("log_"):
+            return self._check_log_action(action)
         flag = _action_capability(action)
         if flag is None:
             return True
         job = self.selected_job()
         if job is None or not _capability(job, flag):
             return None
+        return True
+
+    def _check_log_action(self, action: str) -> bool | None:
+        """Disable a log action the pane cannot take right now.
+
+        Every log action needs the pane on screen; the error jumps also need
+        an error to jump to. ``None`` greys the key rather than hiding it,
+        the same reading the row actions already use.
+        """
+        if not self._log_visible():
+            return None
+        if action in ("log_next_error", "log_prev_error"):
+            log = self._log_view()
+            if log is None or log.error_count == 0:
+                return None
         return True
 
     def on_key(self, event: events.Key) -> None:
@@ -1094,9 +1178,30 @@ class JobsTuiApp(App[None]):
 
     def _refusal(self, action: str) -> str:
         """Say why *action* is unavailable, in the operator's terms."""
+        if action.startswith("log_"):
+            if not self._log_visible():
+                return _LOG_CLOSED_REASON
+            return _ACTION_REASONS.get(
+                action, "The log cannot take that action right now."
+            )
         if self.selected_job() is None:
             return "No job is selected."
         return _ACTION_REASONS.get(action, "This job cannot take that action.")
+
+    def action_toggle_zoom(self) -> None:
+        """Fill the screen with the focused pane, or restore the split.
+
+        The zoom follows the focus ring: whichever pane's frame is lit is
+        the one that grows, so the two answers to "where am I" and "what
+        will z do" are the same answer. A pane that cannot be maximized
+        answers the press rather than ignoring it.
+        """
+        if self.screen.maximized is not None:
+            self.screen.minimize()
+            return
+        focused = self.focused
+        if focused is None or not self.screen.maximize(focused):
+            self.notify("This pane cannot be zoomed.", severity="warning")
 
     def action_toggle_log(self) -> None:
         # One state, applied the same way in both layouts, so the key always
@@ -1104,6 +1209,44 @@ class JobsTuiApp(App[None]):
         # splits the screen or takes it over.
         self._show_log = not self._log_visible()
         self.screen.set_class(self._show_log, "-showlog")
+        # The log keys gate on the pane being on screen, and the footer only
+        # re-evaluates them when told to.
+        self.refresh_bindings()
+
+    def action_log_noise(self) -> None:
+        """Toggle the polling-noise filter, and say so in the title."""
+        log = self._log_view()
+        if log is None:
+            return
+        log.toggle_polling()
+        self._refresh_log_title()
+        self.refresh_bindings()
+
+    def action_log_expand(self) -> None:
+        """Toggle full values in place of middle-elided ones."""
+        log = self._log_view()
+        if log is not None:
+            log.toggle_expanded()
+
+    def action_log_next_error(self) -> None:
+        log = self._log_view()
+        if log is not None:
+            log.jump_next_error()
+
+    def action_log_prev_error(self) -> None:
+        log = self._log_view()
+        if log is not None:
+            log.jump_previous_error()
+
+    def action_log_top(self) -> None:
+        log = self._log_view()
+        if log is not None:
+            log.jump_top()
+
+    def action_log_end(self) -> None:
+        log = self._log_view()
+        if log is not None:
+            log.jump_end()
 
     def _log_visible(self) -> bool:
         return self.screen.has_class("-showlog")
