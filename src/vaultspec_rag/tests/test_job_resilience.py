@@ -58,11 +58,11 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
         no_progress_remaining_seconds=287.5,
         circuit_state="closed",
         next_retry_at=1_722_000_060.0,
-        peak_rss_mb=512.0,
-        rss_ceiling_mb=2048.0,
-        peak_cuda_allocated_mb=768.0,
-        peak_cuda_reserved_mb=896.0,
-        cuda_ceiling_mb=4096.0,
+        peak_rss_mib=512.0,
+        rss_ceiling_mib=2048.0,
+        peak_cuda_allocated_mib=768.0,
+        peak_cuda_reserved_mib=896.0,
+        cuda_ceiling_mib=4096.0,
         support_profile="standard",
         terminal_outcome="incomplete",
     )
@@ -99,11 +99,11 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
             "no_progress_remaining_seconds": 287.5,
             "circuit_state": "closed",
             "next_retry_at": 1_722_000_060.0,
-            "peak_rss_mb": 512.0,
-            "rss_ceiling_mb": 2048.0,
-            "peak_cuda_allocated_mb": 768.0,
-            "peak_cuda_reserved_mb": 896.0,
-            "cuda_ceiling_mb": 4096.0,
+            "peak_rss_mib": 512.0,
+            "rss_ceiling_mib": 2048.0,
+            "peak_cuda_allocated_mib": 768.0,
+            "peak_cuda_reserved_mib": 896.0,
+            "cuda_ceiling_mib": 4096.0,
             "support_profile": "standard",
             "terminal_outcome": "incomplete",
         }
@@ -176,9 +176,9 @@ def test_resilience_rejects_invalid_operability_values() -> None:
     with pytest.raises(ValueError):
         IndexResilienceSnapshot(replayed_units=-1)
     with pytest.raises(ValueError):
-        IndexResilienceSnapshot(peak_rss_mb=float("inf"))
+        IndexResilienceSnapshot(peak_rss_mib=float("inf"))
     with pytest.raises(ValueError):
-        IndexResilienceSnapshot(cuda_ceiling_mb=-0.5)
+        IndexResilienceSnapshot(cuda_ceiling_mib=-0.5)
 
 
 def test_route_shaping_bounds_rounds_and_derives_remediation() -> None:
@@ -203,11 +203,11 @@ def test_route_shaping_bounds_rounds_and_derives_remediation() -> None:
             "no_progress_remaining_seconds": 12.371,
             "circuit_state": "closed",
             "next_retry_at": None,
-            "peak_rss_mb": 1215.52734375,
-            "rss_ceiling_mb": 1940.5,
-            "peak_cuda_allocated_mb": 1363.827,
-            "peak_cuda_reserved_mb": 1368.0,
-            "cuda_ceiling_mb": 1366.001,
+            "peak_rss_mib": 1215.52734375,
+            "rss_ceiling_mib": 1940.5,
+            "peak_cuda_allocated_mib": 1363.827,
+            "peak_cuda_reserved_mib": 1368.0,
+            "cuda_ceiling_mib": 1366.001,
             "support_profile": "managed-service",
             "terminal_outcome": "cuda_memory_ceiling",
             # A field the snapshot might grow later must not reach the broker.
@@ -229,19 +229,19 @@ def test_route_shaping_bounds_rounds_and_derives_remediation() -> None:
         "no_progress_remaining_seconds",
         "circuit_state",
         "next_retry_at",
-        "peak_rss_mb",
-        "rss_ceiling_mb",
-        "peak_cuda_allocated_mb",
-        "peak_cuda_reserved_mb",
-        "cuda_ceiling_mb",
+        "peak_rss_mib",
+        "rss_ceiling_mib",
+        "peak_cuda_allocated_mib",
+        "peak_cuda_reserved_mib",
+        "cuda_ceiling_mib",
         "support_profile",
         "terminal_outcome",
         "remediation",
     }
     # Rounded to one-decimal operator precision, the same the CLI renders.
-    assert shaped["peak_rss_mb"] == 1215.5
+    assert shaped["peak_rss_mib"] == 1215.5
     assert shaped["no_progress_remaining_seconds"] == 12.4
-    assert shaped["cuda_ceiling_mb"] == 1366.0
+    assert shaped["cuda_ceiling_mib"] == 1366.0
     # State the operator reads unrounded is preserved exactly.
     assert shaped["generation_id"] == "gen-1"
     assert shaped["committed_units"] == 5
@@ -276,23 +276,23 @@ def test_budget_enforces_captured_job_peak_not_process_global_counter() -> None:
     """
     from ..memory_probe import MemoryBudget
 
-    sibling = MemoryBudget(cuda_ceiling_mb=20000.0)
-    sibling.record_forward_peak_mb(9000.0)
-    budget = MemoryBudget(cuda_ceiling_mb=1000.0)
-    budget.record_forward_peak_mb(500.0)
+    sibling = MemoryBudget(cuda_ceiling_mib=20000.0)
+    sibling.record_forward_peak_mib(9000.0)
+    budget = MemoryBudget(cuda_ceiling_mib=1000.0)
+    budget.record_forward_peak_mib(500.0)
     # The field failure mode: a non-forward checkpoint taken while a
     # sibling holds the GPU. It must be admitted.
     snapshot = budget.sample_readings(
         label="code producer queue wait",
-        rss_mb=100.0,
-        cuda_mb=(9000.0, 9500.0),
+        rss_mib=100.0,
+        cuda_mib=(9000.0, 9500.0),
     )
 
     # Enforced peak is the job's own captured maximum...
-    assert snapshot.peak_cuda_allocated_mb == 500.0
+    assert snapshot.peak_cuda_allocated_mib == 500.0
     # ...while the process-global reading stays visible as a diagnostic.
-    assert snapshot.cuda_allocated_mb == 9000.0
-    assert snapshot.cuda_reserved_mb == 9500.0
+    assert snapshot.cuda_allocated_mib == 9000.0
+    assert snapshot.cuda_reserved_mib == 9500.0
 
 
 def test_runtime_cuda_peak_is_not_a_corpus_rejection_dimension() -> None:
@@ -350,19 +350,23 @@ def test_forward_peak_routes_to_thread_recorder_and_keeps_maximum() -> None:
     thread, so the orphan 9999.0 reading finds an owner and the assertion
     that it was dropped reports True against False. Restored, it passes.
     """
-    from ..memory_probe import MemoryBudget, record_forward_peaks, route_forward_peak_mb
+    from ..memory_probe import (
+        MemoryBudget,
+        record_forward_peaks,
+        route_forward_peak_mib,
+    )
 
-    budget = MemoryBudget(cuda_ceiling_mb=1000.0)
-    with record_forward_peaks(budget.record_forward_peak_mb):
-        assert route_forward_peak_mb(321.5) is True
+    budget = MemoryBudget(cuda_ceiling_mib=1000.0)
+    with record_forward_peaks(budget.record_forward_peak_mib):
+        assert route_forward_peak_mib(321.5) is True
         # A later, smaller forward must not shrink the job maximum.
-        assert route_forward_peak_mb(100.0) is True
-    assert budget.captured_cuda_peak_mb == 321.5
+        assert route_forward_peak_mib(100.0) is True
+    assert budget.captured_cuda_peak_mib == 321.5
 
     # Outside the recorder context a capture has nowhere to go and
     # must be dropped rather than credited to a stale recorder.
-    assert route_forward_peak_mb(9999.0) is False
-    assert budget.captured_cuda_peak_mb == 321.5
+    assert route_forward_peak_mib(9999.0) is False
+    assert budget.captured_cuda_peak_mib == 321.5
 
 
 def test_unreadable_forward_peak_is_dropped_quietly(
@@ -384,14 +388,18 @@ def test_unreadable_forward_peak_is_dropped_quietly(
     warning fires, failing the assertion that nothing was logged. Restored,
     both pass.
     """
-    from ..memory_probe import MemoryBudget, record_forward_peaks, route_forward_peak_mb
+    from ..memory_probe import (
+        MemoryBudget,
+        record_forward_peaks,
+        route_forward_peak_mib,
+    )
 
-    budget = MemoryBudget(cuda_ceiling_mb=1000.0)
+    budget = MemoryBudget(cuda_ceiling_mib=1000.0)
     with caplog.at_level(logging.WARNING, logger="vaultspec_rag.memory_probe"):
-        with record_forward_peaks(budget.record_forward_peak_mb):
-            assert route_forward_peak_mb(444.0) is True
-            assert route_forward_peak_mb(None) is False
-        assert route_forward_peak_mb(777.0) is False
+        with record_forward_peaks(budget.record_forward_peak_mib):
+            assert route_forward_peak_mib(444.0) is True
+            assert route_forward_peak_mib(None) is False
+        assert route_forward_peak_mib(777.0) is False
 
     assert caplog.records == []
-    assert budget.captured_cuda_peak_mb == 444.0
+    assert budget.captured_cuda_peak_mib == 444.0

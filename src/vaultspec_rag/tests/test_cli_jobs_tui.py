@@ -1486,8 +1486,8 @@ class TestHeaderCounts:
         control_service.gpu = {
             "available": True,
             "utilization_percent": 97.0,
-            "memory_used_mb": 15770.0,
-            "memory_total_mb": 16384.0,
+            "memory_used_mib": 15770.0,
+            "memory_total_mib": 16384.0,
         }
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
@@ -1525,8 +1525,8 @@ class TestHeaderCounts:
         control_service.gpu = {
             "available": False,
             "utilization_percent": None,
-            "memory_used_mb": None,
-            "memory_total_mb": None,
+            "memory_used_mib": None,
+            "memory_total_mib": None,
         }
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:

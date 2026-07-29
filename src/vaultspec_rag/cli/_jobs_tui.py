@@ -1365,8 +1365,8 @@ class JobsTuiApp(App[None]):
             return "gpu —", "muted", False
         gpu = self._gpu or {}
         utilization = measurement(gpu.get("utilization_percent"))
-        used = measurement(gpu.get("memory_used_mb"))
-        total = measurement(gpu.get("memory_total_mb"))
+        used = measurement(gpu.get("memory_used_mib"))
+        total = measurement(gpu.get("memory_total_mib"))
         parts: list[str] = []
         pressure = 0.0
         if utilization is not None:

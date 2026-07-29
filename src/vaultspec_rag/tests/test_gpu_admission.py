@@ -60,14 +60,14 @@ pytestmark = [pytest.mark.unit]
 _ROOMY = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
-    free_mb=14000.0,
-    total_mb=16376.0,
+    free_mib=14000.0,
+    total_mib=16376.0,
 )
 _CROWDED = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
-    free_mb=2000.0,
-    total_mb=16376.0,
+    free_mib=2000.0,
+    total_mib=16376.0,
 )
 
 #: An arbitrary floor pinned for the predicate tests below, deliberately NOT
@@ -201,8 +201,8 @@ class TestTheFloorPredicate:
         reading = CudaDeviceMemory(
             torch_present=True,
             cuda_present=True,
-            free_mb=float(_FLOOR),
-            total_mb=16376.0,
+            free_mib=float(_FLOOR),
+            total_mib=16376.0,
         )
 
         admission = admission_from_reading(reading, floor_mib=_FLOOR)
@@ -228,8 +228,8 @@ class TestTheFloorPredicate:
             CudaDeviceMemory(
                 torch_present=True,
                 cuda_present=True,
-                free_mb=_FLOOR - 0.4,
-                total_mb=16376.0,
+                free_mib=_FLOOR - 0.4,
+                total_mib=16376.0,
             ),
             floor_mib=_FLOOR,
         )
@@ -237,8 +237,8 @@ class TestTheFloorPredicate:
             CudaDeviceMemory(
                 torch_present=True,
                 cuda_present=True,
-                free_mb=_FLOOR + 0.4,
-                total_mb=16376.0,
+                free_mib=_FLOOR + 0.4,
+                total_mib=16376.0,
             ),
             floor_mib=_FLOOR,
         )
@@ -258,8 +258,8 @@ class TestTheFloorPredicate:
             CudaDeviceMemory(
                 torch_present=False,
                 cuda_present=False,
-                free_mb=None,
-                total_mb=None,
+                free_mib=None,
+                total_mib=None,
             ),
             floor_mib=_FLOOR,
         )
@@ -267,8 +267,8 @@ class TestTheFloorPredicate:
             CudaDeviceMemory(
                 torch_present=True,
                 cuda_present=False,
-                free_mb=None,
-                total_mb=None,
+                free_mib=None,
+                total_mib=None,
             ),
             floor_mib=_FLOOR,
         )
@@ -295,8 +295,8 @@ class TestTheFloorPredicate:
             CudaDeviceMemory(
                 torch_present=True,
                 cuda_present=True,
-                free_mb=None,
-                total_mb=16376.0,
+                free_mib=None,
+                total_mib=16376.0,
             ),
             floor_mib=_FLOOR,
         )
@@ -368,8 +368,8 @@ class TestTheShippedFloorIsSound:
             CudaDeviceMemory(
                 torch_present=True,
                 cuda_present=True,
-                free_mb=float(free_beside_one_tenant),
-                total_mb=float(_DEVICE_TOTAL_MIB),
+                free_mib=float(free_beside_one_tenant),
+                total_mib=float(_DEVICE_TOTAL_MIB),
             ),
             floor_mib=shipped,
         )
@@ -631,8 +631,8 @@ class TestTheAdmissionLatch:
         cpu_only = CudaDeviceMemory(
             torch_present=True,
             cuda_present=False,
-            free_mb=None,
-            total_mb=None,
+            free_mib=None,
+            total_mib=None,
         )
         source = _windowed(tmp_path / "load-window.lock", [cpu_only], entries)
 

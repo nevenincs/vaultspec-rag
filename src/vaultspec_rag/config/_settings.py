@@ -340,18 +340,18 @@ class VaultSpecConfigWrapper:
         # Absolute admitted process ceilings. The per-run budget may freeze a
         # lower ceiling relative to its starting baseline. The allocator cap
         # preserves device headroom for concurrent search before model load.
-        "index_rss_ceiling_mb": 16384.0,
+        "index_rss_ceiling_mib": 16384.0,
         # CUDA ceiling override. ``0`` means auto-derive from the real device:
-        # total device memory minus ``index_cuda_headroom_mb``. A positive value
+        # total device memory minus ``index_cuda_headroom_mib``. A positive value
         # is an authoritative operator override that raises OR lowers the
         # effective ceiling, replacing the former one-way clamp against a fixed
         # 12 GiB profile constant that a 16 GiB card could never raise.
-        "index_cuda_ceiling_mb": 0.0,
+        "index_cuda_ceiling_mib": 0.0,
         # Memory reserved below the device total when the CUDA ceiling is
         # auto-derived: leaves room for the driver, concurrent search, and
         # allocator fragmentation. On a 16 GiB card this yields a ~14 GiB
         # indexing ceiling instead of the flat 12 GiB.
-        "index_cuda_headroom_mb": 2048.0,
+        "index_cuda_headroom_mib": 2048.0,
         "index_cuda_allocator_fraction": 0.8,
         # Free device memory, in MiB, required before this process may load
         # model stacks onto the GPU. Read once per process before the first

@@ -151,9 +151,9 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "watch_retry_max_seconds": EnvVar.WATCH_RETRY_MAX_SECONDS,
     "watch_retry_jitter_fraction": EnvVar.WATCH_RETRY_JITTER_FRACTION,
     "watch_circuit_failure_threshold": EnvVar.WATCH_CIRCUIT_FAILURE_THRESHOLD,
-    "index_rss_ceiling_mb": EnvVar.INDEX_RSS_CEILING_MB,
-    "index_cuda_ceiling_mb": EnvVar.INDEX_CUDA_CEILING_MB,
-    "index_cuda_headroom_mb": EnvVar.INDEX_CUDA_HEADROOM_MB,
+    "index_rss_ceiling_mib": EnvVar.INDEX_RSS_CEILING_MIB,
+    "index_cuda_ceiling_mib": EnvVar.INDEX_CUDA_CEILING_MIB,
+    "index_cuda_headroom_mib": EnvVar.INDEX_CUDA_HEADROOM_MIB,
     "index_cuda_allocator_fraction": EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION,
     "gpu_admission_floor_mib": EnvVar.GPU_ADMISSION_FLOOR_MIB,
     "index_support_profile": EnvVar.INDEX_SUPPORT_PROFILE,
@@ -288,9 +288,9 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "watch_circuit_failure_threshold": _POSITIVE_INT,
     # Memory ceilings. The CUDA ceiling's zero means "auto-derive from the
     # device", so it admits zero where the RSS ceiling does not.
-    "index_rss_ceiling_mb": _POSITIVE_NUMBER,
-    "index_cuda_ceiling_mb": _NON_NEGATIVE_NUMBER,
-    "index_cuda_headroom_mb": _POSITIVE_NUMBER,
+    "index_rss_ceiling_mib": _POSITIVE_NUMBER,
+    "index_cuda_ceiling_mib": _NON_NEGATIVE_NUMBER,
+    "index_cuda_headroom_mib": _POSITIVE_NUMBER,
     "index_cuda_allocator_fraction": _OPEN_UNIT_INTERVAL,
     # Model-load admission floor. Zero would admit every load, which is the
     # behaviour the gate exists to remove, so it is refused with the negatives;
