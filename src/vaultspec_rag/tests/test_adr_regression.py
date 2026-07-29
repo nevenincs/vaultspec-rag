@@ -601,6 +601,19 @@ assert not loaded, loaded
         assert_fresh_import_excludes(self._IMPORT_CHECK)
 
 
+def _cuda_oom_handlers(root: ast.AST) -> list[ast.ExceptHandler]:
+    """Collect the ``except`` handlers naming the CUDA OOM error under *root*."""
+    import ast
+
+    return [
+        node
+        for node in ast.walk(root)
+        if isinstance(node, ast.ExceptHandler)
+        and node.type is not None
+        and "OutOfMemoryError" in ast.unparse(node.type)
+    ]
+
+
 class TestEncodeRecoveryStaysBounded:
     """No unbounded retry may stand between a storage error and job failure.
 
@@ -608,7 +621,8 @@ class TestEncodeRecoveryStaysBounded:
     embed-and-upsert path costs: hours of GPU burn with no failure. The
     CUDA-OOM recovery must keep its floor - a bucket that cannot shrink
     (a single text) re-raises the real error instead of replanning - so
-    every OOM handler must pair with the floor re-raise.
+    every OOM handler must pair with the floor re-raise, and every encode
+    path must reach a handler that has one.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
@@ -620,18 +634,13 @@ class TestEncodeRecoveryStaysBounded:
         from .. import embeddings
 
         tree = ast.parse(inspect.getsource(embeddings))
-        oom_handlers = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ExceptHandler)
-            and node.type is not None
-            and "OutOfMemoryError" in ast.unparse(node.type)
-        ]
-        # The dense and sparse encode paths each carry one handler; zero
-        # found means this scan went stale, not that the risk is gone.
-        assert len(oom_handlers) >= 2, (
-            "expected the dense and sparse CUDA-OOM handlers in "
-            "embeddings.py; the source scan no longer finds them"
+        oom_handlers = _cuda_oom_handlers(tree)
+        # The shared bucket loop carries the one handler both encode
+        # paths route through; zero found means this scan went stale,
+        # not that the risk is gone.
+        assert oom_handlers, (
+            "expected the shared bucket loop's CUDA-OOM handler in "
+            "embeddings.py; the source scan no longer finds any"
         )
 
         def keeps_floor_reraise(handler: ast.ExceptHandler) -> bool:
@@ -647,7 +656,7 @@ class TestEncodeRecoveryStaysBounded:
                 for statement in handler.body
             )
 
-        # Deleting the single-text-bucket re-raise from either handler
+        # Deleting the single-text-bucket re-raise from any handler
         # makes this fail by naming the handler's line: without the
         # floor, a persistent allocator failure retries forever instead
         # of failing the job.
@@ -660,6 +669,70 @@ class TestEncodeRecoveryStaysBounded:
             f"CUDA-OOM handlers at embeddings.py lines {missing} lack "
             "the single-text-bucket floor re-raise; the bucket retry "
             "must terminate"
+        )
+
+    def test_both_encode_paths_reach_an_oom_handler(self):
+        """Each encode path must route its buckets through the OOM recovery.
+
+        The dense and sparse paths share one bucket-encode loop, so one
+        handler bounds both - but only while both actually route through
+        it. This asserts that routing directly: an encode path either
+        handles the CUDA OOM itself or calls a function that does, so an
+        OOM on either path always meets the bounded recovery the floor
+        test pins.
+
+        Mutation check: bypassing the shared loop in
+        ``encode_documents_sparse`` - encoding its buckets inline instead
+        of calling ``_run_bucketed_encode`` - makes this fail on the
+        uncovered-paths assertion below, naming the function; restoring
+        the call returns it to green.
+        """
+        import ast
+        import inspect
+
+        from .. import embeddings
+
+        encode_paths = ("_encode_documents_output", "encode_documents_sparse")
+        tree = ast.parse(inspect.getsource(embeddings))
+        functions = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+        absent = [path for path in encode_paths if path not in functions]
+        assert not absent, (
+            f"encode paths {absent} no longer exist in embeddings.py; "
+            "this scan went stale"
+        )
+        handling = {
+            name for name, function in functions.items() if _cuda_oom_handlers(function)
+        }
+
+        def reaches_handling(function: ast.FunctionDef) -> bool:
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Call):
+                    continue
+                callee = node.func
+                called = (
+                    callee.attr
+                    if isinstance(callee, ast.Attribute)
+                    else callee.id
+                    if isinstance(callee, ast.Name)
+                    else None
+                )
+                if called in handling:
+                    return True
+            return False
+
+        uncovered = [
+            path
+            for path in encode_paths
+            if path not in handling and not reaches_handling(functions[path])
+        ]
+        assert not uncovered, (
+            f"encode paths {uncovered} neither handle a CUDA OOM nor "
+            "call a function that does; an OOM there would escape the "
+            "bounded bucket recovery"
         )
 
 
