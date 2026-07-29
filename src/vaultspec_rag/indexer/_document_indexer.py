@@ -421,6 +421,12 @@ class DocumentIndexer:
         """Resolve policy and document discovery before any mutable resource."""
         run_control.checkpoint()
         policy = self.resolve_policy_snapshot()
+        # An execution preflight is the membership observation the run it
+        # authorizes diffs and publishes claims from, so it must see the tree
+        # as it stands now: a cached walk would hide any create or delete
+        # since the walk was taken. The fresh walk re-primes the cache, so
+        # reads inside the authorized run serve this same observation.
+        self._discover_cache.invalidate()
         files = self._discover(policy, run_control=run_control)
         run_control.checkpoint()
         return DocumentIndexPreflight(self.root_dir, policy, files)
