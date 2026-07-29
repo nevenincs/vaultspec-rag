@@ -165,8 +165,9 @@ class TestForwardTelemetry:
                 self,
                 texts: list[str],
                 batch_size: int | None = None,
+                gpu_lock: object | None = None,
             ) -> list[list[float]]:
-                del batch_size
+                del batch_size, gpu_lock
                 events.append("forward")
                 return [[0.0, 1.0] for _ in texts]
 

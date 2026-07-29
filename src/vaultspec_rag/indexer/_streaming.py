@@ -15,7 +15,7 @@ from functools import partial
 from itertools import chain, pairwise
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
-from ..job_control import NO_RUN_CONTROL, timed_gpu_lock
+from ..job_control import NO_RUN_CONTROL
 
 if TYPE_CHECKING:
     import threading
@@ -341,8 +341,9 @@ def _transfer_to_cpu(value: object) -> object:
 
     Ordinary dense callers receive a CPU NumPy array. Index streaming requests
     an accelerator tensor and crosses this boundary immediately after the
-    caller releases ``gpu_lock``. The structural check keeps both forms lazy
-    without adding an eager Torch import to this module.
+    encoder releases its last per-bucket ``gpu_lock`` hold. The structural
+    check keeps both forms lazy without adding an eager Torch import to this
+    module.
     """
     if isinstance(value, _CpuTransferable):
         return value.cpu()
@@ -446,8 +447,9 @@ class _VectorEncodeRequest:
     after_encode: Callable[[], None] | None = None
     # Forward-pass boundary callbacks, called with the pass kind ("dense" or
     # "sparse"). ``before_forward`` fires on the encoding thread immediately
-    # before the GPU lock is sought, so an in-flight forward - the only
-    # activity inside a slice - is observable while it runs, not only after.
+    # before the first bucket forward seeks the GPU lock, so an in-flight
+    # encode - the only activity inside a slice - is observable while it
+    # runs, not only after.
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
     on_cuda_oom: Callable[[BaseException], None] | None = None
@@ -492,11 +494,14 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
     sparse: Iterable[_SparseVectorLike | None] | None = None
     try:
         _notify_forward_boundary(request.before_forward, "dense")
-        with timed_gpu_lock(request.gpu_lock):
-            dense_device = request.model.encode_documents_on_device(
-                slice_texts,
-                batch_size=request.encode_batch_size,
-            )
+        # The model brackets each planned encode bucket's forward with its
+        # own GPU-lock hold, so a concurrent search on the shared device
+        # waits for at most one bucket, never a whole slice.
+        dense_device = request.model.encode_documents_on_device(
+            slice_texts,
+            batch_size=request.encode_batch_size,
+            gpu_lock=request.gpu_lock,
+        )
         _notify_forward_boundary(request.after_forward, "dense")
         dense_cpu = _transfer_to_cpu(dense_device)
         dense_device = None
@@ -1513,9 +1518,9 @@ def iter_weighted_code_slices(
 def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
-    Dense and sparse forwards use separate GPU-lock spans, and sparse transfer
-    and conversion run outside the lock, so the I/O-bound upsert does not block
-    concurrent searches on the same device. When
+    Every dense and sparse bucket forward holds its own GPU-lock span, and
+    transfer and conversion run outside the lock, so the I/O-bound upsert does
+    not block concurrent searches on the same device. When
     ``release_cache`` is True the CUDA caching pool is returned to the driver
     on every exit path (#68); the chunk-to-embed pipeline passes
     False on most slices and flushes periodically instead (#155).
