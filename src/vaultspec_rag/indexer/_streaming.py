@@ -28,7 +28,7 @@ if TYPE_CHECKING:
         VaultDocument,
     )
     from .._store_writes import StoreWritePolicy
-    from ..embeddings import EmbeddingModel
+    from ..embeddings import EmbeddingModel, EncodeBucketProgress
     from ..job_control import RunControl
     from ..memory_probe import MemoryProbe
     from ..progress import ProgressReporter
@@ -160,6 +160,7 @@ class CodeSliceRequest:
     on_storage_confirmed: Callable[[], None] | None = None
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
+    on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
     on_cuda_oom: Callable[[BaseException], None] | None = None
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
@@ -452,6 +453,10 @@ class _VectorEncodeRequest:
     # runs, not only after.
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
+    # Per-bucket encode boundary callback. The encoder splits the slice into
+    # token-budgeted buckets and calls this at each one, so the reporting it
+    # drives resolves inside a slice rather than only at its edges.
+    on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
     on_cuda_oom: Callable[[BaseException], None] | None = None
     reuse: DonorReuseContext | None = None
 
@@ -501,11 +506,14 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
             slice_texts,
             batch_size=request.encode_batch_size,
             gpu_lock=request.gpu_lock,
+            on_bucket=request.on_encode_bucket,
         )
         _notify_forward_boundary(request.after_forward, "dense")
         dense_cpu = _transfer_to_cpu(dense_device)
         dense_device = None
         if request.sparse_enabled:
+            # The sparse encoder plans buckets too, but exposes no boundary
+            # callback, so its forward window stays scoped to the whole slice.
             _notify_forward_boundary(request.before_forward, "sparse")
             sparse = request.model.encode_documents_sparse(
                 slice_texts,
@@ -715,6 +723,7 @@ class _VaultSliceRequest:
     release_cache: bool = True
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
+    on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
 
 
 def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
@@ -752,6 +761,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
                 after_encode=_after_encode,
                 before_forward=request.before_forward,
                 after_forward=request.after_forward,
+                on_encode_bucket=request.on_encode_bucket,
                 reuse=request.reuse,
             )
         )
@@ -803,6 +813,83 @@ def _report_forward_exit(
     """Adapt one slice's forward-exit boundary onto the progress reporter."""
     del kind
     reporter.forward_finished(ordinal=ordinal, items=items)
+
+
+@runtime_checkable
+class _EncodeTelemetrySink(Protocol):
+    """The encode-state surface a progress reporter may also publish.
+
+    Forward boundaries mean something to every reporter; encode budget and
+    memory-retry state only mean something to one with a job record behind
+    it. Narrowing to the capability keeps that state off the reporters that
+    have nowhere to put it, without a no-op member on each of them.
+    """
+
+    def encode_budget_planned(
+        self,
+        *,
+        token_budget: int | None,
+        bucket_items: int | None,
+    ) -> None: ...
+
+    def encode_oom(self) -> None: ...
+
+
+class _EncodeBucketReporter:
+    """Adapt one slice's per-bucket encode boundaries onto the reporter.
+
+    The encoder splits a slice into token-budgeted buckets and calls this at
+    each boundary, on the encoding thread and outside any GPU-lock hold. Every
+    boundary re-reports the forward window carrying the slice's completed item
+    count, so a slice that takes minutes shows progress climbing through it
+    instead of one silent open window; every planned bucket republishes the
+    token budget and bucket size it was planned under, which is what makes a
+    collapsed encode rate attributable to a memory ceiling rather than to a
+    stuck pass. The item count reported at the last bucket equals the slice's
+    own, so the window a slice ends on is the one it always ended on.
+
+    Bucket progress carries the encoder's running memory-retry count rather
+    than an event per retry, so each rise in it is republished as the retries
+    it stands for.
+    """
+
+    __slots__ = ("_ooms_reported", "_ordinal", "_reporter", "_sink")
+
+    def __init__(self, reporter: ProgressReporter, ordinal: int) -> None:
+        self._reporter = reporter
+        self._ordinal = ordinal
+        self._sink = reporter if isinstance(reporter, _EncodeTelemetrySink) else None
+        self._ooms_reported = 0
+
+    def __call__(self, phase: str, progress: EncodeBucketProgress) -> None:
+        try:
+            self._publish(phase, progress)
+        except Exception:
+            # This runs inside the encoder's bucket loop, so raising would
+            # discard every bucket the slice has already encoded. Reporting is
+            # never worth an encode: record the failure and let the slice run.
+            logger.warning("encode bucket telemetry failed", exc_info=True)
+
+    def _publish(self, phase: str, progress: EncodeBucketProgress) -> None:
+        if self._sink is not None:
+            while self._ooms_reported < progress.oom_count:
+                self._ooms_reported += 1
+                self._sink.encode_oom()
+        if phase == "before":
+            if self._sink is not None:
+                self._sink.encode_budget_planned(
+                    token_budget=progress.token_budget,
+                    bucket_items=progress.bucket_items,
+                )
+            self._reporter.forward_started(
+                ordinal=self._ordinal,
+                items=progress.items_done,
+            )
+            return
+        self._reporter.forward_finished(
+            ordinal=self._ordinal,
+            items=progress.items_done,
+        )
 
 
 def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, int]:
@@ -889,6 +976,10 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                                 request.reporter,
                                 slice_index,
                                 len(slice_chunks),
+                            ),
+                            on_encode_bucket=_EncodeBucketReporter(
+                                request.reporter,
+                                slice_index,
                             ),
                         )
                     )
@@ -1562,6 +1653,7 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
                 encode_batch_size=request.encode_batch_size,
                 before_forward=request.before_forward,
                 after_forward=request.after_forward,
+                on_encode_bucket=request.on_encode_bucket,
                 on_cuda_oom=request.on_cuda_oom,
                 reuse=request.reuse,
             )

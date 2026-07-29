@@ -63,7 +63,9 @@ class _RecordingEncoder:
         texts: list[str],
         batch_size: int | None = None,
         gpu_lock: threading.Lock | None = None,
+        on_bucket: object | None = None,
     ) -> list[list[float]]:
+        del on_bucket
         started = time.monotonic()
         self.seen_batch_sizes.append(batch_size)
         self.seen_gpu_locks.append(gpu_lock)

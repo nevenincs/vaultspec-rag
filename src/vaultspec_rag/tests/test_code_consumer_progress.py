@@ -11,7 +11,9 @@ code path is visible while it runs.
 The encoder here is a deterministic implementation of the model's encode
 call surface and the store records its upserts; everything between them -
 the slice encode, the vector population, the accounting, the reporter, the
-registry - is the shipped production path.
+registry - is the shipped production path. The encoder also replays the
+per-bucket boundary contract the real one emits, so the sub-slice progress
+and encode-budget state those boundaries publish are covered without a GPU.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._store_models import CodeChunk
+from ..embeddings import EncodeBucketProgress
 from ..indexer._chunk_producer import WeightedCodeSegmentQueue
 from ..indexer._consumer_pipeline import (
     CodeConsumerPipeline,
@@ -33,6 +36,7 @@ from ..indexer._streaming import CodeFileSegment, WeightedCodeSlice
 from ..job_models import JobSource
 from ..jobs import (
     JobProgressReporter,
+    encode_telemetry,
     forward_telemetry,
     record_start,
     reset,
@@ -41,7 +45,7 @@ from ..jobs import (
 from ..memory_probe import MemoryProbe
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
     from ..embeddings import EmbeddingModel
@@ -71,15 +75,36 @@ def own_status_dir(
 
 
 class DeterministicEncoder:
-    """Deterministic encoder exposing the dense-encode call surface."""
+    """Deterministic encoder exposing the dense-encode call surface.
+
+    ``bucket_events`` replays the real encoder's per-bucket boundary contract
+    for one encode call, and ``on_event`` runs after each replayed boundary -
+    the only way a test sees what a slice published while it ran rather than
+    the single value it ended on. Left unset, no boundary is reported.
+    """
+
+    def __init__(
+        self,
+        *,
+        bucket_events: Sequence[tuple[str, EncodeBucketProgress]] = (),
+        on_event: Callable[[], None] | None = None,
+    ) -> None:
+        self.bucket_events = bucket_events
+        self.on_event = on_event
 
     def encode_documents_on_device(
         self,
         texts: list[str],
         batch_size: int | None = None,
         gpu_lock: object | None = None,
+        on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
     ) -> list[list[float]]:
         del batch_size, gpu_lock
+        if on_bucket is not None:
+            for phase, progress in self.bucket_events:
+                on_bucket(phase, progress)
+                if self.on_event is not None:
+                    self.on_event()
         return [[0.0, 1.0] for _ in texts]
 
 
@@ -149,11 +174,18 @@ def _limits() -> CodePipelineLimits:
     )
 
 
-def _pipeline(tmp_path: Path, store: RecordingUpsertStore) -> CodeConsumerPipeline:
+def _pipeline(
+    tmp_path: Path,
+    store: RecordingUpsertStore,
+    encoder: DeterministicEncoder | None = None,
+) -> CodeConsumerPipeline:
     return CodeConsumerPipeline(
         CodePipelineBindings(
             root_dir=tmp_path,
-            model=cast("EmbeddingModel", DeterministicEncoder()),
+            model=cast(
+                "EmbeddingModel",
+                encoder if encoder is not None else DeterministicEncoder(),
+            ),
             store=cast("VaultStore", store),
             producer=cast("CodeChunkProducer", object()),
             lifecycle=cast("CodeGenerationLifecycle", object()),
@@ -298,3 +330,122 @@ class TestConsumerAdvancesProgress:
         assert exited >= cast("float", forward["entered_at"])
         assert forward["slice_ordinal"] == 5
         assert forward["items"] == 1
+
+    def test_encode_buckets_publish_sub_slice_progress_and_retries(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Each bucket boundary moves the published item count and budget.
+
+        The replayed sequence is one four-chunk slice encoded as a two-item
+        bucket, then a bucket whose first attempt runs out of memory (a
+        "before" with no "after") and is replanned as two one-item buckets
+        under a halved budget.
+
+        Mutation check: dropping ``on_encode_bucket`` from the slice request
+        in ``_consume_weighted_slice`` makes this fail on the ``published ==
+        [0, 2, 2, 2, 3, 3, 4]`` assertion below - the encoder is handed no
+        callback, so nothing is published between the slice's own two
+        boundaries and the list comes back empty - and restoring it returns
+        the test to green.
+        """
+        from ..job_control import NO_RUN_CONTROL
+
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        reporter = JobProgressReporter(job_id)
+        reporter.phase_start("chunk + embed", 1)
+        chunks = tuple(_chunk("pkg/d.py", ordinal) for ordinal in range(4))
+        weighted_slice = WeightedCodeSlice(
+            segments=(_segment("pkg/d.py", 0, chunks, is_file_end=True),),
+            chunks=chunks,
+            estimated_bytes=sum(len(chunk.content) for chunk in chunks),
+        )
+
+        def _progress(
+            items_done: int,
+            bucket_items: int,
+            token_budget: int,
+            oom_count: int,
+        ) -> EncodeBucketProgress:
+            return EncodeBucketProgress(
+                items_done=items_done,
+                items_total=len(chunks),
+                bucket_items=bucket_items,
+                bucket_estimated_tokens=bucket_items * 500,
+                token_budget=token_budget,
+                oom_count=oom_count,
+            )
+
+        published: list[dict[str, object]] = []
+
+        def _sample() -> None:
+            forward = forward_telemetry(job_id)
+            if forward is not None:
+                published.append(forward)
+
+        encoder = DeterministicEncoder(
+            bucket_events=(
+                ("before", _progress(0, 2, 4000, 0)),
+                ("after", _progress(2, 2, 4000, 0)),
+                # This attempt runs out of memory: no "after" follows it, and
+                # the next boundary carries the raised retry count.
+                ("before", _progress(2, 2, 4000, 0)),
+                ("before", _progress(2, 1, 2000, 1)),
+                ("after", _progress(3, 1, 2000, 1)),
+                ("before", _progress(3, 1, 2000, 1)),
+                ("after", _progress(4, 1, 2000, 1)),
+            ),
+            on_event=_sample,
+        )
+        store = RecordingUpsertStore(job_id)
+        pipeline = _pipeline(tmp_path, store, encoder)
+        consumer_run = _WeightedConsumerRun(
+            segment_queue=WeightedCodeSegmentQueue(max_chunks=32, max_bytes=1 << 20),
+            consumer_exceptions=[],
+            limits=_limits(),
+            new_ids=set(),
+            total=[0],
+            metadata={},
+            checkpoint=None,
+            ingest_wait=False,
+            run_control=NO_RUN_CONTROL,
+            code_build_target=None,
+            donor_reuse=None,
+            reporter=reporter,
+        )
+
+        with MemoryProbe(name="test-code-consumer-buckets") as probe:
+            pipeline._consume_weighted_slice(
+                weighted_slice,
+                slice_index=2,
+                consumer_run=consumer_run,
+                probe=probe,
+            )
+
+        # Progress resolves inside the slice: the count climbs bucket by
+        # bucket and repeats across the failed attempt, which encoded nothing.
+        assert [sample["items"] for sample in published] == [0, 2, 2, 2, 3, 3, 4]
+        # Every bucket reopens the window, so an in-flight bucket reads as one
+        # rather than as a slice that finished at its first boundary.
+        assert [sample["exited_at"] is None for sample in published] == [
+            True,
+            False,
+            True,
+            True,
+            False,
+            True,
+            False,
+        ]
+        assert {sample["slice_ordinal"] for sample in published} == {2}
+        # The budget the last bucket was planned under, and one retry - the
+        # count rose once across four boundaries carrying it.
+        assert encode_telemetry(job_id) == {
+            "token_budget": 2000,
+            "bucket_items": 1,
+            "oom_count": 1,
+        }
+        # The slice still ends on the window it always ended on.
+        forward = forward_telemetry(job_id)
+        assert forward is not None
+        assert forward["items"] == len(chunks)
+        assert forward["slice_ordinal"] == 2
