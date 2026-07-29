@@ -114,6 +114,7 @@ class _ExplodingModel:
         texts: list[str],
         batch_size: int | None = None,  # noqa: ARG002  # seam-imposed signature
         gpu_lock: object | None = None,  # noqa: ARG002  # seam-imposed signature
+        on_bucket: object | None = None,  # noqa: ARG002  # seam-imposed signature
     ) -> object:
         raise AssertionError(f"dense forward ran for a fully adopted slice: {texts!r}")
 
@@ -139,6 +140,7 @@ class _RecordingModel:
         texts: list[str],
         batch_size: int | None = None,  # noqa: ARG002  # seam-imposed signature
         gpu_lock: object | None = None,  # noqa: ARG002  # seam-imposed signature
+        on_bucket: object | None = None,  # noqa: ARG002  # seam-imposed signature
     ) -> list[list[float]]:
         self.encoded_texts.extend(texts)
         return [_encoded_dense(text) for text in texts]
