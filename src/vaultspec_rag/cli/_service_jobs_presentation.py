@@ -12,7 +12,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediation
-from ..jobs import measurement
+from ..jobs import count, measurement
 from ._cli_format import (
     _format_mb,
     _format_milliseconds,
@@ -139,8 +139,9 @@ def _job_prefix(job: dict[str, object]) -> str:
 
 
 def _job_timestamp(job: dict[str, object]) -> float:
-    timestamp = job.get("finished_at") or job.get("started_at")
-    return float(timestamp) if isinstance(timestamp, int | float) else 0.0
+    raw = job.get("finished_at") or job.get("started_at")
+    timestamp = measurement(raw)
+    return timestamp if timestamp is not None else 0.0
 
 
 def _job_time_label(job: dict[str, object]) -> str:
@@ -241,13 +242,13 @@ def human_progress(job: dict[str, object]) -> str:
     progress = cast("dict[str, object]", raw_progress)
     step = str(progress.get("step", ""))
     label = _progress_step_label(step, _source_label(job))
-    completed = progress.get("completed")
-    total = progress.get("total")
+    completed = measurement(progress.get("completed"))
+    total = measurement(progress.get("total"))
     if step == "queued":
         return label
-    if isinstance(completed, int | float) and isinstance(total, int | float):
+    if completed is not None and total is not None:
         return f"{label} {int(completed)} of {int(total)}"
-    if isinstance(completed, int | float) and step:
+    if completed is not None and step:
         return f"{label} {int(completed)}"
     return label
 
@@ -274,28 +275,27 @@ def _forward_evidence_phrase(job: dict[str, object]) -> str:
     forward = _evidence_section(job, "forward")
     if forward is None:
         return ""
-    age = forward.get("age_seconds")
-    aged = isinstance(age, int | float) and not isinstance(age, bool)
+    age = measurement(forward.get("age_seconds"))
     if forward.get("in_flight") is True:
         phrase = (
             f"GPU forward pass running {_format_seconds(age)}"
-            if aged
+            if age is not None
             else "GPU forward pass running"
         )
         if forward.get("thread_alive") is False:
             phrase += " (encode thread dead)"
         return phrase
-    if aged:
+    if age is not None:
         return f"last GPU forward finished {_format_seconds(age)} ago"
     return ""
 
 
 def _unhealthy_summary(job: dict[str, object], verdict: str) -> str:
     """One line naming the verdict and its leading cause, service words only."""
-    raw_age = job.get("last_progress_age_seconds")
+    age = measurement(job.get("last_progress_age_seconds"))
     base = (
-        f"no progress for {_format_seconds(raw_age)}"
-        if isinstance(raw_age, int | float)
+        f"no progress for {_format_seconds(age)}"
+        if age is not None
         else "no recent progress"
     )
     forward = _forward_evidence_phrase(job)
@@ -399,9 +399,9 @@ def _cpu_evidence_line(job: dict[str, object]) -> str | None:
         return None
     if cpu.get("available") is not True:
         return "Process CPU: not measurable from the service process"
-    percent = cpu.get("utilization_percent")
-    if isinstance(percent, int | float) and not isinstance(percent, bool):
-        return f"Process CPU: {round(float(percent))}% of one core"
+    percent = measurement(cpu.get("utilization_percent"))
+    if percent is not None:
+        return f"Process CPU: {round(percent)}% of one core"
     # The first sample only primes the counter; the next poll carries a
     # number, so an empty reading is a warming probe, not an absent one.
     return None
@@ -414,9 +414,9 @@ def _gpu_evidence_line(job: dict[str, object]) -> str | None:
     if gpu.get("available") is not True:
         return "GPU: not measurable from the service process"
     parts: list[str] = []
-    utilization = gpu.get("utilization_percent")
-    if isinstance(utilization, int | float):
-        parts.append(f"{round(float(utilization))}% busy")
+    utilization = measurement(gpu.get("utilization_percent"))
+    if utilization is not None:
+        parts.append(f"{round(utilization)}% busy")
     used = gpu.get("memory_used_mb")
     total = gpu.get("memory_total_mb")
     if used is not None or total is not None:
@@ -472,15 +472,15 @@ def _fallback_stale_label(job: dict[str, object]) -> str:
     Prefers the service-computed ``stalled`` flag, then the local threshold
     for snapshots from an older service that lacks even that.
     """
-    raw_age = job.get("last_progress_age_seconds")
-    if not isinstance(raw_age, int | float):
+    age = measurement(job.get("last_progress_age_seconds"))
+    if age is None:
         return ""
     stalled = job.get("stalled")
     if stalled is False:
         return ""
-    if stalled is not True and float(raw_age) < STALL_THRESHOLD_SECONDS:
+    if stalled is not True and age < STALL_THRESHOLD_SECONDS:
         return ""
-    return f"no progress for {_format_seconds(raw_age)}"
+    return f"no progress for {_format_seconds(age)}"
 
 
 def remaining_estimate_label(job: dict[str, object]) -> str:
@@ -496,12 +496,12 @@ def remaining_estimate_label(job: dict[str, object]) -> str:
     """
     if "estimated_remaining_seconds" not in job:
         return ""
-    remaining = job.get("estimated_remaining_seconds")
-    if isinstance(remaining, int | float) and not isinstance(remaining, bool):
+    remaining = measurement(job.get("estimated_remaining_seconds"))
+    if remaining is not None:
         # Ceiling, not truncation: a countdown must never read below what
         # the service just said, and the coarse two-unit rendering already
         # removes any precision the estimate does not have.
-        return f"~{compact_duration(math.ceil(max(0.0, float(remaining))))} remaining"
+        return f"~{compact_duration(math.ceil(max(0.0, remaining)))} remaining"
     return "ETA unknown"
 
 
@@ -539,22 +539,21 @@ def _human_result(raw: object, *, failed: bool = False) -> str:
     return ", ".join(parts)
 
 
-def _waiting_job_detail(detail: str, raw_runtime: object) -> str:
-    has_runtime = isinstance(raw_runtime, int | float)
+def _waiting_job_detail(detail: str, runtime: float | None) -> str:
     if detail:
         return (
-            f"{detail} for {_format_seconds(raw_runtime)}"
-            if has_runtime
+            f"{detail} for {_format_seconds(runtime)}"
+            if runtime is not None
             else f"{detail}; runtime not reported"
         )
     return (
-        f"waiting for {_format_seconds(raw_runtime)}"
-        if has_runtime
+        f"waiting for {_format_seconds(runtime)}"
+        if runtime is not None
         else "waiting; runtime not reported"
     )
 
 
-def _admission_wait_detail(raw_runtime: object) -> str:
+def _admission_wait_detail(runtime: float | None) -> str:
     """Name the wait, not just its duration.
 
     An operator reading "waiting for 6 minutes" cannot tell whether the job is
@@ -562,9 +561,9 @@ def _admission_wait_detail(raw_runtime: object) -> str:
     and that exactly one job holds it, which turns an alarming line into an
     expected one - and points at the real remedy when it is not expected.
     """
-    if isinstance(raw_runtime, int | float):
+    if runtime is not None:
         return (
-            f"waiting {_format_seconds(raw_runtime)} for the GPU slot "
+            f"waiting {_format_seconds(runtime)} for the GPU slot "
             "(one indexing job encodes at a time)"
         )
     return "waiting for the GPU slot (one indexing job encodes at a time)"
@@ -572,14 +571,14 @@ def _admission_wait_detail(raw_runtime: object) -> str:
 
 def _running_job_detail(job: dict[str, object]) -> str:
     detail = human_progress(job)
-    raw_runtime = job.get("runtime_seconds")
+    runtime = measurement(job.get("runtime_seconds"))
     if job_awaiting_admission(job):
-        return _admission_wait_detail(raw_runtime)
+        return _admission_wait_detail(runtime)
     if job_is_waiting(job):
-        return _waiting_job_detail(detail, raw_runtime)
+        return _waiting_job_detail(detail, runtime)
     runtime_detail = (
-        f"running for {_format_seconds(raw_runtime)}"
-        if isinstance(raw_runtime, int | float)
+        f"running for {_format_seconds(runtime)}"
+        if runtime is not None
         else "runtime not reported"
     )
     stale_progress = stale_progress_label(job)
@@ -765,11 +764,11 @@ def _filter_line(result: dict[str, object]) -> str:
 
 
 def _job_count_text(
-    count: object,
+    raw: object,
     singular: str = "job",
     plural: str | None = None,
 ) -> str:
-    value = count if isinstance(count, int) else 0
+    value = count(raw) or 0
     word = singular if value == 1 else (plural or f"{singular}s")
     return f"{value} {word}"
 
@@ -997,14 +996,11 @@ def _resilience_summary_lines(job: dict[str, object]) -> tuple[str, ...]:
         lines.append(f"No-progress budget remaining: {_format_seconds(deadline)}")
     if circuit := data.get("circuit_state"):
         lines.append(f"Retry circuit: {circuit}")
-    next_retry = data.get("next_retry_at")
-    if isinstance(next_retry, int | float):
+    next_retry = measurement(data.get("next_retry_at"))
+    if next_retry is not None:
         lines.append(
             "Next retry: "
-            + time.strftime(
-                "%Y-%m-%d %H:%M:%S UTC",
-                time.gmtime(float(next_retry)),
-            )
+            + time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(next_retry))
         )
     peak_rss = data.get("peak_rss_mb")
     rss_ceiling = data.get("rss_ceiling_mb")
