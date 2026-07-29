@@ -399,9 +399,12 @@ def _log_managed_transition(
     elif snapshot.state is JobState.SUPERSEDED:
         # A newer job replaced this one, which is routine on a watcher that
         # coalesces work: worth surfacing, because it tells an operator
-        # coalescing happened, but not a failure and not progress either -
-        # filing a terminal state under the progress event would be its own
-        # lie. It gets an outcome event of its own at ordinary severity.
+        # coalescing happened, but neither a failure nor progress. Reporting it
+        # on the error channel would be backwards - the replacing work is the
+        # one that ran - and it would put a routine resolution in the place an
+        # operator greps for failures that still need attention. Filing it
+        # under the progress event would be its own lie, since the state is
+        # terminal. It gets an outcome event of its own at ordinary severity.
         log_event(
             logger,
             "service.watcher",

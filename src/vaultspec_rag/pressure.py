@@ -172,9 +172,10 @@ def _store_failure_findings(signals: MachinePressureSignals) -> set[str]:
 def _elevated_findings(signals: MachinePressureSignals) -> tuple[str, ...]:
     findings: list[str] = []
     age = signals.forward_age_seconds
-    # An in-flight forward at least this old is pressure evidence, at exactly
-    # the threshold the per-job verdict calls a job degraded, so the two
-    # vocabularies can never disagree about when a stretch begins.
+    # An in-flight forward at least this old is pressure evidence, measured
+    # against the very threshold at which the per-job verdict calls that job
+    # degraded - so the machine vocabulary and the job vocabulary cannot
+    # disagree about when a stretch begins.
     if (
         signals.forward_in_flight
         and age is not None
@@ -302,9 +303,10 @@ class PressureEvaluator:
             return
         # A tier clears one rung only after this long of continuously calmer
         # samples, and any sample back at or above the tier restarts the clock
-        # above, so a race can only extend the verdict and never shorten it.
-        # The window that makes a job's silence reportable is the same order of
-        # quiet that makes a machine's recovery believable.
+        # above - so a race can only extend the verdict, never shorten it. The
+        # window that makes a job's silence reportable is the same order of
+        # quiet that makes a machine's recovery believable, so it is the same
+        # threshold rather than a second number that could drift from it.
         if now - self._clear_started_at >= DEGRADED_THRESHOLD_SECONDS:
             self._transition(self._tier - 1, now, findings)
             # One rung per window: a further drop restarts the clock rather

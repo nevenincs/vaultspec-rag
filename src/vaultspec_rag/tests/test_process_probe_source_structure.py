@@ -234,6 +234,24 @@ class TestNoStructurallyIdenticalFunctions:
         "which is the enumeration these properties exist to remove."
     )
 
+    _INDEPENDENT_LANE = (
+        "Each bumps its own generation counter and dispatches its own worker. "
+        "The separate counters are the point - they are what let the lanes be "
+        "ordered independently, so one lane's slow answer cannot be mistaken "
+        "for another's - and merging would mean reaching them by attribute "
+        "name, which trades a checked reference for a string."
+    )
+
+    _UNSHARED_VIEW_STATE = (
+        "Two view classes that deliberately share no rendering: one parses "
+        "structured records, suppresses polling reflections and caps the "
+        "window, the other only neutralizes control bytes. They hold "
+        "differently named state and repaint through different methods, so "
+        "what matches is the guard's shape. Giving them a common base to share "
+        "three lines would couple exactly what they were separated to keep "
+        "apart."
+    )
+
     _CONSTRUCTOR_BINDING = (
         "Two unrelated constructors binding their own parameters to their own "
         "attributes. What matches is the run of `self._x = x` lines and the "
@@ -287,6 +305,19 @@ class TestNoStructurallyIdenticalFunctions:
             "_store_models.py:vault_indexed_metadata",
             "index_profiles.py:_limits",
         ): _SERIALISATION,
+        (
+            "cli/_jobs_tui.py:refresh_jobs",
+            "cli/_jobs_tui.py:refresh_managed_logs",
+            "cli/_jobs_tui.py:refresh_search_activity",
+        ): _INDEPENDENT_LANE,
+        (
+            "cli/_jobs_tui_log.py:_render_if_content",
+            "cli/_jobs_tui_managed_logs.py:_repaint_if_held",
+        ): _UNSHARED_VIEW_STATE,
+        (
+            "cli/_jobs_tui_log.py:show_message",
+            "cli/_jobs_tui_managed_logs.py:show_message",
+        ): _UNSHARED_VIEW_STATE,
         (
             "indexer/_codebase_indexer.py:_reuse_snapshot",
             "indexer/_document_indexer.py:_reuse_snapshot",

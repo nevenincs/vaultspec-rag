@@ -54,6 +54,10 @@ def test_jobs_route_200_with_bearer_token(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     payload: dict[str, Any] = response.json()
+    # An exact set, not a subset: a field appearing here without a reader is an
+    # envelope an adapter can drift from, so growth has to be stated. ``gpu``,
+    # ``pressure`` and ``device_load`` ride beside the work list so a header can
+    # show the card's condition without a request of its own.
     assert set(payload) == {
         "jobs",
         "total",
