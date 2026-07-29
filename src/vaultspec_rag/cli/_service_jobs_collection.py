@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from typer.core import TyperCommand, TyperOption
 
@@ -52,6 +52,7 @@ class ServiceJobsOptions:
     json_mode: bool = False
     watch: bool = False
     interval: float = 2.0
+    watch_mode: Literal["server", "jobs"] = "jobs"
 
 
 class _ServiceJobsCommand(TyperCommand):
@@ -212,6 +213,7 @@ def run_service_jobs(options: ServiceJobsOptions) -> None:
                 port=resolved_port,
                 interval=interval,
                 client_state=client_state,
+                watch_mode=options.watch_mode,
             )
         )
         return
