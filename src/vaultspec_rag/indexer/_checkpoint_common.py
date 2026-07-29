@@ -36,7 +36,9 @@ from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
+    RunLedgerCompatibilityError,
     RunLedgerStateError,
+    RunOperation,
     RunTerminalState,
 )
 from ._run_policy import DurableProgressKind
@@ -49,7 +51,7 @@ if TYPE_CHECKING:
     from . import _config_epoch
     from ._content_policy import ContentKind
     from ._resolved_policy import ResolvedIndexPolicy
-    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_models import RunGeneration, RunSignature
     from ._run_ledger_runtime import RunLedger
     from ._run_policy import RunPolicy
 
@@ -125,6 +127,37 @@ class RunCheckpointBase:
 
     _content_kind: ClassVar[ContentKind]
     _kind_label: ClassVar[str]
+
+    @classmethod
+    def start_compatible_generation(
+        cls,
+        ledger: RunLedger,
+        signature: RunSignature,
+    ) -> RunGeneration:
+        """Start one attempt's generation, refusing a parentless incremental.
+
+        An incremental reconciles a difference against a published manifest.
+        Without a compatible parent there is no manifest to differ from, so
+        every file the run believed unchanged would be skipped and an index
+        nobody wrote would be certified. Refusing is what lets the caller
+        escalate to a full failure-safe reconciliation instead.
+
+        Both source types refuse on the same evidence, which is why the
+        refusal lives here rather than beside each signature: a copy that
+        drifted would leave one source type failing every incremental where
+        the other recovers.
+        """
+        generation = ledger.start_generation(signature)
+        if (
+            signature.operation
+            in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
+            and generation.parent_generation_id is None
+        ):
+            raise RunLedgerCompatibilityError(
+                f"incremental {cls._kind_label} indexing requires a compatible "
+                "published manifest; run a full reconciliation"
+            )
+        return generation
 
     @property
     def generation_id(self) -> str:
