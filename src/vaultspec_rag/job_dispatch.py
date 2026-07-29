@@ -293,24 +293,24 @@ def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
     domain = IndexDomain.CODE if source is JobSource.CODE else IndexDomain.DOCUMENT
     limits = profile.limits_for(domain)
     from .memory_probe import (
-        resident_cuda_baseline_mb,
-        resolve_index_cuda_ceiling_mb,
+        resident_cuda_baseline_mib,
+        resolve_index_cuda_ceiling_mib,
     )
 
-    rss_ceiling_mb = bytes_to_mib(limits.rss_bytes)
-    rss_ceiling_mb = min(rss_ceiling_mb, config.index_rss_ceiling_mb)
+    rss_ceiling_mib = bytes_to_mib(limits.rss_bytes)
+    rss_ceiling_mib = min(rss_ceiling_mib, config.index_rss_ceiling_mib)
     # Point-in-time diagnostic only: this snapshot is reported and persisted,
     # never enforced, and may legitimately differ from the later per-job
     # enforcing derivation the budget builders compute post-flush.
-    cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
-        configured_mb=config.index_cuda_ceiling_mb,
-        headroom_mb=config.index_cuda_headroom_mb,
-        profile_cuda_mb=bytes_to_mib(limits.cuda_bytes),
-        baseline_mb=resident_cuda_baseline_mb(),
+    cuda_ceiling_mib = resolve_index_cuda_ceiling_mib(
+        configured_mib=config.index_cuda_ceiling_mib,
+        headroom_mib=config.index_cuda_headroom_mib,
+        profile_cuda_mib=bytes_to_mib(limits.cuda_bytes),
+        baseline_mib=resident_cuda_baseline_mib(),
     )
     return IndexResilienceSnapshot(
-        rss_ceiling_mb=rss_ceiling_mb,
-        cuda_ceiling_mb=cuda_ceiling_mb,
+        rss_ceiling_mib=rss_ceiling_mib,
+        cuda_ceiling_mib=cuda_ceiling_mib,
         support_profile=profile.name,
     )
 
@@ -319,9 +319,9 @@ def _checkpoint_resilience(
     checkpoint: object,
     admitted: IndexResilienceSnapshot,
     *,
-    peak_rss_mb: float | None,
-    peak_cuda_allocated_mb: float | None,
-    peak_cuda_reserved_mb: float | None,
+    peak_rss_mib: float | None,
+    peak_cuda_allocated_mib: float | None,
+    peak_cuda_reserved_mib: float | None,
 ) -> IndexResilienceSnapshot:
     """Project one concrete checkpoint without adapter policy recomputation."""
     from .indexer._document_checkpoint import DocumentRunCheckpoint
@@ -340,11 +340,11 @@ def _checkpoint_resilience(
         last_durable_progress_at=run.last_durable_progress_at,
         no_progress_timeout_seconds=run.timeout_seconds,
         no_progress_remaining_seconds=run.remaining_seconds,
-        peak_rss_mb=peak_rss_mb,
-        rss_ceiling_mb=admitted.rss_ceiling_mb,
-        peak_cuda_allocated_mb=peak_cuda_allocated_mb,
-        peak_cuda_reserved_mb=peak_cuda_reserved_mb,
-        cuda_ceiling_mb=admitted.cuda_ceiling_mb,
+        peak_rss_mib=peak_rss_mib,
+        rss_ceiling_mib=admitted.rss_ceiling_mib,
+        peak_cuda_allocated_mib=peak_cuda_allocated_mib,
+        peak_cuda_reserved_mib=peak_cuda_reserved_mib,
+        cuda_ceiling_mib=admitted.cuda_ceiling_mib,
         support_profile=admitted.support_profile,
         terminal_outcome=generation.terminal_state.value,
     )
@@ -357,16 +357,16 @@ def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
     return _checkpoint_resilience(
         indexer.last_checkpoint,
         admitted,
-        peak_rss_mb=(
-            budget.peak_rss_mb
+        peak_rss_mib=(
+            budget.peak_rss_mib
             if budget is not None
             else bytes_to_mib(measurement.rss_bytes)
         ),
-        peak_cuda_allocated_mb=(
-            budget.peak_cuda_allocated_mb if budget is not None else None
+        peak_cuda_allocated_mib=(
+            budget.peak_cuda_allocated_mib if budget is not None else None
         ),
-        peak_cuda_reserved_mb=(
-            budget.peak_cuda_reserved_mb
+        peak_cuda_reserved_mib=(
+            budget.peak_cuda_reserved_mib
             if budget is not None
             else bytes_to_mib(measurement.cuda_bytes)
         ),
@@ -379,12 +379,12 @@ def _document_resilience(indexer: DocumentIndexer) -> IndexResilienceSnapshot:
     return _checkpoint_resilience(
         indexer.last_checkpoint,
         admitted,
-        peak_rss_mb=budget.peak_rss_mb if budget is not None else None,
-        peak_cuda_allocated_mb=(
-            budget.peak_cuda_allocated_mb if budget is not None else None
+        peak_rss_mib=budget.peak_rss_mib if budget is not None else None,
+        peak_cuda_allocated_mib=(
+            budget.peak_cuda_allocated_mib if budget is not None else None
         ),
-        peak_cuda_reserved_mb=(
-            budget.peak_cuda_reserved_mb if budget is not None else None
+        peak_cuda_reserved_mib=(
+            budget.peak_cuda_reserved_mib if budget is not None else None
         ),
     )
 

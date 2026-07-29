@@ -66,7 +66,7 @@ _ENCODE_KEYS = {
     "oom_count",
 }
 _RATE_KEYS = {"recent_per_second", "median_per_second", "ratio"}
-_GPU_KEYS = {"available", "utilization_percent", "memory_used_mb", "memory_total_mb"}
+_GPU_KEYS = {"available", "utilization_percent", "memory_used_mib", "memory_total_mib"}
 _BACKEND_KEYS = {"alive", "latency_seconds", "detail"}
 
 

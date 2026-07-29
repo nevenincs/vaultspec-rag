@@ -127,25 +127,25 @@ _RESILIENCE_CONFIG_CASES: tuple[
         7,
     ),
     (
-        "index_rss_ceiling_mb",
-        EnvVar.INDEX_RSS_CEILING_MB,
-        "VAULTSPEC_RAG_INDEX_RSS_CEILING_MB",
+        "index_rss_ceiling_mib",
+        EnvVar.INDEX_RSS_CEILING_MIB,
+        "VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB",
         16384.0,
         "4096.5",
         4096.5,
     ),
     (
-        "index_cuda_ceiling_mb",
-        EnvVar.INDEX_CUDA_CEILING_MB,
-        "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB",
+        "index_cuda_ceiling_mib",
+        EnvVar.INDEX_CUDA_CEILING_MIB,
+        "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB",
         0.0,
         "3072.25",
         3072.25,
     ),
     (
-        "index_cuda_headroom_mb",
-        EnvVar.INDEX_CUDA_HEADROOM_MB,
-        "VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB",
+        "index_cuda_headroom_mib",
+        EnvVar.INDEX_CUDA_HEADROOM_MIB,
+        "VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB",
         2048.0,
         "1024.0",
         1024.0,
@@ -281,25 +281,25 @@ def test_cuda_ceiling_override_raises_and_lowers_past_the_profile() -> None:
     # both directions: this test binds that a value ABOVE the profile raises the
     # effective ceiling (the bug that pinned a 16 GiB card at 12 GiB) and a value
     # BELOW it still lowers it.
-    from ..memory_probe import resolve_index_cuda_ceiling_mb
+    from ..memory_probe import resolve_index_cuda_ceiling_mib
 
-    profile_mb = 12288.0
-    raised = resolve_index_cuda_ceiling_mb(
-        configured_mb=15000.0,
-        headroom_mb=2048.0,
-        profile_cuda_mb=profile_mb,
-        baseline_mb=0.0,
+    profile_mib = 12288.0
+    raised = resolve_index_cuda_ceiling_mib(
+        configured_mib=15000.0,
+        headroom_mib=2048.0,
+        profile_cuda_mib=profile_mib,
+        baseline_mib=0.0,
     )
-    lowered = resolve_index_cuda_ceiling_mb(
-        configured_mb=6000.0,
-        headroom_mb=2048.0,
-        profile_cuda_mb=profile_mb,
-        baseline_mb=0.0,
+    lowered = resolve_index_cuda_ceiling_mib(
+        configured_mib=6000.0,
+        headroom_mib=2048.0,
+        profile_cuda_mib=profile_mib,
+        baseline_mib=0.0,
     )
     assert raised == 15000.0
-    assert raised > profile_mb
+    assert raised > profile_mib
     assert lowered == 6000.0
-    assert lowered < profile_mb
+    assert lowered < profile_mib
 
 
 def test_cuda_ceiling_auto_derives_or_falls_back_to_profile() -> None:
@@ -313,24 +313,24 @@ def test_cuda_ceiling_auto_derives_or_falls_back_to_profile() -> None:
 
     derived = memory_probe.cuda_ceiling_from_observation(
         memory_probe.CudaCeilingObservation(
-            device_total_mb=16376.0,
-            free_mb=None,
-            configured_mb=0.0,
-            headroom_mb=2048.0,
-            profile_cuda_mb=12288.0,
-            baseline_mb=0.0,
+            device_total_mib=16376.0,
+            free_mib=None,
+            configured_mib=0.0,
+            headroom_mib=2048.0,
+            profile_cuda_mib=12288.0,
+            baseline_mib=0.0,
         )
     )
     assert derived == 16376.0 - 2048.0
 
     fallback = memory_probe.cuda_ceiling_from_observation(
         memory_probe.CudaCeilingObservation(
-            device_total_mb=None,
-            free_mb=None,
-            configured_mb=0.0,
-            headroom_mb=2048.0,
-            profile_cuda_mb=12288.0,
-            baseline_mb=0.0,
+            device_total_mib=None,
+            free_mib=None,
+            configured_mib=0.0,
+            headroom_mib=2048.0,
+            profile_cuda_mib=12288.0,
+            baseline_mib=0.0,
         )
     )
     assert fallback == 12288.0
@@ -351,37 +351,37 @@ def test_cuda_ceiling_auto_is_absolute_over_free_plus_resident_baseline() -> Non
     baseline = 5000.0
     ceiling = memory_probe.cuda_ceiling_from_observation(
         memory_probe.CudaCeilingObservation(
-            device_total_mb=16000.0,
-            free_mb=6000.0,
-            configured_mb=0.0,
-            headroom_mb=2048.0,
-            profile_cuda_mb=12288.0,
-            baseline_mb=baseline,
+            device_total_mib=16000.0,
+            free_mib=6000.0,
+            configured_mib=0.0,
+            headroom_mib=2048.0,
+            profile_cuda_mib=12288.0,
+            baseline_mib=baseline,
         )
     )
     budget = memory_probe.MemoryBudget(
-        cuda_ceiling_mb=ceiling,
-        cuda_baseline_mb=baseline,
+        cuda_ceiling_mib=ceiling,
+        cuda_baseline_mib=baseline,
     )
     # Net demand 3500 MiB sits inside free - headroom (3952 MiB): admitted.
     snapshot = budget.observe(
         label="net forward within free memory",
-        rss_mb=0.0,
-        cuda_allocated_mb=baseline + 3500.0,
-        cuda_reserved_mb=baseline + 3500.0,
+        rss_mib=0.0,
+        cuda_allocated_mib=baseline + 3500.0,
+        cuda_reserved_mib=baseline + 3500.0,
     )
-    assert snapshot.peak_cuda_allocated_mb == baseline + 3500.0
+    assert snapshot.peak_cuda_allocated_mib == baseline + 3500.0
     assert ceiling == baseline + 6000.0 - 2048.0
 
     # An idle-device free reading recovers the total - headroom clamp.
     clamped = memory_probe.cuda_ceiling_from_observation(
         memory_probe.CudaCeilingObservation(
-            device_total_mb=16000.0,
-            free_mb=15500.0,
-            configured_mb=0.0,
-            headroom_mb=2048.0,
-            profile_cuda_mb=12288.0,
-            baseline_mb=baseline,
+            device_total_mib=16000.0,
+            free_mib=15500.0,
+            configured_mib=0.0,
+            headroom_mib=2048.0,
+            profile_cuda_mib=12288.0,
+            baseline_mib=baseline,
         )
     )
     assert clamped == 16000.0 - 2048.0
@@ -589,8 +589,8 @@ def test_resilience_positive_integer_settings_reject_zero(
         ),
         (EnvVar.WATCH_RETRY_BASE_SECONDS, "watch_retry_base_seconds"),
         (EnvVar.WATCH_RETRY_MAX_SECONDS, "watch_retry_max_seconds"),
-        (EnvVar.INDEX_RSS_CEILING_MB, "index_rss_ceiling_mb"),
-        (EnvVar.INDEX_CUDA_HEADROOM_MB, "index_cuda_headroom_mb"),
+        (EnvVar.INDEX_RSS_CEILING_MIB, "index_rss_ceiling_mib"),
+        (EnvVar.INDEX_CUDA_HEADROOM_MIB, "index_cuda_headroom_mib"),
     ],
 )
 def test_resilience_positive_float_settings_reject_zero(
@@ -609,7 +609,7 @@ def test_resilience_positive_float_settings_reject_zero(
 
 
 def test_cuda_ceiling_accepts_zero_sentinel_but_rejects_negative() -> None:
-    # index_cuda_ceiling_mb carries an in-band 0 sentinel meaning "auto-derive
+    # index_cuda_ceiling_mib carries an in-band 0 sentinel meaning "auto-derive
     # from the device", so unlike the other float ceilings it must ACCEPT zero.
     # A negative override is still nonsense and must be rejected. This guard
     # binds the sentinel contract: reverting the knob to a positive-only
@@ -617,14 +617,14 @@ def test_cuda_ceiling_accepts_zero_sentinel_but_rejects_negative() -> None:
     # admit a negative ceiling.
     saved = _clear_resilience_env()
     try:
-        os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "0"
+        os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "0"
         reset_config()
-        assert get_config().index_cuda_ceiling_mb == 0.0
+        assert get_config().index_cuda_ceiling_mib == 0.0
 
-        os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "-1"
+        os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "-1"
         reset_config()
-        with pytest.raises(ValueError, match="index_cuda_ceiling_mb"):
-            _ = get_config().index_cuda_ceiling_mb
+        with pytest.raises(ValueError, match="index_cuda_ceiling_mib"):
+            _ = get_config().index_cuda_ceiling_mib
     finally:
         _restore_resilience_env(saved)
         reset_config()
@@ -794,31 +794,31 @@ def test_retry_maximum_must_not_be_less_than_base(
 
 def test_low_configured_memory_budget_accepts_exact_limit_and_latches_rss() -> None:
     saved = _clear_resilience_env()
-    os.environ[EnvVar.INDEX_RSS_CEILING_MB.value] = "4"
-    os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "3"
+    os.environ[EnvVar.INDEX_RSS_CEILING_MIB.value] = "4"
+    os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "3"
     try:
         reset_config()
         cfg = get_config()
         budget = MemoryBudget(
-            rss_ceiling_mb=cfg.index_rss_ceiling_mb,
-            cuda_ceiling_mb=cfg.index_cuda_ceiling_mb,
+            rss_ceiling_mib=cfg.index_rss_ceiling_mib,
+            cuda_ceiling_mib=cfg.index_cuda_ceiling_mib,
         )
         exact = budget.observe(
             label="exact-low-limits",
-            rss_mb=4.0,
-            cuda_allocated_mb=3.0,
-            cuda_reserved_mb=3.0,
+            rss_mib=4.0,
+            cuda_allocated_mib=3.0,
+            cuda_reserved_mib=3.0,
         )
-        assert exact.rss_mb == exact.rss_ceiling_mb == 4.0
-        assert exact.cuda_allocated_mb == exact.cuda_ceiling_mb == 3.0
-        assert exact.cuda_reserved_mb == exact.cuda_ceiling_mb == 3.0
+        assert exact.rss_mib == exact.rss_ceiling_mib == 4.0
+        assert exact.cuda_allocated_mib == exact.cuda_ceiling_mib == 3.0
+        assert exact.cuda_reserved_mib == exact.cuda_ceiling_mib == 3.0
 
         with pytest.raises(JobError) as first_failure:
             budget.observe(
                 label="first-rss-failure",
-                rss_mb=4.1,
-                cuda_allocated_mb=3.1,
-                cuda_reserved_mb=3.1,
+                rss_mib=4.1,
+                cuda_allocated_mib=3.1,
+                cuda_reserved_mib=3.1,
             )
         assert first_failure.value.error_kind is JobErrorKind.RSS_MEMORY_CEILING
         violating_snapshot = budget.snapshot
@@ -828,9 +828,9 @@ def test_low_configured_memory_budget_accepts_exact_limit_and_latches_rss() -> N
         with pytest.raises(JobError) as latched_failure:
             budget.observe(
                 label="later-safe-observation",
-                rss_mb=0.0,
-                cuda_allocated_mb=0.0,
-                cuda_reserved_mb=0.0,
+                rss_mib=0.0,
+                cuda_allocated_mib=0.0,
+                cuda_reserved_mib=0.0,
             )
         assert latched_failure.value.error_kind is first_failure.value.error_kind
         assert latched_failure.value.detail == first_failure.value.detail
@@ -842,16 +842,16 @@ def test_low_configured_memory_budget_accepts_exact_limit_and_latches_rss() -> N
 
 def test_low_configured_cuda_budget_returns_typed_failure() -> None:
     saved = _clear_resilience_env()
-    os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "3"
+    os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "3"
     try:
         reset_config()
-        budget = MemoryBudget(cuda_ceiling_mb=get_config().index_cuda_ceiling_mb)
+        budget = MemoryBudget(cuda_ceiling_mib=get_config().index_cuda_ceiling_mib)
         with pytest.raises(JobError) as failure:
             budget.observe(
                 label="cuda-failure",
-                rss_mb=0.0,
-                cuda_allocated_mb=3.1,
-                cuda_reserved_mb=0.0,
+                rss_mib=0.0,
+                cuda_allocated_mib=3.1,
+                cuda_reserved_mib=0.0,
             )
         assert failure.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
         # The detail must name the allocated high-water measure: the ceiling
@@ -872,27 +872,27 @@ def test_cuda_reserved_above_ceiling_is_diagnostic_not_enforced() -> None:
     ``MemoryBudget`` enforcement.
     """
     saved = _clear_resilience_env()
-    os.environ[EnvVar.INDEX_CUDA_CEILING_MB.value] = "3"
+    os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "3"
     try:
         reset_config()
-        budget = MemoryBudget(cuda_ceiling_mb=get_config().index_cuda_ceiling_mb)
+        budget = MemoryBudget(cuda_ceiling_mib=get_config().index_cuda_ceiling_mib)
         snapshot = budget.observe(
             label="reserved-retention-only",
-            rss_mb=0.0,
-            cuda_allocated_mb=1.0,
-            cuda_reserved_mb=11.0,
+            rss_mib=0.0,
+            cuda_allocated_mib=1.0,
+            cuda_reserved_mib=11.0,
         )
-        assert snapshot.peak_cuda_reserved_mb == 11.0
-        assert snapshot.cuda_ceiling_mb == 3.0
+        assert snapshot.peak_cuda_reserved_mib == 11.0
+        assert snapshot.cuda_ceiling_mib == 3.0
         # Reserved stays reported on the snapshot for operators; it just no
         # longer decides outcome.
         later = budget.observe(
             label="still-admitted",
-            rss_mb=0.0,
-            cuda_allocated_mb=1.5,
-            cuda_reserved_mb=12.0,
+            rss_mib=0.0,
+            cuda_allocated_mib=1.5,
+            cuda_reserved_mib=12.0,
         )
-        assert later.peak_cuda_reserved_mb == 12.0
+        assert later.peak_cuda_reserved_mib == 12.0
     finally:
         _restore_resilience_env(saved)
         reset_config()
@@ -913,22 +913,22 @@ def test_cuda_ceiling_comparison_is_baseline_consistent() -> None:
     - a peak just above the ceiling must be REJECTED; it is admitted iff
       the baseline is subtracted from the peak only.
     """
-    admitted_budget = MemoryBudget(cuda_ceiling_mb=1000.0, cuda_baseline_mb=400.0)
+    admitted_budget = MemoryBudget(cuda_ceiling_mib=1000.0, cuda_baseline_mib=400.0)
     admitted = admitted_budget.observe(
         label="peak-between-net-ceiling-and-ceiling",
-        rss_mb=0.0,
-        cuda_allocated_mb=900.0,
-        cuda_reserved_mb=0.0,
+        rss_mib=0.0,
+        cuda_allocated_mib=900.0,
+        cuda_reserved_mib=0.0,
     )
-    assert admitted.peak_cuda_allocated_mb == 900.0
+    assert admitted.peak_cuda_allocated_mib == 900.0
 
-    rejecting_budget = MemoryBudget(cuda_ceiling_mb=1000.0, cuda_baseline_mb=400.0)
+    rejecting_budget = MemoryBudget(cuda_ceiling_mib=1000.0, cuda_baseline_mib=400.0)
     with pytest.raises(JobError) as failure:
         rejecting_budget.observe(
             label="peak-above-ceiling",
-            rss_mb=0.0,
-            cuda_allocated_mb=1050.0,
-            cuda_reserved_mb=0.0,
+            rss_mib=0.0,
+            cuda_allocated_mib=1050.0,
+            cuda_reserved_mib=0.0,
         )
     assert failure.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
     # The failure names the baseline-relative measure so an operator reads
@@ -946,7 +946,7 @@ sys.path.insert(0, sys.argv[1])
 from vaultspec_rag._job_errors import JobError, JobErrorKind  # absolute-import-ok
 from vaultspec_rag.memory_probe import MemoryBudget  # absolute-import-ok
 
-rss_budget = MemoryBudget(rss_ceiling_mb=1.0)
+rss_budget = MemoryBudget(rss_ceiling_mib=1.0)
 try:
     rss_budget.sample("rss-unavailable")
 except JobError as exc:
@@ -959,7 +959,7 @@ except JobError as exc:
 else:
     raise AssertionError("unavailable RSS measurement was admitted")
 
-cuda_budget = MemoryBudget(cuda_ceiling_mb=1.0)
+cuda_budget = MemoryBudget(cuda_ceiling_mib=1.0)
 try:
     cuda_budget.sample("cuda-unavailable")
 except JobError as exc:

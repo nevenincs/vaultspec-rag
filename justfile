@@ -378,6 +378,13 @@ audit target='all':
 # reasons unrelated to a regression - they are excluded from "gpu" and run
 # only on explicit `just test perf`, never as a correctness gate.
 #
+# Both "gpu" and "perf" read the device's admission state before loading any
+# model, and refuse before the first pytest invocation when the card cannot
+# be admitted - a contended or absent GPU exits the lane instead of starving
+# VRAM under concurrent load. "perf" gets the same guard as "gpu" because its
+# wall-clock assertions are invalidated by contention at least as badly as
+# "gpu"'s correctness assertions are.
+#
 # Only "python" runs parallel. `-n auto` resolves to PHYSICAL cores when psutil
 # is importable, which it always is here (it is a runtime dependency), and
 # `--dist loadfile` keeps a module's tests on one worker so module-scoped state
@@ -399,12 +406,19 @@ test target='all':
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
+      {{uvr}} vaultspec-rag server preflight ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "(integration or quality or robustness or cuda) and not subprocess_gpu" ; \
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "subprocess_gpu" ; \
       break \
     } \
-    "perf" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "performance" ; break } \
+    "perf" { \
+      {{uvr}} vaultspec-rag server preflight ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "performance" ; \
+      break \
+    } \
     "all" { just test python ; break } \
     default { \
       Write-Host "unknown test target: {{target}}" -ForegroundColor Red ; \

@@ -25,7 +25,6 @@ it, because the lock belongs with the storage it guards.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -62,14 +61,6 @@ _MACHINE_LOCK_FILENAME = "service.lock"
 # VAULTSPEC_RAG_STATUS_DIR can still find the one running service. It is distinct
 # from the per-STATUS_DIR ``service.json`` (a different directory), and the daemon
 # writes the SAME versioned discovery payload to both on each heartbeat.
-
-# The byte offset the OS lock is taken at. On Windows ``msvcrt.locking`` is
-# MANDATORY - a locked byte cannot be read by another process - so the lock byte
-# must sit well beyond the recorded-pid JSON (which lives at offset 0) so a
-# contender can still read the holder pid for its refusal message. Windows
-# permits locking a byte past EOF; POSIX ``flock`` is whole-file and ignores the
-# offset entirely.
-_LOCK_OFFSET = 1 << 20
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -199,37 +190,6 @@ def delete_machine_discovery(lease: MachineLockLease) -> None:
         pointer.unlink(missing_ok=True)
 
 
-def _machine_lock_holder(path: Path) -> int:
-    """Return the pid recorded in the lock file, or 0 when absent/unreadable.
-
-    Informational only (for the refusal message); the OS lock is the authority.
-    """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return 0
-    pid = cast("dict[str, object]", data).get("pid") if isinstance(data, dict) else None
-    return int(pid) if isinstance(pid, int) else 0
-
-
-def _try_lock_exclusive(fd: int) -> bool:
-    """Take a non-blocking exclusive OS lock on *fd*; return whether acquired."""
-    from ._fd_lock import lock_fd_exclusive
-
-    try:
-        lock_fd_exclusive(fd, offset=_LOCK_OFFSET)
-    except OSError:
-        return False
-    return True
-
-
-def _unlock(fd: int) -> None:
-    """Release the OS lock on *fd* (best effort)."""
-    from ._fd_lock import unlock_fd
-
-    unlock_fd(fd, offset=_LOCK_OFFSET)
-
-
 def acquire_machine_lock_lease() -> tuple[MachineLockLease | None, int]:
     """Acquire and retain the machine lock; return its owner capability.
 
@@ -246,25 +206,26 @@ def acquire_machine_lock_lease() -> tuple[MachineLockLease | None, int]:
         operation="acquire the machine service lock",
         targets=(path,),
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
     with _lease_guard:
         retained = _held_leases.get(str(path))
         if retained is not None:
             _require_active_lease(retained, operation="reuse the machine lock")
             return (retained, retained.pid)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    if not _try_lock_exclusive(fd):
-        holder = _machine_lock_holder(path)
-        os.close(fd)
-        return (None, holder)
+    from ._anchor_claim import claim_anchor, record_claim_owner
+
+    claim = claim_anchor(path, pid_record=True, create_parent=True)
+    if claim.fault is not None:
+        # Proceeding without the claim is the one outcome this lock cannot
+        # have: two daemons would each believe they own the machine's single
+        # GPU and single-writer storage, so a mechanism that cannot be used
+        # fails the caller rather than admitting it.
+        raise claim.fault
+    if claim.descriptor is None:
+        return (None, claim.holder_pid)
     # We hold the lock. Record our pid for the refusal message a future
     # contender will read; the lock itself is the authority.
-    with contextlib.suppress(OSError):
-        os.ftruncate(fd, 0)
-        os.lseek(fd, 0, os.SEEK_SET)
-        os.write(fd, json.dumps({"pid": os.getpid()}).encode("utf-8"))
-        os.fsync(fd)
-    lease = MachineLockLease(path=path, pid=os.getpid(), descriptor=fd)
+    record_claim_owner(claim.descriptor)
+    lease = MachineLockLease(path=path, pid=os.getpid(), descriptor=claim.descriptor)
     with _lease_guard:
         _held_leases[str(path)] = lease
     return (lease, lease.pid)
@@ -284,13 +245,13 @@ def release_machine_lock_lease(lease: MachineLockLease) -> None:
         operation="release the machine service lock",
         targets=(lease.path,),
     )
+    from ._anchor_claim import release_anchor_claim
+
     with _lease_guard:
         if _held_leases.get(str(lease.path)) is not lease:
             return
         _held_leases.pop(str(lease.path))
-        _unlock(lease.descriptor)
-        with contextlib.suppress(OSError):
-            os.close(lease.descriptor)
+        release_anchor_claim(lease.descriptor, pid_record=True)
 
 
 def release_machine_lock() -> None:
@@ -340,16 +301,22 @@ def machine_lock_live_holder() -> int:
             return retained.pid
     if not path.exists():
         return 0
-    try:
-        fd = os.open(path, os.O_RDWR)
-    except OSError:
+    from ._anchor_claim import claim_anchor, release_anchor_claim
+
+    # No owner pid is recorded here: this probe answers a question and must
+    # leave the lock file exactly as it found it, so a later contender reads
+    # the real holder's record rather than one a probe left behind.
+    claim = claim_anchor(path, pid_record=True)
+    if claim.fault is not None:
+        # An anchor that cannot be opened is truthful absence - there is
+        # nothing there to hold. A platform with no advisory-lock primitive is
+        # not: it cannot answer at all, and reporting the lock free would tell
+        # the caller it may spawn a second resident service.
+        if isinstance(claim.fault, ImportError):
+            raise claim.fault
         return 0
-    try:
-        if _try_lock_exclusive(fd):
-            # Nobody holds it (free, or a dead holder the OS already released).
-            _unlock(fd)
-            return 0
-        return _machine_lock_holder(path)
-    finally:
-        with contextlib.suppress(OSError):
-            os.close(fd)
+    if claim.descriptor is None:
+        return claim.holder_pid
+    # Nobody holds it (free, or a dead holder the OS already released).
+    release_anchor_claim(claim.descriptor, pid_record=True)
+    return 0

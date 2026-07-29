@@ -131,7 +131,19 @@ Changing a model against an index built with another one is an operator decision
 
 These bound one index run's segment/queue geometry, its memory use, and its liveness. The defaults suit a managed multi-root service; lower them on a smaller host.
 
-The CUDA ceiling is derived from the real device by default rather than fixed: at `0` the ceiling is the device's total memory minus `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`, so a larger card gets a larger budget without any tuning. Setting a positive value is an authoritative override that raises or lowers the effective ceiling.
+Every memory figure here is mebibytes, and the three ceiling variables spell that unit `MIB`. The former `MB` spelling is no longer read at all, so a stale name sets nothing and its ceiling silently falls back to the default instead of failing loudly. Rename these keys wherever they are set — an `.env` file, a supervisor unit, a CI job:
+
+- `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB` is now `VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB`
+- `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB` is now `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`
+- `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB` is now `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`
+
+The same rename applies to the JSON any script reads off the health, status, jobs, and diagnostics surfaces: every `_mb` field is now `_mib`, `gpu_memory_used_mb`, `gpu_memory_total_mb`, `rss_ceiling_mb`, and `cuda_ceiling_mb` among them. No value changed — these were always mebibytes, and only the spelling moved.
+
+The CUDA ceiling is derived from the real device by default rather than fixed: at `0` the ceiling is the device's total memory minus `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`, so a larger card gets a larger budget without any tuning. Setting a positive value is an authoritative override that raises or lowers the effective ceiling.
+
+The ceilings bound the work an already-resident process does. `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB` answers the question before it: whether this process may bring a model stack up at all. It is read once, before the first load, and a card with less free memory than the floor refuses the load with the reading and the floor in the message, rather than loading into a device it will starve.
+
+The floor has to exceed the resident stack a load creates *plus* the largest legitimate demand that stack then places on top of its own residency — measured at 6301 MiB and 4609 MiB respectively, so 10910 MiB is the smallest sound value. Sizing it to the resident stack alone is the trap: on a card already holding one tenant, the free memory left over still clears such a floor, so a second stack is admitted onto a device that cannot hold both. Lower this past 10910 and that hazard returns; raise it and loads a busy-but-adequate card could have served are refused instead.
 
 | Variable                                          | Type    | Default               | Controls                                                                   | CLI flag |
 | ------------------------------------------------- | ------- | --------------------- | -------------------------------------------------------------------------- | -------- |
@@ -141,10 +153,11 @@ The CUDA ceiling is derived from the real device by default rather than fixed: a
 | `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`             | integer | `134217728` (128 MiB) | Byte cap on the buffered index queue, applying backpressure                | -        |
 | `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float   | `900`                 | Seconds without index progress before the run is failed                    | -        |
 | `VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR`             | boolean | `1` (true)            | Queue one failure-safe reindex when a search finds the served index shrunken below its published claim | -        |
-| `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB`              | float   | `16384`               | Resident-memory ceiling enforced at index checkpoints (MiB)                | -        |
-| `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`             | float   | `0` (auto-derive)     | CUDA-memory ceiling override in MiB; `0` derives one from the device       | -        |
-| `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`            | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB) | -        |
+| `VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB`             | float   | `16384`               | Resident-memory ceiling enforced at index checkpoints (MiB)                | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`            | float   | `0` (auto-derive)     | CUDA-memory ceiling override in MiB; `0` derives one from the device       | -        |
+| `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`           | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB) | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`                 | Fraction of CUDA memory the index allocator may reserve                    | -        |
+| `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB`           | integer | `11264`               | Free device memory required before this process loads model stacks (MiB)   | -        |
 | `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service                           | -        |
 
 ### Concurrency limits
@@ -271,7 +284,7 @@ To fit a smaller GPU:
 
 - Lower the inner encode sub-batches: `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` and `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` (32 each), and `VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE` (12, smaller because document fragments fill the model's whole window).
 - Cap `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH` (default 2048) to shrink padded-attention memory.
-- Raise `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB` to leave more of the device outside the indexing budget, or set `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB` to pin an explicit ceiling.
+- Raise `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB` to leave more of the device outside the indexing budget, or set `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB` to pin an explicit ceiling.
 - Set `VAULTSPEC_RAG_QDRANT_QUANTIZATION` to `scalar` to compress the stored vectors.
 - Turn off a model to free the most memory. Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` to drop the SPLADE encoder, or `VAULTSPEC_RAG_RERANKER_ENABLED=0` to drop the CrossEncoder.
 

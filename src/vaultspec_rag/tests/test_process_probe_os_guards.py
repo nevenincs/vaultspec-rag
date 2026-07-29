@@ -297,10 +297,11 @@ class TestDiskFullVocabularyHasOneHome:
 class TestFdLockHasOneImplementation:
     """The ``msvcrt``/``fcntl`` branch lives only in ``_fd_lock``.
 
-    Three modules carried it: the machine singleton lock, the status-write
-    lock, and the store's exclusive lock. Only the platform call was shared -
-    each caller's policy around it (which file, which byte, what contention
-    means) differs for real reasons and stayed where it was.
+    Only the platform call is shared there. Which file, which byte and what
+    contention means differ per caller for real reasons and stay with them;
+    the crash-safe claim sequence that several of them DO share - anchor,
+    non-blocking claim, recorded owner pid, release on close or on death -
+    has one owner a layer up rather than a copy each.
     """
 
     def test_no_module_calls_the_platform_lock_directly(self) -> None:

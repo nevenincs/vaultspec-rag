@@ -396,6 +396,20 @@ def _log_managed_transition(
             job_id=snapshot.id,
             pending_paths=context.pending_count,
         )
+    elif snapshot.state is JobState.SUPERSEDED:
+        # A newer job replaced this one, which is routine on a watcher that
+        # coalesces work: worth surfacing, because it tells an operator
+        # coalescing happened, but not a failure and not progress either -
+        # filing a terminal state under the progress event would be its own
+        # lie. It gets an outcome event of its own at ordinary severity.
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_superseded",
+            source=slot.source.value,
+            job_id=snapshot.id,
+            pending_paths=context.pending_count,
+        )
     elif not snapshot.state.is_terminal:
         # Queued, running, pausing and cancelling are progress, not outcomes.
         # They reached the failure branch below only because it was the

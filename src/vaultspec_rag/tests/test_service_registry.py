@@ -128,9 +128,9 @@ class TestClosingReleasesTheResidentBaseline:
         it the model, for as long as the test that loaded it runs.
 
         Proven able to fail, both directions on the same assertion: dropping the
-        rebase call leaves the baseline at ``raised_mb``, and dropping only the
+        rebase call leaves the baseline at ``raised_mib``, and dropping only the
         ``gc.collect()`` leaves the cycle-held tensor still allocated for the
-        rebase to measure. Either way ``released_mb < raised_mb`` fails.
+        rebase to measure. Either way ``released_mib < raised_mib`` fails.
         Restored, the baseline returns to the session model's own residency.
         """
         # Requested for its residency rather than its value: the session model
@@ -138,14 +138,14 @@ class TestClosingReleasesTheResidentBaseline:
         del embedding_model
         from .._gpu import load_torch
         from ..memory_probe import (
-            current_cuda_mb,
-            resident_cuda_baseline_mb,
+            current_cuda_mib,
+            resident_cuda_baseline_mib,
             sample_resident_cuda_baseline,
         )
 
         torch = load_torch()
-        resident_mb = sample_resident_cuda_baseline()
-        assert resident_mb > 0.0, (
+        resident_mib = sample_resident_cuda_baseline()
+        assert resident_mib > 0.0, (
             "premise: the session embedding model must be resident on the device"
         )
 
@@ -158,20 +158,20 @@ class TestClosingReleasesTheResidentBaseline:
             dtype=torch.float32,
             device="cuda",
         )
-        raised_mb = sample_resident_cuda_baseline()
-        assert raised_mb > resident_mb, (
+        raised_mib = sample_resident_cuda_baseline()
+        assert raised_mib > resident_mib, (
             "premise: the ballast must be a real added device allocation"
         )
         del holder
 
         ServiceRegistry().close_all()
 
-        released_mb = resident_cuda_baseline_mb()
-        assert released_mb < raised_mb
+        released_mib = resident_cuda_baseline_mib()
+        assert released_mib < raised_mib
         # The figure describes what is still resident - the session model - and
         # not the allocation that was released.
-        assert released_mb == pytest.approx(current_cuda_mb()[0], abs=1.0)
-        assert released_mb == pytest.approx(resident_mb, abs=1.0)
+        assert released_mib == pytest.approx(current_cuda_mib()[0], abs=1.0)
+        assert released_mib == pytest.approx(resident_mib, abs=1.0)
 
 
 class TestGetProject:
