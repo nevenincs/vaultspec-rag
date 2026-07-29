@@ -597,8 +597,9 @@ class TestCalibrationBoundsUnderPlanning:
     tokenisation too far turns every token-dense slice into an
     OOM-discard-replan cycle instead of a planned pass. This guard
     tokenises a fixed worst-case corpus with the real pinned dense
-    tokenizer (loaded from the local cache, no network) and bounds how
-    far real token counts may exceed the production estimate.
+    tokenizer and bounds how far real token counts may exceed the
+    production estimate. It never loads a model onto a device: the
+    tokenizer is CPU-only text processing.
     """
 
     pytestmark: ClassVar = [pytest.mark.unit]
@@ -615,13 +616,25 @@ class TestCalibrationBoundsUnderPlanning:
         from transformers import AutoTokenizer
 
         from ..config._settings import get_config
+        from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 
         config = get_config()
+        model_id = str(config.embedding_model)
+        # Acquire the snapshot before loading it. A cache-only load on a host
+        # that has never held the pinned model raises instead of running the
+        # guard, and no lane guarantees a warm cache. Acquisition is a
+        # killable child process under an explicit deadline; a warm cache
+        # returns from it without spawning anything or touching the network,
+        # and the load itself stays cache-only either way.
+        ensure_model_snapshots(
+            (model_id,),
+            timeout_seconds=model_setup_timeout_seconds(),
+        )
         tokenizer = AutoTokenizer.from_pretrained(  # pyright: ignore[reportUnknownMemberType]  # transformers factory is partially stubbed
-            str(config.embedding_model),
+            model_id,
             local_files_only=True,
         )
-        assert tokenizer is not None, "pinned dense tokenizer absent from local cache"
+        assert tokenizer is not None, f"no tokenizer backend resolved for {model_id}"
         divisor = int(config.embedding_encode_chars_per_token)
         offenders: dict[str, float] = {}
         for name, text in _CALIBRATION_CORPUS.items():
