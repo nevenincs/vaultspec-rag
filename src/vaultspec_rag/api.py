@@ -717,11 +717,10 @@ def clean(
     """
     source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
-    from .config._settings import get_config
+    from ._index_breadth import index_meta_path
     from .registry import get_registry
     from .store_runtime import VaultStore
 
-    cfg = get_config()
     cleared: list[str] = []
 
     # Evict project from registry to close Qdrant connections and release locks
@@ -739,15 +738,16 @@ def clean(
     # serve-time check would read that as a full index over an empty husk.
     # The safe interruption is the reverse: intact data with no claim, which
     # reads as honestly unverifiable.
-    data_dir = root / cfg.data_dir
     if do_vault:
-        (data_dir / cfg.index_metadata_file).unlink(missing_ok=True)
+        index_meta_path(root, PublicSourceType.VAULT).unlink(missing_ok=True)
     if do_code:
-        (data_dir / cfg.code_index_metadata_file).unlink(missing_ok=True)
+        index_meta_path(root, PublicSourceType.CODE).unlink(missing_ok=True)
     if do_document:
-        from .indexer._document_meta import DOCUMENT_META_FILENAME
+        # Documents publish a differently shaped record under an independently
+        # chosen name, so it resolves through its own owner rather than here.
+        from .indexer._document_meta import document_metadata_path
 
-        (data_dir / DOCUMENT_META_FILENAME).unlink(missing_ok=True)
+        document_metadata_path(root).unlink(missing_ok=True)
 
     store = VaultStore(root)
     try:
