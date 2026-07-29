@@ -644,6 +644,7 @@ def _job_with_liveness(
     encode = _job_encode(record)
     if encode is not None:
         enriched["encode"] = dict(encode)
+    rate_baseline = _job_rate_baseline(record)
     verdict = _job_degradation(record, now)
     enriched["degradation"] = verdict
     # Present-and-null when healthy: absent means a daemon that predates the
@@ -652,10 +653,14 @@ def _job_with_liveness(
     enriched["degradation_evidence"] = (
         _jobs.degradation_evidence(
             now=now,
-            forward=forward,
-            project_root=_job_project_root(record),
-            source=job_source(record),
-            step=_job_progress_step(record) or None,
+            inputs=_jobs.DegradationInputs(
+                source=job_source(record),
+                project_root=_job_project_root(record),
+                step=_job_progress_step(record) or None,
+                forward=forward,
+                encode=encode,
+                rate_baseline=rate_baseline,
+            ),
         )
         if verdict != "healthy"
         else None
@@ -666,7 +671,7 @@ def _job_with_liveness(
     # Present-and-null on the same terms as the evidence block above: a
     # published null is the service declining to compare this job against
     # itself, and an absent key is a daemon that never made the comparison.
-    enriched["progress_rate_baseline"] = _job_rate_baseline(record)
+    enriched["progress_rate_baseline"] = rate_baseline
     resources = record.get("resources")
     if isinstance(resources, dict):
         resources_map = cast("dict[str, object]", resources)

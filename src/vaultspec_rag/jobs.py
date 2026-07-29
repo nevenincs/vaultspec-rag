@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "TERMINAL_PHASES",
+    "DegradationInputs",
     "JobProgressReporter",
     "activate_index_job",
     "active_index_support_profiles",
@@ -1349,37 +1350,105 @@ def _backend_evidence(project_root: str | None, source: str) -> dict[str, object
     return dict(result)
 
 
+def _evidence_count(value: object) -> int | None:
+    """Read one evidence value as a whole count; ``bool`` is malformed."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _encode_evidence(encode: dict[str, object] | None) -> dict[str, object] | None:
+    """Shape the encode budget and retry count, or ``None`` when unreported.
+
+    Says what bounds the encode stage rather than only that it is slow: a run
+    planning tiny batches under a clamped token budget, with a retry count
+    that keeps climbing, is bounded by its own memory ceiling - a different
+    finding, and a different remedy, from a starved card or a stalled store.
+    """
+    if encode is None:
+        return None
+    section: dict[str, object] = {
+        "token_budget": _evidence_count(encode.get("token_budget")),
+        "bucket_items": _evidence_count(encode.get("bucket_items")),
+        "oom_count": _evidence_count(encode.get("oom_count")),
+    }
+    return section if any(value is not None for value in section.values()) else None
+
+
+def _rate_evidence(baseline: dict[str, object] | None) -> dict[str, object] | None:
+    """Shape the run's throughput comparison, or ``None`` when unmeasured.
+
+    The finding that names a collapse: what the job is doing now against
+    what it has proved it can do, and the factor between them.
+    """
+    if baseline is None:
+        return None
+    section: dict[str, object] = {
+        "recent_per_second": _signal_measure(baseline.get("recent_per_second")),
+        "median_per_second": _signal_measure(baseline.get("median_per_second")),
+        "ratio": _signal_measure(baseline.get("ratio")),
+    }
+    return section if any(value is not None for value in section.values()) else None
+
+
+@dataclass(frozen=True, slots=True)
+class DegradationInputs:
+    """One job's record-side facts, read at one moment, for its evidence.
+
+    Carried as one value rather than re-listed at every call: they are all
+    reads of the same record, and the evidence block gains a finding
+    whenever the service learns to measure one.
+    """
+
+    source: str
+    project_root: str | None = None
+    step: str | None = None
+    forward: dict[str, object] | None = None
+    encode: dict[str, object] | None = None
+    rate_baseline: dict[str, object] | None = None
+
+
 def degradation_evidence(
     *,
     now: float,
-    forward: dict[str, object] | None,
-    project_root: str | None,
-    source: str,
-    step: str | None,
+    inputs: DegradationInputs,
 ) -> dict[str, object]:
     """Attach sampled cause attribution to one unhealthy job verdict.
 
-    One shape, four independent findings: the forward-pass window and encode
+    Four findings are always present: the forward-pass window and encode
     thread (is the work alive), the service process's own CPU utilisation
     (is anything running at all), machine-wide GPU pressure (is the card
     starved), and a bounded backend probe (is the store answering). Each
-    section degrades to explicit absence on hosts or processes that cannot
-    answer it, so the block's shape is stable for every renderer.
+    degrades to explicit absence on hosts or processes that cannot answer it,
+    so those four keep a stable shape for every renderer.
 
-    The forward section is phase-aware: ``expected`` says whether *step*
-    performs forward passes at all, so a CPU-bound phase is never judged by
-    the absence of a signal it structurally cannot produce - the CPU section
-    is the liveness reading that remains valid there.
+    Two findings are conditional, because they describe work not every job
+    performs: the encode budget and retry count, and the run's throughput
+    against its own baseline. Both are omitted rather than nulled - a job
+    that never encoded published no budget, which is a different statement
+    from a budget of nothing, and an omitted section costs a renderer no line.
+
+    The forward section is phase-aware: ``expected`` says whether the
+    reported step performs forward passes at all, so a CPU-bound phase is
+    never judged by the absence of a signal it structurally cannot produce -
+    the CPU section is the liveness reading that remains valid there.
     """
-    return {
+    evidence: dict[str, object] = {
         "forward": {
-            **_forward_evidence(forward, now=now),
-            "expected": _forward_pass_expected(step),
+            **_forward_evidence(inputs.forward, now=now),
+            "expected": _forward_pass_expected(inputs.step),
         },
         "cpu": _process_cpu_evidence(now=now),
         "gpu": _gpu_evidence(),
-        "backend": _backend_evidence(project_root, source),
+        "backend": _backend_evidence(inputs.project_root, inputs.source),
     }
+    encode_section = _encode_evidence(inputs.encode)
+    if encode_section is not None:
+        evidence["encode"] = encode_section
+    rate_section = _rate_evidence(inputs.rate_baseline)
+    if rate_section is not None:
+        evidence["rate"] = rate_section
+    return evidence
 
 
 def _signal_measure(value: object) -> float | None:
