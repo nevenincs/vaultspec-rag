@@ -132,14 +132,19 @@ class EncodeBucket:
 class EncodeBucketProgress:
     """Progress snapshot handed to the per-bucket encode callback.
 
-    ``items_done`` counts input texts whose embeddings are complete at the
-    moment the callback fires: before the reported bucket for a
-    ``"before"`` notification, including it for an ``"after"`` one.
-    ``token_budget`` is the planning budget in effect for the bucket - it
-    tightens when an OOM lowers the learned ceiling mid-call - and
-    ``oom_count`` counts the CUDA OOMs absorbed so far within the call.
+    ``kind`` names the encoder the snapshot describes (``"dense"`` or
+    ``"sparse"``); the two encodes hold independent ceilings and OOM
+    counts, so an observer shared between them must read each series
+    under its kind. ``items_done`` counts input texts whose embeddings
+    are complete at the moment the callback fires: before the reported
+    bucket for a ``"before"`` notification, including it for an
+    ``"after"`` one. ``token_budget`` is the planning budget in effect
+    for the bucket - it tightens when an OOM lowers the learned ceiling
+    mid-call - and ``oom_count`` counts the CUDA OOMs absorbed so far
+    within the call.
     """
 
+    kind: str
     items_done: int
     items_total: int
     bucket_items: int
@@ -852,7 +857,7 @@ class EmbeddingModel:
         ``gpu_lock`` independently, so concurrent searches on the shared
         device wait for at most one bucket, never a whole slice.
         ``on_bucket`` observes bucket boundaries under the contract
-        documented on :meth:`_encode_documents_output`. Other callers use
+        documented on :meth:`_run_bucketed_encode`. Other callers use
         :meth:`encode_documents` and receive a CPU NumPy result.
         """
         return cast(
@@ -896,6 +901,97 @@ class EmbeddingModel:
             normalize_embeddings=True,
         )
 
+    def _run_bucketed_encode[T](
+        self,
+        context: _BucketPlanContext,
+        *,
+        ceiling: EncodeBatchCeiling,
+        kind: str,
+        encode_bucket: Callable[[list[str]], T],
+        on_bucket: Callable[[str, EncodeBucketProgress], None] | None,
+    ) -> list[T]:
+        """Drive one encode call's planned buckets under the learned ceiling.
+
+        The texts in *context* are partitioned by
+        :func:`plan_encode_buckets` under the configured token budget
+        clamped by *ceiling*, and ``encode_bucket`` runs each bucket as
+        exactly one model forward, owning its own GPU-lock hold. A CUDA
+        OOM discards only the failing bucket: completed bucket outputs
+        are retained, the allocator cache is flushed (only on a real
+        OOM), the ceiling learns the failing footprint, and the failing
+        bucket plus the not-yet-encoded remainder are replanned under
+        the lowered budget. A single-text bucket that OOMs cannot shrink
+        and re-raises.
+
+        Callback contract: ``on_bucket`` fires on the encoding thread,
+        outside any GPU-lock hold - once with ``"before"`` immediately
+        ahead of the bucket's forward seeking the lock (every attempt,
+        including replanned retries after an OOM), and once with
+        ``"after"`` when the bucket's forward has completed and the lock
+        is released, carrying the updated done-count. A failing attempt
+        therefore produces a ``"before"`` without an ``"after"``. The
+        callback must be fast and must not raise.
+
+        Returns:
+            One ``encode_bucket`` result per successfully encoded
+            bucket, in input order.
+        """
+        import torch
+
+        budget = ceiling.clamp(self._encode_token_budget)
+        buckets = context.plan(budget)
+        outputs: list[T] = []
+        oom_count = 0
+        index = 0
+        while index < len(buckets):
+            bucket = buckets[index]
+            bucket_texts = context.texts[bucket.start : bucket.end]
+            if on_bucket is not None:
+                on_bucket(
+                    "before",
+                    EncodeBucketProgress(
+                        kind=kind,
+                        items_done=bucket.start,
+                        items_total=len(context.texts),
+                        bucket_items=len(bucket_texts),
+                        bucket_estimated_tokens=bucket.estimated_tokens,
+                        token_budget=budget,
+                        oom_count=oom_count,
+                    ),
+                )
+            try:
+                encoded = encode_bucket(bucket_texts)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                oom_count += 1
+                if bucket.end - bucket.start <= 1:
+                    raise
+                budget, buckets = _shrink_after_bucket_oom(
+                    ceiling,
+                    kind,
+                    context,
+                    buckets,
+                    index,
+                )
+                continue
+            outputs.append(encoded)
+            if on_bucket is not None:
+                on_bucket(
+                    "after",
+                    EncodeBucketProgress(
+                        kind=kind,
+                        items_done=bucket.end,
+                        items_total=len(context.texts),
+                        bucket_items=len(bucket_texts),
+                        bucket_estimated_tokens=bucket.estimated_tokens,
+                        token_budget=budget,
+                        oom_count=oom_count,
+                    ),
+                )
+            index += 1
+        ceiling.record_success(budget)
+        return outputs
+
     def _encode_documents_output(
         self,
         texts: list[str],
@@ -907,32 +1003,14 @@ class EmbeddingModel:
     ) -> object:
         """Encode texts bucket by bucket under the learned token budget.
 
-        The input is partitioned by :func:`plan_encode_buckets` under the
-        configured token budget clamped by the instance's learned token
-        ceiling, capped at ``batch_size`` items per bucket, and each
-        bucket runs as exactly one model forward. A CUDA OOM discards
-        only the failing bucket: completed bucket outputs are retained,
-        the allocator cache is flushed (only on a real OOM), the ceiling
-        learns the failing footprint, and the failing bucket plus the
-        not-yet-encoded remainder are replanned under the lowered budget.
-        A single-text bucket that OOMs cannot shrink and re-raises.
-
-        When ``retain_on_device`` is true every bucket forward is
+        Bucket planning, OOM-scoped retry, and the ``on_bucket`` callback
+        contract are owned by :meth:`_run_bucketed_encode`, driving the
+        dense token ceiling; this method contributes the dense forward
+        itself. When ``retain_on_device`` is true every bucket forward is
         bracketed by ``cuda_forward_peak_capture`` inside its own
         ``gpu_lock`` hold, so each captured peak attributes that
         forward's demand to the calling job alone.
-
-        Callback contract: ``on_bucket`` fires on the encoding thread,
-        outside any GPU-lock hold - once with ``"before"`` immediately
-        ahead of the bucket's forward seeking the lock (every attempt,
-        including replanned retries after an OOM), and once with
-        ``"after"`` when the bucket's forward has completed and the lock
-        is released, carrying the updated done-count. A failing attempt
-        therefore produces a ``"before"`` without an ``"after"``. The
-        callback must be fast and must not raise.
         """
-        import torch
-
         from .memory_probe import cuda_forward_peak_capture
 
         if batch_size is None:
@@ -945,75 +1023,35 @@ class EmbeddingModel:
             # result shape for each output mode.
             return self._dense_encode_call(truncated, retain_on_device=retain_on_device)
 
-        context = _BucketPlanContext(
-            texts=truncated,
-            chars_per_token=self._encode_chars_per_token,
-            max_items=batch_size,
+        def encode_bucket(bucket_texts: list[str]) -> object:
+            if retain_on_device:
+                with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
+                    return self._dense_encode_call(
+                        bucket_texts,
+                        retain_on_device=True,
+                    )
+            with timed_gpu_lock(gpu_lock):
+                return self._dense_encode_call(
+                    bucket_texts,
+                    retain_on_device=False,
+                )
+
+        outputs = self._run_bucketed_encode(
+            _BucketPlanContext(
+                texts=truncated,
+                chars_per_token=self._encode_chars_per_token,
+                max_items=batch_size,
+            ),
+            ceiling=self._dense_batch_ceiling,
+            kind="dense",
+            encode_bucket=encode_bucket,
+            on_bucket=on_bucket,
         )
-        budget = self._dense_batch_ceiling.clamp(self._encode_token_budget)
-        buckets = context.plan(budget)
-        outputs: list[object] = []
-        oom_count = 0
-        index = 0
-        while index < len(buckets):
-            bucket = buckets[index]
-            bucket_texts = truncated[bucket.start : bucket.end]
-            if on_bucket is not None:
-                on_bucket(
-                    "before",
-                    EncodeBucketProgress(
-                        items_done=bucket.start,
-                        items_total=len(truncated),
-                        bucket_items=len(bucket_texts),
-                        bucket_estimated_tokens=bucket.estimated_tokens,
-                        token_budget=budget,
-                        oom_count=oom_count,
-                    ),
-                )
-            try:
-                if retain_on_device:
-                    with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
-                        encoded = self._dense_encode_call(
-                            bucket_texts,
-                            retain_on_device=True,
-                        )
-                else:
-                    with timed_gpu_lock(gpu_lock):
-                        encoded = self._dense_encode_call(
-                            bucket_texts,
-                            retain_on_device=False,
-                        )
-            except torch.cuda.OutOfMemoryError:
-                torch.cuda.empty_cache()
-                oom_count += 1
-                if bucket.end - bucket.start <= 1:
-                    raise
-                budget, buckets = _shrink_after_bucket_oom(
-                    self._dense_batch_ceiling,
-                    "dense",
-                    context,
-                    buckets,
-                    index,
-                )
-                continue
-            outputs.append(encoded)
-            if on_bucket is not None:
-                on_bucket(
-                    "after",
-                    EncodeBucketProgress(
-                        items_done=bucket.end,
-                        items_total=len(truncated),
-                        bucket_items=len(bucket_texts),
-                        bucket_estimated_tokens=bucket.estimated_tokens,
-                        token_budget=budget,
-                        oom_count=oom_count,
-                    ),
-                )
-            index += 1
-        self._dense_batch_ceiling.record_success(budget)
         if len(outputs) == 1:
             return outputs[0]
         if retain_on_device:
+            import torch
+
             return torch.cat([cast("Tensor", output) for output in outputs], dim=0)
         import numpy as np
 
@@ -1089,19 +1127,14 @@ class EmbeddingModel:
         *,
         batch_size: int | None = None,
         gpu_lock: threading.Lock | None = None,
+        on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
     ) -> list[SparseResult]:
         """Encode documents as SPLADE sparse vectors bucket by bucket.
 
-        The input is partitioned by :func:`plan_encode_buckets` under the
-        configured token budget clamped by the sparse token ceiling,
-        capped at ``batch_size`` items per bucket, and each bucket runs
-        as one model forward. A CUDA OOM discards only the failing
-        bucket's rows: completed buckets' results are retained, the
-        allocator cache is flushed (only on a real OOM), the ceiling
-        learns the failing footprint, and the failing bucket plus the
-        not-yet-encoded remainder are replanned under the lowered
-        budget. A single-text bucket that OOMs cannot shrink and
-        re-raises.
+        Bucket planning, OOM-scoped retry, and the ``on_bucket`` callback
+        contract are owned by :meth:`_run_bucketed_encode`, driving the
+        sparse token ceiling; this method contributes the sparse forward
+        itself (:meth:`_encode_sparse_batch`).
 
         Args:
             texts: List of document texts.
@@ -1112,6 +1145,9 @@ class EmbeddingModel:
             gpu_lock: Optional process-wide GPU lock. Each bucket
                 forward holds it independently; device-to-host transfer,
                 sparse conversion, and result mapping run after release.
+            on_bucket: Per-bucket boundary callback observing progress,
+                the live token budget, and the running OOM count under
+                the contract documented on :meth:`_run_bucketed_encode`.
 
         Returns:
             List of SparseResult objects with .indices and .values, in
@@ -1121,8 +1157,6 @@ class EmbeddingModel:
             torch.cuda.OutOfMemoryError: If a single-text bucket still
                 fails after the allocator cache is flushed.
         """
-        import torch
-
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
         if batch_size <= 0:
@@ -1133,39 +1167,21 @@ class EmbeddingModel:
         if not truncated:
             return []
 
-        context = _BucketPlanContext(
-            texts=truncated,
-            chars_per_token=self._encode_chars_per_token,
-            max_items=batch_size,
+        def encode_bucket(bucket_texts: list[str]) -> list[SparseResult]:
+            return self._encode_sparse_batch(bucket_texts, gpu_lock)
+
+        bucket_results = self._run_bucketed_encode(
+            _BucketPlanContext(
+                texts=truncated,
+                chars_per_token=self._encode_chars_per_token,
+                max_items=batch_size,
+            ),
+            ceiling=self._sparse_batch_ceiling,
+            kind="sparse",
+            encode_bucket=encode_bucket,
+            on_bucket=on_bucket,
         )
-        budget = self._sparse_batch_ceiling.clamp(self._encode_token_budget)
-        buckets = context.plan(budget)
-        results: list[SparseResult] = []
-        index = 0
-        while index < len(buckets):
-            bucket = buckets[index]
-            try:
-                results.extend(
-                    self._encode_sparse_batch(
-                        truncated[bucket.start : bucket.end],
-                        gpu_lock,
-                    )
-                )
-            except torch.cuda.OutOfMemoryError:
-                torch.cuda.empty_cache()
-                if bucket.end - bucket.start <= 1:
-                    raise
-                budget, buckets = _shrink_after_bucket_oom(
-                    self._sparse_batch_ceiling,
-                    "sparse",
-                    context,
-                    buckets,
-                    index,
-                )
-                continue
-            index += 1
-        self._sparse_batch_ceiling.record_success(budget)
-        return results
+        return [result for bucket in bucket_results for result in bucket]
 
     def _encode_sparse_batch(
         self,
