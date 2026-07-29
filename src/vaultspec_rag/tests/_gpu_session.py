@@ -23,8 +23,6 @@ a failed run, or a hard kill - and no stale-file reclaim heuristic is needed.
 
 from __future__ import annotations
 
-import contextlib
-import json
 import os
 import tempfile
 from dataclasses import dataclass
@@ -39,11 +37,6 @@ __all__ = [
 ]
 
 _LOCK_FILENAME = "vaultspec-rag-gpu-test-session.lock"
-
-# The lock byte sits far past the recorded pid because a Windows lock is
-# mandatory rather than advisory: a locked byte cannot be READ by another
-# process, and a contender must still read the holder pid for its refusal.
-_LOCK_OFFSET = 1 << 20
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -61,20 +54,6 @@ _held: GpuSessionLease | None = None
 def gpu_session_lock_path() -> Path:
     """Path of the machine-global GPU test-session lock."""
     return Path(tempfile.gettempdir()) / _LOCK_FILENAME
-
-
-def _recorded_holder(path: Path) -> int:
-    """Return the pid recorded in the lock file, or 0 when it cannot be read.
-
-    Informational, for the refusal message only; the OS lock is the authority,
-    so an absent or truncated record costs the operator a pid and nothing more.
-    """
-    try:
-        recorded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return 0
-    pid = recorded.get("pid") if isinstance(recorded, dict) else None
-    return pid if isinstance(pid, int) else 0
 
 
 def acquire_gpu_session_lock(anchor: Path) -> tuple[GpuSessionLease | None, int]:
@@ -99,24 +78,20 @@ def acquire_gpu_session_lock(anchor: Path) -> tuple[GpuSessionLease | None, int]
     if _held is not None:
         return (_held, _held.pid)
 
-    from .._fd_lock import lock_fd_exclusive
+    from .._anchor_claim import claim_anchor, record_claim_owner
 
-    path = anchor
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    try:
-        lock_fd_exclusive(fd, offset=_LOCK_OFFSET)
-    except OSError:
-        holder = _recorded_holder(path)
-        os.close(fd)
-        return (None, holder)
+    claim = claim_anchor(anchor, pid_record=True)
+    if claim.fault is not None:
+        # Proceeding without the claim would admit a second session onto the
+        # one card, which is the collision this exists to prevent, so an
+        # unusable anchor stops the session instead.
+        raise claim.fault
+    if claim.descriptor is None:
+        return (None, claim.holder_pid)
     # Record our pid for the refusal a later contender will print. Best effort:
     # the lock is already ours, and a failed write costs that contender a pid.
-    with contextlib.suppress(OSError):
-        os.ftruncate(fd, 0)
-        os.lseek(fd, 0, os.SEEK_SET)
-        os.write(fd, json.dumps({"pid": os.getpid()}).encode("utf-8"))
-        os.fsync(fd)
-    _held = GpuSessionLease(path=path, pid=os.getpid(), descriptor=fd)
+    record_claim_owner(claim.descriptor)
+    _held = GpuSessionLease(path=anchor, pid=os.getpid(), descriptor=claim.descriptor)
     return (_held, _held.pid)
 
 
@@ -136,11 +111,9 @@ def release_gpu_session_lock() -> None:
         return
     _held = None
 
-    from .._fd_lock import unlock_fd
+    from .._anchor_claim import release_anchor_claim
 
-    unlock_fd(lease.descriptor, offset=_LOCK_OFFSET)
-    with contextlib.suppress(OSError):
-        os.close(lease.descriptor)
+    release_anchor_claim(lease.descriptor, pid_record=True)
 
 
 def gpu_session_refusal(anchor: Path) -> str | None:
