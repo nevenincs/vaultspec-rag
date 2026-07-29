@@ -27,7 +27,7 @@ import urllib.parse
 import pytest
 from textual.widgets import DataTable
 
-from ..cli._jobs_tui import _SPINNER_FRAMES, _SPINNER_INTERVAL, JobsTuiApp
+from ..cli._jobs_tui import _SPINNER_FRAMES, _SPINNER_INTERVAL, ServerWatchApp
 from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
 from ..serviceclient._transport import _try_http_admin
 
@@ -129,6 +129,35 @@ def _finished_job(job_id: str) -> dict[str, object]:
     )
 
 
+def _served_search(
+    request_id: str,
+    *,
+    state: str = "active",
+    query: str = "why is the index behind",
+    outcome: str | None = None,
+) -> dict[str, object]:
+    """Build one actual activity-route record for a rendered TUI regression."""
+    return {
+        "request_id": request_id,
+        "state": state,
+        "source": "code",
+        "type": "code",
+        "root": "/repos/example-worktrees/main",
+        "top_k": 8,
+        "started_at": 1000.0,
+        "finished_at": 1001.5 if state == "terminal" else None,
+        "total_seconds": 1.5 if state == "terminal" else None,
+        "status_code": 200 if state == "terminal" else None,
+        "outcome": outcome,
+        "result_count": 3 if state == "terminal" else None,
+        "timings": {"search": 0.4} if state == "terminal" else {},
+        "availability_cause": None,
+        "error_code": None,
+        "error_message": None,
+        "query": query,
+    }
+
+
 def _summarise(records: list[dict[str, object]]) -> dict[str, object]:
     """Tally records by canonical state, in the shape the service publishes."""
     states = [str(record.get("state", "")) for record in records]
@@ -160,6 +189,12 @@ class _JobService:
         # per-job placeholder, so a test can serve the service's real log
         # dialects - including adversarial content - through the real route.
         self.log_lines: list[str] | None = None
+        # The managed Qdrant producer has its own retained source group. The
+        # all-source route must not fold this into the service group merely
+        # because a selected-job inspection only asks the latter for lines.
+        self.qdrant_log_lines: list[str] = ["a qdrant log line"]
+        self.search_active: list[dict[str, object]] = []
+        self.search_recent: list[dict[str, object]] = []
         # When set, the jobs listing carries this GPU pressure block; when
         # ``None`` the key is omitted entirely, which is how a daemon older
         # than the field answers.
@@ -201,8 +236,12 @@ class _JobService:
 
             def do_GET(self) -> None:
                 path, query = self._record("GET")
-                if path == "/health":
-                    self._answer(_health_payload(service))
+                response = {
+                    "/health": _health_payload,
+                    "/search-activity": _search_activity_payload,
+                }.get(path)
+                if response is not None:
+                    self._answer(response(service))
                     return
                 if path.startswith("/logs"):
                     self._answer(_log_payload(service, query))
@@ -278,6 +317,16 @@ class _JobService:
         with self._lock:
             return [str(job.get("id")) for job in self.jobs]
 
+    def set_search_activity(
+        self,
+        *,
+        active: list[dict[str, object]],
+        recent: list[dict[str, object]],
+    ) -> None:
+        with self._lock:
+            self.search_active = list(active)
+            self.search_recent = list(recent)
+
     def close(self) -> None:
         self.server.shutdown()
         self.server.server_close()
@@ -331,15 +380,63 @@ def _health_payload(service: _JobService) -> dict[str, object]:
 def _log_payload(
     service: _JobService, query: dict[str, list[str]]
 ) -> dict[str, object]:
-    """Answer ``/logs`` with the configured lines, scoped to the job asked."""
+    """Answer ``/logs`` with the grouped managed-log transport contract."""
     scope = query.get("job_id", ["none"])[0]
+    source = query.get("source", ["all"])[0]
+    lines = int(query.get("lines", ["200"])[0])
+    filters = {
+        key: values[0]
+        for key, values in query.items()
+        if key in {"job_id", "contains"} and values and values[0]
+    }
     with service._lock:
-        lines = (
+        service_lines = (
             list(service.log_lines)
             if service.log_lines is not None
             else [f"a logged line for {scope}"]
         )
-    return {"ok": True, "groups": [{"source": "service", "lines": lines}]}
+        qdrant_lines = list(service.qdrant_log_lines)
+    source_lines = {
+        "service": service_lines[-lines:],
+        "qdrant": qdrant_lines[-lines:],
+    }
+    selected = ("service", "qdrant") if source == "all" else (source,)
+    return {
+        "ok": True,
+        "source": source,
+        "limit": lines,
+        "groups": [
+            {"source": producer, "lines": source_lines[producer]}
+            for producer in selected
+        ],
+        "filters": filters,
+    }
+
+
+def _search_activity_payload(service: _JobService) -> dict[str, object]:
+    """Return the bounded activity response the authenticated admin route owns."""
+    with service._lock:
+        active = list(service.search_active)
+        recent = list(service.search_recent)
+    return {
+        "ok": True,
+        "active": active,
+        "recent": recent,
+        "counts": {
+            "active": len(active),
+            "recent": len(recent),
+            "total": len(active) + len(recent),
+        },
+        "returned": len(active) + len(recent),
+        "filters": {
+            "state": None,
+            "type": None,
+            "root": None,
+            "request_id": None,
+            "since": None,
+            "limit": 100,
+        },
+    }
 
 
 def _requested_state(handler: http.server.BaseHTTPRequestHandler) -> object:
@@ -360,7 +457,8 @@ def _app(
     *,
     limit: int = 20,
     interval: float = 3600.0,
-) -> JobsTuiApp:
+    watch_mode: str = "jobs",
+) -> ServerWatchApp:
     """Build the interface over *service*, reached through the real transport."""
     if jobs is not None:
         service.set_jobs(jobs)
@@ -370,10 +468,15 @@ def _app(
 
     # A long interval keeps the periodic refresh out of the way; every test
     # drives the first load explicitly.
-    return JobsTuiApp(fetch=fetch, port=service.port, interval=interval)
+    return ServerWatchApp(
+        fetch=fetch,
+        port=service.port,
+        interval=interval,
+        watch_mode=watch_mode,
+    )
 
 
-def _screen_text(app: JobsTuiApp) -> str:
+def _screen_text(app: ServerWatchApp) -> str:
     """Return what the interface actually painted, as text.
 
     Pill contents use non-breaking spaces so a pill wraps as one unit; they
@@ -394,7 +497,7 @@ def _line_with(painted: str, needle: str) -> str:
     return ""
 
 
-def _header_line(app: JobsTuiApp) -> str:
+def _header_line(app: ServerWatchApp) -> str:
     """Return the painted jobs header line.
 
     Found by its content rather than by its position: this screen carries
@@ -407,7 +510,7 @@ def _header_line(app: JobsTuiApp) -> str:
     return ""
 
 
-def _row_line(app: JobsTuiApp, *needles: str) -> str | None:
+def _row_line(app: ServerWatchApp, *needles: str) -> str | None:
     """Return the painted line carrying every one of *needles*, or ``None``.
 
     A row's second line holds the state cell's second line beside that job's
@@ -429,6 +532,36 @@ def control_service() -> typing.Iterator[_JobService]:
         yield server
     finally:
         server.close()
+
+
+class TestTeardown:
+    """Queued presentation timers are harmless after Textual removes its screen."""
+
+    @pytest.mark.asyncio
+    async def test_jobs_focused_timer_tick_survives_screen_teardown(self) -> None:
+        """The normal jobs watch may close between a timer queue and its callback.
+
+        Proven able to fail: without the screen-presence guard, leaving the
+        real Textual ``run_test`` context clears its screen stack and this
+        direct production timer callback raises ``ScreenStackError`` from
+        ``_apply_default_log_visibility``. Restored, it is a no-op.
+        """
+
+        def fetch() -> dict[str, object] | None:
+            return {"ok": True, "jobs": [_job("teardown-watch-job")]}
+
+        app = ServerWatchApp(
+            fetch=fetch,
+            port=0,
+            interval=3600.0,
+            watch_mode="jobs",
+        )
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            assert app.screen.has_class("-jobsfocused")
+
+        assert not app.is_running
+        app._tick()
 
 
 class TestRenderedRows:
@@ -581,6 +714,260 @@ class TestResponsiveLayout:
         )
         assert "a logged line" not in closed, "toggling again must give the table back"
         assert "code index" in closed
+
+
+class TestDualLaneServerWatch:
+    """The root watch presents indexing and served searches as equal lanes."""
+
+    @pytest.mark.asyncio
+    async def test_wide_server_watch_shows_both_lanes_and_global_logs(
+        self, control_service: _JobService
+    ) -> None:
+        control_service.set_search_activity(
+            active=[
+                _served_search(
+                    "search-active-001",
+                    query="where is the active indexing work",
+                )
+            ],
+            recent=[
+                _served_search(
+                    "search-recent-001",
+                    state="terminal",
+                    query="which documents changed",
+                    outcome="succeeded",
+                )
+            ],
+        )
+        app = _app(
+            control_service,
+            [_job("abc123def456")],
+            watch_mode="server",
+        )
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = await _await_painted(
+                pilot, app, "where is the active indexing work"
+            )
+            await pilot.press("m")
+            tank = await _await_painted(pilot, app, "Managed log tank")
+
+        assert "code index" in painted, "indexing remains visible beside searches"
+        assert "which documents changed" in painted, (
+            "recent served searches remain visible"
+        )
+        assert "search 1 active · 1 recent" in painted, (
+            "the header must expose both served-search counts"
+        )
+        assert "a qdrant log line" in tank, (
+            "the canonical global log tank remains reachable from server watch"
+        )
+        assert "where is the active indexing work" not in tank, (
+            "query text is reviewable from activity only, never injected into raw logs"
+        )
+
+    @pytest.mark.asyncio
+    async def test_narrow_server_watch_keeps_counts_and_switches_to_search(
+        self, control_service: _JobService
+    ) -> None:
+        control_service.set_search_activity(
+            active=[
+                _served_search(
+                    "search-active-001",
+                    query="show the served search query",
+                )
+            ],
+            recent=[],
+        )
+        app = _app(
+            control_service,
+            [_job("abc123def456")],
+            watch_mode="server",
+        )
+        async with app.run_test(size=_NARROW, notifications=True) as pilot:
+            await _ready(pilot, app)
+            jobs = await _await_painted(pilot, app, "search 1 active · 0 recent")
+            await pilot.press("s")
+            searches = await _await_painted(pilot, app, "show the served search query")
+            await pilot.press("s")
+            returned = await _await_painted(pilot, app, "code index")
+
+        assert "show the served search query" not in jobs, (
+            "narrow mode starts on indexing rather than squeezing both lanes"
+        )
+        assert "code index" not in searches, (
+            "the selected narrow search lane must occupy the usable body"
+        )
+        assert "show the served search query" not in returned
+
+    @pytest.mark.asyncio
+    async def test_jobs_watch_starts_focused_and_keeps_search_review_access(
+        self, control_service: _JobService
+    ) -> None:
+        control_service.set_search_activity(
+            active=[
+                _served_search(
+                    "search-active-001",
+                    query="find the query from jobs watch",
+                )
+            ],
+            recent=[],
+        )
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_NARROW, notifications=True) as pilot:
+            await _ready(pilot, app)
+            assert "-jobsfocused" in app.screen.classes
+            await pilot.press("s")
+            painted = await _await_painted(pilot, app, "find the query from jobs watch")
+
+        assert "Served searches · 1 active · 0 recent" in painted
+
+    @pytest.mark.asyncio
+    async def test_search_focus_cannot_mutate_the_retained_job_selection(
+        self, control_service: _JobService
+    ) -> None:
+        """A search-focused key must not reuse the indexing table's old row.
+
+        The test drives the real search widget, all five job bindings, and the
+        action methods that could otherwise bypass a disabled binding. It then
+        focuses the real jobs table and proves the same pause control reaches
+        the loopback service. Removing either action-context gate makes a
+        request appear while search holds the keyboard.
+        """
+        control_service.set_search_activity(
+            active=[_served_search("search-active-001")], recent=[]
+        )
+        job = _job(
+            "abc123def456",
+            capabilities={
+                "pausable": True,
+                "resumable": True,
+                "cancellable": True,
+                "retryable": True,
+                "deletable": True,
+                "force_killable": False,
+            },
+        )
+        app = _app(control_service, [job], watch_mode="server")
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            await pilot.press("s")
+            await _await_painted(pilot, app, "why is the index behind")
+            searches = typing.cast(
+                "DataTable[object]", app.query_one("#searches", DataTable)
+            )
+            assert app.focused is searches, (
+                "s gives the served-search lane the keyboard"
+            )
+            assert app.selected_id == "abc123def456", (
+                "the retained id makes this the stale-selection regression"
+            )
+            for key in ("p", "u", "k", "y", "d"):
+                await pilot.press(key)
+                await pilot.pause()
+            app.action_job_pause()
+            app.action_job_resume()
+            app.action_job_stop()
+            app.action_job_retry()
+            app.action_job_delete()
+            await _settle(pilot)
+            blocked = _screen_text(app)
+
+            jobs = typing.cast("DataTable[object]", app.query_one("#jobs", DataTable))
+            jobs.focus()
+            await pilot.pause()
+            await pilot.press("p")
+            await _settle(pilot)
+
+        assert "Select an indexing job before sending a job action." in blocked
+        assert control_service.control_paths() == [
+            "/jobs/abc123def456/desired-state"
+        ], "only a job-focused pause may reach the service"
+
+    @pytest.mark.asyncio
+    async def test_global_log_focus_cannot_mutate_the_retained_job_selection(
+        self, control_service: _JobService
+    ) -> None:
+        """The global raw-log tank keeps a job selection for return, not control.
+
+        This drives the real full-height managed-log widget, every mutation
+        binding, and the direct action methods that must not bypass the focus
+        guard. Removing the managed-log branch of
+        ``_job_action_context_available`` makes one of the named job-control
+        requests reach the loopback service; restored, only refocusing the
+        real jobs table permits the final pause.
+        """
+        job = _job(
+            "abc123def456",
+            capabilities={
+                "pausable": True,
+                "resumable": True,
+                "cancellable": True,
+                "retryable": True,
+                "deletable": True,
+                "force_killable": False,
+            },
+        )
+        app = _app(control_service, [job], watch_mode="server")
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            await pilot.press("m")
+            await _await_painted(pilot, app, "Managed log tank")
+            tank = app.query_one("#managedlog")
+            assert app.focused is tank, "m gives the global raw-log tank the keyboard"
+            assert app.selected_id == "abc123def456", (
+                "the retained id makes this the stale-selection regression"
+            )
+            for key in ("p", "u", "k", "y", "d"):
+                await pilot.press(key)
+                await pilot.pause()
+            app.action_job_pause()
+            app.action_job_resume()
+            app.action_job_stop()
+            app.action_job_retry()
+            app.action_job_delete()
+            await _settle(pilot)
+            blocked = _screen_text(app)
+
+            await pilot.press("m")
+            await _await_painted(pilot, app, "code index")
+            jobs = typing.cast("DataTable[object]", app.query_one("#jobs", DataTable))
+            jobs.focus()
+            await pilot.pause()
+            await pilot.press("p")
+            await _settle(pilot)
+
+        assert "Select an indexing job before sending a job action." in blocked
+        assert control_service.control_paths() == [
+            "/jobs/abc123def456/desired-state"
+        ], "only a job-focused pause may reach the service"
+
+    @pytest.mark.asyncio
+    async def test_narrow_search_view_cannot_mutate_a_hidden_job_selection(
+        self, control_service: _JobService
+    ) -> None:
+        """A lane switch hides jobs, so a direct action must refuse as well."""
+        control_service.set_search_activity(
+            active=[_served_search("search-active-001")], recent=[]
+        )
+        app = _app(
+            control_service,
+            [_job("abc123def456")],
+            watch_mode="server",
+        )
+        async with app.run_test(size=_NARROW, notifications=True) as pilot:
+            await _ready(pilot, app)
+            await pilot.press("s")
+            await _await_painted(pilot, app, "why is the index behind")
+            jobs = typing.cast("DataTable[object]", app.query_one("#jobs", DataTable))
+            assert not jobs.display, "narrow search replaces the indexing table"
+            assert app.check_action("job_pause", ()) is None
+            await pilot.press("p")
+            await pilot.pause()
+            app.action_job_pause()
+            await _settle(pilot)
+
+        assert control_service.control_paths() == []
 
 
 class TestCapabilityGating:
@@ -1649,7 +2036,12 @@ class TestHeaderCounts:
         def fetch() -> dict[str, object] | None:
             return {"ok": True, "jobs": [_job("abc123def456")]}
 
-        app = JobsTuiApp(fetch=fetch, port=control_service.port, interval=3600.0)
+        app = ServerWatchApp(
+            fetch=fetch,
+            port=control_service.port,
+            interval=3600.0,
+            watch_mode="jobs",
+        )
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
             painted = _screen_text(app)
@@ -1896,7 +2288,7 @@ class TestLogPane:
         assert "a logged line for def456abc123" in painted
 
 
-async def _ready(pilot: typing.Any, app: JobsTuiApp) -> None:
+async def _ready(pilot: typing.Any, app: ServerWatchApp) -> None:
     """Wait until the interface has completed its first real paint.
 
     Mounting, the threaded fetch, and the column division each take their own
@@ -1958,7 +2350,7 @@ async def _settle(pilot: typing.Any) -> None:
     raise AssertionError("the interface's workers did not settle")
 
 
-async def _settled_paint(pilot: typing.Any, app: JobsTuiApp) -> None:
+async def _settled_paint(pilot: typing.Any, app: ServerWatchApp) -> None:
     """Let the layout settle after a change that re-divides the columns.
 
     Held across a frame tick rather than slept over, for the reason given in
@@ -1985,7 +2377,7 @@ async def _settled_paint(pilot: typing.Any, app: JobsTuiApp) -> None:
         await asyncio.sleep(_POLL_INTERVAL)
 
 
-async def _await_painted(pilot: typing.Any, app: JobsTuiApp, needle: str) -> str:
+async def _await_painted(pilot: typing.Any, app: ServerWatchApp, needle: str) -> str:
     """Return the painted screen once *needle* is on it.
 
     Every outcome this asserts on arrives through a worker thread and a
@@ -2006,7 +2398,7 @@ async def _await_painted(pilot: typing.Any, app: JobsTuiApp, needle: str) -> str
 
 async def _await_painted_when(
     pilot: typing.Any,
-    app: JobsTuiApp,
+    app: ServerWatchApp,
     predicate: typing.Callable[[str], bool],
     described: str,
 ) -> str:
@@ -2022,7 +2414,7 @@ async def _await_painted_when(
     raise AssertionError(f"{described} was never painted; last frame:\n{painted}")
 
 
-async def _await_gone(pilot: typing.Any, app: JobsTuiApp, needle: str) -> str:
+async def _await_gone(pilot: typing.Any, app: ServerWatchApp, needle: str) -> str:
     """Return the painted screen once *needle* has left it."""
     deadline = time.monotonic() + _HANDOFF_TIMEOUT
     painted = ""

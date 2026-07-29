@@ -104,11 +104,12 @@ JobIdArgument = Annotated[
     str, typer.Argument(help="Exact job id or human-mode prefix.")
 ]
 
-#: The interactive jobs view, declared once for the two entry points that open
-#: it. ``server jobs --watch`` opens it with the filters that verb parsed;
-#: ``server --watch`` opens the same screen unfiltered, so both must describe
-#: the same thing.
-WATCH_OPTION_HELP = "Open the interactive jobs interface with per-job controls."
+#: The interactive server watch is declared once for both entry points.
+#: ``server jobs --watch`` opens its jobs-focused mode with parsed filters;
+#: ``server --watch`` opens the balanced server mode.
+WATCH_OPTION_HELP = (
+    "Open the interactive server watch with indexing and served searches."
+)
 WATCH_INTERVAL_OPTION_HELP = "Seconds between refreshes in the interactive interface."
 
 #: Watcher tuning, declared once for the two verbs that accept it. ``server
@@ -379,13 +380,20 @@ def server_main(
     ] = 2.0,
     port: PortOption = None,
 ) -> None:
-    """Open the interactive jobs interface, else show server command help."""
+    """Open the interactive server watch, else show server command help."""
     if watch and ctx.invoked_subcommand is None:
         # Function-local: the jobs module registers its command against the app
         # objects this module owns, so importing it at module scope is a cycle.
         from ._service_jobs_collection import ServiceJobsOptions, run_service_jobs
 
-        run_service_jobs(ServiceJobsOptions(port=port, interval=interval, watch=True))
+        run_service_jobs(
+            ServiceJobsOptions(
+                port=port,
+                interval=interval,
+                watch=True,
+                watch_mode="server",
+            )
+        )
         return
     _show_group_help_if_no_command(ctx)
 
