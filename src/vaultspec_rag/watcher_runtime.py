@@ -30,7 +30,6 @@ from .watcher_retry import (
 
 if TYPE_CHECKING:
     from .graph_cache import GraphCache
-    from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from .indexer._codebase_indexer import CodeExecutionPreflight
     from .indexer._document_indexer import DocumentExecutionPreflight
     from .indexer._resolved_policy import ResolvedIndexPolicy
@@ -124,11 +123,8 @@ class WatcherConfiguration:
 
     root_dir: Path
     vault_dir: Path
-    vault_indexer: VaultIndexer
-    code_indexer: CodebaseIndexer
     stop_event: asyncio.Event
     graph_cache: GraphCache
-    document_indexer: DocumentIndexer | None = None
     debounce: int = 2000
     cooldown: float = 30.0
     registry: ServiceRegistry | None = None

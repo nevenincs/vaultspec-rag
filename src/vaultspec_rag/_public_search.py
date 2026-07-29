@@ -128,9 +128,10 @@ def search_documents_timed(
     indexed_count = registry.document_chunk_count(root)
     if indexed_count == 0:
         return [], {"indexed_count": 0.0}
-    registry.load_model()
-    with registry.lease(root) as slot:
-        results, timings = slot.searcher.search_document_timed(
+    results: list[DocumentSearchResult] | None = None
+    timings: dict[str, float] | None = None
+    with registry.search_lease(root) as lease:
+        results, timings = lease.searcher.search_document_timed(
             request.query,
             top_k=request.top_k,
             source_path=request.source_path,
@@ -138,6 +139,8 @@ def search_documents_timed(
             extractor_version=request.extractor_version,
             locator_kind=request.locator_kind,
         )
+    if results is None or timings is None:
+        raise RuntimeError("document search lease ended without a result")
     timings["indexed_count"] = float(indexed_count)
     return results, timings
 
@@ -265,13 +268,15 @@ def search_combined_timed(
     if not any(counts.values()):
         return _empty_or_failed_combined_outcome(count_failures, request.top_k), timings
 
-    registry.load_model()
-    with registry.lease(root) as slot:
+    vault: SearchDomainOutcome | None = None
+    code: SearchDomainOutcome | None = None
+    document: SearchDomainOutcome | None = None
+    with registry.search_lease(root) as lease:
         vault = _indexed_domain_outcome(
             PublicSourceType.VAULT,
             counts,
             count_failures,
-            lambda: slot.searcher.search_vault(
+            lambda: lease.searcher.search_vault(
                 request.query,
                 top_k=request.top_k,
                 doc_type=request.vault_filters.doc_type,
@@ -285,7 +290,7 @@ def search_combined_timed(
             PublicSourceType.CODE,
             counts,
             count_failures,
-            lambda: slot.searcher.search_codebase(
+            lambda: lease.searcher.search_codebase(
                 request.query,
                 top_k=request.top_k,
                 language=request.code_filters.language,
@@ -306,7 +311,7 @@ def search_combined_timed(
             PublicSourceType.DOCUMENT,
             counts,
             count_failures,
-            lambda: slot.searcher.search_document(
+            lambda: lease.searcher.search_document(
                 request.query,
                 top_k=request.top_k,
                 source_path=request.document_filters.source_path,
@@ -315,4 +320,6 @@ def search_combined_timed(
                 locator_kind=request.document_filters.locator_kind,
             ),
         )
+    if vault is None or code is None or document is None:
+        raise RuntimeError("combined search lease ended without domain outcomes")
     return CombinedSearchOutcome(vault, code, document, request.top_k), timings

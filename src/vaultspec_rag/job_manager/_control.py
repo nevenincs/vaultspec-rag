@@ -29,6 +29,7 @@ from ..job_models import (
     capabilities_for_state as _capabilities_for_state,
 )
 from ..logging_config import log_event
+from ..service_quiesce import QuiesceState
 from .state import (
     JobManagerState,
     JobRuntimeOwner,
@@ -120,6 +121,121 @@ class AttemptTerminal:
 
 
 class JobManagerControl(JobManagerState):
+    def defer_unstarted_for_quiesce(self, job_id: str) -> JobOutcome:
+        """Retain queued logical work when quiesce closes its start boundary."""
+        command = "defer_unstarted_for_quiesce"
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed = self._active.get(job_id)
+            if managed is None:
+                return self._error(
+                    command,
+                    "job_not_found",
+                    "The job was not found.",
+                )
+            if (
+                managed.snapshot.state is not JobState.QUEUED
+                or managed.snapshot.desired_state is not DesiredJobState.RUNNING
+                or managed.runtime.task is not None
+            ):
+                return self._error(
+                    command,
+                    "invalid_transition",
+                    "Only queued running work without a runtime can defer for quiesce.",
+                    managed,
+                )
+            now = time.time()
+            self._replace_snapshot_locked(
+                managed,
+                state=JobState.PAUSED,
+                desired_state=DesiredJobState.RUNNING,
+                now=now,
+                control_requested_at=now,
+                control_acknowledged_at=now,
+            )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return self._persistence_error(
+                    command,
+                    persistence_error,
+                    self._get_locked(job_id),
+                )
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="quiesce_deferred_before_start",
+                message="The job was retained for service quiesce resume.",
+                job=self._snapshot_locked(managed),
+            )
+
+    def request_quiesce_attempts(self) -> tuple[str, ...]:
+        """Ask active attempts to unwind for a service-managed quiesce.
+
+        This adapts live attempts only. The service controller owns lifecycle
+        transitions and admission; the manager does not advance either.
+        """
+        with self._lock:
+            backup = self._capture_state_locked()
+            requested: list[str] = []
+            for job_id, managed in self._active.items():
+                if (
+                    managed.snapshot.state is not JobState.RUNNING
+                    or managed.runtime.task is None
+                    or managed.runtime.control is None
+                ):
+                    continue
+                now = time.time()
+                self._replace_snapshot_locked(
+                    managed,
+                    state=JobState.PAUSING,
+                    desired_state=DesiredJobState.RUNNING,
+                    now=now,
+                    control_requested_at=now,
+                )
+                requested.append(job_id)
+            if not requested:
+                return ()
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return ()
+            for job_id in requested:
+                managed = self._active.get(job_id)
+                if managed is not None and managed.runtime.control is not None:
+                    managed.runtime.control.request_quiesce()
+            return tuple(requested)
+
+    def resume_quiesced_attempts(self) -> tuple[str, ...]:
+        """Requeue quiesced same-ID work only after service admission reopens."""
+        if self._quiesce_controller.snapshot().state is not QuiesceState.RUNNING:
+            return ()
+        with self._lock:
+            backup = self._capture_state_locked()
+            resumed: list[str] = []
+            now = time.time()
+            for job_id, managed in self._active.items():
+                if (
+                    managed.snapshot.state is not JobState.PAUSED
+                    or managed.snapshot.desired_state is not DesiredJobState.RUNNING
+                    or managed.runtime.task is not None
+                ):
+                    continue
+                self._queue_resumed_attempt_locked(managed, now=now)
+                resumed.append(job_id)
+            if not resumed:
+                return ()
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return ()
+        for job_id in resumed:
+            self._schedule_dispatch(job_id)
+        return tuple(resumed)
+
     def _resolve_control_target_locked(
         self,
         command: str,
@@ -480,17 +596,22 @@ class JobManagerControl(JobManagerState):
                 state is JobState.PAUSING
                 and managed.snapshot.desired_state is DesiredJobState.RUNNING
             ):
-                return self._complete_resumed_control_locked(
-                    command,
-                    managed,
-                    now,
+                if (
+                    self._quiesce_controller.snapshot().state
+                    is not QuiesceState.RUNNING
+                ):
+                    outcome = self._complete_quiesced_control_locked(
+                        command, managed, now
+                    )
+                else:
+                    outcome = self._complete_resumed_control_locked(
+                        command, managed, now
+                    )
+            else:
+                outcome = self._complete_control_acknowledgement_locked(
+                    command, managed, state, now
                 )
-            return self._complete_control_acknowledgement_locked(
-                command,
-                managed,
-                state,
-                now,
-            )
+            return outcome
 
     def _missing_acknowledgement_target_locked(
         self,
@@ -532,6 +653,34 @@ class JobManagerControl(JobManagerState):
             status=JobOutcomeStatus.ACCEPTED,
             code="resume_requeued",
             message="The unwound job queued a new reconciliation attempt.",
+            job=self._snapshot_locked(managed),
+        )
+
+    def _complete_quiesced_control_locked(
+        self,
+        command: str,
+        managed: ManagedJob,
+        now: float,
+    ) -> JobOutcome:
+        self._replace_snapshot_locked(
+            managed,
+            state=JobState.PAUSED,
+            desired_state=DesiredJobState.RUNNING,
+            now=now,
+            control_acknowledged_at=now,
+        )
+        persistence_error = self._persist_locked()
+        if persistence_error is not None:
+            return self._persistence_error(
+                command,
+                persistence_error,
+                self._snapshot_locked(managed),
+            )
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.OK,
+            code="quiesce_acknowledged",
+            message="The job released resources for service quiesce.",
             job=self._snapshot_locked(managed),
         )
 

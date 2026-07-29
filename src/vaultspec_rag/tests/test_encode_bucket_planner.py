@@ -2,7 +2,7 @@
 
 import threading
 from itertools import pairwise
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Protocol, cast
 
 import pytest
 
@@ -18,6 +18,22 @@ from ..embeddings import (
 def _texts_of_lengths(lengths: list[int]) -> list[str]:
     """Build texts whose character lengths are exactly *lengths*."""
     return ["x" * length for length in lengths]
+
+
+class _TokenCounter(Protocol):
+    """The concrete tokenizer operation the calibration guard exercises."""
+
+    def tokenize(
+        self,
+        text: str,
+        pair: str | None = None,
+        add_special_tokens: bool = False,
+    ) -> list[str]: ...
+
+
+def _token_count(tokenizer: _TokenCounter, text: str) -> int:
+    """Count one text with the tokenizer interface the guard requires."""
+    return len(tokenizer.tokenize(text, add_special_tokens=True))
 
 
 class TestPlanEncodeBuckets:
@@ -410,7 +426,7 @@ class TestBucketedDenseEncode:
         result = model.encode_documents_on_device(texts, gpu_lock=gpu_lock)
         assert fake.calls == [texts[0:2], texts[2:4]]
         assert not gpu_lock.locked()
-        assert [row[0] for row in result.tolist()] == [200.0] * 4
+        assert [float(result[index, 0]) for index in range(4)] == [200.0] * 4
 
     def test_bucket_callback_reports_progress_and_budget(self):
         texts = _distinct_texts(4)
@@ -613,7 +629,8 @@ class TestCalibrationBoundsUnderPlanning:
     MAX_UNDER_PLAN_FACTOR = 3.5
 
     def test_estimator_under_plan_stays_within_the_stated_margin(self):
-        from transformers import AutoTokenizer
+        from huggingface_hub import scan_cache_dir
+        from transformers import PreTrainedTokenizerFast
 
         from ..config._settings import get_config
         from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
@@ -630,11 +647,18 @@ class TestCalibrationBoundsUnderPlanning:
             (model_id,),
             timeout_seconds=model_setup_timeout_seconds(),
         )
-        tokenizer = AutoTokenizer.from_pretrained(  # pyright: ignore[reportUnknownMemberType]  # transformers factory is partially stubbed
-            model_id,
-            local_files_only=True,
+        snapshots = [
+            revision.snapshot_path
+            for repository in scan_cache_dir().repos
+            if repository.repo_id == model_id
+            for revision in repository.revisions
+            if "main" in revision.refs
+            and (revision.snapshot_path / "tokenizer.json").is_file()
+        ]
+        assert snapshots, f"no tokenizer snapshot resolved for {model_id}"
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_file=str(snapshots[0] / "tokenizer.json")
         )
-        assert tokenizer is not None, f"no tokenizer backend resolved for {model_id}"
         divisor = int(config.embedding_encode_chars_per_token)
         offenders: dict[str, float] = {}
         for name, text in _CALIBRATION_CORPUS.items():
@@ -646,7 +670,7 @@ class TestCalibrationBoundsUnderPlanning:
                 chars_per_token=divisor,
                 max_items=1,
             )
-            real_tokens = len(tokenizer(text)["input_ids"])
+            real_tokens = _token_count(tokenizer, text)
             factor = real_tokens / bucket.estimated_tokens
             if factor > self.MAX_UNDER_PLAN_FACTOR:
                 offenders[name] = round(factor, 3)

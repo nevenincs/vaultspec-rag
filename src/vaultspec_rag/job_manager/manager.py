@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     import os
 
     from .. import job_persistence as _job_persistence
-    from ..job_control import QuiesceGate
+    from ..service_quiesce import ServiceQuiesceController
 
 from ..config._settings import get_config, managed_status_dir
 from ._control import JobManagerControl
@@ -50,7 +50,7 @@ class JobManager(
         state_path: (
             str | os.PathLike[str] | ConfiguredStatePath | None
         ) = CONFIGURED_STATE_PATH,
-        quiesce_gate: QuiesceGate | None = None,
+        quiesce_controller: ServiceQuiesceController,
     ) -> None:
         resolved_max = (
             get_config().job_max_nonterminal
@@ -72,10 +72,7 @@ class JobManager(
             self._state_path = (
                 Path(resolved_path) if resolved_path is not None else None
             )
-        # One shared hold gate injected into every attempt's control token
-        # so a single process-global pause quiesces all in-flight jobs.
-        # ``None`` keeps tokens gateless (no hold behavior).
-        self._quiesce_gate = quiesce_gate
+        self._quiesce_controller = quiesce_controller
         self._lock = threading.RLock()
         # Serializes every state-file write. Synchronous transition persists
         # write while holding both locks; deferred progress flushes serialize

@@ -267,7 +267,8 @@ def _attempt_task(job_id: str, attempt: int) -> asyncio.Task[object] | None:
 
 def _assert_manager_resources_released(
     snapshot: JobSnapshot,
-    slot: ProjectSlot,
+    registry: ServiceRegistry,
+    root: Path,
     *,
     code: bool,
 ) -> None:
@@ -284,10 +285,12 @@ def _assert_manager_resources_released(
         capacity = limiter_stats()[pool]
         assert capacity["borrowed_tokens"] == 0
         assert capacity["waiting"] == 0
+    slot = registry.peek_project(root)
     assert slot.ref_count == 0
-    indexer = slot.code_indexer if code else slot.vault_indexer
-    assert indexer._writer_lock.acquire(blocking=False)
-    indexer._writer_lock.release()
+    with registry.compute_lease(root) as lease:
+        indexer = lease.runtime.code_indexer if code else lease.runtime.vault_indexer
+        assert indexer._writer_lock.acquire(blocking=False)
+        indexer._writer_lock.release()
     if code:
         _assert_code_resources_released()
 
@@ -521,7 +524,8 @@ async def request_cancel_at_the_write_gate(
 async def assert_cancel_wins_at_the_write_gate(
     manager: JobManager,
     cancelled_id: str,
-    slot: ProjectSlot,
+    registry: ServiceRegistry,
+    root: Path,
 ) -> None:
     joined = await manager.wait_for_attempt(
         cancelled_id,
@@ -539,8 +543,9 @@ async def assert_cancel_wins_at_the_write_gate(
     # persisted.
     assert cancelled.error_kind is None
     assert cancelled.result is None
+    slot = registry.peek_project(root)
     assert slot.store.count_code() == 0
-    _assert_manager_resources_released(cancelled, slot, code=True)
+    _assert_manager_resources_released(cancelled, registry, root, code=True)
 
 
 @pytest.fixture(scope="module")

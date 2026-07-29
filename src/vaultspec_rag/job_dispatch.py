@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .indexer import CodebaseIndexer, DocumentIndexer
+    from .indexer import CodebaseIndexer, DocumentIndexer, IndexResult
     from .indexer._codebase_indexer import CodeIndexPreflight
     from .indexer._document_indexer import DocumentIndexPreflight
     from .job_manager.manager import JobManager
@@ -120,9 +120,10 @@ def _run_vault_attempt(
     """Run one vault attempt through the exact service registry."""
     from .jobs import JobProgressReporter
 
-    dispatch.registry.load_model()
+    result: IndexResult | None = None
     try:
-        with dispatch.registry.lease(dispatch.root) as slot:
+        with dispatch.registry.compute_lease(dispatch.root) as lease:
+            runtime = lease.runtime
             context.set_resources(ResourceUpdate(project_lease_held=True))
             try:
                 context.set_resources(ResourceUpdate(writer_lock_held=True))
@@ -133,21 +134,23 @@ def _run_vault_attempt(
                     and snapshot.attempt.resumed_from_attempt is not None
                 )
                 if dispatch.clean:
-                    result = slot.vault_indexer.full_index(
+                    result = runtime.vault_indexer.full_index(
                         clean=not resumed,
                         reporter=reporter,
                         run_control=context.control,
                     )
                 else:
-                    result = slot.vault_indexer.incremental_index(
+                    result = runtime.vault_indexer.incremental_index(
                         reporter=reporter,
                         run_control=context.control,
                     )
             finally:
                 context.set_resources(ResourceUpdate(writer_lock_held=False))
-            slot.graph_cache.invalidate()
+            dispatch.registry.peek_project(dispatch.root).graph_cache.invalidate()
     finally:
         context.set_resources(ResourceUpdate(project_lease_held=False))
+    if result is None:
+        raise RuntimeError("vault indexing attempt ended without a result")
     return JobExecutionResult(
         summary=(
             f"+{result.added} /{result.updated} "
@@ -205,9 +208,10 @@ def _run_indexing_attempt(
         )
     context.set_resilience(_admitted_resilience(dispatch.source))
     context.control.checkpoint()
-    dispatch.registry.load_model()
+    result: IndexResult | None = None
     try:
-        with dispatch.registry.lease(dispatch.root) as slot:
+        with dispatch.registry.compute_lease(dispatch.root) as lease:
+            runtime = lease.runtime
             context.set_resources(ResourceUpdate(project_lease_held=True))
             try:
                 context.set_resources(
@@ -221,7 +225,7 @@ def _run_indexing_attempt(
                 )
                 try:
                     if code_preflight is not None:
-                        code_indexer = slot.code_indexer
+                        code_indexer = runtime.code_indexer
                         result = (
                             code_indexer.full_index(
                                 clean=not resumed,
@@ -237,7 +241,7 @@ def _run_indexing_attempt(
                             )
                         )
                     else:
-                        document_indexer = slot.document_indexer
+                        document_indexer = runtime.document_indexer
                         result = (
                             document_indexer.full_index(
                                 clean=not resumed,
@@ -256,9 +260,11 @@ def _run_indexing_attempt(
                     _publish_resilience(
                         context,
                         (
-                            (lambda: _code_resilience(slot.code_indexer))
+                            (lambda: _code_resilience(runtime.code_indexer))
                             if code_preflight is not None
-                            else (lambda: _document_resilience(slot.document_indexer))
+                            else (
+                                lambda: _document_resilience(runtime.document_indexer)
+                            )
                         ),
                     )
             finally:
@@ -267,6 +273,8 @@ def _run_indexing_attempt(
                 )
     finally:
         context.set_resources(ResourceUpdate(project_lease_held=False))
+    if result is None:
+        raise RuntimeError("indexing attempt ended without a result")
     skipped_suffix = (
         f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
     )

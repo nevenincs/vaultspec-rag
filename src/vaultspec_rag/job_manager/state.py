@@ -18,9 +18,11 @@ if TYPE_CHECKING:
     from ..job_control import (
         CancelRequested,
         PauseRequested,
+        QuiesceRequested,
         RunControlToken,
         ShutdownRequested,
     )
+    from ..service_quiesce import ComputeTicket
 
 MANAGED_STATE_FILENAME = "jobs-state.json"
 
@@ -62,7 +64,9 @@ class JobDispatchBinding:
 @dataclass(frozen=True, slots=True)
 class AttemptExit:
     result: JobExecutionResult | None
-    control_signal: PauseRequested | CancelRequested | ShutdownRequested | None
+    control_signal: (
+        PauseRequested | CancelRequested | QuiesceRequested | ShutdownRequested | None
+    )
     error: BaseException | None
     duration_seconds: float
     release_persisted: bool
@@ -76,6 +80,7 @@ class JobRuntimeOwner:
     control: RunControlToken | None
     worker_active: bool = False
     worker_thread: threading.Thread | None = None
+    compute_ticket: ComputeTicket | None = None
 
 
 @dataclass(slots=True)

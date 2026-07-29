@@ -224,12 +224,12 @@ class TestForwardTelemetry:
         """
         from functools import partial
 
-        from ..indexer._streaming import _report_forward_entry, _report_forward_exit
+        from ..indexer._streaming import report_forward_entry, report_forward_exit
 
         job_id = record_start(JobSource.VAULT, "tool", command="reindex_vault")
         reporter = JobProgressReporter(job_id)
-        entry = partial(_report_forward_entry, reporter, 5, 48)
-        exit_ = partial(_report_forward_exit, reporter, 5, 48)
+        entry = partial(report_forward_entry, reporter, 5, 48)
+        exit_ = partial(report_forward_exit, reporter, 5, 48)
 
         entry("dense")
         forward = telemetry_block(job_id, "forward")

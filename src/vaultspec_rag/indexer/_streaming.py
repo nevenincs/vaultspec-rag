@@ -793,7 +793,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
             _release_cuda_cache()
 
 
-def _report_forward_entry(
+def report_forward_entry(
     reporter: ProgressReporter,
     ordinal: int,
     items: int,
@@ -804,7 +804,7 @@ def _report_forward_entry(
     reporter.forward_started(ordinal=ordinal, items=items)
 
 
-def _report_forward_exit(
+def report_forward_exit(
     reporter: ProgressReporter,
     ordinal: int,
     items: int,
@@ -837,7 +837,7 @@ class _EncodeTelemetrySink(Protocol):
     def encode_oom(self) -> None: ...
 
 
-class _EncodeBucketReporter:
+class EncodeBucketReporter:
     """Adapt one slice's per-bucket encode boundaries onto the reporter.
 
     The encoder splits a slice into token-budgeted buckets and calls this at
@@ -979,18 +979,18 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                                 is_last or (slice_index + 1) % flush_slices == 0
                             ),
                             before_forward=partial(
-                                _report_forward_entry,
+                                report_forward_entry,
                                 request.reporter,
                                 slice_index,
                                 len(slice_chunks),
                             ),
                             after_forward=partial(
-                                _report_forward_exit,
+                                report_forward_exit,
                                 request.reporter,
                                 slice_index,
                                 len(slice_chunks),
                             ),
-                            on_encode_bucket=_EncodeBucketReporter(
+                            on_encode_bucket=EncodeBucketReporter(
                                 request.reporter,
                                 slice_index,
                                 len(slice_chunks),
