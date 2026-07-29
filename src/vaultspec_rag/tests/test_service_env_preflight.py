@@ -177,7 +177,9 @@ class TestRemediationCommands:
         assert cmd.endswith("torch")
 
     def test_durable_command_pins_a_cu130_wheel_via_with(self) -> None:
-        from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
+        import importlib.metadata
+
+        from packaging.version import Version
 
         cmd = durable_tool_install_command()
         assert CU130_INDEX_URL in cmd
@@ -194,10 +196,79 @@ class TestRemediationCommands:
         from packaging.tags import cpython_tags
 
         tag = next(iter(cpython_tags()))
-        assert (
-            f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-{tag.interpreter}-{tag.abi}-"
-            in cmd
+        # The version tracks the torch already installed in this env (the CPU
+        # wheel being replaced), read from distribution metadata - an
+        # independent source from whatever the implementation consults.
+        torch_version = Version(importlib.metadata.version("torch")).base_version
+        assert f"torch-{torch_version}%2Bcu130-{tag.interpreter}-{tag.abi}-" in cmd
+
+    def test_durable_command_tracks_the_installed_torch_version(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The wheel version follows the env's torch, not a baked constant.
+
+        An env whose torch is older than the workspace pin must be offered
+        the same release it already resolved - the cu130 flavour of a version
+        the index may no longer pair with this interpreter otherwise. The
+        local ``+cpu`` suffix must be stripped: the index names ``+cu130``.
+        """
+        import importlib.metadata
+
+        def fake_version(name: str) -> str:
+            assert name == "torch"
+            return "2.99.1+cpu"
+
+        monkeypatch.setattr(importlib.metadata, "version", fake_version)
+
+        cmd = durable_tool_install_command()
+
+        assert "torch-2.99.1%2Bcu130-" in cmd, (
+            f"wheel version must track the installed torch; command was: {cmd}"
         )
+
+    def test_durable_command_falls_back_when_torch_is_absent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no torch installed the pinned fallback version is offered."""
+        import importlib.metadata
+
+        from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
+
+        def missing_version(name: str) -> str:
+            raise importlib.metadata.PackageNotFoundError(name)
+
+        monkeypatch.setattr(importlib.metadata, "version", missing_version)
+
+        cmd = durable_tool_install_command()
+
+        assert f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-" in cmd
+
+    def test_durable_command_derives_the_linux_platform_tag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An aarch64 Linux host is offered the aarch64 wheel, not x86_64.
+
+        The platform half of the wheel name was a hardcoded x86_64 string;
+        PyTorch publishes ``manylinux_2_28`` wheels per machine architecture,
+        so the machine must be read from the host.
+        """
+        import platform
+        import sys
+
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(platform, "machine", lambda: "aarch64")
+
+        cmd = durable_tool_install_command()
+
+        assert "-manylinux_2_28_aarch64.whl" in cmd, (
+            f"platform tag must track the host machine; command was: {cmd}"
+        )
+        # `uv tool install --force` rebuilds the env with uv's DEFAULT python
+        # request, not the interpreter that printed the command, so the wheel
+        # pin must travel with a matching --python request (uv records it in
+        # the receipt). Derived from sys.version_info here - an independent
+        # source from the packaging tag the implementation parses.
+        assert f"--python {sys.version_info[0]}.{sys.version_info[1]}" in cmd
 
     def test_durable_command_names_the_free_threaded_abi(
         self, monkeypatch: pytest.MonkeyPatch
@@ -229,6 +300,14 @@ class TestRemediationCommands:
         )
         assert "-cp314-cp314-" not in cmd, (
             "the GIL wheel was named for a free-threaded interpreter"
+        )
+        # The --python request must come from the SAME tag as the wheel (the
+        # test interpreter is a GIL build with a different version, so an
+        # implementation reading sys.version_info emits that version without
+        # the t suffix and fails here) - otherwise install resolves on an
+        # interpreter the pinned wheel cannot satisfy.
+        assert "--python 3.14t " in cmd, (
+            f"--python request must name the free-threaded interpreter; was: {cmd}"
         )
 
 
