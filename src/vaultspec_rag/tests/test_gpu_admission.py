@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -86,6 +87,30 @@ _DEVICE_TOTAL_MIB = 16376
 #: measurements rather than restating the floor they are checking.
 _MEASURED_RESIDENT_STACK_MIB = 6301
 _MEASURED_PEAK_NET_DEMAND_MIB = 4609
+
+#: How long to keep re-attempting a claim on an anchor whose holder has been
+#: killed, before reporting that it never came free.
+#:
+#: This is a FAILURE BOUND, not a synchronisation device, and the difference is
+#: the whole reason the loop below is shaped this way. Lengthening it cannot turn
+#: a failing run into a passing one for a lock that genuinely never frees - it
+#: only changes how long a real regression in crash-safe release takes to
+#: report. That asymmetry is what separates a bound from a widened tolerance: a
+#: tolerance admits a wrong answer, whereas this admits only a slower right one.
+#: So it is deliberately generous, and it must never be traded for a sleep long
+#: enough to "usually" work, which is the shape it replaced.
+_RELEASE_DEADLINE_SECONDS = 15.0
+
+#: How long to pause between claim attempts. Bounds the polling rate and nothing
+#: else: the verdict is decided by whether ANY attempt succeeded before the
+#: deadline, so this value cannot change the outcome - a larger one only means
+#: fewer observations inside the same window.
+_RELEASE_POLL_SECONDS = 0.05
+
+#: How long to wait for a killed child to be reaped. Cleanup hygiene, so the
+#: test leaves no process behind; deliberately not load-bearing for anything
+#: asserted, because a reap is not a release.
+_CHILD_REAP_SECONDS = 10.0
 
 #: A child that takes the production advisory lock on the anchor it is given,
 #: announces the hold, and then blocks until its stdin closes or it is killed.
@@ -413,6 +438,12 @@ class TestTheLoadWindow:
         ``UNAVAILABLE`` and degrade. Observed this assertion fail on ``the
         window must refuse while a sibling process holds it``.
         """
+        # Reclaiming after the kill waits on the OBSERVED release, never on an
+        # elapsed interval. Waiting on `holder.wait()` returning is what this
+        # test used to do and it was wrong: the process object is signalled once
+        # its threads are gone, which precedes the kernel finishing with its
+        # handle table, so a claim attempted the instant `wait()` returned could
+        # still lose to a holder that was dead but not yet reaped.
         del floor
         anchor = tmp_path / "load-window.lock"
         holder = subprocess.Popen(
@@ -434,18 +465,30 @@ class TestTheLoadWindow:
                 )
                 assert contended.reason == REASON_LOAD_IN_PROGRESS
         finally:
+            # Cleanup only. Neither call orders anything the assertion below
+            # depends on - the retry loop owns that - so neither can carry the
+            # timing assumption that made this test racy. Do not promote either
+            # back into a synchronisation point.
             holder.kill()
-            holder.wait(timeout=10.0)
+            holder.wait(timeout=_CHILD_REAP_SECONDS)
             if holder.stdout is not None:
                 holder.stdout.close()
             if holder.stdin is not None:
                 holder.stdin.close()
 
-        with device_load_window(anchor=anchor, reading=_ROOMY) as after_death:
-            assert after_death.admitted is True, (
-                "the kernel must release a dead holder's lock, leaving no state "
-                "for a later loader to reclaim"
-            )
+        admitted_after_death = False
+        deadline = time.monotonic() + _RELEASE_DEADLINE_SECONDS
+        while time.monotonic() < deadline:
+            with device_load_window(anchor=anchor, reading=_ROOMY) as after_death:
+                admitted_after_death = after_death.admitted
+            if admitted_after_death:
+                break
+            time.sleep(_RELEASE_POLL_SECONDS)
+
+        assert admitted_after_death is True, (
+            "the kernel must release a dead holder's lock, leaving no state "
+            "for a later loader to reclaim"
+        )
 
     def test_the_window_is_released_on_exit(self, tmp_path: Path, floor: int) -> None:
         """The hold covers the window and nothing after it.
