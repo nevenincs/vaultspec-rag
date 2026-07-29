@@ -20,6 +20,8 @@ from .config._types import EnvVar
 from .job_control import timed_gpu_lock
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import numpy as np
     from sentence_transformers import SentenceTransformer, SparseEncoder
     from torch import Tensor
@@ -109,6 +111,94 @@ class QueryEmbeddingCache:
             self._data.move_to_end(key)
             while len(self._data) > self._maxsize:
                 self._data.popitem(last=False)
+
+
+@dataclass(frozen=True, slots=True)
+class EncodeBucket:
+    """One contiguous sub-batch of an encode call's input texts.
+
+    ``start``/``end`` are half-open indices into the text list the bucket
+    was planned over. ``estimated_tokens`` is the bucket's planned
+    activation footprint: item count times the padded (bucket-longest)
+    per-item token estimate, the quantity a token budget bounds.
+    """
+
+    start: int
+    end: int
+    estimated_tokens: int
+
+
+def plan_encode_buckets(
+    texts: Sequence[str],
+    *,
+    token_budget: int,
+    chars_per_token: int,
+    max_items: int,
+) -> list[EncodeBucket]:
+    """Partition texts into contiguous buckets bounded by a token budget.
+
+    Activation memory for one encoder forward scales with items times the
+    padded sequence length, so a fixed item count has an unbounded memory
+    footprint: a batch of near-truncation-cap texts demands an order of
+    magnitude more than the same count of short ones. Planning by
+    estimated tokens bounds that footprint by construction.
+
+    Each text's token count is estimated as ``ceil(len(text) /
+    chars_per_token)`` (minimum 1); a bucket's footprint is its item count
+    times its longest item's estimate, i.e. the padded cost the encoder
+    actually pays. The scan is greedy and order-preserving: buckets are
+    contiguous, their concatenation is exactly the input, and callers that
+    feed a length-sorted list get length-homogeneous buckets, so the
+    encode library's internal length sort becomes a no-op. A single text
+    whose own estimate exceeds the budget forms its own bucket - the
+    planner never drops input; the caller's OOM handling owns that risk.
+
+    Args:
+        texts: Input texts, already truncated to the embed character cap.
+            Length-sorted input yields length-homogeneous buckets; the
+            partition is correct (bounded, order-preserving, exhaustive)
+            for any order.
+        token_budget: Maximum estimated tokens per multi-item bucket.
+        chars_per_token: Calibration divisor mapping characters to
+            estimated tokens.
+        max_items: Item-count cap per bucket, always enforced on top of
+            the token budget.
+
+    Returns:
+        Ordered, contiguous, exhaustive buckets over ``texts``; empty for
+        empty input.
+
+    Raises:
+        ValueError: If any bound is not a positive integer.
+    """
+    if token_budget <= 0:
+        raise ValueError(f"token_budget must be a positive integer, got {token_budget}")
+    if chars_per_token <= 0:
+        raise ValueError(
+            f"chars_per_token must be a positive integer, got {chars_per_token}"
+        )
+    if max_items <= 0:
+        raise ValueError(f"max_items must be a positive integer, got {max_items}")
+
+    buckets: list[EncodeBucket] = []
+    start = 0
+    count = 0
+    padded = 0
+    for index, text in enumerate(texts):
+        estimate = max(1, -(-len(text) // chars_per_token))
+        if count > 0:
+            widened = max(padded, estimate)
+            if count < max_items and widened * (count + 1) <= token_budget:
+                padded = widened
+                count += 1
+                continue
+            buckets.append(EncodeBucket(start, index, padded * count))
+            start = index
+        padded = estimate
+        count = 1
+    if count > 0:
+        buckets.append(EncodeBucket(start, len(texts), padded * count))
+    return buckets
 
 
 class EncodeBatchCeiling:
