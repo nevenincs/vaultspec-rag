@@ -238,6 +238,136 @@ class TestPhaseAwareEvidenceRendering:
         assert "Process CPU: not measurable from the service process" in lines
 
 
+def _collapse_evidence(
+    *,
+    encode: dict[str, object] | None = None,
+    rate: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Evidence for a run whose throughput collapsed against its own median.
+
+    The recency findings are healthy-looking on purpose: the forward exited
+    moments ago and progress is fresh, which is exactly the shape in which
+    only the throughput comparison has anything to say.
+    """
+    evidence = _evidence(in_flight=False, forward_age=2.0)
+    if encode is not None:
+        evidence["encode"] = encode
+    if rate is not None:
+        evidence["rate"] = rate
+    return evidence
+
+
+class TestEncodeBudgetRendering:
+    def test_the_encode_batch_bounds_are_rendered_from_the_payload(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 16384,
+                        "bucket_items": 6,
+                        "oom_count": 3,
+                    }
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 16384 tokens per batch, 6 items in the last batch, "
+            "3 GPU memory retries" in lines
+        )
+
+    def test_a_single_retry_is_not_pluralised(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={"token_budget": 8192, "bucket_items": None, "oom_count": 1}
+                ),
+            )
+        )
+        assert "Encode batch: 8192 tokens per batch, 1 GPU memory retry" in lines
+
+    def test_a_run_with_no_retries_says_nothing_about_them(self) -> None:
+        # A zero is not a finding; naming it would spend the line an operator
+        # needs on the numbers that do bound the batch.
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={"token_budget": 8192, "bucket_items": 24, "oom_count": 0}
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 8192 tokens per batch, 24 items in the last batch" in lines
+        )
+
+    def test_a_job_that_never_encoded_renders_no_budget_line(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(degradation="degraded", evidence=_collapse_evidence())
+        )
+        assert not any(line.startswith("Encode batch:") for line in lines)
+
+
+class TestThroughputRendering:
+    def test_the_collapse_is_rendered_as_the_service_measured_it(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    rate={
+                        "recent_per_second": 1.9,
+                        "median_per_second": 13.3,
+                        "ratio": 0.143,
+                    }
+                ),
+            )
+        )
+        assert (
+            "Throughput: 1.9 per second against a 13.3 per second run median "
+            "(14% of it)" in lines
+        )
+
+    def test_the_row_summary_names_the_collapse_not_the_progress_gap(self) -> None:
+        """A fresh progress stamp must not be offered as the cause.
+
+        Mutation check: dropping the throughput part from
+        ``_unhealthy_summary`` makes this fail on the ``against a`` assertion
+        below, leaving the row claiming a two-second gap explains a degraded
+        verdict.
+        """
+        label = stale_progress_label(
+            _job(
+                degradation="degraded",
+                age=2.0,
+                evidence=_collapse_evidence(
+                    rate={
+                        "recent_per_second": 1.9,
+                        "median_per_second": 13.3,
+                        "ratio": 0.143,
+                    }
+                ),
+            )
+        )
+        assert label.startswith("degraded: ")
+        assert "1.9 per second against a 13.3 per second run median" in label
+
+    def test_an_unmeasured_baseline_renders_no_throughput_line(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    rate={
+                        "recent_per_second": 1.9,
+                        "median_per_second": None,
+                        "ratio": None,
+                    }
+                ),
+            )
+        )
+        assert not any(line.startswith("Throughput:") for line in lines)
+
+
 class TestProgressLabels:
     def test_the_code_pipeline_label_names_completed_work(self) -> None:
         # The counter behind "chunk + embed" counts files whose chunks were

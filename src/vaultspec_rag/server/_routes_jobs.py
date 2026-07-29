@@ -20,6 +20,7 @@ from typing import cast
 from .. import jobs as _jobs
 from .._job_errors import (
     DEGRADED_THRESHOLD_SECONDS,
+    RATE_COLLAPSE_RATIO,
     STALL_THRESHOLD_SECONDS,
     remediation,
 )
@@ -352,6 +353,58 @@ def _job_forward(record: dict[str, object]) -> dict[str, object] | None:
     return None
 
 
+def _job_encode(record: dict[str, object]) -> dict[str, object] | None:
+    """Return one job's encode budget and retry state, or ``None``.
+
+    Resolved the same way as the forward block: legacy activity records
+    carry it themselves, canonical manager snapshots do not and are read
+    through by id. ``None`` is a run that never reported encode state, which
+    is not the same finding as a run reporting a budget of nothing.
+    """
+    raw = record.get("encode")
+    if isinstance(raw, dict):
+        return cast("dict[str, object]", raw)
+    identifier = record.get("id")
+    if isinstance(identifier, str) and identifier:
+        return _jobs.encode_telemetry(identifier)
+    return None
+
+
+def _job_rate_baseline(record: dict[str, object]) -> dict[str, object] | None:
+    """Compare one job's current throughput against its own run baseline.
+
+    Two readings of the same measurement the service already takes: the
+    windowed rate (what the job is doing now) and the median of the rates it
+    has sustained on this step (what the job has proved it can do). Their
+    ratio is the one number that says a run has collapsed relative to
+    itself, which no absolute threshold can say - throughput that is normal
+    for one corpus is a tenfold collapse for another.
+
+    ``None`` for work that is not actively advancing, and for a job the
+    service has no reading for at all; a member is ``None`` where that one
+    reading is unavailable.
+    """
+    if job_state(record) != JobState.RUNNING.value or _job_is_waiting(record):
+        return None
+    identifier = record.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        return None
+    recent = _jobs.progress_rate(identifier)
+    baseline = _jobs.progress_rate_baseline(identifier)
+    if recent is None and baseline is None:
+        return None
+    ratio = (
+        round(recent / baseline, 3)
+        if recent is not None and baseline is not None and baseline > 0
+        else None
+    )
+    return {
+        "recent_per_second": round(recent, 3) if recent is not None else None,
+        "median_per_second": round(baseline, 3) if baseline is not None else None,
+        "ratio": ratio,
+    }
+
+
 def _forward_signal_age(
     forward: dict[str, object] | None,
     now: float,
@@ -368,6 +421,28 @@ def _forward_signal_age(
     return _age_seconds(max(stamps), now) if stamps else None
 
 
+def _rate_collapsed(record: dict[str, object]) -> bool:
+    """Whether throughput has fallen far below what this run has sustained.
+
+    The one degradation the recency signals structurally cannot see. A job
+    clamped by its own encode memory ceiling keeps ticking progress and keeps
+    entering forwards, so every age stays fresh while the run does a fraction
+    of the work it was doing an hour earlier - which is exactly how an
+    order-of-magnitude slowdown reported healthy throughout.
+
+    Measured only against the job's own median and only once the service will
+    state one, so a young job, a job on a step it has never measured, and a
+    job whose baseline is unknown all report healthy rather than guessing.
+    """
+    baseline = _job_rate_baseline(record)
+    if baseline is None:
+        return False
+    ratio = baseline.get("ratio")
+    if isinstance(ratio, bool) or not isinstance(ratio, int | float):
+        return False
+    return float(ratio) <= RATE_COLLAPSE_RATIO
+
+
 def _job_degradation(record: dict[str, object], now: float) -> str:
     """Return the three-way service verdict: healthy, degraded, or stalled.
 
@@ -378,6 +453,11 @@ def _job_degradation(record: dict[str, object], now: float) -> str:
     tick progress at their boundary), while a forward that has been running -
     or a job that has shown neither signal - beyond the short threshold is
     degraded. Queued, paused, and terminal work is inert, not degraded.
+
+    Recency is necessary and not sufficient. A job whose signals are all
+    fresh is degraded anyway when its throughput has collapsed against its
+    own run baseline, because a run can report continuously while delivering
+    a fraction of the work it has proved it can do.
     """
     if _job_stalled(record, now):
         return "stalled"
@@ -397,9 +477,9 @@ def _job_degradation(record: dict[str, object], now: float) -> str:
         )
         if age is not None
     ]
-    if not ages:
-        return "healthy"
-    return "degraded" if min(ages) >= DEGRADED_THRESHOLD_SECONDS else "healthy"
+    if ages and min(ages) >= DEGRADED_THRESHOLD_SECONDS:
+        return "degraded"
+    return "degraded" if _rate_collapsed(record) else "healthy"
 
 
 def _countable_progress(record: dict[str, object]) -> tuple[int, int] | None:
@@ -561,6 +641,10 @@ def _job_with_liveness(
     forward = _job_forward(record)
     if forward is not None:
         enriched["forward"] = dict(forward)
+    encode = _job_encode(record)
+    if encode is not None:
+        enriched["encode"] = dict(encode)
+    rate_baseline = _job_rate_baseline(record)
     verdict = _job_degradation(record, now)
     enriched["degradation"] = verdict
     # Present-and-null when healthy: absent means a daemon that predates the
@@ -569,10 +653,14 @@ def _job_with_liveness(
     enriched["degradation_evidence"] = (
         _jobs.degradation_evidence(
             now=now,
-            forward=forward,
-            project_root=_job_project_root(record),
-            source=job_source(record),
-            step=_job_progress_step(record) or None,
+            inputs=_jobs.DegradationInputs(
+                source=job_source(record),
+                project_root=_job_project_root(record),
+                step=_job_progress_step(record) or None,
+                forward=forward,
+                encode=encode,
+                rate_baseline=rate_baseline,
+            ),
         )
         if verdict != "healthy"
         else None
@@ -580,6 +668,10 @@ def _job_with_liveness(
     rate, remaining = _job_completion_estimate(record)
     enriched["progress_rate_per_second"] = rate
     enriched["estimated_remaining_seconds"] = remaining
+    # Present-and-null on the same terms as the evidence block above: a
+    # published null is the service declining to compare this job against
+    # itself, and an absent key is a daemon that never made the comparison.
+    enriched["progress_rate_baseline"] = rate_baseline
     resources = record.get("resources")
     if isinstance(resources, dict):
         resources_map = cast("dict[str, object]", resources)
