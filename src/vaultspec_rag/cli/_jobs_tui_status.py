@@ -77,6 +77,7 @@ from textual.widgets import Static
 from .._loopback_http import LOOPBACK_OPENER
 from .._units import human_bytes
 from ..concurrency import LIMITER_STAT_FIELDS
+from ..jobs import measurement
 from ..serviceclient._compat import classify_service_version
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
@@ -195,16 +196,9 @@ class ServiceStatusHeader:
         return None
 
 
-def _opt_float(raw: object) -> float | None:
-    """Read a numeric field, treating anything else as unreported."""
-    if isinstance(raw, bool) or not isinstance(raw, int | float):
-        return None
-    return float(raw)
-
-
 def _opt_int(raw: object) -> int | None:
     """Read an integer field, treating anything else as unreported."""
-    numeric = _opt_float(raw)
+    numeric = measurement(raw)
     return None if numeric is None else int(numeric)
 
 
@@ -386,7 +380,7 @@ def fetch_service_status(
         status=str(status) if isinstance(status, str) else None,
         degraded_reasons=reasons,
         qdrant_alive=_opt_bool(qdrant.get("alive")),
-        uptime_seconds=_opt_float(health.get("uptime_s")),
+        uptime_seconds=measurement(health.get("uptime_s")),
         store_bytes=_opt_int(totals.get("total_bytes")),
         namespaces=_opt_int(totals.get("namespaces")),
         projects_loaded=loaded,

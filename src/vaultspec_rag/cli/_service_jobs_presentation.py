@@ -12,6 +12,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediation
+from ..jobs import measurement
 from ._cli_format import (
     _format_mb,
     _format_milliseconds,
@@ -331,13 +332,6 @@ def _encode_evidence_line(job: dict[str, object]) -> str | None:
     return f"Encode: {phrase}"
 
 
-def _measure(value: object) -> float | None:
-    """Read one published evidence value as a number; ``bool`` is malformed."""
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return float(value)
-
-
 def _encode_budget_line(job: dict[str, object]) -> str | None:
     """The encode batch bounds the service reported, in the numbers it sent.
 
@@ -348,13 +342,13 @@ def _encode_budget_line(job: dict[str, object]) -> str | None:
     if encode is None:
         return None
     parts: list[str] = []
-    budget = _measure(encode.get("token_budget"))
+    budget = measurement(encode.get("token_budget"))
     if budget is not None:
         parts.append(f"{budget:g} tokens per batch")
-    items = _measure(encode.get("bucket_items"))
+    items = measurement(encode.get("bucket_items"))
     if items is not None:
         parts.append(f"{items:g} items in the last batch")
-    retries = _measure(encode.get("oom_count"))
+    retries = measurement(encode.get("oom_count"))
     if retries:
         parts.append(f"{retries:g} GPU memory {'retry' if retries == 1 else 'retries'}")
     return f"Encode batch: {', '.join(parts)}" if parts else None
@@ -369,12 +363,12 @@ def _throughput_phrase(job: dict[str, object]) -> str:
     rate = _evidence_section(job, "rate")
     if rate is None:
         return ""
-    recent = _measure(rate.get("recent_per_second"))
-    median = _measure(rate.get("median_per_second"))
+    recent = measurement(rate.get("recent_per_second"))
+    median = measurement(rate.get("median_per_second"))
     if recent is None or median is None:
         return ""
     phrase = f"{recent:g} per second against a {median:g} per second run median"
-    ratio = _measure(rate.get("ratio"))
+    ratio = measurement(rate.get("ratio"))
     if ratio is not None:
         phrase += f" ({round(ratio * 100)}% of it)"
     return phrase

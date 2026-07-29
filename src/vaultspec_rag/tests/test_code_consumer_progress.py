@@ -36,11 +36,10 @@ from ..indexer._streaming import CodeFileSegment, WeightedCodeSlice
 from ..job_models import JobSource
 from ..jobs import (
     JobProgressReporter,
-    encode_telemetry,
-    forward_telemetry,
     record_start,
     reset,
     snapshot,
+    telemetry_block,
 )
 from ..memory_probe import MemoryProbe
 
@@ -322,7 +321,7 @@ class TestConsumerAdvancesProgress:
                 probe=probe,
             )
 
-        forward = forward_telemetry(job_id)
+        forward = telemetry_block(job_id, "forward")
         assert forward is not None
         assert isinstance(forward["entered_at"], float)
         exited = forward["exited_at"]
@@ -379,7 +378,7 @@ class TestConsumerAdvancesProgress:
         published: list[dict[str, object]] = []
 
         def _sample() -> None:
-            forward = forward_telemetry(job_id)
+            forward = telemetry_block(job_id, "forward")
             if forward is not None:
                 published.append(forward)
 
@@ -439,13 +438,13 @@ class TestConsumerAdvancesProgress:
         assert {sample["slice_ordinal"] for sample in published} == {2}
         # The budget the last bucket was planned under, and one retry - the
         # count rose once across four boundaries carrying it.
-        assert encode_telemetry(job_id) == {
+        assert telemetry_block(job_id, "encode") == {
             "token_budget": 2000,
             "bucket_items": 1,
             "oom_count": 1,
         }
         # The slice still ends on the window it always ended on.
-        forward = forward_telemetry(job_id)
+        forward = telemetry_block(job_id, "forward")
         assert forward is not None
         assert forward["items"] == len(chunks)
         assert forward["slice_ordinal"] == 2

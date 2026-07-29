@@ -29,12 +29,12 @@ from ..jobs import (
     DegradationInputs,
     JobProgressReporter,
     degradation_evidence,
-    forward_telemetry,
     progress_rate_baseline,
     record_progress,
     record_start,
     reset,
     snapshot,
+    telemetry_block,
 )
 from ..server._routes_jobs import _job_degradation, _job_summary, _job_with_liveness
 
@@ -135,7 +135,7 @@ class TestForwardTelemetry:
         reporter = JobProgressReporter(job_id)
 
         reporter.forward_started(ordinal=3, items=64)
-        forward = forward_telemetry(job_id)
+        forward = telemetry_block(job_id, "forward")
         assert forward is not None
         assert isinstance(forward["entered_at"], float)
         assert forward["exited_at"] is None
@@ -144,7 +144,7 @@ class TestForwardTelemetry:
         assert forward["thread_ident"] == threading.get_ident()
 
         reporter.forward_finished(ordinal=3, items=64)
-        forward = forward_telemetry(job_id)
+        forward = telemetry_block(job_id, "forward")
         assert forward is not None
         entered = cast("float", forward["entered_at"])
         exited = forward["exited_at"]
@@ -225,13 +225,13 @@ class TestForwardTelemetry:
         exit_ = partial(_report_forward_exit, reporter, 5, 48)
 
         entry("dense")
-        forward = forward_telemetry(job_id)
+        forward = telemetry_block(job_id, "forward")
         assert forward is not None
         assert forward["exited_at"] is None
         assert forward["slice_ordinal"] == 5
         assert forward["items"] == 48
         exit_("dense")
-        forward = forward_telemetry(job_id)
+        forward = telemetry_block(job_id, "forward")
         assert forward is not None
         assert isinstance(forward["exited_at"], float)
 

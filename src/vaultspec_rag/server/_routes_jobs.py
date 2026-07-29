@@ -337,36 +337,24 @@ def _job_stalled(record: dict[str, object], now: float) -> bool:
     return age is not None and age >= STALL_THRESHOLD_SECONDS
 
 
-def _job_forward(record: dict[str, object]) -> dict[str, object] | None:
-    """Return one job's forward-pass telemetry from whichever registry has it.
+def _job_telemetry(record: dict[str, object], name: str) -> dict[str, object] | None:
+    """Return one job's *name* telemetry block from whichever registry has it.
 
-    Legacy activity records carry the block themselves; canonical manager
-    snapshots do not, so it is resolved by id from the activity registry -
-    the same read-through the completion estimate uses for its rate window.
+    ``forward`` is the forward-pass window, ``encode`` the budget and retry
+    state. Legacy activity records carry the block themselves; canonical
+    manager snapshots do not, so it is resolved by id from the activity
+    registry - the same read-through the completion estimate uses for its
+    rate window.
+
+    ``None`` is a run that never reported that block, which is not the same
+    finding as a run reporting a budget of nothing.
     """
-    raw = record.get("forward")
+    raw = record.get(name)
     if isinstance(raw, dict):
         return cast("dict[str, object]", raw)
     identifier = record.get("id")
     if isinstance(identifier, str) and identifier:
-        return _jobs.forward_telemetry(identifier)
-    return None
-
-
-def _job_encode(record: dict[str, object]) -> dict[str, object] | None:
-    """Return one job's encode budget and retry state, or ``None``.
-
-    Resolved the same way as the forward block: legacy activity records
-    carry it themselves, canonical manager snapshots do not and are read
-    through by id. ``None`` is a run that never reported encode state, which
-    is not the same finding as a run reporting a budget of nothing.
-    """
-    raw = record.get("encode")
-    if isinstance(raw, dict):
-        return cast("dict[str, object]", raw)
-    identifier = record.get("id")
-    if isinstance(identifier, str) and identifier:
-        return _jobs.encode_telemetry(identifier)
+        return _jobs.telemetry_block(identifier, name)
     return None
 
 
@@ -473,7 +461,7 @@ def _job_degradation(record: dict[str, object], now: float) -> str:
         age
         for age in (
             _job_last_progress_age_seconds(record, now),
-            _forward_signal_age(_job_forward(record), now),
+            _forward_signal_age(_job_telemetry(record, "forward"), now),
         )
         if age is not None
     ]
@@ -638,10 +626,10 @@ def _job_with_liveness(
     )
     enriched["control_pending_age_seconds"] = _control_pending_age_seconds(record, now)
     enriched["stalled"] = _job_stalled(record, now)
-    forward = _job_forward(record)
+    forward = _job_telemetry(record, "forward")
     if forward is not None:
         enriched["forward"] = dict(forward)
-    encode = _job_encode(record)
+    encode = _job_telemetry(record, "encode")
     if encode is not None:
         enriched["encode"] = dict(encode)
     rate_baseline = _job_rate_baseline(record)
@@ -919,7 +907,7 @@ def _machine_pressure(
     anchor = running[0] if running else None
     return _jobs.machine_pressure(
         now=now,
-        forwards=[_job_forward(record) for record in running],
+        forwards=[_job_telemetry(record, "forward") for record in running],
         project_root=_job_project_root(anchor) if anchor is not None else None,
         source=job_source(anchor) if anchor is not None else "code",
         store_failures=_recent_store_failures(records, now=now),
