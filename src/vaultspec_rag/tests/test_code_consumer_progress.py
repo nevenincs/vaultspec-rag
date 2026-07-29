@@ -196,10 +196,10 @@ def _pipeline(
             gpu_lock=None,
             begin_memory_budget=lambda: None,
             sample_memory_budget=_sample_memory_budget,
-            forward_peak_recording=lambda: nullcontext(),
+            forward_peak_recording=nullcontext,
             fail_cuda_oom=lambda _label, _exc: None,
             begin_support_measurement=lambda _paths: None,
-            measure_code_segments=lambda segments: iter(segments),
+            measure_code_segments=iter,
             record_extracted_bytes=lambda _n: None,
             record_preprocess_result=lambda _result: None,
         )
