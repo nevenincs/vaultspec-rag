@@ -212,10 +212,22 @@ class TestLabelShape:
         )
         assert label == "~4m10s remaining"
 
-    def test_a_negative_value_clamps_to_zero(self) -> None:
-        # A skewed clock or a rounded-down remainder must not render a
-        # negative countdown.
+    def test_a_negative_value_reads_as_unknown_not_as_almost_done(self) -> None:
+        # A countdown must never read negative, and it must not invent "~0s"
+        # either. The estimate is a quantity the service measured, so a
+        # negative one is a corrupt field rather than a job about to finish -
+        # and "~0s remaining" is a confident claim that it is finishing now.
+        # The service cannot produce this: the projection divides a positive
+        # remainder by a positive rate. It is the malformed-payload path.
         label = remaining_estimate_label(
             {"estimated_remaining_seconds": -3.0},
+        )
+        assert label == "ETA unknown"
+
+    def test_a_zero_estimate_still_reads_as_a_countdown(self) -> None:
+        # The refusal above must not have swallowed a genuine zero, which is
+        # the service saying "finishing now" and is a different fact.
+        label = remaining_estimate_label(
+            {"estimated_remaining_seconds": 0.0},
         )
         assert label == "~0s remaining"

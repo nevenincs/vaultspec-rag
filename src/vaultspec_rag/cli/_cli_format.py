@@ -119,7 +119,7 @@ def compact_duration(raw: object) -> str:
 
 
 def _format_milliseconds(raw: object) -> str:
-    if not isinstance(raw, int | float):
+    if not isinstance(raw, int | float) or isinstance(raw, bool):
         return "not reported"
     return _format_seconds(float(raw) / 1000.0)
 
