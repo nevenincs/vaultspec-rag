@@ -40,6 +40,7 @@ __all__ = [
     "prepare_document",
     "split_document",
     "split_documents",
+    "vault_document_from_text",
 ]
 
 # Fan each worker's share out over several batches so one heavyweight
@@ -68,7 +69,15 @@ class IndexResult:
     Attributes:
         total: Total number of items in the index after the operation.
         added: Number of newly indexed items.
-        updated: Number of re-indexed (modified) items.
+        updated: Number of re-indexed (modified) items - items whose content
+            was re-chunked and re-embedded.
+        payload_updated: Number of items whose indexed metadata changed while
+            their body did not, so their stored point payloads were rebuilt
+            and their vectors left untouched. Reported separately from
+            ``updated`` because the two cost different orders of magnitude:
+            collapsing them would hide the difference between a run that
+            reached the GPU and one that did not, which is the whole
+            distinction the split fingerprint exists to draw.
         removed: Number of items removed from the index.
         duration_ms: Wall-clock time for the operation in milliseconds.
         device: Compute device used for embeddings (e.g. ``"cuda"``).
@@ -100,6 +109,7 @@ class IndexResult:
     removed: int
     duration_ms: int
     device: str
+    payload_updated: int = 0
     files: int = 0
     preprocess_ok: int = 0
     preprocess_skipped: int = 0
@@ -336,8 +346,7 @@ def prepare_document(
 ) -> VaultDocument | None:
     """Prepare a single vault document for indexing (without vector).
 
-    Reads the file, parses metadata, and constructs a VaultDocument
-    with all fields except the vector (which is filled during embedding).
+    Reads the file and delegates to :func:`vault_document_from_text`.
 
     Args:
         path: Absolute path to the markdown document file.
@@ -348,11 +357,36 @@ def prepare_document(
         cannot be read or has no recognised doc type.
     """
     try:
-        content = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except Exception as e:
         logger.warning("Cannot read %s: %s", path, e)
         return None
+    return vault_document_from_text(path, root_dir, text)
 
+
+def vault_document_from_text(
+    path: pathlib.Path,
+    root_dir: pathlib.Path,
+    content: str,
+) -> VaultDocument | None:
+    """Build a vault document from text already read off disk.
+
+    Split out from :func:`prepare_document` so change detection can derive a
+    document's fingerprint from the same parse that indexing would use. The
+    two must agree: a fingerprint computed from a different reading of the
+    frontmatter than the payload builder sees is a fingerprint that can miss a
+    payload-visible change.
+
+    Args:
+        path: The document's path, used for doc-type and relative-path
+            resolution only - it is not read here.
+        root_dir: Workspace root directory used to compute the relative path.
+        content: The document's full text, frontmatter included.
+
+    Returns:
+        A ``VaultDocument`` with an empty vector, or ``None`` when *path* has
+        no recognised doc type.
+    """
     metadata, body = parse_vault_metadata(content)
     doc_type_enum = get_doc_type(path, root_dir)
 
