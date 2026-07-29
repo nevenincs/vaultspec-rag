@@ -17,11 +17,12 @@ session-polluted, so the no-load assertion is only meaningful in a fresh
 interpreter): the MCP server is a thin service client and never runs a
 local fallback in its own interpreter.
 
-A second subprocess variant proves the same for the branch that *succeeds*.
-The failed-call probe can only report on code reached before the daemon
-answers, so on its own it leaves the path an agent session actually spends its
-life on unasserted - and a function-local import there is invisible to the
-module-scope scans too, because nothing about it happens at import time.
+Two further subprocess variants prove the same for the branches that *answer*:
+the ordinary success, and the authenticated retry a rejected token sends the
+transport down. The failed-call probe can only report on code reached before
+the daemon replies, so on its own it leaves both unasserted - and a
+function-local import on either is invisible to the module-scope scans too,
+because nothing about it happens at import time.
 """
 
 from __future__ import annotations
@@ -135,8 +136,11 @@ def test_failed_call_loads_no_heavy_ml_libs() -> None:
     )
 
 
-#: Drive every registered tool to a successful answer and prove each one
-#: crossed the wire.
+#: Drive every registered tool against a stubbed daemon and prove each call
+#: made the exchange the stub expects. The stub is injected at ``__STUB__``,
+#: which defines the token the discovery file records, how the server answers,
+#: and the exchange each call must have had - the only things the probes below
+#: differ by.
 #:
 #: The service is a stub returning one permissive envelope, deliberately not
 #: the production route table: the subject is what the *client* interpreter
@@ -150,7 +154,7 @@ def test_failed_call_loads_no_heavy_ml_libs() -> None:
 #: for the same reason: an import made by the arrangement is indistinguishable
 #: in ``sys.modules`` from one made by the code under test, so a convenient
 #: helper that reached the CLI or the server would quietly decide the result.
-_DRIVE_EVERY_TOOL_TO_SUCCESS = """
+_DRIVE_EVERY_TOOL = """
 import asyncio
 import json
 import os
@@ -198,20 +202,29 @@ envelope = json.dumps(
 ).encode('utf-8')
 
 
-class _Stub(QuietHandler):
-    def _answer(self):
-        seen.append(self.path)
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(envelope)))
-        self.end_headers()
-        self.wfile.write(envelope)
+def answer(handler, status, body):
+    payload = json.dumps(body).encode('utf-8') if body is not None else envelope
+    handler.send_response(status)
+    handler.send_header('Content-Type', 'application/json')
+    handler.send_header('Content-Length', str(len(payload)))
+    handler.end_headers()
+    handler.wfile.write(payload)
 
+
+def presented_token(handler):
+    raw = handler.headers.get('Authorization') or ''
+    return raw[len('Bearer ') :] if raw.startswith('Bearer ') else ''
+
+
+__STUB__
+
+
+class _Stub(QuietHandler):
     def do_GET(self):
-        self._answer()
+        respond(self)
 
     def do_POST(self):
-        self._answer()
+        respond(self)
 
 
 # Bound before it is advertised, and the port is read back off the bound
@@ -230,7 +243,7 @@ thread.start()
             'schema': SERVICE_DISCOVERY_SCHEMA,
             'version': SERVICE_DISCOVERY_VERSION,
             SERVICE_VERSION_FIELD: local_package_version(),
-            'service_token': 'stub-service-token',
+            'service_token': STATUS_TOKEN,
         }
     ),
     encoding='utf-8',
@@ -264,13 +277,69 @@ try:
         result = asyncio.run(call())
         assert result is not None, name
         # The positive control: a torch-freedom assertion over calls that
-        # never reached the wire would pass on any arrangement at all.
-        assert len(seen) > before, name
+        # never reached the wire would pass on any arrangement at all, a
+        # broken one included. Each stub states the exchange it expects, so
+        # a call that took a different route through the transport fails
+        # here rather than being counted as the one under test.
+        check(name, seen[before:])
 finally:
     server.shutdown()
     server.server_close()
     thread.join(timeout=5)
 """
+
+#: The daemon answers every request first time. One request per tool, no
+#: token recovery: the exchange the success path is named for.
+_ACCEPTS_THE_TOKEN = """
+STATUS_TOKEN = 'stub-service-token'
+
+
+def respond(handler):
+    seen.append((handler.path, 'answered'))
+    answer(handler, 200, None)
+
+
+def check(name, events):
+    assert [event for _path, event in events] == ['answered'], (name, events)
+"""
+
+#: The daemon rejects the recorded token once, publishes a different live one
+#: on its ungated health route, and accepts the retry that carries it. The
+#: recorded token must differ from the live one or the transport declines to
+#: retry at all, which would leave the branch unexecuted and the guard
+#: reporting on nothing.
+_REJECTS_THE_TOKEN_ONCE = """
+STATUS_TOKEN = 'stale-recorded-token'
+LIVE_TOKEN = 'live-health-token'
+
+
+def respond(handler):
+    if handler.path == '/health':
+        seen.append((handler.path, 'health'))
+        answer(handler, 200, {'ok': True, 'service_token': LIVE_TOKEN})
+        return
+    if presented_token(handler) == LIVE_TOKEN:
+        seen.append((handler.path, 'answered'))
+        answer(handler, 200, None)
+        return
+    seen.append((handler.path, 'rejected'))
+    answer(handler, 401, {'ok': False, 'error': 'unauthorized'})
+
+
+def check(name, events):
+    assert [event for _path, event in events] == [
+        'rejected',
+        'health',
+        'answered',
+    ], (name, events)
+    rejected, _health, answered = events
+    assert rejected[0] == answered[0], (name, events)
+"""
+
+
+def _drive_every_tool(stub: str) -> str:
+    """Return probe source driving every tool against *stub*'s exchange."""
+    return _DRIVE_EVERY_TOOL.replace("__STUB__", stub.strip())
 
 
 def test_successful_calls_load_no_heavy_ml_libs() -> None:
@@ -284,7 +353,29 @@ def test_successful_calls_load_no_heavy_ml_libs() -> None:
     """
     assert_fresh_import_excludes(
         import_probe_source(
-            setup=_DRIVE_EVERY_TOOL_TO_SUCCESS,
+            setup=_drive_every_tool(_ACCEPTS_THE_TOKEN),
+            forbidden=_HEAVY_ML_LIBS,
+        )
+    )
+
+
+def test_token_recovery_retries_load_no_heavy_ml_libs() -> None:
+    """The authenticated retry must not load Torch / models / store either.
+
+    A rejected credential sends the transport down a second path: it reads the
+    live token from the ungated health route and reissues the call. Nothing
+    else in this suite executes that path, and an import placed there would be
+    reached only by an operator whose recorded token had gone stale - a
+    service restarted out of band, a rotated credential - which is to say
+    reached in production and never in a test.
+
+    Kept separate from the success probe rather than folded into it: one
+    failing assertion should name one exchange, and a guard driving two
+    response sequences at once cannot say which of them broke.
+    """
+    assert_fresh_import_excludes(
+        import_probe_source(
+            setup=_drive_every_tool(_REJECTS_THE_TOKEN_ONCE),
             forbidden=_HEAVY_ML_LIBS,
         )
     )
