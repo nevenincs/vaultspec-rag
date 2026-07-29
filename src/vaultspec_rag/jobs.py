@@ -98,6 +98,7 @@ __all__ = [
     "start_reindex_documents",
     "start_reindex_vault",
     "telemetry_block",
+    "text",
     "validate_code_index_policy",
     "validate_code_job_admission",
     "validate_code_support_profile",
@@ -1497,6 +1498,21 @@ def flag(value: object) -> bool | None:
     never sent can never read as a denial.
     """
     return value if isinstance(value, bool) else None
+
+
+def text(value: object) -> str:
+    """Read one published value as a string, or as the empty string.
+
+    The two-state member of the family, and deliberately so: an identity, a
+    cause or a command that the service did not publish as a string cannot
+    be shown, addressed or compared, and every caller already treats the
+    empty string as that. Distinguishing "absent" from "published empty"
+    would need a caller's own reader; nothing here needs the difference.
+
+    Never reach for this to render a number. ``str(value)`` on a raw field
+    would print ``True`` as a value; the numeric readers exist to refuse it.
+    """
+    return value if isinstance(value, str) else ""
 
 
 #: The conditional evidence sections, each as the readers its members are
