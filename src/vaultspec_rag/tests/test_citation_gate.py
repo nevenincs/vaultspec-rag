@@ -653,6 +653,71 @@ def test_a_documentation_placeholder_account_is_not_a_leak(
     assert leaks == []
 
 
+def test_a_citation_exempt_subtree_is_still_scanned_for_identity(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """The citation exemptions do not excuse a subtree from the privacy scan.
+
+    A development record naming a vault stem is content, which is why it is
+    exempt from the citation rules. A development record naming somebody's home
+    directory is not content, and nothing ever argued for exempting it - but one
+    exclusion list served both checks, so every subtree excused from the first
+    was silently excused from the second. That is where the real machine paths
+    accumulated: pasted from a terminal into a record nothing scanned.
+
+    Both halves are asserted together, because a test that only checked the leak
+    would pass equally if the exemption had been dropped altogether - and
+    dropping it would fail the gate on every record that legitimately names a
+    stem.
+
+    Mutation proving this can fail: apply the citation exclusions to the
+    identity enumeration.
+    """
+    _git_tree(tmp_path)
+    # Split for the same reason the sibling fixture above is split: the scan
+    # matches string VALUES, so a whole account path spelled out here would be
+    # a leak in this very file - and this file is itself scanned.
+    account = "devbox01"
+    _write(
+        tmp_path,
+        ".vault/research/note.md",
+        f"Observed under `C:/Users/{account}/data`, while indexing {_STEM}.\n",
+    )
+
+    active, _deferred, leaks, _smells = gate.collect_findings(tmp_path)
+
+    assert _slugs(leaks) == ["user-home-path"]
+    assert active == []
+
+
+def test_a_rendered_asset_is_scanned_for_identity(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """A capture rendered for documentation carries whatever produced it.
+
+    Terminal captures are generated from a real session, so they embed the
+    working directory that made them - and one shipped a real drive and
+    workspace layout into an image the README displays. The pattern would have
+    matched it on sight; the suffix list simply never reached the file, so a
+    detector that already existed never ran on the surface that leaked.
+
+    Mutation proving this can fail: drop the asset suffix from the identity
+    suffix list.
+    """
+    _git_tree(tmp_path)
+    # Split, as above: spelled out whole, this fixture would leak in this file.
+    account = "devbox01"
+    _write(
+        tmp_path,
+        "assets/capture.svg",
+        f"<svg><text>project_root=C:/Users/{account}/work</text></svg>\n",
+    )
+
+    _active, _deferred, leaks, _smells = gate.collect_findings(tmp_path)
+
+    assert _slugs(leaks) == ["user-home-path"]
+
+
 def test_the_checkout_carries_no_active_citation_or_identity_leak(
     gate: ModuleType,
 ) -> None:
