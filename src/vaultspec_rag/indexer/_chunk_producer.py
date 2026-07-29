@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ._chunk_worker import FileChunkResult
     from ._preprocess_config import PreprocessContext, PreprocessRule
+    from ._run_policy import RunPolicy
     from ._streaming import CodeFileSegment
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,11 @@ class SegmentSubmission:
     consumer_exceptions: list[BaseException]
     on_wait: Callable[[str], object]
     run_control: RunControl
+    #: The run's durable no-progress authority. Liveness alone cannot end the
+    #: queue wait: a consumer wedged inside a CUDA or store call stays alive
+    #: while draining nothing, and only this clock turns that stall into the
+    #: run's typed no-progress failure instead of an unbounded poll loop.
+    run_policy: RunPolicy | None = None
 
 
 # Polling bound for cooperative control while the parent waits on CPU workers
@@ -735,6 +741,8 @@ class CodeChunkProducer:
             try:
                 submission.segment_queue.put(segment, timeout=CONTROL_POLL_SECONDS)
             except queue.Full:
+                if submission.run_policy is not None:
+                    submission.run_policy.checkpoint("code producer queue wait")
                 submission.on_wait("code producer queue wait")
                 continue
             submission.run_control.checkpoint()
