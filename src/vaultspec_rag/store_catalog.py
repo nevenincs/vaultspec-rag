@@ -535,7 +535,32 @@ class _VaultCatalogMixin:
         return ids
 
     def _count_collection(self, collection: str) -> int:
-        """Return the point count for one already-ensured collection."""
+        """Return *collection*'s point count, creating nothing.
+
+        The one counting reader behind every public count. An absent
+        collection counts zero and stays absent, for two reasons.
+
+        It keeps the answer honest. A read that created the name it failed to
+        find would convert "this index does not exist" into "this index is
+        empty", and every downstream guard compares counts, so the fabricated
+        empty collection then reads as a healthy small one.
+
+        It also keeps creation to one owner. A count runs on whatever handle
+        its caller holds, and a root can be counted through a transient store
+        opened while its project slot is still being constructed - a different
+        instance from the one the index job writes through, with its own
+        lifecycle lock and its own ensure latch, so neither serialises against
+        the other. Both would find the collection absent and both would issue
+        the create; the loser took a conflict from the backend, and when the
+        loser was the index job that conflict failed the run. Creation belongs
+        to the index path, which is the only caller that must have the
+        collection before it can proceed.
+
+        Returns:
+            Point count in *collection*, or ``0`` when it does not exist.
+        """
+        if not self._collection_exists(collection):
+            return 0
         with self._point_lock(collection):
             return self._retried(
                 f"count {collection}",
@@ -548,28 +573,19 @@ class _VaultCatalogMixin:
         """Return total number of indexed documents in vault_docs.
 
         Returns:
-            Point count in the vault_docs collection.
+            Point count in the vault_docs collection, or ``0`` when it does
+            not exist.
         """
-        self.ensure_table()
         return self._count_collection(self.TABLE_NAME)
 
     def count_code(self, collection: str | None = None) -> int:
         """Return total number of indexed codebase chunks.
 
-        Reads the collection the call targets and creates nothing. An absent
-        collection counts zero, and stays absent: a read that created the name
-        it failed to find would convert "this index does not exist" into "this
-        index is empty", and every downstream guard compares counts, so the
-        fabricated empty collection then reads as a healthy small one.
-
         Returns:
             Point count in the targeted code collection, or ``0`` when it does
             not exist.
         """
-        _target = self._code_collection(collection)
-        if not self._collection_exists(_target):
-            return 0
-        return self._count_collection(_target)
+        return self._count_collection(self._code_collection(collection))
 
     def count_code_files(self, collection: str | None = None) -> int:
         """Return how many distinct files the code collection holds points for.
@@ -590,8 +606,12 @@ class _VaultCatalogMixin:
         return len(self._scroll_all_ids(_target, "path"))
 
     def count_document(self) -> int:
-        """Return the point count in the document collection."""
-        self.ensure_document_table()
+        """Return the point count in the document collection.
+
+        Returns:
+            Point count in the document collection, or ``0`` when it does not
+            exist.
+        """
         return self._count_collection(self.DOCUMENT_TABLE_NAME)
 
     def get_by_id(self, doc_id: str) -> dict[str, Any] | None:

@@ -746,6 +746,49 @@ class TestDropTable:
             store.close()
 
 
+class TestCountsCreateNothing:
+    """Counting an absent collection answers zero and leaves it absent.
+
+    Creation belongs to the index path alone. A count runs on whatever handle
+    its caller holds - including a handle opened alongside the one an index run
+    writes through, with its own lifecycle lock and ensure latch - so a
+    creating count gives the collection a second owner, and two owners that
+    each find it absent each issue the create. It also fabricates an empty
+    collection where the honest answer is that no index exists.
+    """
+
+    @pytest.mark.parametrize(
+        ("count_attr", "collection_attr"),
+        [
+            ("count", "TABLE_NAME"),
+            ("count_code", "CODE_TABLE_NAME"),
+            ("count_document", "DOCUMENT_TABLE_NAME"),
+        ],
+        ids=["vault", "code", "document"],
+    )
+    def test_counting_an_unindexed_root_creates_no_collection(
+        self,
+        tmp_path: Path,
+        count_attr: str,
+        collection_attr: str,
+    ) -> None:
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            collection = getattr(store, collection_attr)
+            assert not store.client.collection_exists(collection)
+
+            counted: object = getattr(store, count_attr)()
+
+            assert counted == 0
+            assert not store.client.collection_exists(collection), (
+                f"{count_attr}() created {collection}; counting must not create"
+            )
+        finally:
+            store.close()
+
+
 class TestServerModeNamespacing:
     """Per-root collection namespacing in server mode.
 
