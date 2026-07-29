@@ -74,6 +74,62 @@ class TestCodeDiscoveryScanCache:
         fresh = discovery.scan_content(policy, sample_limit=100)
         assert sorted(p.name for p in fresh.files) == ["a.py", "b.py"]
 
+    def test_execution_preflight_reobserves_membership(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A fresh execution preflight must see a create since the last walk.
+
+        The preflight is the membership observation the run it authorizes
+        diffs and publishes claims from; served from a cached walk, an
+        unscoped incremental after a create diffs clean against the manifest
+        and reports "no changes" over a file it never saw.
+        """
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        discovery = CodeContentDiscovery(tmp_path)
+
+        first = discovery.preflight_content(sample_limit=100)
+        assert [p.name for p in first.scan.files] == ["a.py"]
+
+        (tmp_path / "b.py").write_text("y = 2\n", encoding="utf-8")
+        fresh = discovery.preflight_content(sample_limit=100)
+        assert sorted(p.name for p in fresh.scan.files) == ["a.py", "b.py"]
+
+    def test_document_execution_preflight_reobserves_membership(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The document preflight walks fresh for the same reason as code."""
+        from typing import Any, cast
+
+        from ..indexer._content_policy import (
+            ContentKind,
+            ContentRoute,
+            RootContentPolicy,
+            SourceProfileVersion,
+        )
+        from ..indexer._document_indexer import DocumentIndexer
+
+        manuals = tmp_path / "manuals"
+        manuals.mkdir()
+        (manuals / "a.txt").write_text("first\n", encoding="utf-8")
+        indexer = DocumentIndexer(
+            tmp_path,
+            cast("Any", None),
+            cast("Any", None),
+            content_policy=RootContentPolicy(
+                SourceProfileVersion.CONVENTIONAL_V1,
+                (ContentRoute("manuals/**", ContentKind.DOCUMENT),),
+            ),
+        )
+
+        first = indexer.preflight_content()
+        assert [p.name for p in first.files] == ["a.txt"]
+
+        (manuals / "b.txt").write_text("second\n", encoding="utf-8")
+        fresh = indexer.preflight_content()
+        assert sorted(p.name for p in fresh.files) == ["a.txt", "b.txt"]
+
     def test_narrower_sample_budget_is_served_from_the_wide_walk(
         self,
         tmp_path: Path,
