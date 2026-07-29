@@ -94,11 +94,11 @@ async def _seed_terminal_resilience_job(
                 "open" if error_kind is JobErrorKind.WATCHER_CIRCUIT_OPEN else "closed"
             ),
             next_retry_at=1_722_000_060.0,
-            peak_rss_mb=512.0,
-            rss_ceiling_mb=2048.0,
-            peak_cuda_allocated_mb=768.0,
-            peak_cuda_reserved_mb=896.0,
-            cuda_ceiling_mb=4096.0,
+            peak_rss_mib=512.0,
+            rss_ceiling_mib=2048.0,
+            peak_cuda_allocated_mib=768.0,
+            peak_cuda_reserved_mib=896.0,
+            cuda_ceiling_mib=4096.0,
             support_profile="embedded-local",
             terminal_outcome=terminal_outcome,
         )
@@ -182,12 +182,25 @@ def _assert_resilience_job_parity(parity: _ResilienceJobParity) -> str:
 _RESILIENCE_MEASURE_KEYS = (
     "no_progress_timeout_seconds",
     "no_progress_remaining_seconds",
-    "peak_rss_mb",
-    "rss_ceiling_mb",
-    "peak_cuda_allocated_mb",
-    "peak_cuda_reserved_mb",
-    "cuda_ceiling_mb",
+    "peak_rss_mib",
+    "rss_ceiling_mib",
+    "peak_cuda_allocated_mib",
+    "peak_cuda_reserved_mib",
+    "cuda_ceiling_mib",
 )
+
+
+def _rounded_measure(key: str, value: object) -> object:
+    """Round one resilience measure to the compared precision, or pass it on.
+
+    The narrowing is the canonical reader's rather than restated here, so an
+    unreadable measure is carried through untouched on BOTH sides of the
+    comparison instead of being rounded on one of them.
+    """
+    if key not in _RESILIENCE_MEASURE_KEYS:
+        return value
+    measured = _managed_jobs.measurement(value)
+    return value if measured is None else round(measured, 1)
 
 
 def _resilience_state(resilience: dict[str, object]) -> dict[str, object]:
@@ -198,18 +211,11 @@ def _resilience_state(resilience: dict[str, object]) -> dict[str, object]:
     liveness-facing health rollup deliberately does not carry. It is verified
     separately as a correct derivation of the shared terminal outcome.
     """
-    state = {
-        key: (
-            round(float(value), 1)
-            if key in _RESILIENCE_MEASURE_KEYS
-            and isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            else value
-        )
+    return {
+        key: _rounded_measure(key, value)
         for key, value in resilience.items()
         if key != "remediation"
     }
-    return state
 
 
 def _assert_resilience_health(

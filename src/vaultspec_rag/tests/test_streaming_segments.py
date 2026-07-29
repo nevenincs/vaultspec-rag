@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from itertools import chain
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -31,6 +32,9 @@ from ..indexer._streaming import (
     iter_code_file_segments,
     iter_weighted_code_slices,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -317,6 +321,90 @@ def test_normal_consumer_drain_extends_while_storage_progress_continues() -> Non
     assert consumed == segments
     assert elapsed > policy.snapshot().timeout_seconds
     assert policy.snapshot().durable_progress_count == len(segments)
+
+
+def test_producer_queue_wait_expires_with_the_no_progress_authority(
+    tmp_path: Path,
+) -> None:
+    """A live consumer that drains nothing must end the wait via the clock.
+
+    The producer's queue wait is liveness-guarded against consumer death,
+    but a consumer wedged inside a CUDA or store call stays alive while
+    draining nothing. Only the run's durable no-progress authority can end
+    that wait, so the submission must raise its typed expiry rather than
+    poll behind the live consumer forever.
+    """
+    from .._job_errors import JobError, JobErrorKind
+    from ..indexer import _chunk_worker
+    from ..indexer._chunk_producer import CodeChunkProducer, SegmentSubmission
+    from ..job_control import NO_RUN_CONTROL
+
+    chunks = [_chunk(f"parked-{index}") for index in range(2)]
+    segments = list(
+        iter_code_file_segments(
+            CodeFileSegmentRequest(
+                chunks=chunks,
+                max_chunks=1,
+                max_bytes=1_000_000,
+                dense_dimension=4,
+                sparse_enabled=False,
+            )
+        )
+    )
+    segment_q = WeightedCodeSegmentQueue(
+        max_chunks=1,
+        max_bytes=max(segment.estimated_bytes for segment in segments),
+    )
+    # Fill the queue so the second submission has to wait for a drain that
+    # never comes.
+    segment_q.put(segments[0])
+
+    release = threading.Event()
+    consumer = threading.Thread(target=release.wait, name="wedged-consumer")
+    consumer.start()
+    producer = CodeChunkProducer(
+        tmp_path,
+        chunk_execution_policy=_chunk_worker.ChunkExecutionPolicy(),
+        prep_ctx=lambda: None,
+    )
+    submission = SegmentSubmission(
+        segment_queue=segment_q,
+        consumer=consumer,
+        consumer_exceptions=[],
+        on_wait=lambda _label: None,
+        run_control=NO_RUN_CONTROL,
+        run_policy=RunPolicy(no_progress_timeout_seconds=0.2),
+    )
+    failures: list[BaseException] = []
+    finished = threading.Event()
+
+    def _submit() -> None:
+        try:
+            producer.enqueue_segment(segments[1], submission)
+        except BaseException as exc:
+            # Caught broadly on purpose: the exception's type IS the assertion.
+            failures.append(exc)
+        finally:
+            finished.set()
+
+    submitter = threading.Thread(target=_submit, name="parked-producer")
+    submitter.start()
+    try:
+        # Termination is itself the guarded behaviour: without the authority
+        # the wait polls forever behind the live consumer.
+        assert finished.wait(5.0), (
+            "producer queue wait outlived its no-progress budget"
+        )
+        assert len(failures) == 1
+        failure = failures[0]
+        assert isinstance(failure, JobError)
+        assert failure.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
+    finally:
+        release.set()
+        submitter.join(timeout=1.0)
+        consumer.join(timeout=1.0)
+    assert not submitter.is_alive()
+    assert not consumer.is_alive()
 
 
 def test_explicit_stream_limits_do_not_resolve_global_configuration() -> None:

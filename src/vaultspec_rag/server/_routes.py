@@ -595,6 +595,14 @@ async def jobs_route(request: Request) -> JSONResponse:
             # the key's absence marks a daemon that predates the tier - and
             # purely informational: nothing acts on it.
             "pressure": _machine_pressure(records, now=now),
+            # A different thing from both blocks above: whether the device
+            # will actually admit a new model load right now, against the
+            # configured floor. Synchronous and fail-fast, not a display
+            # reading and not folded through hysteresis - an operator watching
+            # this listing can see the one fact that decides whether the next
+            # load or test run is refused. Null when this host's reading could
+            # not be taken; the key's absence marks a daemon that predates it.
+            "device_load": _jobs.device_load_snapshot(now=now),
             "filters": {
                 "phase": phase,
                 "state": state,

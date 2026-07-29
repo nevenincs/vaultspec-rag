@@ -44,7 +44,7 @@ class TestStatusCommand:
             {
                 "cuda": False,
                 "gpu_name": "",
-                "vram_mb": 0,
+                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
                 "vault_documents": 12,
                 "codebase_chunks": 34,
@@ -78,7 +78,7 @@ class TestStatusCommand:
             {
                 "cuda": False,
                 "gpu_name": "",
-                "vram_mb": 0,
+                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
                 "vault_documents": 0,
                 "codebase_chunks": 0,
@@ -101,7 +101,7 @@ class TestStatusCommand:
             {
                 "cuda": False,
                 "gpu_name": "",
-                "vram_mb": 0,
+                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
                 "vault_documents": 3,
                 "codebase_chunks": 0,
@@ -135,7 +135,7 @@ class TestStatusCommand:
                     "index": {
                         "cuda": False,
                         "gpu_name": "",
-                        "vram_mb": 0,
+                        "vram_mib": 0,
                         "storage_path": "http://127.0.0.1:8765",
                         "vault_documents": 7,
                         "codebase_chunks": 9,

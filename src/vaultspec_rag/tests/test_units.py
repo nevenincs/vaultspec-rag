@@ -14,23 +14,23 @@ _MIB = 1024 * 1024
 
 def _snapshot(
     *,
-    peak_rss_mb: float = 0.0,
-    peak_cuda_allocated_mb: float = 0.0,
-    peak_cuda_reserved_mb: float = 0.0,
+    peak_rss_mib: float = 0.0,
+    peak_cuda_allocated_mib: float = 0.0,
+    peak_cuda_reserved_mib: float = 0.0,
 ) -> MemoryBudgetSnapshot:
     """Build a snapshot carrying only the fields a projection reads."""
     return MemoryBudgetSnapshot(
         label="probe",
-        rss_mb=peak_rss_mb,
+        rss_mib=peak_rss_mib,
         rss_available=True,
-        peak_rss_mb=peak_rss_mb,
-        rss_ceiling_mb=None,
-        cuda_allocated_mb=peak_cuda_allocated_mb,
+        peak_rss_mib=peak_rss_mib,
+        rss_ceiling_mib=None,
+        cuda_allocated_mib=peak_cuda_allocated_mib,
         cuda_available=True,
-        peak_cuda_allocated_mb=peak_cuda_allocated_mb,
-        cuda_reserved_mb=peak_cuda_reserved_mb,
-        peak_cuda_reserved_mb=peak_cuda_reserved_mb,
-        cuda_ceiling_mb=None,
+        peak_cuda_allocated_mib=peak_cuda_allocated_mib,
+        cuda_reserved_mib=peak_cuda_reserved_mib,
+        peak_cuda_reserved_mib=peak_cuda_reserved_mib,
+        cuda_ceiling_mib=None,
     )
 
 
@@ -97,14 +97,14 @@ class TestSnapshotProjection:
         field returns 8 MiB of bytes instead of 2 and fails on that number, so
         this must not be relaxed to a shared-field assertion.
         """
-        snapshot = _snapshot(peak_cuda_allocated_mb=2.0, peak_cuda_reserved_mb=8.0)
+        snapshot = _snapshot(peak_cuda_allocated_mib=2.0, peak_cuda_reserved_mib=8.0)
 
         _, cuda_bytes = snapshot_resource_bytes(snapshot)
 
         assert cuda_bytes == 2 * _MIB
 
     def test_the_rss_dimension_carries_the_high_water(self):
-        snapshot = _snapshot(peak_rss_mb=5.0)
+        snapshot = _snapshot(peak_rss_mib=5.0)
 
         rss_bytes, _ = snapshot_resource_bytes(snapshot)
 

@@ -91,9 +91,9 @@ class _DocumentResourceBudget:
     """Aggregate document ceilings enforced at each measurable runtime edge."""
 
     limits: SupportProfileLimits
-    rss_ceiling_mb: float | None = None
-    cuda_ceiling_mb: float | None = None
-    cuda_baseline_mb: float | None = None
+    rss_ceiling_mib: float | None = None
+    cuda_ceiling_mib: float | None = None
+    cuda_baseline_mib: float | None = None
     enforce_cuda: bool = True
     generated_chunks: int = 0
     weighted_bytes: int = 0
@@ -106,20 +106,20 @@ class _DocumentResourceBudget:
         from .._units import bytes_to_mib
         from ..memory_probe import MemoryBudget
 
-        rss_ceiling_mb = (
+        rss_ceiling_mib = (
             bytes_to_mib(self.limits.rss_bytes)
-            if self.rss_ceiling_mb is None
-            else self.rss_ceiling_mb
+            if self.rss_ceiling_mib is None
+            else self.rss_ceiling_mib
         )
-        cuda_ceiling_mb = (
+        cuda_ceiling_mib = (
             bytes_to_mib(self.limits.cuda_bytes)
-            if self.cuda_ceiling_mb is None
-            else self.cuda_ceiling_mb
+            if self.cuda_ceiling_mib is None
+            else self.cuda_ceiling_mib
         )
         self.memory_budget = MemoryBudget(
-            rss_ceiling_mb=rss_ceiling_mb,
-            cuda_ceiling_mb=cuda_ceiling_mb if self.enforce_cuda else None,
-            cuda_baseline_mb=self.cuda_baseline_mb if self.enforce_cuda else None,
+            rss_ceiling_mib=rss_ceiling_mib,
+            cuda_ceiling_mib=cuda_ceiling_mib if self.enforce_cuda else None,
+            cuda_baseline_mib=self.cuda_baseline_mib if self.enforce_cuda else None,
         )
 
     def reserve(
@@ -197,9 +197,9 @@ class _DocumentResourceBudget:
         try:
             snapshot = self.memory_budget.observe(
                 label=label,
-                rss_mb=bytes_to_mib(rss_bytes),
-                cuda_allocated_mb=bytes_to_mib(allocated_bytes),
-                cuda_reserved_mb=bytes_to_mib(cuda_bytes),
+                rss_mib=bytes_to_mib(rss_bytes),
+                cuda_allocated_mib=bytes_to_mib(allocated_bytes),
+                cuda_reserved_mib=bytes_to_mib(cuda_bytes),
             )
         except JobError:
             snapshot = self.memory_budget.snapshot
@@ -421,6 +421,12 @@ class DocumentIndexer:
         """Resolve policy and document discovery before any mutable resource."""
         run_control.checkpoint()
         policy = self.resolve_policy_snapshot()
+        # An execution preflight is the membership observation the run it
+        # authorizes diffs and publishes claims from, so it must see the tree
+        # as it stands now: a cached walk would hide any create or delete
+        # since the walk was taken. The fresh walk re-primes the cache, so
+        # reads inside the authorized run serve this same observation.
+        self._discover_cache.invalidate()
         files = self._discover(policy, run_control=run_control)
         run_control.checkpoint()
         return DocumentIndexPreflight(self.root_dir, policy, files)
@@ -531,9 +537,9 @@ class DocumentIndexer:
         ceilings = admit_index_ceilings(self.model, limits)
         budget = _DocumentResourceBudget(
             limits,
-            rss_ceiling_mb=ceilings.rss_ceiling_mb,
-            cuda_ceiling_mb=ceilings.cuda_ceiling_mb,
-            cuda_baseline_mb=ceilings.cuda_baseline_mb,
+            rss_ceiling_mib=ceilings.rss_ceiling_mib,
+            cuda_ceiling_mib=ceilings.cuda_ceiling_mib,
+            cuda_baseline_mib=ceilings.cuda_baseline_mib,
             enforce_cuda=ceilings.uses_cuda,
         )
         self._memory_budget = budget.memory_budget
@@ -711,7 +717,7 @@ class DocumentIndexer:
         # Route the lock-bracketed forward captures into this job's own
         # budget so checkpoints enforce the job's demand rather than a
         # process-wide high-water.
-        with record_forward_peaks(request.budget.memory_budget.record_forward_peak_mb):
+        with record_forward_peaks(request.budget.memory_budget.record_forward_peak_mib):
             encode_and_upsert_document_slice(
                 DocumentSliceRequest(
                     chunks=request.selected,

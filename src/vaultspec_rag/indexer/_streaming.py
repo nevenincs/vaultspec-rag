@@ -453,9 +453,10 @@ class _VectorEncodeRequest:
     # runs, not only after.
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
-    # Per-bucket encode boundary callback. The encoder splits the slice into
-    # token-budgeted buckets and calls this at each one, so the reporting it
-    # drives resolves inside a slice rather than only at its edges.
+    # Per-bucket encode boundary callback. The dense and sparse encoders each
+    # split the slice into token-budgeted buckets and call this at every
+    # boundary, so the reporting it drives resolves inside a slice rather
+    # than only at its edges.
     on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
     on_cuda_oom: Callable[[BaseException], None] | None = None
     reuse: DonorReuseContext | None = None
@@ -512,13 +513,12 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
         dense_cpu = _transfer_to_cpu(dense_device)
         dense_device = None
         if request.sparse_enabled:
-            # The sparse encoder plans buckets too, but exposes no boundary
-            # callback, so its forward window stays scoped to the whole slice.
             _notify_forward_boundary(request.before_forward, "sparse")
             sparse = request.model.encode_documents_sparse(
                 slice_texts,
                 batch_size=request.encode_batch_size,
                 gpu_lock=request.gpu_lock,
+                on_bucket=request.on_encode_bucket,
             )
             _notify_forward_boundary(request.after_forward, "sparse")
         else:
@@ -856,7 +856,10 @@ class EncodeBucketReporter:
 
     Bucket progress carries the encoder's running memory-retry count rather
     than an event per retry, so each rise in it is republished as the retries
-    it stands for.
+    it stands for. The dense and sparse encodes of one slice share this
+    adapter but hold independent counts that each restart at zero, so the
+    drained total is tracked per encode kind - a sparse retry is never read
+    as already reported because a dense count got there first.
     """
 
     __slots__ = ("_items", "_ooms_reported", "_ordinal", "_reporter", "_sink")
@@ -871,7 +874,7 @@ class EncodeBucketReporter:
         self._ordinal = ordinal
         self._items = items
         self._sink = reporter if isinstance(reporter, _EncodeTelemetrySink) else None
-        self._ooms_reported = 0
+        self._ooms_reported: dict[str, int] = {}
 
     def __call__(self, phase: str, progress: EncodeBucketProgress) -> None:
         try:
@@ -884,9 +887,11 @@ class EncodeBucketReporter:
 
     def _publish(self, phase: str, progress: EncodeBucketProgress) -> None:
         if self._sink is not None:
-            while self._ooms_reported < progress.oom_count:
-                self._ooms_reported += 1
+            reported = self._ooms_reported.get(progress.kind, 0)
+            while reported < progress.oom_count:
+                reported += 1
                 self._sink.encode_oom()
+            self._ooms_reported[progress.kind] = reported
             self._sink.encode_bucket_observed(
                 token_budget=progress.token_budget,
                 bucket_items=progress.bucket_items,

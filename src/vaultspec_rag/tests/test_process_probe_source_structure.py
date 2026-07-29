@@ -284,6 +284,10 @@ class TestNoStructurallyIdenticalFunctions:
             "indexer/_drift_owner.py:snapshot",
         ): _SERIALISATION,
         (
+            "_store_models.py:vault_indexed_metadata",
+            "index_profiles.py:_limits",
+        ): _SERIALISATION,
+        (
             "indexer/_codebase_indexer.py:_reuse_snapshot",
             "indexer/_document_indexer.py:_reuse_snapshot",
             "indexer/_generation_lifecycle.py:drift_snapshot",

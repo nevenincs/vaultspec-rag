@@ -740,11 +740,10 @@ def clean(
     """
     source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
-    from .config._settings import get_config
+    from ._index_breadth import index_meta_path
     from .registry import get_registry
     from .store_runtime import VaultStore
 
-    cfg = get_config()
     cleared: list[str] = []
 
     # Evict project from registry to close Qdrant connections and release locks
@@ -762,15 +761,16 @@ def clean(
     # serve-time check would read that as a full index over an empty husk.
     # The safe interruption is the reverse: intact data with no claim, which
     # reads as honestly unverifiable.
-    data_dir = root / cfg.data_dir
     if do_vault:
-        (data_dir / cfg.index_metadata_file).unlink(missing_ok=True)
+        index_meta_path(root, PublicSourceType.VAULT).unlink(missing_ok=True)
     if do_code:
-        (data_dir / cfg.code_index_metadata_file).unlink(missing_ok=True)
+        index_meta_path(root, PublicSourceType.CODE).unlink(missing_ok=True)
     if do_document:
-        from .indexer._document_meta import DOCUMENT_META_FILENAME
+        # Documents publish a differently shaped record under an independently
+        # chosen name, so it resolves through its own owner rather than here.
+        from .indexer._document_meta import document_metadata_path
 
-        (data_dir / DOCUMENT_META_FILENAME).unlink(missing_ok=True)
+        document_metadata_path(root).unlink(missing_ok=True)
 
     store = VaultStore(root)
     try:
@@ -814,11 +814,11 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     if cuda_available and torch is not None:
         gpu_name = torch.cuda.get_device_name(0)
         props = torch.cuda.get_device_properties(0)
-        vram_mb = int(bytes_to_mib(props.total_memory))
+        vram_mib = int(bytes_to_mib(props.total_memory))
         vram_gb = round(props.total_memory / 1e9, 2)
     else:
         gpu_name = None
-        vram_mb = 0
+        vram_mib = 0
         vram_gb = 0.0
 
     from .capabilities import backend_capabilities_dict
@@ -840,7 +840,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     return {
         "cuda": cuda_available,
         "gpu_name": gpu_name,
-        "vram_mb": vram_mb,
+        "vram_mib": vram_mib,
         "vram_gb": vram_gb,
         "storage_path": storage_path,
         "vault_documents": vault_count,
@@ -905,7 +905,7 @@ def run_benchmark(
 
     Returns:
         Dict containing benchmark results: p50, p95, p99, mean, stdev,
-        vault_count, code_count, gpu_name, vram_mb.
+        vault_count, code_count, gpu_name, vram_mib.
     """
     import statistics
     import time
@@ -968,14 +968,14 @@ def run_benchmark(
             gpu_name = (
                 torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
             )
-            vram_mb = (
+            vram_mib = (
                 bytes_to_mib(torch.cuda.memory_allocated(0))
                 if torch.cuda.is_available()
                 else 0.0
             )
         except ImportError:
             gpu_name = "N/A"
-            vram_mb = 0.0
+            vram_mib = 0.0
 
         benchmark = {
             "p50": p50,
@@ -986,7 +986,7 @@ def run_benchmark(
             "vault_count": vault_count,
             "code_count": code_count,
             "gpu": gpu_name,
-            "vram_mb": vram_mb,
+            "vram_mib": vram_mib,
         }
     if benchmark is None:
         raise RuntimeError("benchmark search lease ended without a result")

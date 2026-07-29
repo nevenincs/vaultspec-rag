@@ -532,12 +532,12 @@ def _process_resources_from_dict(value: object) -> ProcessResourceSnapshot | Non
         return None
     raw = _required_mapping(value, "process resources")
     return ProcessResourceSnapshot(
-        rss_mb=_required_nonnegative_float(raw.get("rss_mb"), "resource rss_mb"),
-        cuda_allocated_mb=_required_nonnegative_float(
-            raw.get("cuda_allocated_mb"), "resource cuda_allocated_mb"
+        rss_mib=_required_nonnegative_float(raw.get("rss_mib"), "resource rss_mib"),
+        cuda_allocated_mib=_required_nonnegative_float(
+            raw.get("cuda_allocated_mib"), "resource cuda_allocated_mib"
         ),
-        cuda_reserved_mb=_required_nonnegative_float(
-            raw.get("cuda_reserved_mb"), "resource cuda_reserved_mb"
+        cuda_reserved_mib=_required_nonnegative_float(
+            raw.get("cuda_reserved_mib"), "resource cuda_reserved_mib"
         ),
     )
 
@@ -587,25 +587,25 @@ def _job_resilience_from_dict(value: object) -> IndexResilienceSnapshot | None:
             raw.get("next_retry_at"),
             "resilience next_retry_at",
         ),
-        peak_rss_mb=_optional_float(
-            raw.get("peak_rss_mb"),
-            "resilience peak_rss_mb",
+        peak_rss_mib=_optional_float(
+            raw.get("peak_rss_mib"),
+            "resilience peak_rss_mib",
         ),
-        rss_ceiling_mb=_optional_float(
-            raw.get("rss_ceiling_mb"),
-            "resilience rss_ceiling_mb",
+        rss_ceiling_mib=_optional_float(
+            raw.get("rss_ceiling_mib"),
+            "resilience rss_ceiling_mib",
         ),
-        peak_cuda_allocated_mb=_optional_float(
-            raw.get("peak_cuda_allocated_mb"),
-            "resilience peak_cuda_allocated_mb",
+        peak_cuda_allocated_mib=_optional_float(
+            raw.get("peak_cuda_allocated_mib"),
+            "resilience peak_cuda_allocated_mib",
         ),
-        peak_cuda_reserved_mb=_optional_float(
-            raw.get("peak_cuda_reserved_mb"),
-            "resilience peak_cuda_reserved_mb",
+        peak_cuda_reserved_mib=_optional_float(
+            raw.get("peak_cuda_reserved_mib"),
+            "resilience peak_cuda_reserved_mib",
         ),
-        cuda_ceiling_mb=_optional_float(
-            raw.get("cuda_ceiling_mb"),
-            "resilience cuda_ceiling_mb",
+        cuda_ceiling_mib=_optional_float(
+            raw.get("cuda_ceiling_mib"),
+            "resilience cuda_ceiling_mib",
         ),
         support_profile=_optional_str(
             raw.get("support_profile"),

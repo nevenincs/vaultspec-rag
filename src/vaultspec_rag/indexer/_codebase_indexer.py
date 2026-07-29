@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
-from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
+from .._index_breadth import (
+    PUBLISHED_FILES_KEY,
+    PUBLISHED_POINTS_KEY,
+    index_meta_path,
+)
+from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _code_meta, _preprocess_glue, _stat_gate
 from ._chunk_producer import CodeChunkProducer
@@ -156,8 +161,10 @@ class CodebaseIndexer:
         from ..config._settings import get_config
 
         cfg = get_config()
+        # The data root also locates the generation lifecycle's artifacts and
+        # the preprocess context, so it stays independent of the sidecar.
         self._data_root = root_dir / cfg.data_dir
-        self._meta_path = self._data_root / cfg.code_index_metadata_file
+        self._meta_path = index_meta_path(root_dir, PublicSourceType.CODE)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's

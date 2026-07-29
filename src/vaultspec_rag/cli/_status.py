@@ -12,7 +12,7 @@ from .._source_types import PublicSourceType
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, JsonMode, app
-from ._cli_format import _counted_unit, _format_mb
+from ._cli_format import _counted_unit, _format_mib
 from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
@@ -198,17 +198,17 @@ def _render_status_text(
 ) -> None:
     cuda_available = bool(status["cuda"])
     gpu_name = cast("Any", status["gpu_name"])
-    vram_mb = int(cast("Any", status["vram_mb"]))
+    vram_mib = int(cast("Any", status["vram_mib"]))
     index_data_path = _human_index_data_location(
         status["storage_path"],
         service_port=service_port,
     )
     vault_count, code_count, document_count = _status_counts(status)
     device = (
-        # vram_mb is produced by bytes_to_mib, so it is mebibytes; rendering it
+        # vram_mib is produced by bytes_to_mib, so it is mebibytes; rendering it
         # as "MB" both mislabelled it and left the operator converting five
         # digits to work out whether a model fits.
-        f"GPU - {gpu_name} ({_format_mb(vram_mb)} VRAM)"
+        f"GPU - {gpu_name} ({_format_mib(vram_mib)} VRAM)"
         if cuda_available
         else "CPU only (no supported GPU detected)"
     )
@@ -245,7 +245,7 @@ def _emit_status_json(
     data: dict[str, object] = {
         "cuda": bool(status["cuda"]),
         "gpu_name": status["gpu_name"],
-        "vram_mb": int(cast("Any", status["vram_mb"])),
+        "vram_mib": int(cast("Any", status["vram_mib"])),
         "storage_path": str(status["storage_path"]),
         "vault_documents": vault_count,
         "codebase_chunks": code_count,

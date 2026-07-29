@@ -262,9 +262,9 @@ class JobRuntimeSnapshot:
 class ProcessResourceSnapshot:
     """Best-effort process memory readings at one lifecycle boundary."""
 
-    rss_mb: float
-    cuda_allocated_mb: float
-    cuda_reserved_mb: float
+    rss_mib: float
+    cuda_allocated_mib: float
+    cuda_reserved_mib: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,11 +308,11 @@ class IndexResilienceSnapshot:
     no_progress_remaining_seconds: float | None = None
     circuit_state: str | None = None
     next_retry_at: float | None = None
-    peak_rss_mb: float | None = None
-    rss_ceiling_mb: float | None = None
-    peak_cuda_allocated_mb: float | None = None
-    peak_cuda_reserved_mb: float | None = None
-    cuda_ceiling_mb: float | None = None
+    peak_rss_mib: float | None = None
+    rss_ceiling_mib: float | None = None
+    peak_cuda_allocated_mib: float | None = None
+    peak_cuda_reserved_mib: float | None = None
+    cuda_ceiling_mib: float | None = None
     support_profile: str | None = None
     terminal_outcome: str | None = None
 
@@ -326,11 +326,11 @@ class IndexResilienceSnapshot:
             "no_progress_timeout_seconds",
             "no_progress_remaining_seconds",
             "next_retry_at",
-            "peak_rss_mb",
-            "rss_ceiling_mb",
-            "peak_cuda_allocated_mb",
-            "peak_cuda_reserved_mb",
-            "cuda_ceiling_mb",
+            "peak_rss_mib",
+            "rss_ceiling_mib",
+            "peak_cuda_allocated_mib",
+            "peak_cuda_reserved_mib",
+            "cuda_ceiling_mib",
         ):
             value = getattr(self, name)
             if value is not None and (
@@ -490,9 +490,9 @@ def _process_resources_to_dict(
     if resources is None:
         return None
     return {
-        "rss_mb": resources.rss_mb,
-        "cuda_allocated_mb": resources.cuda_allocated_mb,
-        "cuda_reserved_mb": resources.cuda_reserved_mb,
+        "rss_mib": resources.rss_mib,
+        "cuda_allocated_mib": resources.cuda_allocated_mib,
+        "cuda_reserved_mib": resources.cuda_reserved_mib,
     }
 
 
@@ -522,11 +522,11 @@ def _resilience_to_dict(
         "no_progress_remaining_seconds": resilience.no_progress_remaining_seconds,
         "circuit_state": resilience.circuit_state,
         "next_retry_at": resilience.next_retry_at,
-        "peak_rss_mb": resilience.peak_rss_mb,
-        "rss_ceiling_mb": resilience.rss_ceiling_mb,
-        "peak_cuda_allocated_mb": resilience.peak_cuda_allocated_mb,
-        "peak_cuda_reserved_mb": resilience.peak_cuda_reserved_mb,
-        "cuda_ceiling_mb": resilience.cuda_ceiling_mb,
+        "peak_rss_mib": resilience.peak_rss_mib,
+        "rss_ceiling_mib": resilience.rss_ceiling_mib,
+        "peak_cuda_allocated_mib": resilience.peak_cuda_allocated_mib,
+        "peak_cuda_reserved_mib": resilience.peak_cuda_reserved_mib,
+        "cuda_ceiling_mib": resilience.cuda_ceiling_mib,
         "support_profile": resilience.support_profile,
         "terminal_outcome": resilience.terminal_outcome,
     }

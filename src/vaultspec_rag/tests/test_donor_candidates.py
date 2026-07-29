@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .. import store_schema
+from .._index_breadth import index_meta_path
 from .._store_models import (
     generation_code_collection,
     publish_served_code_collection,
@@ -43,6 +44,7 @@ from ..indexer._donor_candidates import (
     VectorSchema,
     discover_donor_candidates,
     evaluate_donor_eligibility,
+    index_meta_source,
     read_donor_recorded_state,
 )
 from ..indexer._vault_meta import (
@@ -450,6 +452,40 @@ class TestEligibilityGates:
 
 
 class TestRecordedState:
+    def test_both_kinds_read_the_shared_resolver_path(self, tmp_path: Path) -> None:
+        """Each sidecar kind reads the file the shared resolver names.
+
+        The donor read and the breadth readers must land on one file per
+        domain. The helpers above spell the sidecar path independently, from
+        config, so pinning that spelling against the resolver and then reading
+        through the production entry point fails if either side moves - which
+        a second inline spelling of the same resolution would not.
+
+        Writing both sidecars with distinct epochs also pins the discrimination:
+        a crossing that returned the neighbouring domain would resolve the
+        other file, and each read would find the keys it wants absent.
+        """
+        donor = _make_root(tmp_path, "donor")
+        code_path = _write_code_sidecar(donor, epoch="code-epoch")
+        vault_path = _write_vault_sidecar(donor, epoch="vault-epoch")
+
+        assert code_path == index_meta_path(
+            donor, index_meta_source(CollectionKind.CODE)
+        )
+        assert vault_path == index_meta_path(
+            donor, index_meta_source(CollectionKind.VAULT)
+        )
+
+        code = read_donor_recorded_state(donor, CollectionKind.CODE)
+        vault = read_donor_recorded_state(donor, CollectionKind.VAULT)
+
+        assert code is not None
+        assert code.content_epoch == "code-epoch"
+        assert code.embed_schema == CODE_EMBED_SCHEMA
+        assert vault is not None
+        assert vault.content_epoch == "vault-epoch"
+        assert vault.embed_schema == _VAULT_SCHEMA
+
     def test_vault_sidecar_round_trip(self, tmp_path: Path) -> None:
         donor = _make_root(tmp_path, "donor")
         _write_vault_sidecar(donor, epoch="vault-epoch")
