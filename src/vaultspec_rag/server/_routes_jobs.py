@@ -358,37 +358,53 @@ def _job_telemetry(record: dict[str, object], name: str) -> dict[str, object] | 
     return None
 
 
-def _job_rate_baseline(record: dict[str, object]) -> dict[str, object] | None:
-    """Compare one job's current throughput against its own run baseline.
+def _job_rates(record: dict[str, object]) -> tuple[float | None, float | None]:
+    """Take one job's windowed rate and its own median in a single read.
 
-    Two readings of the same measurement the service already takes: the
-    windowed rate (what the job is doing now) and the median of the rates it
-    has sustained on this step (what the job has proved it can do). Their
-    ratio is the one number that says a run has collapsed relative to
-    itself, which no absolute threshold can say - throughput that is normal
-    for one corpus is a tenfold collapse for another.
+    ``(None, None)`` for work that is not actively advancing: an estimate
+    over queued, paused, waiting or finished work describes work that is not
+    happening, and the honest answer is that there is no reading.
 
-    ``None`` for work that is not actively advancing, and for a job the
-    service has no reading for at all; a member is ``None`` where that one
-    reading is unavailable.
+    Every consumer of these two numbers - the verdict, the evidence attached
+    to it, and the published estimate - takes them from one call, so all
+    three describe the same moment. The reporter thread writes between reads,
+    so a second read is a second moment, and an operator would otherwise see
+    a degraded verdict whose own evidence sits above the threshold that
+    earned it.
     """
     if job_state(record) != JobState.RUNNING.value or _job_is_waiting(record):
-        return None
+        return None, None
     identifier = record.get("id")
     if not isinstance(identifier, str) or not identifier:
-        return None
-    recent = _jobs.progress_rate(identifier)
-    baseline = _jobs.progress_rate_baseline(identifier)
-    if recent is None and baseline is None:
+        return None, None
+    return _jobs.progress_rates(identifier)
+
+
+def _shaped_rate_baseline(
+    recent: float | None,
+    median: float | None,
+) -> dict[str, object] | None:
+    """Shape one job's throughput against its own run baseline.
+
+    The windowed rate is what the job is doing now and the median is what it
+    has proved it can do; their ratio is the one number that says a run has
+    collapsed relative to itself, which no absolute threshold can say -
+    throughput that is normal for one corpus is a tenfold collapse for
+    another.
+
+    ``None`` for a job the service has no reading for at all; a member is
+    ``None`` where that one reading is unavailable.
+    """
+    if recent is None and median is None:
         return None
     ratio = (
-        round(recent / baseline, 3)
-        if recent is not None and baseline is not None and baseline > 0
+        round(recent / median, 3)
+        if recent is not None and median is not None and median > 0
         else None
     )
     return {
         "recent_per_second": round(recent, 3) if recent is not None else None,
-        "median_per_second": round(baseline, 3) if baseline is not None else None,
+        "median_per_second": round(median, 3) if median is not None else None,
         "ratio": ratio,
     }
 
@@ -409,7 +425,7 @@ def _forward_signal_age(
     return _age_seconds(max(stamps), now) if stamps else None
 
 
-def _rate_collapsed(record: dict[str, object]) -> bool:
+def _rate_collapsed(rate_baseline: dict[str, object] | None) -> bool:
     """Whether throughput has fallen far below what this run has sustained.
 
     The one degradation the recency signals structurally cannot see. A job
@@ -418,21 +434,34 @@ def _rate_collapsed(record: dict[str, object]) -> bool:
     of the work it was doing an hour earlier - which is exactly how an
     order-of-magnitude slowdown reported healthy throughout.
 
+    Judges the comparison it is handed rather than taking one of its own, so
+    the verdict and the evidence published beside it are the same numbers.
+
     Measured only against the job's own median and only once the service will
     state one, so a young job, a job on a step it has never measured, and a
     job whose baseline is unknown all report healthy rather than guessing.
     """
-    baseline = _job_rate_baseline(record)
-    if baseline is None:
+    if rate_baseline is None:
         return False
-    ratio = baseline.get("ratio")
+    ratio = rate_baseline.get("ratio")
     if isinstance(ratio, bool) or not isinstance(ratio, int | float):
         return False
     return float(ratio) <= RATE_COLLAPSE_RATIO
 
 
-def _job_degradation(record: dict[str, object], now: float) -> str:
+def _job_degradation(
+    record: dict[str, object],
+    now: float,
+    *,
+    forward: dict[str, object] | None,
+    rate_baseline: dict[str, object] | None,
+) -> str:
     """Return the three-way service verdict: healthy, degraded, or stalled.
+
+    A function of what it is passed. The forward window and the throughput
+    comparison are read once per job by the caller and handed in, so the
+    verdict is earned by the very numbers published beside it rather than by
+    a second reading taken a moment later.
 
     ``stalled`` keeps the existing hard threshold and semantics unchanged.
     ``degraded`` fires earlier, from the freshest of two signals: the last
@@ -461,13 +490,13 @@ def _job_degradation(record: dict[str, object], now: float) -> str:
         age
         for age in (
             _job_last_progress_age_seconds(record, now),
-            _forward_signal_age(_job_telemetry(record, "forward"), now),
+            _forward_signal_age(forward, now),
         )
         if age is not None
     ]
     if ages and min(ages) >= DEGRADED_THRESHOLD_SECONDS:
         return "degraded"
-    return "degraded" if _rate_collapsed(record) else "healthy"
+    return "degraded" if _rate_collapsed(rate_baseline) else "healthy"
 
 
 def _countable_progress(record: dict[str, object]) -> tuple[int, int] | None:
@@ -492,14 +521,16 @@ def _countable_progress(record: dict[str, object]) -> tuple[int, int] | None:
 
 def _job_completion_estimate(
     record: dict[str, object],
+    rate: float | None,
 ) -> tuple[float | None, float | None]:
     """Return ``(rate_per_second, remaining_seconds)`` for one job.
 
-    Both are ``None`` unless the job is actually doing work now. Queued,
-    waiting, paused, transitional and terminal jobs are all inert or
-    finished, and an estimate over any of them describes work that is not
-    happening. ``None`` is the honest answer, and is rendered as unknown
-    rather than as zero.
+    *rate* is the windowed rate the caller already read for this job, so the
+    published estimate is composed from the same reading the verdict and its
+    evidence were. It arrives as ``None`` for work that is not actually
+    happening - queued, waiting, paused, transitional and terminal jobs are
+    all inert or finished - and both members are then ``None``, which renders
+    as unknown rather than as zero.
 
     The two answer different questions and are reported independently. The
     rate is a measurement, and is published for any advancing step. The
@@ -508,12 +539,6 @@ def _job_completion_estimate(
     but there is nothing to subtract it from, so it carries a rate and no
     estimate rather than suppressing both.
     """
-    if job_state(record) != JobState.RUNNING.value or _job_is_waiting(record):
-        return None, None
-    identifier = record.get("id")
-    if not isinstance(identifier, str) or not identifier:
-        return None, None
-    rate = _jobs.progress_rate(identifier)
     if rate is None or rate <= 0:
         return None, None
     counts = _countable_progress(record)
@@ -632,8 +657,14 @@ def _job_with_liveness(
     encode = _job_telemetry(record, "encode")
     if encode is not None:
         enriched["encode"] = dict(encode)
-    rate_baseline = _job_rate_baseline(record)
-    verdict = _job_degradation(record, now)
+    recent_rate, median_rate = _job_rates(record)
+    rate_baseline = _shaped_rate_baseline(recent_rate, median_rate)
+    verdict = _job_degradation(
+        record,
+        now,
+        forward=forward,
+        rate_baseline=rate_baseline,
+    )
     enriched["degradation"] = verdict
     # Present-and-null when healthy: absent means a daemon that predates the
     # verdict, and renderers read that difference the same way they do for
@@ -653,7 +684,7 @@ def _job_with_liveness(
         if verdict != "healthy"
         else None
     )
-    rate, remaining = _job_completion_estimate(record)
+    rate, remaining = _job_completion_estimate(record, recent_rate)
     enriched["progress_rate_per_second"] = rate
     enriched["estimated_remaining_seconds"] = remaining
     # Present-and-null on the same terms as the evidence block above: a
@@ -817,7 +848,14 @@ def _tally_job(tally: _JobSummaryTally, record: dict[str, object], now: float) -
     """Fold one job record's counts into the running summary tally."""
     if _job_stalled(record, now):
         tally.stalled += 1
-    if _job_degradation(record, now) == "degraded":
+    recent_rate, median_rate = _job_rates(record)
+    verdict = _job_degradation(
+        record,
+        now,
+        forward=_job_telemetry(record, "forward"),
+        rate_baseline=_shaped_rate_baseline(recent_rate, median_rate),
+    )
+    if verdict == "degraded":
         tally.degraded += 1
     if _job_controllable(record):
         tally.controllable += 1

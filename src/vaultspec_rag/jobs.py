@@ -75,8 +75,7 @@ __all__ = [
     "index_job_status",
     "machine_pressure",
     "measurement",
-    "progress_rate",
-    "progress_rate_baseline",
+    "progress_rates",
     "record_encode_budget",
     "record_encode_oom",
     "record_finish",
@@ -600,49 +599,52 @@ def _window_rate(samples: deque[tuple[float, int]]) -> float | None:
     return advanced / span
 
 
-def progress_rate(record_id: str) -> float | None:
-    """Return the windowed completion rate for one job, or ``None``.
+def _record_window_rate(record: dict[str, object]) -> float | None:
+    """The windowed completion rate *record* holds (caller holds the lock)."""
+    window = record.get(_PROGRESS_WINDOW_KEY)
+    if not isinstance(window, deque):
+        return None
+    return _window_rate(cast("deque[tuple[float, int]]", window))
 
-    ``None`` means the service declines to estimate - the job is unknown,
-    has not reported twice within one step, or has not advanced. It never
-    means zero.
+
+def _record_baseline_rate(record: dict[str, object]) -> float | None:
+    """The median of *record*'s retained observations (caller holds the lock).
+
+    The run's own baseline, against which the windowed rate says whether
+    throughput has collapsed. The median rather than the mean because a run
+    passes through regimes and a single stalled window must not move the
+    reference.
+    """
+    history = record.get(_PROGRESS_RATE_HISTORY_KEY)
+    if not isinstance(history, deque):
+        return None
+    rates = [rate for _at, rate in cast("deque[tuple[float, float]]", history)]
+    if len(rates) < _PROGRESS_RATE_HISTORY_MIN_OBSERVATIONS:
+        return None
+    return median(rates)
+
+
+def progress_rates(record_id: str) -> tuple[float | None, float | None]:
+    """Return one job's windowed rate and its own baseline, under one read.
+
+    What the job is achieving now and the median of what it has sustained on
+    this step are two readings of the same record, written by the same
+    reporter thread. Taken under one lock acquisition they describe one
+    moment, so the ratio between them is a number the record actually held;
+    taken separately they can straddle a write, and the comparison would then
+    describe no state the job was ever in.
+
+    Either member is ``None`` where the service declines to state it: the job
+    is unknown, has not reported twice within one step, has not advanced, or
+    has not yet spaced enough observations for a median to describe a run
+    rather than a moment. Neither ever means zero.
     """
     with _lock:
         for record in reversed(_records):
             if record["id"] != record_id:
                 continue
-            window = record.get(_PROGRESS_WINDOW_KEY)
-            if not isinstance(window, deque):
-                return None
-            return _window_rate(cast("deque[tuple[float, int]]", window))
-    return None
-
-
-def progress_rate_baseline(record_id: str) -> float | None:
-    """Return the throughput this run has sustained on its current step.
-
-    The median of the retained rate observations - the run's own baseline,
-    against which the windowed rate says whether throughput has collapsed.
-    The median rather than the mean because a run passes through regimes and
-    a single stalled window must not move the reference.
-
-    ``None`` means the service declines to state a baseline: the job is
-    unknown, its step has not been sampled, or it has not yet reported
-    enough spaced observations for a median to describe a run rather than a
-    moment. It never means zero.
-    """
-    with _lock:
-        for record in reversed(_records):
-            if record["id"] != record_id:
-                continue
-            history = record.get(_PROGRESS_RATE_HISTORY_KEY)
-            if not isinstance(history, deque):
-                return None
-            rates = [rate for _at, rate in cast("deque[tuple[float, float]]", history)]
-            if len(rates) < _PROGRESS_RATE_HISTORY_MIN_OBSERVATIONS:
-                return None
-            return median(rates)
-    return None
+            return _record_window_rate(record), _record_baseline_rate(record)
+    return None, None
 
 
 def record_progress(

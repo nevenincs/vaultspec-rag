@@ -29,7 +29,7 @@ from ..jobs import (
     DegradationInputs,
     JobProgressReporter,
     degradation_evidence,
-    progress_rate_baseline,
+    progress_rates,
     record_progress,
     record_start,
     reset,
@@ -250,7 +250,6 @@ class TestDegradationVerdict:
     def test_silent_beyond_the_short_threshold_is_degraded(self) -> None:
         record = _running_record(progress_at=1000.0)
         now = 1000.0 + DEGRADED_THRESHOLD_SECONDS + 30.0
-        assert _job_degradation(record, now) == "degraded"
         shaped = _job_with_liveness(record, now=now)
         assert shaped["degradation"] == "degraded"
         assert shaped["stalled"] is False
@@ -259,11 +258,17 @@ class TestDegradationVerdict:
         # The forward exited seconds ago: the slice is in its CPU/storage
         # tail, which is activity, not silence - whatever the progress stamp
         # says. This is the branch that stops the verdict flapping mid-slice.
-        record = _running_record(
-            progress_at=1000.0,
-            forward=_forward_block(entered_at=1080.0, exited_at=1085.0),
+        # Read as the route reads it: the verdict is a function of the
+        # window and the comparison handed to it, and nothing else.
+        forward = _forward_block(entered_at=1080.0, exited_at=1085.0)
+        record = _running_record(progress_at=1000.0, forward=forward)
+        verdict = _job_degradation(
+            record,
+            1090.0,
+            forward=forward,
+            rate_baseline=None,
         )
-        assert _job_degradation(record, 1090.0) == "healthy"
+        assert verdict == "healthy"
 
     def test_a_long_in_flight_forward_is_degraded_with_evidence(self) -> None:
         entered = 1000.0
@@ -314,7 +319,7 @@ class TestDegradationVerdict:
 
     def test_waiting_and_terminal_work_is_inert_not_degraded(self) -> None:
         waiting = _running_record(progress_at=1000.0, step="queued")
-        assert _job_degradation(waiting, 2000.0) == "healthy"
+        assert _job_with_liveness(waiting, now=2000.0)["degradation"] == "healthy"
         finished: dict[str, object] = {
             "id": "j2",
             "phase": "done",
@@ -327,8 +332,8 @@ class TestDegradationVerdict:
                 "last_updated": 190.0,
             },
         }
-        assert _job_degradation(finished, 5000.0) == "healthy"
         shaped = _job_with_liveness(finished, now=5000.0)
+        assert shaped["degradation"] == "healthy"
         assert shaped["degradation_evidence"] is None
 
     def test_gpu_and_backend_evidence_sections_keep_their_shape(self) -> None:
@@ -717,7 +722,8 @@ class TestRateBaselineVerdict:
             seconds=60.0,
         )
 
-        assert progress_rate_baseline(job_id) is None
+        _recent, median_rate = progress_rates(job_id)
+        assert median_rate is None
         shaped = _job_with_liveness(_replayed_record(job_id), now=at + 1.0)
         assert shaped["degradation"] == "healthy"
         baseline = _as_map(shaped["progress_rate_baseline"])
@@ -736,10 +742,12 @@ class TestRateBaselineVerdict:
             rate=_FAST_RATE,
             seconds=300.0,
         )
-        assert progress_rate_baseline(job_id) is not None
+        _recent, median_rate = progress_rates(job_id)
+        assert median_rate is not None
 
         record_progress(job_id, "write metadata", 0, _CORPUS, now=at + 1.0)
-        assert progress_rate_baseline(job_id) is None
+        _recent, median_rate = progress_rates(job_id)
+        assert median_rate is None
 
 
 class TestBackendEvidence:
