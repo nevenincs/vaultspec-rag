@@ -77,7 +77,7 @@ from textual.widgets import Static
 from .._loopback_http import LOOPBACK_OPENER
 from .._units import human_bytes
 from ..concurrency import LIMITER_STAT_FIELDS
-from ..jobs import flag, measurement
+from ..jobs import count, flag, mapping, measurement
 from ..serviceclient._compat import classify_service_version
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
@@ -196,25 +196,14 @@ class ServiceStatusHeader:
         return None
 
 
-def _opt_int(raw: object) -> int | None:
-    """Read an integer field, treating anything else as unreported."""
-    numeric = measurement(raw)
-    return None if numeric is None else int(numeric)
-
-
-def _mapping(raw: object) -> dict[str, Any]:
-    """Narrow a response body to a mapping, or an empty one."""
-    return cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
-
-
-def _ok_payload(raw: object) -> dict[str, Any]:
+def _ok_payload(raw: object) -> dict[str, object]:
     """Narrow an admin result, discarding a structured failure envelope.
 
     ``_try_http_admin`` reports a refusal or a timeout as a mapping carrying
     ``ok: False``. Reading fields off that would report every absent value
     twice over; an errored call reports nothing instead.
     """
-    payload = _mapping(raw)
+    payload = mapping(raw)
     if payload.get("ok") is False:
         return {}
     return payload
@@ -291,7 +280,7 @@ def _survey_totals(port: int, timeout: float | None) -> dict[str, Any]:
     survey = _ok_payload(
         _try_http_admin("get_storage_survey", {"limit": 1}, port, timeout=timeout)
     )
-    return _mapping(survey.get("totals"))
+    return mapping(survey.get("totals"))
 
 
 def _project_slots(
@@ -301,12 +290,12 @@ def _project_slots(
     payload = _ok_payload(_try_http_admin("list_projects", {}, port, timeout=timeout))
     raw_projects = payload.get("projects")
     if not isinstance(raw_projects, list):
-        return None, _opt_int(payload.get("max_projects")), None
+        return None, count(payload.get("max_projects")), None
     raw_entries = cast("list[object]", raw_projects)
-    entries = [_mapping(entry) for entry in raw_entries]
-    leases = [_opt_int(entry.get("ref_count")) for entry in entries]
-    held = sum(count for count in leases if count is not None) if leases else 0
-    return len(entries), _opt_int(payload.get("max_projects")), held
+    entries = [mapping(entry) for entry in raw_entries]
+    leases = [count(entry.get("ref_count")) for entry in entries]
+    held = sum(lease for lease in leases if lease is not None) if leases else 0
+    return len(entries), count(payload.get("max_projects")), held
 
 
 def _watching_count(port: int, timeout: float | None) -> int | None:
@@ -343,7 +332,7 @@ def fetch_service_status(
     health = _try_http_health(port)
     if health is None:
         return ServiceStatusHeader(error="service not reachable")
-    http_code = _opt_int(health.get("http_code"))
+    http_code = count(health.get("http_code"))
     if http_code is not None:
         # The service answered, badly. That is not the same as absent, and an
         # operator has to be able to tell them apart.
@@ -354,7 +343,7 @@ def fetch_service_status(
         )
 
     token = health.get("service_token")
-    qdrant = _mapping(health.get("qdrant"))
+    qdrant = mapping(health.get("qdrant"))
     raw_reasons = health.get("degraded_reasons")
     listed_reasons = (
         cast("list[object]", raw_reasons) if isinstance(raw_reasons, list) else []
@@ -376,12 +365,12 @@ def fetch_service_status(
         degraded_reasons=reasons,
         qdrant_alive=flag(qdrant.get("alive")),
         uptime_seconds=measurement(health.get("uptime_s")),
-        store_bytes=_opt_int(totals.get("total_bytes")),
-        namespaces=_opt_int(totals.get("namespaces")),
+        store_bytes=count(totals.get("total_bytes")),
+        namespaces=count(totals.get("namespaces")),
         projects_loaded=loaded,
         projects_cap=cap,
         leases_held=leases,
-        clients=_opt_int(health.get("clients_connected")),
+        clients=count(health.get("clients_connected")),
         watching=_watching_count(port, timeout),
         seats=seats,
         error=None,

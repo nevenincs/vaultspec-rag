@@ -30,6 +30,7 @@ from textual.widgets.data_table import ColumnKey
 from textual.worker import WorkerState
 
 from ..job_models import DesiredJobState, JobState
+from ..jobs import count, measurement
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_delete_job,
@@ -543,16 +544,10 @@ def _progress_cell(
     bar = ""
     if isinstance(progress, dict) and bar_cells > 0:
         data = cast("dict[str, object]", progress)
-        completed = data.get("completed")
-        total = data.get("total")
-        if (
-            isinstance(completed, int)
-            and not isinstance(completed, bool)
-            and isinstance(total, int)
-            and not isinstance(total, bool)
-            and total > 0
-        ):
-            ratio = min(1.0, max(0.0, completed / total))
+        completed = count(data.get("completed"))
+        total = count(data.get("total"))
+        if completed is not None and total is not None and total > 0:
+            ratio = min(1.0, completed / total)
             filled = round(bar_cells * ratio)
             bar = f"{'█' * filled}{'░' * (bar_cells - filled)} {round(100 * ratio)}%"
     return _two_line(detail, bar, cells)
@@ -564,9 +559,9 @@ def _time_cell(
     *,
     ticked: float | None = None,
 ) -> Text:
-    remaining = job.get(_ESTIMATE_KEY)
-    if isinstance(remaining, int | float) and not isinstance(remaining, bool):
-        shown = ticked if ticked is not None else max(0.0, float(remaining))
+    remaining = measurement(job.get(_ESTIMATE_KEY))
+    if remaining is not None:
+        shown = ticked if ticked is not None else remaining
         # Ceiling, not truncation: the countdown must never read below the
         # value the service just published, and the coarse two-unit
         # rendering already strips any precision the estimate lacks.
@@ -993,7 +988,7 @@ class JobsTuiApp(App[None]):
         self._service_estimates = not jobs or any(_ESTIMATE_KEY in job for job in jobs)
         self._record_estimates(jobs)
         self._jobs = jobs
-        self._total = _count(payload.get("total"))
+        self._total = count(payload.get("total"))
         self._summary = payload.get("summary")
         self._gpu_reported = "gpu" in payload
         raw_gpu = payload.get("gpu")
@@ -1024,9 +1019,9 @@ class JobsTuiApp(App[None]):
         now = time.monotonic()
         estimates: dict[str, tuple[float, float]] = {}
         for job in jobs:
-            value = job.get(_ESTIMATE_KEY)
-            if isinstance(value, int | float) and not isinstance(value, bool):
-                estimates[_job_id(job)] = (max(0.0, float(value)), now)
+            value = measurement(job.get(_ESTIMATE_KEY))
+            if value is not None:
+                estimates[_job_id(job)] = (value, now)
         self._estimates = estimates
 
     def _ticked_remaining(self, job: dict[str, object]) -> float | None:
@@ -1237,16 +1232,15 @@ class JobsTuiApp(App[None]):
         if isinstance(summary, dict):
             counted = cast("dict[str, object]", summary)
             counts = [
-                (label, _count(counted.get(key)) or 0)
-                for label, key in _SUMMARY_BUCKETS
+                (label, count(counted.get(key)) or 0) for label, key in _SUMMARY_BUCKETS
             ]
-            tallied = sum(count for _label, count in counts)
+            tallied = sum(tally for _label, tally in counts)
             scope = self._total if self._total is not None else tallied
         else:
             states = [str(job.get("state", "")) for job in self._jobs]
             counts = [(label, states.count(key)) for label, key in _SUMMARY_BUCKETS]
             scope = len(self._jobs)
-        other = scope - sum(count for _label, count in counts)
+        other = scope - sum(tally for _label, tally in counts)
         if other > 0:
             counts.append(("other", other))
         return counts
@@ -1276,7 +1270,7 @@ class JobsTuiApp(App[None]):
         A pill with work in it wears its token's solid fill; an empty one
         wears the muted fill so colour always means signal.
         """
-        for key, count in self._header_counts():
+        for key, tally in self._header_counts():
             spec = _STATE_PILLS.get(key)
             if spec is None:
                 # The residue bucket, in the same anatomy as its neighbours.
@@ -1284,7 +1278,7 @@ class JobsTuiApp(App[None]):
                 label, tone = key, "muted"
             else:
                 glyph, fallback, label, tone, _bold = spec
-            content = f"{glyph if unicode_ok else fallback} {count}"
+            content = f"{glyph if unicode_ok else fallback} {tally}"
             if labelled:
                 content += f" {label}"
             # One cell of air: the caps already separate pill from pill.
@@ -1292,7 +1286,7 @@ class JobsTuiApp(App[None]):
             _append_pill(
                 line,
                 content,
-                fills[tone if count else "muted"],
+                fills[tone if tally else "muted"],
                 unicode_ok=unicode_ok,
             )
 
@@ -1317,8 +1311,8 @@ class JobsTuiApp(App[None]):
         if lead_separator:
             self._append_separator(line, unicode_ok=unicode_ok)
         for index, (key, glyph, fallback, label, tone, _bold) in enumerate(present):
-            count = _count(counted.get(key)) or 0
-            content = f"{glyph if unicode_ok else fallback} {count}"
+            tally = count(counted.get(key)) or 0
+            content = f"{glyph if unicode_ok else fallback} {tally}"
             if labelled:
                 content += f" {label}"
             if index:
@@ -1326,7 +1320,7 @@ class JobsTuiApp(App[None]):
             _append_pill(
                 line,
                 content,
-                fills[tone if count else "muted"],
+                fills[tone if tally else "muted"],
                 unicode_ok=unicode_ok,
             )
 
@@ -1344,9 +1338,9 @@ class JobsTuiApp(App[None]):
         if isinstance(summary, dict):
             counted = cast("dict[str, object]", summary)
             if "stalled" in counted or "degraded" in counted:
-                if _count(counted.get("stalled")):
+                if count(counted.get("stalled")):
                     return "stalled"
-                if _count(counted.get("degraded")):
+                if count(counted.get("degraded")):
                     return "degraded"
                 return "healthy"
         stamped = [
@@ -1370,9 +1364,9 @@ class JobsTuiApp(App[None]):
         if not self._gpu_reported:
             return "gpu —", "muted", False
         gpu = self._gpu or {}
-        utilization = _measurement(gpu.get("utilization_percent"))
-        used = _measurement(gpu.get("memory_used_mb"))
-        total = _measurement(gpu.get("memory_total_mb"))
+        utilization = measurement(gpu.get("utilization_percent"))
+        used = measurement(gpu.get("memory_used_mb"))
+        total = measurement(gpu.get("memory_total_mb"))
         parts: list[str] = []
         pressure = 0.0
         if utilization is not None:
@@ -1994,24 +1988,6 @@ class JobsTuiApp(App[None]):
         # flips, so its colour is resolved at each render, never stored.
         self._last_outcome = (detail, "bad" if failed else "good")
         self.notify(detail, severity="error" if failed else "information")
-
-
-def _count(raw: object) -> int | None:
-    """Read a published count, or ``None`` when the service published none."""
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
-        return None
-    return raw
-
-
-def _measurement(raw: object) -> float | None:
-    """Read a published measurement, or ``None`` when there is none.
-
-    ``None`` is the probe saying it could not measure; anything non-numeric
-    is read the same way rather than invented into a number.
-    """
-    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw < 0:
-        return None
-    return float(raw)
 
 
 def _fetch_error(result: dict[str, object] | None) -> str | None:
