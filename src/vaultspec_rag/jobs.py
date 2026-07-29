@@ -1360,8 +1360,13 @@ def _backend_evidence(project_root: str | None, source: str) -> dict[str, object
     return dict(result)
 
 
-def _evidence_count(value: object) -> int | None:
-    """Read one evidence value as a whole count; ``bool`` is malformed."""
+def count(value: object) -> int | None:
+    """Read one published value as a whole count; ``bool`` is malformed.
+
+    The counted-work half of the reader pair :func:`measurement` completes:
+    a ``float`` is refused outright rather than truncated, because a
+    fractional count is a malformed reading and not a rounding question.
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
@@ -1380,15 +1385,25 @@ def measurement(value: object) -> float | None:
     return float(value)
 
 
+def flag(value: object) -> bool | None:
+    """Read one published value as a signal; anything else is unreported.
+
+    The three-state reader beside :func:`measurement` and :func:`count`:
+    yes, no, and never reported stay distinct, so a signal the service
+    never sent can never read as a denial.
+    """
+    return value if isinstance(value, bool) else None
+
+
 #: The conditional evidence sections, each as the readers its members are
 #: narrowed through. Encode state is counted work and rate readings are
 #: measurements, which is the whole of the difference between them.
 _ENCODE_EVIDENCE_READERS: dict[str, Callable[[object], object]] = {
-    "token_budget": _evidence_count,
-    "bucket_items": _evidence_count,
-    "items_done": _evidence_count,
-    "items_total": _evidence_count,
-    "oom_count": _evidence_count,
+    "token_budget": count,
+    "bucket_items": count,
+    "items_done": count,
+    "items_total": count,
+    "oom_count": count,
 }
 _RATE_EVIDENCE_READERS: dict[str, Callable[[object], object]] = {
     "recent_per_second": measurement,
@@ -1482,10 +1497,6 @@ def degradation_evidence(
     return evidence
 
 
-def _signal_flag(value: object) -> bool | None:
-    return value if isinstance(value, bool) else None
-
-
 def _worst_forward_evidence(
     forwards: list[dict[str, object] | None],
     *,
@@ -1554,12 +1565,12 @@ def machine_pressure(
     signals = MachinePressureSignals(
         forward_in_flight=forward_block["in_flight"] is True,
         forward_age_seconds=measurement(forward_block["age_seconds"]),
-        forward_thread_alive=_signal_flag(forward_block["thread_alive"]),
+        forward_thread_alive=flag(forward_block["thread_alive"]),
         gpu_utilization_percent=measurement(gpu.get("utilization_percent")),
         gpu_memory_used_mb=measurement(gpu.get("memory_used_mb")),
         gpu_memory_total_mb=measurement(gpu.get("memory_total_mb")),
         backend_probed=probed,
-        backend_alive=_signal_flag(backend.get("alive")),
+        backend_alive=flag(backend.get("alive")),
         backend_latency_seconds=measurement(backend.get("latency_seconds")),
         backend_probe_bound_seconds=_BACKEND_PROBE_TIMEOUT_SECONDS if probed else None,
         encode_waiters=waiting,
