@@ -8,6 +8,7 @@ tracking with a per-instance writer lock.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -30,22 +31,24 @@ from .._index_breadth import (
 from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
-from . import _config_epoch, _stat_gate
+from . import _config_epoch, _stat_gate, _vault_fingerprint
 from ._index_lifecycle import run_index_lifecycle
 from ._streaming import VaultStreamRequest, _stream_encode_and_upsert_vault
+from ._vault_fingerprint import VaultDelta
 from ._vault_meta import (
     VAULT_CONTENT_EPOCH_KEY,
+    VAULT_FINGERPRINT_SCHEME_KEY,
     VAULT_POINT_SCHEMA,
     VAULT_POINT_SCHEMA_KEY,
 )
-from ._vault_prep import IndexResult, prepare_document
+from ._vault_prep import IndexResult, prepare_document, split_document
 
 if TYPE_CHECKING:
     import pathlib
     import threading
     from collections.abc import Generator, Iterable, Iterator
 
-    from .._store_models import VaultDocument
+    from .._store_models import VaultChunk, VaultDocument
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..progress import ProgressReporter
@@ -77,6 +80,79 @@ class _VaultEncodeWork:
     slice_size: int
     reporter: ProgressReporter
     run_control: RunControl
+
+
+@dataclass(frozen=True, slots=True)
+class _PayloadRefreshPlan:
+    """The payload-only work one classification turned out to justify."""
+
+    #: Chunks whose payloads are to be rewritten, vectors untouched.
+    chunks: list[VaultChunk]
+    #: How many documents those chunks belong to. Counted separately because a
+    #: document is not one chunk, and the reported figure names documents.
+    documents: int
+    #: Documents the plan could not honour, for the re-embed branch instead.
+    deferred: set[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _VaultReconcileInputs:
+    """What reconciling a classified change set needs, however it was reached."""
+
+    id_to_path: dict[str, pathlib.Path]
+    existing_counts: dict[str, int]
+    slice_size: int
+    reporter: ProgressReporter
+    run_control: RunControl
+
+
+@dataclass(frozen=True, slots=True)
+class _VaultReconcileOutcome:
+    """What one reconciliation of a classified change set actually did."""
+
+    re_embedded: int
+    payload_updated: int
+    reuse: ReuseStats | None
+
+
+@dataclass(frozen=True, slots=True)
+class _VaultClassification:
+    """One run's split of candidate documents into the work each demands."""
+
+    #: Documents whose body moved: re-chunk and re-embed.
+    body: set[str]
+    #: Documents whose indexed metadata moved while their body did not:
+    #: rebuild payloads, leave vectors alone.
+    metadata: set[str]
+
+    def defer_to_body(self, doc_ids: set[str]) -> _VaultClassification:
+        """Move *doc_ids* out of the payload branch and into the re-embed one."""
+        if not doc_ids:
+            return self
+        return _VaultClassification(
+            body=self.body | doc_ids,
+            metadata=self.metadata - doc_ids,
+        )
+
+
+def _classify_documents(
+    candidates: set[str],
+    current: dict[str, str],
+    previous: dict[str, str],
+) -> _VaultClassification:
+    """Route each candidate document to the cheapest outcome that is correct."""
+    body: set[str] = set()
+    metadata: set[str] = set()
+    for doc_id in candidates:
+        if doc_id not in current:
+            # Unhashable this run; the previous publication stands for it.
+            continue
+        delta = _vault_fingerprint.classify(previous.get(doc_id), current[doc_id])
+        if delta is VaultDelta.BODY:
+            body.add(doc_id)
+        elif delta is VaultDelta.METADATA:
+            metadata.add(doc_id)
+    return _VaultClassification(body=body, metadata=metadata)
 
 
 @contextlib.contextmanager
@@ -175,8 +251,16 @@ class VaultIndexer:
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
-        # single-threaded contract relies on.
-        self._stat_gate_cache = _stat_gate.ResidentGateCache(self._stat_gate_path)
+        # single-threaded contract relies on. The gate digests through the
+        # split fingerprint, so its evidence and the sidecar it gates always
+        # describe the same thing.
+        self._stat_gate_cache = _stat_gate.ResidentGateCache(
+            self._stat_gate_path,
+            digest=functools.partial(
+                _vault_fingerprint.fingerprint_path,
+                root_dir=root_dir,
+            ),
+        )
 
     def _resolve_reuse(
         self,
@@ -554,6 +638,8 @@ class VaultIndexer:
         deleted_ids = stored_ids - current_ids
         potentially_modified = current_ids & stored_ids
 
+        self._announce_fingerprint_migration()
+
         with _controlled_phase(
             reporter,
             run_control,
@@ -567,29 +653,21 @@ class VaultIndexer:
                 full_membership=True,
             )
 
-        modified_ids = {
-            doc_id
-            for doc_id in potentially_modified
-            if doc_id in current_hashes
-            and current_hashes[doc_id] != prev_meta.get(doc_id)
-        }
-
-        to_index_ids = new_ids | modified_ids
-        docs_to_index = self._parse_documents(
-            to_index_ids,
-            current_docs,
-            reporter,
-            run_control=run_control,
+        classification = _classify_documents(
+            potentially_modified,
+            current_hashes,
+            prev_meta,
         )
-
-        reuse_stats = self._encode_incremental_documents(
-            _VaultEncodeWork(
-                docs=docs_to_index,
+        outcome = self._reconcile_classified(
+            classification,
+            new_ids,
+            _VaultReconcileInputs(
+                id_to_path=current_docs,
                 existing_counts=stored_counts,
                 slice_size=slice_size,
                 reporter=reporter,
                 run_control=run_control,
-            )
+            ),
         )
 
         with _controlled_phase(
@@ -615,12 +693,13 @@ class VaultIndexer:
         return IndexResult(
             total=total,
             added=len(new_ids),
-            updated=len(modified_ids),
+            updated=outcome.re_embedded,
+            payload_updated=outcome.payload_updated,
             removed=len(deleted_ids),
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(current_docs),
-            reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
+            reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
 
     def _scan_vault_for_docs(
@@ -740,6 +819,161 @@ class VaultIndexer:
             run_control=work.run_control,
         )
         return reuse_stats
+
+    def _reconcile_classified(
+        self,
+        classification: _VaultClassification,
+        new_ids: set[str],
+        work: _VaultReconcileInputs,
+    ) -> _VaultReconcileOutcome:
+        """Plan, encode, and write one classified change set.
+
+        Shared verbatim by the full-scan and scoped incremental paths, because
+        the two differ only in how they arrive at a classification - what a
+        classification then costs must not depend on which caller produced it.
+        A copy here would be the shape that drifts: a fix applied to the scan
+        path and missed on the scoped one is invisible until a watcher-driven
+        edit behaves differently from an operator-driven one.
+        """
+        plan = self._plan_payload_refresh(
+            classification.metadata,
+            work.id_to_path,
+            work.existing_counts,
+            work.reporter,
+            run_control=work.run_control,
+        )
+        classification = classification.defer_to_body(plan.deferred)
+
+        docs_to_index = self._parse_documents(
+            new_ids | classification.body,
+            work.id_to_path,
+            work.reporter,
+            run_control=work.run_control,
+        )
+        reuse_stats = self._encode_incremental_documents(
+            _VaultEncodeWork(
+                docs=docs_to_index,
+                existing_counts=work.existing_counts,
+                slice_size=work.slice_size,
+                reporter=work.reporter,
+                run_control=work.run_control,
+            )
+        )
+        self._apply_payload_refresh(
+            plan.chunks,
+            work.reporter,
+            run_control=work.run_control,
+        )
+        return _VaultReconcileOutcome(
+            re_embedded=len(classification.body),
+            payload_updated=plan.documents,
+            reuse=reuse_stats,
+        )
+
+    def _plan_payload_refresh(
+        self,
+        doc_ids: set[str],
+        id_to_path: dict[str, pathlib.Path],
+        existing_counts: dict[str, int],
+        reporter: ProgressReporter,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> _PayloadRefreshPlan:
+        """Build the chunks a payload-only refresh would write, and its fallout.
+
+        A payload-only write assumes the store already holds exactly the points
+        this document produces - the body did not move, so its chunk partition
+        did not either. That assumption is checked rather than trusted: when
+        the stored chunk count disagrees with what the document splits into
+        now, the store is not in the shape the classification described, and
+        writing payloads into it would leave whatever is actually there
+        unreconciled. Those documents are returned as the second element for
+        the caller to route back into the re-embed branch, which rebuilds
+        their points outright.
+
+        Returns:
+            The chunks to write, how many documents they cover, and the ids
+            that must be re-embedded instead.
+        """
+        if not doc_ids:
+            return _PayloadRefreshPlan(chunks=[], documents=0, deferred=set())
+
+        from ..config._settings import get_config
+
+        chunk_chars = int(get_config().vault_chunk_chars)
+        deferred: set[str] = set()
+        chunks: list[VaultChunk] = []
+        refreshed = 0
+        with _controlled_phase(
+            reporter,
+            run_control,
+            "rebuild payloads",
+            len(doc_ids),
+        ):
+            docs = self._prepare_documents_bounded(
+                [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
+                reporter,
+                run_control=run_control,
+                skip_errors=False,
+            )
+            prepared = {doc.id for doc in docs}
+            # A document that would not parse cannot have its payloads rebuilt
+            # from what it says, so it goes the way of any other unreconciled
+            # document rather than being silently dropped.
+            deferred |= doc_ids - prepared
+            for doc in docs:
+                run_control.checkpoint()
+                doc_chunks = split_document(doc, chunk_chars)
+                if existing_counts.get(doc.id, 0) != len(doc_chunks):
+                    deferred.add(doc.id)
+                    continue
+                chunks.extend(doc_chunks)
+                refreshed += 1
+        return _PayloadRefreshPlan(
+            chunks=chunks,
+            documents=refreshed,
+            deferred=deferred,
+        )
+
+    def _apply_payload_refresh(
+        self,
+        chunks: list[VaultChunk],
+        reporter: ProgressReporter,
+        *,
+        run_control: RunControl = NO_RUN_CONTROL,
+    ) -> None:
+        """Write the planned payload-only refresh, leaving vectors untouched."""
+        with _controlled_phase(
+            reporter,
+            run_control,
+            "upsert payloads",
+            len(chunks),
+        ):
+            if not chunks:
+                return
+            run_control.checkpoint()
+            self.store.overwrite_vault_chunk_payloads(chunks, write_policy=None)
+            run_control.checkpoint()
+            reporter.advance(len(chunks))
+
+    def _announce_fingerprint_migration(self) -> None:
+        """Say once, at the top of a run, that the sidecar predates the split.
+
+        The migration is cheap by design - documents whose bytes have not moved
+        re-label rather than re-embed - but it is not nothing, and a run that
+        does more work than its successors will for a reason nobody can see is
+        the kind of thing that gets diagnosed twice.
+        """
+        raw = self._read_meta_raw()
+        if not raw:
+            return
+        if raw.get(VAULT_FINGERPRINT_SCHEME_KEY) == _vault_fingerprint.SCHEME:
+            return
+        logger.info(
+            "Vault fingerprints predate the body/metadata split; this run "
+            "re-classifies the corpus and re-embeds only documents whose "
+            "bytes actually moved",
+        )
 
     def _prepare_documents_bounded(
         self,
@@ -876,26 +1110,22 @@ class VaultIndexer:
             )
 
         new_ids = {d for d in changed_hashes if d not in prev_meta}
-        modified_ids = {
-            d
-            for d in changed_hashes
-            if d in prev_meta and changed_hashes[d] != prev_meta.get(d)
-        }
-        to_index_ids = new_ids | modified_ids
-
-        docs_to_index = self._parse_documents(
-            to_index_ids,
-            to_hash,
-            reporter,
-            run_control=run_control,
+        classification = _classify_documents(
+            {d for d in changed_hashes if d in prev_meta},
+            changed_hashes,
+            prev_meta,
         )
 
+        # The chunk-count snapshot serves the payload branch's arity check as
+        # well as the shrunk-tail purge, so it is taken over every candidate
+        # before either branch is decided.
+        candidate_ids = new_ids | classification.body | classification.metadata
         existing_counts: dict[str, int] = {}
-        if docs_to_index:
+        if candidate_ids:
             run_control.checkpoint()
             try:
                 existing_counts = self.store.get_chunk_counts(
-                    doc_ids=to_index_ids,
+                    doc_ids=candidate_ids,
                 )
             except (OSError, RuntimeError):
                 logger.warning(
@@ -905,14 +1135,17 @@ class VaultIndexer:
                 )
                 existing_counts = {}
             run_control.checkpoint()
-        reuse_stats = self._encode_incremental_documents(
-            _VaultEncodeWork(
-                docs=docs_to_index,
+
+        outcome = self._reconcile_classified(
+            classification,
+            new_ids,
+            _VaultReconcileInputs(
+                id_to_path=to_hash,
                 existing_counts=existing_counts,
                 slice_size=slice_size,
                 reporter=reporter,
                 run_control=run_control,
-            )
+            ),
         )
 
         with _controlled_phase(
@@ -946,14 +1179,15 @@ class VaultIndexer:
         return IndexResult(
             total=total,
             added=len(new_ids),
-            updated=len(modified_ids),
+            updated=outcome.re_embedded,
+            payload_updated=outcome.payload_updated,
             removed=len(delete_ids),
             duration_ms=duration_ms,
             device=self.model.device,
             files=len(changed_paths)
             if isinstance(changed_paths, list)
             else 0,  # Approximate
-            reuse=reuse_stats.snapshot() if reuse_stats is not None else None,
+            reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
 
     def _process_changed_vault_path(
@@ -1221,6 +1455,7 @@ class VaultIndexer:
         stamped = {
             **meta,
             VAULT_POINT_SCHEMA_KEY: VAULT_POINT_SCHEMA,
+            VAULT_FINGERPRINT_SCHEME_KEY: _vault_fingerprint.SCHEME,
             VAULT_CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
             VAULT_PUBLISHED_POINTS_KEY: str(points),
             VAULT_PUBLISHED_DOCUMENTS_KEY: str(documents),

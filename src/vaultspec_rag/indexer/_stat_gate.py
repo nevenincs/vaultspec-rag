@@ -6,6 +6,14 @@ remembers the ``(size, mtime_ns)`` a file had when its content hash was last
 computed and answers "may that hash be reused" from a stat call alone, so the
 pass costs stat calls plus the bytes that actually changed.
 
+What "hash" means is the owning domain's choice, carried by the gate itself:
+each indexer holds its own gate over its own sidecar, and a gate digests every
+file through the one function it was built with. The vault's fingerprint
+splits a document into body and metadata halves rather than digesting raw
+bytes, and binding that function to the gate is what keeps the recorded
+evidence and the fingerprint it is evidence *for* from ever meaning different
+things.
+
 The content hash stays the sole indexing authority. The gate is advisory in
 both directions: a missing, stale, corrupt, or unwritable sidecar only ever
 causes extra hashing, never a skipped one, and a reused hash is still diffed
@@ -46,6 +54,7 @@ __all__ = [
     "BatchHashOutcome",
     "ResidentGateCache",
     "StatEvidenceGate",
+    "file_digest",
     "hash_paths",
     "record_computed_hashes",
     "sidecar_for",
@@ -107,6 +116,16 @@ def sidecar_for(meta_path: pathlib.Path) -> pathlib.Path:
     return meta_path.with_name(f"{meta_path.name}.statgate.json")
 
 
+def file_digest(path: pathlib.Path) -> str:
+    """Digest a file's raw bytes - the default a domain gets without asking.
+
+    Raises:
+        OSError: The file could not be opened or read.
+    """
+    with open(path, "rb") as stream:
+        return hashlib.file_digest(stream, "blake2b").hexdigest()
+
+
 class StatEvidenceGate:
     """One load-use-persist cycle of stat evidence for a hashing loop.
 
@@ -114,21 +133,29 @@ class StatEvidenceGate:
     domain's writer lock, uses it for one hashing loop, and persists it.
     """
 
-    __slots__ = ("_dirty", "_entries", "_path", "rehashed", "reused")
+    __slots__ = ("_dirty", "_entries", "_path", "digest", "rehashed", "reused")
 
     def __init__(
         self,
         path: pathlib.Path,
         entries: dict[str, _StatEvidence],
+        *,
+        digest: Callable[[pathlib.Path], str] = file_digest,
     ) -> None:
         self._path = path
         self._entries = entries
         self._dirty = False
+        self.digest = digest
         self.reused = 0
         self.rehashed = 0
 
     @classmethod
-    def load(cls, path: pathlib.Path) -> Self:
+    def load(
+        cls,
+        path: pathlib.Path,
+        *,
+        digest: Callable[[pathlib.Path], str] = file_digest,
+    ) -> Self:
         """Load the sidecar, treating every defect as an empty gate.
 
         A corrupt or partially valid sidecar is discarded whole rather than
@@ -139,27 +166,26 @@ class StatEvidenceGate:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return cls(path, {})
+            return cls(path, {}, digest=digest)
         entries = _validated_entries(raw)
         if entries is None:
             logger.debug("stat gate sidecar %s invalid; rehashing instead", path)
-            return cls(path, {})
-        return cls(path, entries)
+            return cls(path, {}, digest=digest)
+        return cls(path, entries, digest=digest)
 
     def hash_file(self, key: str, path: pathlib.Path) -> str:
         """Return *path*'s content hash, reading it only when evidence demands.
 
         Raises:
             OSError: The file could not be statted or read, exactly as the
-                ungated ``hashlib.file_digest`` call would have raised.
+                ungated digest call would have raised.
         """
         stat = os.stat(path)
         reused = self.probe(key, stat)
         if reused is not None:
             return reused
         hashed_at_ns = time.time_ns()
-        with open(path, "rb") as stream:
-            digest = hashlib.file_digest(stream, "blake2b").hexdigest()
+        digest = self.digest(path)
         self.record(key, stat, digest, hashed_at_ns)
         self.rehashed += 1
         return digest
@@ -300,10 +326,16 @@ class ResidentGateCache:
     already proved.
     """
 
-    __slots__ = ("_entries", "_path", "_signature")
+    __slots__ = ("_digest", "_entries", "_path", "_signature")
 
-    def __init__(self, path: pathlib.Path) -> None:
+    def __init__(
+        self,
+        path: pathlib.Path,
+        *,
+        digest: Callable[[pathlib.Path], str] = file_digest,
+    ) -> None:
         self._path = path
+        self._digest = digest
         self._entries: dict[str, _StatEvidence] | None = None
         self._signature: tuple[int, int] | None = None
 
@@ -315,8 +347,8 @@ class ResidentGateCache:
             and signature is not None
             and signature == self._signature
         ):
-            return StatEvidenceGate(self._path, self._entries)
-        return StatEvidenceGate.load(self._path)
+            return StatEvidenceGate(self._path, self._entries, digest=self._digest)
+        return StatEvidenceGate.load(self._path, digest=self._digest)
 
     def retain(self, gate: StatEvidenceGate) -> None:
         """Adopt *gate*'s entries after :meth:`StatEvidenceGate.persist`."""
@@ -377,16 +409,17 @@ class BatchHashOutcome:
     failures: tuple[tuple[str, OSError], ...]
 
 
-def _read_digest(path: pathlib.Path) -> tuple[str, os.stat_result]:
+def _read_digest(
+    digest: Callable[[pathlib.Path], str],
+    path: pathlib.Path,
+) -> tuple[str, os.stat_result]:
     """Digest *path* and return the stat observed after the read.
 
     Runs on pool workers: file I/O and hashing only, no gate, reporter, or
     control access. The post-read stat lets the calling thread refuse to
     record evidence for a file whose identity moved while it was being read.
     """
-    with open(path, "rb") as stream:
-        digest = hashlib.file_digest(stream, "blake2b").hexdigest()
-    return digest, os.stat(path)
+    return digest(path), os.stat(path)
 
 
 def hash_paths(
@@ -480,14 +513,17 @@ def _drain_pending_digests(
     mean_bytes = sum(stat.st_size for _, _, stat, _ in pending) // len(pending)
     if mean_bytes < _POOL_MIN_MEAN_BYTES:
         for entry in pending:
-            consume(entry, functools.partial(_read_digest, entry[1]))
+            consume(entry, functools.partial(_read_digest, gate.digest, entry[1]))
         return
     executor = ThreadPoolExecutor(
         max_workers=min(_HASH_POOL_WORKERS, len(pending)),
         thread_name_prefix="stat-gate-hash",
     )
     try:
-        futures = [executor.submit(_read_digest, path) for _, path, _, _ in pending]
+        futures = [
+            executor.submit(_read_digest, gate.digest, path)
+            for _, path, _, _ in pending
+        ]
         for entry, future in zip(pending, futures, strict=True):
             consume(entry, future.result)
     finally:
