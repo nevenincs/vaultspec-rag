@@ -69,13 +69,12 @@ __all__ = [
     "active_index_support_profiles",
     "degradation_evidence",
     "delete_job",
-    "encode_telemetry",
     "find_job",
-    "forward_telemetry",
     "get_job_manager",
     "gpu_pressure_snapshot",
     "index_job_status",
     "machine_pressure",
+    "measurement",
     "progress_rate",
     "progress_rate_baseline",
     "record_encode_budget",
@@ -95,6 +94,7 @@ __all__ = [
     "start_reindex_codebase",
     "start_reindex_documents",
     "start_reindex_vault",
+    "telemetry_block",
     "validate_code_index_policy",
     "validate_code_job_admission",
     "validate_code_support_profile",
@@ -773,22 +773,6 @@ def record_forward_exit(record_id: str, *, ordinal: int, items: int) -> None:
                 break
 
 
-def forward_telemetry(record_id: str) -> dict[str, object] | None:
-    """Return a detached copy of one job's newest forward-pass telemetry.
-
-    ``None`` means the job is unknown or its run never reached a forward
-    pass; the read surface treats that as no signal, never as a stall.
-    """
-    with _lock:
-        for record in reversed(_records):
-            if record["id"] == record_id:
-                forward = record.get("forward")
-                if isinstance(forward, dict):
-                    return dict(cast("dict[str, object]", forward))
-                return None
-    return None
-
-
 def _encode_block(record: dict[str, object]) -> dict[str, object]:
     """Return one record's encode state, creating it absent (caller locked).
 
@@ -851,19 +835,25 @@ def record_encode_oom(record_id: str) -> None:
                 break
 
 
-def encode_telemetry(record_id: str) -> dict[str, object] | None:
-    """Return a detached copy of one job's encode budget and retry state.
+def telemetry_block(record_id: str, name: str) -> dict[str, object] | None:
+    """Return a detached copy of one job's newest *name* telemetry block.
 
-    ``None`` means the job is unknown or its run never reported encode
-    state; the read surface treats that as no signal, never as a zeroed
-    budget.
+    ``forward`` is the newest forward-pass window, ``encode`` the budget and
+    retry state the encode stage is planning under. Both are read the same
+    way, so they are read by the same code: a hardening applied to one block
+    that skipped the other would be a difference nothing in the record
+    justifies.
+
+    ``None`` means the job is unknown or its run never reported that block.
+    The read surface treats that as no signal at all - never as a stall, and
+    never as a budget of nothing.
     """
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
-                encode = record.get("encode")
-                if isinstance(encode, dict):
-                    return dict(cast("dict[str, object]", encode))
+                block = record.get(name)
+                if isinstance(block, dict):
+                    return dict(cast("dict[str, object]", block))
                 return None
     return None
 
@@ -1357,36 +1347,55 @@ def _evidence_count(value: object) -> int | None:
     return value
 
 
-def _encode_evidence(encode: dict[str, object] | None) -> dict[str, object] | None:
-    """Shape the encode budget and retry count, or ``None`` when unreported.
+def measurement(value: object) -> float | None:
+    """Read one published value as a measurement; ``bool`` is malformed.
 
-    Says what bounds the encode stage rather than only that it is slow: a run
-    planning tiny batches under a clamped token budget, with a retry count
-    that keeps climbing, is bounded by its own memory ceiling - a different
-    finding, and a different remedy, from a starved card or a stalled store.
+    The one reader every surface uses for a numeric field the service may
+    not have measured: the evidence blocks here, the jobs presentation, and
+    the status pane all narrow the same way, so a value one of them would
+    refuse can never read as a number in another.
     """
-    if encode is None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+#: The conditional evidence sections, each as the readers its members are
+#: narrowed through. Encode state is counted work and rate readings are
+#: measurements, which is the whole of the difference between them.
+_ENCODE_EVIDENCE_READERS: dict[str, Callable[[object], object]] = {
+    "token_budget": _evidence_count,
+    "bucket_items": _evidence_count,
+    "oom_count": _evidence_count,
+}
+_RATE_EVIDENCE_READERS: dict[str, Callable[[object], object]] = {
+    "recent_per_second": measurement,
+    "median_per_second": measurement,
+    "ratio": measurement,
+}
+
+
+def _conditional_evidence(
+    block: dict[str, object] | None,
+    readers: dict[str, Callable[[object], object]],
+) -> dict[str, object] | None:
+    """Shape one conditional evidence section, or ``None`` when unreported.
+
+    The encode section says what bounds the encode stage rather than only
+    that it is slow: a run planning tiny batches under a clamped token
+    budget, with a retry count that keeps climbing, is bounded by its own
+    memory ceiling - a different finding, and a different remedy, from a
+    starved card or a stalled store. The rate section is the finding that
+    names a collapse: what the job is doing now against what it has proved
+    it can do, and the factor between them.
+
+    A section whose every member is unreadable is returned as ``None``, so a
+    renderer is never handed a block of nulls to caption.
+    """
+    if block is None:
         return None
     section: dict[str, object] = {
-        "token_budget": _evidence_count(encode.get("token_budget")),
-        "bucket_items": _evidence_count(encode.get("bucket_items")),
-        "oom_count": _evidence_count(encode.get("oom_count")),
-    }
-    return section if any(value is not None for value in section.values()) else None
-
-
-def _rate_evidence(baseline: dict[str, object] | None) -> dict[str, object] | None:
-    """Shape the run's throughput comparison, or ``None`` when unmeasured.
-
-    The finding that names a collapse: what the job is doing now against
-    what it has proved it can do, and the factor between them.
-    """
-    if baseline is None:
-        return None
-    section: dict[str, object] = {
-        "recent_per_second": _signal_measure(baseline.get("recent_per_second")),
-        "median_per_second": _signal_measure(baseline.get("median_per_second")),
-        "ratio": _signal_measure(baseline.get("ratio")),
+        key: read(block.get(key)) for key, read in readers.items()
     }
     return section if any(value is not None for value in section.values()) else None
 
@@ -1442,20 +1451,13 @@ def degradation_evidence(
         "gpu": _gpu_evidence(),
         "backend": _backend_evidence(inputs.project_root, inputs.source),
     }
-    encode_section = _encode_evidence(inputs.encode)
+    encode_section = _conditional_evidence(inputs.encode, _ENCODE_EVIDENCE_READERS)
     if encode_section is not None:
         evidence["encode"] = encode_section
-    rate_section = _rate_evidence(inputs.rate_baseline)
+    rate_section = _conditional_evidence(inputs.rate_baseline, _RATE_EVIDENCE_READERS)
     if rate_section is not None:
         evidence["rate"] = rate_section
     return evidence
-
-
-def _signal_measure(value: object) -> float | None:
-    """Read one evidence value as a measurement; ``bool`` is malformed."""
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return float(value)
 
 
 def _signal_flag(value: object) -> bool | None:
@@ -1480,7 +1482,7 @@ def _worst_forward_evidence(
         evidence = _forward_evidence(forward, now=now)
         in_flight = evidence["in_flight"] is True
         dead = in_flight and evidence["thread_alive"] is False
-        age = _signal_measure(evidence["age_seconds"])
+        age = measurement(evidence["age_seconds"])
         rank = (2 if dead else 1 if in_flight else 0, age if age is not None else -1.0)
         if rank > worst_rank:
             worst_rank, worst = rank, evidence
@@ -1529,14 +1531,14 @@ def machine_pressure(
     )
     signals = MachinePressureSignals(
         forward_in_flight=forward_block["in_flight"] is True,
-        forward_age_seconds=_signal_measure(forward_block["age_seconds"]),
+        forward_age_seconds=measurement(forward_block["age_seconds"]),
         forward_thread_alive=_signal_flag(forward_block["thread_alive"]),
-        gpu_utilization_percent=_signal_measure(gpu.get("utilization_percent")),
-        gpu_memory_used_mb=_signal_measure(gpu.get("memory_used_mb")),
-        gpu_memory_total_mb=_signal_measure(gpu.get("memory_total_mb")),
+        gpu_utilization_percent=measurement(gpu.get("utilization_percent")),
+        gpu_memory_used_mb=measurement(gpu.get("memory_used_mb")),
+        gpu_memory_total_mb=measurement(gpu.get("memory_total_mb")),
         backend_probed=probed,
         backend_alive=_signal_flag(backend.get("alive")),
-        backend_latency_seconds=_signal_measure(backend.get("latency_seconds")),
+        backend_latency_seconds=measurement(backend.get("latency_seconds")),
         backend_probe_bound_seconds=_BACKEND_PROBE_TIMEOUT_SECONDS if probed else None,
         encode_waiters=waiting,
         store_failures=store_failures,
