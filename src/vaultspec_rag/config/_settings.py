@@ -360,23 +360,26 @@ class VaultSpecConfigWrapper:
         # bound the work an already-resident process does; this one decides
         # whether it becomes resident at all.
         #
-        # The floor must exceed the resident stack a load is about to create
+        # The floor must cover the resident stack a load is about to create
         # PLUS the largest legitimate demand that stack then places on top of
         # its own residency. Sizing it to residency alone is the trap: on a card
         # already holding one tenant, the free memory left over still clears
         # such a floor, so a second stack is admitted - and two residencies plus
         # one peak exceed the device, which is precisely the arrangement the
-        # gate exists to refuse. The embedding, sparse, and reranker stacks
-        # measure 6301 MiB resident together, and the largest legitimate demand
-        # above that residency measures 4609 MiB, so nothing at or below their
-        # 10910 MiB sum is a sufficient floor. This sits above it with margin
-        # while staying low enough that an ordinary desktop session holding a
-        # few GiB does not refuse a load the card could have served.
+        # gate exists to refuse.
         #
-        # Uncalibrated against a live device: the two figures are measured, the
-        # margin over their sum is not. The shape of the check is settled - free
-        # below the floor refuses - and the numeral moves on evidence.
-        "gpu_admission_floor_mib": 11264,
+        # Zero, the default, means derive it from the CUDA demand the configured
+        # support profile declares - the same declaration the per-job ceiling is
+        # derived from. A shipped absolute would be a statement about one
+        # machine: sized to a large card it refuses every load on a smaller one,
+        # permanently, because free memory can never reach it; sized to a small
+        # one it under-protects a larger card, where two stacks still collide
+        # beneath the figure it names. The demand is a property of the models,
+        # so it is the workload that sets this and not the hardware.
+        #
+        # A positive value is an authoritative operator override in MiB, for a
+        # card whose owner knows it better than any derivation can.
+        "gpu_admission_floor_mib": 0,
         # Named profile definitions and corpus dimensions live in
         # ``index_profiles``; this selects the service default.
         "index_support_profile": "managed-service",

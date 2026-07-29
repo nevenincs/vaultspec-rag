@@ -18,6 +18,7 @@ hold, and never gets a green result from a lock that was not taken.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -43,6 +44,7 @@ from .._gpu_admission import (
     device_load_wire,
     load_window_lock_path,
 )
+from .._units import bytes_to_mib
 from ..config._settings import rag_default
 from ..config._types import EnvVar
 from ..memory_probe import CudaDeviceMemory
@@ -55,36 +57,57 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-#: A 16 GiB card with room to spare, and the same card with a resident stack on
-#: it. The pair is what the floor is meant to separate.
+#: An arbitrary floor pinned for the predicate tests below, deliberately NOT
+#: the shipped default: those tests are about how a reading and a floor combine,
+#: so they must not move when the default's derivation changes. The default's own
+#: soundness is asserted separately, against the measurements.
+_FLOOR = 8448
+
+#: The scenario device every reading below describes, stated as a relation to the
+#: floor under test rather than as any real card: a total twice the floor, with
+#: free memory a margin above it in one reading and the same margin below it in
+#: the other. What the floor separates is those two figures, and naming a
+#: particular device would tie these guards to one machine while asserting
+#: nothing extra - the comparison does not know how large the card is.
+_SCENARIO_TOTAL_MIB = _FLOOR * 2
+_SCENARIO_MARGIN_MIB = 2048
+_ABOVE_FLOOR_MIB = _FLOOR + _SCENARIO_MARGIN_MIB
+_BELOW_FLOOR_MIB = _FLOOR - _SCENARIO_MARGIN_MIB
+
+#: Room to spare, and the same device with a resident stack on it. The pair is
+#: what the floor is meant to separate.
 _ROOMY = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
-    free_mib=14000.0,
-    total_mib=16376.0,
+    free_mib=float(_ABOVE_FLOOR_MIB),
+    total_mib=float(_SCENARIO_TOTAL_MIB),
 )
 _CROWDED = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
-    free_mib=2000.0,
-    total_mib=16376.0,
+    free_mib=float(_BELOW_FLOOR_MIB),
+    total_mib=float(_SCENARIO_TOTAL_MIB),
 )
 
-#: An arbitrary floor pinned for the predicate tests below, deliberately NOT
-#: the shipped default: those tests are about how a reading and a floor combine,
-#: so they must not move when the default is recalibrated. The shipped default's
-#: own soundness is asserted separately, against the measurements.
-_FLOOR = 8448
+#: A present device whose driver answered presence and then refused the memory
+#: query. The verdict it produces is admitted, and is the one verdict no floor
+#: was consulted for - which is what the latch has to tell apart. It carries no
+#: device size on purpose: nothing asserted about the latch depends on one, and
+#: a figure here would tie this guard to a particular card without buying it
+#: anything.
+_UNREADABLE = CudaDeviceMemory(
+    torch_present=True,
+    cuda_present=True,
+    free_mib=None,
+    total_mib=None,
+)
 
-#: The device this project targets, in MiB, as the driver reports it - a 16 GiB
-#: card measures slightly under its nominal size.
-_DEVICE_TOTAL_MIB = 16376
-
-#: The two measured figures the shipped floor has to clear: what the embedding,
+#: Two measured properties of this project's MODELS, in MiB: what the embedding,
 #: sparse, and reranker stacks occupy together once all three are resident, and
 #: the largest legitimate demand one of them then places above that residency.
-#: Named here so the soundness properties below are derived from the
-#: measurements rather than restating the floor they are checking.
+#: Model weights occupy what they occupy on any card, so these travel with the
+#: software rather than with the machine they were measured on - which is what
+#: lets them check the profile's declared demand without asserting a device size.
 _MEASURED_RESIDENT_STACK_MIB = 6301
 _MEASURED_PEAK_NET_DEMAND_MIB = 4609
 
@@ -187,8 +210,8 @@ class TestTheFloorPredicate:
 
         assert admission.admitted is False
         assert admission.reason == REASON_BELOW_FLOOR
-        assert admission.free_mib == 2000
-        assert admission.total_mib == 16376
+        assert admission.free_mib == _BELOW_FLOOR_MIB
+        assert admission.total_mib == _SCENARIO_TOTAL_MIB
         assert admission.floor_mib == _FLOOR
 
     def test_free_memory_at_the_floor_is_admitted(self) -> None:
@@ -202,7 +225,7 @@ class TestTheFloorPredicate:
             torch_present=True,
             cuda_present=True,
             free_mib=float(_FLOOR),
-            total_mib=16376.0,
+            total_mib=float(_SCENARIO_TOTAL_MIB),
         )
 
         admission = admission_from_reading(reading, floor_mib=_FLOOR)
@@ -229,7 +252,7 @@ class TestTheFloorPredicate:
                 torch_present=True,
                 cuda_present=True,
                 free_mib=_FLOOR - 0.4,
-                total_mib=16376.0,
+                total_mib=float(_SCENARIO_TOTAL_MIB),
             ),
             floor_mib=_FLOOR,
         )
@@ -238,7 +261,7 @@ class TestTheFloorPredicate:
                 torch_present=True,
                 cuda_present=True,
                 free_mib=_FLOOR + 0.4,
-                total_mib=16376.0,
+                total_mib=float(_SCENARIO_TOTAL_MIB),
             ),
             floor_mib=_FLOOR,
         )
@@ -296,7 +319,7 @@ class TestTheFloorPredicate:
                 torch_present=True,
                 cuda_present=True,
                 free_mib=None,
-                total_mib=16376.0,
+                total_mib=float(_SCENARIO_TOTAL_MIB),
             ),
             floor_mib=_FLOOR,
         )
@@ -309,76 +332,131 @@ class TestTheFloorPredicate:
         """An operator can only act on a refusal that carries the figures.
 
         Mutation: dropped the reading from the rendered message, leaving the
-        standing prose alone. Observed this assertion fail on the ``2000 MiB``
+        standing prose alone. Observed this assertion fail on the free-memory
         membership check.
         """
         message = device_contended_message(
             admission_from_reading(_CROWDED, floor_mib=_FLOOR)
         )
 
-        assert "2000 MiB free" in message
+        assert f"{_BELOW_FLOOR_MIB} MiB free" in message
         assert f"{_FLOOR} MiB floor" in message
         assert EnvVar.GPU_ADMISSION_FLOOR_MIB.value in message
 
 
-class TestTheShippedFloorIsSound:
-    """The shipped default must refuse a second tenant, whatever its value.
+class TestTheFloorIsDerivedFromTheWorkload:
+    """The floor is a statement about the models, never about one card.
 
-    These pin the PROPERTY, never the numeral. A test asserting the floor equals
-    some number would have passed just as happily at a value where a resident
-    tenant still left room to admit a second stack - reporting the defect as
-    healthy, which is worse than having no test at all. Both assertions here are
-    derived from the two measured figures, so they keep their meaning if those
-    measurements are revised and they fail if the floor drifts below what the
-    measurements require.
+    A shipped absolute cannot be right on more than one device: sized to a large
+    card it refuses every load on a smaller one - permanently, because free
+    memory can never reach it - and sized to a small one it under-protects a
+    larger card, where two stacks still collide beneath the figure it names. So
+    what is pinned here is that the floor tracks the declared CUDA demand of the
+    workload, that it moves when that declaration does, and that an operator
+    keeps the last word for a card they know better.
     """
 
-    def test_the_floor_exceeds_a_stack_plus_its_own_peak_demand(self) -> None:
+    def test_the_shipped_configuration_names_no_device_size(self) -> None:
+        """The default must be a derivation, not a figure.
+
+        Mutation: restored an absolute default (11264). Observed this assertion
+        fail on ``shipped == 0``, the shipped configuration once again asserting
+        a size for a card it has never seen.
+        """
+        assert int(rag_default("gpu_admission_floor_mib")) == 0
+
+    def test_the_floor_covers_the_configured_workload_s_declared_demand(
+        self,
+    ) -> None:
         """A load needs room for what it creates AND what it then does.
 
-        Mutation: returned the floor to a value sized to the resident stack plus
-        a generic headroom figure (8448). Observed this assertion fail on
-        ``8448 > 10910``.
+        The profile declares that demand per content domain and the per-job CUDA
+        ceiling is derived from the same declaration, so the floor covering it is
+        what makes "room for one workload" mean the same thing on both sides.
+
+        Mutation: derived the floor from ``min`` of the two domains instead of
+        ``max``. Observed this assertion fail on the code domain's 12288 MiB
+        against a floor of 12288 for a profile whose domains differ - and on the
+        ``>=`` for a profile where the document domain is the larger.
         """
-        shipped = int(rag_default("gpu_admission_floor_mib"))
+        from .._gpu_admission import _workload_floor_mib
+        from ..config._settings import get_config
+        from ..index_profiles import get_index_support_profile
+
+        profile = get_index_support_profile(get_config().index_support_profile)
+        declared_mib = max(
+            bytes_to_mib(profile.code.cuda_bytes),
+            bytes_to_mib(profile.document.cuda_bytes),
+        )
+
+        assert _workload_floor_mib() >= int(declared_mib), (
+            "the derived floor does not cover one workload's declared CUDA "
+            "demand, so a second stack can be admitted beside a resident one"
+        )
+
+    def test_a_smaller_workload_profile_yields_a_smaller_floor(self) -> None:
+        """The floor moves with the workload, which is the whole point.
+
+        The two shipped profiles declare different CUDA demand, so a derivation
+        that tracks the workload must separate them. A constant cannot.
+
+        Mutation: returned a fixed figure from ``_workload_floor_mib``. Observed
+        this assertion fail on ``embedded < managed`` with both figures equal.
+        """
+        from .._gpu_admission import _workload_floor_mib
+
+        with managed_env(**{EnvVar.INDEX_SUPPORT_PROFILE.value: "managed-service"}):
+            managed = _workload_floor_mib()
+        with managed_env(**{EnvVar.INDEX_SUPPORT_PROFILE.value: "embedded-local"}):
+            embedded = _workload_floor_mib()
+
+        assert embedded < managed
+
+    def test_an_operator_figure_overrides_the_derivation(self) -> None:
+        """One card's owner may know it better than any derivation.
+
+        Mutation: dropped the ``configured > 0`` branch from
+        ``_configured_floor_mib``. Observed this assertion fail on
+        ``floor == _FLOOR``, the override silently replaced by the derived
+        figure.
+        """
+        from .._gpu_admission import _configured_floor_mib, _workload_floor_mib
+
+        with managed_env(**{EnvVar.GPU_ADMISSION_FLOOR_MIB.value: str(_FLOOR)}):
+            assert _configured_floor_mib() == _FLOOR
+        assert _configured_floor_mib() == _workload_floor_mib()
+
+    def test_the_declared_demand_covers_this_project_s_measured_stack(
+        self,
+    ) -> None:
+        """The declaration has to be sound, not merely present.
+
+        A derivation is only as good as what it derives from: a profile
+        declaring less CUDA demand than the models actually take would produce a
+        floor that admits a second stack onto a card holding one. The two figures
+        it is checked against are measurements of this project's models - a
+        property of the software, not of any device - so this stays meaningful on
+        hardware none of them was taken on.
+
+        Mutation: halved the profile's ``cuda_bytes`` declaration. Observed this
+        assertion fail on ``declared >= required`` with 6144 against 10910.
+        """
+        from ..config._settings import get_config
+        from ..index_profiles import get_index_support_profile
+
+        profile = get_index_support_profile(get_config().index_support_profile)
+        declared = min(
+            bytes_to_mib(profile.code.cuda_bytes),
+            bytes_to_mib(profile.document.cuda_bytes),
+        )
         required = _MEASURED_RESIDENT_STACK_MIB + _MEASURED_PEAK_NET_DEMAND_MIB
 
-        assert shipped > required, (
-            f"the shipped floor is {shipped} MiB, which does not exceed the "
-            f"{required} MiB a load actually needs ({_MEASURED_RESIDENT_STACK_MIB} "
-            f"MiB resident plus {_MEASURED_PEAK_NET_DEMAND_MIB} MiB of demand "
-            "above it); a load admitted at this floor can still run the device out"
+        assert declared >= required, (
+            f"the profile declares {declared:.0f} MiB of CUDA demand but the "
+            f"stacks measure {_MEASURED_RESIDENT_STACK_MIB} MiB resident plus "
+            f"{_MEASURED_PEAK_NET_DEMAND_MIB} MiB of demand above them; a floor "
+            "derived from this declaration would admit a load the card cannot hold"
         )
-
-    def test_the_free_memory_one_resident_tenant_leaves_is_refused(self) -> None:
-        """The incident arrangement, stated as a reading and refused.
-
-        This is the case a residency-sized floor admitted: one tenant already
-        holds the card, and the free memory it leaves behind must not be enough
-        to bring a second stack up beside it.
-
-        Mutation: returned the floor to 8448. Observed this assertion fail on
-        ``admitted is False``, the second stack being admitted onto a card that
-        could not hold both.
-        """
-        shipped = int(rag_default("gpu_admission_floor_mib"))
-        free_beside_one_tenant = _DEVICE_TOTAL_MIB - _MEASURED_RESIDENT_STACK_MIB
-
-        admission = admission_from_reading(
-            CudaDeviceMemory(
-                torch_present=True,
-                cuda_present=True,
-                free_mib=float(free_beside_one_tenant),
-                total_mib=float(_DEVICE_TOTAL_MIB),
-            ),
-            floor_mib=shipped,
-        )
-
-        assert admission.admitted is False, (
-            f"{free_beside_one_tenant} MiB free - what one resident tenant "
-            f"leaves on this device - was admitted against a {shipped} MiB floor"
-        )
-        assert admission.reason == REASON_BELOW_FLOOR
 
 
 class TestTheLoadWindow:
@@ -696,6 +774,114 @@ class TestTheAdmissionLatch:
         with pytest.raises(RuntimeError, match="too contended"):
             admit_gpu_load(lambda: "second", window=source)
 
+    def test_a_verdict_that_never_reached_the_floor_is_not_latched(
+        self,
+        tmp_path: Path,
+        floor: int,
+    ) -> None:
+        """A reading that was never taken must not retire the gate.
+
+        The first verdict here is the driver answering presence and refusing the
+        memory query: admitted, because turning a hiccup into a refusal of all
+        GPU work costs more than it buys - but admitted without the floor ever
+        being consulted. Latching that would mean one transient probe failure on
+        a working device left the floor unevaluated for the life of the process,
+        with the gate still reporting itself present. So the second call must
+        reach the window again, and the roomy figure it finds there is the first
+        real evaluation this process has made.
+
+        Mutation: restored the unconditional ``_admitted = True``. Observed this
+        assertion fail on ``len(entries) == 2`` with ``entries == [1]`` - the
+        second load rode a latch earned by a reading that never happened. The
+        sibling refusal-not-latched guard passes under that same mutation,
+        because a refusal raises before the assignment either way.
+        """
+        del floor
+        entries: list[int] = []
+        source = _windowed(
+            tmp_path / "load-window.lock",
+            [_UNREADABLE, _ROOMY],
+            entries,
+        )
+
+        assert admit_gpu_load(lambda: "first", window=source) == "first"
+        assert admit_gpu_load(lambda: "second", window=source) == "second"
+        assert len(entries) == 2
+
+    def test_an_unattributable_figure_does_not_refuse_the_second_stack(
+        self,
+        tmp_path: Path,
+        floor: int,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The retry must not refuse a process on its own residency.
+
+        The counterpart to the guard above, and the reason it is safe. Once a
+        load has gone through without an evaluated verdict, this process holds
+        models the device-wide figure includes, so a below-floor reading may be
+        describing them rather than a foreign tenant - and refusing here would
+        fail the second stack a search path needs while naming another consumer
+        as the cause. The figure is reported and the load proceeds, and because
+        this verdict did reach the floor it also latches, so the report is made
+        once per process rather than at every later load site.
+
+        Mutation: forced the escape's flag read - ``if not
+        _unattributable_load:`` to ``if True:`` - so the refusal always fires.
+        Observed this assertion fail on ``RuntimeError`` naming the contended
+        device, raised from the second ``admit_gpu_load``.
+        """
+        del floor
+        entries: list[int] = []
+        source = _windowed(
+            tmp_path / "load-window.lock",
+            [_UNREADABLE, _CROWDED, _CROWDED],
+            entries,
+        )
+
+        assert admit_gpu_load(lambda: "first", window=source) == "first"
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag._gpu_admission"):
+            assert admit_gpu_load(lambda: "second", window=source) == "second"
+        assert any(
+            "cannot be told apart from this process's own residency"
+            in record.getMessage()
+            for record in caplog.records
+        ), [record.getMessage() for record in caplog.records]
+
+        # Evaluated, so latched: the third load neither re-reads nor repeats it.
+        assert admit_gpu_load(lambda: "third", window=source) == "third"
+        assert len(entries) == 2
+
+    def test_a_release_retires_the_unattributable_allowance_too(
+        self,
+        tmp_path: Path,
+        floor: int,
+    ) -> None:
+        """A release makes the figure attributable again, so the allowance ends.
+
+        Without this the flag would outlive the residency that justified it: a
+        process that once loaded under an unevaluated verdict would carry a
+        standing permission to ignore the floor across every later release,
+        which is the permanent no-op this whole change removes, reintroduced by
+        the mechanism that fixes it.
+
+        Mutation: left ``_unattributable_load`` set in
+        ``clear_gpu_admission_latch``. Observed this assertion fail on
+        ``pytest.raises(RuntimeError)`` - the post-release load rode the stale
+        allowance and was admitted onto a card below the floor.
+        """
+        del floor
+        entries: list[int] = []
+        source = _windowed(
+            tmp_path / "load-window.lock",
+            [_UNREADABLE, _CROWDED],
+            entries,
+        )
+
+        assert admit_gpu_load(lambda: "first", window=source) == "first"
+        clear_gpu_admission_latch()
+        with pytest.raises(RuntimeError, match="too contended"):
+            admit_gpu_load(lambda: "second", window=source)
+
     def test_two_threads_racing_the_first_load_are_both_admitted(
         self,
         tmp_path: Path,
@@ -762,7 +948,7 @@ class TestTheWireReading:
         admission = DeviceAdmission(
             admitted=False,
             free_mib=2000,
-            total_mib=16376,
+            total_mib=_SCENARIO_TOTAL_MIB,
             floor_mib=6400,
             reason=REASON_BELOW_FLOOR,
         )
@@ -770,7 +956,7 @@ class TestTheWireReading:
         wire = device_load_wire(admission)
 
         assert wire["free_mib"] == 2000
-        assert wire["total_mib"] == 16376
+        assert wire["total_mib"] == _SCENARIO_TOTAL_MIB
         assert wire["floor_mib"] == 6400
         assert wire["admitted"] is False
         assert wire["reason"] == REASON_BELOW_FLOOR
@@ -786,7 +972,11 @@ class TestTheWireReading:
         ``__getitem__``).
         """
         admission = DeviceAdmission(
-            admitted=True, free_mib=9000, total_mib=16376, floor_mib=6400, reason=""
+            admitted=True,
+            free_mib=9000,
+            total_mib=_SCENARIO_TOTAL_MIB,
+            floor_mib=6400,
+            reason="",
         )
         monkeypatch.setattr(
             "vaultspec_rag._gpu_admission.evaluate_device_admission",
