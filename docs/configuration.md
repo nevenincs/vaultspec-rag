@@ -102,6 +102,8 @@ Changing a model against an index built with another one is an operator decision
 | `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE`          | integer | `32`    | Vault inner encode sub-batch size                   | -        |
 | `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE`     | integer | `32`    | Code inner encode sub-batch size                    | -        |
 | `VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE` | integer | `12`    | Document inner encode sub-batch size                | -        |
+| `VAULTSPEC_RAG_EMBEDDING_ENCODE_TOKEN_BUDGET`        | integer | `24000` | Estimated token footprint allowed per encode bucket | -        |
+| `VAULTSPEC_RAG_EMBEDDING_ENCODE_CHARS_PER_TOKEN`     | integer | `3`     | Chars-per-token ratio used to plan encode buckets   | -        |
 | `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`             | integer | `2048`  | Hard cap on sequence length advertised to the model | -        |
 | `VAULTSPEC_RAG_MAX_EMBED_CHARS`                      | integer | `8000`  | Character cap applied to each text before encoding  | -        |
 | `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`                  | integer | `1024`  | Reranker token bound                                | -        |
