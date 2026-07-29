@@ -171,7 +171,8 @@ def test_an_unattended_gate_publishes_a_generation_without_emptying_the_served_o
     """
     import json as _json
 
-    from ..._index_breadth import code_meta_path
+    from ..._index_breadth import index_meta_path
+    from ..._source_types import PublicSourceType
     from ...indexer._code_meta import EMBED_SCHEMA_KEY
 
     paths = _write_code_files(tmp_path, 24, "unattended-gate")
@@ -192,7 +193,7 @@ def test_an_unattended_gate_publishes_a_generation_without_emptying_the_served_o
 
         # Age the embed-format marker so the unattended gate fires on the next
         # incremental, exactly as it would after a format change shipped.
-        meta_path = code_meta_path(tmp_path)
+        meta_path = index_meta_path(tmp_path, PublicSourceType.CODE)
         raw = _json.loads(meta_path.read_text(encoding="utf-8"))
         raw[EMBED_SCHEMA_KEY] = "superseded-regime"
         meta_path.write_text(_json.dumps(raw), encoding="utf-8")

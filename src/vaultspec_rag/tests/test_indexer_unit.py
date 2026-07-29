@@ -1594,13 +1594,14 @@ class TestPublishedFileBreadth:
         """Write a sidecar naming *named* files and claiming *covered* coverage."""
         import json as _json
 
-        from .._index_breadth import PUBLISHED_FILES_KEY, code_meta_path
+        from .._index_breadth import PUBLISHED_FILES_KEY, index_meta_path
+        from .._source_types import PublicSourceType
 
         reserved: dict[str, str] = {}
         if covered is not None:
             reserved[PUBLISHED_FILES_KEY] = covered
         entries = {f"src/mod_{index}.py": f"hash{index}" for index in range(named)}
-        path = code_meta_path(root)
+        path = index_meta_path(root, PublicSourceType.CODE)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_json.dumps({**reserved, **entries}), encoding="utf-8")
 
