@@ -1128,7 +1128,7 @@ async def test_watcher_cancellation_releases_real_admitted_claim(
         )
         active_state = await _wait_for_watcher_state(
             state_path,
-            lambda state: isinstance(state.get("attempt_generation"), int),
+            lambda state: jobs.count(state.get("attempt_generation")) is not None,
             "watcher never durably admitted a convergence generation",
         )
         running = await _wait_for_watcher_job(

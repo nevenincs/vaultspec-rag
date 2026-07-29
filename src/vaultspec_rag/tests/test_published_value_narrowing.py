@@ -368,13 +368,23 @@ _NARROWING_SURFACES: tuple[str, ...] = (
     "server/_routes_jobs.py",
 )
 
+#: Whole trees held to the same rule, every module in them.
+#:
+#: The integration fixtures and helpers wait on the SAME published status the
+#: renderers above display - a daemon pid, a supervised child's pid and port,
+#: a start time - and they re-derived the narrowing by hand at five sites
+#: while the file-by-file list above looked only at production. A tree entry
+#: rather than a file list is the point: a helper added tomorrow is covered
+#: the day it lands, without anyone remembering to enrol it.
+_NARROWING_SURFACE_TREES: tuple[str, ...] = ("tests/integration",)
+
 #: The ONLY functions on those surfaces allowed to narrow a number with their
 #: own ``isinstance``, each named with the reason it cannot route through a
 #: reader. The list is asserted exhaustive in both directions - an unnamed
 #: offender fails, and a name that no longer needs exempting also fails - so
 #: it can neither grow silently nor rot into a blanket suppression.
 #:
-#: Every entry is a terminal renderer taking an untrusted ``object``. They sit
+#: Most entries are terminal renderers taking an untrusted ``object``. They sit
 #: BEHIND the readers as the last line of defence, so they are reached both by
 #: values a reader already narrowed and by raw payload fields, and they cannot
 #: delegate their guard to a caller that may not exist.
@@ -393,18 +403,55 @@ _NARROWING_EXEMPT: dict[str, str] = {
     "_format_delay_milliseconds": "terminal renderer of an untrusted object",
     # Same, at second granularity.
     "_format_delay_seconds": "terminal renderer of an untrusted object",
+    # Not a published value at all: it sorts a heterogeneous ``Future``
+    # result, where the shape IS the discriminator between the search futures
+    # and the reindex future. Routing that through a published-value reader
+    # would misdescribe what is being asked.
+    "test_concurrent_searches_and_reindex_across_two_repos_hold": (
+        "discriminates a future result, not a published field"
+    ),
 }
 
 _NUMERIC_SHAPES = frozenset({"int", "float"})
 
 
+def _narrowing_surface_paths() -> dict[Path, str]:
+    """Every enrolled source file, mapped to the label offenders report it by."""
+    package_root = Path(_jobs_module.__file__).parent
+    surfaces = {package_root / relative: relative for relative in _NARROWING_SURFACES}
+    for tree_relative in _NARROWING_SURFACE_TREES:
+        for path in sorted((package_root / tree_relative).rglob("*.py")):
+            surfaces[path] = path.relative_to(package_root).as_posix()
+    return surfaces
+
+
+def _asserted_nodes(tree: ast.Module) -> frozenset[int]:
+    """Identify every node sitting inside an ``assert``.
+
+    An ``assert isinstance(...)`` is not this rule's target, and the reason is
+    the defect being guarded against rather than a convenience. The twins
+    caused harm by ACCEPTING a malformed value and rendering it - ``True`` as
+    a 1970 clock time, a completion of "1 of 1". An assert does the opposite:
+    it stops the run and names the field. So a test pinning that the service
+    published a ``float`` is stating the contract, which is its job, while a
+    narrowing that lets execution continue with whatever it decided is the
+    reader written a second time. Without this the rule would forbid the
+    integration suite from asserting the published shape at all.
+    """
+    return frozenset(
+        id(node)
+        for statement in ast.walk(tree)
+        if isinstance(statement, ast.Assert)
+        for node in ast.walk(statement)
+    )
+
+
 def _numeric_isinstance_offenders() -> dict[str, list[str]]:
     """Map each function that narrows a number itself to where it does so."""
-    package_root = Path(_jobs_module.__file__).parent
     offenders: dict[str, list[str]] = {}
-    for relative in _NARROWING_SURFACES:
-        path = package_root / relative
+    for path, label in _narrowing_surface_paths().items():
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        asserted = _asserted_nodes(tree)
         for function in ast.walk(tree):
             if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
@@ -414,6 +461,7 @@ def _numeric_isinstance_offenders() -> dict[str, list[str]]:
                     or not isinstance(node.func, ast.Name)
                     or node.func.id != "isinstance"
                     or len(node.args) != 2
+                    or id(node) in asserted
                 ):
                     continue
                 named = {
@@ -423,7 +471,7 @@ def _numeric_isinstance_offenders() -> dict[str, list[str]]:
                 }
                 if named & _NUMERIC_SHAPES:
                     offenders.setdefault(function.name, []).append(
-                        f"{relative}:{node.lineno}"
+                        f"{label}:{node.lineno}"
                     )
     return offenders
 
@@ -443,6 +491,14 @@ class TestNoSurfaceNarrowsANumberTwice:
     ``test_no_unexempted_function_narrows_a_number`` on ``assert unexempted ==
     {}``, reporting ``{'_gpu_cell': ['cli/_jobs_tui.py:1374']} == {}``;
     restoring the reader call returns every test here to green.
+
+    Proved able to fail on the integration tree the same way: replacing
+    ``count(info.get("pid"))`` in ``_service_processes_on_port`` with an
+    inline ``isinstance(pid, int) and not isinstance(pid, bool)`` test fails
+    the same assertion, reporting ``{'_service_processes_on_port':
+    ['tests/integration/_service_lifecycle_helpers.py:210']} == {}``;
+    restoring the reader call returns every test here to green. That is the
+    site the file-by-file surface list could not see.
     """
 
     def test_no_unexempted_function_narrows_a_number(self) -> None:

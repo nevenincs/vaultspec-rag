@@ -190,6 +190,19 @@ _RESILIENCE_MEASURE_KEYS = (
 )
 
 
+def _rounded_measure(key: str, value: object) -> object:
+    """Round one resilience measure to the compared precision, or pass it on.
+
+    The narrowing is the canonical reader's rather than restated here, so an
+    unreadable measure is carried through untouched on BOTH sides of the
+    comparison instead of being rounded on one of them.
+    """
+    if key not in _RESILIENCE_MEASURE_KEYS:
+        return value
+    measured = _managed_jobs.measurement(value)
+    return value if measured is None else round(measured, 1)
+
+
 def _resilience_state(resilience: dict[str, object]) -> dict[str, object]:
     """Return the shared resilience state: measures rounded, remediation dropped.
 
@@ -198,18 +211,11 @@ def _resilience_state(resilience: dict[str, object]) -> dict[str, object]:
     liveness-facing health rollup deliberately does not carry. It is verified
     separately as a correct derivation of the shared terminal outcome.
     """
-    state = {
-        key: (
-            round(float(value), 1)
-            if key in _RESILIENCE_MEASURE_KEYS
-            and isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            else value
-        )
+    return {
+        key: _rounded_measure(key, value)
         for key, value in resilience.items()
         if key != "remediation"
     }
-    return state
 
 
 def _assert_resilience_health(
