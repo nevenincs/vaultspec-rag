@@ -19,16 +19,22 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from .._job_errors import DEGRADED_THRESHOLD_SECONDS, STALL_THRESHOLD_SECONDS
+from .._job_errors import (
+    DEGRADED_THRESHOLD_SECONDS,
+    RATE_COLLAPSE_RATIO,
+    STALL_THRESHOLD_SECONDS,
+)
 from ..job_models import JobSource
 from ..jobs import (
     DegradationInputs,
     JobProgressReporter,
     degradation_evidence,
     forward_telemetry,
+    progress_rate_baseline,
     record_progress,
     record_start,
     reset,
+    snapshot,
 )
 from ..server._routes_jobs import _job_degradation, _job_summary, _job_with_liveness
 
@@ -52,6 +58,7 @@ _FORWARD_KEYS = {
     "expected",
 }
 _CPU_KEYS = {"available", "utilization_percent"}
+_RATE_KEYS = {"recent_per_second", "median_per_second", "ratio"}
 _GPU_KEYS = {"available", "utilization_percent", "memory_used_mb", "memory_total_mb"}
 _BACKEND_KEYS = {"alive", "latency_seconds", "detail"}
 
@@ -540,6 +547,197 @@ class TestJobsRouteGpuExposure:
         assert set(gpu) == _GPU_KEYS, (
             "the polled listing is where the header reads GPU pressure from"
         )
+
+
+# The measured shape of a tail-throughput collapse: a code index clearing
+# most of a 4,703-file corpus at ~13 files/s, then dropping by roughly an
+# order of magnitude for the tail while continuing to report normally. The
+# reporting cadence is the production one (every few seconds), which is what
+# keeps the rate window short and the retained baseline long.
+_CORPUS = 4703
+_FAST_RATE = 13.3
+_COLLAPSED_RATE = 1.9
+_REPORT_INTERVAL = 5.0
+_ENCODING_STEP = "chunk + embed"
+
+
+def _replay_rate(
+    job_id: str,
+    *,
+    start_at: float,
+    completed: float,
+    rate: float,
+    seconds: float,
+) -> tuple[float, float]:
+    """Report real progress at *rate* for *seconds*; return the end state.
+
+    Drives the production reporting path at injected times, so the rate
+    window, the retained baseline, and the verdict are all computed by the
+    service from progress it actually observed.
+    """
+    at = start_at
+    done = completed
+    while at < start_at + seconds:
+        at += _REPORT_INTERVAL
+        done += rate * _REPORT_INTERVAL
+        record_progress(job_id, _ENCODING_STEP, int(done), _CORPUS, now=at)
+    return at, done
+
+
+def _replayed_record(job_id: str) -> dict[str, object]:
+    return next(entry for entry in snapshot() if entry["id"] == job_id)
+
+
+class TestRateBaselineVerdict:
+    """A run that collapses against itself is degraded, not healthy.
+
+    The recency inputs cannot see this: a clamped encode stage keeps ticking
+    progress, so every age stays fresh while the run delivers a fraction of
+    the work it was delivering minutes earlier. These replays drive real
+    progress through the real registry and read the service verdict.
+    """
+
+    def test_a_collapsed_rate_is_degraded_while_progress_stays_fresh(self) -> None:
+        """The incident shape: reporting normally at a tenth of its own rate.
+
+        Mutation check: replacing the final line of ``_job_degradation`` with
+        a bare ``return "healthy"`` (dropping the ``_rate_collapsed`` input)
+        makes this fail on the ``degradation == "degraded"`` assertion below,
+        not on an import or a collection error; restoring it returns to green.
+        """
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
+        at, done = _replay_rate(
+            job_id,
+            start_at=0.0,
+            completed=0.0,
+            rate=_FAST_RATE,
+            seconds=300.0,
+        )
+        at, done = _replay_rate(
+            job_id,
+            start_at=at,
+            completed=done,
+            rate=_COLLAPSED_RATE,
+            seconds=120.0,
+        )
+
+        record = _replayed_record(job_id)
+        now = at + 1.0
+        shaped = _job_with_liveness(record, now=now)
+
+        # Every recency input is healthy: the run reported a second ago and
+        # is nowhere near either threshold, so the verdict below can only
+        # have been earned by the throughput comparison.
+        age = shaped["last_progress_age_seconds"]
+        assert isinstance(age, float)
+        assert age < DEGRADED_THRESHOLD_SECONDS
+        assert shaped["stalled"] is False
+
+        assert shaped["degradation"] == "degraded"
+
+        baseline = _as_map(shaped["progress_rate_baseline"])
+        assert set(baseline) == _RATE_KEYS
+        recent = baseline["recent_per_second"]
+        median = baseline["median_per_second"]
+        ratio = baseline["ratio"]
+        assert isinstance(recent, float)
+        assert isinstance(median, float)
+        assert isinstance(ratio, float)
+        assert recent == pytest.approx(_COLLAPSED_RATE, rel=0.15)
+        assert median == pytest.approx(_FAST_RATE, rel=0.15)
+        assert ratio <= RATE_COLLAPSE_RATIO
+
+    def test_the_collapse_is_named_in_the_evidence_block(self) -> None:
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
+        at, done = _replay_rate(
+            job_id,
+            start_at=0.0,
+            completed=0.0,
+            rate=_FAST_RATE,
+            seconds=300.0,
+        )
+        at, done = _replay_rate(
+            job_id,
+            start_at=at,
+            completed=done,
+            rate=_COLLAPSED_RATE,
+            seconds=120.0,
+        )
+
+        shaped = _job_with_liveness(_replayed_record(job_id), now=at + 1.0)
+        evidence = _as_map(shaped["degradation_evidence"])
+        rate = _as_map(evidence["rate"])
+        assert set(rate) == _RATE_KEYS
+        # The evidence must carry the same numbers the projection published,
+        # not a second reading taken a moment later.
+        assert rate == _as_map(shaped["progress_rate_baseline"])
+
+    def test_a_steady_run_at_the_same_cadence_is_healthy(self) -> None:
+        # The control for the replay above: identical reporting, identical
+        # recency, no collapse - so the verdict must not fire.
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
+        at, _done = _replay_rate(
+            job_id,
+            start_at=0.0,
+            completed=0.0,
+            rate=_FAST_RATE,
+            seconds=420.0,
+        )
+
+        shaped = _job_with_liveness(_replayed_record(job_id), now=at + 1.0)
+        assert shaped["degradation"] == "healthy"
+        baseline = _as_map(shaped["progress_rate_baseline"])
+        ratio = baseline["ratio"]
+        assert isinstance(ratio, float)
+        assert ratio == pytest.approx(1.0, rel=0.05)
+
+    def test_a_run_too_young_to_have_a_baseline_declines_to_compare(self) -> None:
+        # A median over a handful of observations describes a moment, not a
+        # run. Until the service has enough of them it states no baseline,
+        # which is what stops one slow stretch early in a run from firing.
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
+        at, done = _replay_rate(
+            job_id,
+            start_at=0.0,
+            completed=0.0,
+            rate=_FAST_RATE,
+            seconds=120.0,
+        )
+        at, done = _replay_rate(
+            job_id,
+            start_at=at,
+            completed=done,
+            rate=_COLLAPSED_RATE,
+            seconds=60.0,
+        )
+
+        assert progress_rate_baseline(job_id) is None
+        shaped = _job_with_liveness(_replayed_record(job_id), now=at + 1.0)
+        assert shaped["degradation"] == "healthy"
+        baseline = _as_map(shaped["progress_rate_baseline"])
+        assert baseline["median_per_second"] is None
+        assert baseline["ratio"] is None
+
+    def test_a_changed_step_starts_a_new_baseline(self) -> None:
+        # Steps have very different per-unit costs, so a baseline carried
+        # from one into the next would report every transition as a collapse.
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        record_progress(job_id, _ENCODING_STEP, 0, _CORPUS, now=0.0)
+        at, _done = _replay_rate(
+            job_id,
+            start_at=0.0,
+            completed=0.0,
+            rate=_FAST_RATE,
+            seconds=300.0,
+        )
+        assert progress_rate_baseline(job_id) is not None
+
+        record_progress(job_id, "write metadata", 0, _CORPUS, now=at + 1.0)
+        assert progress_rate_baseline(job_id) is None
 
 
 class TestBackendEvidence:
