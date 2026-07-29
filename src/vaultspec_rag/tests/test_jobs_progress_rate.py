@@ -8,7 +8,6 @@ change that resets the per-unit cost, and a resumed attempt replaying units.
 
 from __future__ import annotations
 
-import time
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -137,21 +136,28 @@ class TestProgressRateWindow:
     def test_the_whole_chain_estimates_from_real_progress(self) -> None:
         from ..server._routes_jobs import _job_with_liveness
 
+        # Reported at injected moments rather than slept out. The estimate is
+        # a count divided by an interval, so an interval read from the host's
+        # clock measures the host: the published projection is rounded to a
+        # tenth of a second, and a fast host's projection is small enough
+        # that the rounding alone exceeds any relative tolerance worth
+        # asserting. Injected, the span is exactly 3s - past the window's
+        # minimum - and 600 units across it is exactly 200/s.
         job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
-        record_progress(job_id, "embed", completed=0, total=1000)
-        # The window must span a real interval before it will answer.
-        time.sleep(1.2)
-        record_progress(job_id, "embed", completed=600, total=1000)
+        record_progress(job_id, "embed", completed=0, total=1000, now=0.0)
+        record_progress(job_id, "embed", completed=600, total=1000, now=3.0)
 
         record = next(e for e in snapshot() if e["id"] == job_id)
-        shaped = _job_with_liveness(record, now=time.time())
+        shaped = _job_with_liveness(record, now=3.0)
 
         rate = shaped["progress_rate_per_second"]
         remaining = shaped["estimated_remaining_seconds"]
         assert isinstance(rate, float) and rate > 0
         assert isinstance(remaining, float)
-        # 400 units left at the measured rate, within timing tolerance.
-        assert remaining == pytest.approx(400.0 / rate, rel=0.01)
+        assert rate == pytest.approx(200.0)
+        # 400 units left at 200/s is 2s, and both sides land on the published
+        # tenth exactly, so no tolerance is owed to a clock the test controls.
+        assert remaining == pytest.approx(400.0 / rate)
 
     def test_waiting_job_reports_no_estimate(self) -> None:
         from ..server._routes_jobs import _job_with_liveness
@@ -216,9 +222,12 @@ class TestProgressRateWindow:
 # Measured against this tree: chunk production reports once per file and
 # emits ~390 advances/second (median inter-advance gap 1.8ms) over the 483
 # source files, because the producer chunks far faster than the GPU drains.
+# A burst ends when the segment queue fills and the producer blocks on the
+# GPU draining it, which measures a few tenths of a second.
 # These are the numbers the replays below run at.
 _PRODUCTION_ADVANCES_PER_SECOND = 390.0
 _PRODUCTION_FILE_COUNT = 483
+_PRODUCTION_QUEUE_BLOCK_SECONDS = 0.3
 
 
 class TestRealisticProgressCadence:
@@ -357,30 +366,52 @@ class TestRealisticProgressCadence:
     def test_the_whole_chain_answers_at_production_cadence(self) -> None:
         from ..server._routes_jobs import _job_with_liveness
 
-        # Real wall clock through the real registry, in the shape a real run
-        # emits: the producer chunks a burst of files at full speed, blocks on
-        # the full segment queue while the GPU drains it, then bursts again.
-        # One burst alone fills a 16-sample window in under 30ms, which is
-        # precisely why a count-bounded window can never answer here.
+        # The whole chain, in the shape a real run emits: the producer chunks
+        # a burst of files at full speed, blocks on the full segment queue
+        # while the GPU drains it, then bursts again. One burst alone fills a
+        # 16-sample window in 41ms, which is precisely why a count-bounded
+        # window can never answer here.
+        #
+        # The cadence is replayed at injected moments rather than slept out.
+        # Slept out, what the window ends up spanning is the loop's own
+        # overshoot rather than the cadence: the trailing block lands after
+        # the last report, so a host that got through one burst fewer left the
+        # window spanning 0.92s, the span guard rightly refused, and the test
+        # failed on how fast the host was.
         job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
-        record_progress(job_id, "chunk + embed", 0, _PRODUCTION_FILE_COUNT)
-        started = time.monotonic()
+        record_progress(job_id, "chunk + embed", 0, _PRODUCTION_FILE_COUNT, now=0.0)
+        interval = 1.0 / _PRODUCTION_ADVANCES_PER_SECOND
+        at = 0.0
+        last_report_at = 0.0
         units = 0
-        while time.monotonic() - started < 1.2:
-            for _ in range(16):
+        for _burst in range(6):
+            for _advance in range(16):
                 units += 1
-                record_progress(job_id, "chunk + embed", units, _PRODUCTION_FILE_COUNT)
-                time.sleep(1.0 / _PRODUCTION_ADVANCES_PER_SECOND)
-            time.sleep(0.3)
+                record_progress(
+                    job_id,
+                    "chunk + embed",
+                    units,
+                    _PRODUCTION_FILE_COUNT,
+                    now=at,
+                )
+                last_report_at = at
+                at += interval
+            at += _PRODUCTION_QUEUE_BLOCK_SECONDS
 
         record = next(e for e in snapshot() if e["id"] == job_id)
-        shaped = _job_with_liveness(record, now=time.time())
+        shaped = _job_with_liveness(record, now=at)
         rate = shaped["progress_rate_per_second"]
         remaining = shaped["estimated_remaining_seconds"]
         assert isinstance(rate, float) and rate > 0
         assert isinstance(remaining, float) and remaining > 0
+        # The window spans the whole replay, so the rate is every unit over
+        # every second of it - the property the overshoot above destroyed.
+        # Published to three decimals, which is all the slack this needs.
+        assert rate == pytest.approx(units / last_report_at, rel=1e-4)
+        # The projection is published to a tenth of a second; that quantum is
+        # the only slack left once the clock is the test's to choose.
         assert remaining == pytest.approx(
-            (_PRODUCTION_FILE_COUNT - units) / rate, rel=0.05
+            (_PRODUCTION_FILE_COUNT - units) / rate, abs=0.1
         )
 
     def test_a_step_without_a_total_reports_a_rate_and_no_estimate(self) -> None:
@@ -390,12 +421,12 @@ class TestRealisticProgressCadence:
         # a measurement and is reported; there is no completion point to
         # project onto, so the remaining time stays unknown.
         job_id = record_start(JobSource.DOCUMENT, "tool", command="reindex_documents")
-        record_progress(job_id, "embed + upsert document chunks", 0, None)
-        time.sleep(1.2)
-        record_progress(job_id, "embed + upsert document chunks", 600, None)
+        record_progress(job_id, "embed + upsert document chunks", 0, None, now=0.0)
+        record_progress(job_id, "embed + upsert document chunks", 600, None, now=3.0)
 
         record = next(e for e in snapshot() if e["id"] == job_id)
-        shaped = _job_with_liveness(record, now=time.time())
+        shaped = _job_with_liveness(record, now=3.0)
         assert isinstance(shaped["progress_rate_per_second"], float)
         assert shaped["progress_rate_per_second"] > 0
+        assert shaped["progress_rate_per_second"] == pytest.approx(200.0)
         assert shaped["estimated_remaining_seconds"] is None

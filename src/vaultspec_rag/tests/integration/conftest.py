@@ -58,19 +58,19 @@ def pin_index_cuda_ceiling() -> Generator[None]:
 
     Without it the ceiling is derived from free device memory when the budget
     is built, so a neighbouring CUDA process decides whether these tests pass.
-    See ``INTEGRATION_CUDA_CEILING_MB`` for the measurements behind the value.
+    See ``INTEGRATION_CUDA_CEILING_MIB`` for the measurements behind the value.
 
     Session-scoped and set before any config is cached, so a later
     ``reset_config()`` re-reads it rather than dropping back to derivation. An
     explicit setting already in the environment is left alone, which is what
     lets an operator reproduce a ceiling failure by exporting their own.
     """
-    from ._helpers import INTEGRATION_CUDA_CEILING_MB
+    from ._helpers import INTEGRATION_CUDA_CEILING_MIB
 
-    key = EnvVar.INDEX_CUDA_CEILING_MB.value
+    key = EnvVar.INDEX_CUDA_CEILING_MIB.value
     previous = os.environ.get(key)
     if previous is None:
-        os.environ[key] = str(INTEGRATION_CUDA_CEILING_MB)
+        os.environ[key] = str(INTEGRATION_CUDA_CEILING_MIB)
         reset_config()
     try:
         yield

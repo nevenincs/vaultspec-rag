@@ -379,11 +379,11 @@ class JobManagerRecords(JobManagerState):
 
     @staticmethod
     def _process_resource_snapshot() -> ProcessResourceSnapshot:
-        from ..memory_probe import current_cuda_mb, current_rss_mb
+        from ..memory_probe import current_cuda_mib, current_rss_mib
 
-        cuda_allocated_mb, cuda_reserved_mb = current_cuda_mb()
+        cuda_allocated_mib, cuda_reserved_mib = current_cuda_mib()
         return ProcessResourceSnapshot(
-            rss_mb=round(current_rss_mb(), 1),
-            cuda_allocated_mb=round(cuda_allocated_mb, 1),
-            cuda_reserved_mb=round(cuda_reserved_mb, 1),
+            rss_mib=round(current_rss_mib(), 1),
+            cuda_allocated_mib=round(cuda_allocated_mib, 1),
+            cuda_reserved_mib=round(cuda_reserved_mib, 1),
         )

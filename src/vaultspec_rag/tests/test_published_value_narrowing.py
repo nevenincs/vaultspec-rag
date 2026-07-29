@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from .. import jobs as _jobs_module
-from ..cli._cli_format import _format_mb, _format_seconds, compact_duration
+from ..cli._cli_format import _format_mib, _format_seconds, compact_duration
 from ..cli._jobs_tui import _capability, _fetch_error
 from ..cli._service_jobs_presentation import _nested_section, render_jobs_result
 from ..cli._service_watcher import _format_delay_milliseconds, _format_delay_seconds
@@ -228,7 +228,7 @@ class TestTheMappingReaderNarrowsAContainer:
 #: module of every member.
 _FORMATTERS: tuple[tuple[str, Callable[[object], str], str], ...] = (
     ("_cli_format._format_seconds", _format_seconds, "not reported"),
-    ("_cli_format._format_mb", _format_mb, "not reported"),
+    ("_cli_format._format_mib", _format_mib, "not reported"),
     ("_cli_format.compact_duration", compact_duration, "—"),
     (
         "_service_watcher._format_delay_milliseconds",
@@ -280,7 +280,7 @@ class TestTheFormattersRefuseABool:
         # The bool guard must not have cost the accepting path, and ``1``
         # is the value a leaked ``True`` would have arrived as.
         assert _format_seconds(1) == "1 second"
-        assert _format_mb(1) != "not reported"
+        assert _format_mib(1) != "not reported"
         assert compact_duration(1) == "1s"
         assert _format_delay_seconds(1) == "1 second"
         assert _format_delay_milliseconds(1) == "1 millisecond"
@@ -397,7 +397,7 @@ _NARROWING_EXEMPT: dict[str, str] = {
     # Same, converting from milliseconds before delegating.
     "_format_milliseconds": "terminal renderer of an untrusted object",
     # Same, for a mebibyte measure.
-    "_format_mb": "terminal renderer of an untrusted object",
+    "_format_mib": "terminal renderer of an untrusted object",
     # Renders a CONFIGURED delay, whose vocabulary differs from an elapsed
     # duration's; reads the watcher payload with no reader in front of it.
     "_format_delay_milliseconds": "terminal renderer of an untrusted object",
@@ -576,8 +576,8 @@ class TestTheLookalikesThatMustNotBeMerged:
         assert _nested_section({}, "resources", "current") is None
         assert mapping({}.get("resources")) == {}
 
-        present: dict[str, object] = {"resources": {"current": {"rss_mb": 12.0}}}
-        assert _nested_section(present, "resources", "current") == {"rss_mb": 12.0}
+        present: dict[str, object] = {"resources": {"current": {"rss_mib": 12.0}}}
+        assert _nested_section(present, "resources", "current") == {"rss_mib": 12.0}
 
     def test_the_two_envelope_readers_answer_opposite_questions(self) -> None:
         # Same input shape, opposite outputs: one returns the payload worth

@@ -132,8 +132,8 @@ def test_bench_memory(root: Path) -> dict[str, Any]:
 
     result: dict[str, Any] = {}
     result["gpu_name"] = torch.cuda.get_device_name(0)
-    result["vram_allocated_mb"] = torch.cuda.memory_allocated(0) / (1024 * 1024)
-    result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
+    result["vram_allocated_mib"] = torch.cuda.memory_allocated(0) / (1024 * 1024)
+    result["vram_reserved_mib"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
 
     # Qdrant disk size
     from ...config._settings import get_config
@@ -144,8 +144,8 @@ def test_bench_memory(root: Path) -> dict[str, Any]:
         total_bytes = sum(
             f.stat().st_size for f in qdrant_dir.rglob("*") if f.is_file()
         )
-        result["qdrant_disk_mb"] = total_bytes / (1024 * 1024)
+        result["qdrant_disk_mib"] = total_bytes / (1024 * 1024)
     else:
-        result["qdrant_disk_mb"] = 0
+        result["qdrant_disk_mib"] = 0
 
     return result

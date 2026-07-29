@@ -9,17 +9,28 @@ GPU tests into ``-m unit``.
 
 Both directions are enforced at collection time from the root conftest, so the
 enforcement runs on every pytest invocation rather than only where someone
-remembered to add a gate. These tests exercise that enforcement directly; the
-mutation each one catches is named in its own docstring.
+remembered to add a gate. The same gate module refuses to spread a GPU-bound
+selection across worker processes, which one card cannot survive. These tests
+exercise that enforcement directly; the mutation each one catches is named in
+its own docstring.
 """
 
 from __future__ import annotations
 
+import argparse
 from typing import TYPE_CHECKING
 
 import pytest
 
-from ._tier_gate import enforce_tiers, group_gpu_items, tier_violations
+from ._tier_gate import (
+    SLOW_TIERS,
+    distributed_worker_count,
+    enforce_serial_gpu_lane,
+    enforce_tiers,
+    selectable_slow_tiers,
+    selected_tiers,
+    tier_violations,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -40,13 +51,9 @@ class _FakeItem:
     def __init__(self, nodeid: str, *marker_names: str) -> None:
         self.nodeid = nodeid
         self._marks = [_FakeMark(name) for name in marker_names]
-        self.added: list[object] = []
 
     def iter_markers(self) -> Iterator[_FakeMark]:
         return iter(self._marks)
-
-    def add_marker(self, marker: object) -> None:
-        self.added.append(marker)
 
 
 class TestTierClassification:
@@ -176,28 +183,171 @@ class TestGateRefusesTheRun:
         assert "and 5 more" in message
 
 
-class TestGpuGroupingSurvives:
-    """The pre-existing xdist grouping must not be lost to the new gate."""
+class TestSelectedTiers:
+    """The tier reading every device precondition is decided from."""
 
-    def test_gpu_tests_receive_the_group(self) -> None:
-        """Mutation it catches: dropping the grouping when the hook was split.
+    def test_only_tier_markers_are_reported(self) -> None:
+        """Mutation it catches: returning every marker name instead of tiers.
 
-        GPU tests would then be free to co-schedule across xdist workers and
-        contend for one device.
+        The run-loop gates test this reading against the slow tiers, so
+        admitting ``timeout`` would make any decorated test look like a tier and
+        an unrelated modifier would decide whether the GPU lock is taken.
         """
-        item = _FakeItem("t.py::test_gpu", "integration")
+        items = [
+            _FakeItem("t.py::test_fast", "unit", "timeout"),
+            _FakeItem("t.py::test_gpu", "cuda"),
+        ]
 
-        group_gpu_items([item])
+        assert selected_tiers(items) == {"unit", "cuda"}
 
-        assert len(item.added) == 1
+    def test_an_empty_selection_declares_no_tier(self) -> None:
+        """A fully deselected run must not look like it needs a device."""
+        assert selected_tiers([]) == set()
 
-    def test_fast_tests_are_left_alone(self) -> None:
-        """Mutation it catches: grouping every item regardless of tier.
 
-        That would serialise the whole fast lane onto a single xdist worker.
+#: The exclusion the project's own distributed lane passes. Held here as the
+#: input it is, so the admission direction is pinned against the real string
+#: rather than one invented to pass.
+_DISTRIBUTED_LANE_EXCLUSION = (
+    "not (integration or quality or performance or robustness "
+    "or subprocess_gpu or cuda)"
+)
+
+
+def _options(
+    *, workers: int = 0, markexpr: str = "", dist: str = "no"
+) -> argparse.Namespace:
+    """Build the resolved option set pytest hands the gate.
+
+    Mirrors what the plugin has already done by the time the gate runs: a
+    worker count is an integer, and each worker has an execution environment.
+    """
+    return argparse.Namespace(
+        numprocesses=workers or None,
+        dist=dist if workers == 0 else "load",
+        tx=["popen"] * workers,
+        markexpr=markexpr,
+    )
+
+
+class TestParallelGpuBan:
+    """A GPU-bound selection must never be spread across worker processes."""
+
+    def test_a_distributed_gpu_selection_is_refused(self) -> None:
+        """The whole point: one card cannot host one model stack per worker.
+
+        Mutation it catches: returning instead of raising once the offending
+        tiers are known. Every worker would then load its own models onto the
+        single device, which is the failure this gate exists to prevent.
         """
-        item = _FakeItem("t.py::test_fast", "unit")
+        with pytest.raises(pytest.UsageError) as excinfo:
+            enforce_serial_gpu_lane(_options(workers=4, markexpr="cuda"))
 
-        group_gpu_items([item])
+        message = str(excinfo.value)
+        assert "refusing to distribute this session across 4 worker" in message
+        assert "cuda" in message
 
-        assert item.added == []
+    def test_an_unfiltered_distributed_session_is_refused(self) -> None:
+        """No marker expression selects the whole suite, GPU tiers included.
+
+        Mutation it catches: treating an empty expression as excluding
+        everything. ``-n auto`` with no selection would then be admitted and
+        would distribute the entire GPU suite.
+        """
+        with pytest.raises(pytest.UsageError) as excinfo:
+            enforce_serial_gpu_lane(_options(workers=2))
+
+        message = str(excinfo.value)
+        assert "no marker expression, so the whole suite is selected" in message
+
+    def test_a_distributed_unit_selection_is_admitted(self) -> None:
+        """The project's own parallel lane must keep running.
+
+        Mutation it catches: refusing on distribution alone without reading the
+        selection. That would break the one lane that legitimately distributes,
+        and the pressure to delete the gate would follow.
+        """
+        enforce_serial_gpu_lane(
+            _options(workers=12, markexpr=_DISTRIBUTED_LANE_EXCLUSION, dist="loadfile")
+        )
+
+    def test_a_serial_gpu_selection_is_admitted(self) -> None:
+        """The GPU lane itself is serial and must pass untouched.
+
+        Mutation it catches: reading the marker expression without first
+        checking the worker count. The serial GPU lane would then be refused
+        and the GPU tiers could not be run at all.
+        """
+        enforce_serial_gpu_lane(_options(markexpr="cuda"))
+
+    def test_a_partial_exclusion_is_still_refused(self) -> None:
+        """Excluding some slow tiers is not excluding the GPU.
+
+        Mutation it catches: refusing only when every slow tier is selectable.
+        A lane that excluded ``integration`` but not ``cuda`` would distribute
+        real device work.
+        """
+        with pytest.raises(pytest.UsageError) as excinfo:
+            enforce_serial_gpu_lane(_options(workers=2, markexpr="not integration"))
+
+        # The listing is asserted whole rather than by substring: naming one
+        # surviving tier passes even when the reading has lost the others, and
+        # naming the excluded one would read as a refusal for the wrong reason.
+        listing = str(excinfo.value).split("tier(s) ")[1].split(".")[0]
+
+        assert listing == "cuda, performance, quality, robustness, subprocess_gpu"
+
+
+class TestDistributionReading:
+    """Whether this process will hand tests to other processes."""
+
+    def test_a_worker_count_is_reported(self) -> None:
+        """Mutation it catches: reading the mode and ignoring the count."""
+        assert distributed_worker_count(_options(workers=8)) == 8
+
+    def test_a_distribution_mode_alone_spawns_nothing(self) -> None:
+        """``--dist`` without a worker count runs in this very process.
+
+        Mutation it catches: treating any mode other than ``no`` as
+        distribution. A serial run passing only ``--dist`` would be refused,
+        and so would every process that reports a mode without spawning.
+        """
+        assert distributed_worker_count(_options(dist="loadfile")) == 0
+
+    def test_a_process_told_nothing_reports_no_distribution(self) -> None:
+        """A distributed session's workers are told neither count nor mode.
+
+        Mutation it catches: defaulting an absent option to distribution. Every
+        worker of a legitimate parallel run would refuse its own collection,
+        turning the gate into an internal scheduling fault.
+        """
+        assert distributed_worker_count(argparse.Namespace()) == 0
+
+
+class TestSelectableSlowTiers:
+    """Which GPU tiers a marker expression can still reach."""
+
+    def test_the_lane_exclusion_reaches_no_slow_tier(self) -> None:
+        """Mutation it catches: inverting the evaluated verdict."""
+        assert selectable_slow_tiers(_DISTRIBUTED_LANE_EXCLUSION) == []
+
+    def test_the_fast_lane_expression_reaches_no_slow_tier(self) -> None:
+        """``-m unit`` names one tier, so no slow tier survives it."""
+        assert selectable_slow_tiers("unit") == []
+
+    def test_a_union_with_a_slow_tier_reaches_it(self) -> None:
+        """Mutation it catches: reading only the leading term of a union."""
+        assert selectable_slow_tiers("unit or cuda") == ["cuda"]
+
+    def test_an_empty_expression_reaches_every_slow_tier(self) -> None:
+        """Nothing selected means everything selected."""
+        assert selectable_slow_tiers("   ") == sorted(SLOW_TIERS)
+
+    def test_a_malformed_expression_proves_no_exclusion(self) -> None:
+        """An expression that cannot be compiled excludes nothing provable.
+
+        Mutation it catches: letting the compile error escape. It would surface
+        as an unhandled fault from session startup instead of the clear
+        expression error pytest raises on its own moments later.
+        """
+        assert selectable_slow_tiers("cuda and or") == sorted(SLOW_TIERS)

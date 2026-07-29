@@ -25,9 +25,15 @@ import typing
 import urllib.parse
 
 import pytest
+from textual.app import ScreenStackError
 from textual.widgets import DataTable
 
-from ..cli._jobs_tui import _SPINNER_FRAMES, _SPINNER_INTERVAL, JobsTuiApp
+from ..cli._jobs_tui import (
+    _LOG_LINES,
+    _SPINNER_FRAMES,
+    _SPINNER_INTERVAL,
+    JobsTuiApp,
+)
 from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
 from ..serviceclient._transport import _try_http_admin
 
@@ -1486,8 +1492,8 @@ class TestHeaderCounts:
         control_service.gpu = {
             "available": True,
             "utilization_percent": 97.0,
-            "memory_used_mb": 15770.0,
-            "memory_total_mb": 16384.0,
+            "memory_used_mib": 15770.0,
+            "memory_total_mib": 16384.0,
         }
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
@@ -1525,8 +1531,8 @@ class TestHeaderCounts:
         control_service.gpu = {
             "available": False,
             "utilization_percent": None,
-            "memory_used_mb": None,
-            "memory_total_mb": None,
+            "memory_used_mib": None,
+            "memory_total_mib": None,
         }
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
@@ -2265,4 +2271,159 @@ class TestRemainingTimeOnTheRow:
 
         assert "2m20s left" in snapped, (
             "a fresh service payload must snap the countdown back to its value"
+        )
+
+
+def _screen_failure(deliver: typing.Callable[[], object]) -> ScreenStackError | None:
+    """Run *deliver*, returning the screen error it raised, or ``None``.
+
+    The raise is the finding, so it is captured and named by an assertion
+    rather than left to surface as an error on the run.
+    """
+    try:
+        deliver()
+    except ScreenStackError as error:
+        return error
+    return None
+
+
+class TestClosingTheSession:
+    """Nothing the interface set in motion outlives the screen it paints.
+
+    A session ends by removing the screen, and the stack is empty from that
+    moment on. Anything still beating or still answering reads the screen,
+    raises there, and is reported as the interface having crashed rather than
+    closed - on whichever unrelated thing happened to be in progress. Every
+    test below drives the removal directly, because the window it opens is
+    microseconds wide on an idle machine and a loaded one lands in it about
+    once in several hundred sessions.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_beat_survives_the_screen_it_paints(
+        self, control_service: _JobService
+    ) -> None:
+        """Removing the screen stops every one of the interface's beats.
+
+        The removal empties the screen stack before the timers an application
+        owns are stopped, so a beat owned there fires once more with no screen
+        left to read.
+
+        Proven able to fail two ways, each on its own assertion: registering
+        the frame beat on the application - the ownership before this change -
+        fires it against the empty stack and fails on the outlived assertion;
+        registering the jobs beat there instead leaves a beat running without
+        firing one, and fails on the ownership assertion. Restored, both pass.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            # The step that removes the interface's screen.
+            await app._close_all()
+            # Several frames' worth, so a beat that survived has to fire.
+            await asyncio.sleep(_SPINNER_INTERVAL * 4)
+            # Read and cleared here so the assertion below is what fails,
+            # rather than the session's own close re-raising it.
+            recorded = app._exception
+            app._exception = None
+            beats = {app._tick, app.refresh_jobs, app.refresh_service_status}
+            left_running = [
+                timer.name
+                for timer in app._timers
+                if timer._callback in beats and timer._task is not None
+            ]
+
+        assert recorded is None, (
+            f"a beat outlived the screen it paints: {recorded!r}"
+        )
+        assert not left_running, (
+            f"the beats must end with the screen they paint, not with the "
+            f"application: {left_running}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_answer_that_outlives_the_session_is_dropped(
+        self, control_service: _JobService
+    ) -> None:
+        """A poll answering after the screen has gone is dropped, not applied.
+
+        A blocking transport call cannot be cancelled, so a request issued a
+        moment before the session ended answers into an interface that no
+        longer has a screen to paint onto.
+
+        Proven able to fail two ways, each on its own assertion: removing the
+        screen check from ``_apply_result`` raises out of the binding refresh
+        at the end of it and fails on the dropped assertion; removing both
+        that check and the binding refresh applies a payload no operator can
+        see and fails on the not-applied assertion. Restored, both pass.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            # An answer that differs from what the interface holds, so applying
+            # it is visible rather than indistinguishable from dropping it.
+            control_service.set_jobs([_job("999999999999")])
+            answer = _try_http_admin("get_jobs", {"limit": 20}, control_service.port)
+            await app._close_all()
+            failure = _screen_failure(
+                lambda: app._apply_result(answer, app._generation + 1)
+            )
+            held = [str(job.get("id")) for job in app._jobs]
+
+        assert failure is None, (
+            f"an answer arriving after the screen went must be dropped: {failure!r}"
+        )
+        assert held == ["abc123def456"], (
+            "an answer arriving after the screen went must not be applied either"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_log_answer_that_outlives_the_session_is_dropped(
+        self, control_service: _JobService
+    ) -> None:
+        """A log window answering after the screen has gone is dropped as well.
+
+        Pinned separately from its neighbour for two reasons, neither of which
+        the code itself records.
+
+        First, this one is protected by accident rather than on purpose: the
+        pane's absence is noticed before anything reads the screen, so what
+        stops the read is a lookup that happens to sit in front of it. Hoisting
+        the binding refresh above that lookup is an ordinary-looking tidy-up
+        which removes the protection with nothing else in the file to notice -
+        so the two tests are not the duplicates they resemble, and neither
+        covers the other.
+
+        Second, that lookup comes back empty rather than raising only because
+        a query issued from the application resolves against the screen the
+        application composed on, held separately from the screen stack that
+        teardown empties (``App._compose_screen``, assigned once at compose
+        time). Nothing here governs that. Were it to stop being held, every
+        callback answering after the screen has gone would begin raising at its
+        first lookup, and this test is the only tripwire that says so - the
+        failures otherwise surface as an unexplained intermittent crash in
+        whatever else happened to be running.
+
+        Proven able to fail: moving the binding refresh above the absent-pane
+        return raises out of it and fails on the assertion below by name, while
+        the neighbouring poll test still passes; restored, it passes.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            selected = app.selected_id
+            # The same window the interface asks for, from the same transport.
+            answer = _try_http_admin(
+                "get_logs",
+                {"lines": _LOG_LINES, "source": "service", "job_id": selected},
+                control_service.port,
+            )
+            assert answer is not None and answer.get("ok") is True, (
+                "the delivery below has to carry an answer the interface would act on"
+            )
+            await app._close_all()
+            failure = _screen_failure(lambda: app._apply_logs(selected, answer))
+
+        assert failure is None, (
+            f"a log answer arriving after the screen went must be dropped: {failure!r}"
         )

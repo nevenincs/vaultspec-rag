@@ -1173,6 +1173,7 @@ async def health_handler(_request: Request) -> object:
     from starlette.responses import JSONResponse
 
     from .. import store_schema
+    from .._gpu_admission import device_load_reading
     from ..serviceclient._compat import (
         SERVICE_VERSION_FIELD,
         local_package_version,
@@ -1209,6 +1210,7 @@ async def health_handler(_request: Request) -> object:
             # prose, so rewording the reason costs its pairing, never its
             # visibility.
             "nonconforming": reg_health.get("nonconforming") or [],
+            "device_load": device_load_reading(),
             "uptime_s": round(uptime, 2),
             "backend_capabilities": backend_capabilities_dict(),
             "degraded_reasons": degraded_reasons,

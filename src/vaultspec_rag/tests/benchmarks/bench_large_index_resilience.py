@@ -81,29 +81,29 @@ class CorpusPreparation:
 class ResourceHighWater:
     """Process and device memory observed during one production run."""
 
-    baseline_rss_mb: float
-    peak_rss_mb: float
-    baseline_cuda_allocated_mb: float
-    peak_cuda_allocated_mb: float
-    baseline_cuda_reserved_mb: float
-    peak_cuda_reserved_mb: float
+    baseline_rss_mib: float
+    peak_rss_mib: float
+    baseline_cuda_allocated_mib: float
+    peak_cuda_allocated_mib: float
+    baseline_cuda_reserved_mib: float
+    peak_cuda_reserved_mib: float
 
     @property
-    def rss_growth_mb(self) -> float:
-        return max(0.0, self.peak_rss_mb - self.baseline_rss_mb)
+    def rss_growth_mib(self) -> float:
+        return max(0.0, self.peak_rss_mib - self.baseline_rss_mib)
 
     @property
-    def cuda_allocated_growth_mb(self) -> float:
+    def cuda_allocated_growth_mib(self) -> float:
         return max(
             0.0,
-            self.peak_cuda_allocated_mb - self.baseline_cuda_allocated_mb,
+            self.peak_cuda_allocated_mib - self.baseline_cuda_allocated_mib,
         )
 
     @property
-    def cuda_reserved_growth_mb(self) -> float:
+    def cuda_reserved_growth_mib(self) -> float:
         return max(
             0.0,
-            self.peak_cuda_reserved_mb - self.baseline_cuda_reserved_mb,
+            self.peak_cuda_reserved_mib - self.baseline_cuda_reserved_mib,
         )
 
 
@@ -145,10 +145,10 @@ class _ResourceSampler:
 
     @staticmethod
     def _sample() -> tuple[float, float, float]:
-        from ...memory_probe import current_cuda_mb, current_rss_mb
+        from ...memory_probe import current_cuda_mib, current_rss_mib
 
-        allocated_mb, reserved_mb = current_cuda_mb()
-        return current_rss_mb(), allocated_mb, reserved_mb
+        allocated_mib, reserved_mib = current_cuda_mib()
+        return current_rss_mib(), allocated_mib, reserved_mib
 
     def _observe(self) -> None:
         sample = self._sample()
@@ -215,12 +215,12 @@ class _ResourceSampler:
         if self._baseline is None or self._peak is None:
             raise RuntimeError("resource sampler has no observations")
         return ResourceHighWater(
-            baseline_rss_mb=self._baseline[0],
-            peak_rss_mb=self._peak[0],
-            baseline_cuda_allocated_mb=self._baseline[1],
-            peak_cuda_allocated_mb=self._peak[1],
-            baseline_cuda_reserved_mb=self._baseline[2],
-            peak_cuda_reserved_mb=self._peak[2],
+            baseline_rss_mib=self._baseline[0],
+            peak_rss_mib=self._peak[0],
+            baseline_cuda_allocated_mib=self._baseline[1],
+            peak_cuda_allocated_mib=self._peak[1],
+            baseline_cuda_reserved_mib=self._baseline[2],
+            peak_cuda_reserved_mib=self._peak[2],
         )
 
 
@@ -505,9 +505,9 @@ def run_acceptance(request: AcceptanceRequest) -> AcceptanceReport:
             measurement=asdict(measurement),
             resources={
                 **asdict(resources),
-                "rss_growth_mb": resources.rss_growth_mb,
-                "cuda_allocated_growth_mb": resources.cuda_allocated_growth_mb,
-                "cuda_reserved_growth_mb": resources.cuda_reserved_growth_mb,
+                "rss_growth_mib": resources.rss_growth_mib,
+                "cuda_allocated_growth_mib": resources.cuda_allocated_growth_mib,
+                "cuda_reserved_growth_mib": resources.cuda_reserved_growth_mib,
             },
             wall_seconds=measured.wall_seconds,
         )
