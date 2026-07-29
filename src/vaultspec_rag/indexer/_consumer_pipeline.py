@@ -612,6 +612,7 @@ class CodeConsumerPipeline:
                         on_encode_bucket=_EncodeBucketReporter(
                             consumer_run.reporter,
                             slice_index,
+                            slice_items,
                         ),
                         on_cuda_oom=_on_cuda_oom,
                         run_control=run_control,

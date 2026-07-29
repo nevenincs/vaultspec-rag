@@ -324,6 +324,10 @@ def _encode_evidence_line(job: dict[str, object]) -> str | None:
         )
     ordinal = forward.get("slice_ordinal")
     items = forward.get("items")
+    # The service writes this count once per slice and never moves it, so it
+    # is the slice's size and is captioned as one. Progress through those
+    # items is a fraction on the encode-batch line below, never a bare count
+    # here that a reader would take for the size.
     if ordinal is not None and items is not None:
         phrase += f" (slice {ordinal}, {items} items)"
     alive = forward.get("thread_alive")
@@ -337,6 +341,11 @@ def _encode_budget_line(job: dict[str, object]) -> str | None:
 
     Silent for a job the service published no encode state for, which is
     every job that never reached an encode stage.
+
+    The sub-slice climb is rendered only as a fraction, and only when the
+    service published both of its halves: a completed count on its own
+    reads as a size, which is the reading that has to stay impossible here
+    because the forward line above already names the slice's size.
     """
     encode = _evidence_section(job, "encode")
     if encode is None:
@@ -348,6 +357,10 @@ def _encode_budget_line(job: dict[str, object]) -> str | None:
     items = measurement(encode.get("bucket_items"))
     if items is not None:
         parts.append(f"{items:g} items in the last batch")
+    done = measurement(encode.get("items_done"))
+    total = measurement(encode.get("items_total"))
+    if done is not None and total is not None:
+        parts.append(f"{done:g} of {total:g} items encoded")
     retries = measurement(encode.get("oom_count"))
     if retries:
         parts.append(f"{retries:g} GPU memory {'retry' if retries == 1 else 'retries'}")

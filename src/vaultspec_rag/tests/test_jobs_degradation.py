@@ -58,6 +58,13 @@ _FORWARD_KEYS = {
     "expected",
 }
 _CPU_KEYS = {"available", "utilization_percent"}
+_ENCODE_KEYS = {
+    "token_budget",
+    "bucket_items",
+    "items_done",
+    "items_total",
+    "oom_count",
+}
 _RATE_KEYS = {"recent_per_second", "median_per_second", "ratio"}
 _GPU_KEYS = {"available", "utilization_percent", "memory_used_mb", "memory_total_mb"}
 _BACKEND_KEYS = {"alive", "latency_seconds", "detail"}
@@ -234,6 +241,49 @@ class TestForwardTelemetry:
         forward = telemetry_block(job_id, "forward")
         assert forward is not None
         assert isinstance(forward["exited_at"], float)
+
+
+class TestEncodeEvidence:
+    """The encode section carries the sub-slice climb with its denominator."""
+
+    def test_the_climb_is_shaped_with_the_total_it_is_read_against(self) -> None:
+        evidence = degradation_evidence(
+            now=1000.0,
+            inputs=DegradationInputs(
+                source="code",
+                step="chunk + embed",
+                encode={
+                    "token_budget": 2000,
+                    "bucket_items": 1,
+                    "items_done": 64,
+                    "items_total": 512,
+                    "oom_count": 1,
+                },
+            ),
+        )
+        encode = _as_map(evidence["encode"])
+        assert set(encode.keys()) == _ENCODE_KEYS
+        assert encode["items_done"] == 64
+        assert encode["items_total"] == 512
+
+    def test_a_block_predating_the_pair_reports_neither_as_a_number(self) -> None:
+        # A record written before the encode block carried sub-slice progress
+        # has no such reading, and a shaped null is how that is said. Inventing
+        # one from the batch size would be the same untruth the forward
+        # window's item count used to tell.
+        evidence = degradation_evidence(
+            now=1000.0,
+            inputs=DegradationInputs(
+                source="code",
+                step="chunk + embed",
+                encode={"token_budget": 2000, "bucket_items": 1, "oom_count": 1},
+            ),
+        )
+        encode = _as_map(evidence["encode"])
+        assert set(encode.keys()) == _ENCODE_KEYS
+        assert encode["items_done"] is None
+        assert encode["items_total"] is None
+        assert encode["token_budget"] == 2000
 
 
 class TestDegradationVerdict:

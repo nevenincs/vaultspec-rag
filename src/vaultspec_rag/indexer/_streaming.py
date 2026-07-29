@@ -825,11 +825,13 @@ class _EncodeTelemetrySink(Protocol):
     have nowhere to put it, without a no-op member on each of them.
     """
 
-    def encode_budget_planned(
+    def encode_bucket_observed(
         self,
         *,
         token_budget: int | None,
         bucket_items: int | None,
+        items_done: int | None,
+        items_total: int | None,
     ) -> None: ...
 
     def encode_oom(self) -> None: ...
@@ -840,24 +842,34 @@ class _EncodeBucketReporter:
 
     The encoder splits a slice into token-budgeted buckets and calls this at
     each boundary, on the encoding thread and outside any GPU-lock hold. Every
-    boundary re-reports the forward window carrying the slice's completed item
-    count, so a slice that takes minutes shows progress climbing through it
-    instead of one silent open window; every planned bucket republishes the
-    token budget and bucket size it was planned under, which is what makes a
-    collapsed encode rate attributable to a memory ceiling rather than to a
-    stuck pass. The item count reported at the last bucket equals the slice's
-    own, so the window a slice ends on is the one it always ended on.
+    boundary reopens or closes the forward window, so a slice that takes
+    minutes reads as work moving through it instead of one silent open
+    window, and every boundary republishes the token budget and bucket size
+    the encoder is working under, which is what makes a collapsed encode rate
+    attributable to a memory ceiling rather than to a stuck pass.
+
+    The window is always reported with the slice's own item count, which is
+    what that number has to mean for a reader who finds the window open:
+    the sub-slice climb through those items is published beside the budget
+    instead, as a done-and-total pair that says what it is without a second
+    field to read it against.
 
     Bucket progress carries the encoder's running memory-retry count rather
     than an event per retry, so each rise in it is republished as the retries
     it stands for.
     """
 
-    __slots__ = ("_ooms_reported", "_ordinal", "_reporter", "_sink")
+    __slots__ = ("_items", "_ooms_reported", "_ordinal", "_reporter", "_sink")
 
-    def __init__(self, reporter: ProgressReporter, ordinal: int) -> None:
+    def __init__(
+        self,
+        reporter: ProgressReporter,
+        ordinal: int,
+        items: int,
+    ) -> None:
         self._reporter = reporter
         self._ordinal = ordinal
+        self._items = items
         self._sink = reporter if isinstance(reporter, _EncodeTelemetrySink) else None
         self._ooms_reported = 0
 
@@ -875,20 +887,21 @@ class _EncodeBucketReporter:
             while self._ooms_reported < progress.oom_count:
                 self._ooms_reported += 1
                 self._sink.encode_oom()
+            self._sink.encode_bucket_observed(
+                token_budget=progress.token_budget,
+                bucket_items=progress.bucket_items,
+                items_done=progress.items_done,
+                items_total=progress.items_total,
+            )
         if phase == "before":
-            if self._sink is not None:
-                self._sink.encode_budget_planned(
-                    token_budget=progress.token_budget,
-                    bucket_items=progress.bucket_items,
-                )
             self._reporter.forward_started(
                 ordinal=self._ordinal,
-                items=progress.items_done,
+                items=self._items,
             )
             return
         self._reporter.forward_finished(
             ordinal=self._ordinal,
-            items=progress.items_done,
+            items=self._items,
         )
 
 
@@ -980,6 +993,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                             on_encode_bucket=_EncodeBucketReporter(
                                 request.reporter,
                                 slice_index,
+                                len(slice_chunks),
                             ),
                         )
                     )
