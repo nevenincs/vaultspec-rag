@@ -1,10 +1,22 @@
-"""Logging configuration for vaultspec-rag.
+"""The one logging backend for vaultspec-rag.
 
-Thin wrapper over :mod:`vaultspec_core.logging_config`. RAG previously held a
-near-verbatim copy of core's implementation; it now delegates so the two
-packages cannot silently diverge. The only RAG-specific behavior preserved
-here is the env-var override (``VAULTSPEC_RAG_LOG_LEVEL``) and RAG's
-``WARNING`` default when no explicit level is supplied.
+Console configuration delegates to :mod:`vaultspec_core.logging_config`, which
+owns it for every vaultspec package; RAG held a near-verbatim copy once and no
+longer does, so the two cannot diverge. What RAG adds on top has no counterpart
+in core and lives only here:
+
+* ``log_event`` - the canonical ``namespace event=name key=value`` record shape
+  every producer in this package emits through.
+* ``DaemonLogCapture`` - the daemon's single-writer pipeline. Root logging,
+  Uvicorn, ``print``, and native stdout/stderr all enter one pipe, so every
+  byte the service emits participates in rotation.
+* ``PolledAccessFilter`` and the third-party level table - what keeps the
+  managed log carrying signal rather than timer polls and library chatter.
+* The bounded managed-log reader every operator surface adapts to.
+
+Producers do not configure logging themselves. A module that installs its own
+handler, opens its own file, or renders progress into the stream writes bytes
+that nothing here formats, bounds, rotates, or can read back.
 """
 
 from __future__ import annotations
@@ -34,10 +46,13 @@ __all__ = [
     "MAX_MANAGED_LOG_LINES",
     "MAX_MANAGED_LOG_RECORD_BYTES",
     "MAX_MANAGED_LOG_SOURCE_BYTES",
+    "POLLED_ROUTES",
+    "QDRANT_LOG_NAME",
     "DaemonLogCapture",
     "InvalidManagedLogSourceError",
     "ManagedLogGroup",
     "ManagedLogSource",
+    "PolledAccessFilter",
     "clamp_managed_log_lines",
     "configure_logging",
     "install_daemon_log_capture",
@@ -81,7 +96,10 @@ class InvalidManagedLogSourceError(ValueError):
 
 
 _MANAGED_LOG_SOURCES: tuple[ManagedLogGroupSource, ...] = ("service", "qdrant")
-_QDRANT_LOG_NAME = "qdrant.log"
+#: The vector backend's managed log filename. Public because the supervisor
+#: that writes this file and the reader below must name it identically; two
+#: literals desync silently the moment either is renamed.
+QDRANT_LOG_NAME = "qdrant.log"
 DEFAULT_MANAGED_LOG_LINES = 200
 MAX_MANAGED_LOG_LINES = 5_000
 MAX_MANAGED_LOG_RECORD_BYTES = 64 * 1024
@@ -197,7 +215,7 @@ def _managed_log_source(raw: str) -> ManagedLogSource:
 
 def _managed_log_name(source: ManagedLogGroupSource) -> str:
     if source == "qdrant":
-        return _QDRANT_LOG_NAME
+        return QDRANT_LOG_NAME
     from .config._settings import get_config
 
     return str(get_config().log_file)
@@ -1033,6 +1051,83 @@ class DaemonLogCapture:
             return completed
 
 
+#: Routes the operator surfaces refresh on a timer. A successful GET reflected
+#: back from one of these tells an operator nothing the caller did not already
+#: have on screen, and at observed refresh rates it crowds every other record
+#: out of the bounded log. Mutations, failures, and every other route stay.
+POLLED_ROUTES: tuple[str, ...] = (
+    "/jobs",
+    "/logs",
+    "/health",
+    "/metrics",
+    "/projects",
+    "/watcher",
+    "/storage/survey",
+)
+
+#: Positional arguments Uvicorn's access logger carries:
+#: ``(client_addr, method, path_with_query, http_version, status)``.
+_ACCESS_RECORD_ARITY = 5
+_ACCESS_METHOD_INDEX = 1
+_ACCESS_PATH_INDEX = 2
+_ACCESS_STATUS_INDEX = 4
+_FIRST_ERROR_STATUS = 400
+
+
+def _is_polled_route(path: str) -> bool:
+    base = path.partition("?")[0]
+    return any(base == route or base.startswith(route + "/") for route in POLLED_ROUTES)
+
+
+class PolledAccessFilter(logging.Filter):
+    """Drop successful timer-poll reads from the access stream.
+
+    Reads the access record's positional arguments rather than its rendered
+    text: the formatted line is a presentation detail, and matching against it
+    would re-derive the request from a string the emitter already had typed.
+    A record whose shape is not the documented access tuple is passed through
+    untouched, so an unrecognised producer is never silently discarded.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != _ACCESS_RECORD_ARITY:
+            return True
+        method = args[_ACCESS_METHOD_INDEX]
+        path = args[_ACCESS_PATH_INDEX]
+        status = args[_ACCESS_STATUS_INDEX]
+        if not isinstance(method, str) or not isinstance(path, str):
+            return True
+        if not isinstance(status, int) or isinstance(status, bool):
+            return True
+        if method != "GET" or status >= _FIRST_ERROR_STATUS:
+            return True
+        return not _is_polled_route(path)
+
+
+#: Third-party loggers the daemon quiets, with the level each is held at.
+#: Every entry states why in one clause; an entry without a reason is a
+#: silenced symptom rather than a decision, and does not belong here.
+_THIRD_PARTY_LOG_LEVELS: tuple[tuple[str, int], ...] = (
+    # Routine Qdrant HTTP requests are already represented by the service's
+    # structured operation summaries. Keeping client wire chatter at INFO
+    # obscures those summaries and creates disproportionate managed-log I/O.
+    ("httpx", logging.WARNING),
+    ("httpcore", logging.WARNING),
+    # One record per filesystem event, emitted for every change the watcher
+    # already reports as a coalesced job outcome.
+    ("watchfiles.main", logging.WARNING),
+    # Model load and encode chatter, including progress rendering that keys
+    # off its own effective level rather than any explicit request.
+    ("sentence_transformers", logging.WARNING),
+)
+
+
+def _apply_third_party_log_levels() -> None:
+    for name, level in _THIRD_PARTY_LOG_LEVELS:
+        logging.getLogger(name).setLevel(level)
+
+
 def _validate_daemon_capture_settings(max_bytes: int, backup_count: int) -> None:
     """Reject settings that cannot preserve bounded managed-log retention."""
     if (
@@ -1103,14 +1198,26 @@ def install_daemon_log_capture(
             raise
         _active_daemon_capture = capture
 
-        # Routine Qdrant HTTP requests are already represented by the service's
-        # structured operation summaries. Keeping client wire chatter at INFO
-        # obscures those summaries and creates disproportionate managed-log I/O.
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("httpcore").setLevel(logging.WARNING)
+        _apply_third_party_log_levels()
+        _install_polled_access_filter()
 
         _report_handler_close_failures(close_failures)
         return capture
+
+
+def _install_polled_access_filter() -> None:
+    """Make the access stream carry signal only, exactly once.
+
+    Uvicorn rebuilds its loggers on every start, so the filter is installed
+    idempotently: a second daemon start in one interpreter must not stack a
+    second copy that re-tests every record.
+    """
+    access_logger = logging.getLogger("uvicorn.access")
+    if any(
+        isinstance(existing, PolledAccessFilter) for existing in access_logger.filters
+    ):
+        return
+    access_logger.addFilter(PolledAccessFilter())
 
 
 type EventExcInfo = (

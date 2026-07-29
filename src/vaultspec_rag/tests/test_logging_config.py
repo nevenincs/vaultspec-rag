@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -11,8 +11,10 @@ from ..logging_config import (
     MANAGED_LOG_TRUNCATION_MARKER,
     MAX_MANAGED_LOG_RECORD_BYTES,
     MAX_MANAGED_LOG_SOURCE_BYTES,
+    POLLED_ROUTES,
     InvalidManagedLogSourceError,
     ManagedLogGroup,
+    PolledAccessFilter,
     log_event,
     query_managed_logs,
     read_managed_logs,
@@ -422,3 +424,74 @@ if capture is None or capture.persistence_error is not None:
     retained = b"".join(path.read_bytes() for path in generations)
     assert retained.count(b"__FINAL_RAW_STDOUT_MARKER__") == 1
     assert retained.count(b"__FINAL_RAW_STDERR_MARKER__") == 1
+
+
+def _access_record(method: str, path: str, status: int) -> logging.LogRecord:
+    """Build one record shaped exactly as Uvicorn's access logger emits it."""
+    return logging.LogRecord(
+        name="uvicorn.access",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=0,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=("127.0.0.1:1", method, path, "1.1", status),
+        exc_info=None,
+    )
+
+
+def test_polled_access_filter_drops_only_successful_polled_reads() -> None:
+    """A timer poll is dropped; a mutation, a failure, and any other route stay.
+
+    The three retained cases are the point. Suppressing reads that tell an
+    operator nothing must not suppress the request that changed state, the
+    one that failed, or traffic to a route nobody polls - those are the
+    records an operator opens the log to find.
+    """
+    log_filter = PolledAccessFilter()
+
+    assert not log_filter.filter(_access_record("GET", "/jobs?limit=20", 200))
+    assert not log_filter.filter(_access_record("GET", "/health", 200))
+    assert not log_filter.filter(_access_record("GET", "/jobs/abc123", 204))
+
+    assert log_filter.filter(_access_record("POST", "/jobs", 200))
+    assert log_filter.filter(_access_record("DELETE", "/jobs/abc123", 200))
+    assert log_filter.filter(_access_record("GET", "/jobs", 500))
+    assert log_filter.filter(_access_record("GET", "/jobs", 404))
+    assert log_filter.filter(_access_record("GET", "/search", 200))
+    assert log_filter.filter(_access_record("GET", "/jobsomething", 200))
+
+
+def test_polled_access_filter_passes_records_it_cannot_read() -> None:
+    """An unrecognised record shape is never silently discarded."""
+    log_filter = PolledAccessFilter()
+    unreadable: tuple[object, ...] = (
+        None,
+        (),
+        ("127.0.0.1:1", "GET", "/jobs"),
+        ("127.0.0.1:1", "GET", "/jobs", "1.1", "200"),
+        ("127.0.0.1:1", b"GET", "/jobs", "1.1", 200),
+    )
+    for args in unreadable:
+        record = _access_record("GET", "/jobs", 200)
+        record.args = cast("Any", args)
+        assert log_filter.filter(record), f"discarded unreadable record args={args!r}"
+
+
+def test_polled_routes_are_absolute_paths() -> None:
+    """The filter matches on path prefixes, so a relative entry never fires."""
+    assert POLLED_ROUTES
+    assert all(route.startswith("/") for route in POLLED_ROUTES)
+    assert all(not route.endswith("/") for route in POLLED_ROUTES)
+
+
+def test_one_generation_never_exceeds_what_the_reader_can_return() -> None:
+    """A rotation generation may not outgrow the reader's per-source budget.
+
+    The reader walks back from the newest bytes and stops when the budget is
+    spent. A larger generation therefore carries a head that is written,
+    retained, rotated, and never returned through any operator surface -
+    storage spent on bytes the service cannot show.
+    """
+    from ..config._settings import rag_default
+
+    assert int(rag_default("managed_log_max_bytes")) <= MAX_MANAGED_LOG_SOURCE_BYTES
