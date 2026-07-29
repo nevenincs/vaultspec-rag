@@ -146,6 +146,14 @@ EXCLUDED_FILES: frozenset[str] = frozenset(
 #: baseline recording a workstation root would be a real leak this scan is the
 #: only one positioned to catch.
 TEXT_SUFFIXES: tuple[str, ...] = (".md", ".toml", ".yaml", ".yml", ".json", ".ps1")
+
+#: Suffixes the IDENTITY scan reads, which is a wider set than the citation scan
+#: above. It adds the shapes that carry a path without being prose: ``.svg`` is
+#: here because a terminal capture rendered for documentation embeds whatever
+#: working directory produced it, and one shipped a real drive and workspace
+#: layout into a README image - a leak the drive-path pattern would have matched
+#: on sight, in a file nothing looked at.
+IDENTITY_SUFFIXES: tuple[str, ...] = (*TEXT_SUFFIXES, ".svg", ".txt", ".cfg", ".ini")
 TEXT_FILENAMES: tuple[str, ...] = (
     "justfile",
     ".env.example",
@@ -681,6 +689,48 @@ def _is_excluded(rel: str) -> bool:
     )
 
 
+def iter_identity_files(repo_root: Path) -> list[Path]:
+    """Return every tracked file the IDENTITY scan reads. Nothing is exempt.
+
+    The citation exclusions do not apply here, and that separation is the whole
+    point. A development record naming a vault stem or a rule is content - that
+    is what makes the citation exemption right. A development record naming
+    somebody's home directory is not content, and no argument was ever made for
+    exempting it; the one exclusion list was doing both jobs, so a subtree
+    excused from the citation rules was silently excused from the privacy rules
+    too. Every real machine path this gate failed to catch was in such a
+    subtree: a corpus excluded for its subject matter, and an asset type absent
+    from the suffix list.
+
+    So privacy scanning is subtractive over the whole tree with no subtractions.
+    The cost is that generic absolute paths in development records now report as
+    smells, which do not fail the gate - a backlog rather than a wall - while an
+    identity-revealing path fails wherever it lives.
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    gate_file = Path(__file__).resolve()
+    files: list[Path] = []
+    for rel in sorted(entry for entry in listing.split("\0") if entry):
+        path = repo_root / rel
+        if not path.is_file():
+            continue
+        name = path.name
+        if not (name.endswith(".py") or name.endswith(IDENTITY_SUFFIXES)):
+            continue
+        # The gate's own file states every pattern as a literal, including the
+        # path shapes, so scanning itself reports its own definitions.
+        if path.resolve() == gate_file:
+            continue
+        files.append(path)
+    return files
+
+
 def iter_surface_files(repo_root: Path) -> tuple[list[Path], list[Path]]:
     """Return (Python files, text files) to scan for the repository at *root*.
 
@@ -755,16 +805,21 @@ def collect_findings(
         rel = path.relative_to(repo_root).as_posix()
         target = deferred if rel in DEFERRED_PENDING_FOLLOWUP else active
         target.extend(scan_file(path, repo_root=repo_root))
-        f_leaks, f_smells = scan_file_paths(path, repo_root=repo_root)
-        leaks.extend(f_leaks)
-        smells.extend(f_smells)
     for path in text_files:
         rel = path.relative_to(repo_root).as_posix()
         target = deferred if rel in DEFERRED_PENDING_FOLLOWUP else active
-        t_citations, t_leaks, t_smells = scan_text(path, repo_root=repo_root)
+        t_citations, _t_leaks, _t_smells = scan_text(path, repo_root=repo_root)
         target.extend(t_citations)
-        leaks.extend(t_leaks)
-        smells.extend(t_smells)
+    # Paths are scanned over their own enumeration, which exempts nothing. The
+    # citation loops above deliberately discard the path findings their scanners
+    # also return, so a file reached by both is not reported twice.
+    for path in iter_identity_files(repo_root):
+        if path.name.endswith(".py"):
+            p_leaks, p_smells = scan_file_paths(path, repo_root=repo_root)
+        else:
+            _citations, p_leaks, p_smells = scan_text(path, repo_root=repo_root)
+        leaks.extend(p_leaks)
+        smells.extend(p_smells)
     for bucket in (active, deferred, leaks, smells):
         bucket.sort(key=lambda f: (f[0], f[1]))
     return active, deferred, leaks, smells
@@ -780,13 +835,18 @@ def main() -> int:
     args = parser.parse_args()
 
     py_files, text_files = iter_surface_files(REPO_ROOT)
+    identity_files = iter_identity_files(REPO_ROOT)
     active, deferred, leaks, smells = collect_findings(REPO_ROOT)
     mode = "REPORT-ONLY" if args.report_only else "GATE"
+    # Both counts are printed because they are deliberately different, and the
+    # wider one is the whole point: an unreached surface is invisible from a
+    # green run, so a coverage that shrank silently would read as a pass.
     print(
-        f"[citation-gate] {mode} - {len(py_files)} python and {len(text_files)} "
-        "text file(s): docstrings, comments, documentary strings, exception, "
-        "assert and log messages, documentation, config, and string values "
-        "(paths)"
+        f"[citation-gate] {mode} - citations over {len(py_files)} python and "
+        f"{len(text_files)} text file(s); identity over {len(identity_files)} "
+        "file(s) with nothing exempt: docstrings, comments, documentary "
+        "strings, exception, assert and log messages, documentation, config, "
+        "and string values (paths)"
     )
 
     if deferred:
