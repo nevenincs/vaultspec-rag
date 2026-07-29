@@ -853,10 +853,16 @@ class JobsTuiApp(App[None]):
 
         Composition is not there for the whole of a request's life: one issued
         a moment before the session ended is answered after the screen has
-        gone, and that answer arrives here. An unguarded lookup raises there,
-        and an exception on the callback delivering an answer takes the whole
-        interface down - which reads to an operator as the service having
-        died.
+        gone, and that answer arrives here.
+
+        The lookup does not raise there. A query issued from the application
+        resolves against the screen the application composed on, and that
+        screen is held separately from the stack a closing session empties, so
+        the lookup comes back empty rather than raising and the empty answer
+        is what has to be handled. Reading the screen is the thing that raises,
+        which is why nothing on this path does. Anything added here that reads
+        the screen instead of querying for a widget needs its own answer for
+        the screen being gone; a lookup does not.
         """
         found = self.query("#jobs")
         if not found:
