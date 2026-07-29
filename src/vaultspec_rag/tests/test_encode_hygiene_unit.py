@@ -6,8 +6,6 @@ from typing import Any, ClassVar, cast
 import pytest
 
 from ..embeddings import (
-    EmbeddingModel,
-    EncodeBatchCeiling,
     QueryEmbeddingCache,
     SparseResult,
     _sparse_tensor_to_results,
@@ -71,89 +69,6 @@ class TestSparseTensorConversionParity:
         converted = _sparse_tensor_to_results(tensor)
         assert len(converted) == 3
         assert all(r.indices == [] and r.values == [] for r in converted)
-
-
-class _OOMSparseModel:
-    """Sparse-model double mirroring :class:`_OOMDenseModel`."""
-
-    def __init__(self, succeed_at: int | None = None) -> None:
-        self.batch_sizes: list[int] = []
-        self._succeed_at = succeed_at
-
-    def encode_document(
-        self,
-        texts: list[str],
-        *,
-        batch_size: int,
-        **options: object,
-    ) -> Any:
-        # Mirrors the production call site's keyword set; the sparse
-        # encode path passes these explicitly, so a double that accepts
-        # only batch_size fails on the call rather than on the OOM the
-        # test is actually about.
-        del options
-        import torch
-
-        self.batch_sizes.append(batch_size)
-        if self._succeed_at is not None and batch_size <= self._succeed_at:
-            return torch.zeros((len(texts), 4), dtype=torch.float32)
-        raise torch.cuda.OutOfMemoryError("simulated CUDA OOM")
-
-
-def _model_shell() -> EmbeddingModel:
-    """An ``EmbeddingModel`` shell that skips real model loading."""
-    model = object.__new__(EmbeddingModel)
-    model._dense_batch_ceiling = EncodeBatchCeiling()
-    model._sparse_batch_ceiling = EncodeBatchCeiling()
-    return model
-
-
-class TestOomLadderIsFloorBounded:
-    """The CUDA-OOM recovery must terminate - never loop forever.
-
-    A persistent allocator failure (e.g. host commit exhaustion on a full
-    disk) must abort the run with the real error after the halving ladder
-    reaches batch size 1, so no unbounded retry loop can stand between a
-    storage-pressure condition and a failed job.
-    """
-
-    pytestmark: ClassVar = [pytest.mark.unit]
-
-    def test_sparse_ladder_halves_then_raises(self):
-        import torch
-
-        fake = _OOMSparseModel()
-        model = _model_shell()
-        model._sparse_model = cast("Any", fake)
-        with pytest.raises(torch.cuda.OutOfMemoryError):
-            model.encode_documents_sparse(["text"] * 4, batch_size=8)
-        assert fake.batch_sizes == [8, 4, 2, 1]
-
-
-class TestOomLadderCeilingIsSticky:
-    """A learned OOM batch ceiling persists across calls and recovers upward.
-
-    A per-call ladder rediscovers the same ceiling on every call, paying a
-    discarded forward pass and an allocator cache flush each time; the
-    ceiling must therefore survive the call that learned it. It must also
-    not stay pinned forever, or one transient memory squeeze becomes a
-    permanent throughput loss - after sustained success at the ceiling the
-    next call probes upward, bounded by one doubling.
-    """
-
-    pytestmark: ClassVar = [pytest.mark.unit]
-
-    def test_sparse_ceiling_sticks_across_calls(self):
-        fake = _OOMSparseModel(succeed_at=2)
-        model = _model_shell()
-        model._sparse_model = cast("Any", fake)
-        model.encode_documents_sparse(["text"] * 4, batch_size=8)
-        model.encode_documents_sparse(["text"] * 4, batch_size=8)
-        # Same failure direction as the dense sticky test in the bucket
-        # planner tests: a per-call reset records a second descent
-        # [8, 4, 2, 2] after the first instead of two clamped sub-batch
-        # calls at 2.
-        assert fake.batch_sizes == [8, 4, 2, 2, 2, 2]
 
 
 class TestQueryEmbeddingCache:
