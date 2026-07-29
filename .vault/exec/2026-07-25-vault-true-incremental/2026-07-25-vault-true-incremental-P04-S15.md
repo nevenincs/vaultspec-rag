@@ -32,12 +32,18 @@ unscoped incremental run, same machine, same GPU, same corpus.
 
 | | before | after |
 | --- | --- | --- |
+| documents in corpus | 2158 | 2173 |
 | documents re-embedded | 2158 | 0 |
 | payload-only updates | 0 | 0 |
-| wall time | 86.3 s | 1.15 s |
+| wall time | 86.3 s | 1.90 s |
 
-Every document re-embedded before; none after. Seventy-five times faster, and the
-remaining second is stat calls, parses, and digests - no GPU work at all.
+Every document re-embedded before; none after. Forty-five times faster, and the
+remaining two seconds are stat calls, parses, and digests - no GPU work at all.
+
+The corpus grew by the fifteen execution records this plan produced, which is why
+the two document counts differ; the comparison is unaffected, since the before
+figure re-embedded 100% of its corpus and the after figure re-embedded 0% of a
+slightly larger one.
 
 The figure sits in the class the originating research measured: incremental vault
 jobs spending hundreds of seconds to commit nothing.
@@ -56,3 +62,10 @@ plan asked for.
 
 The standing test asserts the classification rather than a duration. A wall-time
 assertion on shared hardware measures whatever else is running.
+
+The after figure was re-taken once more following the review fixes, and it is
+that re-take which is quoted. It is slower than the first post-change reading of
+1.15 s: the ordinal census the payload branch now reads costs one extra scan, and
+this run shared the machine with the unit suite. Both are still the same class of
+answer - under two seconds against eighty-six, with no GPU work at all - and
+quoting the slower, later, honestly-contended figure is the conservative choice.

@@ -77,6 +77,35 @@ def _add_tag(path: Path, tag: str) -> None:
     _write_preserving_newlines(path, "---\n" + "\n".join(lines) + tail)
 
 
+def _delete_one_chunk(store: VaultStore, doc_id: str, ordinal: int) -> None:
+    """Remove exactly one stored chunk point, fabricating a damaged collection.
+
+    Reaches the store's point deletion directly because no production path
+    removes a single interior ordinal - which is the point: the state being
+    fabricated is one the indexer must survive, not one it creates.
+    """
+    from qdrant_client import models
+
+    store.ensure_table()
+    store._delete_points(
+        collection_name=store.TABLE_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="doc_id",
+                        match=models.MatchValue(value=doc_id),
+                    ),
+                    models.FieldCondition(
+                        key="chunk_ordinal",
+                        match=models.MatchValue(value=ordinal),
+                    ),
+                ],
+            ),
+        ),
+    )
+
+
 def _doc_id(path: Path, docs_dir: Path) -> str:
     """Mirror the indexer's path -> doc-id scheme for assertions."""
     rel = str(path.relative_to(docs_dir)).replace("\\", "/")
@@ -290,6 +319,80 @@ class TestMetadataOnlyChangeSkipsTheGpu:
             store.close()
 
     @pytest.mark.timeout(300)
+    def test_a_punctured_ordinal_range_re_embeds_instead(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
+        """A document missing a point in the middle must not take this branch.
+
+        The payload-only write addresses points by assumed ordinal. Against a
+        missing ordinal it reaches nothing and raises nothing, so the document
+        would keep a stale payload forever with every count agreeing. The
+        stored-chunk-count reading cannot see this - it is the highest ordinal
+        plus one, so a hole reports the same number as a whole document - which
+        is why the check reads the exact stored ordinals instead.
+
+        Mutation that drives this red: in ``_plan_payload_refresh``, compare
+        the highest stored ordinal plus one against the chunk count instead of
+        comparing the ordinal set itself - the count-based reading this check
+        replaced. The punctured document is then accepted onto the payload
+        branch and ``payload_updated == 0`` fails with ``payload_updated == 1``.
+
+        Note that comparing set *size* rather than the set does NOT drive it
+        red: a hole makes the size disagree too. Only the max-plus-one reading
+        is blind to an interior gap, which is exactly why it was the defect.
+        """
+        store, indexer = _build_vault(tmp_path, embedding_model)
+        try:
+            docs_dir = tmp_path / get_config().docs_dir
+            wide = docs_dir / "adr" / "punctured-decision.md"
+            body = "\n\n".join(
+                f"## part {index}\n\n" + ("prose about retention. " * 60)
+                for index in range(12)
+            )
+            _write_preserving_newlines(
+                wide,
+                "---\ntags:\n  - '#adr'\n  - '#punctured'\n"
+                "date: '2026-07-29'\nrelated:\n  []\n---\n\n"
+                f"# punctured decision\n\n{body}\n",
+            )
+            indexer.incremental_index(reporter=NullProgressReporter())
+            doc_id = "adr/punctured-decision"
+            ordinals = store.get_stored_chunk_ordinals({doc_id})[doc_id]
+            assert len(ordinals) > 2, "the fixture must split, or this proves nothing"
+
+            # Punch a hole: drop exactly one middle ordinal, leaving the
+            # range's reach unchanged so the count-based reading still reports
+            # a whole document. Deleting the point directly rather than
+            # re-upserting survivors, because the survivors would have to be
+            # re-encoded to be written back and this is about the store's
+            # shape, not about vectors.
+            hole = sorted(ordinals)[1]
+            _delete_one_chunk(store, doc_id, hole)
+            punctured = store.get_stored_chunk_ordinals({doc_id})[doc_id]
+            assert hole not in punctured
+            assert store.get_chunk_counts(doc_ids={doc_id})[doc_id] == len(ordinals), (
+                "the count reading must still look whole, or the hole is "
+                "detectable without reading the ordinals and this proves nothing"
+            )
+
+            _add_tag(wide, "#late-curation")
+            result = indexer.incremental_index(reporter=NullProgressReporter())
+
+            assert result.payload_updated == 0, (
+                "a punctured document took the payload-only branch, where the "
+                "write cannot reach its missing point"
+            )
+            assert result.updated == 1, (
+                "a punctured document was neither payload-refreshed nor "
+                "re-embedded; its stale payload has no path back"
+            )
+            assert store.get_stored_chunk_ordinals({doc_id})[doc_id] == ordinals, (
+                "the re-embed did not restore the missing point"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.timeout(300)
     def test_an_untouched_document_keeps_its_payload(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
@@ -347,6 +450,79 @@ class TestBodyChangeStillReEmbeds:
                 "a body edit took the payload-only branch, leaving stale vectors behind"
             )
             assert _stored_vectors(store, target_id) != vectors_before
+        finally:
+            store.close()
+
+
+class TestOneBadByteCannotWedgeIndexing:
+    """A file the fingerprint cannot decode must not abort the run."""
+
+    @pytest.mark.timeout(300)
+    def test_an_undecodable_document_is_skipped_not_fatal(
+        self, embedding_model: EmbeddingModel, tmp_path: Path
+    ) -> None:
+        """The fingerprint reads and parses; the digest it replaced only hashed.
+
+        A decode error raised from the fingerprint escapes the hashing phase,
+        whose per-file failure capture catches ``OSError`` alone, and aborts the
+        whole run - then aborts every retry while the file remains, so indexing
+        stays wedged until an operator finds one byte. Before the split
+        fingerprint such a file hashed fine and was skipped at the parse phase.
+
+        Mutation that drives this red: in ``fingerprint_bytes``, decode without
+        catching ``UnicodeDecodeError``. This test then fails with that
+        exception escaping ``incremental_index``.
+        """
+        store, indexer = _build_vault(tmp_path, embedding_model)
+        try:
+            docs_dir = tmp_path / get_config().docs_dir
+            good = docs_dir / "adr" / "still-indexable.md"
+            _write_preserving_newlines(
+                good,
+                "---\ntags:\n  - '#adr'\n  - '#survivor'\n"
+                "date: '2026-07-29'\nrelated:\n  []\n---\n\n"
+                "# still indexable\n\nThis one decodes perfectly well.\n",
+            )
+            broken = docs_dir / "adr" / "one-bad-byte.md"
+            broken.write_bytes(
+                b"---\ntags:\n  - '#adr'\n  - '#broken'\n"
+                b"date: '2026-07-29'\nrelated:\n  []\n---\n\n"
+                b"# one bad byte\n\nA caf\xe9 encoded as cp1252.\n"
+            )
+
+            # Reaching this line at all is most of the assertion: the run
+            # completed instead of raising out of the hashing phase.
+            result = indexer.incremental_index(reporter=NullProgressReporter())
+
+            stored = store.get_all_ids()
+            assert "adr/still-indexable" in stored, (
+                "the decodable new document was not indexed; the undecodable "
+                "one took the run down with it"
+            )
+            assert "adr/one-bad-byte" not in stored, (
+                "an undecodable document reached the store"
+            )
+            # ``added`` counts documents the sidecar had not seen, which
+            # includes the undecodable one - it fingerprints fine and is only
+            # dropped later, at the parse phase. That over-count predates the
+            # split fingerprint (the raw-bytes digest hashed such files too),
+            # so it is recorded here rather than asserted away.
+            assert result.added == 2
+
+            # And again: a wedged run fails identically on every retry, so one
+            # clean pass is not enough to prove the wedge is gone.
+            repeat = indexer.incremental_index(reporter=NullProgressReporter())
+
+            assert store.get_all_ids() == stored, "the retry disturbed the index"
+            # The undecodable file stays in the "new" set on every run, because
+            # that set is the difference against the *store*, which it can never
+            # enter. So it is re-parsed and re-skipped each run - one file's
+            # worth of work, bounded and constant, and the same before the split
+            # fingerprint. What matters is that it never re-embeds anything and
+            # never grows.
+            assert repeat.added == 1
+            assert repeat.updated == 0
+            assert repeat.payload_updated == 0
         finally:
             store.close()
 

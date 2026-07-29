@@ -73,3 +73,30 @@ copied. The two differ only in how they reach a classification; what a
 classification costs must not depend on which caller produced it, or a fix
 applied to one path and missed on the other makes watcher-driven edits behave
 differently from operator-driven ones.
+
+The arity check was originally read from the stored chunk count, which is the
+highest ordinal plus one rather than a census of the points that exist. A
+document missing an interior ordinal therefore reported the same number as a
+whole one, passed the check, and took the payload branch - where the write
+addresses points by assumed ordinal, reaches nothing for the missing one, and
+raises nothing. The sidecar then recorded the new fingerprint, so every later
+run classified it unchanged and the stale payload had no path back. Verified
+against a real store before fixing: with ordinals 0 and 2 present, the count
+reading still returned 3 and the overwrite of ordinal 1 silently no-opped.
+
+The check now reads the exact stored ordinal set and requires it to equal the
+set the document splits into, deferring anything else to the re-embed branch,
+and defers everything if the read itself fails. That also closes two cases the
+count reading admitted: a pre-chunking point, which counts as one and passes for
+a single-chunk document while no ordinal-keyed write can address it, and a
+document carrying extra points beyond its chunk count.
+
+The set reading and the count reading are derived from one scan, so the tail
+purge keeps the max-plus-one answer it needs while this branch gets the census
+it needs.
+
+The payload write is now handed to the store one document at a time. It issues a
+call per point, so a whole-corpus refresh is thousands of sequential round
+trips; as one call it was uncancellable and reported no progress until it
+finished. A document is the safe granularity - its payloads land together, so
+cancelling between documents never leaves one half-refreshed.

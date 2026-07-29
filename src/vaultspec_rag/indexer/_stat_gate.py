@@ -415,9 +415,12 @@ def _read_digest(
 ) -> tuple[str, os.stat_result]:
     """Digest *path* and return the stat observed after the read.
 
-    Runs on pool workers: file I/O and hashing only, no gate, reporter, or
-    control access. The post-read stat lets the calling thread refuse to
-    record evidence for a file whose identity moved while it was being read.
+    Runs on pool workers, and touches no gate, reporter, or control state -
+    those all stay on the calling thread. What the digest itself does is the
+    owning domain's business and is not always just I/O and hashing: the vault
+    fingerprint parses frontmatter and reads configuration here. It must
+    therefore stay thread-safe and must never raise anything the caller does
+    not catch.
     """
     return digest(path), os.stat(path)
 

@@ -15,12 +15,15 @@ never drift apart. A delta in the body means re-chunk and re-embed. A delta in
 the metadata alone means rebuild payloads and leave the vectors where they
 are. Neither means the run does nothing.
 
-The raw digest is carried alongside both. It is the byte-identity fast path,
-and it is the bridge to sidecars written under the old scheme: a stored bare
-digest is compared against it, so a corpus whose bytes have not moved since
-the last run under the old scheme migrates by re-labelling rather than by
-re-embedding. Getting that wrong would spend a full corpus of GPU time once,
-which is precisely the cost this module exists to stop paying.
+The raw digest is carried alongside both, taken over the file's bytes exactly
+as stored. It is the byte-identity fast path, and it is the bridge to sidecars
+written under the old scheme: a stored bare digest is compared against it, so a
+corpus whose bytes have not moved since the last run under the old scheme
+migrates by re-labelling rather than by re-embedding. It must be over the true
+bytes for that comparison to mean anything - the old scheme digested bytes, so
+digesting a decoded-and-re-encoded copy instead would disagree for every file
+whose line endings the checkout translated, and spend a full corpus of GPU time
+once, which is precisely the cost this module exists to stop paying.
 """
 
 from __future__ import annotations
@@ -44,8 +47,8 @@ __all__ = [
     "VaultFingerprint",
     "classify",
     "encode",
+    "fingerprint_bytes",
     "fingerprint_path",
-    "fingerprint_text",
     "parse",
 ]
 
@@ -117,24 +120,47 @@ def parse(stored: str) -> VaultFingerprint | None:
     return VaultFingerprint(raw=raw, body=body, metadata=metadata)
 
 
-def fingerprint_text(
+def fingerprint_bytes(
     path: pathlib.Path,
     root_dir: pathlib.Path,
-    content: str,
+    data: bytes,
 ) -> str:
-    """Fingerprint one vault document from text already read off disk.
+    """Fingerprint one vault document from the bytes read off disk.
+
+    The raw digest is taken over those bytes exactly as stored, never over a
+    decoded-and-re-encoded copy. That is what makes it comparable to a sidecar
+    entry written under the previous scheme, which digested the file's bytes:
+    re-encoding would silently disagree for any file whose line endings the
+    checkout translated, and the cheap migration would degrade to a re-embed of
+    every such document.
 
     The body digest covers ``VaultDocument.content`` - the exact string the
     chunker splits and the encoder embeds, already stripped by the shared
     parse - so a body delta and a stale-vector condition are the same event by
-    construction. Line endings are normalised first: a checkout that rewrites
-    them changes no character the embedder would ever see.
+    construction. Line endings are normalised there instead, where they belong:
+    a checkout that rewrites them changes no character the embedder sees.
 
-    A path with no recognised doc type has no document to describe, so its raw
-    digest stands alone as its fingerprint; such a path is not indexed, and a
-    fabricated body digest for it would only be noise.
+    Two cases yield the bare raw digest rather than a split fingerprint, and
+    both are documents this indexer does not store:
+
+    - a path with no recognised doc type, which has no document to describe;
+    - bytes that are not valid UTF-8, which no parse can read.
+
+    Neither may raise. Indexing skips such files with a warning at the parse
+    phase, and it did so before this fingerprint existed; raising here instead
+    would abort the whole run on one bad byte, and keep aborting it on every
+    retry until an operator found the file.
     """
-    raw = hashlib.blake2b(content.encode("utf-8")).hexdigest()
+    raw = hashlib.blake2b(data).hexdigest()
+    try:
+        content = data.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.debug(
+            "%s is not valid UTF-8; fingerprinting its bytes alone. Indexing "
+            "skips it at the parse phase, as it always has",
+            path,
+        )
+        return raw
     doc = vault_document_from_text(path, root_dir, content)
     if doc is None:
         return raw
@@ -153,10 +179,10 @@ def fingerprint_path(path: pathlib.Path, root_dir: pathlib.Path) -> str:
 
     Raises:
         OSError: The file could not be read, exactly as the raw-digest read it
-            replaces would have raised. The caller reports the failure per
-            file rather than aborting its batch.
+            replaces would have raised, and the only failure this can produce.
+            The caller reports it per file rather than aborting its batch.
     """
-    return fingerprint_text(path, root_dir, path.read_text(encoding="utf-8"))
+    return fingerprint_bytes(path, root_dir, path.read_bytes())
 
 
 def classify(stored: str | None, current: str) -> VaultDelta:
