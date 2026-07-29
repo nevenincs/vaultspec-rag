@@ -325,8 +325,23 @@ def _assert_mcp_job_snapshot(
     job_id: str,
     project_root: Path,
 ) -> None:
-    """Assert the complete real MCP job envelope and caller identity."""
-    assert set(result) == {"jobs", "total", "returned", "summary", "filters"}
+    """Assert the complete real MCP job envelope and caller identity.
+
+    Exact on purpose: the envelope is a contract, and a subset check would stop
+    catching an unintended key forever. The tool answers from the same route as
+    the HTTP listing, so the machine-wide readings the listing carries are part
+    of what it returns.
+    """
+    assert set(result) == {
+        "jobs",
+        "total",
+        "returned",
+        "summary",
+        "filters",
+        "gpu",
+        "pressure",
+        "device_load",
+    }
     jobs: list[Any] = result["jobs"]
     assert isinstance(jobs, list)
     assert jobs
