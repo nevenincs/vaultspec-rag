@@ -463,6 +463,7 @@ class TestBucketedDenseEncode:
         # After the OOM the live budget halves and the counter advances.
         assert events[3][1].token_budget == 50
         assert events[3][1].oom_count == 1
+        assert {progress.kind for _phase, progress in events} == {"dense"}
         assert all(progress.items_total == 4 for _phase, progress in events)
 
 
@@ -558,6 +559,46 @@ class TestBucketedSparseEncode:
         model._sparse_model = cast("Any", _BucketRecordingSparseModel())
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
             model.encode_documents_sparse(["text"], batch_size=0)
+
+    def test_bucket_callback_reports_progress_and_budget(self):
+        """A sparse memory retry is published, not silently absorbed.
+
+        A sparse CUDA OOM lowers the sparse ceiling and retries; a
+        callback seam that only the dense path fires leaves that retry
+        invisible, so degradation evidence points away from the memory
+        squeeze that caused it.
+        """
+        texts = _distinct_texts(4)
+        fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
+        model = _model_shell(token_budget=100)
+        model._sparse_model = cast("Any", fake)
+        events: list[tuple[str, EncodeBucketProgress]] = []
+
+        def observe(phase: str, progress: EncodeBucketProgress) -> None:
+            events.append((phase, progress))
+
+        model.encode_documents_sparse(texts, on_bucket=observe)
+        phases = [phase for phase, _progress in events]
+        # The failing [t2, t3] attempt fires "before" without an "after";
+        # its replanned single-item retries each fire a full pair.
+        assert phases == [
+            "before",
+            "after",
+            "before",
+            "before",
+            "after",
+            "before",
+            "after",
+        ]
+        done = [progress.items_done for phase, progress in events if phase == "after"]
+        assert done == [2, 3, 4]
+        assert events[0][1].token_budget == 100
+        assert events[0][1].oom_count == 0
+        # After the OOM the live budget halves and the counter advances.
+        assert events[3][1].token_budget == 50
+        assert events[3][1].oom_count == 1
+        assert {progress.kind for _phase, progress in events} == {"sparse"}
+        assert all(progress.items_total == 4 for _phase, progress in events)
 
 
 #: Fixed worst-case calibration corpus: token-dense shapes a code or

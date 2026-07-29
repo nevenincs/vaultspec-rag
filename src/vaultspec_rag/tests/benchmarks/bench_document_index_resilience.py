@@ -105,11 +105,11 @@ class _RuntimeSampler:
         self.cuda_bytes = 0
 
     def _observe(self) -> None:
-        from ...memory_probe import current_cuda_mb, current_rss_mb
+        from ...memory_probe import current_cuda_mib, current_rss_mib
 
-        _allocated_mb, reserved_mb = current_cuda_mb()
-        self.rss_bytes = max(self.rss_bytes, int(current_rss_mb() * 1024**2))
-        self.cuda_bytes = max(self.cuda_bytes, int(reserved_mb * 1024**2))
+        _allocated_mib, reserved_mib = current_cuda_mib()
+        self.rss_bytes = max(self.rss_bytes, int(current_rss_mib() * 1024**2))
+        self.cuda_bytes = max(self.cuda_bytes, int(reserved_mib * 1024**2))
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_seconds):

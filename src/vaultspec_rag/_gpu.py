@@ -57,9 +57,28 @@ def load_torch() -> Any:
 
     The single gate every local-mode torch *compute* load must pass through.
     Returns the imported ``torch`` module. Raises ``ImportError`` when torch is
-    not installed, or ``RuntimeError`` when torch is installed but exposes no
-    CUDA device (a CPU-only build, or no GPU) - it never silently degrades to
-    CPU compute.
+    not installed, ``RuntimeError`` when torch is installed but exposes no CUDA
+    device (a CPU-only build, or no GPU) - it never silently degrades to CPU
+    compute - and ``RuntimeError`` when the device has no room for a model
+    stack, so a contended card is refused instead of starved.
+
+    The device is checked once per process, before the first successful load,
+    and the verdict is latched: a later call is exactly as cheap as it was
+    before the check existed, and - the load-bearing half - it takes no second
+    reading, so this process's own residency can never be read back as foreign
+    pressure. A release of the resident stack retires the latch.
+    """
+    from ._gpu_admission import admit_gpu_load
+
+    return admit_gpu_load(_import_torch_for_compute)
+
+
+def _import_torch_for_compute() -> Any:
+    """Import torch, require a CUDA device, and apply the process allocator cap.
+
+    The load itself, separated from the admission that precedes it so the two
+    concerns stay legible: this function answers "can torch run compute here at
+    all", and the admission gate answers "is there room for it right now".
     """
     try:
         import torch

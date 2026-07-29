@@ -35,16 +35,16 @@ pytestmark = [pytest.mark.unit]
 # admission samples the live process once the budget is frozen: a ceiling
 # chosen low enough to be crossed would fail on enforcement and never reach
 # the derivation under test.
-CONFIG_RSS_MB = 16384.0
-PROFILE_RSS_BELOW_CONFIG_MB = 8192.0
-PROFILE_RSS_ABOVE_CONFIG_MB = 32768.0
-PROFILE_CUDA_MB = 6144.0
-CONFIGURED_CUDA_MB = 4096.0
+CONFIG_RSS_MIB = 16384.0
+PROFILE_RSS_BELOW_CONFIG_MIB = 8192.0
+PROFILE_RSS_ABOVE_CONFIG_MIB = 32768.0
+PROFILE_CUDA_MIB = 6144.0
+CONFIGURED_CUDA_MIB = 4096.0
 
 type BudgetFactory = Callable[[Path, SupportProfileLimits | None, bool], "MemoryBudget"]
 
 
-def _limits(*, rss_mb: float, cuda_mb: float) -> SupportProfileLimits:
+def _limits(*, rss_mib: float, cuda_mib: float) -> SupportProfileLimits:
     """Build real profile limits carrying the two enforced dimensions.
 
     The remaining dimensions are corpus counters that admission never reads;
@@ -57,8 +57,8 @@ def _limits(*, rss_mb: float, cuda_mb: float) -> SupportProfileLimits:
         weighted_bytes=1_000_000_000,
         extracted_bytes=1_000_000_000,
         queue_bytes=1_000_000_000,
-        rss_bytes=mib_to_bytes(rss_mb),
-        cuda_bytes=mib_to_bytes(cuda_mb),
+        rss_bytes=mib_to_bytes(rss_mib),
+        cuda_bytes=mib_to_bytes(cuda_mib),
     )
 
 
@@ -134,9 +134,9 @@ def pinned_ceilings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     The CUDA ceiling is pinned to the auto-derive sentinel; the tests that
     characterise an operator override set it themselves.
     """
-    monkeypatch.setenv(EnvVar.INDEX_RSS_CEILING_MB.value, str(CONFIG_RSS_MB))
-    monkeypatch.setenv(EnvVar.INDEX_CUDA_CEILING_MB.value, "0")
-    monkeypatch.setenv(EnvVar.INDEX_CUDA_HEADROOM_MB.value, "2048")
+    monkeypatch.setenv(EnvVar.INDEX_RSS_CEILING_MIB.value, str(CONFIG_RSS_MIB))
+    monkeypatch.setenv(EnvVar.INDEX_CUDA_CEILING_MIB.value, "0")
+    monkeypatch.setenv(EnvVar.INDEX_CUDA_HEADROOM_MIB.value, "2048")
     reset_config()
     yield
     reset_config()
@@ -152,10 +152,10 @@ class TestAdmittedRssCeiling:
     ) -> None:
         budget = derive(
             tmp_path,
-            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            _limits(rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB),
             False,
         )
-        assert budget.rss_ceiling_mb == PROFILE_RSS_BELOW_CONFIG_MB
+        assert budget.rss_ceiling_mib == PROFILE_RSS_BELOW_CONFIG_MIB
 
     @BOTH_INDEXERS
     def test_config_below_profile_wins(
@@ -163,10 +163,10 @@ class TestAdmittedRssCeiling:
     ) -> None:
         budget = derive(
             tmp_path,
-            _limits(rss_mb=PROFILE_RSS_ABOVE_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            _limits(rss_mib=PROFILE_RSS_ABOVE_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB),
             False,
         )
-        assert budget.rss_ceiling_mb == CONFIG_RSS_MB
+        assert budget.rss_ceiling_mib == CONFIG_RSS_MIB
 
     def test_code_without_profile_limits_takes_the_configured_ceiling(
         self, tmp_path: Path
@@ -179,7 +179,7 @@ class TestAdmittedRssCeiling:
         than becoming unbounded or zero.
         """
         budget = _code_budget(tmp_path, None, False)
-        assert budget.rss_ceiling_mb == CONFIG_RSS_MB
+        assert budget.rss_ceiling_mib == CONFIG_RSS_MIB
 
     def test_profile_bytes_convert_through_mebibytes(self, tmp_path: Path) -> None:
         """The profile bound is bytes and the ceiling is MiB.
@@ -189,7 +189,9 @@ class TestAdmittedRssCeiling:
         admitting roughly 5% more memory than the profile permits.
         """
         odd_bytes = 7_654_321_000
-        limits = _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB)
+        limits = _limits(
+            rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB
+        )
         budget = _code_budget(
             tmp_path,
             SupportProfileLimits(
@@ -204,7 +206,7 @@ class TestAdmittedRssCeiling:
             ),
             False,
         )
-        assert budget.rss_ceiling_mb == bytes_to_mib(odd_bytes)
+        assert budget.rss_ceiling_mib == bytes_to_mib(odd_bytes)
 
 
 @pytest.mark.usefixtures("pinned_ceilings")
@@ -223,10 +225,10 @@ class TestCudaEnforcementGate:
         """
         budget = derive(
             tmp_path,
-            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            _limits(rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB),
             False,
         )
-        assert budget.cuda_ceiling_mb is None
+        assert budget.cuda_ceiling_mib is None
 
     @BOTH_INDEXERS
     def test_no_cuda_device_admits_no_baseline(
@@ -240,10 +242,10 @@ class TestCudaEnforcementGate:
         """
         budget = derive(
             tmp_path,
-            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            _limits(rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB),
             False,
         )
-        assert budget.cuda_baseline_mb is None
+        assert budget.cuda_baseline_mib is None
 
 
 class TestConfiguredCudaCeiling:
@@ -251,9 +253,11 @@ class TestConfiguredCudaCeiling:
 
     @pytest.fixture(autouse=True)
     def _operator_ceiling(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-        monkeypatch.setenv(EnvVar.INDEX_RSS_CEILING_MB.value, str(CONFIG_RSS_MB))
-        monkeypatch.setenv(EnvVar.INDEX_CUDA_CEILING_MB.value, str(CONFIGURED_CUDA_MB))
-        monkeypatch.setenv(EnvVar.INDEX_CUDA_HEADROOM_MB.value, "2048")
+        monkeypatch.setenv(EnvVar.INDEX_RSS_CEILING_MIB.value, str(CONFIG_RSS_MIB))
+        monkeypatch.setenv(
+            EnvVar.INDEX_CUDA_CEILING_MIB.value, str(CONFIGURED_CUDA_MIB)
+        )
+        monkeypatch.setenv(EnvVar.INDEX_CUDA_HEADROOM_MIB.value, "2048")
         reset_config()
         yield
         reset_config()
@@ -271,10 +275,10 @@ class TestConfiguredCudaCeiling:
         """
         budget = derive(
             tmp_path,
-            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            _limits(rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB),
             True,
         )
-        assert budget.cuda_ceiling_mb == CONFIGURED_CUDA_MB
+        assert budget.cuda_ceiling_mib == CONFIGURED_CUDA_MIB
 
     @BOTH_INDEXERS
     def test_cuda_device_admits_the_resident_baseline(
@@ -286,14 +290,14 @@ class TestConfiguredCudaCeiling:
         ``None`` here would charge every job for memory the resident models
         hold and reject work that fits.
         """
-        from ..memory_probe import resident_cuda_baseline_mb
+        from ..memory_probe import resident_cuda_baseline_mib
 
         budget = derive(
             tmp_path,
-            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            _limits(rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB),
             True,
         )
-        assert budget.cuda_baseline_mb == resident_cuda_baseline_mb()
+        assert budget.cuda_baseline_mib == resident_cuda_baseline_mib()
 
     @BOTH_INDEXERS
     def test_rss_ceiling_is_unaffected_by_the_cuda_override(
@@ -302,10 +306,10 @@ class TestConfiguredCudaCeiling:
         """The two ceilings are independent; one knob must not move the other."""
         budget = derive(
             tmp_path,
-            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            _limits(rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB),
             True,
         )
-        assert budget.rss_ceiling_mb == PROFILE_RSS_BELOW_CONFIG_MB
+        assert budget.rss_ceiling_mib == PROFILE_RSS_BELOW_CONFIG_MIB
 
 
 @pytest.mark.usefixtures("pinned_ceilings")
@@ -317,7 +321,7 @@ class TestAdmissionSamplesBeforeDispatch:
 
         indexer = CodebaseIndexer(tmp_path, _model(False), cast("Any", None))
         indexer._support_budget._support_limits = _limits(
-            rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB
+            rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB
         )
         assert indexer.memory_budget_snapshot is None
 
@@ -326,7 +330,7 @@ class TestAdmissionSamplesBeforeDispatch:
         snapshot = indexer.memory_budget_snapshot
         assert snapshot is not None
         assert snapshot.label == "before code dispatch"
-        assert snapshot.rss_ceiling_mb == PROFILE_RSS_BELOW_CONFIG_MB
+        assert snapshot.rss_ceiling_mib == PROFILE_RSS_BELOW_CONFIG_MIB
 
     def test_document_admission_publishes_a_snapshot(self, tmp_path: Path) -> None:
         from ..indexer import DocumentIndexer
@@ -334,13 +338,13 @@ class TestAdmissionSamplesBeforeDispatch:
         indexer = DocumentIndexer(tmp_path, _model(False), cast("Any", None))
 
         budget = indexer._begin_resource_budget(
-            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB)
+            _limits(rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB)
         )
 
         snapshot = budget.snapshot
         assert snapshot is not None
         assert snapshot.label == "before document dispatch"
-        assert snapshot.rss_ceiling_mb == PROFILE_RSS_BELOW_CONFIG_MB
+        assert snapshot.rss_ceiling_mib == PROFILE_RSS_BELOW_CONFIG_MIB
         # The document run also publishes the same budget on the indexer, which
         # is what the service reads for its live memory reporting.
         assert indexer._memory_budget is budget.memory_budget
@@ -374,17 +378,17 @@ class TestNoHeadroomIsRefusedAtAdmission:
         Refusing would ground a CPU-side run on a device figure that never
         applies to it.
         """
-        monkeypatch.setenv(EnvVar.INDEX_CUDA_CEILING_MB.value, "0.5")
-        monkeypatch.setenv(EnvVar.INDEX_RSS_CEILING_MB.value, str(CONFIG_RSS_MB))
+        monkeypatch.setenv(EnvVar.INDEX_CUDA_CEILING_MIB.value, "0.5")
+        monkeypatch.setenv(EnvVar.INDEX_RSS_CEILING_MIB.value, str(CONFIG_RSS_MIB))
         reset_config()
 
         budget = derive(
             tmp_path,
-            _limits(rss_mb=PROFILE_RSS_BELOW_CONFIG_MB, cuda_mb=PROFILE_CUDA_MB),
+            _limits(rss_mib=PROFILE_RSS_BELOW_CONFIG_MIB, cuda_mib=PROFILE_CUDA_MIB),
             False,
         )
 
-        assert budget.cuda_ceiling_mb is None
+        assert budget.cuda_ceiling_mib is None
 
     def test_an_exhausted_device_names_the_device_not_the_knob(self) -> None:
         """A collapsed DERIVED ceiling reports free memory, not configuration.
@@ -399,9 +403,9 @@ class TestNoHeadroomIsRefusedAtAdmission:
 
         with pytest.raises(JobError) as refused:
             _require_cuda_headroom(
-                ceiling_mb=0.0,
-                baseline_mb=6301.1,
-                configured_mb=0.0,
+                ceiling_mib=0.0,
+                baseline_mib=6301.1,
+                configured_mib=0.0,
             )
 
         assert refused.value.error_kind is JobErrorKind.CUDA_MEMORY_CEILING
@@ -420,7 +424,7 @@ class TestNoHeadroomIsRefusedAtAdmission:
         from ..indexer._resource_ceilings import _require_cuda_headroom
 
         _require_cuda_headroom(
-            ceiling_mb=6301.1 + 0.001,
-            baseline_mb=6301.1,
-            configured_mb=6301.1 + 0.001,
+            ceiling_mib=6301.1 + 0.001,
+            baseline_mib=6301.1,
+            configured_mib=6301.1 + 0.001,
         )

@@ -16,7 +16,7 @@ import os
 import pathlib
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
 from ._atomic_write import write_json_atomically
 from ._domain import classify_domain
@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ROOT_COLLECTION_PREFIX_RE",
+    "VAULT_BODY_PAYLOAD_KEYS",
+    "VAULT_STRUCTURAL_PAYLOAD_KEYS",
     "CodeChunk",
     "DocumentChunk",
     "DocumentLocator",
@@ -41,6 +43,8 @@ __all__ = [
     "_vault_chunk_payload",
     "_vault_doc_payload",
     "root_collection_prefix",
+    "vault_indexed_metadata",
+    "vault_metadata_digest",
 ]
 
 #: How a document locator addresses its unit. Declared once: the preprocess
@@ -351,6 +355,86 @@ class CodeChunk:
     locator_value_str: str | None = None
     locator_end_int: int | None = None
     locator_end_str: str | None = None
+
+
+#: Vault payload keys carrying the document body verbatim. A change to any of
+#: them is a body change by definition, so they are covered by the body digest
+#: rather than the metadata digest and must never enter the subset below.
+VAULT_BODY_PAYLOAD_KEYS: Final = frozenset({"content", "doc_content"})
+
+#: Vault payload keys that address a point rather than describe its document.
+#: They are derived from the document's identity and its chunk partition, both
+#: of which are already decided by the body digest and the chunk boundary, so
+#: they carry no independent metadata a digest could miss.
+VAULT_STRUCTURAL_PAYLOAD_KEYS: Final = frozenset(
+    {"doc_id", "chunk_ordinal", "chunk_count"}
+)
+
+#: Digest width for the metadata subset. Sixteen bytes render as thirty-two hex
+#: characters, which keeps the per-document sidecar entry small while leaving
+#: accidental collision far outside anything a vault can reach.
+_METADATA_DIGEST_BYTES: Final = 16
+
+
+def vault_indexed_metadata(doc: VaultDocument) -> dict[str, str | list[str]]:
+    """Return the frontmatter-derived subset that enters vault point payloads.
+
+    This is the contract change detection digests, and it lives here - beside
+    the payload builders below - because the two must never drift apart. A
+    field added to a vault payload but not to this mapping would be refreshed
+    by nothing: its stored value would go stale silently, because no digest
+    covering it means no run ever classifies its change as a change.
+
+    The volatile ``modified:`` stamp is excluded by construction rather than by
+    an exclusion list: it is not a :class:`VaultDocument` field at all, so it
+    cannot be named here, and a stamp refresh over a byte-identical body
+    therefore produces an identical digest.
+    """
+    return {
+        "path": doc.path,
+        "doc_type": doc.doc_type,
+        "feature": doc.feature,
+        "date": doc.date,
+        "tags": doc.tags,
+        "related": doc.related,
+        "title": doc.title,
+        "status": doc.status,
+    }
+
+
+def _canonical_metadata(doc: VaultDocument) -> str:
+    """Canonicalise the indexed subset into one digestible string.
+
+    Surrounding whitespace is stripped from every scalar and every list
+    element, so a re-quoted or re-wrapped frontmatter block that parses to the
+    same values digests identically - which is the point: canonicalisation
+    churn is not a semantic change and must not cost an encode.
+
+    List order is preserved rather than sorted. Order is payload-visible, so a
+    reordered ``tags:`` block genuinely changes what the store holds and must
+    read as a metadata delta, not as no change at all.
+    """
+    canonical: dict[str, object] = {}
+    for key, value in vault_indexed_metadata(doc).items():
+        if isinstance(value, str):
+            canonical[key] = value.strip()
+        else:
+            canonical[key] = [str(item).strip() for item in value]
+    return json.dumps(
+        canonical,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+
+
+def vault_metadata_digest(doc: VaultDocument) -> str:
+    """Digest the canonicalised indexed-frontmatter subset of *doc*."""
+    return hashlib.blake2b(
+        _canonical_metadata(doc).encode("utf-8"),
+        digest_size=_METADATA_DIGEST_BYTES,
+    ).hexdigest()
 
 
 def _vault_doc_payload(doc: VaultDocument) -> store_schema.VaultDocPayload:

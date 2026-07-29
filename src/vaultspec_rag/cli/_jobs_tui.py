@@ -940,16 +940,25 @@ class ServerWatchApp(App[None]):
         # The table has no width until the first layout pass completes, and
         # dividing zero width would leave every column at its label size.
         self.call_after_refresh(self._relayout)
-        self.screen.set_class(self._watch_mode == "jobs", "-jobsfocused")
-        self.set_interval(_SPINNER_INTERVAL, self._tick)
-        self.set_interval(self._interval, self.refresh_jobs)
-        self.set_interval(self._interval, self.refresh_search_activity)
-        self.set_interval(self._interval, self.refresh_managed_logs)
+        # Every beat below reads or paints the screen, so the screen owns
+        # them. Shutting down removes the screen and empties the stack behind
+        # it before it stops the timers the application itself holds, so a
+        # beat owned by the application fires once more with no screen left to
+        # read - and an exception raised on a timer callback takes the whole
+        # interface down, which reads to an operator as the service having
+        # died. Removing a screen stops its timers and waits for them, so
+        # ownership here is what makes the beat end with what it paints.
+        screen = self.screen
+        screen.set_class(self._watch_mode == "jobs", "-jobsfocused")
+        screen.set_interval(_SPINNER_INTERVAL, self._tick)
+        screen.set_interval(self._interval, self.refresh_jobs)
+        screen.set_interval(self._interval, self.refresh_search_activity)
+        screen.set_interval(self._interval, self.refresh_managed_logs)
         # The service itself changes far more slowly than its job list, so
         # its beat runs at a multiple of the jobs interval - but the first
         # read happens now, because the header's identity cell is empty
         # until a daemon has answered.
-        self.set_interval(
+        screen.set_interval(
             self._interval * _STATUS_REFRESH_MULTIPLE, self.refresh_service_status
         )
         self.refresh_service_status()
@@ -1031,6 +1040,17 @@ class ServerWatchApp(App[None]):
         """Return the current width of *column*, or zero before layout."""
         return self._column_cells.get(column, 0)
 
+    def _has_screen(self) -> bool:
+        """Report whether the interface still has a screen to answer into.
+
+        A widget lookup answers for itself - a query over a torn-down
+        composition simply finds nothing - but reading the screen raises
+        there, and an exception on a callback delivering an answer is reported
+        as the interface having crashed rather than as a request that outlived
+        the session that issued it.
+        """
+        return bool(self.screen_stack)
+
     def _search_cells(self, column: str) -> int:
         """Return the current width of a served-search column."""
         return self._search_column_cells.get(column, 0)
@@ -1038,11 +1058,18 @@ class ServerWatchApp(App[None]):
     def _table(self) -> DataTable[Text] | None:
         """Return the table, or ``None`` when it is not mounted.
 
-        The timers outlive composition at both ends: one can fire before the
-        first mount completes and again while the screen is being torn down.
-        An unguarded query raises there, and an exception on a timer callback
-        takes the whole interface down - which reads to an operator as the
-        service having died.
+        Composition is not there for the whole of a request's life: one issued
+        a moment before the session ended is answered after the screen has
+        gone, and that answer arrives here.
+
+        The lookup does not raise there. A query issued from the application
+        resolves against the screen the application composed on, and that
+        screen is held separately from the stack a closing session empties, so
+        the lookup comes back empty rather than raising and the empty answer
+        is what has to be handled. Reading the screen is the thing that raises,
+        which is why nothing on this path does. Anything added here that reads
+        the screen instead of querying for a widget needs its own answer for
+        the screen being gone; a lookup does not.
         """
         found = self.query("#jobs")
         if not found:
@@ -1287,6 +1314,12 @@ class ServerWatchApp(App[None]):
             bar.only_one(ServiceStatusBar).show(result)
 
     def _apply_result(self, result: dict[str, object] | None, generation: int) -> None:
+        if not self._has_screen():
+            # A poll that was in flight when the session ended. A blocking
+            # transport call cannot be cancelled, so its answer arrives
+            # whatever became of the interface meanwhile, and there is no
+            # longer anything to apply it to.
+            return
         if generation <= self._applied_generation:
             # A slower fetch that the newest applied one already superseded.
             # Its payload predates what is on screen.
@@ -1893,8 +1926,8 @@ class ServerWatchApp(App[None]):
             return "gpu —", "muted", False
         gpu = self._gpu or {}
         utilization = measurement(gpu.get("utilization_percent"))
-        used = measurement(gpu.get("memory_used_mb"))
-        total = measurement(gpu.get("memory_total_mb"))
+        used = measurement(gpu.get("memory_used_mib"))
+        total = measurement(gpu.get("memory_total_mib"))
         parts: list[str] = []
         pressure = 0.0
         if utilization is not None:

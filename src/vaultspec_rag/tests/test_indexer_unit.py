@@ -1645,3 +1645,32 @@ class TestPublishedFileBreadth:
         from .._index_breadth import code_file_breadth_shortfall
 
         assert code_file_breadth_shortfall(tmp_path) is None
+
+
+class TestCodeSidecarResolution:
+    """Where the constructor publishes, against where the readers look.
+
+    Every other test here rebinds the sidecar path onto the instance, so none
+    of them observes what the constructor resolved. A path resolved to the
+    other domain's filename still type-checks and still round-trips through
+    the writer that produced it; only an independent reader disagrees.
+    """
+
+    def test_the_indexer_publishes_where_the_code_breadth_reader_looks(
+        self, tmp_path: Path
+    ) -> None:
+        import json
+
+        from .._index_breadth import PUBLISHED_POINTS_KEY, read_reserved_count
+        from ..indexer import CodebaseIndexer
+
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer._meta_path.parent.mkdir(parents=True, exist_ok=True)
+        indexer._meta_path.write_text(
+            json.dumps({PUBLISHED_POINTS_KEY: "91"}), encoding="utf-8"
+        )
+
+        # Mutation this catches: resolving the constructor's sidecar under the
+        # vault filename, which leaves every code-breadth read consulting a
+        # file the code index never writes.
+        assert read_reserved_count(tmp_path, PUBLISHED_POINTS_KEY) == 91
