@@ -173,6 +173,10 @@ def _limits() -> CodePipelineLimits:
     )
 
 
+def _sample_memory_budget(_label: str) -> MemoryBudgetSnapshot:
+    return cast("MemoryBudgetSnapshot", None)
+
+
 def _pipeline(
     tmp_path: Path,
     store: RecordingUpsertStore,
@@ -190,14 +194,11 @@ def _pipeline(
             lifecycle=cast("CodeGenerationLifecycle", object()),
             gpu_lock=None,
             begin_memory_budget=lambda: None,
-            sample_memory_budget=cast(
-                "Callable[[str], MemoryBudgetSnapshot]",
-                lambda _label: None,
-            ),
-            forward_peak_recording=lambda: nullcontext(),
+            sample_memory_budget=_sample_memory_budget,
+            forward_peak_recording=nullcontext,
             fail_cuda_oom=lambda _label, _exc: None,
             begin_support_measurement=lambda _paths: None,
-            measure_code_segments=lambda segments: iter(segments),
+            measure_code_segments=iter,
             record_extracted_bytes=lambda _n: None,
             record_preprocess_result=lambda _result: None,
         )
@@ -326,7 +327,7 @@ class TestConsumerAdvancesProgress:
         assert isinstance(forward["entered_at"], float)
         exited = forward["exited_at"]
         assert isinstance(exited, float)
-        assert exited >= cast("float", forward["entered_at"])
+        assert exited >= forward["entered_at"]
         assert forward["slice_ordinal"] == 5
         assert forward["items"] == 1
 
