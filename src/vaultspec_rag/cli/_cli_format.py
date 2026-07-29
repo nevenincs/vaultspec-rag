@@ -84,7 +84,7 @@ def _duration_phrase(total_seconds: int, *, days: bool) -> str:
 
 
 def _format_seconds(raw: object) -> str:
-    if not isinstance(raw, int | float):
+    if not isinstance(raw, int | float) or isinstance(raw, bool):
         return "not reported"
     raw_seconds = max(0.0, float(raw))
     if raw_seconds < 1:
@@ -135,7 +135,7 @@ def _format_mb(raw: object) -> str:
     CLI and a large value promotes to the unit a reader would have reached for
     anyway.
     """
-    if not isinstance(raw, int | float):
+    if not isinstance(raw, int | float) or isinstance(raw, bool):
         return "not reported"
     from .._units import human_bytes, mib_to_bytes
 
