@@ -542,3 +542,107 @@ class TestBucketedSparseEncode:
         model._sparse_model = cast("Any", _BucketRecordingSparseModel())
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
             model.encode_documents_sparse(["text"], batch_size=0)
+
+
+#: Fixed worst-case calibration corpus: token-dense shapes a code or
+#: document index actually ingests. Pure digit streams are the measured
+#: tokenisation floor (~1 char/token under Qwen's digit-splitting BPE);
+#: hex/id dumps sit near 1.2, symbol-heavy and minified source near 2.1;
+#: ordinary indented code (~3.8) and prose (~6) act as controls.
+_CALIBRATION_CORPUS: dict[str, str] = {
+    "numeric_table": "\n".join(
+        " ".join(f"{(row * 17 + col) * 0.137:.6f}" for col in range(8))
+        for row in range(40)
+    ),
+    "hex_and_ids": "\n".join(
+        f"0x{n * 2654435761 % (1 << 32):08x} "
+        f"{n * 7919:05d}-{n * 104729 % 99999:05d} "
+        f"deadbeef-{n:04d}-4abc-9def-{n * 31:012d}"
+        for n in range(30)
+    ),
+    "symbol_heavy_source": (
+        "if (!((a?.b ?? c[d]) && (e | f) ^ ~g) || h != i) { j += k[l]; }\n"
+        'result = re.sub(r"[^a-z0-9_]+", "-", value.strip().lower())\n'
+        "x=(y<<2)|(z>>3); q&=~mask; p^=0xDEADBEEF; r%=s;\n"
+    )
+    * 12,
+    "minified_style": (
+        "var a=function(b,c){return b&&c?b(c):null};"
+        "for(var d=0;d<e.length;d++){f[g[d]]=h(i[d],j[d]||k)}"
+        "window.q=window.q||[];q.push(['x',1,'y',2,'z',3]);"
+    )
+    * 8,
+    "indented_code": (
+        "    def compute(self, values: list[float]) -> dict[str, float]:\n"
+        "        totals = {name: 0.0 for name in self._names}\n"
+        "        for index, value in enumerate(values):\n"
+        "            totals[self._names[index % 3]] += value * 1.5\n"
+        "        return totals\n"
+    )
+    * 10,
+    "prose_control": (
+        "The indexing service partitions each slice of chunk text into "
+        "bounded buckets before encoding, so activation memory stays "
+        "within the planned budget on every forward pass. "
+    )
+    * 10,
+}
+
+
+class TestCalibrationBoundsUnderPlanning:
+    """The chars-per-token estimate must not under-plan beyond its margin.
+
+    The estimate is only a planning device - the learned token ceiling is
+    the enforcement authority - but an estimator that under-plans real
+    tokenisation too far turns every token-dense slice into an
+    OOM-discard-replan cycle instead of a planned pass. This guard
+    tokenises a fixed worst-case corpus with the real pinned dense
+    tokenizer (loaded from the local cache, no network) and bounds how
+    far real token counts may exceed the production estimate.
+    """
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    #: Upper bound on real_tokens / estimated_tokens over the corpus.
+    #: Derivation: one OOM re-clamp halves the planning budget, so two
+    #: re-clamps absorb a 4x under-plan; 3.5 keeps headroom below that
+    #: bound, so calibration or tokenizer drift is caught while the
+    #: measured worst case (digit tables near 1 char/token, ~3x under a
+    #: 3-chars/token divisor) still costs at most two discarded buckets.
+    MAX_UNDER_PLAN_FACTOR = 3.5
+
+    def test_estimator_under_plan_stays_within_the_stated_margin(self):
+        from transformers import AutoTokenizer
+
+        from ..config._settings import get_config
+
+        config = get_config()
+        tokenizer = AutoTokenizer.from_pretrained(  # pyright: ignore[reportUnknownMemberType]  # transformers factory is partially stubbed
+            str(config.embedding_model),
+            local_files_only=True,
+        )
+        assert tokenizer is not None, "pinned dense tokenizer absent from local cache"
+        divisor = int(config.embedding_encode_chars_per_token)
+        offenders: dict[str, float] = {}
+        for name, text in _CALIBRATION_CORPUS.items():
+            # A single-item plan exposes the production estimator itself:
+            # the bucket's footprint is exactly the per-text estimate.
+            [bucket] = plan_encode_buckets(
+                [text],
+                token_budget=10**9,
+                chars_per_token=divisor,
+                max_items=1,
+            )
+            real_tokens = len(tokenizer(text)["input_ids"])
+            factor = real_tokens / bucket.estimated_tokens
+            if factor > self.MAX_UNDER_PLAN_FACTOR:
+                offenders[name] = round(factor, 3)
+        # Loosening the production divisor (raising
+        # ``embedding_encode_chars_per_token``) or shrinking the margin
+        # makes this fail here, naming each corpus text whose real
+        # tokenisation exceeds its planned estimate by more than the
+        # stated factor.
+        assert not offenders, (
+            f"chars-per-token calibration under-plans real tokenisation "
+            f"beyond the {self.MAX_UNDER_PLAN_FACTOR}x margin for: {offenders}"
+        )
