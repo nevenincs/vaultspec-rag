@@ -29,9 +29,10 @@ import pytest
 from ..._index_breadth import (
     VAULT_PUBLISHED_DOCUMENTS_KEY,
     VAULT_PUBLISHED_POINTS_KEY,
+    index_meta_path,
     read_vault_breadth_claim,
-    vault_meta_path,
 )
+from ..._source_types import PublicSourceType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -211,7 +212,7 @@ class TestPublicationOrdering:
         from ...store_runtime import VaultStore
 
         observed: list[dict[str, object] | None] = []
-        meta_path = vault_meta_path(tmp_path)
+        meta_path = index_meta_path(tmp_path, PublicSourceType.VAULT)
 
         class SidecarWatchingStore(VaultStore):
             """Real store that snapshots the sidecar as breadth is observed."""
@@ -314,7 +315,8 @@ class TestAnUncountablePublicationLeavesThePreviousOneIntact:
             _seed(store, _CORPUS)
             indexer = _indexer(root, store)
             indexer._write_meta(_hashes(_CORPUS))
-            published = vault_meta_path(root).read_bytes()
+            meta_path = index_meta_path(root, PublicSourceType.VAULT)
+            published = meta_path.read_bytes()
 
             survivors = dict(_CORPUS)
             del survivors["research/third"]
@@ -325,13 +327,13 @@ class TestAnUncountablePublicationLeavesThePreviousOneIntact:
             # Catches the sidecar being written from figures the writer could
             # not obtain, or from placeholder zeroes: either replaces a claim
             # that still verifies with one that cannot be reconciled at all.
-            assert vault_meta_path(root).read_bytes() == published
+            assert meta_path.read_bytes() == published
             claim = read_vault_breadth_claim(root)
             assert claim is not None
             assert claim.published_points == _TOTAL_POINTS
             assert claim.published_documents == _TOTAL_DOCUMENTS
             assert "research/third" in indexer._load_meta()
-            assert not list(vault_meta_path(root).parent.glob("*.tmp"))
+            assert not list(meta_path.parent.glob("*.tmp"))
         finally:
             store.close()
 
@@ -393,6 +395,6 @@ class TestAnAbsentFigureCannotTell:
 
     def _write_sidecar(self, root: Path, payload: dict[str, Any]) -> None:
         """Write a vault sidecar verbatim, as a build of any vintage would."""
-        path = vault_meta_path(root)
+        path = index_meta_path(root, PublicSourceType.VAULT)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
