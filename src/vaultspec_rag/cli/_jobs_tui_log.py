@@ -535,7 +535,14 @@ class RetainedLog[RecordT](RichLog):
         self._repaint_if_held()
 
     def _repaint_if_held(self) -> None:
-        """Repaint only when something is actually held for display."""
+        """Repaint only when something is actually held for display.
+
+        Two distinct events need this and neither can stand in for the other:
+        the framework calls ``on_show`` when the pane becomes visible, and the
+        app calls ``repaint_theme`` when the palette changes. Painting an empty
+        pane would clear a message the operator has not read yet, so both go
+        through the same guard rather than each carrying a copy of it.
+        """
         if self._records or self._message is not None:
             self._paint()
 

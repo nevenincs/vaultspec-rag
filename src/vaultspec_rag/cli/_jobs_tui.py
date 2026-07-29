@@ -346,7 +346,13 @@ def _find_record(
     identity: Callable[[dict[str, object]], str],
     identifier: str,
 ) -> dict[str, object] | None:
-    """Return the record *identity* reads as *identifier*, or ``None``."""
+    """Return the record *identity* reads as *identifier*, or ``None``.
+
+    Both lanes resolve a selection the same way - the selected id is a value,
+    not an index, so a record that moved or vanished between refreshes simply
+    does not match. Which field carries the id is the only difference, and
+    that is the reader passed in rather than a field name repeated here.
+    """
     for record in records:
         if identity(record) == identifier:
             return record
@@ -1088,18 +1094,24 @@ class ServerWatchApp(App[None]):
     ) -> WidgetT | None:
         """Return the composed widget *selector* names, or ``None``.
 
-        Composition is not there for the whole of a request's life: one issued
-        a moment before the session ended is answered after the screen has
-        gone, and that answer arrives here.
+        Every pane and table on this screen is reached through here, because
+        every one of them needs the same guard. The timers outlive composition
+        at both ends: one can fire before the first mount completes and again
+        while the screen is being torn down. Composition is likewise not there
+        for the whole of a request's life: one issued a moment before the
+        session ended is answered after the screen has gone, and that answer
+        arrives here.
 
         The lookup does not raise there. A query issued from the application
         resolves against the screen the application composed on, and that
         screen is held separately from the stack a closing session empties, so
         the lookup comes back empty rather than raising and the empty answer
         is what has to be handled. Reading the screen is the thing that raises,
-        which is why nothing on this path does. Anything added here that reads
-        the screen instead of querying for a widget needs its own answer for
-        the screen being gone; a lookup does not.
+        which is why nothing on this path does - an exception on a timer
+        callback takes the whole interface down, which reads to an operator as
+        the service having died. Anything added here that reads the screen
+        instead of querying for a widget needs its own answer for the screen
+        being gone; a lookup does not.
 
         Every accessor below binds its own selector and widget type to this
         one rule, so a pane added later cannot acquire a different answer for
