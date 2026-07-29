@@ -15,6 +15,9 @@ from datetime import datetime
 
 import pytest
 
+if typing.TYPE_CHECKING:
+    from pathlib import Path
+
 from ..cli import _jobs_tui, _jobs_tui_log, _jobs_tui_status
 from ..cli._jobs_tui_log import (
     _MAX_LINE_CHARS,
@@ -24,10 +27,19 @@ from ..cli._jobs_tui_log import (
     render_entry,
     sanitize_log_text,
 )
+from ..cli._jobs_tui_managed_logs import (
+    managed_log_group_metadata,
+    managed_log_safe_text,
+)
 from ..cli._jobs_tui_palette import (
     DARK_THEME_NAME,
     LIGHT_THEME_NAME,
     semantic_tones,
+)
+from ..logging_config import (
+    MAX_MANAGED_LOG_RECORD_BYTES,
+    query_managed_logs,
+    validate_managed_log_payload,
 )
 from .test_cli_jobs_tui import (
     _app,
@@ -174,6 +186,19 @@ class TestSanitization:
         assert len(cleaned) == _MAX_LINE_CHARS
         assert cleaned.endswith("…")
 
+    def test_the_raw_managed_tank_keeps_a_full_sanitized_record(self) -> None:
+        """The global tank neutralizes controls but has no diagnostic-pane cap."""
+        record = "\x1b[31m" + "x" * (10 * _MAX_LINE_CHARS) + "\x1b[0m\tend"
+
+        rendered = managed_log_safe_text(record)
+
+        assert len(rendered) == 10 * _MAX_LINE_CHARS + len(" end"), (
+            "the raw tank must retain every printable record character"
+        )
+        assert rendered.endswith("x end")
+        assert "\x1b" not in rendered
+        assert "[31m" not in rendered
+
     @pytest.mark.asyncio
     async def test_hostile_log_content_renders_inert_on_screen(
         self, control_service: _JobService
@@ -197,6 +222,78 @@ class TestSanitization:
         assert "hostile ansi payload with  control bytes" in painted, (
             "the line's text survives sanitization; only the hostility goes"
         )
+
+
+class TestManagedLogTank:
+    """The global tank renders the real grouped log contract without parsing it."""
+
+    def test_real_managed_file_truncation_is_named_with_its_server_bounds(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A real oversized producer record carries its truncation truth."""
+        (tmp_path / "service.log").write_text(
+            "x" * (MAX_MANAGED_LOG_RECORD_BYTES + 1), encoding="utf-8"
+        )
+        (tmp_path / "qdrant.log").write_text(
+            "qdrant retained record\n", encoding="utf-8"
+        )
+
+        payload = query_managed_logs(5_000, source="all", status_dir=tmp_path)
+        groups = validate_managed_log_payload(
+            payload,
+            source="all",
+            limit=5_000,
+            filters={},
+        )
+
+        assert groups is not None
+        service_metadata = managed_log_group_metadata(groups[0])
+        qdrant_metadata = managed_log_group_metadata(groups[1])
+        assert "service: 1 records" in service_metadata
+        assert "server cap 5,000 records / 2 MiB" in service_metadata
+        assert "TRUNCATED by server" in service_metadata
+        assert "shortened 1 records" in service_metadata
+        assert "qdrant: 1 records" in qdrant_metadata
+        assert "TRUNCATED" not in qdrant_metadata
+
+    @pytest.mark.asyncio
+    async def test_the_global_tank_fetches_both_raw_sources_without_a_job_filter(
+        self,
+        control_service: _JobService,
+    ) -> None:
+        """The real transport, validator, and pane keep producer groups apart."""
+        control_service.log_lines = [
+            "service raw record keeps every field=a=b and polling traffic"
+        ]
+        control_service.qdrant_log_lines = [
+            "qdrant raw record keeps its separate producer identity"
+        ]
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            await pilot.press("m")
+            await _await_painted(pilot, app, "qdrant raw record keeps")
+            painted = _screen_text(app)
+
+        all_source_requests = [
+            path
+            for method, path in control_service.requests
+            if method == "GET" and "source=all" in path
+        ]
+        assert all_source_requests, "the global tank must request the all-source route"
+        assert all("job_id=" not in path for path in all_source_requests), (
+            "the global tank must not inherit the selected-job filter"
+        )
+        assert "[service]" in painted
+        assert "service raw record keeps every field=a=b and polling traffic" in painted
+        assert "[qdrant]" in painted
+        assert "qdrant raw record keeps its separate producer identity" in painted
+        assert painted.index("[service]") < painted.index("[qdrant]"), (
+            "source groups must retain the server's stable producer order"
+        )
+        assert "server cap 5,000 records / 2 MiB" in painted
+        assert "Managed log tank" in painted
 
 
 class TestValueTruncation:

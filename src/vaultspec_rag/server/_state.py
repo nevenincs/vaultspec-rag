@@ -59,10 +59,12 @@ __all__ = [
     "publish_survey_snapshot",
     "render_prometheus",
     "reset_metrics",
+    "search_activity_ledger",
     "survey_snapshot",
 ]
 
 from ..registry import get_registry
+from ._search_activity import SearchActivityLedger
 
 if TYPE_CHECKING:
     import asyncio
@@ -150,6 +152,16 @@ _SENSITIVE_DIRS: tuple[str, ...] = (
 # Shutdown bookkeeping; reassigned by _record_shutdown / lifespan.
 _shutdown_hooks_installed: bool = False
 _shutdown_recorded: bool = False
+
+# Served-search activity is intentionally process-local: query text is useful
+# to an authenticated operator watching the resident service, but never belongs
+# in durable job records or managed logs.
+_search_activity_ledger = SearchActivityLedger()
+
+
+def search_activity_ledger() -> SearchActivityLedger:
+    """Return the process-owned bounded served-search activity ledger."""
+    return _search_activity_ledger
 
 
 # --------------------------------------------------------------------------- #

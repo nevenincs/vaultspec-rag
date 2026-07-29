@@ -446,6 +446,21 @@ def _seat_segment(
     )
 
 
+def _pool_segment(pool: SeatPool, tones: Mapping[str, str]) -> tuple[str, str, str]:
+    """Render one named dispatch pool, including callers waiting at its gate."""
+    value = _pair(pool.used, pool.total)
+    if pool.waiting:
+        value = f"{value} +{pool.waiting} waiting"
+    saturated = (
+        pool.used is not None and pool.total is not None and pool.used >= pool.total
+    )
+    return (
+        pool.name,
+        value,
+        tone_style(tones, "attention", bold=True) if saturated or pool.waiting else "",
+    )
+
+
 def _segments(
     status: ServiceStatusHeader, tones: Mapping[str, str]
 ) -> Iterator[tuple[str, str, str]]:
@@ -478,7 +493,10 @@ def _segments(
         )
     index_pool = status.seat_pool("index")
     if index_pool is not None:
-        yield "index", _pair(index_pool.used, index_pool.total), ""
+        yield _pool_segment(index_pool, tones)
+    search_pool = status.seat_pool("search")
+    if search_pool is not None:
+        yield _pool_segment(search_pool, tones)
     yield "watching", _count(status.watching), ""
     yield "up", compact_duration(status.uptime_seconds), "dim"
 
