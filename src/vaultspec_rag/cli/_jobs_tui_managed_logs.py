@@ -1,4 +1,4 @@
-"""Raw, source-grouped managed-log review for the server watch interface.
+"""Raw, source-grouped managed-log view for the server watch interface.
 
 This view deliberately does not share the selected-job renderer's structured
 parsing, polling suppression, or per-record display cap. Its only record
@@ -102,11 +102,21 @@ class ManagedLogTankView(RichLog):
 
     def on_show(self) -> None:
         """Write held content once the full-height pane becomes visible."""
-        if self._groups or self._message is not None:
-            self._paint_groups()
+        self._repaint_if_held()
 
     def repaint_theme(self) -> None:
         """Repaint the held groups after the interface palette changes."""
+        self._repaint_if_held()
+
+    def _repaint_if_held(self) -> None:
+        """Repaint only when something is actually held for display.
+
+        Two distinct events need this and neither can stand in for the other:
+        the framework calls ``on_show`` when the pane becomes visible, and the
+        app calls ``repaint_theme`` when the palette changes. Painting an empty
+        tank would clear a message the operator has not read yet, so both go
+        through the same guard rather than each carrying a copy of it.
+        """
         if self._groups or self._message is not None:
             self._paint_groups()
 

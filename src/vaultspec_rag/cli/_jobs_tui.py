@@ -25,10 +25,12 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Static
 from textual.widgets.data_table import ColumnKey
 from textual.worker import WorkerState
 
+from .._typed_fields import str_or_empty
 from ..job_models import DesiredJobState, JobState
 from ..jobs import count, measurement
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
@@ -340,9 +342,25 @@ _STATE_TONES: dict[str, tuple[str, bool]] = {
 }
 
 
+def _record_with_id(
+    records: list[dict[str, object]],
+    key: str,
+    wanted: str,
+) -> dict[str, object] | None:
+    """Return the record whose *key* equals *wanted*, or ``None``.
+
+    Both lanes resolve a selection the same way - the selected id is a value,
+    not an index, so a record that moved or vanished between refreshes simply
+    does not match. Which field carries the id is the only difference.
+    """
+    for record in records:
+        if str_or_empty(record.get(key)) == wanted:
+            return record
+    return None
+
+
 def _job_id(job: dict[str, object]) -> str:
-    identifier = job.get("id")
-    return identifier if isinstance(identifier, str) else ""
+    return str_or_empty(job.get("id"))
 
 
 def _short_id(job: dict[str, object]) -> str:
@@ -350,8 +368,7 @@ def _short_id(job: dict[str, object]) -> str:
 
 
 def _search_id(search: dict[str, object]) -> str:
-    identifier = search.get("request_id")
-    return identifier if isinstance(identifier, str) else ""
+    return str_or_empty(search.get("request_id"))
 
 
 def _search_text(value: object, *, fallback: str = "—") -> str:
@@ -650,10 +667,8 @@ def _search_request_cell(search: dict[str, object], cells: int) -> Text:
     source = _search_text(search.get("source"), fallback="source unavailable")
     search_type = _search_text(search.get("type"), fallback="type unavailable")
     root = _search_text(search.get("root"), fallback="root unavailable")
-    top_k = search.get("top_k")
-    depth = (
-        str(top_k) if isinstance(top_k, int) and not isinstance(top_k, bool) else "—"
-    )
+    top_k = count(search.get("top_k"))
+    depth = "—" if top_k is None else str(top_k)
     return _two_line(
         f"{request_id[:12]} · {source}/{search_type}",
         f"{_elide_left(root, cells)} · top {depth}",
@@ -671,18 +686,14 @@ def _search_query_cell(search: dict[str, object], cells: int) -> Text:
 
 def _search_time_cell(search: dict[str, object], cells: int) -> Text:
     """Render duration, status, and result count from the activity record."""
-    total = search.get("total_seconds")
-    duration = (
-        compact_duration(total)
-        if isinstance(total, int | float) and not isinstance(total, bool)
-        else "in progress"
-    )
-    status = search.get("status_code")
-    results = search.get("result_count")
+    total = measurement(search.get("total_seconds"))
+    duration = "in progress" if total is None else compact_duration(total)
+    status = count(search.get("status_code"))
+    results = count(search.get("result_count"))
     return _two_line(
         duration,
-        f"HTTP {status if isinstance(status, int) else '—'} · "
-        f"{results if isinstance(results, int) else '—'} results",
+        f"HTTP {'—' if status is None else status} · "
+        f"{'—' if results is None else results} results",
         cells,
     )
 
@@ -1035,26 +1046,32 @@ class ServerWatchApp(App[None]):
         """Return the current width of a served-search column."""
         return self._search_column_cells.get(column, 0)
 
-    def _table(self) -> DataTable[Text] | None:
-        """Return the table, or ``None`` when it is not mounted.
+    def _mounted[WidgetT: Widget](
+        self,
+        selector: str,
+        kind: type[WidgetT],
+    ) -> WidgetT | None:
+        """Return a composed widget, or ``None`` when it is not mounted.
 
-        The timers outlive composition at both ends: one can fire before the
-        first mount completes and again while the screen is being torn down.
-        An unguarded query raises there, and an exception on a timer callback
-        takes the whole interface down - which reads to an operator as the
-        service having died.
+        Every pane and table on this screen is reached through here, because
+        every one of them needs the same guard. The timers outlive composition
+        at both ends: one can fire before the first mount completes and again
+        while the screen is being torn down. An unguarded query raises there,
+        and an exception on a timer callback takes the whole interface down -
+        which reads to an operator as the service having died.
         """
-        found = self.query("#jobs")
+        found = self.query(selector)
         if not found:
             return None
-        return cast("DataTable[Text]", found.only_one(DataTable))
+        return found.only_one(kind)
+
+    def _table(self) -> DataTable[Text] | None:
+        """Return the jobs table, or ``None`` when it is not mounted."""
+        return cast("DataTable[Text] | None", self._mounted("#jobs", DataTable))
 
     def _search_table(self) -> DataTable[Text] | None:
         """Return the served-search table, or ``None`` before composition."""
-        found = self.query("#searches")
-        if not found:
-            return None
-        return cast("DataTable[Text]", found.only_one(DataTable))
+        return cast("DataTable[Text] | None", self._mounted("#searches", DataTable))
 
     def _layout_search_columns(self) -> bool:
         """Divide the served-search table against its actual current width."""
@@ -1595,10 +1612,7 @@ class ServerWatchApp(App[None]):
 
     def selected_search(self) -> dict[str, object] | None:
         """Return the currently selected served-search activity record."""
-        for search in self._searches:
-            if _search_id(search) == self.selected_search_id:
-                return search
-        return None
+        return _record_with_id(self._searches, "request_id", self.selected_search_id)
 
     def watch_selected_search_id(self, _request_id: str) -> None:
         self._render_search_detail()
@@ -1637,68 +1651,48 @@ class ServerWatchApp(App[None]):
         source = _search_text(search.get("source"), fallback="source unavailable")
         search_type = _search_text(search.get("type"), fallback="type unavailable")
         root = _search_text(search.get("root"), fallback="root unavailable")
-        top_k = search.get("top_k")
-        top_k_text = (
-            str(top_k)
-            if isinstance(top_k, int) and not isinstance(top_k, bool)
-            else "—"
-        )
+        top_k = count(search.get("top_k"))
+        top_k_text = "—" if top_k is None else str(top_k)
         detail.append(
             f"\n{_search_id(search)} · source {source} · type {search_type}"
             f" · root {root}"
             f" · top_k {top_k_text}",
             style="dim",
         )
-        status = search.get("status_code")
+        status = count(search.get("status_code"))
         outcome = _search_text(search.get("outcome"), fallback="in progress")
-        result_count = search.get("result_count")
-        status_text = (
-            str(status)
-            if isinstance(status, int) and not isinstance(status, bool)
-            else "—"
-        )
-        result_count_text = (
-            str(result_count)
-            if isinstance(result_count, int) and not isinstance(result_count, bool)
-            else "—"
-        )
-        total = search.get("total_seconds")
-        total_text = (
-            compact_duration(total)
-            if isinstance(total, int | float) and not isinstance(total, bool)
-            else "—"
-        )
+        result_count = count(search.get("result_count"))
+        status_text = "—" if status is None else str(status)
+        result_count_text = "—" if result_count is None else str(result_count)
+        total = measurement(search.get("total_seconds"))
+        total_text = "—" if total is None else compact_duration(total)
         detail.append(
             f"\nstate {search.get('state', '—')} · outcome {outcome}"
             f" · status {status_text} · results {result_count_text}"
             f" · total {total_text}",
             style="dim",
         )
-        started = search.get("started_at")
-        finished = search.get("finished_at")
-        started_text = (
-            str(started)
-            if isinstance(started, int | float) and not isinstance(started, bool)
-            else "—"
-        )
-        finished_text = (
-            str(finished)
-            if isinstance(finished, int | float) and not isinstance(finished, bool)
-            else "—"
-        )
+        started = measurement(search.get("started_at"))
+        finished = measurement(search.get("finished_at"))
+        started_text = "—" if started is None else str(started)
+        finished_text = "—" if finished is None else str(finished)
         detail.append(
             f"\nstarted {started_text} · finished {finished_text}",
             style="dim",
         )
         timings = search.get("timings")
         if isinstance(timings, dict) and timings:
-            values = [
-                f"{name}={compact_duration(value)}"
+            measured = [
+                (str(name), measurement(value))
                 for name, value in sorted(
                     cast("dict[object, object]", timings).items(),
                     key=lambda item: str(item[0]),
                 )
-                if isinstance(value, int | float) and not isinstance(value, bool)
+            ]
+            values = [
+                f"{name}={compact_duration(seconds)}"
+                for name, seconds in measured
+                if seconds is not None
             ]
             if values:
                 detail.append(f"\ntimings {' · '.join(values)}", style="dim")
@@ -2163,10 +2157,7 @@ class ServerWatchApp(App[None]):
 
     def _log_view(self) -> JobsLogView | None:
         """Return the log pane's body, or ``None`` when it is not mounted."""
-        found = self.query("#joblog")
-        if not found:
-            return None
-        return found.only_one(JobsLogView)
+        return self._mounted("#joblog", JobsLogView)
 
     def _refresh_log_title(self) -> None:
         """Repaint the pane's title: whose log, and what is being hidden.
@@ -2200,13 +2191,10 @@ class ServerWatchApp(App[None]):
 
     def _managed_log_view(self) -> ManagedLogTankView | None:
         """Return the global raw-log tank, or ``None`` before composition."""
-        found = self.query("#managedlog")
-        if not found:
-            return None
-        return found.only_one(ManagedLogTankView)
+        return self._mounted("#managedlog", ManagedLogTankView)
 
     def _refresh_managed_log_title(self) -> None:
-        """Name the raw, source-grouped review mode and its refresh contract."""
+        """Name the raw, source-grouped view mode and its refresh contract."""
         found = self.query("#managedlogtitle")
         if not found:
             return
@@ -2234,10 +2222,7 @@ class ServerWatchApp(App[None]):
     # -- actions ------------------------------------------------------------
 
     def selected_job(self) -> dict[str, object] | None:
-        for job in self._jobs:
-            if _job_id(job) == self.selected_id:
-                return job
-        return None
+        return _record_with_id(self._jobs, "id", self.selected_id)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Disable a row action the selected job does not permit.
@@ -2268,7 +2253,7 @@ class ServerWatchApp(App[None]):
         A search-row selection intentionally leaves ``selected_id`` intact so
         returning to indexing restores its row. That retained id must not turn
         a served-search keypress into a control request for the now-hidden job.
-        The same applies to the full-height managed-log review: it preserves
+        The same applies to the full-height managed-log view: it preserves
         selection for return, not for mutation while the jobs lane is absent.
         """
         if self._managed_log_visible():
@@ -2404,7 +2389,7 @@ class ServerWatchApp(App[None]):
         self.refresh_bindings()
 
     def action_toggle_managed_logs(self) -> None:
-        """Move between jobs and the full-height grouped raw-log review."""
+        """Move between jobs and the full-height grouped raw-log view."""
         show_tank = not self._managed_log_visible()
         self.screen.set_class(show_tank, "-showmanagedlogs")
         if show_tank:
