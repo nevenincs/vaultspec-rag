@@ -1200,3 +1200,71 @@ def test_carry_forward_refuses_a_manifest_with_dangling_evidence(
     # full reconciliation rather than diffing against poisoned evidence.
     assert successor.parent_generation_id is None
     assert ledger.file_states_for_paths(successor.generation_id, ("src/kept.py",)) == {}
+
+
+def test_carry_forward_stops_rather_than_falling_back_to_an_older_manifest(
+    tmp_path: Path,
+) -> None:
+    """A dangling candidate ends the scan; it does not demote to an older one.
+
+    The newest compatible manifest is the one storage reflects. An older
+    same-fingerprint manifest describes points a later publication already
+    replaced, so carrying it would claim dead point ids and skip re-encoding
+    every file it names. Refusing outright forces the full failure-safe
+    reconciliation instead.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+    paths = ("src/one.py", "src/two.py", "src/three.py")
+
+    def index(generation_id: str, rel_path: str, version: str) -> None:
+        digest = _digest(f"{rel_path}:{version}")
+        ledger.record_storage_confirmed_unit(
+            generation_id,
+            _unit(rel_path, 0, 1, digest=digest),
+        )
+        ledger.record_file_state(
+            generation_id,
+            FileState(rel_path, FileStateKind.INDEXED, ContentKind.CODE, digest),
+        )
+
+    # The origin indexes everything, so all three states cite it.
+    origin = ledger.start_generation(signature)
+    for rel_path in paths:
+        index(origin.generation_id, rel_path, "v1")
+    _publish_and_compact(ledger, origin.generation_id)
+
+    # The middle generation re-indexes one file, moving that state's evidence
+    # onto itself while the other two keep citing the origin.
+    middle = ledger.start_generation(signature)
+    index(middle.generation_id, paths[0], "v2")
+    _publish_and_compact(ledger, middle.generation_id)
+
+    # The newest generation re-indexes a second file. Its manifest now cites
+    # the middle generation, itself, and the origin.
+    newest = ledger.start_generation(signature)
+    index(newest.generation_id, paths[1], "v2")
+    _publish_and_compact(ledger, newest.generation_id)
+
+    # Sever the middle generation, the state a ledger compacted by a build
+    # without evidence retention is left in. The newest manifest now dangles
+    # while the origin - older, compatible, and still cited only by itself -
+    # remains a viable fall-back target.
+    connection = sqlite3.connect(ledger.path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(
+        "DELETE FROM generations WHERE generation_id = ?",
+        (middle.generation_id,),
+    )
+    connection.commit()
+    connection.close()
+
+    # Without an intact older candidate the assertion below would hold for the
+    # wrong reason, so pin that the fall-back target really did survive.
+    assert ledger.generation(origin.generation_id).terminal_state is (
+        RunTerminalState.SUCCEEDED
+    )
+
+    successor = ledger.start_generation(signature)
+    assert successor.parent_generation_id is None
+    assert ledger.file_states_for_paths(successor.generation_id, paths) == {}
