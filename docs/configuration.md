@@ -60,10 +60,12 @@ The tables in this section, together with the backend selection table, list ever
 | `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`              | Seconds an idle project slot stays resident before eviction               | -                                     |
 | `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`                | Maximum simultaneously cached project slots                               | -                                     |
 | `VAULTSPEC_RAG_ADMIN_TIMEOUT`            | float   | `30`                | Client connection and read budget for lifecycle and admin calls (seconds) | -                                     |
-| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `10485760` (10 MiB) | Active-file size threshold for each managed log source                    | -                                     |
+| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `2097152` (2 MiB)   | Active-file size threshold for each managed log source                    | -                                     |
 | `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                 | Rotated backups retained for each managed log source                      | -                                     |
 
-The log policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 120 MiB.
+The log policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 24 MiB.
+
+A generation is sized to match the per-source window the log readers scan back over. Raising `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES` past that window keeps bytes that no `vaultspec-rag server logs` call, MCP log tool, or jobs interface will return: the readers walk back from the newest record and stop at the window, so the head of an oversized generation is written, rotated, and never read. Prefer raising the backup count to hold more history.
 
 ### Job lifecycle
 
@@ -102,6 +104,8 @@ Changing a model against an index built with another one is an operator decision
 | `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE`          | integer | `32`    | Vault inner encode sub-batch size                   | -        |
 | `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE`     | integer | `32`    | Code inner encode sub-batch size                    | -        |
 | `VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE` | integer | `12`    | Document inner encode sub-batch size                | -        |
+| `VAULTSPEC_RAG_EMBEDDING_ENCODE_TOKEN_BUDGET`        | integer | `24000` | Estimated token footprint allowed per encode bucket | -        |
+| `VAULTSPEC_RAG_EMBEDDING_ENCODE_CHARS_PER_TOKEN`     | integer | `3`     | Chars-per-token ratio used to plan encode buckets   | -        |
 | `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`             | integer | `2048`  | Hard cap on sequence length advertised to the model | -        |
 | `VAULTSPEC_RAG_MAX_EMBED_CHARS`                      | integer | `8000`  | Character cap applied to each text before encoding  | -        |
 | `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`                  | integer | `1024`  | Reranker token bound                                | -        |

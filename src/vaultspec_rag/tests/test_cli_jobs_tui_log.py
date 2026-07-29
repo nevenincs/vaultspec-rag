@@ -543,3 +543,56 @@ class TestFormattedRendering:
         assert '" 200 91 "-"' not in painted, (
             "the raw quoted request dump must be gone from the formatted view"
         )
+
+
+class TestHandlerFormattedAccessRecords:
+    """Access records that reach the log through the service's own handler.
+
+    The daemon declines the HTTP server's private log configuration, so its
+    access records arrive timestamped and logger-tagged rather than in the
+    server's own bare format. Read as ordinary application records they carry
+    the server's INFO level, which would quietly cost this pane both its
+    request fields and its ability to find a failed request.
+    """
+
+    def test_a_failed_request_is_still_an_error(self) -> None:
+        entry = parse_log_line(
+            "2026-07-29 13:01:17,110 INFO     uvicorn.access: "
+            '127.0.0.1:49742 - "GET /search HTTP/1.1" 500'
+        )
+
+        assert entry.kind == "access"
+        assert entry.is_error, "a 5xx must stay findable by the pane's error jump"
+        assert entry.method == "GET"
+        assert entry.path == "/search"
+        assert entry.status == "500"
+        assert entry.timestamp == "13:01:17"
+
+    def test_a_polled_read_is_still_collapsible(self) -> None:
+        entry = parse_log_line(
+            "2026-07-29 13:01:15,339 INFO     uvicorn.access: "
+            '127.0.0.1:49742 - "GET /jobs?limit=20 HTTP/1.1" 200'
+        )
+
+        assert entry.kind == "access"
+        assert entry.is_polling
+        assert not entry.is_error
+
+    def test_a_mutation_is_never_collapsed(self) -> None:
+        entry = parse_log_line(
+            "2026-07-29 13:01:15,551 INFO     uvicorn.access: "
+            '127.0.0.1:49742 - "POST /jobs HTTP/1.1" 201'
+        )
+
+        assert entry.kind == "access"
+        assert not entry.is_polling, "a write to a polled route is not a poll"
+        assert entry.method == "POST"
+
+    def test_an_unparseable_tail_stays_an_application_record(self) -> None:
+        """A record from that logger that is not a request is not invented into one."""
+        entry = parse_log_line(
+            "2026-07-29 13:01:15,551 INFO     uvicorn.access: something else entirely"
+        )
+
+        assert entry.kind == "app"
+        assert entry.method is None

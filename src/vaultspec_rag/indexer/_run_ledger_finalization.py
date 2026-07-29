@@ -245,6 +245,13 @@ class RunLedgerFinalizationMethods:
         The retained generation and every still-running generation are never
         removed.  Cascading foreign keys compact units and file states in the
         same transaction.
+
+        A generation cited as evidence by a surviving file state is also
+        never removed. Carried-forward states pin the generation that
+        produced their evidence, and the commit units that vouch for their
+        stored points live under it; deleting it cascades those units away,
+        after which every retained-point lookup reads the inherited points
+        as obsolete and the next publication purges the entire collection.
         """
         with self._transaction() as connection:
             keep = connection.execute(
@@ -267,11 +274,22 @@ class RunLedgerFinalizationMethods:
                   AND source_type = ?
                   AND collection_identity = ?
                   AND terminal_state IN (?, ?)
+                  AND generation_id NOT IN (
+                      SELECT states.evidence_generation_id
+                      FROM file_states AS states
+                      JOIN generations AS owners
+                        ON owners.generation_id = states.generation_id
+                      WHERE owners.generation_id = ?
+                         OR owners.terminal_state NOT IN (?, ?)
+                  )
                 """,
                 (
                     keep_generation_id,
                     keep["source_type"],
                     keep["collection_identity"],
+                    RunTerminalState.SUCCEEDED.value,
+                    RunTerminalState.INVALIDATED.value,
+                    keep_generation_id,
                     RunTerminalState.SUCCEEDED.value,
                     RunTerminalState.INVALIDATED.value,
                 ),
