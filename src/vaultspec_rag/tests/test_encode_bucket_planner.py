@@ -197,20 +197,59 @@ class _LockAssertingTensorDenseModel:
         return torch.tensor([[float(len(t))] * 2 for t in texts])
 
 
+class _BucketRecordingSparseModel:
+    """Sparse-model double recording each encode call's exact text list.
+
+    ``oom_on_first`` names text lists whose first encode attempt raises a
+    simulated CUDA OOM; any later attempt (a replanned smaller bucket)
+    succeeds. Each returned row carries its input text's length in
+    column 0 so tests can prove row-to-input alignment.
+    """
+
+    def __init__(self, oom_on_first: list[list[str]] | None = None) -> None:
+        self.calls: list[list[str]] = []
+        self.batch_sizes: list[int] = []
+        self._oom_pending = [list(entry) for entry in (oom_on_first or [])]
+
+    def encode_document(
+        self,
+        texts: list[str],
+        *,
+        batch_size: int,
+        **options: object,
+    ) -> Any:
+        # Mirrors the production call site's keyword set; the sparse
+        # encode path passes these explicitly, so a double that accepts
+        # only batch_size fails on the call rather than on the behaviour
+        # the test is actually about.
+        del options
+        import torch
+
+        self.calls.append(list(texts))
+        self.batch_sizes.append(batch_size)
+        if list(texts) in self._oom_pending:
+            self._oom_pending.remove(list(texts))
+            raise torch.cuda.OutOfMemoryError("simulated CUDA OOM")
+        return torch.tensor([[float(len(t)), 0.0] for t in texts])
+
+
+def _distinct_texts(count: int, length: int = 200) -> list[str]:
+    """Distinct single-character bodies, identifiable in a call log.
+
+    200 chars at 4 chars/token estimate 50 tokens each, so a 100-token
+    budget plans two-item buckets.
+    """
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    return [alphabet[i] * length for i in range(count)]
+
+
 class TestBucketedDenseEncode:
     """The dense encode path plans buckets and scopes OOM retry to one bucket."""
 
     pytestmark: ClassVar = [pytest.mark.unit]
 
-    def _texts(self, count: int, length: int = 200) -> list[str]:
-        # Distinct single-character bodies keep every text identifiable in
-        # the double's call log. 200 chars at 4 chars/token estimate 50
-        # tokens each, so a 100-token budget plans two-item buckets.
-        alphabet = "abcdefghijklmnopqrstuvwxyz"
-        return [alphabet[i] * length for i in range(count)]
-
     def test_each_planned_bucket_is_one_encode_call(self):
-        texts = self._texts(4)
+        texts = _distinct_texts(4)
         fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
         model._dense_model = cast("Any", fake)
@@ -222,7 +261,7 @@ class TestBucketedDenseEncode:
         assert result.shape == (4, 2)
 
     def test_oom_discards_only_the_failing_bucket(self):
-        texts = self._texts(6)
+        texts = _distinct_texts(6)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
         model._dense_model = cast("Any", fake)
@@ -248,7 +287,7 @@ class TestBucketedDenseEncode:
     def test_single_text_bucket_oom_reraises(self):
         import torch
 
-        texts = self._texts(1)
+        texts = _distinct_texts(1)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[0:1]])
         model = _model_shell(token_budget=100)
         model._dense_model = cast("Any", fake)
@@ -258,7 +297,7 @@ class TestBucketedDenseEncode:
         assert fake.calls == [texts[0:1]]
 
     def test_learned_token_ceiling_sticks_across_calls(self):
-        texts = self._texts(4)
+        texts = _distinct_texts(4)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
         model._dense_model = cast("Any", fake)
@@ -296,14 +335,14 @@ class TestBucketedDenseEncode:
         fake = _LockAssertingTensorDenseModel(gpu_lock)
         model = _model_shell(token_budget=100)
         model._dense_model = cast("Any", fake)
-        texts = self._texts(4)
+        texts = _distinct_texts(4)
         result = model.encode_documents_on_device(texts, gpu_lock=gpu_lock)
         assert fake.calls == [texts[0:2], texts[2:4]]
         assert not gpu_lock.locked()
         assert [row[0] for row in result.tolist()] == [200.0] * 4
 
     def test_bucket_callback_reports_progress_and_budget(self):
-        texts = self._texts(4)
+        texts = _distinct_texts(4)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
         model._dense_model = cast("Any", fake)
@@ -338,3 +377,97 @@ class TestBucketedDenseEncode:
         assert events[3][1].token_budget == 50
         assert events[3][1].oom_count == 1
         assert all(progress.items_total == 4 for _phase, progress in events)
+
+
+class TestBucketedSparseEncode:
+    """The sparse path shares the planner and the token-denominated ceiling."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_each_planned_bucket_is_one_forward(self):
+        texts = _distinct_texts(4)
+        fake = _BucketRecordingSparseModel()
+        model = _model_shell(token_budget=100)
+        model._sparse_model = cast("Any", fake)
+        results = model.encode_documents_sparse(texts)
+        assert fake.calls == [texts[0:2], texts[2:4]]
+        # The bucket is handed over as a single library sub-batch, so the
+        # library's internal loop degenerates to exactly one forward.
+        assert fake.batch_sizes == [2, 2]
+        assert [row.values[0] for row in results] == [200.0] * 4
+
+    def test_oom_discards_only_the_failing_bucket(self):
+        texts = _distinct_texts(6)
+        fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
+        model = _model_shell(token_budget=100)
+        model._sparse_model = cast("Any", fake)
+        results = model.encode_documents_sparse(texts)
+        # Catches the retry scope regressing from the bucket to the whole
+        # call: a slice-wide retry discards completed rows and replans
+        # from the first text, so the completed [t0, t1] bucket shows up
+        # encoded a second time. Bucket-scoped retry re-encodes nothing
+        # before the failing bucket and splits only from its start; the
+        # 100-token failing footprint halves the budget to 50, so the
+        # replanned tail is single-item buckets.
+        assert fake.calls == [
+            texts[0:2],
+            texts[2:4],
+            [texts[2]],
+            [texts[3]],
+            [texts[4]],
+            [texts[5]],
+        ]
+        # Every input still comes back exactly once, in input order.
+        assert [row.values[0] for row in results] == [200.0] * 6
+
+    def test_single_text_bucket_oom_reraises(self):
+        import torch
+
+        texts = _distinct_texts(1)
+        fake = _BucketRecordingSparseModel(oom_on_first=[texts[0:1]])
+        model = _model_shell(token_budget=100)
+        model._sparse_model = cast("Any", fake)
+        with pytest.raises(torch.cuda.OutOfMemoryError):
+            model.encode_documents_sparse(texts)
+        # A one-text bucket cannot shrink, so there is no retry attempt.
+        assert fake.calls == [texts[0:1]]
+
+    def test_learned_token_ceiling_sticks_across_calls(self):
+        texts = _distinct_texts(4)
+        fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
+        model = _model_shell(token_budget=100)
+        model._sparse_model = cast("Any", fake)
+        model.encode_documents_sparse(texts)
+        first_call_count = len(fake.calls)
+        model.encode_documents_sparse(texts)
+        # Catches the ceiling resetting between calls: an unclamped second
+        # call would replan two-item 100-token buckets and rediscover the
+        # OOM; under the learned 50-token ceiling it plans single-item
+        # buckets from the start.
+        assert fake.calls[first_call_count:] == [[t] for t in texts]
+
+    def test_dense_and_sparse_ceilings_learn_independently(self):
+        texts = _distinct_texts(4)
+        sparse_fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
+        dense_fake = _BucketRecordingDenseModel()
+        model = _model_shell(token_budget=100)
+        model._sparse_model = cast("Any", sparse_fake)
+        model._dense_model = cast("Any", dense_fake)
+        model.encode_documents_sparse(texts)
+        model.encode_documents(texts)
+        # The sparse OOM must not clamp the dense budget: dense still
+        # plans full two-item 100-token buckets.
+        assert dense_fake.calls == [texts[0:2], texts[2:4]]
+
+    def test_empty_input_returns_no_rows_without_a_forward(self):
+        fake = _BucketRecordingSparseModel()
+        model = _model_shell()
+        model._sparse_model = cast("Any", fake)
+        assert model.encode_documents_sparse([]) == []
+        assert fake.calls == []
+
+    def test_non_positive_batch_size_is_rejected(self):
+        model = _model_shell()
+        model._sparse_model = cast("Any", _BucketRecordingSparseModel())
+        with pytest.raises(ValueError, match="batch_size must be a positive integer"):
+            model.encode_documents_sparse(["text"], batch_size=0)
