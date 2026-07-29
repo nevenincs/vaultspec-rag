@@ -173,6 +173,8 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "embedding_document_encode_batch_size": (
         EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE
     ),
+    "embedding_encode_token_budget": EnvVar.EMBEDDING_ENCODE_TOKEN_BUDGET,
+    "embedding_encode_chars_per_token": EnvVar.EMBEDDING_ENCODE_CHARS_PER_TOKEN,
     "index_cache_flush_slices": EnvVar.INDEX_CACHE_FLUSH_SLICES,
     "vault_cache_flush_slices": EnvVar.VAULT_CACHE_FLUSH_SLICES,
     "document_cache_flush_slices": EnvVar.DOCUMENT_CACHE_FLUSH_SLICES,
@@ -299,6 +301,8 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "embedding_encode_batch_size": _POSITIVE_INT,
     "embedding_code_encode_batch_size": _POSITIVE_INT,
     "embedding_document_encode_batch_size": _POSITIVE_INT,
+    "embedding_encode_token_budget": _POSITIVE_INT,
+    "embedding_encode_chars_per_token": _POSITIVE_INT,
     "embedding_max_seq_length": _POSITIVE_INT,
     "max_embed_chars": _POSITIVE_INT,
     "reranker_batch_size": _POSITIVE_INT,

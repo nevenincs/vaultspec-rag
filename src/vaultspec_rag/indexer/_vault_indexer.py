@@ -25,8 +25,9 @@ from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._index_breadth import (
     VAULT_PUBLISHED_DOCUMENTS_KEY,
     VAULT_PUBLISHED_POINTS_KEY,
-    vault_meta_path,
+    index_meta_path,
 )
+from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _config_epoch, _stat_gate
@@ -170,7 +171,7 @@ class VaultIndexer:
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
-        self._meta_path = vault_meta_path(root_dir)
+        self._meta_path = index_meta_path(root_dir, PublicSourceType.VAULT)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
