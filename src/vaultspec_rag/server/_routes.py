@@ -409,6 +409,7 @@ def job_outcome_status(code: str) -> int:
     if code.startswith("invalid_") and code != "invalid_transition":
         return 400
     if code.startswith("persistence_") or code in {
+        "dispatch_loop_unresponsive",
         "dispatch_stopped",
         "event_loop_required",
     }:
