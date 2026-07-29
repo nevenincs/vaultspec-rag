@@ -187,6 +187,14 @@ _backend_probe_cache: dict[tuple[str, str], tuple[float, dict[str, object]]] = {
 _GPU_SNAPSHOT_CACHE_SECONDS = 5.0
 _gpu_snapshot_lock = threading.Lock()
 _gpu_snapshot_cache: tuple[float, dict[str, object]] | None = None
+# The device-load admission reading served on the jobs listing, held the same
+# few seconds and by the same rationale: the same open operator views poll
+# this route at the same cadence as the GPU pressure block above, and a
+# per-poll device read is exactly the cost that block's own cache exists to
+# avoid.
+_DEVICE_LOAD_SNAPSHOT_CACHE_SECONDS = 5.0
+_device_load_snapshot_lock = threading.Lock()
+_device_load_snapshot_cache: tuple[float, dict[str, object] | None] | None = None
 # Service-process CPU utilisation for degradation evidence. ``cpu_percent``
 # measures the interval since its own previous call, so one persistent
 # process handle is kept and the reading is cached for a few seconds: polls
@@ -1040,6 +1048,50 @@ def gpu_pressure_snapshot(*, now: float | None = None) -> dict[str, object]:
     with _gpu_snapshot_lock:
         _gpu_snapshot_cache = (moment, snapshot)
     return dict(snapshot)
+
+
+def device_load_snapshot(*, now: float | None = None) -> dict[str, object] | None:
+    """The device-load admission verdict, cached the same way as the GPU block.
+
+    A different fact from :func:`gpu_pressure_snapshot`: that block reports
+    utilization and memory *usage*, sampled purely for display and for the
+    hysteresis-folded ``pressure`` tier beside it - nothing acts on either.
+    This is the synchronous, fail-fast predicate a model load is actually
+    admitted or refused against right now, against the configured floor. The
+    two must stay visibly distinct so a later reader does not collapse a
+    display reading into the load-bearing gate, or vice versa.
+
+    Cached rather than read fresh per poll for the same reason
+    :func:`gpu_pressure_snapshot` is: the jobs listing is polled every couple
+    of seconds by every open operator view, and this route must not turn each
+    of those polls into its own device probe.
+
+    Args:
+        now: The moment cache freshness is judged against; defaults to the
+            wall clock. Injectable so freshness is testable without sleeping.
+
+    Returns:
+        The ``device_load`` wire shape (``free_mib``, ``total_mib``,
+        ``floor_mib``, ``admitted``, ``reason``), or ``None`` when this host's
+        reading could not be taken - absent, never raised, so an older reader
+        expecting no such key is unaffected. Callers receive a copy; mutating
+        it cannot poison the cache.
+    """
+    global _device_load_snapshot_cache
+    moment = time.time() if now is None else now
+    with _device_load_snapshot_lock:
+        cached = _device_load_snapshot_cache
+        if (
+            cached is not None
+            and 0.0 <= moment - cached[0] < _DEVICE_LOAD_SNAPSHOT_CACHE_SECONDS
+        ):
+            return dict(cached[1]) if cached[1] is not None else None
+    from ._gpu_admission import device_load_reading
+
+    reading = device_load_reading()
+    with _device_load_snapshot_lock:
+        _device_load_snapshot_cache = (moment, reading)
+    return dict(reading) if reading is not None else None
 
 
 def _gpu_evidence() -> dict[str, object]:

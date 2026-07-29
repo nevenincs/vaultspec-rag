@@ -32,10 +32,12 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CudaCeilingObservation",
+    "CudaDeviceMemory",
     "MemoryBudget",
     "MemoryBudgetSnapshot",
     "MemoryProbe",
     "MemorySample",
+    "cuda_device_memory",
     "cuda_forward_peak_capture",
     "cuda_pressure",
     "current_cuda_mb",
@@ -204,6 +206,54 @@ def cuda_free_memory_mb() -> float | None:
         return bytes_to_mib(_torch_module.cuda.mem_get_info()[0])
     except (RuntimeError, AssertionError):
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class CudaDeviceMemory:
+    """One device-wide CUDA memory observation, and what made it possible.
+
+    The presence flags travel with the figures because absence has two distinct
+    causes a caller may have to tell apart - torch is not installed at all, or
+    it is installed without a usable device - and a pair of ``None`` readings
+    cannot say which. Both figures are ``None`` whenever ``cuda_present`` is
+    false, and either may be ``None`` on a device whose driver refused the
+    query.
+    """
+
+    torch_present: bool
+    cuda_present: bool
+    free_mb: float | None
+    total_mb: float | None
+
+
+def cuda_device_memory() -> CudaDeviceMemory:
+    """Return one guarded reading of device-wide free and total memory.
+
+    Composes the two guarded probes above rather than reading
+    ``mem_get_info`` a second time, so the device keeps exactly one reader,
+    and adds the presence distinction a caller needs when an absent torch and
+    a CPU-only build must produce different outcomes. Like its parts it never
+    raises: a torch-free host, a CPU-only build, and a driver that refuses the
+    query all report absence.
+    """
+    _measure_cuda_mb()
+    # A completed probe holding no module means the import itself failed, which
+    # is permanent. An incomplete probe means the import succeeded and only the
+    # availability query misfired, so torch IS present on this host.
+    torch_present = _torch_module is not None or not _torch_probed
+    if _torch_module is None or not _torch_has_cuda:
+        return CudaDeviceMemory(
+            torch_present=torch_present,
+            cuda_present=False,
+            free_mb=None,
+            total_mb=None,
+        )
+    return CudaDeviceMemory(
+        torch_present=True,
+        cuda_present=True,
+        free_mb=cuda_free_memory_mb(),
+        total_mb=cuda_device_total_mb(),
+    )
 
 
 def cuda_pressure() -> tuple[float | None, float | None, float | None]:
@@ -438,6 +488,16 @@ def rebase_resident_cuda_baseline() -> float:
         The re-established baseline in MiB (unchanged off the GPU path).
     """
     global _resident_baseline_mb
+    # A release is also what retires the standing load-admission verdict: that
+    # verdict was taken against the device as it was before these models
+    # loaded, so it describes a state that no longer exists once they are gone,
+    # and the next load must be admitted against what the card actually holds.
+    # Cleared unconditionally, before the reading: an over-clear costs one
+    # extra reading, while an under-clear rides a stale verdict for the life of
+    # the process.
+    from ._gpu_admission import clear_gpu_admission_latch
+
+    clear_gpu_admission_latch()
     measured = _measure_cuda_mb()
     if measured is None:
         return resident_cuda_baseline_mb()

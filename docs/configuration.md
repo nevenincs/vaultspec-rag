@@ -129,6 +129,10 @@ These bound one index run's segment/queue geometry, its memory use, and its live
 
 The CUDA ceiling is derived from the real device by default rather than fixed: at `0` the ceiling is the device's total memory minus `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`, so a larger card gets a larger budget without any tuning. Setting a positive value is an authoritative override that raises or lowers the effective ceiling.
 
+The ceilings bound the work an already-resident process does. `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB` answers the question before it: whether this process may bring a model stack up at all. It is read once, before the first load, and a card with less free memory than the floor refuses the load with the reading and the floor in the message, rather than loading into a device it will starve.
+
+The floor has to exceed the resident stack a load creates *plus* the largest legitimate demand that stack then places on top of its own residency — measured at 6301 MiB and 4609 MiB respectively, so 10910 MiB is the smallest sound value. Sizing it to the resident stack alone is the trap: on a card already holding one tenant, the free memory left over still clears such a floor, so a second stack is admitted onto a device that cannot hold both. Lower this past 10910 and that hazard returns; raise it and loads a busy-but-adequate card could have served are refused instead.
+
 | Variable                                          | Type    | Default               | Controls                                                                   | CLI flag |
 | ------------------------------------------------- | ------- | --------------------- | -------------------------------------------------------------------------- | -------- |
 | `VAULTSPEC_RAG_INDEX_SEGMENT_MAX_CHUNKS`          | integer | `64`                  | Chunks per index upsert segment                                            | -        |
@@ -141,6 +145,7 @@ The CUDA ceiling is derived from the real device by default rather than fixed: a
 | `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`             | float   | `0` (auto-derive)     | CUDA-memory ceiling override in MiB; `0` derives one from the device       | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`            | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB) | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`                 | Fraction of CUDA memory the index allocator may reserve                    | -        |
+| `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB`           | integer | `11264`               | Free device memory required before this process loads model stacks (MiB)   | -        |
 | `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service                           | -        |
 
 ### Concurrency limits
