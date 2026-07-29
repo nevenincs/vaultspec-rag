@@ -117,6 +117,77 @@ class TestPlanEncodeBuckets:
             )
 
 
+class TestEncodeBatchCeilingTokenSemantics:
+    """The learned ceiling records, clamps, and probes in token units.
+
+    A per-count ceiling learned on one length regime is wrong for every
+    other; the token denomination makes one learned number regime-aware.
+    The recovery design is unchanged: sustained success at the ceiling
+    earns one bounded upward probe.
+    """
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_unlearned_ceiling_returns_the_requested_budget(self):
+        assert EncodeBatchCeiling().clamp(24_000) == 24_000
+
+    def test_success_before_any_oom_is_inert(self):
+        ceiling = EncodeBatchCeiling()
+        ceiling.record_success(24_000)
+        assert ceiling.clamp(24_000) == 24_000
+
+    def test_record_oom_halves_the_failing_footprint_and_returns_it(self):
+        ceiling = EncodeBatchCeiling()
+        # Replanning at the footprint that just failed would reproduce the
+        # same failing bucket shape, so the learned ceiling must sit
+        # strictly below it.
+        assert ceiling.record_oom(1600) == 800
+        assert ceiling.clamp(24_000) == 800
+
+    def test_record_oom_floors_at_one_token(self):
+        assert EncodeBatchCeiling().record_oom(1) == 1
+
+    def test_probe_doubles_after_sustained_success_bounded_by_request(self):
+        ceiling = EncodeBatchCeiling()
+        ceiling.record_oom(1600)
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES):
+            assert ceiling.clamp(24_000) == 800
+            ceiling.record_success(800)
+        # One doubling per probe, never a jump straight back to the
+        # requested budget.
+        assert ceiling.clamp(24_000) == 1600
+
+    def test_probe_never_exceeds_the_requested_budget(self):
+        ceiling = EncodeBatchCeiling()
+        ceiling.record_oom(1600)
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES):
+            ceiling.record_success(ceiling.clamp(1000))
+        assert ceiling.clamp(1000) == 1000
+
+    def test_successful_probe_raises_the_ceiling(self):
+        ceiling = EncodeBatchCeiling()
+        ceiling.record_oom(1600)
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES):
+            ceiling.record_success(ceiling.clamp(24_000))
+        probe = ceiling.clamp(24_000)
+        assert probe == 1600
+        ceiling.record_success(probe)
+        # The raised ceiling holds without an immediate second probe.
+        assert ceiling.clamp(24_000) == 1600
+
+    def test_failed_probe_reclamps_and_restarts_the_count(self):
+        ceiling = EncodeBatchCeiling()
+        ceiling.record_oom(1600)
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES):
+            ceiling.record_success(ceiling.clamp(24_000))
+        probe = ceiling.clamp(24_000)
+        assert probe == 1600
+        # The probe OOMs at its own estimated footprint: re-clamp below it
+        # and do not probe again on the next call.
+        assert ceiling.record_oom(probe) == 800
+        assert ceiling.clamp(24_000) == 800
+
+
 def _model_shell(
     token_budget: int = 100,
     chars_per_token: int = 4,
