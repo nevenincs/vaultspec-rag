@@ -315,7 +315,7 @@ class TestEncodeBudgetRendering:
         two numbers have to be told apart on sight.
 
         Mutation check: rendering only the numerator - dropping the ``of
-        {total:g}`` half of the phrase in ``_encode_budget_line`` - makes
+        {total}`` half of the phrase in ``_encode_budget_line`` - makes
         this fail on the ``64 of 512 items encoded`` assertion below, and
         restoring the denominator returns it to green.
         """
@@ -371,6 +371,68 @@ class TestEncodeBudgetRendering:
         assert (
             "Encode batch: 8192 tokens per batch, 24 items in the last batch, "
             "2 GPU memory retries" in lines
+        )
+
+    def test_a_fractional_count_is_withheld_rather_than_rendered(self) -> None:
+        """A counted field arriving fractional is a broken field, not a reading.
+
+        Only a foreign daemon publishing junk can produce one, which is
+        exactly why the two surfaces have to agree: the service narrows this
+        block through the counting reader when it writes it, so a renderer
+        narrowing it as a measurement would caption "3.9 of 8 items encoded"
+        for a payload the service itself would have refused.
+
+        Mutation check: narrowing ``items_done`` and ``items_total`` through
+        the measurement reader instead makes this fail on the first
+        assertion below, which then reports the rendered line as "Encode
+        batch: 8192 tokens per batch, 3.9 of 8.0 items encoded" - the
+        caption this test exists to keep impossible. Restoring the counting
+        reader returns it to green.
+        """
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 8192,
+                        "bucket_items": None,
+                        "items_done": 3.9,
+                        "items_total": 8,
+                        "oom_count": 0,
+                    }
+                ),
+            )
+        )
+        assert "Encode batch: 8192 tokens per batch" in lines
+        assert not any("3.9" in line for line in lines)
+        assert not any("items encoded" in line for line in lines)
+
+    def test_a_large_count_is_rendered_in_full(self) -> None:
+        """A count reads as its digits, never as an exponent.
+
+        Mutation check: formatting these through ``:g`` - the spec the
+        fields carried while they were read as measurements - makes this
+        fail on the "1234567" assertion, rendering "1.23457e+06" instead:
+        six significant digits, so the operator is shown a number that is
+        not the one the service published.
+        """
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 1_048_576,
+                        "bucket_items": None,
+                        "items_done": 1_234_567,
+                        "items_total": 2_000_000,
+                        "oom_count": 0,
+                    }
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 1048576 tokens per batch, "
+            "1234567 of 2000000 items encoded" in lines
         )
 
 

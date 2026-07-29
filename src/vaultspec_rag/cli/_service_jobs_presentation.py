@@ -347,24 +347,30 @@ def _encode_budget_line(job: dict[str, object]) -> str | None:
     service published both of its halves: a completed count on its own
     reads as a size, which is the reading that has to stay impossible here
     because the forward line above already names the slice's size.
+
+    Every field here is counted work, so every one is read through the
+    counting reader - the same one the service narrows this block through
+    when it writes it. A fractional token budget or a fractional items-done
+    is a broken field, and reading it as a measurement would render it as
+    one instead of withholding it.
     """
     encode = _evidence_section(job, "encode")
     if encode is None:
         return None
     parts: list[str] = []
-    budget = measurement(encode.get("token_budget"))
+    budget = count(encode.get("token_budget"))
     if budget is not None:
-        parts.append(f"{budget:g} tokens per batch")
-    items = measurement(encode.get("bucket_items"))
+        parts.append(f"{budget} tokens per batch")
+    items = count(encode.get("bucket_items"))
     if items is not None:
-        parts.append(f"{items:g} items in the last batch")
-    done = measurement(encode.get("items_done"))
-    total = measurement(encode.get("items_total"))
+        parts.append(f"{items} items in the last batch")
+    done = count(encode.get("items_done"))
+    total = count(encode.get("items_total"))
     if done is not None and total is not None:
-        parts.append(f"{done:g} of {total:g} items encoded")
-    retries = measurement(encode.get("oom_count"))
+        parts.append(f"{done} of {total} items encoded")
+    retries = count(encode.get("oom_count"))
     if retries:
-        parts.append(f"{retries:g} GPU memory {'retry' if retries == 1 else 'retries'}")
+        parts.append(f"{retries} GPU memory {'retry' if retries == 1 else 'retries'}")
     return f"Encode batch: {', '.join(parts)}" if parts else None
 
 
