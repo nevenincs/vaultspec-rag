@@ -28,7 +28,12 @@ import pytest
 from textual.app import ScreenStackError
 from textual.widgets import DataTable
 
-from ..cli._jobs_tui import _SPINNER_FRAMES, _SPINNER_INTERVAL, JobsTuiApp
+from ..cli._jobs_tui import (
+    _LOG_LINES,
+    _SPINNER_FRAMES,
+    _SPINNER_INTERVAL,
+    JobsTuiApp,
+)
 from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
 from ..serviceclient._transport import _try_http_admin
 
@@ -2269,16 +2274,14 @@ class TestRemainingTimeOnTheRow:
         )
 
 
-def _delivery_failure(
-    app: JobsTuiApp, answer: dict[str, object] | None
-) -> ScreenStackError | None:
-    """Deliver a poll's *answer* to *app*, returning what it raised, or ``None``.
+def _screen_failure(deliver: typing.Callable[[], object]) -> ScreenStackError | None:
+    """Run *deliver*, returning the screen error it raised, or ``None``.
 
     The raise is the finding, so it is captured and named by an assertion
     rather than left to surface as an error on the run.
     """
     try:
-        app._apply_result(answer, app._generation + 1)
+        deliver()
     except ScreenStackError as error:
         return error
     return None
@@ -2290,8 +2293,8 @@ class TestClosingTheSession:
     A session ends by removing the screen, and the stack is empty from that
     moment on. Anything still beating or still answering reads the screen,
     raises there, and is reported as the interface having crashed rather than
-    closed - on whichever unrelated thing happened to be in progress. Both
-    tests below drive the removal directly, because the window it opens is
+    closed - on whichever unrelated thing happened to be in progress. Every
+    test below drives the removal directly, because the window it opens is
     microseconds wide on an idle machine and a loaded one lands in it about
     once in several hundred sessions.
     """
@@ -2362,7 +2365,9 @@ class TestClosingTheSession:
             control_service.set_jobs([_job("999999999999")])
             answer = _try_http_admin("get_jobs", {"limit": 20}, control_service.port)
             await app._close_all()
-            failure = _delivery_failure(app, answer)
+            failure = _screen_failure(
+                lambda: app._apply_result(answer, app._generation + 1)
+            )
             held = [str(job.get("id")) for job in app._jobs]
 
         assert failure is None, (
@@ -2370,4 +2375,55 @@ class TestClosingTheSession:
         )
         assert held == ["abc123def456"], (
             "an answer arriving after the screen went must not be applied either"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_log_answer_that_outlives_the_session_is_dropped(
+        self, control_service: _JobService
+    ) -> None:
+        """A log window answering after the screen has gone is dropped as well.
+
+        Pinned separately from its neighbour for two reasons, neither of which
+        the code itself records.
+
+        First, this one is protected by accident rather than on purpose: the
+        pane's absence is noticed before anything reads the screen, so what
+        stops the read is a lookup that happens to sit in front of it. Hoisting
+        the binding refresh above that lookup is an ordinary-looking tidy-up
+        which removes the protection with nothing else in the file to notice -
+        so the two tests are not the duplicates they resemble, and neither
+        covers the other.
+
+        Second, that lookup comes back empty rather than raising only because
+        a query issued from the application resolves against the screen the
+        application composed on, held separately from the screen stack that
+        teardown empties (``App._compose_screen``, assigned once at compose
+        time). Nothing here governs that. Were it to stop being held, every
+        callback answering after the screen has gone would begin raising at its
+        first lookup, and this test is the only tripwire that says so - the
+        failures otherwise surface as an unexplained intermittent crash in
+        whatever else happened to be running.
+
+        Proven able to fail: moving the binding refresh above the absent-pane
+        return raises out of it and fails on the assertion below by name, while
+        the neighbouring poll test still passes; restored, it passes.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            selected = app.selected_id
+            # The same window the interface asks for, from the same transport.
+            answer = _try_http_admin(
+                "get_logs",
+                {"lines": _LOG_LINES, "source": "service", "job_id": selected},
+                control_service.port,
+            )
+            assert answer is not None and answer.get("ok") is True, (
+                "the delivery below has to carry an answer the interface would act on"
+            )
+            await app._close_all()
+            failure = _screen_failure(lambda: app._apply_logs(selected, answer))
+
+        assert failure is None, (
+            f"a log answer arriving after the screen went must be dropped: {failure!r}"
         )
