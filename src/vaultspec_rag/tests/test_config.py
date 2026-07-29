@@ -255,7 +255,7 @@ def test_service_max_projects_default() -> None:
 
 def test_managed_log_max_bytes_default() -> None:
     cfg = get_config()
-    assert cfg.managed_log_max_bytes == 10485760
+    assert cfg.managed_log_max_bytes == 2097152
 
 
 def test_managed_log_backup_count_default() -> None:

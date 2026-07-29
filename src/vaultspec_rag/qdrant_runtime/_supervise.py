@@ -42,7 +42,8 @@ from .._win32 import (
     assign_process_to_job,
     create_kill_on_close_job,
 )
-from ..config._settings import managed_status_dir
+from ..config._settings import managed_status_dir, rag_default
+from ..logging_config import QDRANT_LOG_NAME
 from ._constants import (
     QDRANT_SERVER_VERSION,
     QdrantRuntimeState,
@@ -84,8 +85,11 @@ _RECENT_OUTPUT_LINES = 50
 _RECENT_OUTPUT_LINE_CHARS = 16 * 1024
 _QDRANT_DRAIN_CHUNK_BYTES = 64 * 1024
 _DRAIN_JOIN_TIMEOUT_SECONDS = 3.0
-_MANAGED_LOG_MAX_BYTES_DEFAULT = 10 * 1024 * 1024
-_MANAGED_LOG_BACKUP_COUNT_DEFAULT = 5
+#: Read from the settings defaults rather than restated here: the managed log
+#: has one retention policy, and a second literal drifts from it the moment
+#: either is retuned.
+_MANAGED_LOG_MAX_BYTES_DEFAULT = int(rag_default("managed_log_max_bytes"))
+_MANAGED_LOG_BACKUP_COUNT_DEFAULT = int(rag_default("managed_log_backup_count"))
 
 
 class _SupervisorOptions(TypedDict, total=False):
@@ -1061,7 +1065,7 @@ def start_supervised_from_config() -> QdrantSupervisor:
     cfg = get_config()
     qport = int(cfg.qdrant_port)
     storage_dir = Path(str(cfg.qdrant_storage_dir)).expanduser()
-    log_path = managed_status_dir() / "qdrant.log"
+    log_path = managed_status_dir() / QDRANT_LOG_NAME
     log_max_bytes = int(cfg.managed_log_max_bytes)
     log_backup_count = int(cfg.managed_log_backup_count)
 
