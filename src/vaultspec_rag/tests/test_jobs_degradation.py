@@ -22,6 +22,7 @@ import pytest
 from .._job_errors import DEGRADED_THRESHOLD_SECONDS, STALL_THRESHOLD_SECONDS
 from ..job_models import JobSource
 from ..jobs import (
+    DegradationInputs,
     JobProgressReporter,
     degradation_evidence,
     forward_telemetry,
@@ -562,10 +563,11 @@ class TestBackendEvidence:
             root.mkdir()
             evidence = degradation_evidence(
                 now=time.time(),
-                forward=None,
-                project_root=str(root),
-                source="vault",
-                step="embed + upsert documents",
+                inputs=DegradationInputs(
+                    source="vault",
+                    project_root=str(root),
+                    step="embed + upsert documents",
+                ),
             )
             backend = _as_map(evidence["backend"])
             assert backend["alive"] is True
@@ -578,10 +580,11 @@ class TestBackendEvidence:
             # polling operator view cannot stack probe threads.
             again = degradation_evidence(
                 now=time.time(),
-                forward=None,
-                project_root=str(root),
-                source="vault",
-                step="embed + upsert documents",
+                inputs=DegradationInputs(
+                    source="vault",
+                    project_root=str(root),
+                    step="embed + upsert documents",
+                ),
             )
             backend_again = _as_map(again["backend"])
             assert backend_again["latency_seconds"] == latency
