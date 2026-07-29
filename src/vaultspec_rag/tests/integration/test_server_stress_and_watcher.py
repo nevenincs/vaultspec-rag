@@ -645,15 +645,15 @@ class TestLargeIndexSearchHeadroom:
             )
 
             torch = load_torch()
-            total_cuda_mb = float(
+            total_cuda_mib = float(
                 torch.cuda.get_device_properties(0).total_memory / 1024**2
             )
             configured_fraction = float(get_config().index_cuda_allocator_fraction)
-            required_headroom_mb = total_cuda_mb * (1.0 - configured_fraction)
-            observed_headroom_mb = (
-                total_cuda_mb - measured.resources.peak_cuda_reserved_mb
+            required_headroom_mib = total_cuda_mib * (1.0 - configured_fraction)
+            observed_headroom_mib = (
+                total_cuda_mib - measured.resources.peak_cuda_reserved_mib
             )
-            retained_headroom = observed_headroom_mb >= required_headroom_mb - 128.0
+            retained_headroom = observed_headroom_mib >= required_headroom_mib - 128.0
             retain_benchmark_evidence(
                 "concurrent-search-headroom",
                 {
@@ -668,15 +668,15 @@ class TestLargeIndexSearchHeadroom:
                     "searches_completed_before_index": sum(
                         not finished for _count, finished in search_outcomes
                     ),
-                    "total_cuda_mb": total_cuda_mb,
+                    "total_cuda_mib": total_cuda_mib,
                     "configured_allocator_fraction": configured_fraction,
-                    "required_headroom_mb": required_headroom_mb,
-                    "observed_headroom_mb": observed_headroom_mb,
-                    "headroom_tolerance_mb": 128.0,
+                    "required_headroom_mib": required_headroom_mib,
+                    "observed_headroom_mib": observed_headroom_mib,
+                    "headroom_tolerance_mib": 128.0,
                     "checks": {"retained_reserved_headroom": retained_headroom},
                 },
             )
-            assert observed_headroom_mb >= required_headroom_mb - 128.0
+            assert observed_headroom_mib >= required_headroom_mib - 128.0
         finally:
             store.close()
 

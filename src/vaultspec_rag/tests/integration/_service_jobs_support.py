@@ -223,7 +223,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                     "project_root": "C:\\projects\\proj-a",
                 },
                 "runtime": {"pid": 123, "user": "operator"},
-                "resources": {"current": {"rss_mb": 10.0}},
+                "resources": {"current": {"rss_mib": 10.0}},
             },
             {
                 "id": "failjob1",
@@ -242,7 +242,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                     "project_root": "C:\\projects\\proj-b",
                 },
                 "runtime": {"pid": 124, "user": "operator"},
-                "resources": {"finished": {"rss_mb": 11.0}},
+                "resources": {"finished": {"rss_mib": 11.0}},
             },
             {
                 "id": "donejob1",
@@ -261,7 +261,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                     "project_root": "C:\\projects\\proj-c",
                 },
                 "runtime": {"pid": 125, "user": "operator"},
-                "resources": {"finished": {"rss_mb": 12.0}},
+                "resources": {"finished": {"rss_mib": 12.0}},
             },
         ],
         "total": 3,
@@ -353,7 +353,7 @@ def _assert_mcp_job_snapshot(
     assert entry["initiator"]["kind"] == "mcp"
     assert isinstance(entry["runtime"]["pid"], int)
     assert isinstance(entry["runtime"]["user"], str)
-    assert isinstance(entry["resources"]["started"]["rss_mb"], float)
+    assert isinstance(entry["resources"]["started"]["rss_mib"], float)
 
 
 async def _assert_cli_job_attribution(

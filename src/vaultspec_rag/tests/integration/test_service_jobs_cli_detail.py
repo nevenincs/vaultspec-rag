@@ -50,9 +50,9 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
             },
             "resources": {
                 "current": {
-                    "rss_mb": 10.0,
-                    "cuda_allocated_mb": 20.0,
-                    "cuda_reserved_mb": 30.0,
+                    "rss_mib": 10.0,
+                    "cuda_allocated_mib": 20.0,
+                    "cuda_reserved_mib": 30.0,
                 }
             },
         }

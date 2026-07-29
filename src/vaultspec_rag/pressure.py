@@ -96,8 +96,8 @@ class MachinePressureSignals:
     forward_age_seconds: float | None = None
     forward_thread_alive: bool | None = None
     gpu_utilization_percent: float | None = None
-    gpu_memory_used_mb: float | None = None
-    gpu_memory_total_mb: float | None = None
+    gpu_memory_used_mib: float | None = None
+    gpu_memory_total_mib: float | None = None
     backend_probed: bool = False
     backend_alive: bool | None = None
     backend_latency_seconds: float | None = None
@@ -112,8 +112,8 @@ class MachinePressureSignals:
 
 def _gpu_saturated(signals: MachinePressureSignals) -> bool:
     utilization = signals.gpu_utilization_percent
-    used = signals.gpu_memory_used_mb
-    total = signals.gpu_memory_total_mb
+    used = signals.gpu_memory_used_mib
+    total = signals.gpu_memory_total_mib
     if utilization is None or used is None or total is None or total <= 0:
         return False
     return (

@@ -225,7 +225,7 @@ def admission_from_reading(
     would have decided on the float, and the reported figure never claims
     headroom the device did not have.
     """
-    total_mib = None if reading.total_mb is None else int(reading.total_mb)
+    total_mib = None if reading.total_mib is None else int(reading.total_mib)
     if not reading.torch_present:
         return DeviceAdmission(
             admitted=False,
@@ -242,7 +242,7 @@ def admission_from_reading(
             floor_mib=floor_mib,
             reason=REASON_NO_CUDA,
         )
-    if reading.free_mb is None:
+    if reading.free_mib is None:
         # The device answers as present but refused the memory query. Admitting
         # is the honest reading of "unmeasurable": the per-job CUDA ceiling and
         # the allocator's own backoff are both still in force, and turning a
@@ -260,7 +260,7 @@ def admission_from_reading(
         )
     # Decision-preserving against an integer floor, and understating rather
     # than overstating free memory in the figure the operator is shown.
-    free_mib = int(reading.free_mb)
+    free_mib = int(reading.free_mib)
     admitted = free_mib >= floor_mib
     return DeviceAdmission(
         admitted=admitted,

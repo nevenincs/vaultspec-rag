@@ -261,7 +261,7 @@ def _mirror_managed_qdrant_binary(status_dir: Path, source: tuple[Path, Path]) -
 #:
 #: Tests that assert the ceiling FIRES pass their own figure through the config
 #: overrides, which beat the environment, so this default cannot mask them.
-INTEGRATION_CUDA_CEILING_MB = 12288
+INTEGRATION_CUDA_CEILING_MIB = 12288
 
 
 def _get_ephemeral_qdrant_port() -> int:
@@ -403,7 +403,7 @@ def _service_env(
     env_key = "VAULTSPEC_RAG_STATUS_DIR"
     storage_key = "VAULTSPEC_RAG_QDRANT_STORAGE_DIR"
     qdrant_port_key = "VAULTSPEC_RAG_QDRANT_PORT"
-    cuda_ceiling_key = "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB"
+    cuda_ceiling_key = "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB"
     updates: dict[str, str | None] = {
         env_key: str(tmp_path),
     }
@@ -418,7 +418,7 @@ def _service_env(
     if qdrant_port_key not in overrides:
         updates[qdrant_port_key] = str(_get_ephemeral_qdrant_port())
     if cuda_ceiling_key not in overrides:
-        updates[cuda_ceiling_key] = str(INTEGRATION_CUDA_CEILING_MB)
+        updates[cuda_ceiling_key] = str(INTEGRATION_CUDA_CEILING_MIB)
     updates.update(overrides)
 
     # Snapshot every distinct key exactly once before the first mutation.

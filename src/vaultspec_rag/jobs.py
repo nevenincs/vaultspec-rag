@@ -418,13 +418,13 @@ def restore_interrupted() -> int:
 
 def resource_snapshot() -> dict[str, object]:
     """Return a best-effort current resource snapshot for the service process."""
-    from .memory_probe import current_cuda_mb, current_rss_mb
+    from .memory_probe import current_cuda_mib, current_rss_mib
 
-    cuda_allocated_mb, cuda_reserved_mb = current_cuda_mb()
+    cuda_allocated_mib, cuda_reserved_mib = current_cuda_mib()
     return {
-        "rss_mb": round(current_rss_mb(), 1),
-        "cuda_allocated_mb": round(cuda_allocated_mb, 1),
-        "cuda_reserved_mb": round(cuda_reserved_mb, 1),
+        "rss_mib": round(current_rss_mib(), 1),
+        "cuda_allocated_mib": round(cuda_allocated_mib, 1),
+        "cuda_reserved_mib": round(cuda_reserved_mib, 1),
     }
 
 
@@ -1210,8 +1210,8 @@ def gpu_pressure_snapshot(*, now: float | None = None) -> dict[str, object]:
             wall clock. Injectable so freshness is testable without sleeping.
 
     Returns:
-        ``{"available", "utilization_percent", "memory_used_mb",
-        "memory_total_mb"}``, every measurement ``None`` where this host
+        ``{"available", "utilization_percent", "memory_used_mib",
+        "memory_total_mib"}``, every measurement ``None`` where this host
         cannot measure it. Callers receive a copy; mutating it cannot
         poison the cache.
     """
@@ -1283,12 +1283,12 @@ def _gpu_evidence() -> dict[str, object]:
     """
     from .memory_probe import cuda_pressure
 
-    utilization, used_mb, total_mb = cuda_pressure()
+    utilization, used_mib, total_mib = cuda_pressure()
     return {
-        "available": total_mb is not None,
+        "available": total_mib is not None,
         "utilization_percent": utilization,
-        "memory_used_mb": round(used_mb, 1) if used_mb is not None else None,
-        "memory_total_mb": round(total_mb, 1) if total_mb is not None else None,
+        "memory_used_mib": round(used_mib, 1) if used_mib is not None else None,
+        "memory_total_mib": round(total_mib, 1) if total_mib is not None else None,
     }
 
 
@@ -1671,8 +1671,8 @@ def machine_pressure(
         forward_age_seconds=measurement(forward_block["age_seconds"]),
         forward_thread_alive=flag(forward_block["thread_alive"]),
         gpu_utilization_percent=measurement(gpu.get("utilization_percent")),
-        gpu_memory_used_mb=measurement(gpu.get("memory_used_mb")),
-        gpu_memory_total_mb=measurement(gpu.get("memory_total_mb")),
+        gpu_memory_used_mib=measurement(gpu.get("memory_used_mib")),
+        gpu_memory_total_mib=measurement(gpu.get("memory_total_mib")),
         backend_probed=probed,
         backend_alive=flag(backend.get("alive")),
         backend_latency_seconds=measurement(backend.get("latency_seconds")),

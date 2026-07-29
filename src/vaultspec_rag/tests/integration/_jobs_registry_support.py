@@ -109,9 +109,9 @@ def _assert_runtime_context(raw: object) -> dict[str, object]:
 def _assert_resource_snapshot(raw: object) -> dict[str, object]:
     assert isinstance(raw, dict)
     resources = cast("dict[str, object]", raw)
-    assert isinstance(resources["rss_mb"], float)
-    assert isinstance(resources["cuda_allocated_mb"], float)
-    assert isinstance(resources["cuda_reserved_mb"], float)
+    assert isinstance(resources["rss_mib"], float)
+    assert isinstance(resources["cuda_allocated_mib"], float)
+    assert isinstance(resources["cuda_reserved_mib"], float)
     return resources
 
 
