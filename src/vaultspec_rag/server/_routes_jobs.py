@@ -20,6 +20,7 @@ from typing import cast
 from .. import jobs as _jobs
 from .._job_errors import (
     DEGRADED_THRESHOLD_SECONDS,
+    RATE_COLLAPSE_RATIO,
     STALL_THRESHOLD_SECONDS,
     remediation,
 )
@@ -420,6 +421,28 @@ def _forward_signal_age(
     return _age_seconds(max(stamps), now) if stamps else None
 
 
+def _rate_collapsed(record: dict[str, object]) -> bool:
+    """Whether throughput has fallen far below what this run has sustained.
+
+    The one degradation the recency signals structurally cannot see. A job
+    clamped by its own encode memory ceiling keeps ticking progress and keeps
+    entering forwards, so every age stays fresh while the run does a fraction
+    of the work it was doing an hour earlier - which is exactly how an
+    order-of-magnitude slowdown reported healthy throughout.
+
+    Measured only against the job's own median and only once the service will
+    state one, so a young job, a job on a step it has never measured, and a
+    job whose baseline is unknown all report healthy rather than guessing.
+    """
+    baseline = _job_rate_baseline(record)
+    if baseline is None:
+        return False
+    ratio = baseline.get("ratio")
+    if isinstance(ratio, bool) or not isinstance(ratio, int | float):
+        return False
+    return float(ratio) <= RATE_COLLAPSE_RATIO
+
+
 def _job_degradation(record: dict[str, object], now: float) -> str:
     """Return the three-way service verdict: healthy, degraded, or stalled.
 
@@ -430,6 +453,11 @@ def _job_degradation(record: dict[str, object], now: float) -> str:
     tick progress at their boundary), while a forward that has been running -
     or a job that has shown neither signal - beyond the short threshold is
     degraded. Queued, paused, and terminal work is inert, not degraded.
+
+    Recency is necessary and not sufficient. A job whose signals are all
+    fresh is degraded anyway when its throughput has collapsed against its
+    own run baseline, because a run can report continuously while delivering
+    a fraction of the work it has proved it can do.
     """
     if _job_stalled(record, now):
         return "stalled"
@@ -449,9 +477,9 @@ def _job_degradation(record: dict[str, object], now: float) -> str:
         )
         if age is not None
     ]
-    if not ages:
-        return "healthy"
-    return "degraded" if min(ages) >= DEGRADED_THRESHOLD_SECONDS else "healthy"
+    if ages and min(ages) >= DEGRADED_THRESHOLD_SECONDS:
+        return "degraded"
+    return "degraded" if _rate_collapsed(record) else "healthy"
 
 
 def _countable_progress(record: dict[str, object]) -> tuple[int, int] | None:
