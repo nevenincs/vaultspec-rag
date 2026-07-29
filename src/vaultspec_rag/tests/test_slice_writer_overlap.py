@@ -62,9 +62,11 @@ class _RecordingEncoder:
         self,
         texts: list[str],
         batch_size: int | None = None,
+        gpu_lock: threading.Lock | None = None,
     ) -> list[list[float]]:
         started = time.monotonic()
         self.seen_batch_sizes.append(batch_size)
+        self.seen_gpu_locks.append(gpu_lock)
         self.encode_threads.append(threading.get_ident())
         self.encoded_slices.append(list(texts))
         if self._encode_seconds:

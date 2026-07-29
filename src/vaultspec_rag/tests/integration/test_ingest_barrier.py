@@ -88,8 +88,9 @@ class _DeterministicCpuModel:
         self,
         texts: list[str],
         batch_size: int | None = None,
+        gpu_lock: object | None = None,
     ) -> list[list[float]]:
-        del batch_size
+        del batch_size, gpu_lock
         return [self._row(text) for text in texts]
 
     def encode_documents_sparse(
