@@ -7,6 +7,7 @@ along with async task execution helpers for background reindexing.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 import time
@@ -14,6 +15,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
+from statistics import median
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -62,18 +64,24 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "TERMINAL_PHASES",
+    "DegradationInputs",
     "JobProgressReporter",
     "activate_index_job",
     "active_index_support_profiles",
+    "count",
     "degradation_evidence",
     "delete_job",
     "find_job",
-    "forward_telemetry",
+    "flag",
     "get_job_manager",
     "gpu_pressure_snapshot",
     "index_job_status",
     "machine_pressure",
-    "progress_rate",
+    "mapping",
+    "measurement",
+    "progress_rates",
+    "record_encode_bucket",
+    "record_encode_oom",
     "record_finish",
     "record_forward_entry",
     "record_forward_exit",
@@ -89,6 +97,7 @@ __all__ = [
     "start_reindex_codebase",
     "start_reindex_documents",
     "start_reindex_vault",
+    "telemetry_block",
     "validate_code_index_policy",
     "validate_code_job_admission",
     "validate_code_support_profile",
@@ -156,6 +165,24 @@ _MIN_RATE_SPAN_SECONDS = 1.0
 # spanning a real interval, without discarding the current count: the
 # newest sample always carries it.
 _PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS = 0.25
+# Run-spanning throughput baseline. The window above answers "how fast right
+# now" and, by construction, holds only the last seconds of a fast step: a run
+# whose throughput collapses refills it with the collapsed rate within
+# seconds, after which nothing on the record remembers the run was ever
+# faster. The baseline is the second reading that keeps a collapse visible.
+# The window rate is retained at a coarse interval across the step, so the
+# median of what the run has actually sustained survives long after the
+# window has moved on. Derived from the samples already taken - no second
+# sampler - and bounded by both count and spacing, so an hour of history
+# costs one small deque of floats per job.
+_PROGRESS_RATE_HISTORY_KEY = "progress_rate_history"
+_PROGRESS_RATE_HISTORY_SAMPLES = 120
+_PROGRESS_RATE_HISTORY_MIN_INTERVAL_SECONDS = 30.0
+# A median over a handful of observations describes a moment, not a run.
+# Eight spaced observations are four minutes of sustained reporting, which is
+# the point at which comparing the current rate against the run's own history
+# says something an operator can act on instead of flapping on one slow slice.
+_PROGRESS_RATE_HISTORY_MIN_OBSERVATIONS = 8
 # Mid-step progress writes are throttled per output, never gated on the step
 # name changing: a step-name gate admits exactly one write per phase, at the
 # instant the counter is zero by construction, so no advancing count ever
@@ -520,6 +547,10 @@ def _sample_progress(
     )
     if previous_step != step or (samples and completed < samples[-1][1]):
         samples.clear()
+        # The baseline describes one step's sustained throughput, so it is
+        # discarded wherever the window is: a rate carried across a step
+        # change or a replay reset would be a baseline for different work.
+        record.pop(_PROGRESS_RATE_HISTORY_KEY, None)
     # Measured against the last committed sample, never the newest one: the
     # newest is overwritten in place, so comparing against it would hold the
     # window open forever and turn the rate into a whole-step average that
@@ -532,6 +563,34 @@ def _sample_progress(
     else:
         samples.append((at, completed))
     record[_PROGRESS_WINDOW_KEY] = samples
+    _retain_rate_observation(record, at=at)
+
+
+def _retain_rate_observation(record: dict[str, object], *, at: float) -> None:
+    """Retain the current window rate as one run-baseline observation.
+
+    Reads the window the caller has just updated, so the baseline costs no
+    second measurement. Observations are spaced by interval rather than by
+    report, so a step reporting hundreds of times a second contributes at the
+    same cadence as one reporting every few seconds, and the deque bounds how
+    much of the run is remembered.
+    """
+    window = record.get(_PROGRESS_WINDOW_KEY)
+    if not isinstance(window, deque):
+        return
+    rate = _window_rate(cast("deque[tuple[float, int]]", window))
+    if rate is None:
+        return
+    raw_history = record.get(_PROGRESS_RATE_HISTORY_KEY)
+    history: deque[tuple[float, float]] = (
+        cast("deque[tuple[float, float]]", raw_history)
+        if isinstance(raw_history, deque)
+        else deque(maxlen=_PROGRESS_RATE_HISTORY_SAMPLES)
+    )
+    if history and at - history[-1][0] < _PROGRESS_RATE_HISTORY_MIN_INTERVAL_SECONDS:
+        return
+    history.append((at, rate))
+    record[_PROGRESS_RATE_HISTORY_KEY] = history
 
 
 def _window_rate(samples: deque[tuple[float, int]]) -> float | None:
@@ -552,22 +611,52 @@ def _window_rate(samples: deque[tuple[float, int]]) -> float | None:
     return advanced / span
 
 
-def progress_rate(record_id: str) -> float | None:
-    """Return the windowed completion rate for one job, or ``None``.
+def _record_window_rate(record: dict[str, object]) -> float | None:
+    """The windowed completion rate *record* holds (caller holds the lock)."""
+    window = record.get(_PROGRESS_WINDOW_KEY)
+    if not isinstance(window, deque):
+        return None
+    return _window_rate(cast("deque[tuple[float, int]]", window))
 
-    ``None`` means the service declines to estimate - the job is unknown,
-    has not reported twice within one step, or has not advanced. It never
-    means zero.
+
+def _record_baseline_rate(record: dict[str, object]) -> float | None:
+    """The median of *record*'s retained observations (caller holds the lock).
+
+    The run's own baseline, against which the windowed rate says whether
+    throughput has collapsed. The median rather than the mean because a run
+    passes through regimes and a single stalled window must not move the
+    reference.
+    """
+    history = record.get(_PROGRESS_RATE_HISTORY_KEY)
+    if not isinstance(history, deque):
+        return None
+    rates = [rate for _at, rate in cast("deque[tuple[float, float]]", history)]
+    if len(rates) < _PROGRESS_RATE_HISTORY_MIN_OBSERVATIONS:
+        return None
+    return median(rates)
+
+
+def progress_rates(record_id: str) -> tuple[float | None, float | None]:
+    """Return one job's windowed rate and its own baseline, under one read.
+
+    What the job is achieving now and the median of what it has sustained on
+    this step are two readings of the same record, written by the same
+    reporter thread. Taken under one lock acquisition they describe one
+    moment, so the ratio between them is a number the record actually held;
+    taken separately they can straddle a write, and the comparison would then
+    describe no state the job was ever in.
+
+    Either member is ``None`` where the service declines to state it: the job
+    is unknown, has not reported twice within one step, has not advanced, or
+    has not yet spaced enough observations for a median to describe a run
+    rather than a moment. Neither ever means zero.
     """
     with _lock:
         for record in reversed(_records):
             if record["id"] != record_id:
                 continue
-            window = record.get(_PROGRESS_WINDOW_KEY)
-            if not isinstance(window, deque):
-                return None
-            return _window_rate(cast("deque[tuple[float, int]]", window))
-    return None
+            return _record_window_rate(record), _record_baseline_rate(record)
+    return None, None
 
 
 def record_progress(
@@ -666,6 +755,12 @@ def record_forward_entry(record_id: str, *, ordinal: int, items: int) -> None:
     boundaries; this is the only signal inside one. The calling thread's
     identity is recorded so the read surface can report whether the encode
     thread is still alive while the pass looks stuck.
+
+    *items* is the slice's own item count, and means the same thing at
+    every boundary the window is reopened at, so a reader who finds the
+    window open never has to ask which moment the number was written at.
+    Sub-slice progress through those items is a different quantity and is
+    published as its own pair on the encode block.
     """
     now = time.time()
     thread = threading.current_thread()
@@ -698,18 +793,99 @@ def record_forward_exit(record_id: str, *, ordinal: int, items: int) -> None:
                 break
 
 
-def forward_telemetry(record_id: str) -> dict[str, object] | None:
-    """Return a detached copy of one job's newest forward-pass telemetry.
+def _encode_block(record: dict[str, object]) -> dict[str, object]:
+    """Return one record's encode state, creating it absent (caller locked).
 
-    ``None`` means the job is unknown or its run never reached a forward
-    pass; the read surface treats that as no signal, never as a stall.
+    Every member starts absent rather than at a plausible-looking value: a
+    budget of zero and a budget nobody has reported are different findings,
+    and only the retry count has a truthful starting value.
+    """
+    existing = record.get("encode")
+    if isinstance(existing, dict):
+        return cast("dict[str, object]", existing)
+    block: dict[str, object] = {
+        "token_budget": None,
+        "bucket_items": None,
+        "items_done": None,
+        "items_total": None,
+        "oom_count": 0,
+    }
+    record["encode"] = block
+    return block
+
+
+def record_encode_bucket(
+    record_id: str,
+    *,
+    token_budget: int | None,
+    bucket_items: int | None,
+    items_done: int | None,
+    items_total: int | None,
+) -> None:
+    """Publish what one encode-bucket boundary observed.
+
+    *token_budget* is the current per-batch token ceiling and *bucket_items*
+    the size of the batch it most recently produced. Together they are what
+    turns a collapsed throughput reading into an attributable cause: a run
+    encoding a handful of items per batch is bounded by its own memory
+    ceiling, not by a stuck forward pass.
+
+    *items_done* and *items_total* are the encode call's own sub-slice
+    progress, and are published as a pair because neither means anything
+    alone: a lone completed count reads as a size to whoever renders it,
+    which is the ambiguity that put the climb here instead of on the
+    forward window's slice-scoped item count.
     """
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
-                forward = record.get("forward")
-                if isinstance(forward, dict):
-                    return dict(cast("dict[str, object]", forward))
+                block = _encode_block(record)
+                block["token_budget"] = token_budget
+                block["bucket_items"] = bucket_items
+                block["items_done"] = items_done
+                block["items_total"] = items_total
+                break
+
+
+def record_encode_oom(record_id: str) -> None:
+    """Count one out-of-memory encode retry against this job.
+
+    The count is per job and never resets within a run: a ceiling that
+    collides repeatedly is the finding, and a gauge that forgets the earlier
+    collisions cannot show it.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                block = _encode_block(record)
+                count = block.get("oom_count")
+                block["oom_count"] = (
+                    count + 1
+                    if isinstance(count, int) and not isinstance(count, bool)
+                    else 1
+                )
+                break
+
+
+def telemetry_block(record_id: str, name: str) -> dict[str, object] | None:
+    """Return a detached copy of one job's newest *name* telemetry block.
+
+    ``forward`` is the newest forward-pass window, ``encode`` the budget,
+    sub-slice progress and retry state the encode stage is working under.
+    Both are read the same way, so they are read by the same code: a
+    hardening applied to one block that skipped the other would be a
+    difference nothing in the record justifies.
+
+    ``None`` means the job is unknown or its run never reported that block.
+    The read surface treats that as no signal at all - never as a stall, and
+    never as a budget of nothing.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                block = record.get(name)
+                if isinstance(block, dict):
+                    return dict(cast("dict[str, object]", block))
                 return None
     return None
 
@@ -850,6 +1026,7 @@ def _copied_record(record: dict[str, object]) -> dict[str, object]:
     # them in the shared copier keeps them off every projection built from a
     # record, rather than relying on each caller to remember to exclude them.
     item.pop(_PROGRESS_WINDOW_KEY, None)
+    item.pop(_PROGRESS_RATE_HISTORY_KEY, None)
     item.pop(_PROGRESS_EMIT_KEY, None)
     prog = record.get("progress")
     if isinstance(prog, dict):
@@ -857,6 +1034,9 @@ def _copied_record(record: dict[str, object]) -> dict[str, object]:
     forward = record.get("forward")
     if isinstance(forward, dict):
         item["forward"] = dict(cast("dict[str, object]", forward))
+    encode = record.get("encode")
+    if isinstance(encode, dict):
+        item["encode"] = dict(cast("dict[str, object]", encode))
     failures = record.get("preprocess_failures")
     if isinstance(failures, list):
         item["preprocess_failures"] = list(cast("list[object]", failures))
@@ -1236,48 +1416,189 @@ def _backend_evidence(project_root: str | None, source: str) -> dict[str, object
     return dict(result)
 
 
+def count(value: object) -> int | None:
+    """Read one published value as a whole, non-negative count.
+
+    The counted-work half of the reader pair :func:`measurement` completes,
+    and it carries the same contract: a count is a published *quantity*, so
+    ``bool`` and a negative are both malformed rather than readings. A
+    ``float`` is refused outright rather than truncated, because a
+    fractional count is a malformed reading and not a rounding question - a
+    cap of ``3.7`` is a broken field, not "3".
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def measurement(value: object) -> float | None:
+    """Read one published value as a NON-NEGATIVE measured quantity.
+
+    The one reader every surface uses for a numeric field the service may
+    not have measured: the evidence blocks here, the jobs presentation, the
+    status pane, and the route projection all narrow the same way, so a
+    value one of them would refuse can never read as a number in another.
+
+    The contract is deliberately narrower than "a number", and the boundary
+    is worth naming because this reader is general enough to reach for
+    anywhere. It reads a quantity the service *measured and published*: a
+    percentage, a size, an age, a duration, a rate, a tally, a timestamp.
+    Every such quantity is non-negative, so a negative is a corrupt field
+    and is refused. Do NOT route a signed figure through here - a delta
+    between two readings, a clock offset, a drift, or anything else whose
+    sign carries meaning - because this reader would silently discard the
+    negative half of its range.
+
+    A quantity *derived* by subtracting two of these readings is a separate
+    case and is not this reader's job: it can legitimately come out negative
+    from clock skew or an out-of-order stamp, and the treatment there is to
+    clamp at zero, not to refuse. :func:`._routes_jobs._age_seconds` is that
+    pattern.
+
+    ``nan`` and the infinities are refused too, and they are the one shape
+    that fails silently rather than loudly. A ``nan`` compares ``False``
+    against every threshold, so a ``nan`` rate ratio would read as "not
+    collapsed" and quietly suppress a degradation verdict instead of
+    reporting an unreadable field; an infinity reaches the operator
+    formatters, which convert to ``int`` and raise. JSON has no syntax for
+    either, but Python's ``json`` both emits and accepts them by default, so
+    a persisted job record can carry one.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric < 0:
+        return None
+    return numeric
+
+
+def mapping(value: object) -> dict[str, object]:
+    """Read one published value as a sub-mapping, or an empty one.
+
+    The structural member of the reader family: a job record arrives as an
+    untyped mapping decoded from persisted JSON, and reaching a field nested
+    inside it means narrowing the container first. Compose it with the
+    scalar readers - ``measurement(mapping(record.get("progress")).get(key))``
+    - so a malformed container reads as absent rather than raising.
+
+    An absent or non-mapping value reads as an empty mapping rather than
+    ``None``, so a caller can always ``.get`` the field it came for. A
+    caller that has to tell "absent" from "present but empty" needs its own
+    reader; this one deliberately cannot express that difference.
+    """
+    return cast("dict[str, object]", value) if isinstance(value, dict) else {}
+
+
+def flag(value: object) -> bool | None:
+    """Read one published value as a signal; anything else is unreported.
+
+    The three-state reader beside :func:`measurement` and :func:`count`:
+    yes, no, and never reported stay distinct, so a signal the service
+    never sent can never read as a denial.
+    """
+    return value if isinstance(value, bool) else None
+
+
+#: The conditional evidence sections, each as the readers its members are
+#: narrowed through. Encode state is counted work and rate readings are
+#: measurements, which is the whole of the difference between them.
+_ENCODE_EVIDENCE_READERS: dict[str, Callable[[object], object]] = {
+    "token_budget": count,
+    "bucket_items": count,
+    "items_done": count,
+    "items_total": count,
+    "oom_count": count,
+}
+_RATE_EVIDENCE_READERS: dict[str, Callable[[object], object]] = {
+    "recent_per_second": measurement,
+    "median_per_second": measurement,
+    "ratio": measurement,
+}
+
+
+def _conditional_evidence(
+    block: dict[str, object] | None,
+    readers: dict[str, Callable[[object], object]],
+) -> dict[str, object] | None:
+    """Shape one conditional evidence section, or ``None`` when unreported.
+
+    The encode section says what bounds the encode stage rather than only
+    that it is slow: a run planning tiny batches under a clamped token
+    budget, with a retry count that keeps climbing, is bounded by its own
+    memory ceiling - a different finding, and a different remedy, from a
+    starved card or a stalled store. The rate section is the finding that
+    names a collapse: what the job is doing now against what it has proved
+    it can do, and the factor between them.
+
+    A section whose every member is unreadable is returned as ``None``, so a
+    renderer is never handed a block of nulls to caption.
+    """
+    if block is None:
+        return None
+    section: dict[str, object] = {
+        key: read(block.get(key)) for key, read in readers.items()
+    }
+    return section if any(value is not None for value in section.values()) else None
+
+
+@dataclass(frozen=True, slots=True)
+class DegradationInputs:
+    """One job's record-side facts, read at one moment, for its evidence.
+
+    Carried as one value rather than re-listed at every call: they are all
+    reads of the same record, and the evidence block gains a finding
+    whenever the service learns to measure one.
+    """
+
+    source: str
+    project_root: str | None = None
+    step: str | None = None
+    forward: dict[str, object] | None = None
+    encode: dict[str, object] | None = None
+    rate_baseline: dict[str, object] | None = None
+
+
 def degradation_evidence(
     *,
     now: float,
-    forward: dict[str, object] | None,
-    project_root: str | None,
-    source: str,
-    step: str | None,
+    inputs: DegradationInputs,
 ) -> dict[str, object]:
     """Attach sampled cause attribution to one unhealthy job verdict.
 
-    One shape, four independent findings: the forward-pass window and encode
+    Four findings are always present: the forward-pass window and encode
     thread (is the work alive), the service process's own CPU utilisation
     (is anything running at all), machine-wide GPU pressure (is the card
     starved), and a bounded backend probe (is the store answering). Each
-    section degrades to explicit absence on hosts or processes that cannot
-    answer it, so the block's shape is stable for every renderer.
+    degrades to explicit absence on hosts or processes that cannot answer it,
+    so those four keep a stable shape for every renderer.
 
-    The forward section is phase-aware: ``expected`` says whether *step*
-    performs forward passes at all, so a CPU-bound phase is never judged by
-    the absence of a signal it structurally cannot produce - the CPU section
-    is the liveness reading that remains valid there.
+    Two findings are conditional, because they describe work not every job
+    performs: the encode budget and retry count, and the run's throughput
+    against its own baseline. Both are omitted rather than nulled - a job
+    that never encoded published no budget, which is a different statement
+    from a budget of nothing, and an omitted section costs a renderer no line.
+
+    The forward section is phase-aware: ``expected`` says whether the
+    reported step performs forward passes at all, so a CPU-bound phase is
+    never judged by the absence of a signal it structurally cannot produce -
+    the CPU section is the liveness reading that remains valid there.
     """
-    return {
+    evidence: dict[str, object] = {
         "forward": {
-            **_forward_evidence(forward, now=now),
-            "expected": _forward_pass_expected(step),
+            **_forward_evidence(inputs.forward, now=now),
+            "expected": _forward_pass_expected(inputs.step),
         },
         "cpu": _process_cpu_evidence(now=now),
         "gpu": _gpu_evidence(),
-        "backend": _backend_evidence(project_root, source),
+        "backend": _backend_evidence(inputs.project_root, inputs.source),
     }
-
-
-def _signal_measure(value: object) -> float | None:
-    """Read one evidence value as a measurement; ``bool`` is malformed."""
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return float(value)
-
-
-def _signal_flag(value: object) -> bool | None:
-    return value if isinstance(value, bool) else None
+    encode_section = _conditional_evidence(inputs.encode, _ENCODE_EVIDENCE_READERS)
+    if encode_section is not None:
+        evidence["encode"] = encode_section
+    rate_section = _conditional_evidence(inputs.rate_baseline, _RATE_EVIDENCE_READERS)
+    if rate_section is not None:
+        evidence["rate"] = rate_section
+    return evidence
 
 
 def _worst_forward_evidence(
@@ -1298,7 +1619,7 @@ def _worst_forward_evidence(
         evidence = _forward_evidence(forward, now=now)
         in_flight = evidence["in_flight"] is True
         dead = in_flight and evidence["thread_alive"] is False
-        age = _signal_measure(evidence["age_seconds"])
+        age = measurement(evidence["age_seconds"])
         rank = (2 if dead else 1 if in_flight else 0, age if age is not None else -1.0)
         if rank > worst_rank:
             worst_rank, worst = rank, evidence
@@ -1347,14 +1668,14 @@ def machine_pressure(
     )
     signals = MachinePressureSignals(
         forward_in_flight=forward_block["in_flight"] is True,
-        forward_age_seconds=_signal_measure(forward_block["age_seconds"]),
-        forward_thread_alive=_signal_flag(forward_block["thread_alive"]),
-        gpu_utilization_percent=_signal_measure(gpu.get("utilization_percent")),
-        gpu_memory_used_mb=_signal_measure(gpu.get("memory_used_mb")),
-        gpu_memory_total_mb=_signal_measure(gpu.get("memory_total_mb")),
+        forward_age_seconds=measurement(forward_block["age_seconds"]),
+        forward_thread_alive=flag(forward_block["thread_alive"]),
+        gpu_utilization_percent=measurement(gpu.get("utilization_percent")),
+        gpu_memory_used_mb=measurement(gpu.get("memory_used_mb")),
+        gpu_memory_total_mb=measurement(gpu.get("memory_total_mb")),
         backend_probed=probed,
-        backend_alive=_signal_flag(backend.get("alive")),
-        backend_latency_seconds=_signal_measure(backend.get("latency_seconds")),
+        backend_alive=flag(backend.get("alive")),
+        backend_latency_seconds=measurement(backend.get("latency_seconds")),
         backend_probe_bound_seconds=_BACKEND_PROBE_TIMEOUT_SECONDS if probed else None,
         encode_waiters=waiting,
         store_failures=store_failures,
@@ -1561,6 +1882,25 @@ class JobProgressReporter:
 
     def forward_finished(self, *, ordinal: int, items: int) -> None:
         record_forward_exit(self.record_id, ordinal=ordinal, items=items)
+
+    def encode_bucket_observed(
+        self,
+        *,
+        token_budget: int | None,
+        bucket_items: int | None,
+        items_done: int | None,
+        items_total: int | None,
+    ) -> None:
+        record_encode_bucket(
+            self.record_id,
+            token_budget=token_budget,
+            bucket_items=bucket_items,
+            items_done=items_done,
+            items_total=items_total,
+        )
+
+    def encode_oom(self) -> None:
+        record_encode_oom(self.record_id)
 
     def _publish(self, step: str, *, completed: int, total: int | None) -> None:
         context = self._context

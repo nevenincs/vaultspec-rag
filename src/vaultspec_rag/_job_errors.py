@@ -22,6 +22,7 @@ from typing import Final
 
 __all__ = [
     "DEGRADED_THRESHOLD_SECONDS",
+    "RATE_COLLAPSE_RATIO",
     "STALL_THRESHOLD_SECONDS",
     "JobError",
     "JobErrorKind",
@@ -43,6 +44,23 @@ STALL_THRESHOLD_SECONDS = 300.0
 #: Deliberately a fifth of the hard stall threshold above: ``degraded`` is the
 #: early, cause-attributed tier and ``stalled`` remains the hard verdict.
 DEGRADED_THRESHOLD_SECONDS = 60.0
+
+#: A running job whose current throughput has fallen to this fraction of the
+#: median it has sustained on the same step is reported ``degraded``, however
+#: recent its progress and forward-pass signals are. The recency thresholds
+#: above cannot see a collapse that keeps reporting: an encode stage clamped
+#: by its own memory ceiling ticks progress and enters forwards continuously
+#: while doing a fraction of the work, which is exactly how an order-of-
+#: magnitude slowdown read healthy for half an hour.
+#:
+#: A quarter - a fourfold collapse - because that is the bottom of the range
+#: a real collapse produced against its own median, and because the readings
+#: either side of it are unambiguous: normal variation between slices moves
+#: throughput by tens of percent, not by a factor of four. The baseline it is
+#: measured against only exists after the run has reported enough spaced
+#: observations to have a median, so a single slow slice cannot move it and
+#: the verdict does not flap.
+RATE_COLLAPSE_RATIO = 0.25
 
 
 class JobErrorKind(StrEnum):

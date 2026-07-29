@@ -221,7 +221,7 @@ class TestCodeGenerationRebuildSurvivesInterruption:
         breadth claim must still verify, and the fragment must be left
         unreferenced rather than served.
         """
-        from ..._index_breadth import code_meta_path
+        from ..._index_breadth import index_meta_path
         from ..._store_models import (
             generation_code_collection,
             publish_generation_as_served,
@@ -275,7 +275,7 @@ class TestCodeGenerationRebuildSurvivesInterruption:
 
             def _record_breadth() -> None:
                 publish_meta_from_file_states(
-                    code_meta_path(tmp_path),
+                    index_meta_path(tmp_path, PublicSourceType.CODE),
                     [],
                     generation_id="a" * 32,
                     membership_epoch="membership-epoch",
@@ -461,14 +461,14 @@ def _open_clean_code_generation(root: Path) -> Any:
 
 def _lifecycle(root: Path, store: VaultStore) -> Any:
     """Bind a real generation lifecycle to *root*'s sidecar and store."""
-    from ..._index_breadth import code_meta_path
+    from ..._index_breadth import index_meta_path
     from ...indexer._code_meta import load_meta, read_meta_raw
     from ...indexer._generation_lifecycle import (
         CodeGenerationBindings,
         CodeGenerationLifecycle,
     )
 
-    meta_path = code_meta_path(root)
+    meta_path = index_meta_path(root, PublicSourceType.CODE)
     return CodeGenerationLifecycle(
         CodeGenerationBindings(
             root_dir=root,
@@ -577,7 +577,7 @@ class TestCodeReadsNeverMaterialiseAGhost:
         comparison is satisfied at zero, so only an explicit reading of
         "empty under named files" can escalate.
         """
-        from ..._index_breadth import code_meta_path
+        from ..._index_breadth import index_meta_path
         from ...indexer._code_meta import publish_meta_from_file_states
         from ...indexer._content_policy import ContentKind
         from ...indexer._file_state import FileState
@@ -587,7 +587,7 @@ class TestCodeReadsNeverMaterialiseAGhost:
         try:
             store.ensure_code_table()
             publish_meta_from_file_states(
-                code_meta_path(tmp_path),
+                index_meta_path(tmp_path, PublicSourceType.CODE),
                 [
                     FileState.indexed(
                         f"src/named{index}.py",
@@ -747,7 +747,7 @@ class TestResumedCodePublicationClaimsWhatItBuilt:
         build collection is not in storage, finalized anyway, leaving a
         sidecar naming a generation storage has never held.
         """
-        from ..._index_breadth import code_meta_path
+        from ..._index_breadth import index_meta_path
         from ...indexer._run_ledger_models import RunTerminalState
         from ...store_runtime import VaultStore
 
@@ -767,7 +767,7 @@ class TestResumedCodePublicationClaimsWhatItBuilt:
             assert not lifecycle.publish_pending_finalization(
                 checkpoint, reporter=NullProgressReporter()
             )
-            assert not code_meta_path(tmp_path).exists()
+            assert not index_meta_path(tmp_path, PublicSourceType.CODE).exists()
             retired = checkpoint.ledger.generation(checkpoint.generation_id)
             assert retired.terminal_state is RunTerminalState.INVALIDATED
         finally:

@@ -15,7 +15,7 @@ from functools import partial
 from itertools import chain, pairwise
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
-from ..job_control import NO_RUN_CONTROL, timed_gpu_lock
+from ..job_control import NO_RUN_CONTROL
 
 if TYPE_CHECKING:
     import threading
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
         VaultDocument,
     )
     from .._store_writes import StoreWritePolicy
-    from ..embeddings import EmbeddingModel
+    from ..embeddings import EmbeddingModel, EncodeBucketProgress
     from ..job_control import RunControl
     from ..memory_probe import MemoryProbe
     from ..progress import ProgressReporter
@@ -160,6 +160,7 @@ class CodeSliceRequest:
     on_storage_confirmed: Callable[[], None] | None = None
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
+    on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
     on_cuda_oom: Callable[[BaseException], None] | None = None
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
@@ -341,8 +342,9 @@ def _transfer_to_cpu(value: object) -> object:
 
     Ordinary dense callers receive a CPU NumPy array. Index streaming requests
     an accelerator tensor and crosses this boundary immediately after the
-    caller releases ``gpu_lock``. The structural check keeps both forms lazy
-    without adding an eager Torch import to this module.
+    encoder releases its last per-bucket ``gpu_lock`` hold. The structural
+    check keeps both forms lazy without adding an eager Torch import to this
+    module.
     """
     if isinstance(value, _CpuTransferable):
         return value.cpu()
@@ -446,10 +448,15 @@ class _VectorEncodeRequest:
     after_encode: Callable[[], None] | None = None
     # Forward-pass boundary callbacks, called with the pass kind ("dense" or
     # "sparse"). ``before_forward`` fires on the encoding thread immediately
-    # before the GPU lock is sought, so an in-flight forward - the only
-    # activity inside a slice - is observable while it runs, not only after.
+    # before the first bucket forward seeks the GPU lock, so an in-flight
+    # encode - the only activity inside a slice - is observable while it
+    # runs, not only after.
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
+    # Per-bucket encode boundary callback. The encoder splits the slice into
+    # token-budgeted buckets and calls this at each one, so the reporting it
+    # drives resolves inside a slice rather than only at its edges.
+    on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
     on_cuda_oom: Callable[[BaseException], None] | None = None
     reuse: DonorReuseContext | None = None
 
@@ -492,15 +499,21 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
     sparse: Iterable[_SparseVectorLike | None] | None = None
     try:
         _notify_forward_boundary(request.before_forward, "dense")
-        with timed_gpu_lock(request.gpu_lock):
-            dense_device = request.model.encode_documents_on_device(
-                slice_texts,
-                batch_size=request.encode_batch_size,
-            )
+        # The model brackets each planned encode bucket's forward with its
+        # own GPU-lock hold, so a concurrent search on the shared device
+        # waits for at most one bucket, never a whole slice.
+        dense_device = request.model.encode_documents_on_device(
+            slice_texts,
+            batch_size=request.encode_batch_size,
+            gpu_lock=request.gpu_lock,
+            on_bucket=request.on_encode_bucket,
+        )
         _notify_forward_boundary(request.after_forward, "dense")
         dense_cpu = _transfer_to_cpu(dense_device)
         dense_device = None
         if request.sparse_enabled:
+            # The sparse encoder plans buckets too, but exposes no boundary
+            # callback, so its forward window stays scoped to the whole slice.
             _notify_forward_boundary(request.before_forward, "sparse")
             sparse = request.model.encode_documents_sparse(
                 slice_texts,
@@ -710,6 +723,7 @@ class _VaultSliceRequest:
     release_cache: bool = True
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
+    on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
 
 
 def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
@@ -747,6 +761,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
                 after_encode=_after_encode,
                 before_forward=request.before_forward,
                 after_forward=request.after_forward,
+                on_encode_bucket=request.on_encode_bucket,
                 reuse=request.reuse,
             )
         )
@@ -798,6 +813,96 @@ def _report_forward_exit(
     """Adapt one slice's forward-exit boundary onto the progress reporter."""
     del kind
     reporter.forward_finished(ordinal=ordinal, items=items)
+
+
+@runtime_checkable
+class _EncodeTelemetrySink(Protocol):
+    """The encode-state surface a progress reporter may also publish.
+
+    Forward boundaries mean something to every reporter; encode budget and
+    memory-retry state only mean something to one with a job record behind
+    it. Narrowing to the capability keeps that state off the reporters that
+    have nowhere to put it, without a no-op member on each of them.
+    """
+
+    def encode_bucket_observed(
+        self,
+        *,
+        token_budget: int | None,
+        bucket_items: int | None,
+        items_done: int | None,
+        items_total: int | None,
+    ) -> None: ...
+
+    def encode_oom(self) -> None: ...
+
+
+class _EncodeBucketReporter:
+    """Adapt one slice's per-bucket encode boundaries onto the reporter.
+
+    The encoder splits a slice into token-budgeted buckets and calls this at
+    each boundary, on the encoding thread and outside any GPU-lock hold. Every
+    boundary reopens or closes the forward window, so a slice that takes
+    minutes reads as work moving through it instead of one silent open
+    window, and every boundary republishes the token budget and bucket size
+    the encoder is working under, which is what makes a collapsed encode rate
+    attributable to a memory ceiling rather than to a stuck pass.
+
+    The window is always reported with the slice's own item count, which is
+    what that number has to mean for a reader who finds the window open:
+    the sub-slice climb through those items is published beside the budget
+    instead, as a done-and-total pair that says what it is without a second
+    field to read it against.
+
+    Bucket progress carries the encoder's running memory-retry count rather
+    than an event per retry, so each rise in it is republished as the retries
+    it stands for.
+    """
+
+    __slots__ = ("_items", "_ooms_reported", "_ordinal", "_reporter", "_sink")
+
+    def __init__(
+        self,
+        reporter: ProgressReporter,
+        ordinal: int,
+        items: int,
+    ) -> None:
+        self._reporter = reporter
+        self._ordinal = ordinal
+        self._items = items
+        self._sink = reporter if isinstance(reporter, _EncodeTelemetrySink) else None
+        self._ooms_reported = 0
+
+    def __call__(self, phase: str, progress: EncodeBucketProgress) -> None:
+        try:
+            self._publish(phase, progress)
+        except Exception:
+            # This runs inside the encoder's bucket loop, so raising would
+            # discard every bucket the slice has already encoded. Reporting is
+            # never worth an encode: record the failure and let the slice run.
+            logger.warning("encode bucket telemetry failed", exc_info=True)
+
+    def _publish(self, phase: str, progress: EncodeBucketProgress) -> None:
+        if self._sink is not None:
+            while self._ooms_reported < progress.oom_count:
+                self._ooms_reported += 1
+                self._sink.encode_oom()
+            self._sink.encode_bucket_observed(
+                token_budget=progress.token_budget,
+                bucket_items=progress.bucket_items,
+                items_done=progress.items_done,
+                items_total=progress.items_total,
+            )
+        if phase == "before":
+            self._reporter.forward_started(
+                ordinal=self._ordinal,
+                items=self._items,
+            )
+            return
+        self._reporter.forward_finished(
+            ordinal=self._ordinal,
+            items=self._items,
+        )
 
 
 def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, int]:
@@ -881,6 +986,11 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                             ),
                             after_forward=partial(
                                 _report_forward_exit,
+                                request.reporter,
+                                slice_index,
+                                len(slice_chunks),
+                            ),
+                            on_encode_bucket=_EncodeBucketReporter(
                                 request.reporter,
                                 slice_index,
                                 len(slice_chunks),
@@ -1513,9 +1623,9 @@ def iter_weighted_code_slices(
 def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
-    Dense and sparse forwards use separate GPU-lock spans, and sparse transfer
-    and conversion run outside the lock, so the I/O-bound upsert does not block
-    concurrent searches on the same device. When
+    Every dense and sparse bucket forward holds its own GPU-lock span, and
+    transfer and conversion run outside the lock, so the I/O-bound upsert does
+    not block concurrent searches on the same device. When
     ``release_cache`` is True the CUDA caching pool is returned to the driver
     on every exit path (#68); the chunk-to-embed pipeline passes
     False on most slices and flushes periodically instead (#155).
@@ -1557,6 +1667,7 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
                 encode_batch_size=request.encode_batch_size,
                 before_forward=request.before_forward,
                 after_forward=request.after_forward,
+                on_encode_bucket=request.on_encode_bucket,
                 on_cuda_oom=request.on_cuda_oom,
                 reuse=request.reuse,
             )
