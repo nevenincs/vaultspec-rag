@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .._index_breadth import code_meta_path
+from .._index_breadth import index_meta_path
 from .._index_integrity import (
     REASON_COUNT_UNAVAILABLE,
     REASON_FILE_COVERAGE_SHORTFALL,
@@ -63,7 +63,7 @@ def _publish_code_claim(
     covered_files: int | None = None,
 ) -> None:
     """Publish a real code sidecar claiming *points* through the prod writer."""
-    meta_path = code_meta_path(root)
+    meta_path = index_meta_path(root, PublicSourceType.CODE)
     publish_meta_from_file_states(
         meta_path,
         _indexed_states(named_files),
@@ -253,7 +253,7 @@ class TestCodeClassification:
         # A sidecar written by a build that predates the breadth keys: file
         # entries and the embed-schema marker, no published figure. This is a
         # data shape, written verbatim because no current writer produces it.
-        meta_path = code_meta_path(tmp_path)
+        meta_path = index_meta_path(tmp_path, PublicSourceType.CODE)
         meta_path.parent.mkdir(parents=True, exist_ok=True)
         meta_path.write_text(
             '{"__code_embed_schema__": "2", "src/app.py": "abc123"}',
