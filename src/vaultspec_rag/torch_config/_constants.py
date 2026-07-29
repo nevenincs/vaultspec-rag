@@ -65,11 +65,12 @@ CU130_MARKER: Final[str] = "sys_platform == 'linux' or sys_platform == 'win32'"
 # direct-dep example. Extracting the value as a single constant keeps
 # the three surfaces in lockstep when PyTorch drops a major version.
 TORCH_MIN_VERSION: Final[str] = "2.4"
-# Exact torch version pinned by the tool-env remediation command. Tool
-# receipts on current uv (0.11.x, verified on-box 2026-07-14) do NOT record
-# `--index`, so the only re-resolution-proof pin is a `--with` direct wheel
-# URL - which hard-pins version, ABI, and platform. Bump alongside the
-# workspace cu130 pin.
+# Fallback torch version for the tool-env remediation command, used only
+# when NO torch distribution is present in the env (the command otherwise
+# tracks the installed torch's own version). Tool receipts on current uv
+# (0.11.x, verified on-box 2026-07-14) do NOT record `--index`, so the only
+# re-resolution-proof pin is a `--with` direct wheel URL - which hard-pins
+# version, ABI, and platform. Bump alongside the workspace cu130 pin.
 TORCH_TOOL_PIN_VERSION: Final[str] = "2.13.0"
 DIRECT_TORCH_REQUIREMENT: Final[str] = f"torch>={TORCH_MIN_VERSION}"
 _MANAGED_DIRECT_DEP_KEY: Final[str] = "managed-torch-direct-dependency"

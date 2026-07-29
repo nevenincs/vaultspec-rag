@@ -35,13 +35,13 @@ To add vaultspec-rag as a dependency of an existing project, run:
 uv add vaultspec-rag
 ```
 
-To install it as a standalone tool instead, pin the GPU torch wheel as a `--with` requirement (Windows shown; on Linux use the matching `manylinux_2_28_x86_64` wheel from the same index):
+To install it as a standalone tool instead, pin the GPU torch wheel as a `--with` requirement. The command is environment-specific - the wheel names a python version, ABI, platform, and torch release - so do not copy it from documentation: `vaultspec-rag server start` and `vaultspec-rag install` print the exact command derived from your interpreter and installed torch whenever they detect a CPU-only tool environment. For orientation, the shape it takes (here Python 3.13, torch 2.13.0, Windows):
 
 ```bash
-uv tool install "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
+uv tool install --python 3.13 "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
 ```
 
-The `--with` pin matters: uv records it in the tool receipt and re-applies it on every `uv tool upgrade`, so torch keeps resolving to the GPU (cu130) wheel. Without it, every upgrade or forced reinstall re-resolves torch from PyPI and silently replaces the GPU build with a CPU-only wheel that the service refuses to start with. Do not rely on `--index` instead: current uv (verified on 0.11.x) does not record `--index` in the tool receipt, so an upgrade silently drops it. The project-scoped pin that `vaultspec-rag install` writes into `pyproject.toml` never reaches tool environments, and uv's `--torch-backend` selector is `uv pip`-only.
+The `--python` request must match the wheel's `cp3XX` tag (both are recorded in the tool receipt): without it, uv resolves the tool env on its default python, and a default that differs from the wheel's interpreter - a newer version, or a free-threaded build - fails the install on a tag mismatch. The `--with` pin matters: uv records it in the tool receipt and re-applies it on every `uv tool upgrade`, so torch keeps resolving to the GPU (cu130) wheel. Without it, every upgrade or forced reinstall re-resolves torch from PyPI and silently replaces the GPU build with a CPU-only wheel that the service refuses to start with. Do not rely on `--index` instead: current uv (verified on 0.11.x) does not record `--index` in the tool receipt, so an upgrade silently drops it. The project-scoped pin that `vaultspec-rag install` writes into `pyproject.toml` never reaches tool environments, and uv's `--torch-backend` selector is `uv pip`-only.
 
 If a tool environment has already lost its GPU torch, repair it in place (this is undone by the next upgrade; the `--with` pin above is the durable fix):
 
