@@ -82,7 +82,9 @@ class _RecordingEncoder:
         texts: list[str],
         batch_size: int | None = None,
         gpu_lock: threading.Lock | None = None,
+        on_bucket: object | None = None,
     ) -> list[_SparseRow]:
+        del on_bucket
         self.seen_batch_sizes.append(batch_size)
         self.seen_gpu_locks.append(gpu_lock)
         return [_SparseRow() for _ in texts]

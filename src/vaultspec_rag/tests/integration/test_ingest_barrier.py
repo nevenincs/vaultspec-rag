@@ -99,8 +99,9 @@ class _DeterministicCpuModel:
         texts: list[str],
         batch_size: int | None = None,
         gpu_lock: object | None = None,
+        on_bucket: object | None = None,
     ) -> list[None]:
-        del batch_size, gpu_lock
+        del batch_size, gpu_lock, on_bucket
         return [None] * len(texts)
 
 
