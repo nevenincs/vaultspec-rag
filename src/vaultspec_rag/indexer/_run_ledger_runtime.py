@@ -217,6 +217,12 @@ class RunLedger(
             # as unretained and the publication purge would delete the whole
             # collection. Refusing it leaves the caller no parent, which
             # forces the full failure-safe reconciliation path instead.
+            #
+            # Stop rather than fall through to an older candidate. The newest
+            # compatible manifest is the one storage reflects; anything older
+            # describes points a later publication already replaced or purged,
+            # so carrying it would claim dead point ids and skip re-encoding
+            # the files it names - a worse diff than the one just refused.
             dangling = connection.execute(
                 """
                 SELECT 1
@@ -230,7 +236,7 @@ class RunLedger(
                 (published.generation_id,),
             ).fetchone()
             if dangling is not None:
-                continue
+                return None
             source_id = published.generation_id
             break
         if source_id is None:
