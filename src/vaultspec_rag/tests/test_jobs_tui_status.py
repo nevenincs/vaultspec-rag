@@ -21,6 +21,7 @@ import pytest
 from textual.app import App, ComposeResult
 
 from ..cli._jobs_tui_status import (
+    SeatPool,
     ServiceStatusBar,
     ServiceStatusHeader,
     fetch_service_status,
@@ -325,6 +326,19 @@ class TestTheOperatorsFourQuestions:
         # Calling that "clients" would be a fabrication, so it is named for
         # what it is.
         assert "in flight 1" in painted
+
+    def test_search_pool_occupancy_and_waiting_are_painted(self) -> None:
+        status = ServiceStatusHeader(
+            reachable=True,
+            status="ready",
+            seats=(SeatPool(name="search", used=16, total=16, waiting=3),),
+        )
+
+        painted = _painted(status)
+
+        assert "search 16/16 +3 waiting" in painted, (
+            "served-search pressure must not be parsed and then discarded"
+        )
 
     def test_connected_clients_read_as_absent_on_a_full_payload(
         self, full_service: _StatusService

@@ -252,6 +252,9 @@ class RunLedgerFinalizationMethods:
         stored points live under it; deleting it cascades those units away,
         after which every retained-point lookup reads the inherited points
         as obsolete and the next publication purges the entire collection.
+
+        The keep must be the newest published generation of its collection;
+        compacting an older one is refused.
         """
         with self._transaction() as connection:
             keep = connection.execute(
@@ -266,6 +269,34 @@ class RunLedgerFinalizationMethods:
             ):
                 raise RunLedgerStateError(
                     "only a published successful generation compacts"
+                )
+            # An older keep would restamp itself newest and delete - or strand
+            # the evidence of - the manifest storage actually reflects, and the
+            # next carry-forward would then read stale history as current.
+            # Strictly newer is the predicate on purpose: two stamps taken from
+            # one coarse clock reading cannot be ordered, and the in-order
+            # publisher must never be refused over a timestamp tie.
+            newer = connection.execute(
+                """
+                SELECT 1 FROM generations
+                WHERE generation_id != ?
+                  AND source_type = ?
+                  AND collection_identity = ?
+                  AND terminal_state = ?
+                  AND updated_at > ?
+                LIMIT 1
+                """,
+                (
+                    keep_generation_id,
+                    keep["source_type"],
+                    keep["collection_identity"],
+                    RunTerminalState.SUCCEEDED.value,
+                    keep["updated_at"],
+                ),
+            ).fetchone()
+            if newer is not None:
+                raise RunLedgerStateError(
+                    "only the newest published generation compacts its collection"
                 )
             result = connection.execute(
                 """

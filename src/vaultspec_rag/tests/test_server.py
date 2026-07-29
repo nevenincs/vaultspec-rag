@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import typing
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -1294,6 +1295,53 @@ class TestRouteMissingProjectRoot:
 
         import vaultspec_rag.server as mod
 
+        from ..server._state import search_activity_ledger
+
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        orig_token = mod._SERVICE_TOKEN
+        query = f"search-activity-missing-root-{uuid.uuid4().hex}"
+        mod._http_mode = True
+        mod._SERVICE_TOKEN = self._TOKEN
+        try:
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            resp: httpx.Response = client.post(
+                "/search",
+                json={"query": query},
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 400
+            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            assert data["ok"] is False
+            assert data["error"] == "bad_request"
+            assert "project_root" in data["message"]
+
+            activity = search_activity_ledger().snapshot(include_query=True)
+            records = [
+                record for record in activity["recent"] if record.get("query") == query
+            ]
+            assert len(records) == 1
+            assert records[0]["state"] == "terminal"
+            assert records[0]["outcome"] == "validation_rejected"
+            assert records[0]["status_code"] == 400
+            assert records[0]["error_code"] == "bad_request"
+            assert not [
+                record for record in activity["active"] if record.get("query") == query
+            ]
+        finally:
+            mod._http_mode = orig_mode
+            mod._SERVICE_TOKEN = orig_token
+
+    def test_search_route_records_invalid_bodies_as_validation_rejections(self):
+        """Malformed and non-object bodies finish once before search admission."""
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        from ..server._state import search_activity_ledger
+
         app = self._make_app()
         orig_mode = mod._http_mode
         orig_token = mod._SERVICE_TOKEN
@@ -1303,19 +1351,219 @@ class TestRouteMissingProjectRoot:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
             )
-            resp: httpx.Response = client.post(
-                "/search",
-                json={"query": "hello"},
-                headers=self._auth_headers(),
+            cases = (
+                ("malformed", b'{"query":', "invalid_json"),
+                ("non-object", b'["not", "an", "object"]', "bad_request"),
             )
-            assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
-            assert data["ok"] is False
-            assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            for label, body, error_code in cases:
+                before_snapshot = search_activity_ledger().snapshot(include_query=True)
+                before = {
+                    str(record["request_id"])
+                    for group in (
+                        before_snapshot["active"],
+                        before_snapshot["recent"],
+                    )
+                    for record in group
+                }
+                response: httpx.Response = client.post(
+                    "/search",
+                    content=body,
+                    headers={
+                        **self._auth_headers(),
+                        "Content-Type": "application/json",
+                    },
+                )
+
+                assert response.status_code == 400, label
+                data: dict[str, Any] = cast("dict[str, Any]", response.json())
+                assert data["error"] == "bad_request", label
+                activity = search_activity_ledger().snapshot(include_query=True)
+                records = [
+                    record
+                    for group in (activity["active"], activity["recent"])
+                    for record in group
+                    if str(record["request_id"]) not in before
+                ]
+                assert len(records) == 1, label
+                assert records[0]["state"] == "terminal", label
+                assert records[0]["outcome"] == "validation_rejected", label
+                assert records[0]["error_code"] == error_code, label
+                assert all(
+                    str(record["request_id"]) != str(records[0]["request_id"])
+                    for record in activity["active"]
+                ), label
         finally:
             mod._http_mode = orig_mode
             mod._SERVICE_TOKEN = orig_token
+
+    def test_unauthenticated_search_activity_route_never_exposes_query(self):
+        """The token gate rejects the in-memory query-review surface."""
+        from starlette.testclient import TestClient
+
+        from ..server._search_activity import (
+            SearchActivityCompletion,
+            SearchActivityStart,
+        )
+        from ..server._state import search_activity_ledger
+
+        query = f"operator-only-query-{uuid.uuid4().hex}"
+        request_id = f"operator-only-request-{uuid.uuid4().hex}"
+        ledger = search_activity_ledger()
+        ticket = ledger.start(
+            SearchActivityStart(
+                request_id=request_id,
+                query=query,
+                search_type="vault",
+                root="Y:/workspace",
+                top_k=5,
+            )
+        )
+        try:
+            client: httpx.Client = cast(
+                "httpx.Client",
+                TestClient(self._make_app(), raise_server_exceptions=False),
+            )
+            response: httpx.Response = client.get("/search-activity")
+
+            assert response.status_code == 401
+            data: dict[str, Any] = cast("dict[str, Any]", response.json())
+            assert data["error"] == "unauthorized"
+            assert query not in response.text
+        finally:
+            assert ledger.finish(
+                ticket,
+                completion=SearchActivityCompletion(outcome="success", status_code=200),
+            )
+
+    def test_full_activity_ledger_backpressures_then_reviews_the_request(self):
+        """Capacity waits for a slot and still records the eventual response."""
+        child = r"""
+import json
+import threading
+import time
+
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
+
+import vaultspec_rag.server as server
+from vaultspec_rag.server._routes import ROUTES
+from vaultspec_rag.server._search_activity import (
+    DEFAULT_MAX_ACTIVE_SEARCHES,
+    SearchActivityCompletion,
+    SearchActivityStart,
+)
+from vaultspec_rag.server._state import search_activity_ledger
+
+
+token = "activity-capacity-route-token"
+waiting_query = "wait for activity capacity before validation"
+previous_mode = server._http_mode
+previous_token = server._SERVICE_TOKEN
+server._http_mode = True
+server._SERVICE_TOKEN = token
+try:
+    app = Starlette(routes=ROUTES)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        baseline = client.post(
+            "/search",
+            json={"query": "ledger capacity must not control search admission"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        ledger = search_activity_ledger()
+        held = [
+            ledger.start(SearchActivityStart(
+                request_id=f"activity-capacity-{index}",
+                query=f"activity capacity {index}",
+                search_type="vault",
+                root=None,
+                top_k=None,
+            ))
+            for index in range(DEFAULT_MAX_ACTIVE_SEARCHES)
+        ]
+        request_started = threading.Event()
+        response: dict[str, object] = {}
+        failure: list[str] = []
+
+        def request_when_full() -> None:
+            request_started.set()
+            try:
+                constrained = client.post(
+                    "/search",
+                    json={"query": waiting_query},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                response["status_code"] = constrained.status_code
+                response["body"] = constrained.json()
+            except Exception as exc:
+                failure.append(repr(exc))
+
+        waiter = threading.Thread(target=request_when_full)
+        waiter.start()
+        assert request_started.wait(timeout=1.0)
+        time.sleep(0.1)
+        pending_before_release = waiter.is_alive()
+        assert pending_before_release
+        assert ledger.finish(
+            held.pop(),
+            completion=SearchActivityCompletion(outcome="success", status_code=200),
+        )
+        waiter.join(timeout=5.0)
+        assert not waiter.is_alive()
+        assert not failure
+        after = ledger.snapshot(include_query=True)
+    print(
+        "ACTIVITY_CAPACITY_RESULT="
+        + json.dumps(
+            {
+                "baseline": {
+                    "status_code": baseline.status_code,
+                    "body": baseline.json(),
+                },
+                "pending_before_release": pending_before_release,
+                "constrained": response,
+                "counts": after["counts"],
+                "terminal": [
+                    record
+                    for record in after["recent"]
+                    if record.get("query") == waiting_query
+                ],
+                "remaining_active": len(held),
+            }
+        )
+    )
+finally:
+    server._http_mode = previous_mode
+    server._SERVICE_TOKEN = previous_token
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", child],
+            cwd=Path(__file__).resolve().parents[3],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        prefix = "ACTIVITY_CAPACITY_RESULT="
+        rendered = next(
+            line.removeprefix(prefix)
+            for line in completed.stdout.splitlines()
+            if line.startswith(prefix)
+        )
+        result = cast("dict[str, Any]", json.loads(rendered))
+        assert result["pending_before_release"] is True
+        constrained = cast("dict[str, Any]", result["constrained"])
+        assert constrained["status_code"] == 400
+        assert constrained["status_code"] != 429
+        counts = cast("dict[str, int]", result["counts"])
+        assert counts["active"] == result["remaining_active"]
+        assert counts["active_overflow"] == 0
+        terminal = cast("list[dict[str, Any]]", result["terminal"])
+        assert len(terminal) == 1
+        assert terminal[0]["state"] == "terminal"
+        assert terminal[0]["query"] == "wait for activity capacity before validation"
+        assert terminal[0]["outcome"] == "validation_rejected"
+        assert terminal[0]["status_code"] == 400
 
     def test_benchmark_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
