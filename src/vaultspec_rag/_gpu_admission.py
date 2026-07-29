@@ -14,7 +14,9 @@ Two properties make the gate correct rather than merely present:
   pressure, so a gate that re-read it would eventually refuse the process it
   already admitted. The latch is therefore a correctness device, not an
   optimisation, and a declared release of the resident stack clears it so the
-  next load is admitted against what the card actually has.
+  next load is admitted against what the card actually has. Only a verdict that
+  reached the floor comparison latches: latching one that never got a figure
+  would retire the gate on a reading that was never taken.
 - **Detection alone cannot close the race.** Two processes can read the same
   free figure, both find room, and both load. An OS advisory lock held across
   the check-and-load window makes that sequence atomic between processes: a
@@ -96,10 +98,6 @@ DEVICE_CONTENDED_MESSAGE = (
     "VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB."
 )
 
-#: The settings key carrying the floor. Named once so the live read and the
-#: shipped-default fallback below cannot address different knobs.
-_FLOOR_SETTING_KEY = "gpu_admission_floor_mib"
-
 #: The machine-global lock file's name. One name for the whole machine is the
 #: point: the device it guards is singular.
 _LOCK_FILENAME = "vaultspec-rag-gpu-load-window.lock"
@@ -169,34 +167,67 @@ def device_load_wire(admission: DeviceAdmission) -> dict[str, object]:
     }
 
 
+def _workload_floor_mib() -> int:
+    """Derive the floor from what the configured workload actually demands.
+
+    The floor answers "is there room for what this process is about to bring
+    up", so it is a property of the workload rather than of the card: the model
+    stack occupies what it occupies whether the device is 8 GiB or 48 GiB. The
+    support profile already declares that demand per content domain, and the
+    per-job CUDA ceiling is derived from the same figure, so taking it from
+    there keeps one declaration behind both.
+
+    The larger of the two domains, because either may be the one that runs and
+    a floor sized to the smaller would admit a load the card cannot hold.
+
+    A shipped absolute would have been a statement about one machine: pinned to
+    a 16 GiB card it refuses every load on a smaller one - permanently, since
+    free memory can never reach it - and under-protects a larger one, where the
+    figure it names is reached with two stacks still able to collide.
+    """
+    from ._units import bytes_to_mib
+    from .config._settings import get_config
+    from .index_profiles import get_index_support_profile
+
+    profile = get_index_support_profile(get_config().index_support_profile)
+    demand_bytes = max(profile.code.cuda_bytes, profile.document.cuda_bytes)
+    return int(bytes_to_mib(demand_bytes))
+
+
 def _configured_floor_mib() -> int:
     """Return the admission floor in MiB. Never raises.
 
+    A positive configured value is an authoritative operator override, in
+    mebibytes, for a card whose owner knows it better than any default can -
+    the same treatment the CUDA ceiling gives its own override. Unset (zero, or
+    a value below it) means derive, so the shipped configuration states no
+    device size anywhere.
+
     A malformed operator value must not make the gate unusable: the floor IS
     the predicate, so declining to answer would convert one bad environment
-    variable into a blanket refusal of GPU work. The shipped default is read
-    from the settings table rather than restated here, so the two cannot drift.
-    A host on which even that read fails reports no floor, which admits
-    everything - the behaviour that preceded this gate, and the right
-    degradation for a process that cannot read its own defaults.
+    variable into a blanket refusal of GPU work. A host on which even the
+    derivation fails reports no floor, which admits everything - the behaviour
+    that preceded this gate, and the right degradation for a process that
+    cannot read its own configuration.
     """
+    configured = 0
     try:
         from .config._settings import get_config
 
-        return int(get_config().gpu_admission_floor_mib)
+        configured = int(get_config().gpu_admission_floor_mib)
     except Exception:
         logger.warning(
-            "the configured GPU admission floor is unusable; falling back to "
-            "the shipped default",
+            "the configured GPU admission floor is unusable; deriving it from "
+            "the configured workload instead",
             exc_info=True,
         )
+    if configured > 0:
+        return configured
     try:
-        from .config._settings import rag_default
-
-        return int(rag_default(_FLOOR_SETTING_KEY))
+        return _workload_floor_mib()
     except Exception:
         logger.warning(
-            "the shipped GPU admission floor could not be read; admitting every load",
+            "the GPU admission floor could not be derived; admitting every load",
             exc_info=True,
         )
         return 0
@@ -417,6 +448,25 @@ def device_load_window(
 
 _admission_guard = threading.Lock()
 _admitted = False
+#: Whether a load has already run in this process under a verdict that never
+#: reached the floor comparison. It is what stops the retry the latch rule
+#: opens from refusing work on a figure it cannot attribute: once a load has gone
+#: through, free memory reflects this process's own residency, and a reading
+#: below the floor may be describing the models this process just brought up
+#: rather than a foreign tenant.
+_unattributable_load = False
+
+
+def _floor_was_evaluated(admission: DeviceAdmission) -> bool:
+    """Whether *admission* actually compared a free figure against the floor.
+
+    The distinction the latch turns on. Three of the four verdicts this module
+    produces never reach the comparison - an absent torch, an absent device,
+    and a driver that answered presence but refused the memory query - and all
+    three carry no free figure, so the figure's presence is the discriminator
+    rather than a second flag that could disagree with it.
+    """
+    return admission.free_mib is not None
 
 
 def clear_gpu_admission_latch() -> None:
@@ -428,10 +478,16 @@ def clear_gpu_admission_latch() -> None:
     that no longer exists, and a later reload has to be admitted against what
     the card actually holds. Clearing costs one extra reading on the next load;
     not clearing rides a stale verdict for the rest of the process's life.
+
+    The unattributable-load flag is retired with it: a release is exactly the
+    event that makes free memory attributable again, so carrying that flag
+    across one would let the next load ride an allowance earned by residency
+    that no longer exists.
     """
-    global _admitted
+    global _admitted, _unattributable_load
     with _admission_guard:
         _admitted = False
+        _unattributable_load = False
 
 
 def admit_gpu_load[T](
@@ -458,8 +514,27 @@ def admit_gpu_load[T](
     admission source, a parameter so the sequencing this function owns - the
     latch, the thread serialisation, the refusal mapping - is exercisable over a
     known verdict rather than only on a host with a real device.
+
+    Only a verdict that reached the floor comparison latches. A verdict that
+    never got a free figure - a driver that refused the memory query, or a probe
+    that failed outright - is passed through to the loader as before, but
+    latching it would retire the gate on the strength of a reading that was
+    never taken: one transient probe failure on a working device would leave the
+    floor unevaluated for the life of the process, with the gate still
+    reporting itself present. An unverifiable observation must not shorten
+    protection, and permanently is the worst way for it to do so.
+
+    The retry that opens costs at most one further window entry per load site.
+    ``load_torch`` is called once per model construction and each site is behind
+    its own already-constructed guard, so a process makes a handful of these
+    calls in total; the device probe caches its torch lookup, so a repeat costs
+    a memory query and an uncontended lock claim rather than an import. On a
+    host whose probe fails permanently the repeats are bounded by that call
+    count, not by time, and the warning the unreadable reading emits repeats
+    with them - a handful of lines per process, which is a signal rather than a
+    flood, and the honest one to leave in place while the device cannot answer.
     """
-    global _admitted
+    global _admitted, _unattributable_load
     if _admitted:
         return load()
     with _admission_guard:
@@ -467,7 +542,25 @@ def admit_gpu_load[T](
             return load()
         with window() as admission:
             if admission.reason in _REFUSING_REASONS:
-                raise RuntimeError(device_contended_message(admission))
+                if not _unattributable_load:
+                    raise RuntimeError(device_contended_message(admission))
+                # A load already went through here without an evaluated
+                # verdict, so this process holds residency the figure below
+                # cannot be separated from. Refusing now would report this
+                # process's own models as foreign contention and fail the
+                # second stack it needs - the very inversion the latch exists
+                # to prevent. Reported rather than acted on, and the evaluated
+                # verdict latches below, so this is said once per process.
+                logger.warning(
+                    "%s (a load already succeeded here without an evaluated "
+                    "verdict, so this figure cannot be told apart from this "
+                    "process's own residency; the load proceeds)",
+                    device_contended_message(admission),
+                )
             result = load()
-        _admitted = True
+            evaluated = _floor_was_evaluated(admission)
+        if evaluated:
+            _admitted = True
+        else:
+            _unattributable_load = True
         return result

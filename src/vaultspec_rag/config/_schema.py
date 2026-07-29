@@ -292,10 +292,11 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "index_cuda_ceiling_mib": _NON_NEGATIVE_NUMBER,
     "index_cuda_headroom_mib": _POSITIVE_NUMBER,
     "index_cuda_allocator_fraction": _OPEN_UNIT_INTERVAL,
-    # Model-load admission floor. Zero would admit every load, which is the
-    # behaviour the gate exists to remove, so it is refused with the negatives;
-    # an operator who wants a nominal floor sets one.
-    "gpu_admission_floor_mib": _POSITIVE_INT,
+    # Model-load admission floor, in MiB. Zero is admitted and means derive the
+    # floor from the configured workload's declared CUDA demand, the way the
+    # CUDA ceiling above treats its own zero; a positive value overrides that
+    # derivation for one card. Negatives are refused, having no reading.
+    "gpu_admission_floor_mib": _NON_NEGATIVE_INT,
     "index_support_profile": _ChoiceBound(
         "one of " + ", ".join(sorted(VALID_INDEX_SUPPORT_PROFILES)),
         frozenset(VALID_INDEX_SUPPORT_PROFILES),
