@@ -7,6 +7,7 @@ along with async task execution helpers for background reindexing.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 import time
@@ -67,13 +68,16 @@ __all__ = [
     "JobProgressReporter",
     "activate_index_job",
     "active_index_support_profiles",
+    "count",
     "degradation_evidence",
     "delete_job",
     "find_job",
+    "flag",
     "get_job_manager",
     "gpu_pressure_snapshot",
     "index_job_status",
     "machine_pressure",
+    "mapping",
     "measurement",
     "progress_rates",
     "record_encode_bucket",
@@ -1361,28 +1365,76 @@ def _backend_evidence(project_root: str | None, source: str) -> dict[str, object
 
 
 def count(value: object) -> int | None:
-    """Read one published value as a whole count; ``bool`` is malformed.
+    """Read one published value as a whole, non-negative count.
 
-    The counted-work half of the reader pair :func:`measurement` completes:
-    a ``float`` is refused outright rather than truncated, because a
-    fractional count is a malformed reading and not a rounding question.
+    The counted-work half of the reader pair :func:`measurement` completes,
+    and it carries the same contract: a count is a published *quantity*, so
+    ``bool`` and a negative are both malformed rather than readings. A
+    ``float`` is refused outright rather than truncated, because a
+    fractional count is a malformed reading and not a rounding question - a
+    cap of ``3.7`` is a broken field, not "3".
     """
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
     return value
 
 
 def measurement(value: object) -> float | None:
-    """Read one published value as a measurement; ``bool`` is malformed.
+    """Read one published value as a NON-NEGATIVE measured quantity.
 
     The one reader every surface uses for a numeric field the service may
-    not have measured: the evidence blocks here, the jobs presentation, and
-    the status pane all narrow the same way, so a value one of them would
-    refuse can never read as a number in another.
+    not have measured: the evidence blocks here, the jobs presentation, the
+    status pane, and the route projection all narrow the same way, so a
+    value one of them would refuse can never read as a number in another.
+
+    The contract is deliberately narrower than "a number", and the boundary
+    is worth naming because this reader is general enough to reach for
+    anywhere. It reads a quantity the service *measured and published*: a
+    percentage, a size, an age, a duration, a rate, a tally, a timestamp.
+    Every such quantity is non-negative, so a negative is a corrupt field
+    and is refused. Do NOT route a signed figure through here - a delta
+    between two readings, a clock offset, a drift, or anything else whose
+    sign carries meaning - because this reader would silently discard the
+    negative half of its range.
+
+    A quantity *derived* by subtracting two of these readings is a separate
+    case and is not this reader's job: it can legitimately come out negative
+    from clock skew or an out-of-order stamp, and the treatment there is to
+    clamp at zero, not to refuse. :func:`._routes_jobs._age_seconds` is that
+    pattern.
+
+    ``nan`` and the infinities are refused too, and they are the one shape
+    that fails silently rather than loudly. A ``nan`` compares ``False``
+    against every threshold, so a ``nan`` rate ratio would read as "not
+    collapsed" and quietly suppress a degradation verdict instead of
+    reporting an unreadable field; an infinity reaches the operator
+    formatters, which convert to ``int`` and raise. JSON has no syntax for
+    either, but Python's ``json`` both emits and accepts them by default, so
+    a persisted job record can carry one.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return float(value)
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric < 0:
+        return None
+    return numeric
+
+
+def mapping(value: object) -> dict[str, object]:
+    """Read one published value as a sub-mapping, or an empty one.
+
+    The structural member of the reader family: a job record arrives as an
+    untyped mapping decoded from persisted JSON, and reaching a field nested
+    inside it means narrowing the container first. Compose it with the
+    scalar readers - ``measurement(mapping(record.get("progress")).get(key))``
+    - so a malformed container reads as absent rather than raising.
+
+    An absent or non-mapping value reads as an empty mapping rather than
+    ``None``, so a caller can always ``.get`` the field it came for. A
+    caller that has to tell "absent" from "present but empty" needs its own
+    reader; this one deliberately cannot express that difference.
+    """
+    return cast("dict[str, object]", value) if isinstance(value, dict) else {}
 
 
 def flag(value: object) -> bool | None:
