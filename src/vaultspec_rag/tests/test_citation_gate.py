@@ -617,7 +617,12 @@ def test_a_real_account_name_is_an_identity_leak(
     # Assembled from two literals on purpose. The path scan matches string
     # VALUES, not only prose, so a whole account path written out here would be
     # a leak in this very file. Keep it split.
-    account = "gergely"
+    #
+    # The account must not be a real person's name - not this project's authors
+    # and not an invented one either, which could belong to someone. An
+    # account-shaped string naming nobody exercises the same branch: what the
+    # scan needs is a segment absent from the placeholder set, not a human.
+    account = "devbox01"
     source = _write(tmp_path, "module.py", f'P = "C:/Users/{account}/code/thing"\n')
 
     leaks, _smells = gate.scan_file_paths(source, repo_root=tmp_path)
