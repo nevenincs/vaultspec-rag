@@ -35,7 +35,7 @@ To add vaultspec-rag as a dependency of an existing project, run:
 uv add vaultspec-rag
 ```
 
-To install it as a standalone tool instead, pin the GPU torch wheel as a `--with` requirement (Windows shown; on Linux use the matching `manylinux_2_28_x86_64` wheel from the same index):
+To install it as a standalone tool instead, pin the GPU torch wheel as a `--with` requirement. The command is environment-specific - the wheel names a python version, ABI, platform, and torch release - so do not copy it from documentation: `vaultspec-rag server start` and `vaultspec-rag install` print the exact command derived from your interpreter and installed torch whenever they detect a CPU-only tool environment. For orientation, the shape it takes (here Python 3.13, torch 2.13.0, Windows):
 
 ```bash
 uv tool install --python 3.13 "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"

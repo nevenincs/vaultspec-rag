@@ -144,9 +144,18 @@ def durable_tool_install_command() -> str:
     instead of re-deriving the rule here. Its first tag is the most specific one
     for this interpreter.
 
-    The platform tag stays hand-picked: it must match what PyTorch actually
-    publishes (``manylinux_2_28_x86_64``), which is not necessarily the first
-    platform tag ``packaging`` yields for the host.
+    The manylinux level stays hand-picked - it must match what PyTorch
+    actually publishes (``manylinux_2_28``), which is not necessarily the
+    first platform tag ``packaging`` yields for the host - but the machine
+    architecture is read from the host, since PyTorch publishes that level
+    per architecture (``x86_64`` and ``aarch64``).
+
+    The torch version tracks the distribution already installed in this env
+    (the CPU wheel being replaced), with the local ``+cpu`` suffix stripped:
+    the same release is guaranteed to exist in the cu130 flavour for an
+    interpreter that resolved it, where a baked constant goes stale against
+    an env that has not caught up with the workspace pin. The constant
+    remains only as the fallback when no torch is present at all.
 
     The command must also carry ``--python``: ``uv tool install --force``
     rebuilds the tool env with uv's *default* python request, not the
@@ -157,13 +166,25 @@ def durable_tool_install_command() -> str:
     diverge, and uv records ``python`` in the tool receipt, so upgrades keep
     resolving on the matching interpreter.
     """
+    import importlib.metadata
+    import platform
     import sys
 
     from packaging.tags import cpython_tags
+    from packaging.version import InvalidVersion, Version
 
     from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
 
-    platform_tag = "win_amd64" if sys.platform == "win32" else "manylinux_2_28_x86_64"
+    try:
+        torch_version = Version(importlib.metadata.version("torch")).base_version
+    except (importlib.metadata.PackageNotFoundError, InvalidVersion):
+        torch_version = TORCH_TOOL_PIN_VERSION
+
+    platform_tag = (
+        "win_amd64"
+        if sys.platform == "win32"
+        else f"manylinux_2_28_{platform.machine().lower()}"
+    )
     tag = next(iter(cpython_tags()))
     # tag.interpreter is ``cp<major><minor>`` (single-digit major); uv's
     # free-threaded request form is ``X.Yt``, signalled by the abi suffix.
@@ -171,7 +192,7 @@ def durable_tool_install_command() -> str:
     if tag.abi.endswith("t"):
         python_request += "t"
     wheel = (
-        f"{CU130_INDEX_URL}/torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130"
+        f"{CU130_INDEX_URL}/torch-{torch_version}%2Bcu130"
         f"-{tag.interpreter}-{tag.abi}-{platform_tag}.whl"
     )
     return (
