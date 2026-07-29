@@ -38,14 +38,11 @@ pointed at and would exclude nothing.
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
 import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -53,6 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from contextlib import AbstractContextManager
 
+    from ._anchor_claim import AnchorClaim
     from .memory_probe import CudaDeviceMemory
 
 logger = logging.getLogger(__name__)
@@ -338,65 +336,31 @@ def load_window_lock_path() -> Path:
     return Path(tempfile.gettempdir()) / _LOCK_FILENAME
 
 
-class _WindowLock(Enum):
-    """What an attempt on the load-window lock produced."""
+def _warn_unserialised_window(claim: AnchorClaim) -> None:
+    """Report a load window that could not be serialised, naming which fault.
 
-    HELD = "held"
-    CONTENDED = "contended"
-    UNAVAILABLE = "unavailable"
-
-
-def _acquire_load_window(anchor: Path) -> tuple[_WindowLock, int | None]:
-    """Take the load-window lock without blocking, or report why not.
-
-    Three outcomes, and the difference between the last two carries the policy.
-    Contention means another loader holds the window and this caller must be
-    refused. Unavailable means the anchor itself could not be opened, or the
-    platform ships no advisory-lock primitive - a fault in the coordination
-    mechanism, not evidence about the device - so the caller proceeds on the
-    floor check alone. Converting a filesystem fault into a total GPU outage is
-    a worse failure than the degraded protection.
+    The window is not held after this, and the caller proceeds on the
+    free-memory floor alone: the anchor is a coordination mechanism rather than
+    evidence about the device, and turning a filesystem fault into a total
+    refusal of GPU work costs more than the cross-process half of the
+    protection it would buy. So it is logged rather than raised - but it is
+    logged, because the remaining protection is weaker than the one an operator
+    configured.
     """
-    from ._fd_lock import lock_fd_exclusive
-
-    try:
-        anchor.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(anchor, os.O_RDWR | os.O_CREAT, 0o600)
-    except (OSError, ValueError):
-        logger.warning(
-            "the GPU load-window lock at %s could not be opened; admitting on "
-            "the free-memory floor alone",
-            anchor,
-            exc_info=True,
-        )
-        return (_WindowLock.UNAVAILABLE, None)
-    try:
-        lock_fd_exclusive(fd)
-    except OSError:
-        # A failed non-blocking lock call on a descriptor that opened cleanly is
-        # another holder in every practical case, and reading it as one is the
-        # safe direction: it refuses this caller rather than admitting two.
-        os.close(fd)
-        return (_WindowLock.CONTENDED, None)
-    except ImportError:
+    if isinstance(claim.fault, ImportError):
         logger.warning(
             "this platform ships no advisory-lock primitive; the GPU load "
             "window cannot be serialised and the free-memory floor stands "
             "alone",
-            exc_info=True,
+            exc_info=claim.fault,
         )
-        os.close(fd)
-        return (_WindowLock.UNAVAILABLE, None)
-    return (_WindowLock.HELD, fd)
-
-
-def _release_load_window(fd: int) -> None:
-    """Release and close one held load-window descriptor, best effort."""
-    from ._fd_lock import unlock_fd
-
-    unlock_fd(fd)
-    with contextlib.suppress(OSError):
-        os.close(fd)
+        return
+    logger.warning(
+        "the GPU load-window lock at %s could not be opened; admitting on "
+        "the free-memory floor alone",
+        claim.anchor,
+        exc_info=claim.fault,
+    )
 
 
 @contextmanager
@@ -426,8 +390,10 @@ def device_load_window(
     another tenant may legitimately be holding, and without initialising a CUDA
     context to ask a question whose answer is already known.
     """
-    outcome, fd = _acquire_load_window(anchor or load_window_lock_path())
-    if outcome is _WindowLock.CONTENDED:
+    from ._anchor_claim import AnchorOutcome, claim_anchor, release_anchor_claim
+
+    claim = claim_anchor(anchor or load_window_lock_path(), create_parent=True)
+    if claim.outcome is AnchorOutcome.CONTENDED:
         yield DeviceAdmission(
             admitted=False,
             free_mib=None,
@@ -436,6 +402,8 @@ def device_load_window(
             reason=REASON_LOAD_IN_PROGRESS,
         )
         return
+    if claim.outcome is AnchorOutcome.UNAVAILABLE:
+        _warn_unserialised_window(claim)
     try:
         yield (
             evaluate_device_admission()
@@ -443,8 +411,8 @@ def device_load_window(
             else admission_from_reading(reading, floor_mib=_configured_floor_mib())
         )
     finally:
-        if fd is not None:
-            _release_load_window(fd)
+        if claim.descriptor is not None:
+            release_anchor_claim(claim.descriptor)
 
 
 _admission_guard = threading.Lock()

@@ -373,9 +373,9 @@ class TestTheLoadWindow:
         cross-process case is asserted separately below; this one pins the
         in-process semantics the intra-process guard depends on.
 
-        Mutation: made ``_acquire_load_window`` read a refused lock call as
+        Mutation: made ``claim_anchor`` read a refused lock call as
         ``UNAVAILABLE`` and degrade, instead of as ``CONTENDED``. Observed this
-        assertion fail on ``admitted is False``, the verdict arriving as an
+        assertion fail on ``assert True is False``, the verdict arriving as an
         ordinary admitted reading.
         """
         anchor = tmp_path / "load-window.lock"
@@ -409,9 +409,9 @@ class TestTheLoadWindow:
         software, the kernel does it when the holder dies, so a killed loader
         cannot strand the window for the next one.
 
-        Mutation: made ``_acquire_load_window`` read a refused lock call as
-        ``UNAVAILABLE`` and degrade. Observed this assertion fail on ``while a
-        sibling process holds it`` with ``admitted is True``.
+        Mutation: made ``claim_anchor`` read a refused lock call as
+        ``UNAVAILABLE`` and degrade. Observed this assertion fail on ``the
+        window must refuse while a sibling process holds it``.
         """
         del floor
         anchor = tmp_path / "load-window.lock"
@@ -478,9 +478,9 @@ class TestTheLoadWindow:
         total refusal of compute would be a worse outcome than losing the
         cross-process half of the protection, and the floor still decides.
 
-        Mutation: made ``_acquire_load_window`` return ``CONTENDED`` when the
-        anchor cannot be opened. Observed this assertion fail on
-        ``admitted is True``.
+        Mutation: made ``claim_anchor`` report ``CONTENDED`` when the anchor
+        cannot be opened. Observed this assertion fail on ``assert False is
+        True``, over a ``load_in_progress`` verdict.
         """
         blocker = tmp_path / "not-a-dir"
         blocker.write_text("", encoding="utf-8")

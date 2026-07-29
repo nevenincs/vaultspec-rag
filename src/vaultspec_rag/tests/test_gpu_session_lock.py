@@ -174,6 +174,13 @@ class TestASecondSessionIsRefused:
         card already carrying one, which is the collision this claim prevents.
         The holder's pid is asserted too: an operator told only that something
         holds the device cannot act on it.
+
+        The pid half catches three mutations, each observed to fail on ``assert
+        'process <pid>' in refusal``: not recording the owning pid once the
+        claim is taken; not reading it back when refused; and locking byte zero
+        of an anchor whose body carries that pid, which on a platform with
+        mandatory locks makes the record unreadable to the very contender it
+        exists for.
         """
         holder = _Holder(anchor)
         try:
