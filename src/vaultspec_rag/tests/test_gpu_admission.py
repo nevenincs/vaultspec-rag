@@ -57,19 +57,36 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-#: A 16 GiB card with room to spare, and the same card with a resident stack on
-#: it. The pair is what the floor is meant to separate.
+#: An arbitrary floor pinned for the predicate tests below, deliberately NOT
+#: the shipped default: those tests are about how a reading and a floor combine,
+#: so they must not move when the default's derivation changes. The default's own
+#: soundness is asserted separately, against the measurements.
+_FLOOR = 8448
+
+#: The scenario device every reading below describes, stated as a relation to the
+#: floor under test rather than as any real card: a total twice the floor, with
+#: free memory a margin above it in one reading and the same margin below it in
+#: the other. What the floor separates is those two figures, and naming a
+#: particular device would tie these guards to one machine while asserting
+#: nothing extra - the comparison does not know how large the card is.
+_SCENARIO_TOTAL_MIB = _FLOOR * 2
+_SCENARIO_MARGIN_MIB = 2048
+_ABOVE_FLOOR_MIB = _FLOOR + _SCENARIO_MARGIN_MIB
+_BELOW_FLOOR_MIB = _FLOOR - _SCENARIO_MARGIN_MIB
+
+#: Room to spare, and the same device with a resident stack on it. The pair is
+#: what the floor is meant to separate.
 _ROOMY = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
-    free_mib=14000.0,
-    total_mib=16376.0,
+    free_mib=float(_ABOVE_FLOOR_MIB),
+    total_mib=float(_SCENARIO_TOTAL_MIB),
 )
 _CROWDED = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
-    free_mib=2000.0,
-    total_mib=16376.0,
+    free_mib=float(_BELOW_FLOOR_MIB),
+    total_mib=float(_SCENARIO_TOTAL_MIB),
 )
 
 #: A present device whose driver answered presence and then refused the memory
@@ -84,12 +101,6 @@ _UNREADABLE = CudaDeviceMemory(
     free_mib=None,
     total_mib=None,
 )
-
-#: An arbitrary floor pinned for the predicate tests below, deliberately NOT
-#: the shipped default: those tests are about how a reading and a floor combine,
-#: so they must not move when the default is recalibrated. The shipped default's
-#: own soundness is asserted separately, against the measurements.
-_FLOOR = 8448
 
 #: Two measured properties of this project's MODELS, in MiB: what the embedding,
 #: sparse, and reranker stacks occupy together once all three are resident, and
@@ -199,8 +210,8 @@ class TestTheFloorPredicate:
 
         assert admission.admitted is False
         assert admission.reason == REASON_BELOW_FLOOR
-        assert admission.free_mib == 2000
-        assert admission.total_mib == 16376
+        assert admission.free_mib == _BELOW_FLOOR_MIB
+        assert admission.total_mib == _SCENARIO_TOTAL_MIB
         assert admission.floor_mib == _FLOOR
 
     def test_free_memory_at_the_floor_is_admitted(self) -> None:
@@ -214,7 +225,7 @@ class TestTheFloorPredicate:
             torch_present=True,
             cuda_present=True,
             free_mib=float(_FLOOR),
-            total_mib=16376.0,
+            total_mib=float(_SCENARIO_TOTAL_MIB),
         )
 
         admission = admission_from_reading(reading, floor_mib=_FLOOR)
@@ -241,7 +252,7 @@ class TestTheFloorPredicate:
                 torch_present=True,
                 cuda_present=True,
                 free_mib=_FLOOR - 0.4,
-                total_mib=16376.0,
+                total_mib=float(_SCENARIO_TOTAL_MIB),
             ),
             floor_mib=_FLOOR,
         )
@@ -250,7 +261,7 @@ class TestTheFloorPredicate:
                 torch_present=True,
                 cuda_present=True,
                 free_mib=_FLOOR + 0.4,
-                total_mib=16376.0,
+                total_mib=float(_SCENARIO_TOTAL_MIB),
             ),
             floor_mib=_FLOOR,
         )
@@ -308,7 +319,7 @@ class TestTheFloorPredicate:
                 torch_present=True,
                 cuda_present=True,
                 free_mib=None,
-                total_mib=16376.0,
+                total_mib=float(_SCENARIO_TOTAL_MIB),
             ),
             floor_mib=_FLOOR,
         )
@@ -321,14 +332,14 @@ class TestTheFloorPredicate:
         """An operator can only act on a refusal that carries the figures.
 
         Mutation: dropped the reading from the rendered message, leaving the
-        standing prose alone. Observed this assertion fail on the ``2000 MiB``
+        standing prose alone. Observed this assertion fail on the free-memory
         membership check.
         """
         message = device_contended_message(
             admission_from_reading(_CROWDED, floor_mib=_FLOOR)
         )
 
-        assert "2000 MiB free" in message
+        assert f"{_BELOW_FLOOR_MIB} MiB free" in message
         assert f"{_FLOOR} MiB floor" in message
         assert EnvVar.GPU_ADMISSION_FLOOR_MIB.value in message
 
@@ -937,7 +948,7 @@ class TestTheWireReading:
         admission = DeviceAdmission(
             admitted=False,
             free_mib=2000,
-            total_mib=16376,
+            total_mib=_SCENARIO_TOTAL_MIB,
             floor_mib=6400,
             reason=REASON_BELOW_FLOOR,
         )
@@ -945,7 +956,7 @@ class TestTheWireReading:
         wire = device_load_wire(admission)
 
         assert wire["free_mib"] == 2000
-        assert wire["total_mib"] == 16376
+        assert wire["total_mib"] == _SCENARIO_TOTAL_MIB
         assert wire["floor_mib"] == 6400
         assert wire["admitted"] is False
         assert wire["reason"] == REASON_BELOW_FLOOR
@@ -961,7 +972,11 @@ class TestTheWireReading:
         ``__getitem__``).
         """
         admission = DeviceAdmission(
-            admitted=True, free_mib=9000, total_mib=16376, floor_mib=6400, reason=""
+            admitted=True,
+            free_mib=9000,
+            total_mib=_SCENARIO_TOTAL_MIB,
+            floor_mib=6400,
+            reason="",
         )
         monkeypatch.setattr(
             "vaultspec_rag._gpu_admission.evaluate_device_admission",
