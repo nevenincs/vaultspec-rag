@@ -298,7 +298,12 @@ def _unhealthy_summary(job: dict[str, object], verdict: str) -> str:
         else "no recent progress"
     )
     forward = _forward_evidence_phrase(job)
-    return f"{verdict}: {'; '.join(part for part in (base, forward) if part)}"
+    # A collapse keeps every recency reading fresh, so without this the row
+    # would name an age of seconds as the cause of a verdict the throughput
+    # actually earned.
+    throughput = _throughput_phrase(job)
+    parts = (base, forward, throughput)
+    return f"{verdict}: {'; '.join(part for part in parts if part)}"
 
 
 def _encode_evidence_line(job: dict[str, object]) -> str | None:
@@ -324,6 +329,60 @@ def _encode_evidence_line(job: dict[str, object]) -> str | None:
     if alive is not None and forward.get("in_flight") is not True:
         phrase += "; encode thread " + ("alive" if alive is True else "dead")
     return f"Encode: {phrase}"
+
+
+def _measure(value: object) -> float | None:
+    """Read one published evidence value as a number; ``bool`` is malformed."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _encode_budget_line(job: dict[str, object]) -> str | None:
+    """The encode batch bounds the service reported, in the numbers it sent.
+
+    Silent for a job the service published no encode state for, which is
+    every job that never reached an encode stage.
+    """
+    encode = _evidence_section(job, "encode")
+    if encode is None:
+        return None
+    parts: list[str] = []
+    budget = _measure(encode.get("token_budget"))
+    if budget is not None:
+        parts.append(f"{budget:g} tokens per batch")
+    items = _measure(encode.get("bucket_items"))
+    if items is not None:
+        parts.append(f"{items:g} items in the last batch")
+    retries = _measure(encode.get("oom_count"))
+    if retries:
+        parts.append(f"{retries:g} GPU memory {'retry' if retries == 1 else 'retries'}")
+    return f"Encode batch: {', '.join(parts)}" if parts else None
+
+
+def _throughput_phrase(job: dict[str, object]) -> str:
+    """One phrase comparing current throughput to this run's own median.
+
+    Both numbers and the factor between them come from the service; nothing
+    here decides what counts as slow.
+    """
+    rate = _evidence_section(job, "rate")
+    if rate is None:
+        return ""
+    recent = _measure(rate.get("recent_per_second"))
+    median = _measure(rate.get("median_per_second"))
+    if recent is None or median is None:
+        return ""
+    phrase = f"{recent:g} per second against a {median:g} per second run median"
+    ratio = _measure(rate.get("ratio"))
+    if ratio is not None:
+        phrase += f" ({round(ratio * 100)}% of it)"
+    return phrase
+
+
+def _rate_baseline_line(job: dict[str, object]) -> str | None:
+    phrase = _throughput_phrase(job)
+    return f"Throughput: {phrase}" if phrase else None
 
 
 def _cpu_evidence_line(job: dict[str, object]) -> str | None:
@@ -380,6 +439,8 @@ def degradation_evidence_lines(job: dict[str, object]) -> tuple[str, ...]:
     """
     lines = (
         _encode_evidence_line(job),
+        _encode_budget_line(job),
+        _rate_baseline_line(job),
         _cpu_evidence_line(job),
         _gpu_evidence_line(job),
         _backend_evidence_line(job),

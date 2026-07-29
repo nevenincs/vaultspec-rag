@@ -14,6 +14,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
+from statistics import median
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -62,11 +63,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "TERMINAL_PHASES",
+    "DegradationInputs",
     "JobProgressReporter",
     "activate_index_job",
     "active_index_support_profiles",
     "degradation_evidence",
     "delete_job",
+    "encode_telemetry",
     "find_job",
     "forward_telemetry",
     "get_job_manager",
@@ -74,6 +77,9 @@ __all__ = [
     "index_job_status",
     "machine_pressure",
     "progress_rate",
+    "progress_rate_baseline",
+    "record_encode_budget",
+    "record_encode_oom",
     "record_finish",
     "record_forward_entry",
     "record_forward_exit",
@@ -156,6 +162,24 @@ _MIN_RATE_SPAN_SECONDS = 1.0
 # spanning a real interval, without discarding the current count: the
 # newest sample always carries it.
 _PROGRESS_SAMPLE_MIN_INTERVAL_SECONDS = 0.25
+# Run-spanning throughput baseline. The window above answers "how fast right
+# now" and, by construction, holds only the last seconds of a fast step: a run
+# whose throughput collapses refills it with the collapsed rate within
+# seconds, after which nothing on the record remembers the run was ever
+# faster. The baseline is the second reading that keeps a collapse visible.
+# The window rate is retained at a coarse interval across the step, so the
+# median of what the run has actually sustained survives long after the
+# window has moved on. Derived from the samples already taken - no second
+# sampler - and bounded by both count and spacing, so an hour of history
+# costs one small deque of floats per job.
+_PROGRESS_RATE_HISTORY_KEY = "progress_rate_history"
+_PROGRESS_RATE_HISTORY_SAMPLES = 120
+_PROGRESS_RATE_HISTORY_MIN_INTERVAL_SECONDS = 30.0
+# A median over a handful of observations describes a moment, not a run.
+# Eight spaced observations are four minutes of sustained reporting, which is
+# the point at which comparing the current rate against the run's own history
+# says something an operator can act on instead of flapping on one slow slice.
+_PROGRESS_RATE_HISTORY_MIN_OBSERVATIONS = 8
 # Mid-step progress writes are throttled per output, never gated on the step
 # name changing: a step-name gate admits exactly one write per phase, at the
 # instant the counter is zero by construction, so no advancing count ever
@@ -512,6 +536,10 @@ def _sample_progress(
     )
     if previous_step != step or (samples and completed < samples[-1][1]):
         samples.clear()
+        # The baseline describes one step's sustained throughput, so it is
+        # discarded wherever the window is: a rate carried across a step
+        # change or a replay reset would be a baseline for different work.
+        record.pop(_PROGRESS_RATE_HISTORY_KEY, None)
     # Measured against the last committed sample, never the newest one: the
     # newest is overwritten in place, so comparing against it would hold the
     # window open forever and turn the rate into a whole-step average that
@@ -524,6 +552,34 @@ def _sample_progress(
     else:
         samples.append((at, completed))
     record[_PROGRESS_WINDOW_KEY] = samples
+    _retain_rate_observation(record, at=at)
+
+
+def _retain_rate_observation(record: dict[str, object], *, at: float) -> None:
+    """Retain the current window rate as one run-baseline observation.
+
+    Reads the window the caller has just updated, so the baseline costs no
+    second measurement. Observations are spaced by interval rather than by
+    report, so a step reporting hundreds of times a second contributes at the
+    same cadence as one reporting every few seconds, and the deque bounds how
+    much of the run is remembered.
+    """
+    window = record.get(_PROGRESS_WINDOW_KEY)
+    if not isinstance(window, deque):
+        return
+    rate = _window_rate(cast("deque[tuple[float, int]]", window))
+    if rate is None:
+        return
+    raw_history = record.get(_PROGRESS_RATE_HISTORY_KEY)
+    history: deque[tuple[float, float]] = (
+        cast("deque[tuple[float, float]]", raw_history)
+        if isinstance(raw_history, deque)
+        else deque(maxlen=_PROGRESS_RATE_HISTORY_SAMPLES)
+    )
+    if history and at - history[-1][0] < _PROGRESS_RATE_HISTORY_MIN_INTERVAL_SECONDS:
+        return
+    history.append((at, rate))
+    record[_PROGRESS_RATE_HISTORY_KEY] = history
 
 
 def _window_rate(samples: deque[tuple[float, int]]) -> float | None:
@@ -559,6 +615,33 @@ def progress_rate(record_id: str) -> float | None:
             if not isinstance(window, deque):
                 return None
             return _window_rate(cast("deque[tuple[float, int]]", window))
+    return None
+
+
+def progress_rate_baseline(record_id: str) -> float | None:
+    """Return the throughput this run has sustained on its current step.
+
+    The median of the retained rate observations - the run's own baseline,
+    against which the windowed rate says whether throughput has collapsed.
+    The median rather than the mean because a run passes through regimes and
+    a single stalled window must not move the reference.
+
+    ``None`` means the service declines to state a baseline: the job is
+    unknown, its step has not been sampled, or it has not yet reported
+    enough spaced observations for a median to describe a run rather than a
+    moment. It never means zero.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] != record_id:
+                continue
+            history = record.get(_PROGRESS_RATE_HISTORY_KEY)
+            if not isinstance(history, deque):
+                return None
+            rates = [rate for _at, rate in cast("deque[tuple[float, float]]", history)]
+            if len(rates) < _PROGRESS_RATE_HISTORY_MIN_OBSERVATIONS:
+                return None
+            return median(rates)
     return None
 
 
@@ -706,6 +789,85 @@ def forward_telemetry(record_id: str) -> dict[str, object] | None:
     return None
 
 
+def _encode_block(record: dict[str, object]) -> dict[str, object]:
+    """Return one record's encode state, creating it absent (caller locked).
+
+    Every member starts absent rather than at a plausible-looking value: a
+    budget of zero and a budget nobody has reported are different findings,
+    and only the retry count has a truthful starting value.
+    """
+    existing = record.get("encode")
+    if isinstance(existing, dict):
+        return cast("dict[str, object]", existing)
+    block: dict[str, object] = {
+        "token_budget": None,
+        "bucket_items": None,
+        "oom_count": 0,
+    }
+    record["encode"] = block
+    return block
+
+
+def record_encode_budget(
+    record_id: str,
+    *,
+    token_budget: int | None,
+    bucket_items: int | None,
+) -> None:
+    """Publish the token budget the encode path is planning under.
+
+    *token_budget* is the current per-batch token ceiling and *bucket_items*
+    the size of the batch it most recently produced. Together they are what
+    turns a collapsed throughput reading into an attributable cause: a run
+    encoding a handful of items per batch is bounded by its own memory
+    ceiling, not by a stuck forward pass.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                block = _encode_block(record)
+                block["token_budget"] = token_budget
+                block["bucket_items"] = bucket_items
+                break
+
+
+def record_encode_oom(record_id: str) -> None:
+    """Count one out-of-memory encode retry against this job.
+
+    The count is per job and never resets within a run: a ceiling that
+    collides repeatedly is the finding, and a gauge that forgets the earlier
+    collisions cannot show it.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                block = _encode_block(record)
+                count = block.get("oom_count")
+                block["oom_count"] = (
+                    count + 1
+                    if isinstance(count, int) and not isinstance(count, bool)
+                    else 1
+                )
+                break
+
+
+def encode_telemetry(record_id: str) -> dict[str, object] | None:
+    """Return a detached copy of one job's encode budget and retry state.
+
+    ``None`` means the job is unknown or its run never reported encode
+    state; the read surface treats that as no signal, never as a zeroed
+    budget.
+    """
+    with _lock:
+        for record in reversed(_records):
+            if record["id"] == record_id:
+                encode = record.get("encode")
+                if isinstance(encode, dict):
+                    return dict(cast("dict[str, object]", encode))
+                return None
+    return None
+
+
 def _finish_record(
     record: dict[str, object],
     *,
@@ -842,6 +1004,7 @@ def _copied_record(record: dict[str, object]) -> dict[str, object]:
     # them in the shared copier keeps them off every projection built from a
     # record, rather than relying on each caller to remember to exclude them.
     item.pop(_PROGRESS_WINDOW_KEY, None)
+    item.pop(_PROGRESS_RATE_HISTORY_KEY, None)
     item.pop(_PROGRESS_EMIT_KEY, None)
     prog = record.get("progress")
     if isinstance(prog, dict):
@@ -849,6 +1012,9 @@ def _copied_record(record: dict[str, object]) -> dict[str, object]:
     forward = record.get("forward")
     if isinstance(forward, dict):
         item["forward"] = dict(cast("dict[str, object]", forward))
+    encode = record.get("encode")
+    if isinstance(encode, dict):
+        item["encode"] = dict(cast("dict[str, object]", encode))
     failures = record.get("preprocess_failures")
     if isinstance(failures, list):
         item["preprocess_failures"] = list(cast("list[object]", failures))
@@ -1184,37 +1350,105 @@ def _backend_evidence(project_root: str | None, source: str) -> dict[str, object
     return dict(result)
 
 
+def _evidence_count(value: object) -> int | None:
+    """Read one evidence value as a whole count; ``bool`` is malformed."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _encode_evidence(encode: dict[str, object] | None) -> dict[str, object] | None:
+    """Shape the encode budget and retry count, or ``None`` when unreported.
+
+    Says what bounds the encode stage rather than only that it is slow: a run
+    planning tiny batches under a clamped token budget, with a retry count
+    that keeps climbing, is bounded by its own memory ceiling - a different
+    finding, and a different remedy, from a starved card or a stalled store.
+    """
+    if encode is None:
+        return None
+    section: dict[str, object] = {
+        "token_budget": _evidence_count(encode.get("token_budget")),
+        "bucket_items": _evidence_count(encode.get("bucket_items")),
+        "oom_count": _evidence_count(encode.get("oom_count")),
+    }
+    return section if any(value is not None for value in section.values()) else None
+
+
+def _rate_evidence(baseline: dict[str, object] | None) -> dict[str, object] | None:
+    """Shape the run's throughput comparison, or ``None`` when unmeasured.
+
+    The finding that names a collapse: what the job is doing now against
+    what it has proved it can do, and the factor between them.
+    """
+    if baseline is None:
+        return None
+    section: dict[str, object] = {
+        "recent_per_second": _signal_measure(baseline.get("recent_per_second")),
+        "median_per_second": _signal_measure(baseline.get("median_per_second")),
+        "ratio": _signal_measure(baseline.get("ratio")),
+    }
+    return section if any(value is not None for value in section.values()) else None
+
+
+@dataclass(frozen=True, slots=True)
+class DegradationInputs:
+    """One job's record-side facts, read at one moment, for its evidence.
+
+    Carried as one value rather than re-listed at every call: they are all
+    reads of the same record, and the evidence block gains a finding
+    whenever the service learns to measure one.
+    """
+
+    source: str
+    project_root: str | None = None
+    step: str | None = None
+    forward: dict[str, object] | None = None
+    encode: dict[str, object] | None = None
+    rate_baseline: dict[str, object] | None = None
+
+
 def degradation_evidence(
     *,
     now: float,
-    forward: dict[str, object] | None,
-    project_root: str | None,
-    source: str,
-    step: str | None,
+    inputs: DegradationInputs,
 ) -> dict[str, object]:
     """Attach sampled cause attribution to one unhealthy job verdict.
 
-    One shape, four independent findings: the forward-pass window and encode
+    Four findings are always present: the forward-pass window and encode
     thread (is the work alive), the service process's own CPU utilisation
     (is anything running at all), machine-wide GPU pressure (is the card
     starved), and a bounded backend probe (is the store answering). Each
-    section degrades to explicit absence on hosts or processes that cannot
-    answer it, so the block's shape is stable for every renderer.
+    degrades to explicit absence on hosts or processes that cannot answer it,
+    so those four keep a stable shape for every renderer.
 
-    The forward section is phase-aware: ``expected`` says whether *step*
-    performs forward passes at all, so a CPU-bound phase is never judged by
-    the absence of a signal it structurally cannot produce - the CPU section
-    is the liveness reading that remains valid there.
+    Two findings are conditional, because they describe work not every job
+    performs: the encode budget and retry count, and the run's throughput
+    against its own baseline. Both are omitted rather than nulled - a job
+    that never encoded published no budget, which is a different statement
+    from a budget of nothing, and an omitted section costs a renderer no line.
+
+    The forward section is phase-aware: ``expected`` says whether the
+    reported step performs forward passes at all, so a CPU-bound phase is
+    never judged by the absence of a signal it structurally cannot produce -
+    the CPU section is the liveness reading that remains valid there.
     """
-    return {
+    evidence: dict[str, object] = {
         "forward": {
-            **_forward_evidence(forward, now=now),
-            "expected": _forward_pass_expected(step),
+            **_forward_evidence(inputs.forward, now=now),
+            "expected": _forward_pass_expected(inputs.step),
         },
         "cpu": _process_cpu_evidence(now=now),
         "gpu": _gpu_evidence(),
-        "backend": _backend_evidence(project_root, source),
+        "backend": _backend_evidence(inputs.project_root, inputs.source),
     }
+    encode_section = _encode_evidence(inputs.encode)
+    if encode_section is not None:
+        evidence["encode"] = encode_section
+    rate_section = _rate_evidence(inputs.rate_baseline)
+    if rate_section is not None:
+        evidence["rate"] = rate_section
+    return evidence
 
 
 def _signal_measure(value: object) -> float | None:
@@ -1509,6 +1743,21 @@ class JobProgressReporter:
 
     def forward_finished(self, *, ordinal: int, items: int) -> None:
         record_forward_exit(self.record_id, ordinal=ordinal, items=items)
+
+    def encode_budget_planned(
+        self,
+        *,
+        token_budget: int | None,
+        bucket_items: int | None,
+    ) -> None:
+        record_encode_budget(
+            self.record_id,
+            token_budget=token_budget,
+            bucket_items=bucket_items,
+        )
+
+    def encode_oom(self) -> None:
+        record_encode_oom(self.record_id)
 
     def _publish(self, step: str, *, completed: int, total: int | None) -> None:
         context = self._context
