@@ -35,11 +35,27 @@ from ..cli._jobs_tui import (
     JobsTuiApp,
 )
 from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
-from ..serviceclient._transport import _try_http_admin
+from ..serviceclient._transport import DEFAULT_ADMIN_TIMEOUT_SECONDS, _try_http_admin
 
 pytestmark = [pytest.mark.unit]
 
-_HANDOFF_TIMEOUT = 10.0
+# Every wait below fails at this bound and none of them synchronises on it. A
+# deadline that can be lengthened into a pass is a tolerance rather than a
+# bound, so this one is derived from the longest legitimate single attempt a
+# wait can be sitting on: the transport's own administrative timeout. A bound
+# below that declares the interface never got there while the request it is
+# waiting for is still legitimately outstanding - a spurious failure, landing on
+# whichever test drew the slow socket rather than on anything at fault. Never
+# lower it to shorten a run: the first paint takes about half a second with
+# eight suites running on the box, so nothing healthy waits on this number, and
+# raising it can only delay how soon a real regression is reported.
+_HANDOFF_TIMEOUT = DEFAULT_ADMIN_TIMEOUT_SECONDS * 1.5
+# How many times a wait re-asks for a list whose fetch failed. This view polls
+# once an hour under test, so one refused socket would otherwise leave nothing
+# to arrive for the whole of the bound above. Asking again is what an operator
+# does; a service that is genuinely not answering fails every attempt and the
+# wait still ends at its bound.
+_READY_RETRIES = 3
 # How often the waits below re-read the screen. Everything they wait on arrives
 # on a worker thread, so the granularity is dead time added to every wait, not
 # work: it buys nothing to sit on a settled frame for a whole tick.
@@ -1922,35 +1938,84 @@ async def _ready(pilot: typing.Any, app: JobsTuiApp) -> None:
     of it. Sleeping a tick and re-reading afterwards checks two instants and
     is blind to everything between them, and pays a full tick for each of the
     several rounds the first paint takes.
+
+    That held interval is a stability requirement and not a tolerance:
+    lengthening it demands agreement over more of the interface's own beat and
+    can only ever refuse a frame it would previously have accepted. The
+    deadline is the opposite kind of number and is documented where it is set.
     """
     deadline = time.monotonic() + _HANDOFF_TIMEOUT
     matched_at: float | None = None
     matched_width: int | None = None
+    retries = _READY_RETRIES
     while time.monotonic() < deadline:
         await pilot.pause()
-        table = app.query("#jobs")
-        if not (
-            app._jobs
-            and table
-            and table.only_one(DataTable).row_count == len(app._jobs)
-            and app._bar_cells > 0
-            and app._divided_width == table.only_one(DataTable).size.width
-            # A row must be selected too. Every control acts on the selection,
-            # so a test that starts pressing keys before one exists is testing
-            # a frame no operator ever sees.
-            and app.selected_id
+        # A failed fetch is not a paint still on its way: nothing else will ask
+        # again inside this test's lifetime, so the wait would sit out its whole
+        # bound over one refused socket and report it as an interface that never
+        # painted. Re-asked only once per finished attempt, and only a bounded
+        # number of times, so a service that is genuinely silent still ends at
+        # the deadline rather than being hammered until it.
+        if (
+            app._last_error is not None
+            and retries > 0
+            and not any(worker.is_running for worker in app.workers)
         ):
+            retries -= 1
+            app.action_refresh_now()
+        unmet = _unpainted(app)
+        if unmet:
             matched_at = None
             await asyncio.sleep(_POLL_INTERVAL)
             continue
-        width = table.only_one(DataTable).size.width
+        width = app.query_one("#jobs", DataTable).size.width
         now = time.monotonic()
         if matched_at is None or matched_width != width:
             matched_at, matched_width = now, width
         elif now - matched_at >= _SPINNER_INTERVAL * 1.5:
             return
         await asyncio.sleep(_POLL_INTERVAL)
-    raise AssertionError("the interface never completed its first paint")
+    raise AssertionError(
+        "the interface never completed its first paint after "
+        f"{_HANDOFF_TIMEOUT:g}s: {'; '.join(_unpainted(app)) or 'nothing outstanding'}"
+        + (
+            f"; the interface last reported: {app._last_error}"
+            if app._last_error is not None
+            else ""
+        )
+    )
+
+
+def _unpainted(app: JobsTuiApp) -> list[str]:
+    """Name whatever the first paint is still missing, in the operator's terms.
+
+    The wait and its failure message read the same list, so a timeout says which
+    part never arrived instead of leaving the next reader to guess between a
+    list that never landed, a division that never settled and a fetch that
+    failed. Three separate investigations have started from that guess.
+    """
+    found = app.query("#jobs")
+    if not found:
+        return ["the table is not mounted"]
+    table = found.only_one(DataTable)
+    missing: list[str] = []
+    if not app._jobs:
+        missing.append("no job list has been applied")
+    elif table.row_count != len(app._jobs):
+        missing.append(f"{table.row_count} rows painted for {len(app._jobs)} jobs")
+    if app._bar_cells <= 0:
+        missing.append("the columns have not been divided")
+    elif app._divided_width != table.size.width:
+        missing.append(
+            f"the division is for width {app._divided_width}, "
+            f"the table is {table.size.width}"
+        )
+    # A row must be selected too. Every control acts on the selection, so a test
+    # that starts pressing keys before one exists is testing a frame no operator
+    # ever sees.
+    if not app.selected_id:
+        missing.append("no row is selected")
+    return missing
 
 
 async def _settle(pilot: typing.Any) -> None:
