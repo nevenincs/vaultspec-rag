@@ -606,25 +606,60 @@ class TestEncodeRecoveryStaysBounded:
 
     The silent index-wedge incident showed what an unbounded loop in the
     embed-and-upsert path costs: hours of GPU burn with no failure. The
-    CUDA-OOM recovery must keep its floor - the halving ladder raises at
-    batch size 1 - so the source must pair every OOM handler with the
-    floor check.
+    CUDA-OOM recovery must keep its floor - a bucket that cannot shrink
+    (a single text) re-raises the real error instead of replanning - so
+    every OOM handler must pair with the floor re-raise.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
     def test_every_oom_handler_keeps_the_floor_raise(self):
+        import ast
         import inspect
 
         from .. import embeddings
 
-        src = inspect.getsource(embeddings)
-        oom_handlers = src.count("except torch.cuda.OutOfMemoryError")
-        floor_raises = src.count("if batch_size <= 1:")
-        assert oom_handlers > 0
-        assert floor_raises >= oom_handlers, (
-            "an OutOfMemoryError handler in embeddings.py lacks the "
-            "batch-size floor raise; the recovery ladder must terminate"
+        tree = ast.parse(inspect.getsource(embeddings))
+        oom_handlers = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ExceptHandler)
+            and node.type is not None
+            and "OutOfMemoryError" in ast.unparse(node.type)
+        ]
+        # The dense and sparse encode paths each carry one handler; zero
+        # found means this scan went stale, not that the risk is gone.
+        assert len(oom_handlers) >= 2, (
+            "expected the dense and sparse CUDA-OOM handlers in "
+            "embeddings.py; the source scan no longer finds them"
+        )
+
+        def keeps_floor_reraise(handler: ast.ExceptHandler) -> bool:
+            # The floor is a conditional bare re-raise directly in the
+            # handler body: when the failing bucket cannot shrink, the
+            # real OOM propagates instead of another replan iteration.
+            return any(
+                isinstance(statement, ast.If)
+                and any(
+                    isinstance(node, ast.Raise) and node.exc is None
+                    for node in ast.walk(statement)
+                )
+                for statement in handler.body
+            )
+
+        # Deleting the single-text-bucket re-raise from either handler
+        # makes this fail by naming the handler's line: without the
+        # floor, a persistent allocator failure retries forever instead
+        # of failing the job.
+        missing = [
+            handler.lineno
+            for handler in oom_handlers
+            if not keeps_floor_reraise(handler)
+        ]
+        assert not missing, (
+            f"CUDA-OOM handlers at embeddings.py lines {missing} lack "
+            "the single-text-bucket floor re-raise; the bucket retry "
+            "must terminate"
         )
 
 
