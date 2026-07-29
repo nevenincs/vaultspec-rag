@@ -299,6 +299,8 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "embedding_encode_batch_size": _POSITIVE_INT,
     "embedding_code_encode_batch_size": _POSITIVE_INT,
     "embedding_document_encode_batch_size": _POSITIVE_INT,
+    "embedding_encode_token_budget": _POSITIVE_INT,
+    "embedding_encode_chars_per_token": _POSITIVE_INT,
     "embedding_max_seq_length": _POSITIVE_INT,
     "max_embed_chars": _POSITIVE_INT,
     "reranker_batch_size": _POSITIVE_INT,
