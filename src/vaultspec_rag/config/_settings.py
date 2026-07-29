@@ -181,22 +181,28 @@ class VaultSpecConfigWrapper:
         # contiguous buckets whose estimated footprint (items x padded
         # longest item, at the calibration divisor below) stays within
         # this budget, bounding activation memory by construction where a
-        # bare item count leaves it unbounded. 24000 keeps today's
-        # effective footprint for typical content: the 8000-char
-        # ``max_embed_chars`` truncation is ~2000 tokens at 4 chars/token,
-        # so a worst-case bucket carries 12 near-cap items - the same
-        # deliberately sized footprint as the document sub-batch of 12
-        # window-sized fragments - while 32 typical vault or code items
-        # estimate at or under 24k and still fill the full item-count cap.
-        # The learned OOM ceiling clamps this budget under pressure and
-        # stays the safety authority.
+        # bare item count leaves it unbounded. At 3 chars per estimated
+        # token, 24000 keeps typical content at or near the full 32-item
+        # cap: code chunks up to 2250 chars fill the cap, and a 3000-char
+        # vault chunk plans 24-item buckets. A worst-case bucket of
+        # near-truncation items (8000 chars, ~2667 estimated tokens)
+        # carries 9, whose real footprint of ~2000 tokens per item lands
+        # near 18k - the conservative estimate buys OOM headroom on the
+        # long-chunk tail rather than costing typical throughput. The
+        # learned OOM ceiling clamps this budget under pressure and stays
+        # the safety authority.
         "embedding_encode_token_budget": 24_000,
         # Chars-to-tokens calibration divisor for the bucket planner's
-        # estimate. ~4 chars per BPE token holds for typical prose and
-        # code; the estimate only plans - enforcement stays with the
-        # learned token ceiling - so a miscalibrated divisor costs one
-        # discarded bucket, never a wedged run.
-        "embedding_encode_chars_per_token": 4,
+        # estimate. 3 deliberately equals the documented-conservative
+        # ``document_chunk_chars_per_token``: both sit on a memory-safety
+        # path where under-estimating chars-per-token (over-estimating
+        # tokens) is the safe direction. Measured Qwen3 tokenisation of
+        # ordinary source runs ~3.8 chars/token, so 3 covers it with
+        # margin; pathologically token-dense text (digit tables, hex ids)
+        # reaches ~1 char/token and is not chased by the estimate - the
+        # learned token ceiling and the bucket-scoped OOM retry absorb it
+        # at the cost of a discarded bucket, never a wedged run.
+        "embedding_encode_chars_per_token": 3,
         # Flush the CUDA caching allocator every N codebase embed slices
         # instead of every slice (#155). Per-slice flushing (the #68 RSS fix)
         # forces a device sync each iteration; throttling to every N slices
