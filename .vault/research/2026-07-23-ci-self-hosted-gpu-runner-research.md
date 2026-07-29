@@ -62,8 +62,8 @@ fork PR can start any run.
 
 ### The machine already runs a sibling runner; instances are per-directory
 
-The host already has a configured runner at `C:\actions-runner` bound to a
-different repository (`nevenincs/cadrumo`). GitHub's runner supports multiple
+The host already runs a configured runner in its own directory, bound to an
+unrelated repository. GitHub's runner supports multiple
 independent instances on one machine, each in its own directory with its own
 `_work` tree and its own Windows service
 (`actions.runner.<owner>-<repo>.<name>`). A second instance in a separate

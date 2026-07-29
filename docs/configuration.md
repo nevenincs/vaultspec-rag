@@ -143,7 +143,9 @@ The CUDA ceiling is derived from the real device by default rather than fixed: a
 
 The ceilings bound the work an already-resident process does. `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB` answers the question before it: whether this process may bring a model stack up at all. It is read once, before the first load, and a card with less free memory than the floor refuses the load with the reading and the floor in the message, rather than loading into a device it will starve.
 
-The floor has to exceed the resident stack a load creates *plus* the largest legitimate demand that stack then places on top of its own residency — measured at 6301 MiB and 4609 MiB respectively, so 10910 MiB is the smallest sound value. Sizing it to the resident stack alone is the trap: on a card already holding one tenant, the free memory left over still clears such a floor, so a second stack is admitted onto a device that cannot hold both. Lower this past 10910 and that hazard returns; raise it and loads a busy-but-adequate card could have served are refused instead.
+Like the ceiling above it, the floor derives by default rather than shipping a fixed figure: at `0` it comes from the CUDA demand the configured support profile declares, so it tracks the workload instead of asserting one machine's measurements. It does not read the device — model weights occupy what they occupy on any card, so what a load needs is a property of the models rather than of the hardware, and a shipped figure calibrated to one card would refuse every load on a smaller one and under-protect a larger. A positive value overrides the derivation for your own device.
+
+Whatever the floor is, it has to cover the resident stack a load creates *plus* the largest demand that stack then places on top of its own residency. Sizing it to the resident stack alone is the trap: on a card already holding one tenant, the free memory left over still clears such a floor, so a second stack is admitted onto a device that cannot hold both — the arrangement the gate exists to refuse. Setting it too high refuses loads the card could have served, and a floor above a small card's total memory refuses every load.
 
 | Variable                                          | Type    | Default               | Controls                                                                   | CLI flag |
 | ------------------------------------------------- | ------- | --------------------- | -------------------------------------------------------------------------- | -------- |
@@ -157,7 +159,7 @@ The floor has to exceed the resident stack a load creates *plus* the largest leg
 | `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`            | float   | `0` (auto-derive)     | CUDA-memory ceiling override in MiB; `0` derives one from the device       | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`           | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB) | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`                 | Fraction of CUDA memory the index allocator may reserve                    | -        |
-| `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB`           | integer | `11264`               | Free device memory required before this process loads model stacks (MiB)   | -        |
+| `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB`           | integer | `0` (auto-derive)     | Free device memory required before this process loads model stacks (MiB)   | -        |
 | `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service                           | -        |
 
 ### Concurrency limits

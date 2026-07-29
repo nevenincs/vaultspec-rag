@@ -16,6 +16,11 @@ its detection asserted without ever mutating the checkout. The final case is the
 only one pointed at the live tree, and it is a regression guard on the tree
 rather than evidence about the gate.
 
+The machine-identity cases inject the identity instead of reading the host's,
+for the same reason: an assertion built on whoever happens to run the suite
+holds nothing, and on a machine whose account is an ordinary word it would pass
+while detecting nothing at all.
+
 Each assertion below names the mutation it catches. Every one of those mutations
 was run: the gate broken one way at a time, the named tests run alone, observed
 to fail on the assertion they name, the gate restored from a copy held outside
@@ -48,6 +53,17 @@ _GATE_PATH = _REPO_ROOT / "tools" / "citation_gate.py"
 #: has to spell one out. A value is not a citation - which is the distinction the
 #: gate is built on, and the reason this file can carry these at all.
 _STEM = "2026-06-02-index-perf-hardening"
+
+#: An identity-shaped stand-in for whatever the scanning machine's own identity
+#: is. Injected rather than discovered, so every assertion below holds whoever
+#: runs the suite - a test that read the real identity would assert nothing on a
+#: machine whose account happens to be an ordinary word, and would pass for the
+#: wrong reason. Deliberately not a person's name: not this project's authors,
+#: and not an invented one either, which could belong to somebody. This file is
+#: itself scanned, so a real name here would be the exact leak the detector
+#: exists to catch. What the admission filter needs is a token long enough and
+#: absent from the reserved set, which no human has to supply.
+_INJECTED_IDENTITY = "qzrblex"
 
 
 def _load_gate() -> ModuleType:
@@ -617,7 +633,12 @@ def test_a_real_account_name_is_an_identity_leak(
     # Assembled from two literals on purpose. The path scan matches string
     # VALUES, not only prose, so a whole account path written out here would be
     # a leak in this very file. Keep it split.
-    account = "gergely"
+    #
+    # The account must not be a real person's name - not this project's authors
+    # and not an invented one either, which could belong to someone. An
+    # account-shaped string naming nobody exercises the same branch: what the
+    # scan needs is a segment absent from the placeholder set, not a human.
+    account = "devbox01"
     source = _write(tmp_path, "module.py", f'P = "C:/Users/{account}/code/thing"\n')
 
     leaks, _smells = gate.scan_file_paths(source, repo_root=tmp_path)
@@ -648,6 +669,318 @@ def test_a_documentation_placeholder_account_is_not_a_leak(
     assert leaks == []
 
 
+def test_a_citation_exempt_subtree_is_still_scanned_for_identity(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """The citation exemptions do not excuse a subtree from the privacy scan.
+
+    A development record naming a vault stem is content, which is why it is
+    exempt from the citation rules. A development record naming somebody's home
+    directory is not content, and nothing ever argued for exempting it - but one
+    exclusion list served both checks, so every subtree excused from the first
+    was silently excused from the second. That is where the real machine paths
+    accumulated: pasted from a terminal into a record nothing scanned.
+
+    Both halves are asserted together, because a test that only checked the leak
+    would pass equally if the exemption had been dropped altogether - and
+    dropping it would fail the gate on every record that legitimately names a
+    stem.
+
+    Mutation proving this can fail: apply the citation exclusions to the
+    identity enumeration.
+    """
+    _git_tree(tmp_path)
+    # Split for the same reason the sibling fixture above is split: the scan
+    # matches string VALUES, so a whole account path spelled out here would be
+    # a leak in this very file - and this file is itself scanned.
+    account = "devbox01"
+    _write(
+        tmp_path,
+        ".vault/research/note.md",
+        f"Observed under `C:/Users/{account}/data`, while indexing {_STEM}.\n",
+    )
+
+    active, _deferred, leaks, _smells = gate.collect_findings(tmp_path)
+
+    assert _slugs(leaks) == ["user-home-path"]
+    assert active == []
+
+
+def test_a_rendered_asset_is_scanned_for_identity(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """A capture rendered for documentation carries whatever produced it.
+
+    Terminal captures are generated from a real session, so they embed the
+    working directory that made them - and one shipped a real drive and
+    workspace layout into an image the README displays. The pattern would have
+    matched it on sight; the suffix list simply never reached the file, so a
+    detector that already existed never ran on the surface that leaked.
+
+    Mutation proving this can fail: drop the asset suffix from the identity
+    suffix list.
+    """
+    _git_tree(tmp_path)
+    # Split, as above: spelled out whole, this fixture would leak in this file.
+    account = "devbox01"
+    _write(
+        tmp_path,
+        "assets/capture.svg",
+        f"<svg><text>project_root=C:/Users/{account}/work</text></svg>\n",
+    )
+
+    _active, _deferred, leaks, _smells = gate.collect_findings(tmp_path)
+
+    assert _slugs(leaks) == ["user-home-path"]
+
+
+# Every surface a bare identity token can sit in, none of them path-shaped.
+# This is the class the path patterns are blind to by construction: a name in a
+# fixture value, in a docstring, in documentation prose, in a rendered capture.
+_IDENTITY_SURFACES: tuple[tuple[str, str], ...] = (
+    ("src/pkg/module.py", 'FIXTURE = "{t}"\n'),
+    ("src/pkg/other.py", '"""Written by {t}."""\n'),
+    ("docs/guide.md", "Maintained by {t}.\n"),
+    ("assets/capture.svg", "<svg><text>{t}@box</text></svg>\n"),
+)
+
+
+@pytest.mark.parametrize(
+    ("rel", "body"), _IDENTITY_SURFACES, ids=[s[0] for s in _IDENTITY_SURFACES]
+)
+def test_the_scanning_machines_own_identity_is_a_leak_wherever_it_sits(
+    gate: ModuleType, tmp_path: Path, rel: str, body: str
+) -> None:
+    """A bare identity token, in no path at all, on an ordinary tracked file.
+
+    Every other identity pattern matches a PATH, so all of them are blind to the
+    developer's own name standing alone in a sentence or a fixture - which is how
+    a given name came to sit in a test fixture and pass every check. Asserted on
+    the leak bucket and on the exact slug: a leak fails through a different
+    branch with a different remediation than a citation, and a test that only
+    checked "something was found" would pass on either.
+
+    Mutation proving this can fail: return ``()`` from
+    ``machine_identity_patterns``, or drop ``identity_patterns`` from the hard
+    bucket in ``scan_file_paths`` (which reds the Python rows) or in
+    ``scan_text`` (which reds the text and asset rows).
+    """
+    _git_tree(tmp_path)
+    _write(tmp_path, rel, body.format(t=_INJECTED_IDENTITY))
+
+    _active, _deferred, leaks, _smells = gate.collect_findings(
+        tmp_path, machine_identity=(_INJECTED_IDENTITY,)
+    )
+
+    assert _slugs(leaks) == ["machine-identity"], f"{rel} was not scanned"
+    assert _texts(leaks) == [_INJECTED_IDENTITY]
+
+
+def test_an_identity_token_matches_case_folded_and_across_an_underscore(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """One identity, many spellings: a path lowercases it, a signature capitalises
+    it, and a filename welds it to a separator.
+
+    Both halves are one decision. Case-insensitivity is why an account written
+    into a path still matches the name git is configured with, and the explicit
+    character-class boundaries are why an account embedded as
+    ``backup_<account>_2026`` matches at all - ``\\b`` counts an underscore as a
+    word character, so the word-boundary spelling silently misses the embedded
+    form.
+
+    Mutation proving this can fail: drop ``re.IGNORECASE``, or spell the
+    boundaries ``\\b...\\b``. Either one reds on the empty slug list.
+    """
+    _git_tree(tmp_path)
+    _write(
+        tmp_path,
+        "src/pkg/module.py",
+        f'ARCHIVE = "backup_{_INJECTED_IDENTITY.upper()}_2026"\n',
+    )
+
+    _active, _deferred, leaks, _smells = gate.collect_findings(
+        tmp_path, machine_identity=(_INJECTED_IDENTITY,)
+    )
+
+    assert _slugs(leaks) == ["machine-identity"]
+
+
+@pytest.mark.parametrize("rel", ["LICENSE", "justfile", ".env.example"])
+def test_the_identity_walk_reaches_a_file_with_no_scanned_suffix(
+    gate: ModuleType, tmp_path: Path, rel: str
+) -> None:
+    """A recipe file and a comment-bearing dotfile hold hand-typed paths.
+
+    The identity walk reads a wider SUFFIX set than the citation walk and used to
+    read a narrower FILENAME set - none at all - so the files most likely to
+    carry a path pasted from a terminal were in the citation walk and out of the
+    privacy one. The licence is here for the same reason, and because the
+    authorship exemption below is only a decision worth stating if the file it
+    exempts is actually reached.
+
+    Mutation proving this can fail: drop the ``IDENTITY_FILENAMES`` clause from
+    the identity walk's filter.
+    """
+    _git_tree(tmp_path)
+    # Split for the reason the sibling fixtures are split: the scan matches
+    # string VALUES, so a whole account path spelled out here would be a leak in
+    # this very file. The segment names nobody; it only has to be absent from the
+    # placeholder set.
+    account = "devbox01"
+    _write(tmp_path, rel, f"# cache lives under C:/Users/{account}/cache\n")
+
+    _active, _deferred, leaks, _smells = gate.collect_findings(tmp_path)
+
+    assert _slugs(leaks) == ["user-home-path"]
+
+
+def test_declared_authorship_is_exempt_and_those_files_are_still_path_scanned(
+    gate: ModuleType, tmp_path: Path
+) -> None:
+    """A licence and a package manifest publish an author by intent.
+
+    Naming the author is what those two files are FOR - it is how a package
+    declares who wrote it - so failing the gate on them would make it unusable
+    and teach everyone to reach for the report-only flag. The exemption is for
+    DECLARED AUTHORSHIP, not for identity generally, which is why both halves are
+    asserted together: an exemption implemented by dropping the files from the
+    walk would also excuse a home directory pasted into a manifest, and nothing
+    argues for that.
+
+    Mutation proving this can fail: empty ``AUTHORSHIP_FILES``, which adds
+    machine-identity rows; or skip an authorship file entirely instead of
+    dropping only its identity patterns, which removes the path rows.
+    """
+    _git_tree(tmp_path)
+    account = "devbox01"
+    _write(
+        tmp_path,
+        "LICENSE",
+        f"Copyright (c) 2026 {_INJECTED_IDENTITY}\n"
+        f"Cache under C:/Users/{account}/cache\n",
+    )
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        f'authors = [{{ name = "{_INJECTED_IDENTITY}" }}]\n'
+        f'cache = "C:/Users/{account}/cache"\n',
+    )
+
+    _active, _deferred, leaks, _smells = gate.collect_findings(
+        tmp_path, machine_identity=(_INJECTED_IDENTITY,)
+    )
+
+    assert [(rel, slug) for rel, _line, slug, _text in leaks] == [
+        ("LICENSE", "user-home-path"),
+        ("pyproject.toml", "user-home-path"),
+    ]
+
+
+def test_an_ordinary_word_or_a_short_handle_never_becomes_a_pattern(
+    gate: ModuleType,
+) -> None:
+    """A detector that fires everywhere is one that gets switched off.
+
+    An account named for a role or an ordinary word, and the initials a handle is
+    often spelled as, must yield NO pattern rather than a pattern somebody then
+    has to argue with on every file. Rejecting before a pattern exists is what
+    earns a surviving hit its hard failure, and it is why a colliding identity
+    costs a missed detection instead of a blocked commit.
+
+    The positive control belongs in the same test: without it the rejection
+    assertion would pass equally on a function that admits nothing, which is the
+    one way this detector could sit inert and green forever. The reserved set is
+    also fed back capitalised, because an account name arrives in whatever case
+    its host spells it.
+
+    Mutation proving this can fail: drop the ``RESERVED_IDENTITY_TOKENS``
+    membership test, compare it without casefolding, or lower
+    ``MACHINE_IDENTITY_MIN_LENGTH`` to 2.
+    """
+    reserved = tuple(gate.RESERVED_IDENTITY_TOKENS)
+    capitalised = tuple(word.capitalize() for word in reserved)
+    initials = "gw"
+
+    assert gate.machine_identity_patterns((*reserved, *capitalised, initials)) == ()
+    assert len(gate.machine_identity_patterns((_INJECTED_IDENTITY,))) == 1
+
+
+def test_discovery_reads_the_account_and_the_git_identity_never_the_domain(
+    gate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Which sources are read bounds what the tripwire can ever catch.
+
+    All three are read and none is required, because each is independently absent
+    on some host: a container with no ``USERNAME``, a checkout with no configured
+    identity, a machine with no git on the path. The domain is the one part left
+    out on purpose - a hosted address contributes the mail provider and the forge
+    as candidates, and a detector carrying those fires on every workflow file in
+    the tree.
+
+    The configured identity here is consonant noise rather than a plausible name,
+    for the reason stated on the injected token above.
+
+    Mutation proving this can fail: drop the environment loop, drop the
+    ``user.name`` split, drop the email local-part split, or split the domain
+    alongside the local part. Each reds on the assertion that names it.
+    """
+    _git_tree(tmp_path)
+    for key, value in (
+        ("user.name", "Qzrblex Mktharn"),
+        ("user.email", "qzrblex.mktharn@mailhost.example"),
+    ):
+        subprocess.run(["git", "-C", str(tmp_path), "config", key, value], check=True)
+    for variable in ("USERNAME", "USER", "LOGNAME"):
+        monkeypatch.setenv(variable, "boxacct42")
+
+    candidates = set(gate.discover_machine_identity(tmp_path))
+
+    assert "boxacct42" in candidates, "the environment account name was not read"
+    assert {"Qzrblex", "Mktharn"} <= candidates, "user.name was not split into parts"
+    assert "qzrblex.mktharn@mailhost.example" in candidates, "the address was not read"
+    assert {"qzrblex", "mktharn"} <= candidates, "the local part was not split"
+    assert {"mailhost", "example"}.isdisjoint(candidates), "the domain was split too"
+
+
+def test_the_gates_own_file_is_exempt_from_path_literals_not_from_identity(
+    gate: ModuleType,
+) -> None:
+    """The file whose job is keeping names out must not be where nothing looks.
+
+    The gate's own source is out of the path walk because it states every path
+    pattern as a literal and would report its own definitions. That is a reason
+    to skip the PATH patterns and no reason to skip the identity ones, which are
+    never literals there - and the leak that started all of this was a name
+    typed into this very pair of files.
+
+    Both halves are asserted, because either one alone is satisfiable the wrong
+    way: skipping the file whole passes the second, and scanning it wholesale
+    passes the first while filling the report with the gate's own definitions.
+    The injected identity is an ordinary word from the gate's own source, so the
+    assertion needs no mutation of a tracked file to observe a hit.
+
+    Mutation proving this can fail: skip the gate's own file for identity as well
+    as for paths, which reds the first half; feed it ``PATH_PATTERNS`` too, which
+    reds the second.
+    """
+    gate_rel = "tools/citation_gate.py"
+
+    _active, _deferred, leaks, _smells = gate.collect_findings(
+        _REPO_ROOT, machine_identity=("tokenize",)
+    )
+
+    reported = {(rel, slug) for rel, _line, slug, _text in leaks}
+    own_definitions = sorted(
+        slug for rel, slug in reported if rel == gate_rel and slug != "machine-identity"
+    )
+
+    assert (gate_rel, "machine-identity") in reported
+    assert own_definitions == [], (
+        f"the gate reported its own literals: {own_definitions}"
+    )
+
+
 def test_the_checkout_carries_no_active_citation_or_identity_leak(
     gate: ModuleType,
 ) -> None:
@@ -657,6 +990,12 @@ def test_the_checkout_carries_no_active_citation_or_identity_leak(
     asserts the live checkout is on the clean side of it. Read in isolation it
     would prove nothing at all - which is the shape of failure that filed the
     issue behind this file.
+
+    This one case also runs the machine-identity detector against the real host,
+    because it is the only case that does not inject an identity. That makes its
+    verdict machine-dependent by construction: it is a tripwire on the machine
+    introducing a leak, and it says nothing about anybody else's name. A green
+    run on a service account is not evidence the tree is clean.
     """
     active, _deferred, leaks, _smells = gate.collect_findings(_REPO_ROOT)
 
