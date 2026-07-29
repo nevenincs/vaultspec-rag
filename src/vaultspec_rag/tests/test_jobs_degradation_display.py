@@ -308,6 +308,71 @@ class TestEncodeBudgetRendering:
         )
         assert not any(line.startswith("Encode batch:") for line in lines)
 
+    def test_the_sub_slice_climb_is_rendered_as_a_fraction(self) -> None:
+        """The climb through a slice reads as a fraction, not as a size.
+
+        The forward line above it names the slice's own 512 items, so the
+        two numbers have to be told apart on sight.
+
+        Mutation check: rendering only the numerator - dropping the ``of
+        {total:g}`` half of the phrase in ``_encode_budget_line`` - makes
+        this fail on the ``64 of 512 items encoded`` assertion below, and
+        restoring the denominator returns it to green.
+        """
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 16384,
+                        "bucket_items": 6,
+                        "items_done": 64,
+                        "items_total": 512,
+                        "oom_count": 0,
+                    }
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 16384 tokens per batch, 6 items in the last batch, "
+            "64 of 512 items encoded" in lines
+        )
+
+    def test_a_climb_without_its_denominator_is_not_rendered(self) -> None:
+        # A lone completed count is the ambiguity this line exists to avoid:
+        # rendered bare it reads as a size, so it is not rendered at all.
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 8192,
+                        "bucket_items": None,
+                        "items_done": 64,
+                        "items_total": None,
+                        "oom_count": 0,
+                    }
+                ),
+            )
+        )
+        assert "Encode batch: 8192 tokens per batch" in lines
+
+    def test_an_older_daemon_renders_the_budget_line_unchanged(self) -> None:
+        # An encode block from before the pair existed carries neither key,
+        # and must render exactly the line it always rendered.
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={"token_budget": 8192, "bucket_items": 24, "oom_count": 2}
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 8192 tokens per batch, 24 items in the last batch, "
+            "2 GPU memory retries" in lines
+        )
+
 
 class TestThroughputRendering:
     def test_the_collapse_is_rendered_as_the_service_measured_it(self) -> None:

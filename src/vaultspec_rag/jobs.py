@@ -76,7 +76,7 @@ __all__ = [
     "machine_pressure",
     "measurement",
     "progress_rates",
-    "record_encode_budget",
+    "record_encode_bucket",
     "record_encode_oom",
     "record_finish",
     "record_forward_entry",
@@ -743,6 +743,12 @@ def record_forward_entry(record_id: str, *, ordinal: int, items: int) -> None:
     boundaries; this is the only signal inside one. The calling thread's
     identity is recorded so the read surface can report whether the encode
     thread is still alive while the pass looks stuck.
+
+    *items* is the slice's own item count, and means the same thing at
+    every boundary the window is reopened at, so a reader who finds the
+    window open never has to ask which moment the number was written at.
+    Sub-slice progress through those items is a different quantity and is
+    published as its own pair on the encode block.
     """
     now = time.time()
     thread = threading.current_thread()
@@ -788,25 +794,35 @@ def _encode_block(record: dict[str, object]) -> dict[str, object]:
     block: dict[str, object] = {
         "token_budget": None,
         "bucket_items": None,
+        "items_done": None,
+        "items_total": None,
         "oom_count": 0,
     }
     record["encode"] = block
     return block
 
 
-def record_encode_budget(
+def record_encode_bucket(
     record_id: str,
     *,
     token_budget: int | None,
     bucket_items: int | None,
+    items_done: int | None,
+    items_total: int | None,
 ) -> None:
-    """Publish the token budget the encode path is planning under.
+    """Publish what one encode-bucket boundary observed.
 
     *token_budget* is the current per-batch token ceiling and *bucket_items*
     the size of the batch it most recently produced. Together they are what
     turns a collapsed throughput reading into an attributable cause: a run
     encoding a handful of items per batch is bounded by its own memory
     ceiling, not by a stuck forward pass.
+
+    *items_done* and *items_total* are the encode call's own sub-slice
+    progress, and are published as a pair because neither means anything
+    alone: a lone completed count reads as a size to whoever renders it,
+    which is the ambiguity that put the climb here instead of on the
+    forward window's slice-scoped item count.
     """
     with _lock:
         for record in reversed(_records):
@@ -814,6 +830,8 @@ def record_encode_budget(
                 block = _encode_block(record)
                 block["token_budget"] = token_budget
                 block["bucket_items"] = bucket_items
+                block["items_done"] = items_done
+                block["items_total"] = items_total
                 break
 
 
@@ -840,11 +858,11 @@ def record_encode_oom(record_id: str) -> None:
 def telemetry_block(record_id: str, name: str) -> dict[str, object] | None:
     """Return a detached copy of one job's newest *name* telemetry block.
 
-    ``forward`` is the newest forward-pass window, ``encode`` the budget and
-    retry state the encode stage is planning under. Both are read the same
-    way, so they are read by the same code: a hardening applied to one block
-    that skipped the other would be a difference nothing in the record
-    justifies.
+    ``forward`` is the newest forward-pass window, ``encode`` the budget,
+    sub-slice progress and retry state the encode stage is working under.
+    Both are read the same way, so they are read by the same code: a
+    hardening applied to one block that skipped the other would be a
+    difference nothing in the record justifies.
 
     ``None`` means the job is unknown or its run never reported that block.
     The read surface treats that as no signal at all - never as a stall, and
@@ -1368,6 +1386,8 @@ def measurement(value: object) -> float | None:
 _ENCODE_EVIDENCE_READERS: dict[str, Callable[[object], object]] = {
     "token_budget": _evidence_count,
     "bucket_items": _evidence_count,
+    "items_done": _evidence_count,
+    "items_total": _evidence_count,
     "oom_count": _evidence_count,
 }
 _RATE_EVIDENCE_READERS: dict[str, Callable[[object], object]] = {
@@ -1748,16 +1768,20 @@ class JobProgressReporter:
     def forward_finished(self, *, ordinal: int, items: int) -> None:
         record_forward_exit(self.record_id, ordinal=ordinal, items=items)
 
-    def encode_budget_planned(
+    def encode_bucket_observed(
         self,
         *,
         token_budget: int | None,
         bucket_items: int | None,
+        items_done: int | None,
+        items_total: int | None,
     ) -> None:
-        record_encode_budget(
+        record_encode_bucket(
             self.record_id,
             token_budget=token_budget,
             bucket_items=bucket_items,
+            items_done=items_done,
+            items_total=items_total,
         )
 
     def encode_oom(self) -> None:
