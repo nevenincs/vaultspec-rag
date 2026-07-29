@@ -76,6 +76,8 @@ from ._routes_registry import (
 from ._routes_reindex import clean_route, reindex_route
 from ._routes_search import search_route
 from ._routes_storage import storage_survey_route
+from ._search_activity import SearchActivityFilters
+from ._state import search_activity_ledger
 from ._utils import (
     _BAD_REQUEST_MISSING_ROOT,
     _TRUTHY_QUERY_VALUES,
@@ -611,6 +613,35 @@ async def jobs_route(request: Request) -> JSONResponse:
     )
 
 
+async def search_activity_route(request: Request) -> JSONResponse:
+    """Return token-gated, bounded active and recent served-search activity."""
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    raw_root = request.query_params.get("root")
+    root = raw_root.strip() if raw_root is not None else None
+    raw_request_id = request.query_params.get("request_id")
+    request_id = raw_request_id.strip() if raw_request_id is not None else None
+    raw_since = request.query_params.get("since")
+    try:
+        since = float(raw_since) if raw_since is not None else None
+    except ValueError:
+        since = None
+    return JSONResponse(
+        search_activity_ledger().snapshot(
+            include_query=True,
+            filters=SearchActivityFilters(
+                state=_normalise_filter_value(request.query_params.get("state")),
+                search_type=_normalise_filter_value(request.query_params.get("type")),
+                root=root or None,
+                request_id=request_id or None,
+                since=since,
+                limit=_clamp_limit(request.query_params.get("limit")),
+            ),
+        )
+    )
+
+
 async def create_job_route(request: Request) -> JSONResponse:
     """Admit one validated canonical index job."""
     denied = require_token(request)
@@ -1115,6 +1146,7 @@ ROUTES: list[Route] = [
     Route("/metrics", metrics_route, methods=["GET"]),
     Route("/readiness", get_readiness_route, methods=["GET"]),
     Route("/search", search_route, methods=["POST"]),
+    Route("/search-activity", search_activity_route, methods=["GET"]),
     Route("/reindex", reindex_route, methods=["POST"]),
     Route("/clean", clean_route, methods=["POST"]),
     Route("/projects", list_projects_route, methods=["GET"]),

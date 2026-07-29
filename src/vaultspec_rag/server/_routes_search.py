@@ -9,6 +9,7 @@ observation into a stable 503 rather than surfacing a raw client exception.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -49,11 +50,17 @@ from ..search._result_shaping import (
 )
 from ..service import RegistryFullError
 from ._auth import require_token
+from ._search_activity import (
+    SearchActivityCompletion,
+    SearchActivityStart,
+    SearchActivityTicket,
+)
 from ._search_availability import (
     SearchResponseClassification,
     classify_qdrant_collection_disappearance,
     classify_search_response,
 )
+from ._state import search_activity_ledger
 from ._utils import (
     _BAD_REQUEST_MISSING_ROOT,
     ProjectRootRequiredError,
@@ -69,7 +76,6 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from .._index_integrity import IndexIntegrity
-
 logger = logging.getLogger("vaultspec_rag.server")
 
 __all__ = ["search_route"]
@@ -122,6 +128,38 @@ class SearchRequest:
     payload: dict[str, Any]
     search_type: PublicSourceType
     request_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class SearchRouteError:
+    """A validation response and the review metadata that explains it."""
+
+    response: JSONResponse
+    error_code: str
+    error_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchRouteResult:
+    """One completed search response and its bounded-review measurements."""
+
+    result: dict[str, object]
+    status_code: int
+    total_seconds: float
+    availability_cause: str | None
+
+
+@dataclass(slots=True)
+class SearchActivityFinalization:
+    """Mutable route-local state finalized exactly once at route exit."""
+
+    result: dict[str, object] | None = None
+    status_code: int = 500
+    total_seconds: float | None = None
+    outcome: str | None = None
+    availability_cause: str | None = None
+    error_code: str | None = "unhandled_search_route_exception"
+    error_message: str | None = None
 
 
 def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
@@ -403,6 +441,77 @@ def _complete_classified_search(
     return result, response_status
 
 
+def _activity_timings(
+    result: dict[str, object],
+    total_seconds: float,
+) -> dict[str, object]:
+    """Extract scalar route and phase timing without retaining a result body."""
+    timings: dict[str, object] = {"server_total_seconds": total_seconds}
+    timing = result.get("timing")
+    if not isinstance(timing, dict):
+        return timings
+    timing_values = cast("dict[object, object]", timing)
+    for key, value in timing_values.items():
+        if key != "phases":
+            timings[str(key)] = value
+    phases = timing_values.get("phases")
+    if isinstance(phases, dict):
+        phase_values = cast("dict[object, object]", phases)
+        timings.update({str(key): value for key, value in phase_values.items()})
+    return timings
+
+
+def _activity_outcome(result: dict[str, object], status_code: int) -> str:
+    """Classify one terminal response for bounded activity review."""
+    error = result.get("error")
+    if error == "index_unavailable":
+        return "unavailable"
+    if error == "combined_search_failed":
+        return "combined_failed"
+    if error in ("registry_full", "local_store_locked"):
+        return "admission_failed"
+    if status_code >= 500 or error is not None:
+        return "failed"
+    return "partial_success" if result.get("partial") is True else "success"
+
+
+def _finish_search_activity(
+    ticket: SearchActivityTicket,
+    finalization: SearchActivityFinalization,
+) -> None:
+    """Converge every route exit on the process-owned ledger terminal write."""
+    body = finalization.result or {}
+    hits = body.get("results")
+    count = len(cast("list[object]", hits)) if isinstance(hits, list) else None
+    resolved_status = finalization.status_code
+    resolved_outcome = finalization.outcome or _activity_outcome(body, resolved_status)
+    resolved_error = finalization.error_code
+    if resolved_error is None:
+        raw_error = body.get("error")
+        resolved_error = raw_error if isinstance(raw_error, str) else None
+    resolved_message = finalization.error_message
+    if resolved_message is None:
+        raw_message = body.get("message")
+        resolved_message = raw_message if isinstance(raw_message, str) else None
+    timings = (
+        _activity_timings(body, finalization.total_seconds)
+        if finalization.total_seconds is not None
+        else None
+    )
+    search_activity_ledger().finish(
+        ticket,
+        completion=SearchActivityCompletion(
+            outcome=resolved_outcome,
+            status_code=resolved_status,
+            result_count=count,
+            timings=timings,
+            availability_cause=finalization.availability_cause,
+            error_code=resolved_error,
+            error_message=resolved_message,
+        ),
+    )
+
+
 def _dispatch_public_search(
     request: SearchRequest,
     notes: dict[str, object],
@@ -603,55 +712,189 @@ async def search_route(request: Request) -> JSONResponse:
     return await _search_route_response(request)
 
 
-async def _search_route_response(request: Request) -> JSONResponse:
-    from ._routes import canonical_job_snapshot
+async def _search_payload(request: Request) -> dict[str, object] | SearchRouteError:
+    """Read the request body into the one shape the route accepts."""
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return SearchRouteError(
+            JSONResponse(
+                {
+                    "ok": False,
+                    "error": "bad_request",
+                    "message": "search request body must be valid JSON",
+                },
+                status_code=400,
+            ),
+            error_code="invalid_json",
+            error_message=str(exc),
+        )
+    if isinstance(payload, dict):
+        return cast("dict[str, object]", payload)
+    return SearchRouteError(
+        JSONResponse(
+            {
+                "ok": False,
+                "error": "bad_request",
+                "message": "search request body must be a JSON object",
+            },
+            status_code=400,
+        ),
+        error_code="bad_request",
+        error_message="search request body must be a JSON object",
+    )
 
-    payload = await request.json()
-    request_id = uuid.uuid4().hex
+
+def _record_provisional_activity(
+    ticket: SearchActivityTicket,
+    payload: dict[str, object],
+) -> None:
+    """Write inspectable request fields before validation refines them."""
+    raw_query = payload.get("query", "")
+    raw_search_type = payload.get("type", "vault")
+    raw_top_k = payload.get("top_k", 5)
+    raw_root = payload.get("project_root")
+    search_activity_ledger().update_request(
+        ticket,
+        query=raw_query if isinstance(raw_query, str) else "",
+        search_type=raw_search_type if isinstance(raw_search_type, str) else "unknown",
+        root=raw_root if isinstance(raw_root, str) else None,
+        top_k=(
+            raw_top_k
+            if isinstance(raw_top_k, int) and not isinstance(raw_top_k, bool)
+            else None
+        ),
+    )
+
+
+def _normalise_search_request(
+    payload: dict[str, object],
+    request_id: str,
+) -> SearchRequest | SearchRouteError:
+    """Validate public payload data and form the dispatched search request."""
     search_type = _normalise_search_type(payload.get("type", "vault"))
     if isinstance(search_type, JSONResponse):
-        return search_type
+        return SearchRouteError(search_type, error_code="bad_request")
     unsupported_feedback = _unsupported_search_feedback(search_type, payload)
     if unsupported_feedback is not None:
-        return unsupported_feedback
+        return SearchRouteError(unsupported_feedback, error_code="unsupported_feedback")
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
     project_root = payload.get("project_root")
-
-    top_k = _clamp_top_k(top_k)
-    query = _validate_query(query)
-    # An empty/whitespace query has no text and no filter tokens to act
-    # on; encoding it retrieves arbitrary nearest neighbours, so reject
-    # it. A filter-only query like "lang:python" is non-empty here and
-    # proceeds (its filters drive the search after token stripping).
+    field_error = _search_field_error(query, top_k, project_root)
+    if field_error is not None:
+        return field_error
+    query = _validate_query(cast("str", query))
     if not query.strip():
-        return _BAD_REQUEST_EMPTY_QUERY
-    try:
-        root = _resolve_root(project_root)
-    except ProjectRootRequiredError:
-        return _BAD_REQUEST_MISSING_ROOT
-    except ValueError as exc:
-        return _bad_request_invalid_root(exc)
-
-    search_request = SearchRequest(
+        return SearchRouteError(
+            _BAD_REQUEST_EMPTY_QUERY,
+            error_code="bad_request",
+            error_message="query is empty",
+        )
+    root = _search_root(project_root)
+    if isinstance(root, SearchRouteError):
+        return root
+    return SearchRequest(
         root=root,
         query=query,
-        top_k=top_k,
+        top_k=_clamp_top_k(cast("int", top_k)),
         payload=cast("dict[str, Any]", payload),
         search_type=search_type,
         request_id=request_id,
     )
+
+
+def _search_field_error(
+    query: object,
+    top_k: object,
+    project_root: object,
+) -> SearchRouteError | None:
+    """Return the first scalar request-shape error, if any."""
+    if not isinstance(query, str):
+        return _bad_search_field("invalid_query", "query must be a string")
+    if isinstance(top_k, bool) or not isinstance(top_k, int):
+        return _bad_search_field("invalid_top_k", "top_k must be an integer")
+    if project_root is not None and not isinstance(project_root, str):
+        return _bad_search_field(
+            "invalid_project_root", "project_root must be a string"
+        )
+    return None
+
+
+def _bad_search_field(error_code: str, message: str) -> SearchRouteError:
+    """Build one client-visible scalar validation failure."""
+    return SearchRouteError(
+        JSONResponse(
+            {"ok": False, "error": "bad_request", "message": message},
+            status_code=400,
+        ),
+        error_code=error_code,
+        error_message=message,
+    )
+
+
+def _search_root(project_root: object) -> Path | SearchRouteError:
+    """Resolve the validated root while preserving the established envelopes."""
+    try:
+        return _resolve_root(cast("str | None", project_root))
+    except ProjectRootRequiredError:
+        return SearchRouteError(
+            _BAD_REQUEST_MISSING_ROOT,
+            error_code="bad_request",
+            error_message="project_root is required",
+        )
+    except ValueError as exc:
+        return SearchRouteError(
+            _bad_request_invalid_root(exc),
+            error_code="bad_request",
+            error_message=str(exc),
+        )
+
+
+def _record_normalized_activity(
+    ticket: SearchActivityTicket,
+    search_request: SearchRequest,
+) -> None:
+    """Replace provisional activity metadata with validated request facts."""
+    search_activity_ledger().update_request(
+        ticket,
+        query=search_request.query,
+        search_type=search_request.search_type.value,
+        root=str(search_request.root),
+        top_k=search_request.top_k,
+    )
+
+
+def _record_validation_rejection(
+    finalization: SearchActivityFinalization,
+    error: SearchRouteError,
+) -> None:
+    """Set the single terminal review state for a rejected request."""
+    finalization.status_code = error.response.status_code
+    finalization.outcome = "validation_rejected"
+    finalization.error_code = error.error_code
+    finalization.error_message = error.error_message
+
+
+async def _execute_search_route(
+    search_request: SearchRequest,
+    port: int | None,
+) -> SearchRouteResult:
+    """Run, classify, and record the public response for one valid search."""
+    from ._routes import canonical_job_snapshot
+
     availability_context = SearchAvailabilityContext(
         job_snapshot_before=canonical_job_snapshot(),
-        root=root,
-        source=cast('Literal["vault", "code", "document"]', search_type.value),
-        request_id=request_id,
-        port=request.url.port,
+        root=search_request.root,
+        source=cast(
+            'Literal["vault", "code", "document"]', search_request.search_type.value
+        ),
+        request_id=search_request.request_id,
+        port=port,
     )
     run = partial(_execute_search_request, search_request)
-
     started = time.perf_counter()
-    if search_type is PublicSourceType.COMBINED:
+    if search_request.search_type is PublicSourceType.COMBINED:
         result = await _run_in_thread(run, limiter=get_search_limiter())
         classification = None
     else:
@@ -662,28 +905,111 @@ async def _search_route_response(request: Request) -> JSONResponse:
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
-    response_status = 200
-    if search_type is PublicSourceType.COMBINED and result.get("ok") is False:
-        response_status = 503
-    if (
-        classification is None
-        and "results" in result
-        and search_type is not PublicSourceType.COMBINED
-    ):
-        result["request_id"] = request_id
-        timing = result.get("timing")
-        if isinstance(timing, dict):
-            cast("dict[str, object]", timing)["server_total_seconds"] = total_seconds
-        classification = _classify_search_result(
-            result,
-            availability_context,
-        )
+    response_status = _search_response_status(search_request, result)
+    classification = _classify_completed_search(
+        result,
+        search_request,
+        availability_context,
+        classification,
+        total_seconds,
+    )
     if classification is not None:
         result, response_status = _complete_classified_search(
             classification,
-            root=root,
+            root=search_request.root,
             source=availability_context.source,
-            request_id=request_id,
+            request_id=search_request.request_id,
             total_seconds=total_seconds,
         )
-    return JSONResponse(result, status_code=response_status)
+    return SearchRouteResult(
+        result=result,
+        status_code=response_status,
+        total_seconds=total_seconds,
+        availability_cause=(
+            classification.availability_cause if classification is not None else None
+        ),
+    )
+
+
+def _search_response_status(
+    search_request: SearchRequest,
+    result: dict[str, object],
+) -> int:
+    """Apply the combined-search response status rule before classification."""
+    if (
+        search_request.search_type is PublicSourceType.COMBINED
+        and result.get("ok") is False
+    ):
+        return 503
+    return 200
+
+
+def _classify_completed_search(
+    result: dict[str, object],
+    search_request: SearchRequest,
+    context: SearchAvailabilityContext,
+    classification: SearchResponseClassification | None,
+    total_seconds: float,
+) -> SearchResponseClassification | None:
+    """Classify an ordinary completed source search after adding route timing."""
+    if (
+        classification is not None
+        or "results" not in result
+        or search_request.search_type is PublicSourceType.COMBINED
+    ):
+        return classification
+    result["request_id"] = search_request.request_id
+    timing = result.get("timing")
+    if isinstance(timing, dict):
+        cast("dict[str, object]", timing)["server_total_seconds"] = total_seconds
+    return _classify_search_result(result, context)
+
+
+async def _search_route_response(request: Request) -> JSONResponse:
+    request_id = uuid.uuid4().hex
+    # The route owns this ticket before the synchronous bounded admission
+    # starts.  If asyncio cancels the await while its worker is still in
+    # ``ledger.start``, the finally below can mark this same ticket terminal;
+    # the worker then wakes and leaves without acquiring a phantom slot.
+    activity_ticket = SearchActivityTicket(request_id=request_id)
+    finalization = SearchActivityFinalization()
+    try:
+        await _run_in_thread(
+            partial(
+                search_activity_ledger().start,
+                SearchActivityStart(
+                    request_id=request_id,
+                    query="",
+                    search_type="unknown",
+                    root=None,
+                    top_k=None,
+                    ticket=activity_ticket,
+                ),
+            )
+        )
+        payload = await _search_payload(request)
+        if isinstance(payload, SearchRouteError):
+            _record_validation_rejection(finalization, payload)
+            return payload.response
+        _record_provisional_activity(activity_ticket, payload)
+        search_request = _normalise_search_request(payload, request_id)
+        if isinstance(search_request, SearchRouteError):
+            _record_validation_rejection(finalization, search_request)
+            return search_request.response
+        _record_normalized_activity(activity_ticket, search_request)
+        completed = await _execute_search_route(search_request, request.url.port)
+        finalization.result = completed.result
+        finalization.status_code = completed.status_code
+        finalization.total_seconds = completed.total_seconds
+        finalization.availability_cause = completed.availability_cause
+        finalization.error_code = None
+        return JSONResponse(completed.result, status_code=completed.status_code)
+    except BaseException as exc:
+        cancelled = isinstance(exc, asyncio.CancelledError)
+        finalization.status_code = 499 if cancelled else 500
+        finalization.outcome = "cancelled" if cancelled else "failed"
+        finalization.error_code = exc.__class__.__name__
+        finalization.error_message = str(exc)
+        raise
+    finally:
+        _finish_search_activity(activity_ticket, finalization)
