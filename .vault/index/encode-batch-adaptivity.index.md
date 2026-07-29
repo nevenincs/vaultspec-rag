@@ -15,6 +15,7 @@ related:
   - '[[2026-07-29-encode-batch-adaptivity-P01-S06]]'
   - '[[2026-07-29-encode-batch-adaptivity-P01-S07]]'
   - '[[2026-07-29-encode-batch-adaptivity-P01-S08]]'
+  - '[[2026-07-29-encode-batch-adaptivity-P01-summary]]'
   - '[[2026-07-29-encode-batch-adaptivity-P02-S09]]'
   - '[[2026-07-29-encode-batch-adaptivity-P02-S10]]'
   - '[[2026-07-29-encode-batch-adaptivity-P02-S11]]'
@@ -22,8 +23,10 @@ related:
   - '[[2026-07-29-encode-batch-adaptivity-P02-S13]]'
   - '[[2026-07-29-encode-batch-adaptivity-P02-S14]]'
   - '[[2026-07-29-encode-batch-adaptivity-P02-S15]]'
+  - '[[2026-07-29-encode-batch-adaptivity-P02-summary]]'
   - '[[2026-07-29-encode-batch-adaptivity-adr]]'
   - '[[2026-07-29-encode-batch-adaptivity-audit]]'
+  - '[[2026-07-29-encode-batch-adaptivity-final-branch-review-audit]]'
   - '[[2026-07-29-encode-batch-adaptivity-plan]]'
   - '[[2026-07-29-encode-batch-adaptivity-research]]'
 ---
@@ -41,6 +44,7 @@ Auto-generated index of all documents tagged with `#encode-batch-adaptivity`.
 ### audit
 
 - `2026-07-29-encode-batch-adaptivity-audit` - `encode-batch-adaptivity` audit: `feature branch review, token-budget encode core and degradation truth`
+- `2026-07-29-encode-batch-adaptivity-final-branch-review-audit` - `encode-batch-adaptivity` audit: `final branch review before pull request`
 
 ### exec
 
@@ -52,6 +56,7 @@ Auto-generated index of all documents tagged with `#encode-batch-adaptivity`.
 - `2026-07-29-encode-batch-adaptivity-P01-S06` - add the encode token-budget and calibration settings with derivation defaults
 - `2026-07-29-encode-batch-adaptivity-P01-S07` - wire the new encode settings through the env-var schema map
 - `2026-07-29-encode-batch-adaptivity-P01-S08` - author bucket-planner and token-ceiling unit tests plus the bucket-scoped OOM retry guard proven able to fail on slice-scoped regression
+- `2026-07-29-encode-batch-adaptivity-P01-summary` - `encode-batch-adaptivity` `P01` summary
 - `2026-07-29-encode-batch-adaptivity-P02-S09` - emit per-bucket sub-slice progress and live token-budget state through the forward-entry and forward-exit runtime reporting
 - `2026-07-29-encode-batch-adaptivity-P02-S10` - carry the per-job OOM counter and encode budget state on the job record runtime block
 - `2026-07-29-encode-batch-adaptivity-P02-S11` - enrich the jobs projection with the encode budget fields and a recent-rate-versus-run-median baseline
@@ -59,6 +64,7 @@ Auto-generated index of all documents tagged with `#encode-batch-adaptivity`.
 - `2026-07-29-encode-batch-adaptivity-P02-S13` - extend degradation evidence assembly with encode budget, OOM count, and rate-baseline lines
 - `2026-07-29-encode-batch-adaptivity-P02-S14` - render the encode budget, OOM, and rate-baseline evidence in the jobs presentation and TUI detail
 - `2026-07-29-encode-batch-adaptivity-P02-S15` - author degradation rate-baseline verdict tests proven able to fail when the baseline input is removed
+- `2026-07-29-encode-batch-adaptivity-P02-summary` - `encode-batch-adaptivity` `P02` summary
 
 ### plan
 
