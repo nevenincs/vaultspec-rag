@@ -319,6 +319,30 @@ class VaultSpecConfigWrapper:
         # indexing ceiling instead of the flat 12 GiB.
         "index_cuda_headroom_mb": 2048.0,
         "index_cuda_allocator_fraction": 0.8,
+        # Free device memory, in MiB, required before this process may load
+        # model stacks onto the GPU. Read once per process before the first
+        # load: below this figure the load is refused rather than allowed to
+        # starve the card and every other consumer on it. The ceilings above
+        # bound the work an already-resident process does; this one decides
+        # whether it becomes resident at all.
+        #
+        # The floor must exceed the resident stack a load is about to create
+        # PLUS the largest legitimate demand that stack then places on top of
+        # its own residency. Sizing it to residency alone is the trap: on a card
+        # already holding one tenant, the free memory left over still clears
+        # such a floor, so a second stack is admitted - and two residencies plus
+        # one peak exceed the device, which is precisely the arrangement the
+        # gate exists to refuse. The embedding, sparse, and reranker stacks
+        # measure 6301 MiB resident together, and the largest legitimate demand
+        # above that residency measures 4609 MiB, so nothing at or below their
+        # 10910 MiB sum is a sufficient floor. This sits above it with margin
+        # while staying low enough that an ordinary desktop session holding a
+        # few GiB does not refuse a load the card could have served.
+        #
+        # Uncalibrated against a live device: the two figures are measured, the
+        # margin over their sum is not. The shape of the check is settled - free
+        # below the floor refuses - and the numeral moves on evidence.
+        "gpu_admission_floor_mib": 11264,
         # Named profile definitions and corpus dimensions live in
         # ``index_profiles``; this selects the service default.
         "index_support_profile": "managed-service",

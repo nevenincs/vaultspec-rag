@@ -54,7 +54,16 @@ def test_jobs_route_200_with_bearer_token(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     payload: dict[str, Any] = response.json()
-    assert set(payload) == {"jobs", "total", "returned", "summary", "filters"}
+    assert set(payload) == {
+        "jobs",
+        "total",
+        "returned",
+        "summary",
+        "filters",
+        "gpu",
+        "pressure",
+        "device_load",
+    }
     assert len(payload["jobs"]) == 1
     assert payload["jobs"][0]["source"] == "vault"
     assert payload["jobs"][0]["phase"] == "done"

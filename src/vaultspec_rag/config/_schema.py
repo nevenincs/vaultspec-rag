@@ -155,6 +155,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "index_cuda_ceiling_mb": EnvVar.INDEX_CUDA_CEILING_MB,
     "index_cuda_headroom_mb": EnvVar.INDEX_CUDA_HEADROOM_MB,
     "index_cuda_allocator_fraction": EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION,
+    "gpu_admission_floor_mib": EnvVar.GPU_ADMISSION_FLOOR_MIB,
     "index_support_profile": EnvVar.INDEX_SUPPORT_PROFILE,
     # Performance tuning knobs - surface them via env vars too so
     # deploy-time tuning does not require CLI flags or config file edits.
@@ -289,6 +290,10 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "index_cuda_ceiling_mb": _NON_NEGATIVE_NUMBER,
     "index_cuda_headroom_mb": _POSITIVE_NUMBER,
     "index_cuda_allocator_fraction": _OPEN_UNIT_INTERVAL,
+    # Model-load admission floor. Zero would admit every load, which is the
+    # behaviour the gate exists to remove, so it is refused with the negatives;
+    # an operator who wants a nominal floor sets one.
+    "gpu_admission_floor_mib": _POSITIVE_INT,
     "index_support_profile": _ChoiceBound(
         "one of " + ", ".join(sorted(VALID_INDEX_SUPPORT_PROFILES)),
         frozenset(VALID_INDEX_SUPPORT_PROFILES),

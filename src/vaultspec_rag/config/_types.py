@@ -116,6 +116,11 @@ class EnvVar(StrEnum):
     INDEX_CUDA_CEILING_MB = "VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB"
     INDEX_CUDA_HEADROOM_MB = "VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB"
     INDEX_CUDA_ALLOCATOR_FRACTION = "VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION"
+    # Free device memory required before this process may load model stacks
+    # onto the GPU. Distinct from the ceilings above, which bound the work an
+    # already-resident process does; this one decides whether it becomes
+    # resident at all.
+    GPU_ADMISSION_FLOOR_MIB = "VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB"
     INDEX_SUPPORT_PROFILE = "VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE"
     # Wall-clock + memory tuning knobs introduced in #68 Track B.
     # Model identity and the dense width that must accompany it. Overriding a
