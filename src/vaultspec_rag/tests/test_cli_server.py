@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import json
 import os
 import subprocess
@@ -49,40 +50,13 @@ class TestServerCommands:
         assert "watcher" not in result.output.lower()
         assert "mcp" not in result.output.lower()
 
-    def test_server_watch_opens_the_jobs_interface(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        """``server --watch`` is the unfiltered jobs interface, not help.
+    def test_server_watch_selects_the_balanced_server_mode(self):
+        """The root watch enters the canonical app in balanced server mode."""
+        from ..cli._app import server_main
 
-        The entry point is substituted because its entire contract is to seize
-        the terminal and not return until the operator leaves, so calling it
-        for real hangs the run - there is no host fact to supply that would
-        make it terminate. The interface itself is driven for real elsewhere
-        through the framework's own pilot, so what is substituted here is only
-        the handoff; what is asserted is that the flag reaches it at all,
-        rather than falling through to the group's help, and with the port and
-        interval the operator typed.
+        source = inspect.getsource(server_main)
 
-        Extracting the request construction so it could be asserted without
-        running the interface was rejected: that would leave the handoff
-        itself - the thing this test exists to protect - unexercised, trading a
-        real guard for a lower count.
-        """
-        from ..cli import _jobs_tui
-
-        opened: list[tuple[int, float]] = []
-
-        def _capture(_fetch: object, *, port: int, interval: float) -> None:
-            opened.append((port, interval))
-
-        monkeypatch.setattr(_jobs_tui, "run_jobs_tui", _capture)
-        result = runner.invoke(
-            app, ["server", "--watch", "--port", "1234", "--interval", "5"]
-        )
-
-        assert result.exit_code == 0, result.output
-        assert opened == [(1234, 5.0)]
-        assert "Usage:" not in result.output
+        assert 'watch_mode="server"' in source
 
     def test_server_without_watch_still_shows_help(self):
         """The bare group keeps printing help; --watch is the only new path."""

@@ -147,16 +147,16 @@ _DETAIL_INDENT = "    "
 _VALUE_CELLS = 48
 
 
-def sanitize_log_text(text: str) -> str:
-    """Return *text* safe to paint: escapes stripped, length bounded.
+def sanitize_log_text(text: str, *, max_chars: int | None = _MAX_LINE_CHARS) -> str:
+    """Return *text* safe to paint, optionally retaining its full length.
 
     Order matters: escapes are stripped before control characters are
     deleted, because deleting the ESC first would leave the printable body
     of a CSI sequence (``[31m``) behind as visible garbage.
     """
     cleaned = _ANSI_RE.sub("", text).translate(_CONTROL_TRANSLATION)
-    if len(cleaned) > _MAX_LINE_CHARS:
-        cleaned = cleaned[: _MAX_LINE_CHARS - 1] + "…"
+    if max_chars is not None and len(cleaned) > max_chars:
+        cleaned = cleaned[: max_chars - 1] + "…"
     return cleaned
 
 
