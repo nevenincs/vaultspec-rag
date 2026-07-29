@@ -36,6 +36,7 @@ from ._run_ledger_models import RunOperation
 from ._streaming import (
     CodeFileSegmentRequest,
     CodeSliceRequest,
+    _EncodeBucketReporter,
     _release_cuda_cache,
     _report_forward_entry,
     _report_forward_exit,
@@ -608,6 +609,11 @@ class CodeConsumerPipeline:
                         on_storage_confirmed=on_storage_confirmed,
                         before_forward=before_forward,
                         after_forward=_after_forward,
+                        on_encode_bucket=_EncodeBucketReporter(
+                            consumer_run.reporter,
+                            slice_index,
+                            slice_items,
+                        ),
                         on_cuda_oom=_on_cuda_oom,
                         run_control=run_control,
                         reuse=consumer_run.donor_reuse,

@@ -24,13 +24,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, NamedTuple, cast
+from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import Mapping
 
 from ._operator_commands import IndexCommandOptions, index_command
+from ._source_types import PublicSourceType
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +83,12 @@ __all__ = [
     "VaultBreadthClaim",
     "code_breadth_shortfall",
     "code_file_breadth_shortfall",
-    "code_meta_path",
+    "index_meta_path",
     "parse_reserved_count",
     "read_code_breadth_claim",
     "read_reserved_count",
     "read_vault_breadth_claim",
     "shortfall_warnings",
-    "vault_meta_path",
 ]
 
 #: What an incomplete index means for the reader, in one wording for every
@@ -271,20 +271,31 @@ def _named_entry_count(raw: Mapping[str, object]) -> int:
     return sum(1 for key in raw if not key.startswith("__"))
 
 
-def code_meta_path(root: pathlib.Path) -> pathlib.Path:
-    """Return the code index metadata sidecar path for *root*."""
+def index_meta_path(
+    root: pathlib.Path,
+    source: Literal[PublicSourceType.CODE, PublicSourceType.VAULT],
+) -> pathlib.Path:
+    """Return the index metadata sidecar path *source* publishes under *root*.
+
+    Both sidecars sit in the same data directory and differ only in which
+    configured filename names them, so they resolve here rather than through a
+    function each: two bodies differing by one constant is one rename away from
+    a caller reading the wrong domain's claim as its own.
+
+    The parameter is narrowed to the two sources this module covers. The wider
+    source vocabulary includes selections with no sidecar of this shape, and
+    accepting them would buy a runtime rejection where the type already says
+    the call cannot be written.
+    """
     from .config._settings import get_config
 
     cfg = get_config()
-    return root / cfg.data_dir / cfg.code_index_metadata_file
-
-
-def vault_meta_path(root: pathlib.Path) -> pathlib.Path:
-    """Return the vault index metadata sidecar path for *root*."""
-    from .config._settings import get_config
-
-    cfg = get_config()
-    return root / cfg.data_dir / cfg.index_metadata_file
+    filename = (
+        cfg.code_index_metadata_file
+        if source is PublicSourceType.CODE
+        else cfg.index_metadata_file
+    )
+    return root / cfg.data_dir / filename
 
 
 def _read_sidecar(path: pathlib.Path) -> dict[str, object] | None:
@@ -311,7 +322,7 @@ def read_reserved_count(root: pathlib.Path, key: str) -> int | None:
     Every such case is a "cannot tell" rather than a claim of zero, so a caller
     cannot mistake an unreadable sidecar for a destroyed index.
     """
-    raw = _read_sidecar(code_meta_path(root))
+    raw = _read_sidecar(index_meta_path(root, PublicSourceType.CODE))
     return None if raw is None else parse_reserved_count(raw, key)
 
 
@@ -349,7 +360,7 @@ def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
     named files, and the generation from different reads of a file another
     process is replacing - they always describe a single publication.
     """
-    raw = _read_sidecar(code_meta_path(root))
+    raw = _read_sidecar(index_meta_path(root, PublicSourceType.CODE))
     if raw is None:
         return None
     generation = raw.get(GENERATION_ID_KEY)
@@ -395,7 +406,7 @@ def read_vault_breadth_claim(root: pathlib.Path) -> VaultBreadthClaim | None:
     plausible number of points spread across a fraction of the documents the
     same sidecar names, and only the document figures disagree in that case.
     """
-    raw = _read_sidecar(vault_meta_path(root))
+    raw = _read_sidecar(index_meta_path(root, PublicSourceType.VAULT))
     if raw is None:
         return None
     return VaultBreadthClaim(
@@ -447,7 +458,7 @@ def code_file_breadth_shortfall(
     this key existed has nothing to compare against and must not be reported as
     incomplete for that reason.
     """
-    raw = _read_sidecar(code_meta_path(root))
+    raw = _read_sidecar(index_meta_path(root, PublicSourceType.CODE))
     if raw is None:
         return None
     covered = parse_reserved_count(raw, PUBLISHED_FILES_KEY)

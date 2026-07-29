@@ -16,7 +16,6 @@ from ._file_state import FileStateKind
 from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
-    RunLedgerCompatibilityError,
     RunOperation,
     RunSignature,
     RunTerminalState,
@@ -116,16 +115,7 @@ class DocumentRunCheckpoint(RunCheckpointBase):
             policy_fingerprint=request.policy.fingerprints.snapshot,
         )
         ledger = RunLedger(index_run_ledger_path(request.data_root))
-        generation = ledger.start_generation(signature)
-        if (
-            request.operation
-            in (RunOperation.INCREMENTAL, RunOperation.SCOPED_INCREMENTAL)
-            and generation.parent_generation_id is None
-        ):
-            raise RunLedgerCompatibilityError(
-                "incremental document indexing requires a compatible published "
-                "manifest; run a full reconciliation"
-            )
+        generation = cls.start_compatible_generation(ledger, signature)
         return cls(ledger, generation, request.policy, request.run_policy)
 
     def unit_for(

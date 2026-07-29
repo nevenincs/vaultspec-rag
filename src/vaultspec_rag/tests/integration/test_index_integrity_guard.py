@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..._index_breadth import code_meta_path
+from ..._index_breadth import index_meta_path
 from ..._index_integrity import (
     VERDICT_CONSISTENT,
     VERDICT_SHRUNKEN,
@@ -65,7 +65,7 @@ def _publish_breadth(root: Path, store: VaultStore, *, generation_id: str) -> No
     from ...indexer._code_meta import publish_meta_from_file_states
 
     publish_meta_from_file_states(
-        code_meta_path(root),
+        index_meta_path(root, PublicSourceType.CODE),
         [],
         generation_id=generation_id,
         membership_epoch="membership-epoch",
@@ -158,7 +158,7 @@ class TestServeTimeIntegrityGuard:
                 from ...indexer._code_meta import publish_meta_from_file_states
 
                 publish_meta_from_file_states(
-                    code_meta_path(tmp_path),
+                    index_meta_path(tmp_path, PublicSourceType.CODE),
                     [],
                     generation_id="a" * 32,
                     membership_epoch="membership-epoch",
