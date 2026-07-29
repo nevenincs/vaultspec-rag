@@ -212,6 +212,28 @@ def test_a_failure_event_always_carries_a_populated_error(
         assert re.search(r"\berror=\S", line), f"no error field at all: {line}"
 
 
+def test_supersession_is_its_own_outcome_at_ordinary_severity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A coalesced-away job reports supersession, not failure and not progress.
+
+    Three claims the broader state sweep cannot make: the event fires at all
+    (a silently dropped outcome hides that coalescing happened), it is named
+    distinctly, and it is not filed under the progress event - which would
+    report a terminal state as an ongoing one.
+
+    Mutation check: routing supersession into the progress branch (deleting
+    its case) fails on the event-name assertion below, and dropping the
+    branch's ``log_event`` call entirely fails on the emptiness assertion,
+    neither on collection.
+    """
+    events = _log(JobState.SUPERSEDED, caplog)
+    assert events, "supersession produced no event at all"
+    assert events == [("reindex_superseded", logging.INFO)], (
+        f"supersession must report itself once, at INFO; got {events}"
+    )
+
+
 def test_every_job_state_has_an_explicit_outcome(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
