@@ -45,6 +45,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "every run, which the suite's mirror-the-installed-binary design "
         "exists to avoid",
     ),
+    "test_cli_server.py": (
+        1,
+        "the substituted entry point's whole contract is to seize the terminal "
+        "and not return until the operator leaves, so calling it for real "
+        "hangs the run and no argument makes it terminate; the interface "
+        "itself is driven for real elsewhere through the framework's pilot, "
+        "and only the handoff is substituted",
+    ),
 }
 
 

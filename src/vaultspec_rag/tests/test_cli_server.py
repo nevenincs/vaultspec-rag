@@ -52,7 +52,22 @@ class TestServerCommands:
     def test_server_watch_opens_the_jobs_interface(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """``server --watch`` is the unfiltered jobs interface, not help."""
+        """``server --watch`` is the unfiltered jobs interface, not help.
+
+        The entry point is substituted because its entire contract is to seize
+        the terminal and not return until the operator leaves, so calling it
+        for real hangs the run - there is no host fact to supply that would
+        make it terminate. The interface itself is driven for real elsewhere
+        through the framework's own pilot, so what is substituted here is only
+        the handoff; what is asserted is that the flag reaches it at all,
+        rather than falling through to the group's help, and with the port and
+        interval the operator typed.
+
+        Extracting the request construction so it could be asserted without
+        running the interface was rejected: that would leave the handoff
+        itself - the thing this test exists to protect - unexercised, trading a
+        real guard for a lower count.
+        """
         from ..cli import _jobs_tui
 
         opened: list[tuple[int, float]] = []
