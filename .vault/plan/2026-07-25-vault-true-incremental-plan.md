@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#vault-true-incremental'
 date: '2026-07-25'
-modified: '2026-07-27'
+modified: '2026-07-29'
 tier: L2
 related:
   - '[[2026-07-24-vault-true-incremental-adr]]'
@@ -51,36 +51,36 @@ which shares these files.
 
 The subset that enters point payloads becomes a named contract living beside the payload builders that consume it, so a field added to a payload cannot silently escape the fingerprint.
 
-- [ ] `P01.S01` - Name the indexed-frontmatter subset beside the payload builders that consume it, so the fingerprint and the payload cannot drift apart silently; `src/vaultspec_rag/_store_models.py`.
-- [ ] `P01.S02` - Canonicalise the subset before digesting it, excluding the volatile modified stamp by construction and absorbing pure whitespace and quoting churn; `src/vaultspec_rag/_store_models.py`.
-- [ ] `P01.S03` - Cover the subset definition with a test that fails when a payload field is added without entering the subset digest; `src/vaultspec_rag/tests/`.
+- [x] `P01.S01` - Name the indexed-frontmatter subset beside the payload builders that consume it, so the fingerprint and the payload cannot drift apart silently; `src/vaultspec_rag/_store_models.py`.
+- [x] `P01.S02` - Canonicalise the subset before digesting it, excluding the volatile modified stamp by construction and absorbing pure whitespace and quoting churn; `src/vaultspec_rag/_store_models.py`.
+- [x] `P01.S03` - Cover the subset definition with a test that fails when a payload field is added without entering the subset digest; `src/vaultspec_rag/tests/`.
 
 ### Phase `P02` - Split the fingerprint and classify
 
 Change detection stops digesting raw file bytes and computes a body digest plus a subset digest, routing each delta to the cheapest correct outcome: re-embed, payload-only upsert, or nothing.
 
-- [ ] `P02.S04` - Replace the raw whole-file digest with a body digest plus a subset digest, normalising the body the way the chunker already normalises it; `src/vaultspec_rag/indexer/_vault_indexer.py`.
-- [ ] `P02.S05` - Persist both digests in the sidecar under the existing meta-versioning convention so an old sidecar is recognised rather than misread; `src/vaultspec_rag/indexer/_vault_indexer.py`.
-- [ ] `P02.S06` - Classify a body-digest delta as re-chunk and re-embed, preserving the current indexing path for that branch unchanged; `src/vaultspec_rag/indexer/_vault_indexer.py`.
-- [ ] `P02.S07` - Route a subset-only delta to a payload-only upsert that rebuilds the document's payloads and leaves its vectors untouched; `src/vaultspec_rag/indexer/_vault_indexer.py`.
-- [ ] `P02.S08` - Classify a volatile-stamp-only change as unchanged so it reaches neither the encoder nor the store; `src/vaultspec_rag/indexer/_vault_indexer.py`.
-- [ ] `P02.S09` - Hold the first run under the new scheme to a re-classification rather than a re-embed, reusing donor vectors from the root's own collection wherever the body digest matches; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P02.S04` - Replace the raw whole-file digest with a body digest plus a subset digest, normalising the body the way the chunker already normalises it; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P02.S05` - Persist both digests in the sidecar under the existing meta-versioning convention so an old sidecar is recognised rather than misread; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P02.S06` - Classify a body-digest delta as re-chunk and re-embed, preserving the current indexing path for that branch unchanged; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P02.S07` - Route a subset-only delta to a payload-only upsert that rebuilds the document's payloads and leaves its vectors untouched; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P02.S08` - Classify a volatile-stamp-only change as unchanged so it reaches neither the encoder nor the store; `src/vaultspec_rag/indexer/_vault_indexer.py`.
+- [x] `P02.S09` - Hold the first run under the new scheme to a re-classification rather than a re-embed, reusing donor vectors from the root's own collection wherever the body digest matches; `src/vaultspec_rag/indexer/_vault_indexer.py`.
 
 ### Phase `P03` - Make the unscoped escalation a convergence pass
 
 The watcher's failure escalation keeps its convergence guarantee by re-classifying through the split fingerprint rather than re-embedding every unchanged body.
 
-- [ ] `P03.S10` - Run the split classifier over the full corpus on the unscoped escalation so convergence is reached by digest comparison and payload updates rather than a blanket re-embed; `src/vaultspec_rag/watcher.py`.
-- [ ] `P03.S11` - Leave the durable convergence-pending bit and the escalation trigger semantics unchanged, confirming only the work the escalated pass performs is narrowed; `src/vaultspec_rag/watcher_retry.py`.
+- [x] `P03.S10` - Run the split classifier over the full corpus on the unscoped escalation so convergence is reached by digest comparison and payload updates rather than a blanket re-embed; `src/vaultspec_rag/watcher.py`.
+- [x] `P03.S11` - Leave the durable convergence-pending bit and the escalation trigger semantics unchanged, confirming only the work the escalated pass performs is narrowed; `src/vaultspec_rag/watcher_retry.py`.
 
 ### Phase `P04` - Prove the classification can fail
 
 Each classification branch gets a guard test proven red-then-green by mutation, because a wrong fingerprint degrades silently and passes every assertion that does not count encodes.
 
-- [ ] `P04.S12` - Prove the stamp-only guard bidirectionally: assert zero encodes on a modified-stamp bump, weaken the fingerprint back to a raw-file digest, watch the encode assertion fail, restore, watch it pass; `src/vaultspec_rag/tests/`.
-- [ ] `P04.S13` - Prove the metadata-only guard bidirectionally: assert a tags-only edit updates payloads with zero encodes, route metadata changes into the re-embed branch, watch it fail, restore, watch it pass; `src/vaultspec_rag/tests/`.
-- [ ] `P04.S14` - Prove the body guard bidirectionally: assert a body edit re-embeds, drop the body digest from the fingerprint, watch it fail, restore, watch it pass; `src/vaultspec_rag/tests/`.
-- [ ] `P04.S15` - Measure an incremental vault run over a stamp-churned corpus against the recorded pre-change baseline and record both figures; `src/vaultspec_rag/tests/integration/`.
+- [x] `P04.S12` - Prove the stamp-only guard bidirectionally: assert zero encodes on a modified-stamp bump, weaken the fingerprint back to a raw-file digest, watch the encode assertion fail, restore, watch it pass; `src/vaultspec_rag/tests/`.
+- [x] `P04.S13` - Prove the metadata-only guard bidirectionally: assert a tags-only edit updates payloads with zero encodes, route metadata changes into the re-embed branch, watch it fail, restore, watch it pass; `src/vaultspec_rag/tests/`.
+- [x] `P04.S14` - Prove the body guard bidirectionally: assert a body edit re-embeds, drop the body digest from the fingerprint, watch it fail, restore, watch it pass; `src/vaultspec_rag/tests/`.
+- [x] `P04.S15` - Measure an incremental vault run over a stamp-churned corpus against the recorded pre-change baseline and record both figures; `src/vaultspec_rag/tests/integration/`.
 
 ## Parallelization
 
