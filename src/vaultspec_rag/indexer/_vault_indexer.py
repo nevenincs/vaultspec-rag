@@ -135,6 +135,23 @@ class _VaultClassification:
         )
 
 
+def _group_chunks_by_document(
+    chunks: list[VaultChunk],
+) -> list[list[VaultChunk]]:
+    """Group contiguous chunks by their parent document, preserving order.
+
+    The planner appends each document's chunks together, so grouping is a scan
+    rather than a sort, and the output order matches the input's.
+    """
+    groups: list[list[VaultChunk]] = []
+    for chunk in chunks:
+        if groups and groups[-1][0].doc_id == chunk.doc_id:
+            groups[-1].append(chunk)
+        else:
+            groups.append([chunk])
+    return groups
+
+
 def _classify_documents(
     candidates: set[str],
     current: dict[str, str],
@@ -838,7 +855,6 @@ class VaultIndexer:
         plan = self._plan_payload_refresh(
             classification.metadata,
             work.id_to_path,
-            work.existing_counts,
             work.reporter,
             run_control=work.run_control,
         )
@@ -874,7 +890,6 @@ class VaultIndexer:
         self,
         doc_ids: set[str],
         id_to_path: dict[str, pathlib.Path],
-        existing_counts: dict[str, int],
         reporter: ProgressReporter,
         *,
         run_control: RunControl = NO_RUN_CONTROL,
@@ -883,13 +898,13 @@ class VaultIndexer:
 
         A payload-only write assumes the store already holds exactly the points
         this document produces - the body did not move, so its chunk partition
-        did not either. That assumption is checked rather than trusted: when
-        the stored chunk count disagrees with what the document splits into
-        now, the store is not in the shape the classification described, and
-        writing payloads into it would leave whatever is actually there
-        unreconciled. Those documents are returned as the second element for
-        the caller to route back into the re-embed branch, which rebuilds
-        their points outright.
+        did not either. That assumption is checked against the ordinals the
+        store actually has points under, not against how far they reach: the
+        two differ exactly when a document's ordinal range has a hole, and a
+        hole is the case where writing by assumed ordinal reaches nothing and
+        raises nothing. A document whose stored ordinals are not precisely the
+        set it now splits into is returned as deferred, for the caller to route
+        into the re-embed branch, which rebuilds its points outright.
 
         Returns:
             The chunks to write, how many documents they cover, and the ids
@@ -910,6 +925,21 @@ class VaultIndexer:
             "rebuild payloads",
             len(doc_ids),
         ):
+            try:
+                stored_ordinals = self.store.get_stored_chunk_ordinals(doc_ids)
+            except (OSError, RuntimeError):
+                # Without knowing what is stored, nothing can be written
+                # safely by ordinal; re-embedding rebuilds these outright.
+                logger.warning(
+                    "Could not read stored chunk ordinals for the payload "
+                    "refresh; re-embedding those documents instead",
+                    exc_info=True,
+                )
+                return _PayloadRefreshPlan(
+                    chunks=[],
+                    documents=0,
+                    deferred=set(doc_ids),
+                )
             docs = self._prepare_documents_bounded(
                 [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
                 reporter,
@@ -924,7 +954,7 @@ class VaultIndexer:
             for doc in docs:
                 run_control.checkpoint()
                 doc_chunks = split_document(doc, chunk_chars)
-                if existing_counts.get(doc.id, 0) != len(doc_chunks):
+                if stored_ordinals.get(doc.id, set()) != set(range(len(doc_chunks))):
                     deferred.add(doc.id)
                     continue
                 chunks.extend(doc_chunks)
@@ -942,7 +972,16 @@ class VaultIndexer:
         *,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> None:
-        """Write the planned payload-only refresh, leaving vectors untouched."""
+        """Write the planned payload-only refresh, leaving vectors untouched.
+
+        Written one document at a time rather than as a single call over every
+        chunk. The store writes a payload per point, so a whole-corpus metadata
+        refresh is thousands of sequential round trips; handing them over in one
+        call would make the whole write uncancellable and report no progress
+        until it finished. A document is the right granularity to break on -
+        each one's payloads land together, so a cancellation between documents
+        never leaves one half-refreshed.
+        """
         with _controlled_phase(
             reporter,
             run_control,
@@ -951,10 +990,14 @@ class VaultIndexer:
         ):
             if not chunks:
                 return
-            run_control.checkpoint()
-            self.store.overwrite_vault_chunk_payloads(chunks, write_policy=None)
-            run_control.checkpoint()
-            reporter.advance(len(chunks))
+            for doc_chunks in _group_chunks_by_document(chunks):
+                run_control.checkpoint()
+                self.store.overwrite_vault_chunk_payloads(
+                    doc_chunks,
+                    write_policy=None,
+                )
+                reporter.advance(len(doc_chunks))
+                run_control.checkpoint()
 
     def _announce_fingerprint_migration(self) -> None:
         """Say once, at the top of a run, that the sidecar predates the split.

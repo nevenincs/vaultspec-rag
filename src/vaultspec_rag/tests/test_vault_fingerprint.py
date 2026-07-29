@@ -9,6 +9,7 @@ pins the decision itself, where every branch is reachable without a GPU.
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,7 +22,8 @@ from ..indexer._vault_fingerprint import (
     SCHEME,
     VaultDelta,
     classify,
-    fingerprint_text,
+    fingerprint_bytes,
+    fingerprint_path,
     parse,
 )
 
@@ -61,13 +63,19 @@ def vault_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _sample_path(root: Path) -> Path:
+    """The vault's canonical sample ADR path."""
+    return root / ".vault" / "adr" / "2026-07-25-sample-adr.md"
+
+
 def _fingerprint(root: Path, text: str) -> str:
     """Fingerprint *text* as the vault's canonical sample ADR."""
-    return fingerprint_text(
-        root / ".vault" / "adr" / "2026-07-25-sample-adr.md",
-        root,
-        text,
-    )
+    return fingerprint_bytes(_sample_path(root), root, text.encode("utf-8"))
+
+
+def _legacy_digest(data: bytes) -> str:
+    """Digest bytes the way the pre-split scheme did, for migration tests."""
+    return hashlib.blake2b(data).hexdigest()
 
 
 class TestClassification:
@@ -149,6 +157,38 @@ class TestLegacySidecarMigration:
 
         assert classify(legacy_raw.raw, edited) is VaultDelta.BODY
 
+    def test_the_raw_digest_matches_the_previous_scheme_byte_for_byte(
+        self, vault_root: Path
+    ) -> None:
+        """The bridge is only a bridge if both sides digest the same thing.
+
+        Mutation that drives this red: in ``fingerprint_bytes``, digest
+        ``data.decode("utf-8").encode("utf-8")`` instead of ``data``. It stays
+        green for LF files and fails here, on the CRLF case, because
+        ``read_text`` would have folded the line endings away.
+        """
+        raw_bytes = _document().replace("\n", "\r\n").encode("utf-8")
+        current = fingerprint_bytes(_sample_path(vault_root), vault_root, raw_bytes)
+        parsed = parse(current)
+
+        assert parsed is not None
+        assert parsed.raw == _legacy_digest(raw_bytes)
+
+    def test_a_crlf_document_migrates_without_re_embedding(
+        self, vault_root: Path
+    ) -> None:
+        """A CRLF checkout must migrate as cheaply as an LF one.
+
+        The repository pins the vault to LF, but a consumer with
+        ``core.autocrlf=true`` checks out CRLF. If the raw digest disagreed with
+        the previous scheme's there, the advertised cheap migration would become
+        a full-corpus re-embed for exactly those users.
+        """
+        raw_bytes = _document().replace("\n", "\r\n").encode("utf-8")
+        current = fingerprint_bytes(_sample_path(vault_root), vault_root, raw_bytes)
+
+        assert classify(_legacy_digest(raw_bytes), current) is VaultDelta.UNCHANGED
+
     def test_a_stamp_bump_under_a_legacy_entry_still_re_embeds_once(
         self, vault_root: Path
     ) -> None:
@@ -186,11 +226,65 @@ class TestEncoding:
         self, vault_root: Path
     ) -> None:
         """No doc type means no document, so there is no split to record."""
-        rendered = fingerprint_text(
+        rendered = fingerprint_bytes(
             vault_root / "README.md",
             vault_root,
-            _document(),
+            _document().encode("utf-8"),
         )
 
         assert parse(rendered) is None
         assert rendered == rendered.strip() and rendered
+
+
+class TestUndecodableBytes:
+    """One bad byte must not be able to wedge vault indexing."""
+
+    def test_invalid_utf8_yields_a_raw_digest_instead_of_raising(
+        self, vault_root: Path
+    ) -> None:
+        """Mutation that drives this red: in ``fingerprint_bytes``, decode
+        without catching ``UnicodeDecodeError``. This test then fails with that
+        exception rather than an assertion - which is the point, because in
+        production it escapes the hashing phase, whose failure capture catches
+        only ``OSError``, and aborts the entire indexing run.
+
+        Every retry would abort identically while the file remained, so vault
+        indexing would stay wedged until an operator located one byte. The
+        previous raw-bytes digest could not fail this way: such a file hashed
+        fine and was skipped, with a warning, at the parse phase.
+        """
+        latin1 = "caf\xe9".encode("latin-1")
+        undecodable = _document(body=f"# a decision\n\n{latin1.decode('latin-1')}\n")
+        data = undecodable.encode("utf-8").replace(b"caf\xc3\xa9", b"caf\xe9")
+        assert b"caf\xe9" in data, "the fixture must actually be invalid UTF-8"
+
+        rendered = fingerprint_bytes(_sample_path(vault_root), vault_root, data)
+
+        assert rendered == _legacy_digest(data)
+        assert parse(rendered) is None
+
+    def test_an_undecodable_file_is_a_body_delta_not_a_silent_unchanged(
+        self, vault_root: Path
+    ) -> None:
+        """It must never read as unchanged against a real split fingerprint.
+
+        Falling back to a bare digest is safe only because a bare value forces
+        raw-to-raw comparison. If it could compare equal to a split fingerprint,
+        a file that became unreadable would look like nothing had happened.
+        """
+        readable = _fingerprint(vault_root, _document())
+        data = _document().encode("utf-8").replace(b"decision", b"deci\xe9sion")
+        broken = fingerprint_bytes(_sample_path(vault_root), vault_root, data)
+
+        assert classify(readable, broken) is VaultDelta.BODY
+
+    def test_reading_an_undecodable_file_from_disk_does_not_raise(
+        self, vault_root: Path
+    ) -> None:
+        """The production entry point, over a real file, not just its bytes."""
+        path = _sample_path(vault_root)
+        path.write_bytes(_document().encode("utf-8").replace(b"body", b"b\xe9dy"))
+
+        rendered = fingerprint_path(path, vault_root)
+
+        assert rendered == _legacy_digest(path.read_bytes())

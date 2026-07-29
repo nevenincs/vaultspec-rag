@@ -53,3 +53,29 @@ milliseconds against the GPU seconds it replaces.
 The gate's `hash_file` was left in place. It has no production caller - the
 indexers all reach `hash_paths` - and collapsing it is a separate concern from
 this plan.
+
+Two defects in this Step were found by review after it first landed, both from
+the same root cause: the fingerprint decoded the file to text and digested the
+re-encoded result, rather than digesting the bytes as stored.
+
+The first was a crash class. Decoding raised `UnicodeDecodeError` on a file that
+is not valid UTF-8, and the hashing phase's per-file failure capture catches
+`OSError` alone - so one bad byte anywhere in the vault aborted the entire run,
+on the full scan, on the scoped path, and at publication after the GPU work was
+already done. Every retry aborted identically while the file remained, so vault
+indexing stayed wedged until an operator located the byte. The raw-bytes digest
+this replaced could not fail that way: such a file hashed, and was skipped with
+a warning at the parse phase. The fingerprint now falls back to the bare raw
+digest on a decode failure, which `classify` already handles as
+raw-comparison-only, and the document skips at parse exactly as before.
+
+The second was a cost defect in the migration bridge. The old scheme digested
+bytes; digesting a decoded-and-re-encoded copy disagrees for any file whose line
+endings the checkout translated. This repository pins the vault to LF and was
+shielded, but a consumer with `core.autocrlf` set checks out CRLF, and there
+every document would have classified as a body delta and re-embedded - the exact
+full-corpus GPU pass the bridge exists to avoid.
+
+Both are now guarded, each proven red-then-green, including one integration
+guard that indexes a real corpus containing a cp1252 byte and requires the run
+to complete with the good documents landed.

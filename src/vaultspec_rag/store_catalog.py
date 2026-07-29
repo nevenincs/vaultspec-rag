@@ -80,21 +80,23 @@ class _VaultCatalogMixin:
         with self._point_lock(self.TABLE_NAME):
             return self._scroll_all_ids(self.TABLE_NAME, "doc_id")
 
-    def get_chunk_counts(
+    def _scan_chunk_ordinals(
         self,
-        doc_ids: set[str] | None = None,
-    ) -> dict[str, int]:
-        """Return the stored chunk count per vault document.
+        doc_ids: set[str] | None,
+    ) -> dict[str, set[int | None]]:
+        """Scan the ordinals each vault document has points stored under.
 
-        Points written before chunking carry no ordinal and count as a
-        single chunk. Used to detect documents that shrank between
-        index runs so their stale tail chunks can be purged.
+        The one scan behind both public answers below. ``None`` stands for a
+        point written before chunking, which carries no ordinal at all - kept
+        as a member rather than dropped, because a document represented only
+        by such points is a different fact from one with no points, and both
+        callers need to tell them apart.
 
         Args:
             doc_ids: When given, restrict the scan to these documents.
 
         Returns:
-            Mapping of document stem ID to its stored chunk count.
+            Mapping of document stem ID to the ordinals it has points under.
         """
         from qdrant_client import models
 
@@ -111,7 +113,7 @@ class _VaultCatalogMixin:
                 ],
             )
 
-        counts: dict[str, int] = {}
+        ordinals: dict[str, set[int | None]] = {}
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
         self.ensure_table()
         page_limit = self._id_scan_page_limit(self.TABLE_NAME)
@@ -132,13 +134,71 @@ class _VaultCatalogMixin:
                 if doc_id is None:
                     continue
                 ordinal = payload.get("chunk_ordinal")
-                chunk_no = (ordinal + 1) if isinstance(ordinal, int) else 1
-                key = str(doc_id)
-                counts[key] = max(counts.get(key, 0), chunk_no)
+                ordinals.setdefault(str(doc_id), set()).add(
+                    ordinal if isinstance(ordinal, int) else None
+                )
             if next_offset is None:
                 break
             offset = next_offset
-        return counts
+        return ordinals
+
+    def get_chunk_counts(
+        self,
+        doc_ids: set[str] | None = None,
+    ) -> dict[str, int]:
+        """Return the stored chunk count per vault document.
+
+        Points written before chunking carry no ordinal and count as a
+        single chunk. Used to detect documents that shrank between
+        index runs so their stale tail chunks can be purged.
+
+        This is the highest ordinal plus one, not a census of the points that
+        exist. That is what the tail purge wants - it deletes an ordinal range
+        and needs to know where the range ends - but it means a document
+        missing an ordinal in the middle reports the same count as a whole one.
+        A caller that needs to know which points actually exist must ask
+        :meth:`get_stored_chunk_ordinals` instead.
+
+        Args:
+            doc_ids: When given, restrict the scan to these documents.
+
+        Returns:
+            Mapping of document stem ID to its stored chunk count.
+        """
+        return {
+            doc_id: max(
+                (ordinal + 1 if ordinal is not None else 1) for ordinal in ordinals
+            )
+            for doc_id, ordinals in self._scan_chunk_ordinals(doc_ids).items()
+        }
+
+    def get_stored_chunk_ordinals(
+        self,
+        doc_ids: set[str],
+    ) -> dict[str, set[int]]:
+        """Return the exact chunk ordinals each named document has points under.
+
+        Answers "which points exist", where :meth:`get_chunk_counts` answers
+        "how far do they reach". A caller about to write to specific point ids
+        needs the former: the two disagree precisely when a document's ordinal
+        range has a hole in it, and that is the case where writing by assumed
+        ordinal silently reaches nothing.
+
+        Points from the pre-chunking layout are excluded rather than mapped to
+        an ordinal. They are stored under the bare document id, so no
+        ordinal-keyed write addresses them at all, and reporting them as
+        ordinal 0 would claim a point exists where the writer cannot reach one.
+
+        Args:
+            doc_ids: Documents to scan. An empty set scans nothing.
+
+        Returns:
+            Mapping of document stem ID to the ordinals it stores points under.
+        """
+        return {
+            doc_id: {ordinal for ordinal in ordinals if ordinal is not None}
+            for doc_id, ordinals in self._scan_chunk_ordinals(doc_ids).items()
+        }
 
     def delete_document_chunk_tail(self, doc_id: str, from_ordinal: int) -> None:
         """Delete a document's chunks at or beyond *from_ordinal*.
