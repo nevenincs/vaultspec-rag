@@ -103,15 +103,15 @@ def test_a_failed_refresh_is_reported_not_flattened_to_no_result() -> None:
     assert caught.value is boom
 
 
-def test_watch_delegates_refresh_to_the_interactive_interface() -> None:
-    """The split watch adapter gives terminal ownership to the jobs TUI."""
+def test_watch_delegates_refresh_to_the_canonical_server_watch() -> None:
+    """The split watch adapter gives terminal ownership to the one watch app."""
     source = pathlib.Path(jobs_watch.__file__).read_text(encoding="utf-8").splitlines()
     watch_loop = "\n".join(line for line in source if not line.lstrip().startswith("#"))
 
-    assert "from ._jobs_tui import run_jobs_tui" in watch_loop, (
+    assert "from ._jobs_tui import run_server_watch" in watch_loop, (
         "the watch adapter must load the interactive interface it delegates to"
     )
-    assert "run_jobs_tui(watched_fetch" in watch_loop, (
+    assert "run_server_watch(" in watch_loop, (
         "the adapter must hand its filtered fetch to the interactive interface"
     )
 
