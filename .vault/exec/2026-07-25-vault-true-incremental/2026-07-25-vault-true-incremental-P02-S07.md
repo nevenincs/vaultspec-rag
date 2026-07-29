@@ -100,3 +100,17 @@ call per point, so a whole-corpus refresh is thousands of sequential round
 trips; as one call it was uncancellable and reported no progress until it
 finished. A document is the safe granularity - its payloads land together, so
 cancelling between documents never leaves one half-refreshed.
+
+One known limitation, accepted rather than fixed. The branch re-reads each
+document when it plans the write, after the fingerprint that classified it was
+taken. A body edit landing in that window writes the new body text into the
+payload while the vectors still describe the old body, so for one cycle the
+stored content and the stored vectors disagree.
+
+It is self-correcting and cannot persist: the fingerprint recorded for the run
+is the one taken at the hashing phase, which describes the pre-edit file, so the
+next run sees a body delta against the edited file and re-embeds. Closing the
+window properly would mean carrying each document's parsed form from the hashing
+phase through to the write, which means holding the whole candidate corpus in
+memory to remove a one-cycle inconsistency that resolves itself - a worse trade
+than the window. Recorded here so a later reader knows it was weighed.
