@@ -54,7 +54,8 @@ class TestGenerationSurvey:
         there destroys the collection the published breadth describes and
         leaves the claim standing over nothing.
         """
-        from .._index_breadth import code_meta_path
+        from .._index_breadth import index_meta_path
+        from .._source_types import PublicSourceType
         from .._store_models import (
             generation_code_collection,
             publish_served_code_collection,
@@ -64,7 +65,7 @@ class TestGenerationSurvey:
 
         sidecar_generation = "a" * 32
         publish_meta_from_file_states(
-            code_meta_path(tmp_path),
+            index_meta_path(tmp_path, PublicSourceType.CODE),
             [],
             generation_id=sidecar_generation,
             membership_epoch="membership-epoch",

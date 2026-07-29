@@ -29,7 +29,11 @@ from ._document_meta import (
 from ._file_state import FileStateKind
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
 from ._route_migration import reconcile_generation_storage
-from ._run_ledger_models import FinalizationPhase, RunOperation
+from ._run_ledger_models import (
+    FinalizationPhase,
+    RunLedgerCompatibilityError,
+    RunOperation,
+)
 from ._run_policy import RunPolicy
 from ._scan_cache import MembershipScanCache
 from ._streaming import (
@@ -1263,7 +1267,33 @@ class DocumentIndexer:
                 previous = None
             if previous is not None and self._published_evidence_lost(previous):
                 previous = None
-        if previous is None:
+        checkpoint: DocumentRunCheckpoint | None = None
+        if previous is not None:
+            operation = (
+                RunOperation.SCOPED_INCREMENTAL
+                if changed_paths is not None
+                else RunOperation.INCREMENTAL
+            )
+            try:
+                checkpoint = self._open_checkpoint(
+                    policy=policy,
+                    operation=operation,
+                    clean=False,
+                    limits=limits,
+                    run_control=run_control,
+                )
+            except RunLedgerCompatibilityError:
+                # The manifest is trustworthy and the store still backs it,
+                # but the ledger holds no generation the run can build on -
+                # nothing to resume, nothing to diff against. That is the
+                # same "no usable published evidence" the checks above
+                # escalate for, so it converges on the same rebuild rather
+                # than failing every incremental until someone intervenes.
+                logger.info(
+                    "No compatible published document manifest; running a "
+                    "full failure-safe reconciliation"
+                )
+        if previous is None or checkpoint is None:
             return self.full_index(
                 reporter=reporter,
                 preflight=DocumentIndexPreflight(
@@ -1274,18 +1304,6 @@ class DocumentIndexer:
                 run_control=run_control,
             )
 
-        operation = (
-            RunOperation.SCOPED_INCREMENTAL
-            if changed_paths is not None
-            else RunOperation.INCREMENTAL
-        )
-        checkpoint = self._open_checkpoint(
-            policy=policy,
-            operation=operation,
-            clean=False,
-            limits=limits,
-            run_control=run_control,
-        )
         with checkpoint.preserve_incomplete_generation():
             budget = self._begin_resource_budget(limits)
         with self._writer_lock:

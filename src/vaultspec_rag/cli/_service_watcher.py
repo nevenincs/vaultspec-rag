@@ -34,8 +34,20 @@ from ._render import (
 )
 
 
-def _format_milliseconds(raw: object) -> str:
-    if not isinstance(raw, int | float):
+def _format_delay_milliseconds(raw: object) -> str:
+    """Render a CONFIGURED millisecond delay in this surface's vocabulary.
+
+    A delay is not an elapsed duration and does not share its renderer: zero
+    reads as ``immediately`` rather than as a quantity, a sub-second value
+    keeps its millisecond tier, and a fractional second survives instead of
+    being floored. Naming the subject keeps this distinct from the elapsed
+    formatter of the same shape that the shared format module owns.
+
+    ``bool`` is refused despite being an ``int``: the payload is untrusted,
+    and a ``debounce_ms`` of ``True`` would otherwise read as a configured
+    one-millisecond delay rather than as an unreported field.
+    """
+    if not isinstance(raw, int | float) or isinstance(raw, bool):
         return "not reported"
     milliseconds = max(0.0, float(raw))
     if milliseconds == 0:
@@ -48,8 +60,16 @@ def _format_milliseconds(raw: object) -> str:
     return f"{seconds:.1f} seconds"
 
 
-def _format_seconds(raw: object) -> str:
-    if not isinstance(raw, int | float):
+def _format_delay_seconds(raw: object) -> str:
+    """Render a CONFIGURED second-granularity delay in the same vocabulary.
+
+    Deliberately stops cascading at minutes: a repeat-update delay is a knob
+    an operator sets in minutes, so "60 minutes" states the setting where
+    "1 hour" would restate it in units nobody configured it in.
+
+    ``bool`` is refused for the same reason as the millisecond renderer.
+    """
+    if not isinstance(raw, int | float) or isinstance(raw, bool):
         return "not reported"
     seconds = max(0.0, float(raw))
     if seconds == 0:
@@ -86,8 +106,8 @@ def _print_update_result(port: int, status: str, project: str) -> None:
 
 
 def _print_update_timing(result: dict[str, object]) -> None:
-    update_delay = _format_milliseconds(result.get("debounce_ms"))
-    repeat_update_delay = _format_seconds(result.get("cooldown_s"))
+    update_delay = _format_delay_milliseconds(result.get("debounce_ms"))
+    repeat_update_delay = _format_delay_seconds(result.get("cooldown_s"))
     if update_delay == "not reported":
         _plain("File changes: not reported by service.")
     else:

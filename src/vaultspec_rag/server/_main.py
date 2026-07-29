@@ -127,6 +127,13 @@ def _run_http_daemon(port: int) -> None:
             host="127.0.0.1",
             port=port,
             timeout_graceful_shutdown=30,
+            # Uvicorn's default log config is a second logging configuration:
+            # it installs its own formatters and handlers and clears
+            # propagation, so its records reach the managed log untimestamped
+            # and unformatted, having never passed the root handler. Declining
+            # it leaves uvicorn's loggers propagating to the one configured
+            # root handler like every other producer.
+            log_config=None,
             log_level="info",
             lifespan="on",
         )

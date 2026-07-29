@@ -238,6 +238,263 @@ class TestPhaseAwareEvidenceRendering:
         assert "Process CPU: not measurable from the service process" in lines
 
 
+def _collapse_evidence(
+    *,
+    encode: dict[str, object] | None = None,
+    rate: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Evidence for a run whose throughput collapsed against its own median.
+
+    The recency findings are healthy-looking on purpose: the forward exited
+    moments ago and progress is fresh, which is exactly the shape in which
+    only the throughput comparison has anything to say.
+    """
+    evidence = _evidence(in_flight=False, forward_age=2.0)
+    if encode is not None:
+        evidence["encode"] = encode
+    if rate is not None:
+        evidence["rate"] = rate
+    return evidence
+
+
+class TestEncodeBudgetRendering:
+    def test_the_encode_batch_bounds_are_rendered_from_the_payload(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 16384,
+                        "bucket_items": 6,
+                        "oom_count": 3,
+                    }
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 16384 tokens per batch, 6 items in the last batch, "
+            "3 GPU memory retries" in lines
+        )
+
+    def test_a_single_retry_is_not_pluralised(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={"token_budget": 8192, "bucket_items": None, "oom_count": 1}
+                ),
+            )
+        )
+        assert "Encode batch: 8192 tokens per batch, 1 GPU memory retry" in lines
+
+    def test_a_run_with_no_retries_says_nothing_about_them(self) -> None:
+        # A zero is not a finding; naming it would spend the line an operator
+        # needs on the numbers that do bound the batch.
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={"token_budget": 8192, "bucket_items": 24, "oom_count": 0}
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 8192 tokens per batch, 24 items in the last batch" in lines
+        )
+
+    def test_a_job_that_never_encoded_renders_no_budget_line(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(degradation="degraded", evidence=_collapse_evidence())
+        )
+        assert not any(line.startswith("Encode batch:") for line in lines)
+
+    def test_the_sub_slice_climb_is_rendered_as_a_fraction(self) -> None:
+        """The climb through a slice reads as a fraction, not as a size.
+
+        The forward line above it names the slice's own 512 items, so the
+        two numbers have to be told apart on sight.
+
+        Mutation check: rendering only the numerator - dropping the ``of
+        {total}`` half of the phrase in ``_encode_budget_line`` - makes
+        this fail on the ``64 of 512 items encoded`` assertion below, and
+        restoring the denominator returns it to green.
+        """
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 16384,
+                        "bucket_items": 6,
+                        "items_done": 64,
+                        "items_total": 512,
+                        "oom_count": 0,
+                    }
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 16384 tokens per batch, 6 items in the last batch, "
+            "64 of 512 items encoded" in lines
+        )
+
+    def test_a_climb_without_its_denominator_is_not_rendered(self) -> None:
+        # A lone completed count is the ambiguity this line exists to avoid:
+        # rendered bare it reads as a size, so it is not rendered at all.
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 8192,
+                        "bucket_items": None,
+                        "items_done": 64,
+                        "items_total": None,
+                        "oom_count": 0,
+                    }
+                ),
+            )
+        )
+        assert "Encode batch: 8192 tokens per batch" in lines
+
+    def test_an_older_daemon_renders_the_budget_line_unchanged(self) -> None:
+        # An encode block from before the pair existed carries neither key,
+        # and must render exactly the line it always rendered.
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={"token_budget": 8192, "bucket_items": 24, "oom_count": 2}
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 8192 tokens per batch, 24 items in the last batch, "
+            "2 GPU memory retries" in lines
+        )
+
+    def test_a_fractional_count_is_withheld_rather_than_rendered(self) -> None:
+        """A counted field arriving fractional is a broken field, not a reading.
+
+        Only a foreign daemon publishing junk can produce one, which is
+        exactly why the two surfaces have to agree: the service narrows this
+        block through the counting reader when it writes it, so a renderer
+        narrowing it as a measurement would caption "3.9 of 8 items encoded"
+        for a payload the service itself would have refused.
+
+        Mutation check: narrowing ``items_done`` and ``items_total`` through
+        the measurement reader instead makes this fail on the first
+        assertion below, which then reports the rendered line as "Encode
+        batch: 8192 tokens per batch, 3.9 of 8.0 items encoded" - the
+        caption this test exists to keep impossible. Restoring the counting
+        reader returns it to green.
+        """
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 8192,
+                        "bucket_items": None,
+                        "items_done": 3.9,
+                        "items_total": 8,
+                        "oom_count": 0,
+                    }
+                ),
+            )
+        )
+        assert "Encode batch: 8192 tokens per batch" in lines
+        assert not any("3.9" in line for line in lines)
+        assert not any("items encoded" in line for line in lines)
+
+    def test_a_large_count_is_rendered_in_full(self) -> None:
+        """A count reads as its digits, never as an exponent.
+
+        Mutation check: formatting these through ``:g`` - the spec the
+        fields carried while they were read as measurements - makes this
+        fail on the "1234567" assertion, rendering "1.23457e+06" instead:
+        six significant digits, so the operator is shown a number that is
+        not the one the service published.
+        """
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    encode={
+                        "token_budget": 1_048_576,
+                        "bucket_items": None,
+                        "items_done": 1_234_567,
+                        "items_total": 2_000_000,
+                        "oom_count": 0,
+                    }
+                ),
+            )
+        )
+        assert (
+            "Encode batch: 1048576 tokens per batch, "
+            "1234567 of 2000000 items encoded" in lines
+        )
+
+
+class TestThroughputRendering:
+    def test_the_collapse_is_rendered_as_the_service_measured_it(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    rate={
+                        "recent_per_second": 1.9,
+                        "median_per_second": 13.3,
+                        "ratio": 0.143,
+                    }
+                ),
+            )
+        )
+        assert (
+            "Throughput: 1.9 per second against a 13.3 per second run median "
+            "(14% of it)" in lines
+        )
+
+    def test_the_row_summary_names_the_collapse_not_the_progress_gap(self) -> None:
+        """A fresh progress stamp must not be offered as the cause.
+
+        Mutation check: dropping the throughput part from
+        ``_unhealthy_summary`` makes this fail on the ``against a`` assertion
+        below, leaving the row claiming a two-second gap explains a degraded
+        verdict.
+        """
+        label = stale_progress_label(
+            _job(
+                degradation="degraded",
+                age=2.0,
+                evidence=_collapse_evidence(
+                    rate={
+                        "recent_per_second": 1.9,
+                        "median_per_second": 13.3,
+                        "ratio": 0.143,
+                    }
+                ),
+            )
+        )
+        assert label.startswith("degraded: ")
+        assert "1.9 per second against a 13.3 per second run median" in label
+
+    def test_an_unmeasured_baseline_renders_no_throughput_line(self) -> None:
+        lines = degradation_evidence_lines(
+            _job(
+                degradation="degraded",
+                evidence=_collapse_evidence(
+                    rate={
+                        "recent_per_second": 1.9,
+                        "median_per_second": None,
+                        "ratio": None,
+                    }
+                ),
+            )
+        )
+        assert not any(line.startswith("Throughput:") for line in lines)
+
+
 class TestProgressLabels:
     def test_the_code_pipeline_label_names_completed_work(self) -> None:
         # The counter behind "chunk + embed" counts files whose chunks were

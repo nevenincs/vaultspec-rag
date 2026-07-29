@@ -23,6 +23,10 @@ class RawRotatingLogSink:
     Exactly one drain thread owns each instance. The active handle is closed
     before numbered files move, which is required for Windows. Opens use append
     mode, owner-only permissions, and ``O_NOFOLLOW`` where available.
+
+    Bytes are persisted as written but for one guarantee the readers depend on:
+    records are newline-framed, so a producer that ends a line with a carriage
+    return cannot absorb the record written after it.
     """
 
     def __init__(self, path: Path, *, max_bytes: int, backup_count: int) -> None:
@@ -35,6 +39,7 @@ class RawRotatingLogSink:
             raise ValueError("managed log backup_count must be non-negative")
         self._stream: BinaryIO | None = None
         self._retention_checked = False
+        self._pending_return = False
 
     def _open(self, *, truncate: bool = False) -> BinaryIO:
         enforce_pytest_singleton_containment(
@@ -235,8 +240,33 @@ class RawRotatingLogSink:
             self._truncate_active()
         self._stream = self._open()
 
+    def _framed(self, payload: bytes) -> bytes:
+        """Promote carriage-return redraws to record breaks.
+
+        A progress renderer redraws its line by returning the cursor instead
+        of ending the record, so its output carries no newline and the next
+        producer's record continues the same physical line. Every reader of
+        this file splits on newlines, so an unterminated redraw does not
+        merely add noise - it swallows the record printed after it. Promoting
+        the return to a break costs one line per redraw and leaves every
+        record independently readable.
+
+        At most one byte is carried between calls, so a producer that never
+        emits a newline cannot grow a buffer here.
+        """
+        if self._pending_return:
+            payload = b"\r" + payload
+            self._pending_return = False
+        if payload.endswith(b"\r"):
+            # Possibly the first half of a CRLF split across two reads.
+            # Withhold the single byte and decide when the next chunk lands.
+            self._pending_return = True
+            payload = payload[:-1]
+        return payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
     def write(self, payload: bytes) -> None:
         """Persist arbitrary bytes without allowing a generation past its cap."""
+        payload = self._framed(payload)
         if not payload:
             return
         if not self._retention_checked:

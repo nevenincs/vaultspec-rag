@@ -34,6 +34,7 @@ from rich.text import Text
 from textual.widgets import RichLog
 
 from .._timestamps import parse_iso_timestamp
+from ..logging_config import POLLED_ROUTES
 from ._jobs_tui_palette import semantic_tones
 
 if TYPE_CHECKING:
@@ -78,10 +79,25 @@ _APP_RE = re.compile(
     r"(?P<logger>[A-Za-z_][\w.]*):\s?(?P<rest>.*)$"
 )
 
-# The HTTP server's access lines. They carry no timestamp at all.
+# The HTTP server's access lines as it formats them itself, carrying no
+# timestamp at all. Generations written before the daemon declined the
+# server's private log configuration are full of these, and they stay
+# readable for as long as those generations are retained.
 _ACCESS_RE = re.compile(
     r"^(?P<level>[A-Z]+):\s+(?P<client>\S+) - "
     r'"(?P<method>[A-Z]+) (?P<path>\S+) HTTP/[0-9.]+" '
+    r"(?P<status>\d{3})(?: (?P<reason>.+))?$"
+)
+
+# The same record once it reaches the log through the service's own handler:
+# timestamped and logger-tagged like everything else, with the request left
+# in the message tail. Recognising it is what keeps a failed request an
+# error on this surface - read as an ordinary application record it carries
+# the server's INFO level, and a 500 would stop being something the pane's
+# error navigation can find.
+_ACCESS_LOGGER = "uvicorn.access"
+_ACCESS_TAIL_RE = re.compile(
+    r'^(?P<client>\S+) - "(?P<method>[A-Z]+) (?P<path>\S+) HTTP/[0-9.]+" '
     r"(?P<status>\d{3})(?: (?P<reason>.+))?$"
 )
 
@@ -101,20 +117,6 @@ _QDRANT_REQUEST_RE = re.compile(
 )
 
 _PAIR_RE = re.compile(r"^(?P<key>[A-Za-z_][\w.\-]*)=(?P<value>.*)$")
-
-# Routes this interface (and the watch loop behind it) polls on a timer. A
-# GET reflected back from one of these says nothing an operator cannot see on
-# the screen already; everything else - mutations, other clients, errors - is
-# signal and stays visible.
-_POLLING_ROUTES = (
-    "/jobs",
-    "/logs",
-    "/health",
-    "/metrics",
-    "/projects",
-    "/watcher",
-    "/storage/survey",
-)
 
 _ERROR_LEVELS = frozenset({"ERROR", "CRITICAL", "FATAL"})
 
@@ -190,12 +192,19 @@ class LogEntry:
 
     @property
     def is_polling(self) -> bool:
-        """Whether this is the interface's own polling reflected back."""
+        """Whether this is the interface's own polling reflected back.
+
+        The daemon now drops these where they are written, so a current
+        service log carries none. This pane still collapses them: generations
+        written before that filter existed stay on disk for their full
+        retention, and the vector backend's access dialect never passed
+        through the filter at all.
+        """
         if self.kind != "access" or self.method != "GET" or self.path is None:
             return False
         base = self.path.partition("?")[0]
         return any(
-            base == route or base.startswith(route + "/") for route in _POLLING_ROUTES
+            base == route or base.startswith(route + "/") for route in POLLED_ROUTES
         )
 
 
@@ -228,7 +237,29 @@ def _local_time(stamp: str) -> str | None:
     return parsed.astimezone().strftime("%H:%M:%S")
 
 
+def _parse_access_tail(match: re.Match[str], raw: str) -> LogEntry | None:
+    """Recover an access record that reached the log through the handler."""
+    request = _ACCESS_TAIL_RE.match(match.group("rest"))
+    if request is None:
+        return None
+    return LogEntry(
+        kind="access",
+        raw=raw,
+        level=match.group("level"),
+        timestamp=match.group("time"),
+        origin=request.group("client"),
+        method=request.group("method"),
+        path=request.group("path"),
+        status=request.group("status"),
+        reason=request.group("reason"),
+    )
+
+
 def _parse_app_line(match: re.Match[str], raw: str) -> LogEntry:
+    if match.group("logger") == _ACCESS_LOGGER:
+        access = _parse_access_tail(match, raw)
+        if access is not None:
+            return access
     prose, pairs = _split_pairs(match.group("rest"))
     event = None
     kept: list[tuple[str, str]] = []

@@ -1050,3 +1050,221 @@ def test_a_succeeding_generation_never_accrues_resume_failures(
             (generation.generation_id,),
         ).fetchone()[0]
     assert int(failures) == 0
+
+
+def _publish_and_compact(ledger: RunLedger, generation_id: str) -> int:
+    for phase in (
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        ledger.advance_finalization(generation_id, phase)
+    ledger.finish_generation(generation_id, RunTerminalState.SUCCEEDED)
+    return ledger.compact(generation_id)
+
+
+def test_compaction_keeps_generations_backing_carried_evidence(
+    tmp_path: Path,
+) -> None:
+    """Compacting a published carrier must not sever its inherited evidence.
+
+    A carried-forward file state pins the generation that produced its
+    evidence; the commit units that vouch for its stored points live there.
+    Deleting that generation cascades the units away, and the next run's
+    retention lookup then reads every inherited point as obsolete and purges
+    the entire collection.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+    unit = _unit("src/kept.py", 0, 1)
+
+    origin = ledger.start_generation(signature)
+    ledger.record_storage_confirmed_unit(origin.generation_id, unit)
+    ledger.record_file_state(
+        origin.generation_id,
+        FileState(
+            "src/kept.py",
+            FileStateKind.INDEXED,
+            ContentKind.CODE,
+            _digest("src/kept.py"),
+        ),
+    )
+    _publish_and_compact(ledger, origin.generation_id)
+
+    carrier = ledger.start_generation(signature)
+    assert carrier.parent_generation_id == origin.generation_id
+    _publish_and_compact(ledger, carrier.generation_id)
+
+    # The generation the carried state cites must survive its child's
+    # compaction, or the retained-point lookup below returns nothing and the
+    # purge deletes the whole collection.
+    assert ledger.generation(origin.generation_id).terminal_state is (
+        RunTerminalState.SUCCEEDED
+    )
+    successor = ledger.start_generation(signature)
+    assert ledger.retained_point_ids_for_candidates(
+        successor.generation_id,
+        unit.point_ids,
+    ) == frozenset(unit.point_ids)
+
+
+def test_compaction_removes_generations_no_surviving_state_cites(
+    tmp_path: Path,
+) -> None:
+    """Evidence retention is exact: superseded generations still compact."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+
+    origin = ledger.start_generation(signature)
+    ledger.record_storage_confirmed_unit(
+        origin.generation_id, _unit("src/kept.py", 0, 1)
+    )
+    ledger.record_file_state(
+        origin.generation_id,
+        FileState(
+            "src/kept.py",
+            FileStateKind.INDEXED,
+            ContentKind.CODE,
+            _digest("src/kept.py"),
+        ),
+    )
+    _publish_and_compact(ledger, origin.generation_id)
+
+    carrier = ledger.start_generation(signature)
+    _publish_and_compact(ledger, carrier.generation_id)
+
+    # A clean rebuild re-homes every file's evidence to itself, so nothing
+    # cites the earlier generations and both must compact away.
+    rebuild = ledger.start_generation(replace(signature, clean=True))
+    ledger.record_storage_confirmed_unit(
+        rebuild.generation_id, _unit("src/kept.py", 0, 1)
+    )
+    ledger.record_file_state(
+        rebuild.generation_id,
+        FileState(
+            "src/kept.py",
+            FileStateKind.INDEXED,
+            ContentKind.CODE,
+            _digest("src/kept.py"),
+        ),
+    )
+    assert _publish_and_compact(ledger, rebuild.generation_id) == 2
+    with pytest.raises(KeyError):
+        ledger.generation(origin.generation_id)
+    with pytest.raises(KeyError):
+        ledger.generation(carrier.generation_id)
+
+
+def test_carry_forward_refuses_a_manifest_with_dangling_evidence(
+    tmp_path: Path,
+) -> None:
+    """A published manifest whose evidence dangles must not seed a diff.
+
+    Carrying it forward hands the new generation file states whose cited
+    units no longer exist, so every inherited point reads as unretained and
+    the publication purge deletes the entire collection. Refusing the parent
+    forces the caller onto the full failure-safe reconciliation path instead.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+    unit = _unit("src/kept.py", 0, 1)
+
+    origin = ledger.start_generation(signature)
+    ledger.record_storage_confirmed_unit(origin.generation_id, unit)
+    ledger.record_file_state(
+        origin.generation_id,
+        FileState(
+            "src/kept.py",
+            FileStateKind.INDEXED,
+            ContentKind.CODE,
+            _digest("src/kept.py"),
+        ),
+    )
+    _publish_and_compact(ledger, origin.generation_id)
+    carrier = ledger.start_generation(signature)
+    _publish_and_compact(ledger, carrier.generation_id)
+
+    # Sever the evidence out from under the published manifest, the state a
+    # ledger compacted by a build without evidence retention is left in.
+    connection = sqlite3.connect(ledger.path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(
+        "DELETE FROM generations WHERE generation_id = ?",
+        (origin.generation_id,),
+    )
+    connection.commit()
+    connection.close()
+
+    successor = ledger.start_generation(signature)
+    # No parent: the incremental open refuses and the caller escalates to a
+    # full reconciliation rather than diffing against poisoned evidence.
+    assert successor.parent_generation_id is None
+    assert ledger.file_states_for_paths(successor.generation_id, ("src/kept.py",)) == {}
+
+
+def test_carry_forward_stops_rather_than_falling_back_to_an_older_manifest(
+    tmp_path: Path,
+) -> None:
+    """A dangling candidate ends the scan; it does not demote to an older one.
+
+    The newest compatible manifest is the one storage reflects. An older
+    same-fingerprint manifest describes points a later publication already
+    replaced, so carrying it would claim dead point ids and skip re-encoding
+    every file it names. Refusing outright forces the full failure-safe
+    reconciliation instead.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+    paths = ("src/one.py", "src/two.py", "src/three.py")
+
+    def index(generation_id: str, rel_path: str, version: str) -> None:
+        digest = _digest(f"{rel_path}:{version}")
+        ledger.record_storage_confirmed_unit(
+            generation_id,
+            _unit(rel_path, 0, 1, digest=digest),
+        )
+        ledger.record_file_state(
+            generation_id,
+            FileState(rel_path, FileStateKind.INDEXED, ContentKind.CODE, digest),
+        )
+
+    # The origin indexes everything, so all three states cite it.
+    origin = ledger.start_generation(signature)
+    for rel_path in paths:
+        index(origin.generation_id, rel_path, "v1")
+    _publish_and_compact(ledger, origin.generation_id)
+
+    # The middle generation re-indexes one file, moving that state's evidence
+    # onto itself while the other two keep citing the origin.
+    middle = ledger.start_generation(signature)
+    index(middle.generation_id, paths[0], "v2")
+    _publish_and_compact(ledger, middle.generation_id)
+
+    # The newest generation re-indexes a second file. Its manifest now cites
+    # the middle generation, itself, and the origin.
+    newest = ledger.start_generation(signature)
+    index(newest.generation_id, paths[1], "v2")
+    _publish_and_compact(ledger, newest.generation_id)
+
+    # Sever the middle generation, the state a ledger compacted by a build
+    # without evidence retention is left in. The newest manifest now dangles
+    # while the origin - older, compatible, and still cited only by itself -
+    # remains a viable fall-back target.
+    connection = sqlite3.connect(ledger.path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(
+        "DELETE FROM generations WHERE generation_id = ?",
+        (middle.generation_id,),
+    )
+    connection.commit()
+    connection.close()
+
+    # Without an intact older candidate the assertion below would hold for the
+    # wrong reason, so pin that the fall-back target really did survive.
+    assert ledger.generation(origin.generation_id).terminal_state is (
+        RunTerminalState.SUCCEEDED
+    )
+
+    successor = ledger.start_generation(signature)
+    assert successor.parent_generation_id is None
+    assert ledger.file_states_for_paths(successor.generation_id, paths) == {}

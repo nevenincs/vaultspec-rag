@@ -1072,7 +1072,7 @@ def _failure_belongs_to_this_generation(record: dict[str, object]) -> bool:
     reading it: it stays in the reported rollup, but only a failure that
     finished inside the current generation may degrade health.
     """
-    from ._routes_jobs import _job_number
+    from ..jobs import measurement
 
     generation_start = _generation_start_wall_clock()
     if generation_start is None:
@@ -1080,7 +1080,7 @@ def _failure_belongs_to_this_generation(record: dict[str, object]) -> bool:
         # the failure rather than suppress every failure a non-lifespan caller
         # could ever see.
         return True
-    finished_at = _job_number(record, "finished_at")
+    finished_at = measurement(record.get("finished_at"))
     if finished_at is None:
         # Missing or non-numeric stamp: a failure that cannot be placed in time
         # degrades. Under-reporting costs an operator the only signal that the
