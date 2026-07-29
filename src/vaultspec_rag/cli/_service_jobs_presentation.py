@@ -14,6 +14,7 @@ import vaultspec_rag.cli as _cli
 from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediation
 from ..jobs import count, measurement
 from ._cli_format import (
+    _counted_unit,
     _format_mb,
     _format_milliseconds,
     _format_seconds,
@@ -501,7 +502,7 @@ def remaining_estimate_label(job: dict[str, object]) -> str:
         # Ceiling, not truncation: a countdown must never read below what
         # the service just said, and the coarse two-unit rendering already
         # removes any precision the estimate does not have.
-        return f"~{compact_duration(math.ceil(max(0.0, remaining)))} remaining"
+        return f"~{compact_duration(math.ceil(remaining))} remaining"
     return "ETA unknown"
 
 
@@ -768,9 +769,12 @@ def _job_count_text(
     singular: str = "job",
     plural: str | None = None,
 ) -> str:
-    value = count(raw) or 0
-    word = singular if value == 1 else (plural or f"{singular}s")
-    return f"{value} {word}"
+    """Render a published tally, reading an unusable one as zero.
+
+    The pluralisation is not restated here: it is the one shared rule, so
+    these rows can never drift from every other counted row in the CLI.
+    """
+    return _counted_unit(count(raw) or 0, singular, plural)
 
 
 def _shown_count_text(returned: object, *, filtered: bool) -> str:
