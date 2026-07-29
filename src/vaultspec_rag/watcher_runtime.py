@@ -396,6 +396,20 @@ def _log_managed_transition(
             job_id=snapshot.id,
             pending_paths=context.pending_count,
         )
+    elif snapshot.state is JobState.SUPERSEDED:
+        # A superseded record is a resolution, not an outcome to alarm on: it
+        # is retryable-terminal history whose linked retry has since got
+        # through. Reporting it on the error channel would be backwards - the
+        # work succeeded - and it would put a routine resolution in the one
+        # place an operator greps for failures that still need them.
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_superseded",
+            source=slot.source.value,
+            job_id=snapshot.id,
+            pending_paths=context.pending_count,
+        )
     elif not snapshot.state.is_terminal:
         # Queued, running, pausing and cancelling are progress, not outcomes.
         # They reached the failure branch below only because it was the

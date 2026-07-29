@@ -45,6 +45,17 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "every run, which the suite's mirror-the-installed-binary design "
         "exists to avoid",
     ),
+    "test_service_env_preflight.py": (
+        5,
+        "each stages an environment shape the scanning machine cannot be, "
+        "which is the whole subject of a preflight: a CPU-only torch wheel "
+        "and an absent torch (this project is GPU-only, so installing either "
+        "destroys the environment under the rest of the suite), a linux "
+        "aarch64 host, and a free-threaded interpreter. Driving these for "
+        "real means a different machine and a different interpreter, not a "
+        "different test - and the wheel names they assert are exactly what a "
+        "host this one is not would be offered",
+    ),
 }
 
 

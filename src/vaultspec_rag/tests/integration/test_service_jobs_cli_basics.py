@@ -76,7 +76,7 @@ def test_jobs_help_uses_operator_language() -> None:
         "manual requests",
         "index update activity",
         "Show only failed jobs",
-        "Open the interactive jobs interface with per-job controls",
+        "Open the interactive server watch with indexing and served searches",
         "Seconds between refreshes in the interactive interface",
         "active, waiting, finished, failed, or cancelled",
     )

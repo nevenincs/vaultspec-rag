@@ -38,6 +38,21 @@ def required_str(
     return value
 
 
+def str_or_empty(value: object) -> str:
+    """Narrow one string field, substituting ``""`` instead of raising.
+
+    The lenient counterpart to :func:`required_str`, for display surfaces that
+    must render whatever a payload actually sent. An operator interface cannot
+    raise its way out of a missing field - a table that refuses to paint tells
+    the operator less than one that paints a blank cell - so the substitution
+    is the behaviour, not a shortcut around validation.
+
+    Anything a caller must be able to trust still goes through
+    :func:`required_str`, which raises.
+    """
+    return value if isinstance(value, str) else ""
+
+
 def optional_str(
     value: object, *, on_invalid: Callable[[], BaseException]
 ) -> str | None:
