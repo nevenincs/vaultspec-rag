@@ -426,7 +426,7 @@ def _narrowing_surface_paths() -> dict[Path, str]:
 
 
 def _asserted_nodes(tree: ast.Module) -> frozenset[int]:
-    """Identify every node sitting inside an ``assert``.
+    """Identify every node inside the CLAIM an ``assert`` makes.
 
     An ``assert isinstance(...)`` is not this rule's target, and the reason is
     the defect being guarded against rather than a convenience. The twins
@@ -437,12 +437,32 @@ def _asserted_nodes(tree: ast.Module) -> frozenset[int]:
     narrowing that lets execution continue with whatever it decided is the
     reader written a second time. Without this the rule would forbid the
     integration suite from asserting the published shape at all.
+
+    Only the asserted expression is exempt, never the failure message beside
+    it. A narrowing in the message operand is not a claim being made about
+    the value - it is a decision the code took, wearing an assert's clothes.
+
+    The boundary, stated so a later reader does not widen it by accident.
+    What this CANNOT hide: any narrowing whose outcome selects between values
+    or steers control flow. An ``if``, a ``while``, a ternary, a comprehension
+    condition, a lambda predicate and a boolean operand feeding a return are
+    all still reported, which is every shape the re-forks actually took.
+
+    What it CAN hide, and the residual is worth naming rather than assuming
+    away: an ``assert isinstance(value, int)`` whose value is then USED, and
+    the same through a walrus binding. That assert does not reject a ``bool``,
+    because ``isinstance(True, int)`` is ``True`` - so a bool would satisfy
+    the claim and flow on. The equivalent ``float`` assert does reject one,
+    ``isinstance(True, float)`` being ``False``, so the gap is int-shaped and
+    only opens where the asserted value is consumed afterwards. Pin a count
+    that is going to be used through the canonical reader, and assert on what
+    the reader returned; do not lean on a bare numeric assert to narrow it.
     """
     return frozenset(
         id(node)
         for statement in ast.walk(tree)
         if isinstance(statement, ast.Assert)
-        for node in ast.walk(statement)
+        for node in ast.walk(statement.test)
     )
 
 
