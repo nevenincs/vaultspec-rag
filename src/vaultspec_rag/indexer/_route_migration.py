@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import logging
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -43,6 +44,8 @@ __all__ = [
 _DEFAULT_PAGE_SIZE = 256
 _LEDGER_LOOKUP_BATCH = 256
 _MIGRATION_JOURNAL_FILENAME = "route_migrations.sqlite3"
+
+logger = logging.getLogger(__name__)
 
 
 class DestinationCheckpoint(Protocol):
@@ -551,6 +554,18 @@ def reconcile_generation_storage(
         policy,
         destination_kind,
     )
+    if resumed or purged or migrated:
+        # Reconciliation deletes without touching the run's own counters, so
+        # this line is the only record a publication removed anything at all.
+        logger.info(
+            "storage reconciliation for %s generation %s: "
+            "resumed=%d purged=%d migrated=%d",
+            destination_kind.value,
+            checkpoint.generation_id,
+            resumed,
+            purged,
+            migrated,
+        )
     return resumed, purged, migrated
 
 
