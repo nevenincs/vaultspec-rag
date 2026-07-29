@@ -209,10 +209,30 @@ class RunLedger(
             published = self._generation_from_row(candidate)
             if (
                 published.signature.content_compatibility_fingerprint
-                == signature.content_compatibility_fingerprint
+                != signature.content_compatibility_fingerprint
             ):
-                source_id = published.generation_id
-                break
+                continue
+            # A manifest whose cited evidence generation no longer exists
+            # cannot seed an incremental diff: every carried point would read
+            # as unretained and the publication purge would delete the whole
+            # collection. Refusing it leaves the caller no parent, which
+            # forces the full failure-safe reconciliation path instead.
+            dangling = connection.execute(
+                """
+                SELECT 1
+                FROM file_states AS states
+                LEFT JOIN generations AS evidence
+                  ON evidence.generation_id = states.evidence_generation_id
+                WHERE states.generation_id = ?
+                  AND evidence.generation_id IS NULL
+                LIMIT 1
+                """,
+                (published.generation_id,),
+            ).fetchone()
+            if dangling is not None:
+                continue
+            source_id = published.generation_id
+            break
         if source_id is None:
             return None
         connection.execute(
