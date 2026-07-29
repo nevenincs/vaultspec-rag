@@ -202,20 +202,28 @@ def plan_encode_buckets(
 
 
 class EncodeBatchCeiling:
-    """Learned CUDA encode batch ceiling that persists across encode calls.
+    """Learned CUDA encode ceiling in token units, persistent across calls.
 
-    Halving inside a single call converges that call, but a ceiling that
-    resets on return makes every subsequent call rediscover it: each
-    rediscovery costs a discarded forward pass plus an allocator cache
-    flush, and under sustained memory pressure that tax is paid on every
-    slice of every job. The ceiling therefore lives on the model instance
-    and clamps each call's starting batch size to the last size that fit.
+    The ceiling is denominated in estimated token footprint - item count
+    times padded per-item tokens, the quantity activation memory actually
+    scales with - not in items. A per-count ceiling learned on one length
+    regime is wrong for every other: a count that fits short texts OOMs on
+    long ones, and an OOM on long texts clamps short batches that would
+    fit. One token number is regime-aware by construction.
+
+    Recovering the footprint inside a single call converges that call, but
+    a ceiling that resets on return makes every subsequent call rediscover
+    it: each rediscovery costs a discarded forward pass plus an allocator
+    cache flush, and under sustained memory pressure that tax is paid on
+    every slice of every job. The ceiling therefore lives on the model
+    instance and clamps each call's planning budget to a footprint below
+    the one that last failed.
 
     The ceiling must also recover: pinning it at its low-water mark forever
     would turn one transient memory squeeze into a permanent throughput
     loss. After ``RECOVERY_SUCCESSES`` consecutive successful calls at the
-    ceiling, the next call probes double the ceiling (bounded by what the
-    caller requested); a successful probe raises the ceiling, a failed one
+    ceiling, the next call probes double the ceiling (bounded by the
+    requested budget); a successful probe raises the ceiling, a failed one
     re-clamps and restarts the count. While pressure persists, at most one
     call in ``RECOVERY_SUCCESSES + 1`` pays the discarded-forward cost;
     when pressure lifts, the ceiling climbs back within tens of calls.
@@ -237,7 +245,7 @@ class EncodeBatchCeiling:
         self._successes_at_ceiling = 0
 
     def clamp(self, requested: int) -> int:
-        """Return the batch size a call should start from."""
+        """Return the token budget a call should plan its buckets under."""
         with self._lock:
             if self._ceiling is None or requested <= self._ceiling:
                 return requested
@@ -246,21 +254,31 @@ class EncodeBatchCeiling:
                 return min(requested, self._ceiling * 2)
             return self._ceiling
 
-    def record_success(self, batch_size: int) -> None:
-        """Bank one call that completed at *batch_size* without an OOM."""
+    def record_success(self, token_budget: int) -> None:
+        """Bank one call that completed under *token_budget* without an OOM."""
         with self._lock:
             if self._ceiling is None:
                 return
-            if batch_size > self._ceiling:
-                self._ceiling = batch_size
-            if batch_size >= self._ceiling:
+            if token_budget > self._ceiling:
+                self._ceiling = token_budget
+            if token_budget >= self._ceiling:
                 self._successes_at_ceiling += 1
 
-    def record_oom(self, halved_batch_size: int) -> None:
-        """Lower the ceiling to the halved size an OOM forced a retry at."""
+    def record_oom(self, failing_tokens: int) -> int:
+        """Learn from one OOM at the *failing_tokens* estimated footprint.
+
+        The ceiling drops to half the footprint that failed - the failing
+        estimate itself proved too large, so replanning at it would
+        reproduce the same failing shape - and the recovery count restarts.
+
+        Returns:
+            The new ceiling, which is also the budget the caller should
+            replan its remaining work under.
+        """
         with self._lock:
-            self._ceiling = halved_batch_size
+            self._ceiling = max(1, failing_tokens // 2)
             self._successes_at_ceiling = 0
+            return self._ceiling
 
 
 def _raise_for_hf_access(model_id: str, exc: Exception) -> None:
@@ -812,8 +830,7 @@ class EmbeddingModel:
                 torch.cuda.empty_cache()
                 if batch_size <= 1:
                     raise
-                batch_size = max(1, batch_size // 2)
-                self._dense_batch_ceiling.record_oom(batch_size)
+                batch_size = self._dense_batch_ceiling.record_oom(batch_size)
                 logger.warning(
                     "CUDA OOM during dense encoding, retrying with batch_size=%d",
                     batch_size,
@@ -935,8 +952,7 @@ class EmbeddingModel:
                 torch.cuda.empty_cache()
                 if batch_size <= 1:
                     raise
-                batch_size = max(1, batch_size // 2)
-                self._sparse_batch_ceiling.record_oom(batch_size)
+                batch_size = self._sparse_batch_ceiling.record_oom(batch_size)
                 logger.warning(
                     "CUDA OOM during sparse encoding, retrying with batch_size=%d",
                     batch_size,
