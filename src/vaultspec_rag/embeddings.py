@@ -1071,12 +1071,14 @@ class EmbeddingModel:
             embeddings = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
                 [query],
                 prompt=prompt,
+                show_progress_bar=False,
                 normalize_embeddings=True,
             )
         else:
             embeddings = self._dense_model.encode(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers encode overloads are partially stubbed
                 [query],
                 prompt_name="query",
+                show_progress_bar=False,
                 normalize_embeddings=True,
             )
         return np.asarray(embeddings[0], dtype=np.float32)
@@ -1236,6 +1238,9 @@ class EmbeddingModel:
             torch.cuda.OutOfMemoryError: If the GPU runs out of memory.
         """
         max_chars = self._default_max_embed_chars()
-        sparse_tensor = self._require_sparse_model().encode_query([query[:max_chars]])
+        sparse_tensor = self._require_sparse_model().encode_query(
+            [query[:max_chars]],
+            show_progress_bar=False,
+        )
         results = _sparse_tensor_to_results(sparse_tensor)
         return results[0]

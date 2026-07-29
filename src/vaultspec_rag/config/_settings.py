@@ -295,7 +295,14 @@ class VaultSpecConfigWrapper:
         # Per-source retention policy for every operational log managed by the
         # resident service. Service and Qdrant each receive this full budget;
         # the values are not divided across sources.
-        "managed_log_max_bytes": 10485760,
+        #
+        # One generation is sized to the reader's per-source scan budget. A
+        # generation larger than that budget has a head no operator can reach
+        # through the service's own log surface: the reader walks back from
+        # the newest bytes and stops at the budget, so the excess is retained,
+        # rotated, and never returned. Keeping the two equal means every byte
+        # written is a byte something can read back.
+        "managed_log_max_bytes": 2097152,
         "managed_log_backup_count": 5,
         # Nonterminal records are exact-addressable and therefore cannot be
         # evicted. Refuse excess admission at this bound instead of growing an
