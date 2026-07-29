@@ -8,9 +8,12 @@ stdin reader (a non-daemon thread) cannot be cancelled in-process. The only
 reliable backstop is to notice that the process chain above us broke and
 hard-exit.
 
-This module anchors the shim's lifetime through layered anchors, matching
-the companion vaultspec-core watchdog so both servers behave identically:
-the primary anchor resolves the stdin pipe creator (the exact client at any
+This module anchors the shim's lifetime through layered anchors. It carries
+the same design as the companion vaultspec-core watchdog and emits the same
+event shapes, which is the part host tooling depends on and the only part
+kept aligned; each picks its own backstop timing, so the intervals and
+confirmation counts here are not expected to match core's. The layers: the
+primary anchor resolves the stdin pipe creator (the exact client at any
 wrapper depth) and is never grace-pruned, so an already-dead client reaps
 the shim at arm time; the discovered ancestor chain (handles taken at
 startup so PID reuse cannot retarget the wait, creation-time monotonicity,

@@ -452,9 +452,12 @@ capture = None
 try:
     configure_logging(level="INFO")
     capture = install_daemon_log_capture(log_path, max_bytes=1024, backup_count=2)
+    # Deliberately not a route the daemon filters out of the access stream:
+    # this probe exists to prove access bytes alone drive rollover, so its
+    # traffic has to reach the sink.
     app = Starlette(
         routes=[
-            Route("/health", health_handler),
+            Route("/probe", health_handler),
             Route("/stop", stop_handler),
         ]
     )
@@ -507,7 +510,7 @@ def _wait_for_uvicorn_access_probe(process: subprocess.Popen[bytes], port: int) 
         if process.poll() is not None:
             pytest.fail(f"Uvicorn access probe exited early with {process.returncode}")
         try:
-            if _get_probe_response(port, "/health") == 200:
+            if _get_probe_response(port, "/probe") == 200:
                 return
         except OSError:
             time.sleep(0.02)
@@ -516,7 +519,7 @@ def _wait_for_uvicorn_access_probe(process: subprocess.Popen[bytes], port: int) 
 
 def _send_access_only_traffic(port: int) -> None:
     for index in range(100):
-        assert _get_probe_response(port, f"/health?access={index:04d}") == 200
+        assert _get_probe_response(port, f"/probe?access={index:04d}") == 200
 
 
 def _wait_for_rotated_log(log_path: Path) -> None:
@@ -567,7 +570,7 @@ def test_uvicorn_access_only_traffic_drives_live_service_log_rollover(
         _wait_for_uvicorn_access_probe(process, port)
         _send_access_only_traffic(port)
         _wait_for_rotated_log(log_path)
-        assert _get_probe_response(port, f"/health?marker={marker}") == 200
+        assert _get_probe_response(port, f"/probe?marker={marker}") == 200
         _stop_uvicorn_access_probe(process, port)
     finally:
         _terminate_probe_if_needed(process)

@@ -60,10 +60,12 @@ The tables in this section, together with the backend selection table, list ever
 | `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`              | Seconds an idle project slot stays resident before eviction               | -                                     |
 | `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`                | Maximum simultaneously cached project slots                               | -                                     |
 | `VAULTSPEC_RAG_ADMIN_TIMEOUT`            | float   | `30`                | Client connection and read budget for lifecycle and admin calls (seconds) | -                                     |
-| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `10485760` (10 MiB) | Active-file size threshold for each managed log source                    | -                                     |
+| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `2097152` (2 MiB)   | Active-file size threshold for each managed log source                    | -                                     |
 | `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                 | Rotated backups retained for each managed log source                      | -                                     |
 
-The log policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 120 MiB.
+The log policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 24 MiB.
+
+A generation is sized to match the per-source window the log readers scan back over. Raising `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES` past that window keeps bytes that no `vaultspec-rag server logs` call, MCP log tool, or jobs interface will return: the readers walk back from the newest record and stop at the window, so the head of an oversized generation is written, rotated, and never read. Prefer raising the backup count to hold more history.
 
 ### Job lifecycle
 
