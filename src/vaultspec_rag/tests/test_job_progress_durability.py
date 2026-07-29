@@ -29,6 +29,7 @@ from ..job_models import (
     JobState,
 )
 from ..job_persistence import load_persisted_state
+from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,7 +43,11 @@ def _started_manager(
     task: asyncio.Task[bool],
 ) -> tuple[JobManager, str]:
     """Create one persisted manager whose only job owns a started attempt."""
-    manager = JobManager(max_nonterminal=1, state_path=state_path)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=state_path,
+    )
     created = manager.create(
         JobSpec(JobOperation.INDEX, JobSource.CODE, root, JobMode.INCREMENTAL),
         JobInitiator("service", "reindex_codebase", root),

@@ -216,6 +216,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
         JobSpec,
         JobState,
     )
+    from ...service_quiesce import ServiceQuiesceController
     from ...synthetic import build_synthetic_vault
 
     queued_root = tmp_path / "queued-vault"
@@ -223,7 +224,10 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     build_synthetic_vault(queued_root, n_docs=24, seed=2201)
     paused_root.mkdir()
     state_path = tmp_path / "jobs-state.json"
-    seed_manager = JobManager(state_path=state_path)
+    seed_manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        state_path=state_path,
+    )
     queued = seed_manager.create(
         JobSpec(
             JobOperation.INDEX,

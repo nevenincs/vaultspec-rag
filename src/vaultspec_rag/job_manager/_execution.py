@@ -23,6 +23,7 @@ from ..config._settings import get_config
 from ..job_control import (
     CancelRequested,
     PauseRequested,
+    QuiesceRequested,
     RunControlToken,
     ShutdownRequested,
     gpu_lock_wait_scope,
@@ -149,7 +150,7 @@ class JobManagerExecution(JobManagerState):
         return _DispatchAdmission(
             binding=binding,
             attempt=managed.snapshot.attempt.number,
-            control=RunControlToken(gate=self._quiesce_gate),
+            control=RunControlToken(),
         )
 
     def dispatch(self, job_id: str) -> JobOutcome:
@@ -224,14 +225,6 @@ class JobManagerExecution(JobManagerState):
                 name=f"vaultspec-job-{job_id}-attempt-{admission.attempt}",
             )
             self._retiring_tasks.add(task)
-            task.add_done_callback(
-                partial(
-                    self._complete_attempt,
-                    job_id,
-                    admission.attempt,
-                    binding=admission.binding,
-                )
-            )
 
         try:
             started = await _run_in_thread(
@@ -251,9 +244,18 @@ class JobManagerExecution(JobManagerState):
             owns_runtime = latest is not None and latest.runtime.task is task
             if not owns_runtime:
                 task.cancel()
+                self._retiring_tasks.discard(task)
                 return started
             assert latest is not None
             started_snapshot = self._snapshot_locked(latest)
+            task.add_done_callback(
+                partial(
+                    self._complete_attempt,
+                    job_id,
+                    admission.attempt,
+                    binding=admission.binding,
+                )
+            )
 
         start_gate.set()
         self._notify_started(admission.binding, started_snapshot)
@@ -400,9 +402,13 @@ class JobManagerExecution(JobManagerState):
         )
         started = time.perf_counter()
         result: JobExecutionResult | None = None
-        control_signal: PauseRequested | CancelRequested | ShutdownRequested | None = (
-            None
-        )
+        control_signal: (
+            PauseRequested
+            | CancelRequested
+            | QuiesceRequested
+            | ShutdownRequested
+            | None
+        ) = None
         error: BaseException | None = None
         release_persisted = False
         try:
@@ -412,7 +418,12 @@ class JobManagerExecution(JobManagerState):
                 binding,
                 limiter=self._attempt_limiter(job_id),
             )
-        except (PauseRequested, CancelRequested, ShutdownRequested) as exc:
+        except (
+            PauseRequested,
+            CancelRequested,
+            QuiesceRequested,
+            ShutdownRequested,
+        ) as exc:
             control_signal = exc
         except BaseException as exc:
             error = exc

@@ -17,6 +17,7 @@ from ...job_manager.manager import JobManager
 from ...job_manager.models import JobAttemptContext
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...service import ServiceRegistry
+from ...service_quiesce import ServiceQuiesceController
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(120)]
 
@@ -61,7 +62,11 @@ async def test_over_budget_document_is_refused_before_gpu_or_extractor(
     source = tmp_path / "oversized.blob"
     source.write_bytes(b"bounded admission input")
 
-    manager = JobManager(max_nonterminal=1, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=None,
+    )
     created = manager.create(
         JobSpec(
             JobOperation.INDEX,

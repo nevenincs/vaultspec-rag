@@ -24,7 +24,6 @@ from ._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text
 from ._runtime_identity import process_identity_fields
 from .config._settings import managed_status_dir
 from .job_control import NO_RUN_CONTROL
-from .job_manager.manager import JobManager
 from .job_manager.models import MAX_RECORDS, JobAttemptContext, JobExecutionResult
 from .job_models import (
     DesiredJobState,
@@ -58,6 +57,7 @@ if TYPE_CHECKING:
         DocumentScopedPreflight,
     )
     from .job_control import RunControl
+    from .job_manager.manager import JobManager
     from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
@@ -242,7 +242,7 @@ def get_job_manager() -> JobManager:
         with _manager_lock:
             manager = _job_manager
             if manager is None:
-                manager = JobManager(quiesce_gate=get_registry().quiesce_gate)
+                manager = get_registry().create_job_manager()
                 _job_manager = manager
     return manager
 

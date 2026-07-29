@@ -17,6 +17,7 @@ from .. import jobs as jobs_module
 from ..job_manager._execution import logger as execution_logger
 from ..job_manager.manager import JobManager
 from ..service import ServiceRegistry
+from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
@@ -47,7 +48,11 @@ def test_job_manager_logs_under_the_jobs_namespace() -> None:
 
 
 def test_job_manager_rejects_unknown_attributes() -> None:
-    manager = JobManager(max_nonterminal=1, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=None,
+    )
 
     with pytest.raises(AttributeError):
         _ = manager.misspelled_manager_attribute

@@ -19,6 +19,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
 
 if TYPE_CHECKING:
@@ -90,7 +91,11 @@ async def test_successful_retry_supersedes_interrupted_parent() -> None:
     disabled, this failed on the ``JobState.SUPERSEDED`` assertion (the parent
     stayed interrupted and retryable); with it restored the test passes.
     """
-    manager = JobManager(max_nonterminal=2, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=None,
+    )
     parent_id = _create(manager)
     await _finish(
         manager,
@@ -134,7 +139,11 @@ async def test_failed_retry_leaves_parent_retryable() -> None:
     the ``JobState.INTERRUPTED`` assertion below; with the condition restored
     the test passes.
     """
-    manager = JobManager(max_nonterminal=2, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=None,
+    )
     parent_id = _create(manager)
     await _finish(manager, parent_id, JobState.INTERRUPTED, error_kind="interrupted")
 
@@ -153,7 +162,11 @@ async def test_failed_retry_leaves_parent_retryable() -> None:
 @pytest.mark.asyncio
 async def test_chained_retries_resolve_every_ancestor() -> None:
     """One eventual success settles the whole retry lineage."""
-    manager = JobManager(max_nonterminal=2, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=None,
+    )
     parent_id = _create(manager)
     await _finish(manager, parent_id, JobState.INTERRUPTED, error_kind="interrupted")
 
@@ -186,7 +199,11 @@ async def test_retry_with_equivalent_active_child_logs_the_rejection(
     branch removed, this failed on the empty ``rejections`` assertion; with it
     restored the test passes.
     """
-    manager = JobManager(max_nonterminal=2, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=None,
+    )
     parent_id = _create(manager)
     await _finish(manager, parent_id, JobState.INTERRUPTED, error_kind="interrupted")
     child_id = _retry_child(manager, parent_id)
@@ -217,7 +234,11 @@ async def test_rejected_retry_of_succeeded_job_logs_code_target_and_initiator(
     this failed on the empty ``rejections`` assertion; with it restored the
     test passes.
     """
-    manager = JobManager(max_nonterminal=2, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=None,
+    )
     job_id = _create(manager)
     await _finish(manager, job_id, JobState.SUCCEEDED, result="ok")
 
@@ -249,7 +270,11 @@ async def test_rejected_retry_of_unknown_job_logs_the_requested_target(
     retry-target branch, this failed on the ``job_id=`` assertion; with it
     restored the test passes.
     """
-    manager = JobManager(max_nonterminal=2, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=None,
+    )
     with caplog.at_level(logging.WARNING, logger=_JOBS_LOGGER):
         rejected = manager.retry("no-such-job")
     assert rejected.code == "job_not_found"
@@ -269,7 +294,11 @@ async def test_resolution_logs_a_superseded_event(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Resolving a parent is a lifecycle fact and shows up in the service log."""
-    manager = JobManager(max_nonterminal=2, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=None,
+    )
     parent_id = _create(manager)
     await _finish(manager, parent_id, JobState.INTERRUPTED, error_kind="interrupted")
     child_id = _retry_child(manager, parent_id)
@@ -294,13 +323,21 @@ async def test_superseded_parent_round_trips_persistence(tmp_path: Path) -> None
     invariant fails restore validation, not this assertion set.
     """
     state_path = tmp_path / "jobs-state.json"
-    manager = JobManager(max_nonterminal=2, state_path=state_path)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=state_path,
+    )
     parent_id = _create(manager)
     await _finish(manager, parent_id, JobState.INTERRUPTED, error_kind="interrupted")
     child_id = _retry_child(manager, parent_id)
     await _finish(manager, child_id, JobState.SUCCEEDED, result="ok")
 
-    restored = JobManager(max_nonterminal=2, state_path=state_path)
+    restored = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=state_path,
+    )
     outcome = restored.restore_persisted()
     assert outcome.code == "job_state_restored"
     parent = restored.get(parent_id)

@@ -3,108 +3,133 @@ tags:
   - '#plan'
   - '#service-quiesce'
 date: '2026-07-24'
-modified: '2026-07-27'
-tier: L2
+modified: '2026-07-30'
+tier: L3
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-research]]'
+  - '[[2026-06-12-service-concurrency-adr]]'
+  - '[[2026-06-24-service-hardware-singleton-adr]]'
+  - '[[2026-07-21-service-job-control-adr]]'
+  - '[[2026-07-28-pressure-management-adr]]'
 ---
 
 # `service-quiesce` plan
 
 ## Description
 
-This plan executes only Phase 1 of the governing decision: the in-process,
-zero-CPU cooperative quiesce gate that lets the resident daemon stand down for a
-short-lived external GPU consumer and resume afterward, honoured at every
-unprotected indexer checkpoint and at search admission, with a `server pause` /
-`server resume` operator surface. The whole Phase-1 boundary is pure `threading`
-and OS code, GPU-free, and fully green on any host. `P01` builds the primitive and
-the token latch, `P02` wires one process-global gate into the service, jobs, and
-search, and `P03` adds the structured-idempotent operability verbs. The decision
-and its research back every Step and are named in `related:`.
+This amended plan executes the accepted service-quiesce decision. `W01` retains the completed Event-gate history solely for auditability; its global hold design is superseded and must not be extended. `W02` is owned by the core lifecycle implementation lane and replaces that gate with acknowledged resource quiescence: controller state, cooperative drain, GPU-residency release, and same-ID job convergence. `W03` is owned by the service-interface lane and makes routes, adapters, status, and fallback behavior describe the one achieved controller state. `W04` is owned by the containment-and-validation lane and supplies the distinct borrower lease and CPU-only proof that no uncertain service state can trigger local GPU contention.
 
-The load-bearing correctness point is the absorbing-open latch: an absorbing
-shutdown or cancel request must always win over a hold, with no lost wakeup even
-when a `pause()` races a pending absorbing request, so a quiesced worker can never
-block forever. The gate primitive must carry no torch import so it stays importable
-from the spawn-worker chain and from search, and its wait must never sit inside a
-`gpu_lock`, a `protected()` span, or a held store write.
-
-Phase 2 is explicitly deferred and is NOT planned as Steps here. Its work - the
-second OS advisory lock quiesce lease held by the external actor, the daemon-side
-observer and wakeup design that turns a held lease into an actual quiesce and frees
-idle resident VRAM, the `torch.cuda.empty_cache()` VRAM release driven from the
-pause path behind the centralized GPU gate, and the GPU-live end-to-end
-verification that the daemon frees VRAM and a co-scheduled consumer succeeds - all
-require a coordinated GPU maintenance window because any GPU-live test co-schedules
-against the resident service that holds several GiB, the exact 16 GiB OOM hazard
-this feature exists to prevent. Phase 1 `server pause` is the honest synchronous
-interim for the idle-daemon case and the natural future site for `empty_cache()`.
-Phase 2 is sequenced after this plan and is out of its scope.
+The release boundary is exact: only `quiesced` with `vram_released: true` and `safe_to_borrow_gpu: true` permits a borrower. A pause request, `pausing`, `warming`, timeout, rebuild failure, or degraded discovery is not permission to allocate GPU work. The plan deliberately excludes service starts, live GPU runs, and co-scheduled end-to-end tests; those require a separately authorized maintenance window.
 
 ## Steps
 
-### Phase `P01` - QuiesceGate primitive and RunControlToken latch integration
+## Wave `W01` - Retire the unsafe hold gate
 
-Deliver the torch-free QuiesceGate (Event set=running/clear=paused, absorbing-open latch) and wire it into RunControlToken so checkpoint() consults the gate first, protected-aware, with absorbing shutdown/cancel latching the gate open irreversibly; proven by both-direction guard tests.
+Preserve the completed phase-one history while replacing its unsafe global hold semantics under the amended service-quiesce decision.
 
-- [x] `P01.S01` - Create the torch-free QuiesceGate primitive over a threading.Event with set equals running and clear equals paused, exposing wait, pause, resume and is_paused plus an absorbing-open latch so that once latched open wait returns immediately and pause and clear become no-ops, with positive unit tests that pause blocks a waiter and resume releases it; `src/vaultspec_rag/job_control.py`.
-- [x] `P01.S02` - Integrate the gate into RunControlToken as an optional injected reference where request_cancel and request_shutdown latch the gate open, checkpoint consults the gate first but only when protected depth is zero and re-checks absorbing signals after the gate releases, and a gateless token and NullRunControl stay no-op; `src/vaultspec_rag/job_control.py`.
-- [x] `P01.S03` - Add the both-direction guard tests covering worker blocks when quiesced with a bounded join timeout, worker resumes when released, shutdown wins over a concurrent re-pause, and a checkpoint inside a protected span never parks, each proven red-then-green in one sequence; `src/vaultspec_rag/tests/test_job_control_unit.py`.
+### Phase `W01.P01` - Historical Event-gate primitive
 
-### Phase `P02` - Process-global wiring into the service and search
+Record the completed phase-one Event-gate work only; its global hold semantics are superseded by the amended decision and must not be extended.
 
-Give ServiceRegistry one process-global QuiesceGate beside its GPU lock, inject it into every RunControlToken the JobManager builds so all in-flight jobs share one gate, and gate search at admission before the GPU section without parking under the GPU lock.
+- [x] `W01.P01.S01` - Create the torch-free Event-gate primitive with running and held states plus latch behavior; `src/vaultspec_rag/job_control.py`.
+- [x] `W01.P01.S02` - Integrate the historical gate into RunControlToken protected checkpoints; `src/vaultspec_rag/job_control.py`.
+- [x] `W01.P01.S03` - Add the historical Event-gate and protected-checkpoint guard coverage; `src/vaultspec_rag/tests/test_job_control_unit.py`.
 
-- [x] `P02.S04` - Give ServiceRegistry one process-global QuiesceGate constructed beside its GPU lock and expose it through an accessor mirroring the existing gpu_lock property so a single gate governs the whole daemon process; `src/vaultspec_rag/service.py`.
-- [x] `P02.S05` - Thread the registry gate into JobManager and inject it into each RunControlToken built at both dispatch construction sites so every in-flight job shares the one process-global gate, with a unit test asserting a dispatched token observes the shared gate; `src/vaultspec_rag/job_manager.py`.
-- [x] `P02.S06` - Inject the gate into VaultSearcher like gpu_lock at each construction site in the registry and wait on the gate at search admission before acquiring gpu_lock in the GPU section, never parking while holding gpu_lock and preserving the torch-free path, with a unit test of admission gating for gpu_lock None and an injected gate; `src/vaultspec_rag/search/_searcher.py`.
+### Phase `W01.P02` - Historical global-gate wiring
 
-### Phase `P03` - server pause / server resume operability surface
+Record the completed global-gate wiring only; W02 replaces it with controller-owned resource quiescence.
 
-Add service-domain pause/resume behavior over the gate and the server pause / server resume CLI verbs mirroring the structured-idempotent JSON envelope pattern, treating already-paused/already-running as success exit 0 with an already\_\* status.
+- [x] `W01.P02.S04` - Expose the historical process-global gate beside the registry GPU lock; `src/vaultspec_rag/service.py`.
+- [x] `W01.P02.S05` - Inject the historical global gate into managed attempt tokens; `src/vaultspec_rag/job_manager`.
+- [x] `W01.P02.S06` - Gate historical search admission before GPU-lock acquisition; `src/vaultspec_rag/search/_searcher.py`.
 
-- [x] `P03.S07` - Add service-domain pause and resume behavior driving the registry gate and expose it through a localhost server route returning a structured status of paused, already_paused, running or already_running so the CLI adapts to service-owned behavior rather than owning it; `src/vaultspec_rag/server/_routes.py`.
-- [x] `P03.S08` - Add the server pause and server resume CLI verbs that call the route and emit exactly one structured JSON envelope on every exit path, mirroring the start-success and fail-start helper pattern, with already-paused and already-running returning success exit 0 carrying an already\_\* status; `src/vaultspec_rag/cli/_service_quiesce.py`.
-- [x] `P03.S09` - Add guard tests for the pause and resume envelope contract proving both directions of the idempotent already\_\* path, where already-paused and already-running return exit 0 with the already\_\* status and a genuine state change returns the changed status, each proven red-then-green; `src/vaultspec_rag/tests/test_service_quiesce_cli.py`.
+### Phase `W01.P03` - Historical pause and resume surface
+
+Record the original route and CLI surface only; W03 upgrades it to acknowledged quiescence and truthful failure states.
+
+- [x] `W01.P03.S07` - Add the original service pause and resume route behavior; `src/vaultspec_rag/server/_routes.py`.
+- [x] `W01.P03.S08` - Add the original server pause and resume CLI verbs; `src/vaultspec_rag/cli/_service_quiesce.py`.
+- [x] `W01.P03.S09` - Add the original pause and resume CLI envelope guards; `src/vaultspec_rag/tests/test_service_quiesce_cli.py`.
+
+## Wave `W02` - Build acknowledged resource quiescence
+
+Replace the shared hold gate with a registry-owned controller that drains cooperative work and releases GPU residency before asserting a safe handoff. W03 depends on its stable state vocabulary.
+
+### Phase `W02.P04` - Controller and registry GPU residency
+
+Establish the one stateful quiesce authority, its admission epochs and drain evidence, and reversible GPU-stack release and rebuild without closing stores.
+
+- [x] `W02.P04.S10` - Create the serialized resource-quiesce controller with state transitions, epoch-scoped compute tickets, bounded drain acknowledgement and truthful safety snapshots; `src/vaultspec_rag/service_quiesce.py`.
+- [x] `W02.P04.S11` - Own controller lifecycle and reversible GPU dependency detachment and rebuild while retaining stores and project identity; `src/vaultspec_rag/service.py`.
+- [x] `W02.P04.S12` - Prove CPU-only controller transitions, ticket drain ordering, idempotency and fail-closed timeout outcomes with real threads and conditions; `src/vaultspec_rag/tests/test_service_quiesce_controller.py`.
+
+### Phase `W02.P05` - Cooperative job and search drain
+
+Make global quiesce unwind managed attempts and drain search work without letting token-local cancellation or protected mutations corrupt controller state.
+
+- [x] `W02.P05.S13` - Separate token-local cancellation and shutdown from global resource-quiesce signalling while preserving protected checkpoint semantics; `src/vaultspec_rag/job_control.py`.
+- [x] `W02.P05.S14` - Reconcile globally quiesced attempts by releasing every managed resource and requeueing the same logical job only after controller resume; `src/vaultspec_rag/job_manager`.
+- [x] `W02.P05.S15` - Guard index streaming safe boundaries so quiesce observations remain outside GPU locks and indivisible storage mutations; `src/vaultspec_rag/indexer/_streaming.py`.
+- [x] `W02.P05.S16` - Admit search work through controller tickets before project and GPU ownership and return a retryable quiescing outcome instead of parking references; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `W02.P05.S17` - Prove cancellation isolation, managed-resource release and same-ID requeue across global quiesce using CPU-only real runtime fixtures; `src/vaultspec_rag/tests/test_job_manager_quiesce.py`.
+- [x] `W02.P05.S18` - Prove search tickets drain before quiescence without acquiring or initializing CUDA; `src/vaultspec_rag/tests/test_search_quiesce_admission.py`.
+
+## Wave `W03` - Publish truthful lifecycle status
+
+Expose the controller achieved states through routes and adapters while refusing unsafe local fallback or partial acknowledgement. W04 relies on these routes for lease orchestration.
+
+### Phase `W03.P06` - Authoritative routes and service state
+
+Make the service route await achieved quiesce or running, emit one truthful envelope, and publish the identical controller block through health and service state.
+
+- [ ] `W03.P06.S19` - Replace raw gate mutations with acknowledged controller transitions and structured timeout and failure envelopes; `src/vaultspec_rag/server/_routes.py`.
+- [ ] `W03.P06.S20` - Publish controller health and lifecycle cadence without a free-running poller or GPU import; `src/vaultspec_rag/server/_lifespan.py`.
+- [ ] `W03.P06.S21` - Add the canonical quiesce block to read-only service-state output without duplicating lifecycle computation; `src/vaultspec_rag/api.py`.
+- [ ] `W03.P06.S22` - Prove route authentication, idempotency, drain acknowledgement, timeout truthfulness and one-envelope JSON outcomes on a CPU-only service fixture; `src/vaultspec_rag/tests/test_service_quiesce_routes.py`.
+
+### Phase `W03.P07` - Adapter visibility and fallback refusal
+
+Have every adapter render service-owned quiesce truth, while preserving the MCP read-only lifecycle boundary and preventing automatic local compute escalation.
+
+- [ ] `W03.P07.S23` - Pass quiesce transition and service-state payloads through the one service-client transport without local GPU behavior; `src/vaultspec_rag/serviceclient/_transport.py`.
+- [ ] `W03.P07.S24` - Render only acknowledged pause and resume success and explain unsafe transition outcomes in human and JSON modes; `src/vaultspec_rag/cli/_service_quiesce.py`.
+- [ ] `W03.P07.S25` - Remove automatic local fallback after service discovery and require verified borrower safety before explicit local indexing; `src/vaultspec_rag/cli/_index.py`.
+- [ ] `W03.P07.S26` - Expose the service-owned quiesce block through existing MCP service-state delegation without adding public lifecycle mutation tools; `src/vaultspec_rag/mcp/_tools.py`.
+- [ ] `W03.P07.S27` - Render controller state, GPU release evidence and borrower safety in the jobs TUI header and status details; `src/vaultspec_rag/cli/_jobs_tui.py`.
+- [ ] `W03.P07.S28` - Prove CLI, MCP and TUI adapters preserve one controller vocabulary and never initialize torch on service paths; `src/vaultspec_rag/tests/test_service_quiesce_adapters.py`.
+
+## Wave `W04` - Contain external GPU borrowing
+
+Add a distinct borrower lease and CPU-only guard coverage so service discovery, live tests, and local execution cannot silently contend for the GPU. This wave completes only after W02 and W03 are stable.
+
+### Phase `W04.P08` - Distinct borrower lease and containment
+
+Create a machine-global borrower lease separate from service identity and use it to make intentional external GPU work crash-safe and explicit.
+
+- [ ] `W04.P08.S29` - Implement a distinct machine-global GPU borrower lease with exact ownership and crash-release semantics without touching the service identity lock; `src/vaultspec_rag/gpu_borrow_lease.py`.
+- [ ] `W04.P08.S30` - Add explicit borrower lease orchestration around acknowledged pause and resume and observe lease release on the existing lifecycle cadence without starting another service; `src/vaultspec_rag/cli/_gpu_lease.py`.
+- [ ] `W04.P08.S31` - Prove second-lease refusal, child-process crash release and singleton separation using real OS locks without CUDA; `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`.
+
+### Phase `W04.P09` - Static safety gates and non-GPU validation
+
+Prove the implementation cannot silently allocate or co-schedule GPU work and run the focused quality gates without any live service or CUDA execution.
+
+- [ ] `W04.P09.S32` - Add source and fresh-interpreter guards for torch-free controller and adapter imports and explicit GPU lease preconditions; `src/vaultspec_rag/tests/test_service_quiesce_import_guards.py`.
+- [ ] `W04.P09.S33` - Add CLI fallback and machine-singleton regression coverage that refuses local GPU escalation from unreachable or untrusted service discovery; `src/vaultspec_rag/tests/test_cli_index_gpu_containment.py`.
 
 ## Parallelization
 
-The Phases carry hard ordering and run sequentially. `P02` cannot begin until
-`P01` lands, because `P02` injects the `P01` gate and latched token into the
-service, jobs, and search. `P03` cannot begin until `P02` exposes the
-process-global gate on the registry that the pause and resume behavior drives.
-Within `P01`, `S01` (primitive) precedes `S02` (token integration), and `S03`
-(guards) follows both. Within `P02` the three wiring Steps `S04`, `S05`, `S06`
-touch independent modules and may proceed in parallel once `S04` exposes the gate
-accessor. Within `P03`, `S07` (service behavior and route) precedes `S08` (CLI
-verbs), and `S09` (envelope guards) follows both.
+Waves are ordered: W02 establishes the controller contract, W03 adapts all public surfaces to it, and W04 relies on both for safe borrowing. Within W02, P04 precedes P05; after the controller interface is fixed, the service residency implementation and its controller tests may proceed alongside the job/search drain lane. Within W03, P06 precedes P07 because adapters consume the route vocabulary. Within W04, P08 precedes P09. Independent test Steps may begin with their owned production Step, but each guard must be proven red then green without leaving a mutation on disk.
 
 ## Verification
 
-The plan is complete when every Step is closed (`- [x]`) and the following hold:
+The plan is complete only when every open Step is checked and code review confirms these acceptance criteria:
 
-- No busy-loop or sleep-poll exists anywhere in the gate path: the wait is
-  `Event.wait` and the latch only, and a reviewer confirms no sleep-poll on any
-  worker, admission, or observer path.
-- The gate primitive and every module on the spawn-worker import chain and the
-  search path remain torch-free: no new module-scope or function-local `torch`
-  import is introduced by the gate, and the existing lazy-import regression guard
-  stays green.
-- The gate wait never sits inside a `gpu_lock`, a `protected()` span, or a held
-  store write at any checkpoint or admission site, and the streaming checkpoints
-  stay outside `gpu_lock` as they are today.
-- The three both-direction guards (worker blocks when quiesced, worker resumes when
-  released, shutdown wins over a concurrent re-pause) and the protected-aware guard
-  are each proven red-then-green in one uninterrupted sequence and recorded in the
-  respective Step Record.
-- The `server pause` and `server resume` envelope contract emits exactly one
-  structured envelope per exit path and treats already-paused and already-running
-  as success exit 0 with an `already_*` status, with both directions of the
-  idempotent path proven red-then-green and recorded in the Step Record.
-- Green gate per Step where sensible: `uv run --no-sync ruff check src tools`
-  wholesale, `ty check`, and the relevant unit and guard tests pass.
-
-For tier-specific verification cadence, see the authorizing documents linked in the
-`related:` frontmatter.
+- `POST /pause` and `server pause` succeed only after admission closure, pre-pause ticket drain, managed-resource release, GPU-stack detachment, allocator release, and `safe_to_borrow_gpu: true`; every other state is a non-success.
+- `POST /resume` and `server resume` succeed only after GPU rebuild and a new admission epoch open; failed warmup stays closed and names the failure.
+- Cancelling or shutting down one attempt cannot disable a future global quiesce; no global wait occurs inside a GPU lock, protected mutation, or store write.
+- Quiesced jobs preserve logical identity and desired running intent while releasing limiter, project lease, writer, worker and pipeline ownership; searches drain or receive a retryable quiescing outcome without retaining a model reference.
+- Health, service-state, jobs, CLI, MCP service-state, and TUI expose the same controller vocabulary; public MCP retains no lifecycle mutation and no adapter falls back to local GPU work.
+- A borrower lease is distinct from the machine service lock, auto-releases on borrower death, and local fallback or GPU-live test entry refuses unless lease and safe service conditions are proven.
+- Required non-GPU gates are focused unit and integration tests for the listed files, fresh-interpreter torch-import guards, `uv run --no-sync ruff check src tools`, `ty check`, and the configured strict type check. Full GPU-live release proof is explicitly unrun and requires a separately authorized maintenance window.

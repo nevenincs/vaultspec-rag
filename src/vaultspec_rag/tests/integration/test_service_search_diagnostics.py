@@ -22,6 +22,7 @@ from mcp.types import CallToolResult, TextContent
 
 from ...job_manager.manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
+from ...service_quiesce import ServiceQuiesceController
 from ...serviceclient._transport import (
     _do_http_call,
     _timeout_diagnostics,
@@ -1116,7 +1117,10 @@ def _live_service_token(port: int) -> str:
 
 def _persist_paused_matching_rebuild(state_path: Path, root: Path) -> str:
     assert state_path.is_file()
-    manager = JobManager(state_path=state_path)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        state_path=state_path,
+    )
     restored = manager.restore_persisted()
     assert restored.code == "job_state_restored", restored.to_dict()
     created = manager.create(

@@ -498,7 +498,8 @@ class TestTheLookalikesThatMustNotBeMerged:
         # The canonical mapping reader cannot express that difference, which
         # is why this one is not routed through it.
         assert _nested_section({}, "resources", "current") is None
-        assert mapping({}.get("resources")) == {}
+        empty_record: dict[str, object] = {}
+        assert mapping(empty_record.get("resources")) == {}
 
         present: dict[str, object] = {"resources": {"current": {"rss_mb": 12.0}}}
         assert _nested_section(present, "resources", "current") == {"rss_mb": 12.0}

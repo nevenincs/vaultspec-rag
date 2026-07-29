@@ -258,15 +258,18 @@ def index(
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
     registry = get_registry()
-    registry.load_model(model_name)
-    with registry.lease(root) as slot:
+    result: IndexResult | None = None
+    with registry.compute_lease(root, model_name=model_name) as lease:
+        runtime = lease.runtime
         result = (
-            slot.vault_indexer.full_index(clean=clean, reporter=rep)
+            runtime.vault_indexer.full_index(clean=clean, reporter=rep)
             if (full or clean)
-            else slot.vault_indexer.incremental_index(reporter=rep)
+            else runtime.vault_indexer.incremental_index(reporter=rep)
         )
-        slot.graph_cache.invalidate()
-        return result
+        registry.peek_project(root).graph_cache.invalidate()
+    if result is None:
+        raise RuntimeError("vault indexing lease ended without a result")
+    return result
 
 
 def index_codebase(
@@ -292,18 +295,23 @@ def index_codebase(
     rep = options.reporter if options.reporter is not None else NullProgressReporter()
     preflight = _preflight_code_index(root, extra_excludes=options.extra_excludes)
     registry = get_registry()
-    registry.load_model(options.model_name)
-    with registry.lease(root) as slot:
+    result: IndexResult | None = None
+    with registry.compute_lease(root, model_name=options.model_name) as lease:
+        runtime = lease.runtime
         if options.full or options.clean:
-            return slot.code_indexer.full_index(
+            result = runtime.code_indexer.full_index(
                 clean=options.clean,
                 reporter=rep,
                 preflight=preflight,
             )
-        return slot.code_indexer.incremental_index(
-            reporter=rep,
-            preflight=preflight,
-        )
+        else:
+            result = runtime.code_indexer.incremental_index(
+                reporter=rep,
+                preflight=preflight,
+            )
+    if result is None:
+        raise RuntimeError("code indexing lease ended without a result")
+    return result
 
 
 def index_documents(
@@ -332,19 +340,24 @@ def index_documents(
         )
     )
     registry = get_registry()
-    registry.load_model(options.model_name)
-    with registry.lease(root) as slot:
+    result: IndexResult | None = None
+    with registry.compute_lease(root, model_name=options.model_name) as lease:
+        runtime = lease.runtime
         if options.full or options.clean:
-            return slot.document_indexer.full_index(
+            result = runtime.document_indexer.full_index(
                 clean=options.clean,
                 reporter=rep,
                 preflight=cast("DocumentIndexPreflight", preflight),
             )
-        return slot.document_indexer.incremental_index(
-            reporter=rep,
-            changed_paths=options.changed_paths,
-            preflight=preflight,
-        )
+        else:
+            result = runtime.document_indexer.incremental_index(
+                reporter=rep,
+                changed_paths=options.changed_paths,
+                preflight=preflight,
+            )
+    if result is None:
+        raise RuntimeError("document indexing lease ended without a result")
+    return result
 
 
 def _domain_outcome(operation: Any) -> DomainIndexOutcome:
@@ -428,9 +441,9 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
     # cheap and works on a CPU-only host).
     if registry.vault_doc_count(root) == 0:
         return []
-    registry.load_model()
-    with registry.lease(root) as slot:
-        return slot.searcher.search_vault(
+    results: list[SearchResult] | None = None
+    with registry.search_lease(root) as lease:
+        results = lease.searcher.search_vault(
             request.query,
             top_k=request.top_k,
             doc_type=request.doc_type,
@@ -441,6 +454,9 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
             like_ids=request.like_ids,
             unlike_ids=request.unlike_ids,
         )
+    if results is None:
+        raise RuntimeError("vault search lease ended without a result")
+    return results
 
 
 def search_vault_timed(
@@ -469,12 +485,12 @@ def search_vault_timed(
             "project_lease_seconds": 0.0,
         }
     phase_started = time.perf_counter()
-    registry.load_model()
-    model_load_seconds = time.perf_counter() - phase_started
-    phase_started = time.perf_counter()
-    with registry.lease(root) as slot:
+    project_lease_seconds: float | None = None
+    results: list[SearchResult] | None = None
+    timings: dict[str, float] | None = None
+    with registry.search_lease(root) as lease:
         project_lease_seconds = time.perf_counter() - phase_started
-        results, timings = slot.searcher.search_vault_timed(
+        results, timings = lease.searcher.search_vault_timed(
             request.query,
             top_k=request.top_k,
             doc_type=request.doc_type,
@@ -485,7 +501,9 @@ def search_vault_timed(
             like_ids=request.like_ids,
             unlike_ids=request.unlike_ids,
         )
-    timings[PHASE_MODEL_LOAD] = model_load_seconds
+    if results is None or timings is None or project_lease_seconds is None:
+        raise RuntimeError("vault search lease ended without a result")
+    timings[PHASE_MODEL_LOAD] = 0.0
     timings[PHASE_PROJECT_LEASE] = project_lease_seconds
     timings["indexed_count"] = indexed_count
     return results, timings
@@ -524,9 +542,9 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
     # Empty/unbuilt code index: return an empty result without loading the model.
     if registry.code_chunk_count(root) == 0:
         return []
-    registry.load_model()
-    with registry.lease(root) as slot:
-        return slot.searcher.search_codebase(
+    results: list[SearchResult] | None = None
+    with registry.search_lease(root) as lease:
+        results = lease.searcher.search_codebase(
             request.query,
             top_k=request.top_k,
             language=request.language,
@@ -544,6 +562,9 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
             like_ids=request.like_ids,
             unlike_ids=request.unlike_ids,
         )
+    if results is None:
+        raise RuntimeError("code search lease ended without a result")
+    return results
 
 
 def _code_breadth_timings(
@@ -610,12 +631,12 @@ def search_codebase_timed(
             **breadth,
         }
     phase_started = time.perf_counter()
-    registry.load_model()
-    model_load_seconds = time.perf_counter() - phase_started
-    phase_started = time.perf_counter()
-    with registry.lease(root) as slot:
+    project_lease_seconds: float | None = None
+    results: list[SearchResult] | None = None
+    timings: dict[str, float] | None = None
+    with registry.search_lease(root) as lease:
         project_lease_seconds = time.perf_counter() - phase_started
-        results, timings = slot.searcher.search_codebase_timed(
+        results, timings = lease.searcher.search_codebase_timed(
             request.query,
             top_k=request.top_k,
             language=request.language,
@@ -634,7 +655,9 @@ def search_codebase_timed(
             unlike_ids=request.unlike_ids,
             notes=request.notes,
         )
-    timings[PHASE_MODEL_LOAD] = model_load_seconds
+    if results is None or timings is None or project_lease_seconds is None:
+        raise RuntimeError("code search lease ended without a result")
+    timings[PHASE_MODEL_LOAD] = 0.0
     timings[PHASE_PROJECT_LEASE] = project_lease_seconds
     timings["indexed_count"] = indexed_count
     timings.update(breadth)
@@ -889,17 +912,18 @@ def run_benchmark(
 
     root = _resolve(root_dir)
     registry = get_registry()
-    registry.load_model()
-
-    with registry.lease(root) as slot:
-        vault_count = slot.store.count()
+    with registry.lease_store(root) as store:
+        vault_count = store.count()
         if vault_count == 0:
             raise ValueError("No vault documents indexed.")
 
-        code_count = slot.store.count_code()
+        code_count = store.count_code()
+
+    benchmark: dict[str, object] | None = None
+    with registry.search_lease(root) as lease:
 
         # Warmup
-        slot.searcher.search_vault("warmup", top_k=1)
+        lease.searcher.search_vault("warmup", top_k=1)
 
         _bench_queries = [
             "architecture decision",
@@ -928,7 +952,7 @@ def run_benchmark(
         for i in range(n_queries):
             q = _bench_queries[i % len(_bench_queries)]
             t0 = time.perf_counter()
-            slot.searcher.search_vault(q, top_k=5)
+            lease.searcher.search_vault(q, top_k=5)
             latencies.append((time.perf_counter() - t0) * 1000)
 
         latencies.sort()
@@ -953,7 +977,7 @@ def run_benchmark(
             gpu_name = "N/A"
             vram_mb = 0.0
 
-        return {
+        benchmark = {
             "p50": p50,
             "p95": p95,
             "p99": p99,
@@ -964,6 +988,9 @@ def run_benchmark(
             "gpu": gpu_name,
             "vram_mb": vram_mb,
         }
+    if benchmark is None:
+        raise RuntimeError("benchmark search lease ended without a result")
+    return benchmark
 
 
 def run_quality_probe(
@@ -990,21 +1017,19 @@ def run_quality_probe(
     from .synthetic import build_synthetic_vault
 
     registry = get_registry()
-    registry.load_model()
-
     with tempfile.TemporaryDirectory(prefix="vaultspec-quality-") as tmp:
         root = Path(tmp)
         manifest = build_synthetic_vault(root, n_docs=24, seed=42)
+        probes: list[dict[str, object]] = []
+        passed = 0
+        needles = list(manifest.needles.items())[:8]
 
-        with registry.lease(root) as slot:
-            slot.vault_indexer.full_index(reporter=NullProgressReporter())
+        with registry.compute_lease(root) as lease:
+            runtime = lease.runtime
+            runtime.vault_indexer.full_index(reporter=NullProgressReporter())
 
-            probes: list[dict[str, Any]] = []
-            passed = 0
-
-            needles = list(manifest.needles.items())[:8]
             for needle, doc_id in needles:
-                results = slot.searcher.search_vault(needle, top_k=5)
+                results = runtime.searcher.search_vault(needle, top_k=5)
                 ok = any(doc_id in r.id for r in results)
                 if ok:
                     passed += 1
@@ -1017,8 +1042,8 @@ def run_quality_probe(
                     }
                 )
 
-            total = len(needles)
-            precision = passed / total if total else 0.0
+        total = len(needles)
+        precision = passed / total if total else 0.0
 
         registry.close_project(root)
 

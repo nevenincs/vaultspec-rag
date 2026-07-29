@@ -23,6 +23,7 @@ from ..job_models import (
     JobState,
 )
 from ..jobs import index_job_status
+from ..service_quiesce import ServiceQuiesceController
 
 pytestmark = [pytest.mark.unit]
 
@@ -35,7 +36,11 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
     tmp_path: Path,
 ) -> None:
     state_path = tmp_path / "jobs-state.json"
-    manager = JobManager(max_nonterminal=2, state_path=state_path)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=state_path,
+    )
     created = manager.create(
         JobSpec(
             JobOperation.INDEX,
@@ -156,7 +161,11 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
             resilience=settled_resilience,
         )
 
-        restarted = JobManager(max_nonterminal=2, state_path=state_path)
+        restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
         assert restarted.restore_persisted().code == "job_state_restored"
         restored = restarted.get(created.job.id)
         assert restored is not None
