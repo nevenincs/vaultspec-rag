@@ -41,6 +41,7 @@ related:
   - '[[2026-07-29-service-quiesce-w02-audit]]'
   - '[[2026-07-29-service-quiesce-w02-remediation-audit]]'
   - '[[2026-07-30-service-quiesce-s29-borrower-acceptance-audit]]'
+  - '[[2026-07-30-service-quiesce-s32-acceptance-audit]]'
   - '[[2026-07-30-service-quiesce-w02-resume-recovery-audit]]'
   - '[[2026-07-30-service-quiesce-w03-acceptance-audit]]'
 ---
@@ -60,6 +61,7 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-29-service-quiesce-w02-audit` - `service-quiesce` audit: `W02 resource-quiesce implementation review`
 - `2026-07-29-service-quiesce-w02-remediation-audit` - `service-quiesce` audit: `w02 remediation`
 - `2026-07-30-service-quiesce-s29-borrower-acceptance-audit` - `service-quiesce` audit: `S29 borrower capability architectural acceptance`
+- `2026-07-30-service-quiesce-s32-acceptance-audit` - `service-quiesce` audit: `S32 GPU pytest borrower integration`
 - `2026-07-30-service-quiesce-w02-resume-recovery-audit` - `service-quiesce` audit: `w02 resume recovery`
 - `2026-07-30-service-quiesce-w03-acceptance-audit` - `service-quiesce` audit: `w03 acceptance`
 
