@@ -234,7 +234,7 @@ class _ServiceStartCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: ClickContext) -> Any:
+    def invoke(self, ctx: ClickContext) -> None:
         """Dispatch parsed Click parameters as the typed start options."""
         params = ctx.params
         return _run_service_start(
