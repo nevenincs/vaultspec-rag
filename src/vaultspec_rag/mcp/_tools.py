@@ -112,6 +112,8 @@ def _search_envelope_or_raise(
             "invalid_service_response: The search service returned an invalid "
             "response; expected a JSON object envelope."
         )
+    # isinstance narrows the key/value types no further than dict[Unknown,
+    # Unknown]; the JSON object this daemon returns is always str-keyed.
     envelope = cast("dict[str, Any]", result)
     if envelope.get("ok") is not False:
         if not isinstance(envelope.get("results"), list):

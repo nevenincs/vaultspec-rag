@@ -241,7 +241,7 @@ class TestManagedLogTank:
 
         payload = query_managed_logs(5_000, source="all", status_dir=tmp_path)
         groups = validate_managed_log_payload(
-            payload,
+            typing.cast("dict[str, object]", payload),
             source="all",
             limit=5_000,
             filters={},

@@ -52,6 +52,7 @@ __all__ = [
     "InvalidManagedLogSourceError",
     "ManagedLogGroup",
     "ManagedLogSource",
+    "ManagedLogsResult",
     "PolledAccessFilter",
     "clamp_managed_log_lines",
     "configure_logging",
@@ -89,6 +90,15 @@ class ManagedLogGroup(TypedDict):
     truncated: NotRequired[bool]
     marker: NotRequired[str]
     truncation: NotRequired[dict[str, int | bool]]
+
+
+class ManagedLogsResult(TypedDict):
+    """The bounded managed-log outcome :func:`query_managed_logs` returns."""
+
+    source: str
+    limit: int
+    groups: list[ManagedLogGroup]
+    filters: dict[str, str]
 
 
 class InvalidManagedLogSourceError(ValueError):
@@ -590,7 +600,7 @@ def query_managed_logs(
     job_id: str | None = None,
     contains: str | None = None,
     status_dir: Path | None = None,
-) -> dict[str, object]:
+) -> ManagedLogsResult:
     """Return the canonical bounded managed-log outcome for every adapter."""
     limit = clamp_managed_log_lines(lines)
     filters = managed_log_filters(job_id=job_id, contains=contains)
