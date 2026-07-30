@@ -31,10 +31,11 @@ from ..job_models import (
 from ..logging_config import log_event
 from ..service_quiesce import QuiesceState
 from .state import (
+    UNOWNED_RUNTIME,
     JobManagerState,
-    JobRuntimeOwner,
     ManagedJob,
     ManagerStateBackup,
+    assign_runtime_owner,
 )
 
 if TYPE_CHECKING:
@@ -591,7 +592,7 @@ class JobManagerControl(JobManagerState):
                 )
 
             now = time.time()
-            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            assign_runtime_owner(managed, UNOWNED_RUNTIME)
             if (
                 state is JobState.PAUSING
                 and managed.snapshot.desired_state is DesiredJobState.RUNNING
@@ -763,7 +764,7 @@ class JobManagerControl(JobManagerState):
                 )
 
             now = time.time()
-            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            assign_runtime_owner(managed, UNOWNED_RUNTIME)
             self._replace_snapshot_locked(
                 managed,
                 state=terminal.state,
@@ -944,7 +945,7 @@ class JobManagerControl(JobManagerState):
             )
             managed = ManagedJob(
                 snapshot=retried,
-                runtime=JobRuntimeOwner(task=None, control=None),
+                runtime=UNOWNED_RUNTIME,
             )
             self._active[new_id] = managed
             persistence_error = self._persist_locked()

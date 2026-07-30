@@ -83,10 +83,31 @@ class JobRuntimeOwner:
     compute_ticket: ComputeTicket | None = None
 
 
+UNOWNED_RUNTIME = JobRuntimeOwner(task=None, control=None)
+"""The runtime owner of a job with no live attempt attached."""
+
+
 @dataclass(slots=True)
 class ManagedJob:
     snapshot: JobSnapshot
     runtime: JobRuntimeOwner
+
+
+def assign_runtime_owner(managed: ManagedJob, runtime: JobRuntimeOwner) -> None:
+    """Install one job's runtime owner, releasing admission it stops carrying.
+
+    Compute admission is tracked by ticket identity, so an owner replacement
+    that simply drops the outgoing ticket leaves it counted against the drain
+    with nothing left able to release it, and the service can never quiesce
+    again. Every replacement routes here, which is the only place the manager
+    releases a ticket: the outgoing ticket is released exactly when the
+    incoming owner does not carry it forward. Releasing an already-released
+    ticket is a tracked no-op, so a path that released early stays correct.
+    """
+    outgoing = managed.runtime.compute_ticket
+    if outgoing is not None and outgoing is not runtime.compute_ticket:
+        outgoing.release()
+    managed.runtime = runtime
 
 
 @dataclass(slots=True)
