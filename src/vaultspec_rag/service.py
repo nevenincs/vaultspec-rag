@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import gc
+import hmac
 import logging
 import threading
 import time
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from .search import VaultSearcher
     from .store_runtime import VaultStore
 
+from .gpu_borrow_lease import BorrowerLeaseStatus, borrower_lease_status
 from .graph_cache import GraphCache
 from .service_quiesce import (
     ComputeTicket,
@@ -361,6 +363,10 @@ class ServiceRegistry:
         self._root_locks: dict[Path, threading.Lock] = {}
         self._gpu_lock = threading.Lock()
         self._quiesce_controller = ServiceQuiesceController()
+        # This is deliberately the capability alone, never a PID or a lease
+        # record.  It stays private to the registry and is cleared only after
+        # the matching borrower resume has actually succeeded.
+        self._borrower_capability: str | None = None
         # One registry has one controller and therefore one durable job
         # coordinator.  Keeping the manager here makes every lifecycle owner
         # consult the controller that actually owns its admission epoch.
@@ -1511,6 +1517,74 @@ class ServiceRegistry:
     def quiesce_snapshot(self) -> QuiesceSnapshot:
         """Return the registry-owned controller's read-only lifecycle truth."""
         return self._quiesce_controller.snapshot()
+
+    def validate_borrower_lifecycle_request(
+        self,
+        capability: str | None,
+        *,
+        pause: bool,
+    ) -> str | None:
+        """Return one lease denial, or ``None`` for an authorized lifecycle call."""
+        with self._lock:
+            bound_capability = self._borrower_capability
+        if bound_capability is not None:
+            if capability is None:
+                return None if pause else "borrower_lease_required"
+            if not hmac.compare_digest(bound_capability, capability):
+                return "borrower_lease_mismatch"
+        if capability is None:
+            return None
+        match borrower_lease_status(capability):
+            case BorrowerLeaseStatus.HELD:
+                return None
+            case BorrowerLeaseStatus.NOT_HELD:
+                return "borrower_lease_not_held"
+            case BorrowerLeaseStatus.CAPABILITY_INVALID:
+                return "borrower_capability_invalid"
+
+    def bind_borrower_capability(self, capability: str) -> bool:
+        """Retain a verified borrower only after the registry is safely quiesced."""
+        snapshot = self._quiesce_controller.snapshot()
+        if (
+            snapshot.state is not QuiesceState.QUIESCED
+            or not snapshot.vram_released
+            or not snapshot.safe_to_borrow_gpu
+        ):
+            return False
+        with self._lock:
+            bound_capability = self._borrower_capability
+            if bound_capability is None:
+                self._borrower_capability = capability
+                return True
+            return hmac.compare_digest(bound_capability, capability)
+
+    def clear_borrower_capability_after_resume(self, capability: str | None) -> None:
+        """Clear a borrower binding only for its matching achieved resume."""
+        if capability is None:
+            return
+        with self._lock:
+            bound_capability = self._borrower_capability
+            if bound_capability is not None and hmac.compare_digest(
+                bound_capability,
+                capability,
+            ):
+                self._borrower_capability = None
+
+    def resume_lost_borrower_lease(self) -> QuiesceTransition | None:
+        """Recover only a borrower-bound safe quiescence after its OS lock dies."""
+        with self._lock:
+            bound_capability = self._borrower_capability
+        if bound_capability is None:
+            return None
+        snapshot = self._quiesce_controller.snapshot()
+        if snapshot.state is not QuiesceState.QUIESCED:
+            return None
+        if borrower_lease_status(bound_capability) is not BorrowerLeaseStatus.NOT_HELD:
+            return None
+        transition = self.resume_resources()
+        if transition.achieved:
+            self.clear_borrower_capability_after_resume(bound_capability)
+        return transition
 
     def _acquire(self, root: Path) -> ProjectSlot:
         """Admit or fetch *root*'s slot and increment its ``ref_count``.
