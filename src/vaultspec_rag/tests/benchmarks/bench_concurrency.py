@@ -99,7 +99,7 @@ class ServiceTarget:
         path: str,
         payload: dict[str, object],
         timeout: float,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """POST JSON and decode the JSON response."""
         url = f"http://127.0.0.1:{self.port}{path}"
         headers = {"Content-Type": "application/json"}

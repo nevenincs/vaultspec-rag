@@ -10,7 +10,7 @@ the old one-point-per-document layout triggers a one-time rebuild.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
+from typing import TYPE_CHECKING, ClassVar, TypedDict
 
 import pytest
 
@@ -227,7 +227,7 @@ class TestChunkedVaultLifecycle:
             # reproducing the on-disk state of an install that indexed
             # before chunking existed.
             meta_path = index_meta_path(tmp_path, PublicSourceType.VAULT)
-            meta: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta: dict[str, object] = json.loads(meta_path.read_text(encoding="utf-8"))
             meta.pop(VAULT_POINT_SCHEMA_KEY)
             meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
@@ -235,7 +235,9 @@ class TestChunkedVaultLifecycle:
             # A layout rebuild re-adds every document instead of
             # reporting a no-op incremental pass.
             assert result.added == doc_total
-            stamped: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
+            stamped: dict[str, object] = json.loads(
+                meta_path.read_text(encoding="utf-8")
+            )
             assert stamped[VAULT_POINT_SCHEMA_KEY] == VAULT_POINT_SCHEMA
         finally:
             store.close()

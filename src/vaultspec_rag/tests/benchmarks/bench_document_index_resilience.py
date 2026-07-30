@@ -19,8 +19,10 @@ from typing import TYPE_CHECKING, Any, Final, cast
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ...indexer import DocumentIndexer
     from ...indexer._content_policy import RootContentPolicy
     from ...indexer._vault_prep import IndexResult
+    from ...job_control import RunControlToken
 
 _SCHEMA_VERSION: Final = 1
 _MARKER_NAME: Final = ".document-index-resilience-workload.json"
@@ -374,7 +376,7 @@ def _validate_measurement(
 
 
 def _run_interrupted_index(
-    indexer: Any,
+    indexer: DocumentIndexer,
     root: Path,
     *,
     interrupt_after_units: int,
@@ -420,8 +422,8 @@ def _run_interrupted_index(
 
 
 def _capture_interrupted_run(
-    indexer: Any,
-    token: Any,
+    indexer: DocumentIndexer,
+    token: RunControlToken,
     failures: list[BaseException],
 ) -> None:
     """Capture the terminal signal from one benchmark index thread."""
@@ -440,7 +442,7 @@ def _capture_interrupted_run(
 def _wait_for_interruption_boundary(
     ledger_path: Path,
     worker: threading.Thread,
-    token: Any,
+    token: RunControlToken,
     *,
     interrupt_after_units: int,
 ) -> tuple[str, int]:

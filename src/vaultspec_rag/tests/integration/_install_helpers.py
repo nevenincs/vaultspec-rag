@@ -16,7 +16,7 @@ import subprocess
 import tomllib
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from vaultspec_core.core.manifest import (
@@ -25,6 +25,9 @@ from vaultspec_core.core.manifest import (
 
 from ...builtins import list_builtins
 from ...commands._install import install_run
+
+if TYPE_CHECKING:
+    from ...commands._models import InstallReport
 
 pytestmark = [pytest.mark.integration]
 
@@ -132,7 +135,7 @@ def create_windows_junction(path: Path, target: Path) -> None:
     )
 
 
-def _install(target: Path, **overrides: Any) -> Any:
+def _install(target: Path, **overrides: Any) -> InstallReport:
     """Run a network-free dual-provider install with MCP intent enabled."""
     options: dict[str, Any] = {
         "install_mcp": True,
