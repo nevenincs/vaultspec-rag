@@ -187,7 +187,11 @@ class TestRAGAPI:
         assert results[0].title == "Test Title"
 
         # 4. Call clean()
-        cleared = vaultspec_rag.clean(tmp_path, clean_type="all")
+        cleared = vaultspec_rag.clean(
+            tmp_path,
+            clean_type="all",
+            registry=get_registry(),
+        )
         assert "vault" in cleared
 
         status_after = vaultspec_rag.get_status(tmp_path)
@@ -201,11 +205,16 @@ class TestRAGAPI:
 
         from ..._source_types import SourceTypeParseError
         from ...api import clean
+        from ...registry import get_registry
 
         (tmp_path / ".vault").mkdir()
 
         with pytest.raises(SourceTypeParseError) as raised:
-            clean(tmp_path, clean_type=cast("Any", "unsupported"))
+            clean(
+                tmp_path,
+                clean_type=cast("Any", "unsupported"),
+                registry=get_registry(),
+            )
 
         assert raised.value.error_kind == "unknown_source_type"
         assert list(tmp_path.rglob("*")) == [tmp_path / ".vault"]

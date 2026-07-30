@@ -182,6 +182,60 @@ def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
         reset_config()
 
 
+def test_mutating_routes_reject_a_closed_runtime_before_global_or_gpu_work(
+    tmp_path: Path,
+) -> None:
+    """The app runtime remains the sole authority for mutating route facades."""
+    root = tmp_path / "vault"
+    (root / ".vault").mkdir(parents=True)
+    get_config({"watch_enabled": True})
+    reset_registry()
+    global_registry = get_registry()
+    runtime_registry = ServiceRegistry()
+    runtime_registry.close_all()
+    token = "runtime-registry-mutation-token"
+    app = create_http_app(
+        ServerRouteRuntime(
+            token=token,
+            registry=runtime_registry,
+            port=8765,
+        ),
+        lifespan=None,
+    )
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            headers = {"Authorization": f"Bearer {token}"}
+            watcher = client.post(
+                "/watcher/start",
+                headers=headers,
+                json={"root": str(root)},
+            )
+            clean = client.post(
+                "/clean",
+                headers=headers,
+                json={"project_root": str(root), "type": "vault"},
+            )
+            benchmark = client.post(
+                "/benchmark",
+                headers=headers,
+                json={"project_root": str(root), "n_queries": 1},
+            )
+            quality = client.post("/quality", headers=headers)
+
+        assert global_registry is not runtime_registry
+        assert watcher.status_code == 500, watcher.text
+        assert clean.status_code == 409, clean.text
+        clean_domains = clean.json()["domains"]
+        assert clean_domains["vault"]["error_kind"] == "RuntimeError"
+        assert clean_domains["vault"]["detail"] == "ServiceRegistry is shutting down"
+        assert benchmark.status_code == 500, benchmark.text
+        assert quality.status_code == 500, quality.text
+    finally:
+        runtime_registry.close_all()
+        reset_registry()
+        reset_config()
+
+
 class TestSearchResponseStatus:
     """Retryable admission failures must not reach the wire as success."""
 

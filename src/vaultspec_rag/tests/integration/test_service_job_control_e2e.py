@@ -366,7 +366,12 @@ def _watcher_attempt_owns_runtime(snapshot: JobSnapshot) -> bool:
 async def _start_real_watcher(root: Path) -> None:
     resolved = root.resolve()
     assert (
-        server._ensure_watcher(resolved, debounce_ms=50, cooldown_s=0.0)
+        server._ensure_watcher(
+            resolved,
+            get_registry(),
+            debounce_ms=50,
+            cooldown_s=0.0,
+        )
         is WatcherStartOutcome.STARTED
     )
     assert resolved in server._watcher_tasks
