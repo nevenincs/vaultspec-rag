@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
+import inspect
 import json
 import os
+import textwrap
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -14,6 +17,7 @@ import uvicorn
 from typer.testing import CliRunner
 
 from ..cli import app
+from ..cli._service_quiesce import _quiesce as _cli_quiesce
 from ..config._types import EnvVar
 from ..jobs import mapping
 from ..server import ServerRouteRuntime, create_http_app
@@ -36,6 +40,16 @@ pytestmark = [pytest.mark.unit]
 runner = CliRunner()
 
 _SERVICE_TOKEN = "quiesce-cli-route-token"
+_SUCCESS_GUARD = "result.get('ok') is True and quiesce_state == expected_state"
+
+
+def _has_canonical_success_guard(source: str) -> bool:
+    """Recognize the one acceptance predicate the CLI may use for success."""
+    tree = ast.parse(source)
+    return any(
+        isinstance(node, ast.If) and ast.unparse(node.test) == _SUCCESS_GUARD
+        for node in ast.walk(tree)
+    )
 
 
 def _publish_service_discovery(status_dir: Path, *, port: int) -> None:
@@ -165,6 +179,26 @@ def test_resume_already_running_is_idempotent_success(tmp_path: Path) -> None:
     assert _quiesce(_data(result))["state"] == "running"
 
 
+def test_success_requires_the_canonical_state_under_targeted_source_mutation() -> None:
+    """The success branch fails closed if its canonical-state predicate is lost.
+
+    The production app-route tests above exercise the real authenticated HTTP
+    transport. This focused mutation guard protects the CLI-only acceptance
+    seam that no valid production route can intentionally corrupt: a route
+    cannot truthfully emit ``ok: true`` with the wrong controller state.
+    """
+    source = textwrap.dedent(inspect.getsource(_cli_quiesce))
+    mutated = source.replace(
+        'result.get("ok") is True and quiesce_state == expected_state',
+        'result.get("ok") is True',
+        1,
+    )
+
+    assert _has_canonical_success_guard(source)
+    assert mutated != source
+    assert not _has_canonical_success_guard(mutated)
+
+
 def _start_pause_held_by_a_real_ticket(
     port: int,
     registry: ServiceRegistry,
@@ -188,12 +222,7 @@ def _start_pause_held_by_a_real_ticket(
 def test_resume_conflict_preserves_the_real_route_failure_envelope(
     tmp_path: Path,
 ) -> None:
-    """A resume conflicting with an active pause remains a retryable failure.
-
-    Mutation: remove the expected-state condition in ``_quiesce``. The
-    separate source mutation proof runs this same real route outcome against a
-    false ``ok`` result, so the CLI cannot treat an unachieved state as success.
-    """
+    """A resume conflicting with an active pause remains a retryable failure."""
     with _quiesce_service(tmp_path) as (port, registry):
         ticket, owner, outcomes = _start_pause_held_by_a_real_ticket(port, registry)
         try:
