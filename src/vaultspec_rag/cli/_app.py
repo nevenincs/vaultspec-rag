@@ -34,11 +34,12 @@ if TYPE_CHECKING:
     from typer._click import Context as ClickContext
 
 __all__ = [
+    "JOBS_WATCH_OPTION_HELP",
     "JSON_ENVELOPE_OPTION_HELP",
     "JSON_OPTION_HELP",
     "PORT_OPTION_HELP",
+    "SERVER_WATCH_OPTION_HELP",
     "WATCH_INTERVAL_OPTION_HELP",
-    "WATCH_OPTION_HELP",
     "CLIState",
     "JobIdArgument",
     "JsonEnvelopeMode",
@@ -104,12 +105,16 @@ JobIdArgument = Annotated[
     str, typer.Argument(help="Exact job id or human-mode prefix.")
 ]
 
-#: The interactive server watch is declared once for both entry points.
-#: ``server jobs --watch`` opens its jobs-focused mode with parsed filters;
-#: ``server --watch`` opens the balanced server mode.
-WATCH_OPTION_HELP = (
+#: The two entry points into the interactive watch open different screens, so
+#: each names the one it opens. ``server --watch`` opens the balanced server
+#: mode, which weighs indexing against served searches; ``server jobs --watch``
+#: opens the jobs-focused mode with the filters that verb parsed. One shared
+#: sentence would have promised every operator the screen only one of them gets.
+SERVER_WATCH_OPTION_HELP = (
     "Open the interactive server watch with indexing and served searches."
 )
+JOBS_WATCH_OPTION_HELP = "Open the interactive jobs interface with per-job controls."
+#: The refresh cadence is one knob with one meaning in either mode.
 WATCH_INTERVAL_OPTION_HELP = "Seconds between refreshes in the interactive interface."
 
 #: Watcher tuning, declared once for the two verbs that accept it. ``server
@@ -374,7 +379,9 @@ def _show_group_help_if_no_command(ctx: typer.Context) -> None:
 @server_root_app.callback(invoke_without_command=True)
 def server_main(
     ctx: typer.Context,
-    watch: Annotated[bool, typer.Option("--watch", help=WATCH_OPTION_HELP)] = False,
+    watch: Annotated[
+        bool, typer.Option("--watch", help=SERVER_WATCH_OPTION_HELP)
+    ] = False,
     interval: Annotated[
         float, typer.Option("--interval", help=WATCH_INTERVAL_OPTION_HELP)
     ] = 2.0,

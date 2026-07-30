@@ -76,6 +76,9 @@ def test_jobs_help_uses_operator_language() -> None:
         "manual requests",
         "index update activity",
         "Show only failed jobs",
+        # This verb opens the jobs screen, not the balanced server one, so its
+        # flag has to describe that screen. The two shared a sentence while
+        # they opened the same thing; they no longer do.
         "Open the interactive jobs interface with per-job controls",
         "Seconds between refreshes in the interactive interface",
         "active, waiting, finished, failed, or cancelled",

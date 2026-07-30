@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 __all__ = [
     "JobsLogView",
     "LogEntry",
+    "RetainedLog",
     "parse_log_line",
     "sanitize_log_text",
 ]
@@ -489,13 +490,19 @@ def render_entry(
     return lines
 
 
-class JobsLogView(RichLog):
-    """The log pane: parsed entries, collapsed polling noise, error jumps.
+class RetainedLog[RecordT](RichLog):
+    """A log pane that keeps what it holds so it can paint it again.
 
-    Content arrives as raw lines through :meth:`show_lines` and is kept as
-    parsed entries, so the same window can be re-rendered when the pane's
-    width changes, when the noise filter toggles, and when full values are
-    asked for - without refetching anything.
+    Every log surface here faces the same two problems. A write issued while
+    the widget is off screen is deferred with no line accounting, so anything
+    computed from it then describes nothing; and the palette can move under
+    content already on screen. Holding the records - rather than only the
+    lines they produced - is what lets both be answered by repainting,
+    without refetching anything.
+
+    A subclass owns only how its own records paint. Holding them, replacing
+    them with a plain sentence, and repainting when the pane appears or the
+    scheme changes all live here.
     """
 
     def __init__(self, *, id: str | None = None) -> None:
@@ -510,8 +517,52 @@ class JobsLogView(RichLog):
         # pane's frame, gives the arrow keys to the scroll view, and makes
         # this pane the target of the zoom key.
         self.can_focus = True
-        self._entries: list[LogEntry] = []
+        self._records: list[RecordT] = []
         self._message: str | None = None
+
+    def show_message(self, message: str) -> None:
+        """Replace the pane's content with a single plain sentence."""
+        self._records = []
+        self._message = message
+        self._paint()
+
+    def on_show(self) -> None:
+        """Paint for real once the pane is actually on screen."""
+        self._repaint_if_held()
+
+    def repaint_theme(self) -> None:
+        """Repaint the held content under the active theme's tones."""
+        self._repaint_if_held()
+
+    def _repaint_if_held(self) -> None:
+        """Repaint only when something is actually held for display.
+
+        Two distinct events need this and neither can stand in for the other:
+        the framework calls ``on_show`` when the pane becomes visible, and the
+        app calls ``repaint_theme`` when the palette changes. Painting an empty
+        pane would clear a message the operator has not read yet, so both go
+        through the same guard rather than each carrying a copy of it.
+        """
+        if self._records or self._message is not None:
+            self._paint()
+
+    def _paint(self) -> None:
+        """Write the held records, or the held message, to a cleared pane."""
+        raise NotImplementedError
+
+
+class JobsLogView(RetainedLog[LogEntry]):
+    """The log pane: parsed entries, collapsed polling noise, error jumps.
+
+    Content arrives as raw lines through :meth:`show_lines` and is kept as
+    parsed entries, so the same window can be re-rendered when the pane's
+    width changes, when the noise filter toggles, and when full values are
+    asked for - without refetching anything.
+    """
+
+    def __init__(self, *, id: str | None = None) -> None:
+        # Named to match the base widget's parameter.
+        super().__init__(id=id)
         self._show_polling = False
         self._expanded = False
         # Rendered line offset of each error entry, in written order, and
@@ -524,22 +575,16 @@ class JobsLogView(RichLog):
 
     def show_lines(self, lines: Iterable[str]) -> None:
         """Replace the pane's content with *lines*, parsed and rendered."""
-        self._entries = [parse_log_line(line) for line in lines]
+        self._records = [parse_log_line(line) for line in lines]
         self._message = None
-        self._render_entries()
-
-    def show_message(self, message: str) -> None:
-        """Replace the pane's content with a single plain sentence."""
-        self._entries = []
-        self._message = message
-        self._render_entries()
+        self._paint()
 
     # -- filter state -------------------------------------------------------
 
     @property
     def polling_count(self) -> int:
         """How many entries in the window are polling reflections."""
-        return sum(1 for entry in self._entries if entry.is_polling)
+        return sum(1 for entry in self._records if entry.is_polling)
 
     @property
     def hidden_polling_count(self) -> int:
@@ -567,7 +612,7 @@ class JobsLogView(RichLog):
         """Invert one display-mode attribute, repaint, return the new state."""
         state = not bool(getattr(self, flag))
         setattr(self, flag, state)
-        self._render_entries()
+        self._paint()
         return state
 
     # -- navigation ---------------------------------------------------------
@@ -604,38 +649,21 @@ class JobsLogView(RichLog):
         pane actually has.
         """
         super().on_resize(event)
-        if (self._entries or self._message is not None) and (
+        if (self._records or self._message is not None) and (
             self._content_width() != self._rendered_width
         ):
-            self._render_entries()
-
-    def on_show(self) -> None:
-        """Render for real once the pane is actually on screen.
-
-        Writes issued while the widget is hidden are deferred with no line
-        accounting, so the error offsets recorded then describe nothing.
-        """
-        self._render_if_content()
+            self._paint()
 
     def _content_width(self) -> int:
         width = self.scrollable_content_region.width or self.content_size.width
         return max(24, width)
-
-    def repaint_theme(self) -> None:
-        """Re-render the held window under the active theme's tones."""
-        self._render_if_content()
-
-    def _render_if_content(self) -> None:
-        """Repaint only when something is actually held for display."""
-        if self._entries or self._message is not None:
-            self._render_entries()
 
     def _tones(self) -> dict[str, str]:
         """The active palette variant's tones, resolved fresh per render."""
         app = cast("App[object]", self.app)
         return semantic_tones(app.theme)
 
-    def _render_entries(self) -> None:
+    def _paint(self) -> None:
         self.clear()
         self._error_offsets = []
         self._error_cursor = -1
@@ -646,7 +674,7 @@ class JobsLogView(RichLog):
             return
         tones = self._tones()
         hidden = 0
-        for entry in self._entries:
+        for entry in self._records:
             if entry.is_polling and not self._show_polling:
                 hidden += 1
                 continue
