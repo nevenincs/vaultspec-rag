@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from .._store_writes import StoreWritePolicy
     from ..embeddings import EmbeddingModel
+    from ..job_control import RunControl
 from ..indexer._streaming import (
     StoreWriteTask,
     UnsettledStoreWriterError,
@@ -31,6 +32,7 @@ from ..indexer._streaming import (
     _SliceWriter,
     _stream_encode_and_upsert_vault,
 )
+from ..job_control import CancelRequested
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
 
@@ -268,6 +270,50 @@ class TestSliceWriterContract:
         writer.close()
         assert executed == list(range(6))
         assert len(set(threads)) == 1
+
+    def test_a_cancel_during_close_leaves_no_live_writer_thread(self) -> None:
+        """A shutdown interrupted by its own checkpoint must still stop.
+
+        ``close`` checkpoints the run control before delivering the sentinel,
+        so a cancel raises out of the shutdown itself. The caller's error path
+        cannot cover that - it would have run *before* the close it is
+        unwinding - so the writer has to abandon the thread on its way out.
+        Left undone, the thread parks on an empty queue forever and, being
+        non-daemon, takes interpreter exit with it: the process finishes every
+        unit of work and then hangs, which reads as a slow run rather than a
+        defect.
+
+        Mutation proof: dropping the ``except BaseException: self.abandon()``
+        wrapper from ``close`` fails this on the ``is_alive()`` assertion
+        below, not on the ``raises``.
+        """
+
+        class _CancelOnCheckpoint:
+            def checkpoint(self) -> None:
+                raise CancelRequested
+
+        writer = _SliceWriter(name="cancel-during-close-writer")
+        with pytest.raises(CancelRequested):
+            writer.close(run_control=cast("RunControl", _CancelOnCheckpoint()))
+
+        writer._thread.join(timeout=5.0)
+        assert not writer._thread.is_alive(), (
+            "writer thread outlived a cancelled close; it would block "
+            "interpreter shutdown for the life of the process"
+        )
+
+    def test_the_writer_thread_never_blocks_interpreter_exit(self) -> None:
+        """The thread is a daemon, so an abandoned writer cannot wedge exit.
+
+        Both shutdown paths are bounded and both document giving up on a
+        thread they could not settle. That decision is only reachable if the
+        interpreter is not itself waiting on the thread.
+        """
+        writer = _SliceWriter(name="daemon-contract-writer")
+        try:
+            assert writer._thread.daemon is True
+        finally:
+            writer.close()
 
     def test_failure_releases_later_tasks_without_writing_them(self) -> None:
         writer = _SliceWriter(name="failing-writer", max_pending=4)
