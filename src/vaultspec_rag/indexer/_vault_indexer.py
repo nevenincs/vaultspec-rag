@@ -32,7 +32,7 @@ from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _config_epoch, _stat_gate, _vault_fingerprint
-from ._index_lifecycle import run_index_lifecycle
+from ._index_lifecycle import incremental_mode, run_index_lifecycle
 from ._streaming import VaultStreamRequest, _stream_encode_and_upsert_vault
 from ._vault_fingerprint import VaultDelta
 from ._vault_meta import (
@@ -563,9 +563,7 @@ class VaultIndexer:
                 event_logger=logger,
                 store=self.store,
                 source="vault",
-                mode=(
-                    "scoped_incremental" if changed_paths is not None else "incremental"
-                ),
+                mode=incremental_mode(scoped=changed_paths is not None),
                 clean=False,
                 root=self.root_dir,
                 run_control=run_control,

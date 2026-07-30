@@ -57,7 +57,11 @@ from ._incremental_commit import (
     IncrementalPublicationRequest,
     IncrementalReplacementRequest,
 )
-from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
+from ._index_lifecycle import (
+    incremental_mode,
+    preprocess_completion_fields,
+    run_index_lifecycle,
+)
 from ._resolved_policy import preprocess_stale_note
 from ._run_ledger_models import RunLedgerCompatibilityError, RunOperation
 from ._support_budget import CodeSupportBudget
@@ -997,9 +1001,7 @@ class CodebaseIndexer:
                 event_logger=logger,
                 store=self.store,
                 source="code",
-                mode=(
-                    "scoped_incremental" if changed_paths is not None else "incremental"
-                ),
+                mode=incremental_mode(scoped=changed_paths is not None),
                 clean=False,
                 root=self.root_dir,
                 run_control=run_control,
