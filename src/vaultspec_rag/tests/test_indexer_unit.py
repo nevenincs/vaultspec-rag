@@ -42,6 +42,42 @@ def _reset_cfg(  # pyright: ignore[reportUnusedFunction]
     reset_rag_config()
 
 
+def _assert_line_spans_locate_chunks(
+    source: str,
+    chunks: list[tuple[str, int, int, str | None, str | None, str | None]],
+) -> None:
+    """Assert every chunk's reported ``(line_start, line_end)`` finds its text.
+
+    Ordering and positivity alone are satisfied by any span, including a
+    chunker that emits nothing at all, so this reads the span back out of the
+    source and requires the chunk to be there. That is what catches the
+    force-split regression the non-ASCII cases exist for: indexing ``source``
+    by a byte offset shifts every span past the first multi-byte character,
+    and the shifted window no longer contains the chunk.
+    """
+    assert chunks, "chunker produced no chunks; the spans below assert nothing"
+    lines = source.splitlines()
+    previous_start = 0
+    for text, line_start, line_end, *_ in chunks:
+        assert line_start >= 1, f"line_start {line_start} is not 1-based"
+        assert line_end >= line_start, (
+            f"line_end {line_end} precedes line_start {line_start}"
+        )
+        assert line_end <= len(lines), (
+            f"line_end {line_end} exceeds the source's {len(lines)} lines"
+        )
+        assert line_start >= previous_start, (
+            f"line_start {line_start} decreased from {previous_start}"
+        )
+        previous_start = line_start
+        window = "\n".join(lines[line_start - 1 : line_end])
+        body = [line for line in text.splitlines() if line.strip()]
+        if body:
+            assert body[0] in window, (
+                f"lines {line_start}-{line_end} do not contain {body[0]!r}"
+            )
+
+
 class TestExtractTitle:
     def test_extracts_h1(self):
         assert _extract_title("# My Title\nSome content") == "My Title"
@@ -161,12 +197,10 @@ class TestASTChunkerPython:
         for line in self.SAMPLE.strip().splitlines():
             assert line in combined
 
-    def test_line_numbers_are_positive(self):
+    def test_line_numbers_locate_each_chunk_in_the_source(self):
         chunker = ASTChunker(chunk_size=60)
         chunks = chunker.chunk(self.SAMPLE, "python")
-        for _text, line_start, line_end, *_ in chunks:
-            assert line_start >= 1
-            assert line_end >= line_start
+        _assert_line_spans_locate_chunks(self.SAMPLE, chunks)
 
     def test_empty_source(self):
         chunker = ASTChunker(chunk_size=500)
@@ -341,15 +375,7 @@ class TestASTChunkerPythonBoundaries:
     def test_line_numbers_accurate(self):
         chunker = ASTChunker(chunk_size=300)
         chunks = chunker.chunk(self.SAMPLE, "python")
-        lines = self.SAMPLE.splitlines()
-        for text, line_start, line_end, *_ in chunks:
-            # line_start/line_end are 1-based.
-            assert line_start >= 1
-            assert line_end <= len(lines) + 1
-            assert line_end >= line_start
-            # The chunk text should overlap with the source at those lines.
-            first_line = text.strip().splitlines()[0]
-            assert first_line in self.SAMPLE
+        _assert_line_spans_locate_chunks(self.SAMPLE, chunks)
 
     def test_chunk_ids_contain_hash_via_chunk_file(self, tmp_path: Path):
         """AST chunking produces IDs with a blake2b hash suffix."""
@@ -414,9 +440,7 @@ class TestASTChunkerJavaScript:
     def test_js_line_numbers(self):
         chunker = ASTChunker(chunk_size=80)
         chunks = chunker.chunk(self.JS_SOURCE, "javascript")
-        for _text, line_start, line_end, *_ in chunks:
-            assert line_start >= 1
-            assert line_end >= line_start
+        _assert_line_spans_locate_chunks(self.JS_SOURCE, chunks)
 
 
 class TestASTChunkerFallback:
@@ -936,22 +960,7 @@ class TestForceSplitNonAscii:
         chunker = ASTChunker(chunk_size=50)
         chunks = chunker.chunk(source, "python")
 
-        # Verify line numbers are reasonable (1-based, monotonically increasing).
-        prev_start = 0
-        for _text, ls, le, *_ in chunks:
-            assert ls >= 1, f"line_start {ls} < 1"
-            assert le >= ls, f"line_end {le} < line_start {ls}"
-            assert ls >= prev_start, (
-                f"line_start {ls} decreased from previous {prev_start}"
-            )
-            prev_start = ls
-
-        # The last chunk's line_end should not exceed total lines.
-        total_lines = source.count("\n") + 1
-        last_le = chunks[-1][2]
-        assert last_le <= total_lines, (
-            f"Last line_end {last_le} exceeds total lines {total_lines}"
-        )
+        _assert_line_spans_locate_chunks(source, chunks)
 
     def test_ascii_force_split_line_numbers(self):
         """Sanity check: force-split with ASCII also produces correct lines."""
@@ -961,9 +970,7 @@ class TestForceSplitNonAscii:
         chunker = ASTChunker(chunk_size=50)
         chunks = chunker.chunk(source, "python")
 
-        for _text, ls, le, *_ in chunks:
-            assert ls >= 1
-            assert le >= ls
+        _assert_line_spans_locate_chunks(source, chunks)
 
 
 class TestCodebaseMetaRoundTrip:
