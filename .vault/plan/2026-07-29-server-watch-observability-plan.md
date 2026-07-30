@@ -3,20 +3,13 @@ tags:
   - '#plan'
   - '#server-watch-observability'
 date: '2026-07-29'
-modified: '2026-07-29'
+modified: '2026-07-30'
 tier: L2
 related:
   - '[[2026-07-29-server-watch-observability-adr]]'
   - '[[2026-07-29-server-watch-observability-research]]'
   - '[[2026-07-29-server-watch-observability-reference]]'
 ---
-
-
-
-
-
-
-
 
 # `server-watch-observability` plan
 
@@ -38,30 +31,29 @@ verification constraints for every Step.
 
 Add bounded service-domain truth for active and recent search requests, including exactly-once terminal accounting and authenticated reads.
 
-
-- [ ] `P01.S01` - Write compute-free regression coverage for active, retained, filtered, bounded, concurrent, and every terminal search outcome; `src/vaultspec_rag/tests/test_search_activity.py`.
-- [ ] `P01.S02` - Implement typed exactly-once search activity lifecycle and finite retention; `src/vaultspec_rag/server/_search_activity.py`.
-- [ ] `P01.S03` - Own the process-wide search activity ledger beside existing server metrics; `src/vaultspec_rag/server/_state.py`.
-- [ ] `P01.S04` - Record admission and terminal outcomes across every search route branch without persisting query text; `src/vaultspec_rag/server/_routes_search.py`.
-- [ ] `P01.S05` - Expose a token-gated bounded and filterable search activity response; `src/vaultspec_rag/server/_routes.py`.
-- [ ] `P01.S06` - Add the canonical search activity admin transport mapping; `src/vaultspec_rag/serviceclient/_transport.py`.
+- [x] `P01.S01` - Write compute-free regression coverage for active, retained, filtered, bounded, concurrent, and every terminal search outcome; `src/vaultspec_rag/tests/test_search_activity.py`.
+- [x] `P01.S02` - Implement typed exactly-once search activity lifecycle and finite retention; `src/vaultspec_rag/server/_search_activity.py`.
+- [x] `P01.S03` - Own the process-wide search activity ledger beside existing server metrics; `src/vaultspec_rag/server/_state.py`.
+- [x] `P01.S04` - Record admission and terminal outcomes across every search route branch without persisting query text; `src/vaultspec_rag/server/_routes_search.py`.
+- [x] `P01.S05` - Expose a token-gated bounded and filterable search activity response; `src/vaultspec_rag/server/_routes.py`.
+- [x] `P01.S06` - Add the canonical search activity admin transport mapping; `src/vaultspec_rag/serviceclient/_transport.py`.
 
 ### Phase `P02` - Source-grouped raw global logs
 
 Expose both managed producers in a recurring raw terminal view while preserving origin, bounds, sanitization, and truncation truth.
 
-- [ ] `P02.S07` - Write real managed-file and Textual regressions proving both sources and every raw record remain visible; `src/vaultspec_rag/tests/test_cli_jobs_tui_log.py`.
-- [ ] `P02.S08` - Implement the source-grouped raw log widget with sanitization and visible bounds markers; `src/vaultspec_rag/cli/_server_watch_log.py`.
-- [ ] `P02.S09` - Poll the canonical all-source managed-log response with generation ordering and independent failure state; `src/vaultspec_rag/cli/_jobs_tui.py`.
+- [x] `P02.S07` - Write real managed-file and Textual regressions proving both sources and every raw record remain visible; `src/vaultspec_rag/tests/test_cli_jobs_tui_log.py`.
+- [x] `P02.S08` - Implement the source-grouped raw log widget with sanitization and visible bounds markers; `src/vaultspec_rag/cli/_server_watch_log.py`.
+- [x] `P02.S09` - Poll the canonical all-source managed-log response with generation ordering and independent failure state; `src/vaultspec_rag/cli/_jobs_tui.py`.
 
 ### Phase `P03` - Dual-lane server watch application
 
 Unify root and jobs watch entry points under one responsive owner that gives indexing and search equal operational visibility.
 
-- [ ] `P03.S10` - Write the wide and narrow dual-lane server-watch regression before changing composition; `src/vaultspec_rag/tests/test_cli_jobs_tui.py`.
-- [ ] `P03.S11` - Replace the jobs-only owner with one responsive ServerWatchApp and migrate imports without aliases; `src/vaultspec_rag/cli/_jobs_tui.py`.
-- [ ] `P03.S12` - Route root watch to complete mode and jobs watch to the same owner in jobs-focused mode; `src/vaultspec_rag/cli/_service_jobs_watch.py`.
-- [ ] `P03.S13` - Render search pool occupancy and waiting beside encode and index pools; `src/vaultspec_rag/cli/_jobs_tui_status.py`.
+- [x] `P03.S10` - Write the wide and narrow dual-lane server-watch regression before changing composition; `src/vaultspec_rag/tests/test_cli_jobs_tui.py`.
+- [x] `P03.S11` - Replace the jobs-only owner with one responsive ServerWatchApp and migrate imports without aliases; `src/vaultspec_rag/cli/_jobs_tui.py`.
+- [x] `P03.S12` - Route root watch to complete mode and jobs watch to the same owner in jobs-focused mode; `src/vaultspec_rag/cli/_service_jobs_watch.py`.
+- [x] `P03.S13` - Render search pool occupancy and waiting beside encode and index pools; `src/vaultspec_rag/cli/_jobs_tui_status.py`.
 - [ ] `P03.S14` - Run focused lint type and compute-free unit lanes and perform formal code review; `server-watch-observability changed files`.
 
 ## Parallelization
