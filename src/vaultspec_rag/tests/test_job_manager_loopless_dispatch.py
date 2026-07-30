@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .. import jobs
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -33,6 +34,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..registry import get_registry, reset_registry
 from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
 
@@ -89,6 +91,41 @@ def _bind_recording_runner(
 
 
 class TestDispatchFromALooplessThread:
+    def test_registry_reset_replaces_the_manager_and_its_controller(self) -> None:
+        """Public lookup never retains a manager from a discarded registry.
+
+        The registry owns both the manager and the quiesce controller. If a
+        module-level manager cache survives ``reset_registry()``, the public
+        lookup crosses that lifecycle boundary and returns an authority tied
+        to the closed controller instead of the live registry.
+        """
+        reset_registry()
+        jobs.reset()
+        try:
+            retired_registry = get_registry()
+            retired_manager = jobs.get_job_manager()
+            assert retired_manager is retired_registry.create_job_manager()
+            assert (
+                retired_manager._quiesce_controller
+                is retired_registry._quiesce_controller
+            )
+
+            reset_registry()
+
+            live_registry = get_registry()
+            live_manager = jobs.get_job_manager()
+            assert live_registry is not retired_registry
+            assert live_manager is live_registry.create_job_manager()
+            assert live_manager is not retired_manager
+            assert live_manager._quiesce_controller is live_registry._quiesce_controller
+            assert (
+                live_manager._quiesce_controller
+                is not retired_manager._quiesce_controller
+            )
+        finally:
+            jobs.reset()
+            reset_registry()
+
     async def test_an_adopted_loop_runs_a_dispatch_decided_off_it(self) -> None:
         """The production shape: decide on a worker thread, run on the loop.
 

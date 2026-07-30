@@ -150,6 +150,75 @@ def _create_quiesced_job(
     return manager, job_id
 
 
+async def _invalidate_loopless_recovery_before_callback(
+    manager: JobManager,
+    job_id: str,
+    prepared: QuiescedResumeResult,
+    *,
+    shutdown: bool,
+) -> tuple[tuple[str, ...], bool, str]:
+    """Control one claimed recovery while its service-loop callback is queued."""
+    scheduled: list[tuple[str, ...]] = []
+    callback_blocked = threading.Event()
+    release_callback = threading.Event()
+    claim_observed: list[bool] = []
+    controls: list[str] = []
+
+    def block_service_loop() -> None:
+        callback_blocked.set()
+        assert release_callback.wait(timeout=5.0)
+
+    def schedule_recovery() -> None:
+        scheduled.append(manager.dispatch_prepared_quiesced_resume(prepared))
+
+    def control_before_recovery_callback() -> None:
+        claimed = False
+        try:
+            assert callback_blocked.wait(timeout=5.0)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                with manager._lock:
+                    claimed = job_id in manager._pending_quiesced_dispatches
+                if claimed:
+                    break
+                time.sleep(0.01)
+            claim_observed.append(claimed)
+            if claimed:
+                if shutdown:
+                    assert manager.begin_shutdown() == ()
+                    controls.append("shutdown")
+                else:
+                    controls.append(
+                        manager.set_desired_state(
+                            job_id,
+                            DesiredJobState.CANCELLED,
+                        ).code
+                    )
+        finally:
+            release_callback.set()
+
+    asyncio.get_running_loop().call_soon(block_service_loop)
+    scheduler = threading.Thread(
+        target=schedule_recovery,
+        name="blocked-loop-recovery-scheduler",
+    )
+    controller_thread = threading.Thread(
+        target=control_before_recovery_callback,
+        name="blocked-loop-recovery-control",
+    )
+    scheduler.start()
+    controller_thread.start()
+    await asyncio.to_thread(scheduler.join, 5.0)
+    await asyncio.to_thread(controller_thread.join, 5.0)
+
+    assert not scheduler.is_alive()
+    assert not controller_thread.is_alive()
+    assert len(scheduled) == 1
+    assert len(claim_observed) == 1
+    assert len(controls) == 1
+    return scheduled[0], claim_observed[0], controls[0]
+
+
 @pytest.mark.asyncio
 async def test_quiesce_releases_ticket_and_resources_before_same_id_resume() -> None:
     """A real worker unwinds, drains, and reconciles only after running."""
@@ -420,6 +489,7 @@ async def test_concurrent_recovery_dispatches_claim_one_same_id_attempt() -> Non
     prepared = manager.prepare_quiesced_resume()
     assert prepared.status is QuiescedResumeStatus.PREPARED
     assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+    manager.adopt_service_loop(asyncio.get_running_loop())
 
     launch = threading.Barrier(3)
     scheduled: list[tuple[str, ...]] = []
@@ -433,14 +503,47 @@ async def test_concurrent_recovery_dispatches_claim_one_same_id_attempt() -> Non
     first.start()
     second.start()
     launch.wait(timeout=5.0)
-    first.join(timeout=5.0)
-    second.join(timeout=5.0)
+    await asyncio.to_thread(first.join, 5.0)
+    await asyncio.to_thread(second.join, 5.0)
 
     assert not first.is_alive()
     assert not second.is_alive()
     assert sorted(scheduled, key=len) == [(), (job_id,)]
     await _await_state(manager, job_id, JobState.SUCCEEDED)
     assert attempts == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_loopless_quiesced_recovery_uses_the_adopted_service_loop() -> None:
+    """Recovery uses canonical loopless dispatch after releasing manager state."""
+    controller = _warming_controller()
+    manager, job_id = _create_quiesced_job(controller, None)
+    attempts: list[int] = []
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        attempts.append(context.attempt)
+        return JobExecutionResult(summary="recovered on service loop")
+
+    assert manager.bind_dispatch(job_id, runner).code == "dispatch_bound"
+    prepared = manager.prepare_quiesced_resume()
+    assert prepared.status is QuiescedResumeStatus.PREPARED
+    queued = manager.get(job_id)
+    assert queued is not None
+    assert queued.state is JobState.QUEUED
+    assert queued.attempt.number == 2
+    assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+    manager.adopt_service_loop(asyncio.get_running_loop())
+
+    assert await asyncio.to_thread(
+        manager.dispatch_prepared_quiesced_resume, prepared
+    ) == (job_id,)
+    await _await_state(manager, job_id, JobState.SUCCEEDED)
+
+    completed = manager.get(job_id)
+    assert completed is not None
+    assert completed.id == job_id
+    assert completed.attempt.number == 2
+    assert attempts == [2]
 
 
 @pytest.mark.asyncio
@@ -495,28 +598,22 @@ async def test_blocked_loop_control_invalidates_recovery_claim(
     prepared = manager.prepare_quiesced_resume()
     assert prepared.status is QuiescedResumeStatus.PREPARED
     assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+    manager.adopt_service_loop(asyncio.get_running_loop())
 
-    scheduled: list[tuple[str, ...]] = []
-
-    def schedule_on_owner_loop() -> None:
-        scheduled.append(manager.dispatch_prepared_quiesced_resume(prepared))
-
-    scheduler = threading.Thread(
-        target=schedule_on_owner_loop,
-        name="blocked-loop-recovery-scheduler",
+    (
+        scheduled,
+        claim_observed,
+        control,
+    ) = await _invalidate_loopless_recovery_before_callback(
+        manager,
+        job_id,
+        prepared,
+        shutdown=shutdown,
     )
-    scheduler.start()
-    scheduler.join(timeout=5.0)
 
-    assert not scheduler.is_alive()
-    assert scheduled == [(job_id,)]
-    if shutdown:
-        assert manager.begin_shutdown() == ()
-    else:
-        cancelled = manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
-        assert cancelled.code == "job_cancelled"
-    await asyncio.sleep(0)
-    await asyncio.sleep(0.05)
+    assert claim_observed
+    assert control == ("shutdown" if shutdown else "job_cancelled")
+    assert scheduled == ()
 
     final = manager.get(job_id)
     assert final is not None
