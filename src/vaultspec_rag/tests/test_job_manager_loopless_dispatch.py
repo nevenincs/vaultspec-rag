@@ -35,6 +35,7 @@ from ..job_models import (
     JobState,
 )
 from ..registry import get_registry, reset_registry
+from ..service import ServiceRegistry
 from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
 
@@ -207,7 +208,7 @@ class TestTheServiceWiresItsOwnLoop:
             state_path=None,
             quiesce_controller=ServiceQuiesceController(),
         )
-        await _start_job_manager(manager)
+        await _start_job_manager(manager, ServiceRegistry())
 
         job_id = _queued_code_job(manager)
         ran, _finished = _bind_recording_runner(manager, job_id)

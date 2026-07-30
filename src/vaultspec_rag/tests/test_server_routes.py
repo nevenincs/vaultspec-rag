@@ -318,6 +318,8 @@ class TestServiceStateSchemaVersion:
 
         import vaultspec_rag as vr
 
+        from ..service import ServiceRegistry
+
         prior = {
             EnvVar.STATUS_DIR: os.environ.get(EnvVar.STATUS_DIR),
             EnvVar.QDRANT_STORAGE_DIR: os.environ.get(EnvVar.QDRANT_STORAGE_DIR),
@@ -328,7 +330,7 @@ class TestServiceStateSchemaVersion:
         )
         reset_config()
         try:
-            state = vr.get_service_state(tmp_path)
+            state = vr.get_service_state(tmp_path, registry=ServiceRegistry())
             assert state["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
         finally:
             for key, value in prior.items():
