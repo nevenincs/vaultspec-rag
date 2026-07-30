@@ -7,10 +7,13 @@ import json
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final, TypedDict
 
 from ._content_policy import ContentKind
 from ._file_state import validate_rel_path
+
+if TYPE_CHECKING:
+    import sqlite3
 
 __all__ = [
     "INDEX_RUN_LEDGER_FILENAME",
@@ -26,8 +29,61 @@ __all__ = [
     "RunOperation",
     "RunSignature",
     "RunTerminalState",
+    "fetch_all",
+    "fetch_one",
     "index_run_ledger_path",
 ]
+
+
+def fetch_one[T](
+    connection: sqlite3.Connection,
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> T | None:
+    """Execute *sql* and return its first row, typed by the caller's context.
+
+    ``sqlite3.Cursor.fetchone`` is typed ``Any`` in typeshed: the driver
+    cannot know a query's result shape ahead of running it. Every row read in
+    the ledger goes through this (or :func:`fetch_all`) instead of repeating
+    that ``Any`` at each of the dozens of call sites that would otherwise
+    each re-produce it; the caller supplies the expected row shape through
+    the assignment target's annotation, e.g. ``row: GenerationRow | None =
+    fetch_one(connection, sql, params)``.
+    """
+    return connection.execute(sql, parameters).fetchone()
+
+
+def fetch_all[T](
+    connection: sqlite3.Connection,
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> list[T]:
+    """Execute *sql* and return every row, typed by the caller's context."""
+    return connection.execute(sql, parameters).fetchall()
+
+
+class GenerationRow(TypedDict):
+    """The ``generations`` row columns :func:`RunLedger._generation_from_row` reads.
+
+    Shared across the ledger's runtime and its mixins: every one of them reads
+    or forwards a ``generations`` row and types it against this one shape
+    rather than the untyped ``sqlite3.Row`` the cursor actually returns.
+    """
+
+    generation_id: str
+    source_type: str
+    collection_identity: str
+    signature_fingerprint: str
+    signature_json: str
+    finalization_phase: str
+    terminal_state: str
+    destructive_intent: int
+    created_at: float
+    updated_at: float
+    terminal_detail: str | None
+    parent_generation_id: str | None
+    consecutive_failures: int
+
 
 SCHEMA_VERSION: Final = 6
 FETCH_BATCH: Final = 256
