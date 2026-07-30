@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import socket
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.testclient import TestClient
 
-from .._source_types import PublicSourceType
+from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_locks import VaultStoreLockedError
 from ..mcp._tools import _search_envelope_or_raise
 from ..server import (
@@ -16,7 +20,7 @@ from ..server import (
     _registry_full_error_dict,
 )
 from ..server._routes_search import (
-    SearchAvailabilityContext,
+    SearchAvailabilityRequestFacts,
     SearchRequest,
     _classify_completed_search,
     _search_response_status,
@@ -25,7 +29,7 @@ from ..service import RegistryFullError
 from ..serviceclient._transport import _search_response_envelope, _try_http_search
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from .._source_types import IndexSource
 
 pytestmark = [pytest.mark.unit]
 
@@ -123,8 +127,8 @@ def _status_contract_request(root: Path) -> SearchRequest:
     )
 
 
-def _status_contract_context(root: Path) -> SearchAvailabilityContext:
-    return SearchAvailabilityContext(
+def _status_contract_facts(root: Path) -> SearchAvailabilityRequestFacts:
+    return SearchAvailabilityRequestFacts(
         job_snapshot_before=[],
         root=root,
         source="vault",
@@ -191,7 +195,7 @@ class TestCompletedSearchClassificationSkip:
         classification = _classify_completed_search(
             envelope,
             _status_contract_request(tmp_path),
-            _status_contract_context(tmp_path),
+            _status_contract_facts(tmp_path),
             None,
             0.0,
         )
@@ -215,3 +219,98 @@ def test_mcp_preserves_structured_error_remediation() -> None:
         "index_unavailable: The vault index is changing. Remediation: "
         "Inspect the matching job. | Retry after convergence."
     )
+
+
+class TestCombinedSearchBuildsNoAvailabilityFacts:
+    """The fan-out has no single index, so it must never reach the classifier.
+
+    ``SearchAvailabilityRequestFacts.source`` is typed to the three concrete
+    corpora. Before this pin the route built the facts unconditionally and
+    asserted that type with a cast, so a ``combined`` request put a value in
+    the field that the field's own type excluded. It caused no visible failure
+    only because every consumer re-tested for the fan-out separately, which
+    makes the honest type the thing that has to be pinned.
+    """
+
+    def test_the_facts_refuse_every_source_no_index_job_can_carry(self) -> None:
+        """Only a concrete corpus builds facts; the fan-out is refused.
+
+        Proven able to fail: replacing the ``__post_init__`` membership test
+        with ``pass`` lets ``COMBINED`` construct, and the ``pytest.raises``
+        below fails with ``DID NOT RAISE``. Restored, it raises and the
+        message names the offending source.
+        """
+        for source in INDEX_SOURCES:
+            facts = SearchAvailabilityRequestFacts(
+                job_snapshot_before=[],
+                root=Path("C:/combined-carve-out"),
+                # INDEX_SOURCES is the runtime twin of the field's Literal, so
+                # the checker cannot narrow the loop variable to it.
+                source=cast("IndexSource", source),
+                request_id="concrete-source",
+                port=None,
+            )
+            assert facts.source == source
+
+        with pytest.raises(ValueError, match="combined fan-out has no single index"):
+            SearchAvailabilityRequestFacts(
+                job_snapshot_before=[],
+                root=Path("C:/combined-carve-out"),
+                source=cast("IndexSource", PublicSourceType.COMBINED.value),
+                request_id="fan-out-source",
+                port=None,
+            )
+
+    def test_a_combined_search_route_request_never_constructs_them(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """``POST /search {"type": "combined"}`` reaches retrieval, not the facts.
+
+        Closed compute admission makes retrieval refuse on its first statement,
+        so this drives the real route through the construction site without a
+        model, a GPU, or an index. The facts are built before that refusal can
+        happen, so building them for the fan-out raises out of the route and
+        the single quiesce envelope below becomes a 500.
+
+        Proven able to fail: restoring the unconditional construction the cast
+        used to serve - building the facts before the fan-out is excluded -
+        fails the status assertion below with ``assert 500 == 503``, the 500
+        being the facts' own refusal escaping the route. Restored, the fan-out
+        builds nothing and the quiesce envelope arrives intact.
+        """
+        import vaultspec_rag.server as server
+
+        from ..server._routes_search import search_route
+        from ..service import ServiceRegistry
+
+        root = tmp_path / "vault"
+        (root / ".vault").mkdir(parents=True)
+        registry = ServiceRegistry()
+        assert registry.quiesce_resources(timeout_seconds=0).achieved
+        previous_registry = server._registry
+        previous_token = server._SERVICE_TOKEN
+        server._registry = registry
+        server._SERVICE_TOKEN = "combined-carve-out-token"
+        app = Starlette(routes=[Route("/search", search_route, methods=["POST"])])
+        try:
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.post(
+                    "/search",
+                    headers={"Authorization": "Bearer combined-carve-out-token"},
+                    json={
+                        "query": "combined fan-out builds no availability facts",
+                        "type": PublicSourceType.COMBINED.value,
+                        "project_root": str(root),
+                    },
+                )
+        finally:
+            server._registry = previous_registry
+            server._SERVICE_TOKEN = previous_token
+
+        # Asserted before the body is parsed: a 500 carries Starlette's plain
+        # "Internal Server Error" text, so parsing first would fail on a JSON
+        # decode error instead of on the status this test is about.
+        assert response.status_code == 503, response.text
+        payload: dict[str, object] = response.json()
+        assert payload["error"] == "quiesce_admission_closed"

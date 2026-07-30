@@ -57,6 +57,7 @@ from ._search_activity import (
     SearchActivityTicket,
 )
 from ._search_availability import (
+    SearchAvailabilityContext,
     SearchResponseClassification,
     classify_qdrant_collection_disappearance,
     classify_search_response,
@@ -110,14 +111,61 @@ class SearchIndexStateInput:
 
 
 @dataclass(frozen=True, slots=True)
-class SearchAvailabilityContext:
-    """Stable request facts used while classifying search availability."""
+class SearchAvailabilityRequestFacts:
+    """Stable pre-retrieval request facts used while classifying availability.
+
+    Deliberately a different type from
+    :class:`~._search_availability.SearchAvailabilityContext`, not a second
+    spelling of it: these are the facts fixed before retrieval runs, while the
+    context additionally carries the after-retrieval job snapshot and the
+    index-state block. Both of those exist only once retrieval has finished,
+    and the index-state block differs between the completed-search and
+    vanished-collection call sites, so the two cannot share one lifetime.
+
+    ``source`` names one concrete corpus. The ``combined`` fan-out has no
+    single index to classify against and never builds these facts at all.
+    """
 
     job_snapshot_before: list[dict[str, object]]
     root: Path
     source: IndexSource
     request_id: str
     port: int | None
+
+    def __post_init__(self) -> None:
+        """Refuse a source no index job can ever be recorded against.
+
+        The declared type already excludes the fan-out and the checker enforces
+        it at the one construction site. This costs one set membership test per
+        classified search and closes the gap that type alone leaves: a value
+        arriving through ``object``, ``Any``, or an untyped test helper reaches
+        the field unchecked, and the failure it causes is a silent misroute -
+        the classifier compares this against a job spec's own source, matches
+        nothing, and reports a healthy index for one that is mid-rebuild.
+        """
+        if self.source not in INDEX_SOURCES:
+            raise ValueError(
+                f"search availability facts require one concrete index source, "
+                f"got {self.source!r}; the combined fan-out has no single index "
+                f"to classify against"
+            )
+
+    def to_context(
+        self,
+        *,
+        after_snapshot: list[dict[str, object]],
+        index_state: dict[str, object],
+    ) -> SearchAvailabilityContext:
+        """Complete these facts with the evidence retrieval has since produced."""
+        return SearchAvailabilityContext(
+            before_snapshot=self.job_snapshot_before,
+            after_snapshot=after_snapshot,
+            requested_root=self.root,
+            source=self.source,
+            request_id=self.request_id,
+            index_state=index_state,
+            port=self.port,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,7 +368,7 @@ def _empty_search_diagnostics(
 
 def _classify_search_result(
     result: dict[str, object],
-    context: SearchAvailabilityContext,
+    facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification:
     """Apply availability classification and stable-empty diagnostics."""
     from ._routes import canonical_job_snapshot
@@ -332,19 +380,16 @@ def _classify_search_result(
     index_state = cast("dict[str, object]", result.get("index_state", {}))
     classification = classify_search_response(
         result,
-        before_snapshot=context.job_snapshot_before,
-        after_snapshot=canonical_job_snapshot(),
-        requested_root=context.root,
-        source=context.source,
-        request_id=context.request_id,
-        index_state=index_state,
-        port=context.port,
+        facts.to_context(
+            after_snapshot=canonical_job_snapshot(),
+            index_state=index_state,
+        ),
     )
     if classification.status_code == 200 and not classification.response["results"]:
         raw_path_filter = classification.response.get("path_filter")
         classification.response["empty"] = _empty_search_diagnostics(
             index_state,
-            port=context.port,
+            port=facts.port,
             path_filter=cast("dict[str, object]", raw_path_filter)
             if isinstance(raw_path_filter, dict)
             else None,
@@ -354,7 +399,7 @@ def _classify_search_result(
 
 def _classify_collection_disappearance(
     exc: UnexpectedResponse,
-    context: SearchAvailabilityContext,
+    facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
     from .._index_integrity import evaluate_index_integrity
@@ -362,35 +407,32 @@ def _classify_collection_disappearance(
 
     return classify_qdrant_collection_disappearance(
         exc,
-        before_snapshot=context.job_snapshot_before,
-        after_snapshot=canonical_job_snapshot(),
-        requested_root=context.root,
-        source=context.source,
-        request_id=context.request_id,
-        index_state=_search_index_state(
-            SearchIndexStateInput(
-                indexed_count=0,
-                requested_root=context.root,
-                # The collection vanished mid-flight, so there is no live
-                # count to reconcile: the verdict is honestly unverifiable,
-                # and carrying it keeps the daemon envelope uniform - every
-                # route response has the block, so absence still means only
-                # "old daemon".
-                integrity=evaluate_index_integrity(
-                    context.root,
-                    PublicSourceType(context.source),
-                    None,
-                ),
-                search_type=context.source,
-            )
+        facts.to_context(
+            after_snapshot=canonical_job_snapshot(),
+            index_state=_search_index_state(
+                SearchIndexStateInput(
+                    indexed_count=0,
+                    requested_root=facts.root,
+                    # The collection vanished mid-flight, so there is no live
+                    # count to reconcile: the verdict is honestly unverifiable,
+                    # and carrying it keeps the daemon envelope uniform - every
+                    # route response has the block, so absence still means only
+                    # "old daemon".
+                    integrity=evaluate_index_integrity(
+                        facts.root,
+                        PublicSourceType(facts.source),
+                        None,
+                    ),
+                    search_type=facts.source,
+                )
+            ),
         ),
-        port=context.port,
     )
 
 
 async def _run_search_with_availability(
     run: Callable[[], dict[str, object]],
-    context: SearchAvailabilityContext,
+    facts: SearchAvailabilityRequestFacts,
 ) -> tuple[dict[str, object], SearchResponseClassification | None]:
     """Run retrieval and recover only an evidenced collection disappearance."""
     try:
@@ -398,7 +440,7 @@ async def _run_search_with_availability(
     except UnexpectedResponse as exc:
         classification = _classify_collection_disappearance(
             exc,
-            context,
+            facts,
         )
         if classification is None:
             raise
@@ -408,14 +450,14 @@ async def _run_search_with_availability(
 def _complete_classified_search(
     classification: SearchResponseClassification,
     *,
-    root: Path,
-    source: IndexSource,
-    request_id: str,
+    facts: SearchAvailabilityRequestFacts,
     total_seconds: float,
 ) -> tuple[dict[str, object], Literal[200, 503]]:
     """Complete watcher and log effects from one classification decision."""
     result = classification.response
     response_status = classification.status_code
+    root = facts.root
+    source = facts.source
     _m._ensure_watcher_soon(root)
     hits = result.get("results")
     hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
@@ -432,7 +474,7 @@ def _complete_classified_search(
                 if classification.availability_cause is not None
                 else {}
             ),
-            "request_id": request_id,
+            "request_id": facts.request_id,
             "source": source,
             "search_type": source,
             "root": root,
@@ -897,25 +939,32 @@ async def _execute_search_route(
     """Run, classify, and record the public response for one valid search."""
     from ._routes import canonical_job_snapshot
 
-    availability_context = SearchAvailabilityContext(
-        job_snapshot_before=canonical_job_snapshot(),
-        root=search_request.root,
-        source=cast(
-            'Literal["vault", "code", "document"]', search_request.search_type.value
-        ),
-        request_id=search_request.request_id,
-        port=port,
+    # The fan-out has no single index to classify against, so it builds no
+    # availability facts at all. Deriving ``source`` only on this branch is
+    # what lets it stay typed as one concrete corpus: the checker narrows
+    # ``search_type.value`` here and rejects the fan-out anywhere else, which
+    # a cast at an unconditional construction site could only assert.
+    availability_facts = (
+        None
+        if search_request.search_type is PublicSourceType.COMBINED
+        else SearchAvailabilityRequestFacts(
+            job_snapshot_before=canonical_job_snapshot(),
+            root=search_request.root,
+            source=search_request.search_type.value,
+            request_id=search_request.request_id,
+            port=port,
+        )
     )
     run = partial(_execute_search_request, search_request)
     started = time.perf_counter()
     try:
-        if search_request.search_type is PublicSourceType.COMBINED:
+        if availability_facts is None:
             result = await _run_in_thread(run, limiter=get_search_limiter())
             classification = None
         else:
             result, classification = await _run_search_with_availability(
                 run,
-                availability_context,
+                availability_facts,
             )
     except QuiesceAdmissionClosedError as exc:
         total_seconds = time.perf_counter() - started
@@ -950,21 +999,20 @@ async def _execute_search_route(
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
     response_status = _search_response_status(result)
-    classification = _classify_completed_search(
-        result,
-        search_request,
-        availability_context,
-        classification,
-        total_seconds,
-    )
-    if classification is not None:
-        result, response_status = _complete_classified_search(
+    if availability_facts is not None:
+        classification = _classify_completed_search(
+            result,
+            search_request,
+            availability_facts,
             classification,
-            root=search_request.root,
-            source=availability_context.source,
-            request_id=search_request.request_id,
-            total_seconds=total_seconds,
+            total_seconds,
         )
+        if classification is not None:
+            result, response_status = _complete_classified_search(
+                classification,
+                facts=availability_facts,
+                total_seconds=total_seconds,
+            )
     return SearchRouteResult(
         result=result,
         status_code=response_status,
@@ -1012,7 +1060,7 @@ def _quiesce_admission_closed_result(
 def _classify_completed_search(
     result: dict[str, object],
     search_request: SearchRequest,
-    context: SearchAvailabilityContext,
+    facts: SearchAvailabilityRequestFacts,
     classification: SearchResponseClassification | None,
     total_seconds: float,
 ) -> SearchResponseClassification | None:
@@ -1023,18 +1071,20 @@ def _classify_completed_search(
     declaration.  Skipping on an absent ``results`` key instead would tie
     "did this fail" to "does the payload carry hits", which silently held
     every failure envelope at the success status.
+
+    The ``combined`` fan-out is excluded before this point rather than tested
+    here: it builds no :class:`SearchAvailabilityRequestFacts`, so the route
+    cannot reach this function with it, and the exclusion is now carried by a
+    type the checker enforces instead of by a condition a reader can mistake
+    for redundant and drop.
     """
-    if (
-        classification is not None
-        or result.get("ok") is False
-        or search_request.search_type is PublicSourceType.COMBINED
-    ):
+    if classification is not None or result.get("ok") is False:
         return classification
     result["request_id"] = search_request.request_id
     timing = result.get("timing")
     if isinstance(timing, dict):
         cast("dict[str, object]", timing)["server_total_seconds"] = total_seconds
-    return _classify_search_result(result, context)
+    return _classify_search_result(result, facts)
 
 
 async def _search_route_response(request: Request) -> JSONResponse:
