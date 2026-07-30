@@ -24,7 +24,7 @@ the models, or the store through this top-level init.
 from __future__ import annotations
 
 from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     #: Resolved lazily at runtime; declared here so type checkers and IDEs see it.
@@ -208,7 +208,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> object:
     """Lazily resolve a public export to its owning submodule (:pep:`562`).
 
     Importing ``vaultspec_rag`` no longer eager-loads the heavy facade; the

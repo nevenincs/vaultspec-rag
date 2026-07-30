@@ -120,9 +120,7 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
     recent = activity["recent"]
     for source in ("vault", "code", "document", "combined"):
         records = [
-            record
-            for record in recent
-            if record.get("query") == f"{marker}-{source}"
+            record for record in recent if record.get("query") == f"{marker}-{source}"
         ]
         assert len(records) == 1
         record = records[0]

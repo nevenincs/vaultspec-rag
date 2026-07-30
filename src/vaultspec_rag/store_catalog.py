@@ -58,6 +58,10 @@ class _VaultCatalogMixin:
 
         def _collection_exists(self, name: str) -> bool: ...
 
+        def _reconcile_for_read(
+            self, collection: str, ensure: Callable[[], None]
+        ) -> bool: ...
+
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
         def _scroll(self, **kwargs: Any) -> tuple[list[Record], Any]: ...
@@ -99,7 +103,9 @@ class _VaultCatalogMixin:
             doc_ids: When given, restrict the scan to these documents.
 
         Returns:
-            Mapping of document stem ID to the ordinals it has points under.
+            Mapping of document stem ID to the ordinals it has points under,
+            empty when the collection does not exist. Creates nothing, for the
+            same reason :meth:`count` does not.
         """
         from qdrant_client import models
 
@@ -118,7 +124,8 @@ class _VaultCatalogMixin:
 
         ordinals: dict[str, set[int | None]] = {}
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
-        self.ensure_table()
+        if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
+            return {}
         page_limit = self._id_scan_page_limit(self.TABLE_NAME)
         while True:
             with self._point_lock(self.TABLE_NAME):
@@ -301,8 +308,10 @@ class _VaultCatalogMixin:
         The code and document pages differed only by the collection, the
         payload key holding the source path, and the noun in the two limit
         errors. ``ensure`` is passed rather than called by the public methods
-        so the limit is still validated BEFORE anything creates a collection -
-        a bad limit must not have a side effect.
+        so the limit is still validated BEFORE the collection is reached - a
+        bad limit must not have a side effect. An absent collection pages
+        nothing and stays absent, for the same reason :meth:`count` does not
+        create one.
         """
         from qdrant_client import models
 
@@ -348,7 +357,8 @@ class _VaultCatalogMixin:
                     )
                 ]
             )
-        ensure()
+        if not self._reconcile_for_read(collection, ensure):
+            return [], None
         with self._point_lock(collection):
             records, next_offset = self._scroll(
                 collection_name=collection,
@@ -393,16 +403,29 @@ class _VaultCatalogMixin:
     def code_content_ids_exist(
         self, ids: Sequence[str], collection: str | None = None
     ) -> bool:
-        """Return whether every requested code identity is currently stored."""
+        """Return whether every requested code identity is currently stored.
+
+        A collection that does not exist stores nothing, so it answers
+        ``False`` and stays absent. Addresses points by id rather than through
+        a filter, so it needs no schema reconcile on the way - it only needs
+        the collection to be there.
+        """
         _target = self._code_collection(collection)
         if not ids:
             return False
-        self.ensure_code_table()
+        if not self._collection_exists(_target):
+            return False
         return self._content_ids_exist(_target, ids)
 
     def get_all_document_content_ids(self) -> set[str]:
-        """Return every deterministic ID in the document collection."""
-        self.ensure_document_table()
+        """Return every deterministic ID in the document collection.
+
+        Empty when the collection does not exist. Scrolls unfiltered, so it
+        needs no schema reconcile on the way, and creates nothing for the same
+        reason :meth:`count` does not.
+        """
+        if not self._collection_exists(self.DOCUMENT_TABLE_NAME):
+            return set()
         with self._point_lock(self.DOCUMENT_TABLE_NAME):
             return self._scroll_all_ids(self.DOCUMENT_TABLE_NAME, "document_id")
 
@@ -429,10 +452,16 @@ class _VaultCatalogMixin:
         )
 
     def document_content_ids_exist(self, ids: Sequence[str]) -> bool:
-        """Return whether every requested document identity is currently stored."""
+        """Return whether every requested document identity is currently stored.
+
+        Answers ``False`` for a collection that does not exist, and addresses
+        points by id rather than through a filter, exactly as
+        :meth:`code_content_ids_exist` does.
+        """
         if not ids:
             return False
-        self.ensure_document_table()
+        if not self._collection_exists(self.DOCUMENT_TABLE_NAME):
+            return False
         return self._content_ids_exist(self.DOCUMENT_TABLE_NAME, ids)
 
     def _content_ids_exist(
@@ -667,11 +696,14 @@ class _VaultCatalogMixin:
             doc_type: If provided, only return documents of this type.
 
         Returns:
-            List of document dicts (id, path, doc_type, title, etc.).
+            List of document dicts (id, path, doc_type, title, etc.), empty
+            when the collection does not exist. Creates nothing, for the same
+            reason :meth:`count` does not.
         """
         from qdrant_client import models
 
-        self.ensure_table()
+        if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
+            return []
 
         # One row per document: match only head chunks (ordinal 0) or
         # points written before chunking (no ordinal field at all).

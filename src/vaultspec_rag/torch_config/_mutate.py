@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Final, cast
 import tomlkit
 from tomlkit import TOMLDocument
 from tomlkit.items import AoT, InlineTable
-from vaultspec_core.core.helpers import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.helpers import (
     atomic_write,
 )
 

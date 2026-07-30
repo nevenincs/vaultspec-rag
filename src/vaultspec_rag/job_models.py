@@ -134,6 +134,23 @@ class JobState(StrEnum):
             JobState.INTERRUPTED,
         }
 
+    @property
+    def is_idle(self) -> bool:
+        """Return whether no worker attempt is holding this job.
+
+        Covers both ends of never having started: queued work waiting for a
+        worker, and paused work a worker has released. Six call sites tested
+        for it by listing the members - restoring persisted state, bounding
+        active job counts, validating an inactive state holds no live
+        resources, cancelling immediately rather than requesting a teardown,
+        preparing same-id resume after a quiesce, and recording watcher
+        progress - which is one grouping written six times.
+        """
+        return self in {
+            JobState.QUEUED,
+            JobState.PAUSED,
+        }
+
 
 class DesiredJobState(StrEnum):
     """Canonical operator intent, distinct from observed state."""

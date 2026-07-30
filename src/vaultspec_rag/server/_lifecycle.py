@@ -17,7 +17,7 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .._machine_lock import MachineLockLease
@@ -639,8 +639,8 @@ def _publish_cycle_metrics(
     # Whole-backend size gauges: dangling_bytes counts only orphans, so a
     # pile of live-but-leaked namespaces is invisible without a total.
     totals = backend_totals(result.surveys)
-    observe("store_total_bytes", float(cast("int", totals["total_bytes"])))
-    observe("store_namespaces", float(cast("int", totals["namespaces"])))
+    observe("store_total_bytes", float(totals["total_bytes"]))
+    observe("store_namespaces", float(totals["namespaces"]))
 
 
 def _report_reconcile(batch: ReconcileBatch | None) -> list[ReconcileResult]:

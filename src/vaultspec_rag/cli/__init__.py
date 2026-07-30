@@ -59,7 +59,6 @@ from . import (
     _service_watcher,
     _status,
     _status_render,
-    _store,
 )
 from ._app import app
 from ._core import console
@@ -86,7 +85,6 @@ __all__ = [
     "_service_watcher",
     "_status",
     "_status_render",
-    "_store",
     "app",
     "console",
 ]

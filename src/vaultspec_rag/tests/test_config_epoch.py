@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import pytest
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.config import (
     reset_config,
 )
 

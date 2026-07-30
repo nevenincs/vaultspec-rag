@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
 
-from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.commands import (
     sync_provider,
 )
-from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.mcps import (
     mcp_uninstall,
 )
 
