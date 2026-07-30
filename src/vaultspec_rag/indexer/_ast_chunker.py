@@ -71,6 +71,10 @@ class ASTChunker:
         """
         from tree_sitter_language_pack import get_parser
 
+        # grammar is drawn from _chunking.LANGUAGE_MAP, a hand-authored table
+        # of tree-sitter grammar names; some entries (e.g. "csharp") work at
+        # runtime but are absent from the installed package's SupportedLanguage
+        # stub, so the stub cannot be trusted as the source of truth here.
         parser = get_parser(cast("SupportedLanguage", grammar))
         source_bytes = source.encode("utf-8")
         tree = parser.parse(source_bytes)

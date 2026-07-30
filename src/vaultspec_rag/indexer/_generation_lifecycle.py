@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack, overload
 
 from .._index_breadth import PUBLISHED_POINTS_KEY, parse_reserved_count
 from .._store_models import generation_code_collection, publish_generation_as_served
@@ -58,6 +58,22 @@ class CodeGenerationBindings:
 
 @dataclass(frozen=True, slots=True)
 class CodeGenerationOpenRequest:
+    policy: ResolvedIndexPolicy
+    operation: RunOperation
+    clean: bool
+    configuration: CodeRunConfiguration
+    dense_dimensions: int
+    sparse_enabled: bool
+    run_control: RunControl
+
+
+class _CodeGenerationOpenKwargs(TypedDict):
+    """Keyword shape accepted by ``open_checkpoint``'s legacy path.
+
+    Mirrors ``CodeGenerationOpenRequest`` field-for-field so ``Unpack``
+    type-checks every call site against the request's real field types.
+    """
+
     policy: ResolvedIndexPolicy
     operation: RunOperation
     clean: bool
@@ -136,16 +152,26 @@ class CodeGenerationLifecycle:
         """Drop the drift owner so a new run cannot inherit the prior one."""
         self._drift_owner = None
 
+    @overload
+    def open_checkpoint(
+        self, request: CodeGenerationOpenRequest, /
+    ) -> CodeRunCheckpoint: ...
+    @overload
+    def open_checkpoint(
+        self,
+        request: None = None,
+        **legacy: Unpack[_CodeGenerationOpenKwargs],
+    ) -> CodeRunCheckpoint: ...
     def open_checkpoint(
         self,
         request: CodeGenerationOpenRequest | None = None,
-        **legacy: object,
+        **legacy: Any,
     ) -> CodeRunCheckpoint:
         """Open one compatible storage-confirmed code generation."""
         from ..config._settings import get_config
 
         if request is None:
-            request = CodeGenerationOpenRequest(**cast("dict[str, Any]", legacy))
+            request = CodeGenerationOpenRequest(**legacy)
         elif legacy:
             raise TypeError("use either CodeGenerationOpenRequest or named inputs")
         config = get_config()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, Unpack, overload
 
 from .. import store_schema
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
@@ -83,6 +83,24 @@ class CodeRunOpenRequest:
     configuration: CodeRunConfiguration
 
 
+class _CodeRunOpenKwargs(TypedDict):
+    """Keyword shape accepted by ``CodeRunCheckpoint.open``'s legacy path.
+
+    Mirrors ``CodeRunOpenRequest`` field-for-field so ``Unpack`` type-checks
+    every call site against the request's real field types.
+    """
+
+    data_root: Path
+    root_dir: Path
+    policy: ResolvedIndexPolicy
+    run_policy: RunPolicy
+    operation: RunOperation
+    clean: bool
+    model_identity: str
+    dense_dimensions: int
+    configuration: CodeRunConfiguration
+
+
 @dataclass(slots=True)
 class CodeRunCheckpoint(RunCheckpointBase):
     """One code generation's durable segment and publication authority."""
@@ -91,14 +109,24 @@ class CodeRunCheckpoint(RunCheckpointBase):
     _kind_label: ClassVar[str] = "code"
 
     @classmethod
+    @overload
+    def open(cls, request: CodeRunOpenRequest, /) -> CodeRunCheckpoint: ...
+    @classmethod
+    @overload
+    def open(
+        cls,
+        request: None = None,
+        **legacy: Unpack[_CodeRunOpenKwargs],
+    ) -> CodeRunCheckpoint: ...
+    @classmethod
     def open(
         cls,
         request: CodeRunOpenRequest | None = None,
-        **legacy: object,
+        **legacy: Any,
     ) -> CodeRunCheckpoint:
         """Open or resume the compatible code generation for one attempt."""
         if request is None:
-            request = CodeRunOpenRequest(**cast("dict[str, Any]", legacy))
+            request = CodeRunOpenRequest(**legacy)
         elif legacy:
             raise TypeError("use either a CodeRunOpenRequest or named inputs")
         kind_fingerprints = request.policy.fingerprints_for(ContentKind.CODE)

@@ -533,6 +533,11 @@ class JobManagerExecution(JobManagerState):
         if task is None:
             raise RuntimeError("managed attempt requires an asyncio task")
         context = JobAttemptContext(
+            # JobManagerExecution is only ever mixed into JobManager (see
+            # manager.py's class statement); the import cycle keeps that
+            # link TYPE_CHECKING-only, so self's static type stops at this
+            # mixin even though the composed instance is always the concrete
+            # JobManager the attempt context requires.
             manager=cast("JobManager", self),
             job_id=job_id,
             attempt=attempt,

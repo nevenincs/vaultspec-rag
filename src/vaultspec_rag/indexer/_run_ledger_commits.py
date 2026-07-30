@@ -209,7 +209,7 @@ class RunLedgerCommitMethods:
             f"{unit.rel_path!r}",
             generation_id=generation_id,
             rel_path=unit.rel_path,
-            indexed_digest=cast("str | None", indexed["content_hash"]),
+            indexed_digest=indexed["content_hash"],
             unit_digest=unit_digest,
         )
 
