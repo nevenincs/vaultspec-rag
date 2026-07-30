@@ -10,7 +10,7 @@ import pathlib
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack, cast
 
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import get_index_support_profile
@@ -338,6 +338,36 @@ class DocumentIndexer:
         # result on this long-lived per-root indexer instance.
         self._reuse_stats: ReuseStats | None = None
         self._donor_reuse: DonorReuseContext | None = None
+
+    @classmethod
+    def for_preflight(
+        cls,
+        root_dir: pathlib.Path,
+        *,
+        extra_excludes: list[str] | None = None,
+        content_policy: RootContentPolicy | None = None,
+    ) -> DocumentIndexer:
+        """Build one indexer for read-only preflight, with no model and no store.
+
+        The only construction path that omits both. ``__init__`` stores
+        ``model`` and ``store`` without reading either, and the preflight
+        methods resolve policy and walk the tree without reaching them: both
+        are read only inside an index run, by donor reuse and the encode
+        pipeline. An instance built here must therefore never enter a run -
+        it answers ``resolve_policy_snapshot``, ``preflight_content`` and
+        ``preflight_changed_paths``, and nothing else.
+
+        The two casts are the whole cost of expressing that. They live here,
+        beside the ``__init__`` whose behaviour makes them safe, instead of
+        being restated at every caller that wants a model-free preflight.
+        """
+        return cls(
+            root_dir,
+            cast("Any", None),
+            cast("Any", None),
+            extra_excludes=extra_excludes,
+            content_policy=content_policy,
+        )
 
     def _resolve_reuse(self, policy: ResolvedIndexPolicy) -> None:
         """Resolve this run's donor reuse context, once per index run."""

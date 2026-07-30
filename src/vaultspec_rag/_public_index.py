@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from .indexer._content_policy import ContentKind
 
@@ -41,17 +41,11 @@ def scan_documents(
     from .indexer import DocumentIndexer
 
     root = pathlib.Path(root_dir).resolve()
-    # ``DocumentIndexer.__init__`` only stores ``model``/``store``; both are
-    # read lazily inside a run, never during construction or
-    # ``preflight_content``, so ``None`` is safe here.
-    indexer = DocumentIndexer(
+    preflight = DocumentIndexer.for_preflight(
         root,
-        model=cast("Any", None),
-        store=cast("Any", None),
         extra_excludes=extra_excludes,
         content_policy=content_policy,
-    )
-    preflight = indexer.preflight_content()
+    ).preflight_content()
     paths = tuple(path.relative_to(root).as_posix() for path in preflight.files)
     fingerprints = preflight.policy.fingerprints_for(ContentKind.DOCUMENT)
     return DocumentScanResult(

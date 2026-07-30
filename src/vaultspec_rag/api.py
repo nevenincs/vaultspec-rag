@@ -178,20 +178,14 @@ def _preflight_code_index(
 ) -> CodeIndexPreflight:
     """Resolve policy and discovery without opening storage or loading models.
 
-    ``CodebaseIndexer.__init__`` only stores ``model``/``store`` on
-    collaborators that read them lazily during an actual index run;
-    construction and ``preflight_content`` never touch either, so ``None``
-    is safe here.
+    Code discovery is the read-only half of an index operation and needs no
+    model and no store to construct, so this asks it directly rather than
+    routing through an indexer it would have to leave unfinished.
     """
-    from .indexer import CodebaseIndexer
+    from .indexer._content_discovery import CodeContentDiscovery
 
-    indexer = CodebaseIndexer(
-        root,
-        model=cast("Any", None),
-        store=cast("Any", None),
-        options=CodebaseIndexer.Options(extra_excludes=extra_excludes),
-    )
-    return indexer.preflight_content(sample_limit=sample_limit)
+    discovery = CodeContentDiscovery(root, extra_excludes=extra_excludes or ())
+    return discovery.preflight_content(sample_limit=sample_limit)
 
 
 def _preflight_document_index(
@@ -200,22 +194,14 @@ def _preflight_document_index(
     extra_excludes: list[str] | None = None,
     content_policy: RootContentPolicy | None = None,
 ) -> DocumentIndexPreflight:
-    """Resolve document policy and discovery before storage or model loading.
-
-    ``DocumentIndexer.__init__`` only stores ``model``/``store``; both are
-    read lazily inside a run, never during construction or
-    ``preflight_content``, so ``None`` is safe here.
-    """
+    """Resolve document policy and discovery before storage or model loading."""
     from .indexer import DocumentIndexer
 
-    indexer = DocumentIndexer(
+    return DocumentIndexer.for_preflight(
         root,
-        model=cast("Any", None),
-        store=cast("Any", None),
         extra_excludes=extra_excludes,
         content_policy=content_policy,
-    )
-    return indexer.preflight_content()
+    ).preflight_content()
 
 
 def _preflight_document_scope(
@@ -225,22 +211,14 @@ def _preflight_document_scope(
     extra_excludes: list[str] | None = None,
     content_policy: RootContentPolicy | None = None,
 ) -> DocumentScopedPreflight:
-    """Resolve document policy against only the caller-selected paths.
-
-    ``DocumentIndexer.__init__`` only stores ``model``/``store``; both are
-    read lazily inside a run, never during construction or
-    ``preflight_changed_paths``, so ``None`` is safe here.
-    """
+    """Resolve document policy against only the caller-selected paths."""
     from .indexer import DocumentIndexer
 
-    indexer = DocumentIndexer(
+    return DocumentIndexer.for_preflight(
         root,
-        model=cast("Any", None),
-        store=cast("Any", None),
         extra_excludes=extra_excludes,
         content_policy=content_policy,
-    )
-    return indexer.preflight_changed_paths(changed_paths)
+    ).preflight_changed_paths(changed_paths)
 
 
 def index(
