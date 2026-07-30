@@ -15,7 +15,7 @@ by this module.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ..serviceclient._discovery import (
@@ -42,7 +42,7 @@ __all__ = [
 ]
 
 
-def _service_phase(status: dict[str, Any] | None) -> str | None:
+def _service_phase(status: dict[str, object] | None) -> str | None:
     """Return the daemon-stamped lifecycle phase from a status dict, if any."""
     if not isinstance(status, dict):
         return None

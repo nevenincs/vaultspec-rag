@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from ._file_state import FileStateKind, validate_rel_path
 from ._run_ledger_models import (
@@ -19,10 +19,21 @@ from ._run_ledger_models import (
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator
     from contextlib import AbstractContextManager
 
     from ._run_ledger_models import RunGeneration
+
+
+class _CommitUnitRow(TypedDict):
+    """The ``commit_units`` row columns :func:`_commit_unit_from_row` reads."""
+
+    rel_path: str
+    unit_kind: str
+    source_digest: str | None
+    segment_ordinal: int
+    is_file_end: int
+    point_ids_json: str
 
 
 class RunLedgerCommitMethods:
@@ -516,7 +527,7 @@ def retained_point_ids_sql(*, scoped_to_path: bool, keyset: bool) -> str:
         """
 
 
-def _commit_unit_from_row(row: Mapping[str, Any]) -> CommitUnit:
+def _commit_unit_from_row(row: _CommitUnitRow) -> CommitUnit:
     try:
         point_ids = json.loads(row["point_ids_json"])
         if not isinstance(point_ids, list):
@@ -526,7 +537,7 @@ def _commit_unit_from_row(row: Mapping[str, Any]) -> CommitUnit:
             kind=CommitUnitKind(row["unit_kind"]),
             source_digest=row["source_digest"],
             segment_ordinal=row["segment_ordinal"],
-            is_file_end=bool(cast("int", row["is_file_end"])),
+            is_file_end=bool(row["is_file_end"]),
             point_ids=tuple(cast("list[str]", point_ids)),
         )
     except (KeyError, TypeError, ValueError) as exc:

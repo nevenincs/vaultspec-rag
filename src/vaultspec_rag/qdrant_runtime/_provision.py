@@ -43,7 +43,6 @@ from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir, read_
 if TYPE_CHECKING:
     from collections.abc import Callable
     from http.client import HTTPMessage
-    from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +350,7 @@ def _write_manifest(
     source: str,
 ) -> None:
     """Atomically write the provisioning manifest into *version_dir*."""
-    manifest: dict[str, Any] = {
+    manifest: dict[str, str] = {
         "version": QDRANT_SERVER_VERSION,
         "asset": asset,
         "asset_sha256": asset_sha256,

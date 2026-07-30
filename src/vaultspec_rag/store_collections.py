@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from . import store_schema
 
@@ -13,6 +13,11 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from qdrant_client import QdrantClient
+    from qdrant_client.http.models import (
+        OptimizersConfigDiff,
+        QuantizationConfig,
+        WalConfigDiff,
+    )
 
     from ._store_locks import ReentrantLock
 
@@ -25,6 +30,14 @@ from .store_runtime import (  # noqa: E402
 )
 
 __all__ = ["_VaultCollectionMixin"]
+
+
+class _CreateCollectionExtras(TypedDict, total=False):
+    """The optional ``create_collection`` keyword arguments this store sets."""
+
+    quantization_config: QuantizationConfig
+    wal_config: WalConfigDiff
+    optimizers_config: OptimizersConfigDiff
 
 
 class _VaultCollectionMixin:
@@ -103,7 +116,7 @@ class _VaultCollectionMixin:
             if self._collection_exists(name):
                 return
 
-            kwargs: dict[str, Any] = {}
+            kwargs: _CreateCollectionExtras = {}
             if quantization_config is not None:
                 kwargs["quantization_config"] = quantization_config
             if self._server_mode:

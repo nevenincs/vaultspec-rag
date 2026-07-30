@@ -1115,7 +1115,7 @@ def _quiesce_envelope(
             "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
         },
     )
-    payload: dict[str, Any] = {
+    payload: dict[str, object] = {
         "ok": achieved,
         "status": status,
         "quiesce": snapshot.as_envelope(),

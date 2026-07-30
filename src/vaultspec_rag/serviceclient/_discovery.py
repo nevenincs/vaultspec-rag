@@ -410,7 +410,7 @@ def _coerce_port(port: Any) -> int | None:
         return None
 
 
-def _staleness_window_seconds(payload: dict[str, Any]) -> float:
+def _staleness_window_seconds(payload: dict[str, object]) -> float:
     """Return the payload's own staleness window, or the fallback."""
     threshold = payload.get("stale_after_s")
     if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
@@ -422,7 +422,7 @@ def _staleness_window_seconds(payload: dict[str, Any]) -> float:
     )
 
 
-def _discovery_pair_understood(payload: Mapping[str, Any]) -> bool:
+def _discovery_pair_understood(payload: Mapping[str, object]) -> bool:
     """Whether this build understands *payload*'s declared schema pair.
 
     A payload carrying neither field predates the discriminator and is accepted
@@ -458,7 +458,7 @@ class MachineResolution:
     heartbeat_age_s: float | None = None
     stale_after_s: float | None = None
     reason: str | None = None
-    payload: dict[str, Any] | None = None
+    payload: dict[str, object] | None = None
 
     @property
     def is_ready(self) -> bool:
@@ -590,7 +590,7 @@ def resolve_machine_service() -> MachineResolution:
 class _MachinePointerEvidence:
     """Pointer fields compared against the live machine-lock owner."""
 
-    payload: dict[str, Any]
+    payload: dict[str, object]
     port: int | None
     holder_pid: int
     pointer_pid: int | None
