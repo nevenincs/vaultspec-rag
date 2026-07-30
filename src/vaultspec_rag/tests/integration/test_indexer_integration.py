@@ -721,7 +721,7 @@ class TestDocumentPreparation:
     def test_prepare_real_document(
         self, rag_components: RagComponentsWithManifest
     ) -> None:
-        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.vaultcore import (
             scan_vault,
         )
 
@@ -742,7 +742,7 @@ class TestDocumentPreparation:
     def test_prepare_all_documents(
         self, rag_components: RagComponentsWithManifest
     ) -> None:
-        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.vaultcore import (
             scan_vault,
         )
 
@@ -874,7 +874,7 @@ class TestIncrementalModifyAndDelete:
         self, rag_components_full: RagComponentsWithManifest
     ) -> None:
         """Modifying a file's content triggers an update on incremental re-index."""
-        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.vaultcore import (
             scan_vault,
         )
 
@@ -906,7 +906,7 @@ class TestIncrementalModifyAndDelete:
         self, rag_components_full: RagComponentsWithManifest
     ) -> None:
         """Removing a file from disk triggers a removal on incremental re-index."""
-        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.vaultcore import (
             scan_vault,
         )
 
