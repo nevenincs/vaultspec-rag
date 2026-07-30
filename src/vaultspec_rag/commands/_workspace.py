@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config.workspace import (
     resolve_workspace,
 )
-from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.types import (
     init_paths,
 )
 

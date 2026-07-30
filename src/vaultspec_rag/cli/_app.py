@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import typer
 from typer.core import TyperGroup, TyperOption
 from typer.models import TyperPath
-from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.config.workspace import (
     WorkspaceError,
     WorkspaceLayout,
     resolve_workspace,
