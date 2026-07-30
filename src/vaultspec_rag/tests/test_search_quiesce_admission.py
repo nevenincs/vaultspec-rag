@@ -66,7 +66,12 @@ class _QuiesceSearchEnvelopeHandler(BaseHTTPRequestHandler):
 def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
     tmp_path: Path,
 ) -> None:
-    """Closed admission rejects before any source can construct compute work."""
+    """Closed admission rejects before any source can construct compute work.
+
+    Replacing the route's ``QuiesceAdmissionClosedError`` handling with a
+    raised runtime error makes the named 503 assertion fail, proving this is
+    not a generic server-error response.
+    """
     from time import time_ns
 
     root = tmp_path / "vault"
@@ -99,10 +104,10 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
 
     snapshot = registry.quiesce_snapshot()
     for source, response in responses.items():
+        assert response.status_code == 503, source
         payload: dict[str, object] = response.json()
         request_id = payload.get("request_id")
         assert isinstance(request_id, str), source
-        assert response.status_code == 503, source
         assert payload == {
             "ok": False,
             "error": "quiesce_admission_closed",
@@ -129,7 +134,18 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
         assert record["error_code"] == "quiesce_admission_closed"
         assert record["error_message"] == _QUIESCE_SEARCH_MESSAGE
     assert registry.snapshot() == []
-    assert registry.quiesce_snapshot().active_compute_tickets == 0
+    assert registry.health() == {
+        "model_loaded": False,
+        "reranker_loaded": False,
+        "cuda": False,
+        "project_count": 0,
+        "projects": [],
+        "nonconforming": [],
+    }
+    assert registry.quiesce_snapshot() == snapshot
+    assert snapshot.active_compute_tickets == 0
+    assert snapshot.vram_released
+    assert snapshot.safe_to_borrow_gpu
 
 
 def test_search_transport_preserves_the_exact_quiesce_envelope() -> None:
