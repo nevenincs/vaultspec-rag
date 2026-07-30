@@ -32,7 +32,7 @@ from textual.worker import WorkerState
 from ..job_models import DesiredJobState, JobState
 from ..jobs import count, mapping, measurement, text
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
-from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS
+from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS, QuiesceState
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_delete_job,
@@ -2003,16 +2003,42 @@ class ServerWatchApp(App[None]):
             return None
         return f"pressure {tier}", "bad" if tier == "critical" else "attention"
 
-    def _quiesce_cell(self) -> tuple[str, str]:
-        """Render only service-reported controller evidence, never authority."""
+    def _quiesce_cell(self) -> tuple[str, str] | None:
+        """The controller-evidence pill as (text, tone), or nothing to show.
+
+        Only service-reported evidence is rendered, never authority: this
+        client repairs no block it was sent and derives no permission from
+        one. What it does decide is whether the evidence is news, on the same
+        rule the pressure pill keeps. A daemon that reports no controller
+        block has made no observation, and a controller that is running, is
+        holding its VRAM and has admitted no borrower is the steady state an
+        operator already assumes; neither earns a cell, because a pill nobody
+        needs never costs a label somebody does. Silence here is never a
+        claim of safety - it is only the absence of a claim - and the detail
+        row states the controller's whole answer on every render, absent,
+        foreign or canonical alike, so nothing is lost by staying quiet.
+
+        Everything else is news, and news is never shed and never abbreviated.
+        A block this build cannot read is a contradiction between a daemon
+        that owns a controller and a report nothing may be trusted from, so
+        it is the loud tone rather than the muted one. Any other state, any
+        released VRAM and any admitted borrower is exactly the window in
+        which an operator needs all three facts at once.
+        """
         if not self._quiesce_reported:
-            return "quiesce unavailable", "muted"
+            return None
         match self._quiesce:
             case {
                 "state": str(state),
                 "vram_released": bool(vram_released),
                 "safe_to_borrow_gpu": bool(safe_to_borrow_gpu),
             }:
+                if (
+                    state == QuiesceState.RUNNING
+                    and not vram_released
+                    and not safe_to_borrow_gpu
+                ):
+                    return None
                 vram = "released" if vram_released else "held"
                 safety = "safe" if safe_to_borrow_gpu else "unsafe"
                 tone = "good" if safe_to_borrow_gpu else "attention"
@@ -2021,17 +2047,28 @@ class ServerWatchApp(App[None]):
                 return "quiesce unavailable", "bad"
 
     def _append_quiesce_detail(self, line: Text, tones: dict[str, str]) -> None:
-        """Show the full controller block a received jobs snapshot carried."""
+        """State the controller's whole answer on its own unbounded row.
+
+        The header pill is a summary that speaks only when the controller has
+        news; this row is where the answer is readable whatever it is, so it
+        is the one that carries an absence the pill does not paint. Both ways
+        an answer can go missing read as ``quiesce unavailable`` and differ
+        only in the reason given, because they leave an operator in the same
+        position and one condition must not wear two names.
+        """
         if self._quiesce is not None:
             line.append("\nquiesce details: ", style="dim")
             line.append(str(self._quiesce), style="dim")
         elif self._quiesce_reported:
             line.append(
-                "\nquiesce details unavailable: invalid service response",
+                "\nquiesce unavailable: invalid service response",
                 style=tone_style(tones, "bad", bold=True),
             )
         else:
-            line.append("\nquiesce details unavailable", style="dim")
+            line.append(
+                "\nquiesce unavailable: no controller evidence reported",
+                style="dim",
+            )
 
     def _compose_header_line(
         self,
@@ -2044,11 +2081,12 @@ class ServerWatchApp(App[None]):
     ) -> Text:
         """Build the header row: grouped pills, condition, GPU, page count.
 
-        The groups - state pills, health tallies, service condition, quiesce,
-        GPU, and the page count - are divided by dim separators so the row
-        reads as cells rather than one cramped run. Labels are a width
-        decision made by the caller; the condition, quiesce, and GPU cells are
-        never dropped.
+        The groups - state pills, health tallies, service condition, GPU, the
+        exception cells, and the page count - are divided by dim separators so
+        the row reads as cells rather than one cramped run. Labels are a width
+        decision made by the caller; the condition and GPU cells are never
+        dropped, and neither is an exception cell on the occasions it has
+        something to report at all.
         ``split_before_service`` is the last width fallback: the row breaks
         deliberately at the service-group boundary instead of wherever the
         wrapper would land - never through the middle of a pill.
@@ -2094,14 +2132,16 @@ class ServerWatchApp(App[None]):
             unicode_ok=unicode_ok,
         )
         self._append_separator(line, unicode_ok=unicode_ok)
-        quiesce_text, quiesce_tone = self._quiesce_cell()
-        _append_pill(
-            line,
-            quiesce_text,
-            fills[quiesce_tone],
-            unicode_ok=unicode_ok,
-        )
-        self._append_separator(line, unicode_ok=unicode_ok)
+        quiesce_cell = self._quiesce_cell()
+        if quiesce_cell is not None:
+            quiesce_text, quiesce_tone = quiesce_cell
+            _append_pill(
+                line,
+                quiesce_text,
+                fills[quiesce_tone],
+                unicode_ok=unicode_ok,
+            )
+            self._append_separator(line, unicode_ok=unicode_ok)
         gpu_text, gpu_tone, _gpu_bold = self._gpu_cell()
         _append_pill(line, gpu_text, fills[gpu_tone], unicode_ok=unicode_ok)
         pressure_cell = self._pressure_cell()
@@ -2140,8 +2180,11 @@ class ServerWatchApp(App[None]):
         width = self._summary_width()
         # Widest fitting form wins: labels leave the state pills first, then
         # the health tallies. Counts, the condition and the GPU cell are
-        # never shed, and neither is the pressure pill on the occasions it
-        # is painted at all; past the narrowest form the bar wraps.
+        # never shed, and neither are the quiesce and pressure pills on the
+        # occasions they are painted at all - a cell that only speaks when it
+        # has news has already paid for the width it takes, and shedding it
+        # would hide the very thing it was painted to say; past the narrowest
+        # form the bar wraps.
         line = self._compose_header_line(tones, state_labels=True, health_labels=True)
         if 0 < width < _widest_line(line):
             line = self._compose_header_line(
