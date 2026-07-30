@@ -40,6 +40,10 @@ from .._source_types import (
 from .._store_locks import VaultStoreLockedError
 from ..concurrency import get_search_limiter
 from ..logging_config import log_event
+from ..search._outcomes import (
+    COMBINED_SEARCH_FAILED,
+    COMBINED_SEARCH_FAILED_MESSAGE,
+)
 from ..search._result_shaping import (
     PHASE_EMBEDDING,
     PHASE_MODEL_LOAD,
@@ -515,7 +519,7 @@ def _activity_outcome(result: dict[str, object], status_code: int) -> str:
     error = result.get("error")
     if error in ("index_unavailable", "quiesce_admission_closed"):
         return "unavailable"
-    if error == "combined_search_failed":
+    if error == COMBINED_SEARCH_FAILED:
         return "combined_failed"
     if error in ("registry_full", "local_store_locked"):
         return "admission_failed"
@@ -742,8 +746,8 @@ def _execute_search_request(request: SearchRequest) -> dict[str, object]:
             if not combined.ok:
                 response.update(
                     {
-                        "error": "combined_search_failed",
-                        "message": "Every combined-search domain failed.",
+                        "error": COMBINED_SEARCH_FAILED,
+                        "message": COMBINED_SEARCH_FAILED_MESSAGE,
                         "summary": "Combined search failed in every domain.",
                     }
                 )
