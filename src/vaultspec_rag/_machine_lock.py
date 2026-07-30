@@ -31,7 +31,7 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NoReturn, SupportsIndex, cast
 
 from ._atomic_write import JsonWriteOptions, write_json_atomically
 
@@ -41,9 +41,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CapturedMachineLockWitness",
     "MachineLockLease",
+    "PreIsolationMachineLock",
     "acquire_machine_lock",
     "acquire_machine_lock_lease",
+    "capture_pre_isolation_machine_lock",
     "delete_machine_discovery",
     "machine_discovery_path",
     "machine_lock_live_holder",
@@ -52,6 +55,7 @@ __all__ = [
     "read_machine_discovery",
     "release_machine_lock",
     "release_machine_lock_lease",
+    "revalidate_captured_machine_lock",
 ]
 
 _MACHINE_LOCK_FILENAME = "service.lock"
@@ -77,12 +81,74 @@ class MachineLockLease:
     descriptor: int
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class PreIsolationMachineLock:
+    """Read-only projection of one registry-owned pre-root lock capture.
+
+    Callers can use the projected paths for diagnostics and discovery reads,
+    but cannot construct a record that the witness registry will recognize.
+    """
+
+    witness: CapturedMachineLockWitness
+    identity_lock_path: Path
+    discovery_path: Path
+    holder_pid: int
+
+
+@dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
+class CapturedMachineLockWitness:
+    """A redacted in-process reference to one captured machine lock identity."""
+
+    def __init__(self) -> None:
+        raise TypeError("captured machine lock witnesses are minted internally")
+
+    def __repr__(self) -> str:
+        """Keep diagnostics useful without exposing retained original paths."""
+        return "CapturedMachineLockWitness(<redacted>)"
+
+    def __reduce__(self) -> NoReturn:
+        """Forbid serializing a process-local original machine identity."""
+        raise TypeError("captured machine lock witnesses are not serializable")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        """Forbid every pickle protocol without exposing a fallback state."""
+        del protocol
+        return self.__reduce__()
+
+
+@dataclass(frozen=True, slots=True)
+class _CapturedMachineLockRecord:
+    """The registry-only original paths and expected owner for one witness."""
+
+    identity_lock_path: Path
+    discovery_path: Path
+    holder_pid: int
+
+
+def _project_captured_machine_lock(
+    witness: CapturedMachineLockWitness,
+    record: _CapturedMachineLockRecord,
+) -> PreIsolationMachineLock:
+    """Return the immutable public projection for one private registry record."""
+    projection = object.__new__(PreIsolationMachineLock)
+    object.__setattr__(projection, "witness", witness)
+    object.__setattr__(projection, "identity_lock_path", record.identity_lock_path)
+    object.__setattr__(projection, "discovery_path", record.discovery_path)
+    object.__setattr__(projection, "holder_pid", record.holder_pid)
+    return projection
+
+
 # Keeping the descriptor reachable through the retained lease is what keeps
 # the OS lock held.  Pointer mutation and release are serialized with this
 # registry so a lease cannot be released between its authority check and the
 # filesystem operation it authorizes.
 _held_leases: dict[str, MachineLockLease] = {}
 _lease_guard = threading.RLock()
+_captured_machine_lock_records: dict[
+    CapturedMachineLockWitness, _CapturedMachineLockRecord
+] = {}
+_captured_machine_lock_minted: set[CapturedMachineLockWitness] = set()
+_captured_machine_lock_guard = threading.RLock()
 
 
 def machine_lock_path() -> Path:
@@ -211,7 +277,11 @@ def acquire_machine_lock_lease() -> tuple[MachineLockLease | None, int]:
         if retained is not None:
             _require_active_lease(retained, operation="reuse the machine lock")
             return (retained, retained.pid)
-    from ._anchor_claim import claim_anchor, record_claim_owner
+    from ._anchor_claim import (
+        claim_anchor,
+        record_claim_owner,
+        release_anchor_claim,
+    )
 
     claim = claim_anchor(path, pid_record=True, create_parent=True)
     if claim.fault is not None:
@@ -222,9 +292,14 @@ def acquire_machine_lock_lease() -> tuple[MachineLockLease | None, int]:
         raise claim.fault
     if claim.descriptor is None:
         return (None, claim.holder_pid)
-    # We hold the lock. Record our pid for the refusal message a future
-    # contender will read; the lock itself is the authority.
-    record_claim_owner(claim.descriptor)
+    # The durable PID witness is required for a contender to correlate this
+    # holder with its discovery record. If it cannot be written, release the
+    # OS lock before failing rather than admit an unverifiable singleton.
+    try:
+        record_claim_owner(claim.descriptor)
+    except BaseException:
+        release_anchor_claim(claim.descriptor, pid_record=True)
+        raise
     lease = MachineLockLease(path=path, pid=os.getpid(), descriptor=claim.descriptor)
     with _lease_guard:
         _held_leases[str(path)] = lease
@@ -277,6 +352,90 @@ def release_machine_lock() -> None:
     if lease is None:
         return
     release_machine_lock_lease(lease)
+
+
+def _probe_existing_machine_lock_holder(identity_lock_path: Path) -> int | None:
+    """Read a positive PID from one preselected, already-existing lock path.
+
+    This is the narrow pre-registration captured-target observer. Unlike the
+    configured-path probe below, it neither resolves configuration nor creates
+    an anchor; callers receive no lease or path-selection capability.
+    """
+    from ._anchor_claim import probe_existing_anchor_holder
+
+    return probe_existing_anchor_holder(identity_lock_path, pid_record=True)
+
+
+def capture_pre_isolation_machine_lock() -> PreIsolationMachineLock | None:
+    """Capture one existing original machine lock without path input or writes.
+
+    This is the only public bridge to the private raw-path probe. It derives
+    the configured machine identity and discovery paths before pytest redirects
+    them, then returns evidence only when a positive owner PID is recovered
+    from a currently contended lock.
+    """
+    from ._test_isolation import (
+        ManagedSingletonIsolationError,
+        pytest_singleton_bootstrap_window,
+    )
+
+    try:
+        with pytest_singleton_bootstrap_window(
+            operation="capture a pre-isolation machine lock witness"
+        ):
+            try:
+                identity_lock_path = machine_lock_path().resolve(strict=False)
+                discovery_path = machine_discovery_path().resolve(strict=False)
+            except (OSError, RuntimeError, ValueError):
+                return None
+            holder_pid = _probe_existing_machine_lock_holder(identity_lock_path)
+            if holder_pid is None:
+                return None
+            witness = object.__new__(CapturedMachineLockWitness)
+            record = _CapturedMachineLockRecord(
+                identity_lock_path=identity_lock_path,
+                discovery_path=discovery_path,
+                holder_pid=holder_pid,
+            )
+            with _captured_machine_lock_guard:
+                _captured_machine_lock_records[witness] = record
+    except ManagedSingletonIsolationError:
+        return None
+    return _project_captured_machine_lock(witness, record)
+
+
+def revalidate_captured_machine_lock(
+    witness: object,
+) -> PreIsolationMachineLock | None:
+    """Return a fresh projection only for its original live captured holder."""
+    if not isinstance(witness, CapturedMachineLockWitness):
+        return None
+    with _captured_machine_lock_guard:
+        record = _captured_machine_lock_records.get(witness)
+    if record is None:
+        return None
+    holder_pid = _probe_existing_machine_lock_holder(record.identity_lock_path)
+    if holder_pid != record.holder_pid:
+        return None
+    return _project_captured_machine_lock(witness, record)
+
+
+def consume_captured_machine_lock_for_borrower_authority(
+    witness: object,
+) -> Path:
+    """Consume one witness for a borrower authority and derive its sibling."""
+    if not isinstance(witness, CapturedMachineLockWitness):
+        raise PermissionError(
+            "a captured GPU borrower lease requires a machine witness"
+        )
+    with _captured_machine_lock_guard:
+        record = _captured_machine_lock_records.get(witness)
+        if record is None or witness in _captured_machine_lock_minted:
+            raise PermissionError(
+                "the captured machine lock witness is stale or consumed"
+            )
+        _captured_machine_lock_minted.add(witness)
+    return record.identity_lock_path.with_name("gpu-borrower.lock")
 
 
 def machine_lock_live_holder() -> int:
