@@ -251,7 +251,9 @@ class TestJobStallShaping:
         assert shaped["state"] == "paused"
         assert shaped["phase"] == "paused"
         assert shaped["stalled"] is False
-        assert "current" not in cast("dict[str, object]", shaped["resources"])
+        resources = shaped["resources"]
+        assert isinstance(resources, dict)
+        assert "current" not in resources
 
     def test_fresh_progress_is_not_stalled(self) -> None:
         from ..server._routes_jobs import _job_with_liveness
@@ -295,7 +297,9 @@ class TestJobStallShaping:
         assert shaped["control_acknowledgement_seconds"] == 0.0
         assert shaped["control_pending_age_seconds"] is None
         assert shaped["stalled"] is False
-        assert "current" not in cast("dict[str, object]", shaped["resources"])
+        resources = shaped["resources"]
+        assert isinstance(resources, dict)
+        assert "current" not in resources
 
     def test_canonical_filters_use_state_desired_state_and_capabilities(self) -> None:
         from ..server._routes_jobs import JobFilter, _job_matches
@@ -353,7 +357,9 @@ class TestJobStallShaping:
         assert shaped["phase"] == "pausing"
         assert shaped["control_pending_age_seconds"] == 400.0
         assert shaped["stalled"] is True
-        assert "current" not in cast("dict[str, object]", shaped["resources"])
+        resources = shaped["resources"]
+        assert isinstance(resources, dict)
+        assert "current" not in resources
 
     def test_summary_and_ordering_are_canonical_and_actionable(self) -> None:
         from ..server._routes_jobs import _job_summary, _prioritise_running_jobs
