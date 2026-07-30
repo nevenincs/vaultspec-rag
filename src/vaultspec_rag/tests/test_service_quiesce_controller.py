@@ -137,12 +137,28 @@ def test_resume_recovery_failure_keeps_warming_closed_and_unsafe() -> None:
     """A durable recovery failure is truthful without inventing a fifth state."""
     controller = ServiceQuiesceController()
 
+    # A narrowed terminal code never narrows the unavailable answer: this
+    # report arrives while the controller is still running, so it is answered
+    # for the transition its caller owned and not as a recovery failure.
+    late = controller.fail_transition(
+        owned_state=QuiesceState.WARMING,
+        reason="job_resume_persistence_failed",
+        failed_code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+    )
+
+    assert late.code is QuiesceTransitionCode.WARMUP_UNAVAILABLE
+    assert late.snapshot.failure_reason is None
+
     assert controller.begin_pause().achieved is False
     assert controller.wait_for_drain(timeout=0).achieved
     assert controller.acknowledge_vram_released().achieved
     assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
 
-    failed = controller.fail_resume_recovery("job_resume_persistence_failed")
+    failed = controller.fail_transition(
+        owned_state=QuiesceState.WARMING,
+        reason="job_resume_persistence_failed",
+        failed_code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+    )
 
     assert failed.code is QuiesceTransitionCode.RESUME_RECOVERY_FAILED
     assert not failed.achieved
