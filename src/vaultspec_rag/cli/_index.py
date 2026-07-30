@@ -53,6 +53,7 @@ from ._app import (
 from ._cli_format import _counted_unit
 from ._core import logger
 from ._gpu_errors import _handle_gpu_error
+from ._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
 from ._render import (
     _display_port_unreachable_error,
     _display_service_error,
@@ -531,6 +532,42 @@ def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
     raise typer.Exit(code=1)
 
 
+def _borrow_gpu_refusal(error: BorrowGPUError, *, json_mode: bool) -> None:
+    """Render one fail-closed borrower-coordination refusal."""
+    if json_mode:
+        _emit_json_error_and_exit("index", error.error, str(error), 1)
+    _plain(f"Error: {error}")
+    raise typer.Exit(code=1)
+
+
+def _borrow_gpu_required(*, json_mode: bool) -> None:
+    """Refuse local indexing unless the operator requested borrower authority."""
+    message = (
+        "No compatible running service is available for delegated indexing. "
+        "Start a compatible service, or explicitly rerun with --borrow-gpu."
+    )
+    if json_mode:
+        _emit_json_error_and_exit("index", "borrow_gpu_required", message, 1)
+    _plain(f"Error: {message}")
+    raise typer.Exit(code=1)
+
+
+def _try_borrowed_in_process_indexing(
+    request: _IndexRunRequest,
+    *,
+    requested_port: int | None,
+    no_preprocess: bool,
+) -> None:
+    """Run the existing local index path only under borrower coordination."""
+
+    def index_work() -> None:
+        if no_preprocess:
+            _apply_preprocess_off_env()
+        _try_in_process_indexing(request)
+
+    run_with_borrowed_gpu(requested_port=requested_port, work=index_work)
+
+
 def _print_service_domain_outcomes(raw_domains: object) -> bool:
     """Render canonical per-domain queued or failed reindex outcomes."""
     if not isinstance(raw_domains, dict):
@@ -559,7 +596,7 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
     "index",
     help=(
         "Build or update the vault, code, and extracted-document search indexes. "
-        "Uses the running service when available; otherwise runs locally."
+        "Uses the running service, or --borrow-gpu for explicit local GPU work."
     ),
 )
 def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option schema.
@@ -615,13 +652,13 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             help="Ad-hoc exclusion pattern (repeatable, gitignore syntax).",
         ),
     ] = None,
-    allow_fallback: Annotated[
+    borrow_gpu: Annotated[
         bool,
         typer.Option(
-            "--allow-fallback",
+            "--borrow-gpu",
             help=(
-                "If the selected service is not reachable, build the index "
-                "locally instead of stopping with an error."
+                "Acquire a borrower lease, pause a compatible running service, "
+                "then run this index command locally before resuming it."
             ),
         ),
     ] = False,
@@ -647,7 +684,6 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
     json_mode: JsonMode = False,
 ) -> None:
     """Index vault documents and/or codebase chunks."""
-    del allow_fallback
     if not verbose:
         _suppress_hf_progress()
     state: CLIState = ctx.obj
@@ -664,6 +700,18 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
 
     if rebuild:
         _validate_rebuild(ctx, json_mode)
+
+    request = _IndexRunRequest(source, rebuild, model, exclude, target, json_mode)
+    if borrow_gpu:
+        try:
+            _try_borrowed_in_process_indexing(
+                request,
+                requested_port=port,
+                no_preprocess=no_preprocess,
+            )
+        except BorrowGPUError as exc:
+            _borrow_gpu_refusal(exc, json_mode=json_mode)
+        return
 
     if port is None:
         service = resolve_data_plane_service()
@@ -699,14 +747,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
     ):
         return
 
-    # In-process path: apply the forwarded preprocess mode to the env before
-    # indexing begins (the config property reads it live).
-    if no_preprocess:
-        _apply_preprocess_off_env()
-
-    _try_in_process_indexing(
-        _IndexRunRequest(source, rebuild, model, exclude, target, json_mode)
-    )
+    _borrow_gpu_required(json_mode=json_mode)
 
 
 def _try_in_process_indexing(request: _IndexRunRequest) -> None:
