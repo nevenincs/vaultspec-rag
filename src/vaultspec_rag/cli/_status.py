@@ -231,7 +231,7 @@ def _render_status_text(
     for line in lines:
         _plain(line, soft_wrap=line.startswith(("Index data:", "Project:", "Address:")))
     if service_port is not None:
-        _plain(f"  vaultspec-rag server status --port {service_port}")
+        _plain(f"  {server_status_command(service_port)}")
     _print_next_action(next_action)
 
 

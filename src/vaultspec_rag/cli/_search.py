@@ -851,8 +851,8 @@ def _display_service_down_error(*, json_mode: bool) -> NoReturn:
         "The CLI will not silently run the search locally because that would "
         "open the local search index directly and block other users.\n"
         "Next actions:\n"
-        "  1. Check status:  vaultspec-rag server status\n"
-        "  2. Start service: vaultspec-rag server start\n"
+        f"  1. Check status:  {server_status_command()}\n"
+        f"  2. Start service: {server_start_command()}\n"
         "  3. Or run locally anyway: re-run with "
         "--allow-fallback (one user only)."
     )
