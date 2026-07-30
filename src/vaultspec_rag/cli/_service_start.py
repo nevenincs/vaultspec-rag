@@ -14,13 +14,31 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from typer.core import TyperCommand, TyperOption
 
 if TYPE_CHECKING:
     import typer
     from typer._click import Context as ClickContext
+
+    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
+    # and value types are only known once a command's options are parsed at
+    # runtime. This TypedDict is the producer-side cast target for
+    # ``_ServiceStartCommand.invoke``: the field types mirror the
+    # ``TyperOption`` declarations registered in ``__init__``, so a single
+    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
+    class _StartParams(TypedDict):
+        port: int
+        updates: bool | None
+        update_delay_ms: int | None
+        repeat_update_delay_s: float | None
+        local_only: bool
+        qdrant: bool | None
+        qdrant_auto_provision: bool
+        no_preprocess: bool
+        json: bool
+
 
 from .._operator_commands import (
     server_jobs_command,
@@ -237,7 +255,7 @@ class _ServiceStartCommand(TyperCommand):
 
     def invoke(self, ctx: ClickContext) -> None:
         """Dispatch parsed Click parameters as the typed start options."""
-        params = ctx.params
+        params = cast("_StartParams", ctx.params)
         return _run_service_start(
             ctx,
             _ServiceStartOptions(
@@ -389,8 +407,8 @@ def _existing_service_running() -> _AttachCandidate | None:
     status = read_service_status()
     if status is None:
         return None
-    existing_pid = int(status["pid"])
-    existing_port = int(status["port"])
+    existing_pid = int(cast("int", status["pid"]))
+    existing_port = int(cast("int", status["port"]))
     existing_token = status.get("service_token")
     existing_token_str = existing_token if isinstance(existing_token, str) else None
     if _is_our_service(
@@ -692,8 +710,8 @@ def _attach_warming_service(json_mode: bool) -> bool:
         _service_phase(warming_status) != SERVICE_PHASE_WARMING
     ):
         return False
-    warming_pid = int(warming_status["pid"])
-    warming_port = int(warming_status["port"])
+    warming_pid = int(cast("int", warming_status["pid"]))
+    warming_port = int(cast("int", warming_status["port"]))
     if not pid_alive(warming_pid) or not _is_our_service(warming_pid):
         return False
     _start_success(

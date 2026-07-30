@@ -56,7 +56,8 @@ from ._store_format import (
 )
 
 if TYPE_CHECKING:
-    from typing import Any, BinaryIO
+    from http.client import HTTPResponse
+    from typing import BinaryIO
 
     from ._resolve import QdrantIdentity
 
@@ -88,8 +89,10 @@ _DRAIN_JOIN_TIMEOUT_SECONDS = 3.0
 #: Read from the settings defaults rather than restated here: the managed log
 #: has one retention policy, and a second literal drifts from it the moment
 #: either is retuned.
-_MANAGED_LOG_MAX_BYTES_DEFAULT = int(rag_default("managed_log_max_bytes"))
-_MANAGED_LOG_BACKUP_COUNT_DEFAULT = int(rag_default("managed_log_backup_count"))
+_MANAGED_LOG_MAX_BYTES_DEFAULT = int(cast("int", rag_default("managed_log_max_bytes")))
+_MANAGED_LOG_BACKUP_COUNT_DEFAULT = int(
+    cast("int", rag_default("managed_log_backup_count"))
+)
 
 
 class _SupervisorOptions(TypedDict, total=False):
@@ -240,7 +243,7 @@ def _ready_timeout_seconds() -> float:
     """
     from ..config._settings import get_config, rag_default
 
-    default = float(rag_default("qdrant_ready_timeout_seconds"))
+    default = float(cast("float", rag_default("qdrant_ready_timeout_seconds")))
     try:
         value = float(get_config().qdrant_ready_timeout_seconds)
     except (TypeError, ValueError):
@@ -298,11 +301,12 @@ def _win_kill_on_close_job() -> int | None:
 
 def _win_assign_to_job(job: int | None, proc: subprocess.Popen[bytes]) -> bool:
     """Assign *proc* to *job*; True on success (logged otherwise)."""
-    # Popen exposes the raw Windows process handle as ``_handle``;
-    # typeshed does not declare it, hence the Any cast.
-    return assign_process_to_job(
-        job, int(cast("Any", proc)._handle), proc.pid, purpose="qdrant"
-    )
+    # Popen exposes the raw Windows process handle as ``_handle``, stored as a
+    # plain instance attribute; typeshed does not declare it and a direct
+    # ``proc._handle`` read is a protected-access violation, so it is read
+    # through the instance dict instead.
+    handle = cast("int", vars(proc)["_handle"])
+    return assign_process_to_job(job, int(handle), proc.pid, purpose="qdrant")
 
 
 class QdrantSupervisor:
@@ -580,8 +584,12 @@ class QdrantSupervisor:
             return False
         url = f"{self.url}/readyz"
         try:
-            with LOOPBACK_OPENER.open(url, timeout=2.0) as resp:
-                return int(resp.status) == 200
+            # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it
+            # dispatches across registered handlers); this opener only ever
+            # handles loopback HTTP, so the runtime type is always an
+            # ``HTTPResponse``.
+            with cast("HTTPResponse", LOOPBACK_OPENER.open(url, timeout=2.0)) as resp:
+                return resp.status == 200
         except (urllib.error.URLError, OSError, ValueError) as exc:
             logger.debug("qdrant readyz probe failed: %s", exc)
             return False
@@ -851,8 +859,12 @@ class QdrantSupervisor:
             The version string, or ``""`` when unreachable.
         """
         try:
-            with LOOPBACK_OPENER.open(self.url, timeout=2.0) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
+            with cast(
+                "HTTPResponse", LOOPBACK_OPENER.open(self.url, timeout=2.0)
+            ) as resp:
+                payload = cast(
+                    "dict[str, object]", json.loads(resp.read().decode("utf-8"))
+                )
             return str(payload.get("version", ""))
         except (urllib.error.URLError, OSError, ValueError) as exc:
             logger.debug("qdrant version probe failed: %s", exc)
