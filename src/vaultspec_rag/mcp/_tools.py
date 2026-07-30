@@ -507,11 +507,12 @@ async def get_index_status(
 ) -> dict[str, Any]:
     """Return count, policy, generation, and degraded-state service details."""
     port = _require_port()
+    args: dict[str, object] = {"project_root": _resolve_project_root(project_root)}
     result = await _delegate(
         partial(
             _try_http_admin,
             "get_service_state",
-            {"project_root": _resolve_project_root(project_root)},
+            args,
             port,
         )
     )

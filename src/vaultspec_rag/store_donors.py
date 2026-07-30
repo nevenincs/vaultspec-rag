@@ -183,7 +183,7 @@ class _VaultDonorMixin:
         if isinstance(indices, list) and isinstance(values, list):
             sparse_indices = [int(index) for index in cast("list[int]", indices)]
             sparse_values = [float(value) for value in cast("list[float]", values)]
-        payload: dict[str, Any] = dict(record.payload) if record.payload else {}
+        payload: dict[str, object] = dict(record.payload) if record.payload else {}
         return DonorPoint(
             dense=dense,
             sparse_indices=sparse_indices,

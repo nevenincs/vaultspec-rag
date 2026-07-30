@@ -121,7 +121,7 @@ def _service_qdrant_block() -> dict[str, Any]:
     status = read_service_status()
     if status is None:
         return {"recorded": False}
-    block: dict[str, Any] = {"recorded": "qdrant_pid" in status}
+    block: dict[str, object] = {"recorded": "qdrant_pid" in status}
     for key in ("qdrant_pid", "qdrant_alive", "qdrant_port"):
         if key in status:
             block[key] = status[key]

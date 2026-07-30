@@ -73,7 +73,7 @@ class DonorPoint:
     dense: list[float]
     sparse_indices: list[int] | None
     sparse_values: list[float] | None
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, object] = field(default_factory=dict)
 
 
 #: Reserved fence point identity for the ingest barrier. ``_stable_id``

@@ -482,7 +482,7 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
     # Wire CLI overrides into the config system.
     from ..config._settings import get_config
 
-    cli_overrides: dict[str, Any] = {}
+    cli_overrides: dict[str, str] = {}
     if options.data_dir is not None:
         cli_overrides["data_dir"] = options.data_dir
     if options.storage_dir is not None:

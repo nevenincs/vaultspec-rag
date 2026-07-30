@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Annotated, Any, cast
+from typing import Annotated, cast
 
 import typer
 
@@ -290,10 +290,10 @@ def _compute_state(
 
 
 def _evaluate_service_signals(
-    status: dict[str, Any],
+    status: dict[str, object],
 ) -> _StatusSignals:
-    pid = int(status.get("pid", 0))
-    port = int(status.get("port", 0))
+    pid = int(cast("int", status.get("pid", 0)))
+    port = int(cast("int", status.get("port", 0)))
     started_at = str(status.get("started_at", ""))
 
     raw_token = status.get("service_token")
@@ -995,14 +995,14 @@ def _status_response_token_match(
 
 
 def _render_explicit_port_status(
-    status: dict[str, Any],
+    status: dict[str, object],
     target_port: int,
     *,
     json_mode: bool,
     verbose: bool = False,
 ) -> None:
-    pid = int(status.get("pid", 0))
-    status_file_port = int(status.get("port", 0))
+    pid = int(cast("int", status.get("pid", 0)))
+    status_file_port = int(cast("int", status.get("port", 0)))
     started_at = str(status.get("started_at", "unknown"))
     raw_token = status.get("service_token")
     expected_token = raw_token if isinstance(raw_token, str) else None
