@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import pathlib
 
-    from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    from vaultspec_core.graph import (
         VaultGraph,
     )
 
@@ -86,7 +86,7 @@ def rerank_with_graph(
         return results
 
     if graph is None:
-        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.graph import (
             VaultGraph as _VaultGraph,
         )
 

@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
+from vaultspec_core.vaultcore import (
     DocType,
     get_doc_type,
     parse_vault_metadata,

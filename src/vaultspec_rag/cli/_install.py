@@ -10,7 +10,7 @@ from tomlkit.exceptions import ParseError
 from typer._types import TyperChoice
 from typer.core import TyperCommand, TyperOption
 from typer.models import TyperPath
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
 
