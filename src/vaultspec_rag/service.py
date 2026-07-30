@@ -614,12 +614,16 @@ class ServiceRegistry:
             case QuiescedResumeStatus.PREPARED | QuiescedResumeStatus.NO_WORK:
                 pass
             case QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED:
-                return self._quiesce_controller.fail_resume_recovery(
-                    "job_resume_persistence_unpublished"
+                return self._quiesce_controller.fail_transition(
+                    owned_state=QuiesceState.WARMING,
+                    reason="job_resume_persistence_unpublished",
+                    failed_code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
                 )
             case QuiescedResumeStatus.PERSISTENCE_PUBLISHED_NOT_DURABLE:
-                return self._quiesce_controller.fail_resume_recovery(
-                    "job_resume_persistence_published_not_durable"
+                return self._quiesce_controller.fail_transition(
+                    owned_state=QuiesceState.WARMING,
+                    reason="job_resume_persistence_published_not_durable",
+                    failed_code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
                 )
         completed = self._quiesce_controller.complete_warming()
         if completed.achieved and completed.snapshot.state is QuiesceState.RUNNING:
