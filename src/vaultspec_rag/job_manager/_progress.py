@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from ..job_models import (
     DesiredJobState,
@@ -131,10 +131,9 @@ class JobManagerProgress(JobManagerState):
         in-memory progress stays authoritative for the retrying flush.
         """
         command = "update_progress"
-        raw_step = cast("object", update.step)
-        raw_completed = cast("object", update.completed)
-        raw_total = cast("object", update.total)
-        normalized_progress = _normalize_progress(raw_step, raw_completed, raw_total)
+        normalized_progress = _normalize_progress(
+            update.step, update.completed, update.total
+        )
         if isinstance(normalized_progress, str):
             return self._error(
                 command,
@@ -286,14 +285,10 @@ class JobManagerProgress(JobManagerState):
                 resources=replace(
                     previous,
                     started=(
-                        previous.started
-                        if update.started is ...
-                        else cast("ProcessResourceSnapshot | None", update.started)
+                        previous.started if update.started is ... else update.started
                     ),
                     finished=(
-                        previous.finished
-                        if update.finished is ...
-                        else cast("ProcessResourceSnapshot | None", update.finished)
+                        previous.finished if update.finished is ... else update.finished
                     ),
                     index_capacity_held=(
                         previous.index_capacity_held
