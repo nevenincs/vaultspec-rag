@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import uvicorn
-from starlette.applications import Starlette
 
 from ..config._types import EnvVar
 from ._ports import free_loopback_port
@@ -71,9 +70,10 @@ from vaultspec_rag.config._settings import reset_config
 
 reset_config()
 
-from vaultspec_rag import server as server_module
 from vaultspec_rag.config._paths import SERVICE_STATUS_FILENAME
+from vaultspec_rag.server import ServerRouteRuntime, create_http_app
 from vaultspec_rag.server._routes import ROUTES
+from vaultspec_rag.service import ServiceRegistry
 from vaultspec_rag.serviceclient._compat import (
     SERVICE_VERSION_FIELD,
     local_package_version,
@@ -88,11 +88,12 @@ from vaultspec_rag.tests._ports import free_loopback_port
 
 token = "quiesce-adapter-route-token"
 port = free_loopback_port()
-prior_token = server_module._SERVICE_TOKEN
-server_module._SERVICE_TOKEN = token
 server = uvicorn.Server(
     uvicorn.Config(
-        Starlette(routes=ROUTES),
+        create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            lifespan=None,
+        ),
         host="127.0.0.1",
         port=port,
         log_config=None,
@@ -160,7 +161,6 @@ finally:
     _try_http_admin("resume_service", {}, port)
     server.should_exit = True
     thread.join(timeout=5)
-    server_module._SERVICE_TOKEN = prior_token
     assert not thread.is_alive()
 """
     environment = os.environ.copy()
@@ -222,16 +222,20 @@ def _publish_service_discovery(status_dir: Path, *, port: int) -> None:
 @contextlib.contextmanager
 def _production_routes(status_dir: Path) -> Generator[int]:
     """Serve the real route table without starting the daemon lifespan."""
-    from .. import server as server_module
-    from ..server._routes import ROUTES
+    from ..server import ServerRouteRuntime, create_http_app
+    from ..service import ServiceRegistry
     from ..serviceclient._transport import _try_http_admin
 
     port = free_loopback_port()
-    prior_token = server_module._SERVICE_TOKEN
-    server_module._SERVICE_TOKEN = _SERVICE_TOKEN
     server = uvicorn.Server(
         uvicorn.Config(
-            Starlette(routes=ROUTES),
+            create_http_app(
+                ServerRouteRuntime(
+                    token=_SERVICE_TOKEN,
+                    registry=ServiceRegistry(),
+                ),
+                lifespan=None,
+            ),
             host="127.0.0.1",
             port=port,
             log_config=None,
@@ -252,7 +256,6 @@ def _production_routes(status_dir: Path) -> Generator[int]:
         _try_http_admin("resume_service", {}, port)
         server.should_exit = True
         thread.join(timeout=5)
-        server_module._SERVICE_TOKEN = prior_token
         assert not thread.is_alive()
 
 
@@ -298,12 +301,15 @@ async def test_jobs_tui_renders_production_quiesce_controller_evidence(
     three operator-visible controller facts disappear.
     """
     status_dir = tmp_path / "status"
-    with managed_env(
-        **{
-            EnvVar.STATUS_DIR.value: str(status_dir),
-            EnvVar.LOCAL_ONLY.value: "true",
-        }
-    ), _production_routes(status_dir) as port:
+    with (
+        managed_env(
+            **{
+                EnvVar.STATUS_DIR.value: str(status_dir),
+                EnvVar.LOCAL_ONLY.value: "true",
+            }
+        ),
+        _production_routes(status_dir) as port,
+    ):
         from ..serviceclient._transport import _try_http_admin
 
         pause = _try_http_admin("pause_service", {}, port)
@@ -332,12 +338,15 @@ async def test_jobs_tui_shows_quiesce_unavailable_after_a_route_error(
 ) -> None:
     """A rejected production jobs request cannot render borrower safety."""
     status_dir = tmp_path / "status"
-    with managed_env(
-        **{
-            EnvVar.STATUS_DIR.value: str(status_dir),
-            EnvVar.LOCAL_ONLY.value: "true",
-        }
-    ), _production_routes(status_dir) as port:
+    with (
+        managed_env(
+            **{
+                EnvVar.STATUS_DIR.value: str(status_dir),
+                EnvVar.LOCAL_ONLY.value: "true",
+            }
+        ),
+        _production_routes(status_dir) as port,
+    ):
         retained, painted, fetch_error = await _paint_quiesce_jobs_tui(
             port=port,
             job_args={"controllable": "not-a-boolean"},
