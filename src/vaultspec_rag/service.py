@@ -330,6 +330,10 @@ class ServiceRegistry:
         self._root_locks: dict[Path, threading.Lock] = {}
         self._gpu_lock = threading.Lock()
         self._quiesce_controller = ServiceQuiesceController()
+        # One registry has one controller and therefore one durable job
+        # coordinator.  Keeping the manager here makes every lifecycle owner
+        # consult the controller that actually owns its admission epoch.
+        self._job_manager: JobManager | None = None
         # This condition owns only the right to perform a registry-level
         # resource transition.  It is never held while the owner drains jobs,
         # waits for tickets, or takes GPU/registry locks.
@@ -545,9 +549,7 @@ class ServiceRegistry:
             return started
         if started.snapshot.state is not QuiesceState.PAUSING:
             return started
-        from .jobs import get_job_manager
-
-        get_job_manager().request_quiesce_attempts()
+        self.create_job_manager().request_quiesce_attempts()
         drained = self._quiesce_controller.wait_for_drain(timeout_seconds)
         if not drained.achieved:
             return drained
@@ -570,7 +572,7 @@ class ServiceRegistry:
         )
 
     def _resume_resources_once(self) -> QuiesceTransition:
-        """Perform the one resume owner's residency rebuild and job release."""
+        """Rebuild, durably prepare recovery, then open one new admission epoch."""
         warming = self._quiesce_controller.begin_warming()
         if warming.snapshot.state is not QuiesceState.WARMING:
             return warming
@@ -582,12 +584,37 @@ class ServiceRegistry:
             return self._quiesce_controller.fail_warming(
                 "gpu_dependency_rebuild_failed"
             )
+        from .job_manager.models import QuiescedResumeStatus
+
+        manager = self.create_job_manager()
+        prepared = manager.prepare_quiesced_resume()
+        match prepared.status:
+            case QuiescedResumeStatus.PREPARED | QuiescedResumeStatus.NO_WORK:
+                pass
+            case QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED:
+                return self._quiesce_controller.fail_resume_recovery(
+                    "job_resume_persistence_unpublished"
+                )
+            case QuiescedResumeStatus.PERSISTENCE_PUBLISHED_NOT_DURABLE:
+                return self._quiesce_controller.fail_resume_recovery(
+                    "job_resume_persistence_published_not_durable"
+                )
         completed = self._quiesce_controller.complete_warming()
         if completed.achieved and completed.snapshot.state is QuiesceState.RUNNING:
-            from .jobs import get_job_manager
-
-            get_job_manager().resume_quiesced_attempts()
+            manager.dispatch_prepared_quiesced_resume(prepared)
         return completed
+
+    def _recover_already_running_resources(
+        self,
+        snapshot: QuiesceSnapshot,
+    ) -> QuiesceTransition:
+        """Reconcile retained durable work before reporting an idempotent resume."""
+        self.create_job_manager().recover_running_quiesced_resume()
+        return QuiesceTransition(
+            code=QuiesceTransitionCode.RUNNING,
+            achieved=True,
+            snapshot=snapshot,
+        )
 
     def _run_resource_transition(
         self,
@@ -640,11 +667,7 @@ class ServiceRegistry:
         if direction == "resume" and observed.state is QuiesceState.RUNNING:
             return self._complete_owned_resource_transition(
                 operation,
-                lambda: QuiesceTransition(
-                    code=QuiesceTransitionCode.RUNNING,
-                    achieved=True,
-                    snapshot=observed,
-                ),
+                lambda: self._recover_already_running_resources(observed),
             )
         return self._complete_owned_resource_transition(operation, run)
 
@@ -1046,10 +1069,15 @@ class ServiceRegistry:
         return SearchLease(self.compute_lease(root))
 
     def create_job_manager(self) -> JobManager:
-        """Build the sole manager with this registry's controller authority."""
+        """Return the sole manager with this registry's controller authority."""
         from .job_manager.manager import JobManager
 
-        return JobManager(quiesce_controller=self._quiesce_controller)
+        with self._lock:
+            manager = self._job_manager
+            if manager is None:
+                manager = JobManager(quiesce_controller=self._quiesce_controller)
+                self._job_manager = manager
+            return manager
 
     def quiesce_snapshot(self) -> QuiesceSnapshot:
         """Return the registry-owned controller's read-only lifecycle truth."""

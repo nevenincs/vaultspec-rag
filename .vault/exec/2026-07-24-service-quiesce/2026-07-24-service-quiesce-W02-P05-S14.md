@@ -9,20 +9,24 @@ step_id: 'S14'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
-# Managed quiesce reconciliation
+# Managed quiesce reconciliation remediation
+
+## Status
+
+Unresolved. The earlier completion claim is withdrawn.
 
 ## Description
 
-Completed resource release and same-ID reconciliation after controller resume.
+The existing same-ID requeue path is insufficient because it scans only `paused` work after admission is already open and collapses persistence failure into an empty success-like result.
 
 ## Outcome
 
-Globally quiesced attempts release their managed resources, retain the logical job identity and desired running state, and requeue only after controller warming reaches running.
+Pending: prepare recovery while the controller remains `warming`; scan both `paused` and `queued` active jobs whose desired state is `running`; preserve desired paused and cancelled intent; retain the logical job ID; increment a resumed attempt at most once; persist the complete generation before admission opens; and return a typed preparation or persistence-failure result.
 
 ## Evidence
 
-`test_job_manager_quiesce.py` passed the real CPU/thread attempt-release and same-ID resume proof. The watcher admission race fix additionally defers a queued runtime-free watcher job as paused/running without retry failure.
+The formal W02 remediation audit identifies the stranded-job failure. No implementation evidence currently satisfies the amended durable recovery contract.
 
 ## Notes
 
-No service process, CUDA allocation, or GPU test was run.
+Published and unpublished persistence failures share the same safe retry scan while admission remains closed. No service, RAG endpoint, CUDA allocation, or GPU test was run.

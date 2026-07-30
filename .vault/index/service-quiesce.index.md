@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-quiesce'
-date: '2026-07-29'
-modified: '2026-07-29'
+date: '2026-07-30'
+modified: '2026-07-30'
 body_schema: 'body-v1'
 related:
   - '[[2026-07-24-service-quiesce-P01-S01]]'
@@ -28,6 +28,7 @@ related:
   - '[[2026-07-24-service-quiesce-plan]]'
   - '[[2026-07-24-service-quiesce-research]]'
   - '[[2026-07-29-service-quiesce-w02-audit]]'
+  - '[[2026-07-29-service-quiesce-w02-remediation-audit]]'
 ---
 
 # `service-quiesce` feature index
@@ -43,6 +44,7 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 ### audit
 
 - `2026-07-29-service-quiesce-w02-audit` - `service-quiesce` audit: `W02 resource-quiesce implementation review`
+- `2026-07-29-service-quiesce-w02-remediation-audit` - `service-quiesce` audit: `w02 remediation`
 
 ### exec
 
@@ -55,14 +57,14 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-24-service-quiesce-P03-S08` - Add the server pause and server resume CLI verbs that call the route and emit exactly one structured JSON envelope on every exit path, mirroring the start-success and fail-start helper pattern, with already-paused and already-running returning success exit 0 carrying an already\_\* status
 - `2026-07-24-service-quiesce-P03-S09` - Add guard tests for the pause and resume envelope contract proving both directions of the idempotent already\_\* path, where already-paused and already-running return exit 0 with the already\_\* status and a genuine state change returns the changed status, each proven red-then-green
 - `2026-07-24-service-quiesce-W02-P04-S10` - Create the serialized resource-quiesce controller with state transitions, epoch-scoped compute tickets, bounded drain acknowledgement and truthful safety snapshots
-- `2026-07-24-service-quiesce-W02-P04-S11` - Controller-owned GPU residency lifecycle
-- `2026-07-24-service-quiesce-W02-P04-S12` - CPU controller transition proof
+- `2026-07-24-service-quiesce-W02-P04-S11` - Registry transition coordinator remediation
+- `2026-07-24-service-quiesce-W02-P04-S12` - CPU transition-coordinator proof remediation
 - `2026-07-24-service-quiesce-W02-P05-S13` - Token-local control separation
-- `2026-07-24-service-quiesce-W02-P05-S14` - Managed quiesce reconciliation
+- `2026-07-24-service-quiesce-W02-P05-S14` - Managed quiesce reconciliation remediation
 - `2026-07-24-service-quiesce-W02-P05-S15` - Streaming safe checkpoint boundaries
-- `2026-07-24-service-quiesce-W02-P05-S16` - Ticketed search admission
-- `2026-07-24-service-quiesce-W02-P05-S17` - CPU managed-job quiesce proof
-- `2026-07-24-service-quiesce-W02-P05-S18` - CPU search ticket drain proof
+- `2026-07-24-service-quiesce-W02-P05-S16` - Search quiescence HTTP 503 remediation
+- `2026-07-24-service-quiesce-W02-P05-S17` - CPU managed-job recovery proof remediation
+- `2026-07-24-service-quiesce-W02-P05-S18` - CPU search HTTP 503 proof remediation
 
 ### plan
 

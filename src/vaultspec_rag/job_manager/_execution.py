@@ -43,6 +43,7 @@ from .models import (
     JobAttemptContext,
     JobExecutionResult,
     JobShutdownResult,
+    QuiescedDispatchClaim,
     ResourceUpdate,
 )
 from .state import (
@@ -89,8 +90,11 @@ class JobManagerExecution(JobManagerState):
                     "A live attempt cannot replace its dispatch binding.",
                     managed,
                 )
+            self._next_dispatch_binding_nonce += 1
+            self._supersede_quiesced_dispatch_claim_locked(job_id)
             self._dispatchers[job_id] = JobDispatchBinding(
                 runner=runner,
+                nonce=self._next_dispatch_binding_nonce,
                 on_started=on_started,
                 on_finished=on_finished,
             )
@@ -106,13 +110,19 @@ class JobManagerExecution(JobManagerState):
         self,
         job_id: str,
         loop: asyncio.AbstractEventLoop,
+        *,
+        quiesced_claim: QuiescedDispatchClaim | None = None,
     ) -> _DispatchAdmission | JobOutcome:
         """Validate one queued job and bind its execution to ``loop``."""
         command = "dispatch"
+        if quiesced_claim is None:
+            self._supersede_quiesced_dispatch_claim_locked(job_id)
         managed = self._active.get(job_id)
         if managed is None:
+            self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
             return self._error(command, "job_not_found", "The job was not found.")
         if not self._accepting_dispatch:
+            self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
             return self._error(
                 command,
                 "dispatch_stopped",
@@ -121,27 +131,28 @@ class JobManagerExecution(JobManagerState):
             )
         binding = self._dispatchers.get(job_id)
         if binding is None:
+            self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
             return self._error(
                 command,
                 "dispatch_not_bound",
                 "The job has no execution binding.",
                 managed,
             )
-        if managed.runtime.task is not None:
-            return self._error(
-                command,
-                "runtime_already_owned",
-                "The current attempt already has a runtime owner.",
+        refusal = self._dispatch_runtime_refusal_locked(managed)
+        if refusal is not None:
+            self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
+            return refusal
+        if quiesced_claim is not None and not (
+            self._consume_quiesced_dispatch_claim_locked(
+                quiesced_claim,
                 managed,
+                binding,
             )
-        if (
-            managed.snapshot.state is not JobState.QUEUED
-            or managed.snapshot.desired_state is not DesiredJobState.RUNNING
         ):
             return self._error(
                 command,
-                "invalid_transition",
-                "Only queued work with running desired state can dispatch.",
+                "stale_recovery_dispatch",
+                "The recovery dispatch claim was superseded before execution.",
                 managed,
             )
         if binding.loop is not loop:
@@ -153,12 +164,43 @@ class JobManagerExecution(JobManagerState):
             control=RunControlToken(),
         )
 
-    def dispatch(self, job_id: str) -> JobOutcome:
+    def _dispatch_runtime_refusal_locked(
+        self,
+        managed: ManagedJob,
+    ) -> JobOutcome | None:
+        """Return the exact state refusal that prevents attempt admission."""
+        if managed.runtime.task is not None:
+            return self._error(
+                "dispatch",
+                "runtime_already_owned",
+                "The current attempt already has a runtime owner.",
+                managed,
+            )
+        if (
+            managed.snapshot.state is not JobState.QUEUED
+            or managed.snapshot.desired_state is not DesiredJobState.RUNNING
+        ):
+            return self._error(
+                "dispatch",
+                "invalid_transition",
+                "Only queued work with running desired state can dispatch.",
+                managed,
+            )
+        return None
+
+    def dispatch(
+        self,
+        job_id: str,
+        *,
+        _quiesced_claim: QuiescedDispatchClaim | None = None,
+    ) -> JobOutcome:
         """Schedule one queued attempt and attach its exact task and control token."""
         command = "dispatch"
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            with self._lock:
+                self._clear_quiesced_dispatch_claim_locked(_quiesced_claim)
             return self._error(
                 command,
                 "event_loop_required",
@@ -166,7 +208,11 @@ class JobManagerExecution(JobManagerState):
             )
 
         with self._lock:
-            admission = self._dispatch_admission_locked(job_id, loop)
+            admission = self._dispatch_admission_locked(
+                job_id,
+                loop,
+                quiesced_claim=_quiesced_claim,
+            )
             if isinstance(admission, JobOutcome):
                 return admission
             task = loop.create_task(
@@ -328,6 +374,7 @@ class JobManagerExecution(JobManagerState):
         with self._lock:
             self._accepting_dispatch = False
             self._lifecycle_state = "stopping"
+            self._pending_quiesced_dispatches.clear()
             requested: list[str] = []
             for job_id, managed in self._active.items():
                 if managed.runtime.task is None or managed.runtime.control is None:

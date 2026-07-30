@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-quiesce'
 date: '2026-07-24'
-modified: '2026-07-29'
+modified: '2026-07-30'
 related:
   - '[[2026-07-24-service-quiesce-research]]'
   - '[[2026-06-12-service-concurrency-adr]]'
@@ -42,6 +42,9 @@ The shipped hold gate can report pause before compute drains or resident GPU mem
 - Global pause preserves logical job identity and desired running intent. It may unwind a current attempt and requeue it after resume; it never claims instruction-pointer continuation.
 - The state `quiesced` is reachable only when admissions are closed, all pre-pause compute tickets are drained, managed index resources are released, and resident GPU components are unloaded and cache release has completed. Every other state is unsafe for a borrower.
 - A timeout or rebuild failure fails closed: admissions remain closed, the structured outcome says `safe_to_borrow_gpu: false`, and no adapter reports success.
+- `warming` remains an admission-closed controller state through GPU rebuild and durable same-ID job recovery preparation. Recovery preparation failure is the typed non-success outcome `resume_recovery_failed`; it does not create a fifth controller state, and the controller remains `warming` with admissions closed.
+- Resume recovery considers only active jobs in `paused` or `queued` whose desired state is `running`. It preserves desired `paused` and `cancelled` intent, persists recovery preparation before compute admission opens, and never changes logical job identity.
+- Resume recovery holds the job-manager lock only for scan, state mutation, and persistence; dispatch occurs after that lock is released. The registry transition condition serializes transition ownership only, and the GPU lock remains confined to GPU residency rebuild work; these locks are not nested across recovery or admission waits.
 - No service start, local fallback, or GPU-live test may silently allocate while a machine singleton is live, undiscoverable, pausing, warming, or otherwise unsafe. Intentional local GPU work requires a distinct machine-global borrower lease and a verified safe condition.
 
 ## Implementation
@@ -50,7 +53,9 @@ The shipped hold gate can report pause before compute drains or resident GPU mem
 
 Pause closes the current admission epoch, asks active managed index attempts to cooperatively unwind at safe checkpoints, rejects new search work with a retryable quiescing outcome, and waits boundedly for all pre-pause tickets and managed resources to drain. After the drain, the registry serializes with the GPU lock, detaches GPU dependencies from retained project slots without closing stores or Qdrant, releases the shared embedding and reranker objects, and releases allocator cache through the centralized GPU gate. Only then does the route return `quiesced` with `vram_released: true` and `safe_to_borrow_gpu: true`.
 
-Resume enters `warming`, rebuilds the GPU stack before opening a new admission epoch, then returns `running`; queued and globally unwound jobs converge under their original logical IDs. Failed or timed-out transitions keep admissions closed and return structured non-success outcomes carrying truthful drain and safety data.
+Resume enters `warming` and rebuilds the GPU stack while compute admission remains closed. Still in `warming`, the job manager performs an idempotent same-ID recovery-preparation scan over active `paused` and `queued` jobs whose desired state is `running`: eligible paused work is prepared as queued, already-queued eligible work is retained for retry convergence, and desired paused or cancelled work is untouched. The complete preparation result is persisted before the controller opens a new admission epoch. Only after that durable preparation succeeds does the controller transition to `running`; dispatch is scheduled after the job-manager lock is released.
+
+If recovery preparation or its persistence fails, resume returns the typed non-success outcome `resume_recovery_failed`, leaves the controller in `warming` with admissions closed, and schedules no work. A later resume retries the same `paused`-plus-`queued`, desired-`running` scan so partial durable preparation converges without allocating a new logical job ID. This failure is an outcome within the existing four-state machine, not a fifth state.
 
 The service route owns this contract. CLI pause/resume renders the route's one JSON envelope and exits zero only for the achieved terminal state. Health, service-state, jobs output, MCP service-state, and the TUI render the same controller block. The existing pressure block remains an independent advisory.
 
@@ -64,6 +69,7 @@ Resource quiescence is the smallest truthful lifecycle contract: it preserves se
 
 - Operators and automation receive an exact, idempotent answer about whether GPU borrowing is safe; `paused` is replaced by `quiesced` only after release.
 - Running index attempts may restart a convergence attempt on resume rather than preserve a Python stack, but they release resources truthfully and retain logical identity.
+- Resume can fail after GPU residency rebuild but before admission reopens when same-ID recovery preparation cannot be persisted. The service then remains safely closed in `warming`, reports `resume_recovery_failed`, and can retry without losing job identity or overriding operator pause or cancel intent.
 - Search requests during transition receive a retryable service outcome rather than holding model references or GPU admission.
 - GPU residency release/rebuild adds registry lifecycle complexity and requires bounded failure reporting, but does not close stores, stop the daemon, or change pressure policy.
 - Intentional local GPU runs become explicit, lease-protected operations. Uncertain service discovery and automatic local fallback become hard refusals.
