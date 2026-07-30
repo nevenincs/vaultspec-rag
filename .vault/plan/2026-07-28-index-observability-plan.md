@@ -27,7 +27,7 @@ Attach sampled evidence - GPU pressure, backend liveness, encode-thread activity
 - [x] `P02.S04` - Attach the evidence block to unhealthy verdicts: forward age, read-only GPU utilization and memory probe, bounded backend liveness probe with latency, encode-thread liveness; `src/vaultspec_rag/server/_routes_jobs.py, src/vaultspec_rag/jobs.py`.
 - [x] `P02.S05` - Render the degradation verdict and evidence on the jobs CLI and TUI from the service payload without entry-point heuristics; `src/vaultspec_rag/cli/_service_jobs_presentation.py, src/vaultspec_rag/cli/_jobs_tui.py`.
 - [x] `P02.S06` - Add unit and integration tests proving each verdict tier, the evidence block shape, the terminal-only reindex_failed event, and prove each guard can fail; `src/vaultspec_rag/tests`.
-- [ ] `P02.S07` - Run lint, format, type-check, and the targeted test set, then land the change; `src/vaultspec_rag`.
+- [x] `P02.S07` - Run lint, format, type-check, and the targeted test set, then land the change; `src/vaultspec_rag`.
 
 ## Description
 

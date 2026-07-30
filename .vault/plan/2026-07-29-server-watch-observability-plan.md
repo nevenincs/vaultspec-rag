@@ -54,7 +54,7 @@ Unify root and jobs watch entry points under one responsive owner that gives ind
 - [x] `P03.S11` - Replace the jobs-only owner with one responsive ServerWatchApp and migrate imports without aliases; `src/vaultspec_rag/cli/_jobs_tui.py`.
 - [x] `P03.S12` - Route root watch to complete mode and jobs watch to the same owner in jobs-focused mode; `src/vaultspec_rag/cli/_service_jobs_watch.py`.
 - [x] `P03.S13` - Render search pool occupancy and waiting beside encode and index pools; `src/vaultspec_rag/cli/_jobs_tui_status.py`.
-- [ ] `P03.S14` - Run focused lint type and compute-free unit lanes and perform formal code review; `server-watch-observability changed files`.
+- [x] `P03.S14` - Run focused lint type and compute-free unit lanes and perform formal code review; `server-watch-observability changed files`.
 
 ## Parallelization
 
