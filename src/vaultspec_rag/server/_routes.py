@@ -932,9 +932,14 @@ async def get_service_state_route(request: Request) -> JSONResponse:
 
     with _m._watcher_lock:
         watching_roots = [str(r) for r in _m._watcher_tasks]
+    registry = get_request_runtime(request).registry
 
-    def _run():
-        return vaultspec_rag.get_service_state(root, watching_roots=watching_roots)
+    def _run() -> dict[str, object]:
+        return vaultspec_rag.get_service_state(
+            root,
+            registry=registry,
+            watching_roots=watching_roots,
+        )
 
     from anyio.to_thread import run_sync as _run_in_thread
 
