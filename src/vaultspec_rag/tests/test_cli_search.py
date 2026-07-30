@@ -524,9 +524,9 @@ class TestSearchResultRendering:
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def _render(
+    def _render_all(
         self,
-        result: dict[str, object],
+        results: list[dict[str, object]],
         *,
         show_scores: bool = False,
     ) -> str:
@@ -541,12 +541,20 @@ class TestSearchResultRendering:
                 Console(file=out, force_terminal=False, width=400),
             )
             _display_search_results(
-                [result],
+                results,
                 "code",
                 via="service",
                 show_scores=show_scores,
             )
         return out.getvalue()
+
+    def _render(
+        self,
+        result: dict[str, object],
+        *,
+        show_scores: bool = False,
+    ) -> str:
+        return self._render_all([result], show_scores=show_scores)
 
     def test_default_keeps_full_snippet(self):
         """Default output renders the full snippet."""
@@ -571,13 +579,33 @@ class TestSearchResultRendering:
         [record] = _search_records(rendered)
         assert record["score"] == "0.9000"
 
-    def test_display_empty_results(self):
-        """Empty results list renders without raising."""
-        _display_search_results([], "vault")
+    def test_display_empty_results(self) -> None:
+        """No results prints nothing at all - no header, no empty record.
 
-    def test_display_missing_fields(self):
-        """Dict with no keys renders without raising."""
-        _display_search_results([{}], "vault")
+        Mutation this catches: emitting a header, a count line, or a blank
+        record for an empty result set. The earlier version called the
+        renderer and asserted nothing, so it held even for a renderer whose
+        whole body was ``pass``.
+        """
+        rendered = self._render_all([])
+
+        assert rendered == ""
+        assert _search_records(rendered) == []
+
+    def test_display_missing_fields(self) -> None:
+        """A result carrying no keys still renders, and names the gap.
+
+        Mutation this catches: dropping the ``location-not-reported``
+        fallback, or skipping a result whose fields are all absent. The
+        earlier version asserted only that the call did not raise.
+        """
+        rendered = self._render({})
+
+        [record] = _search_records(rendered)
+        assert record["number"] == 1
+        assert record["location"] == "location-not-reported"
+        assert record["score"] is None
+        assert record["text"] == ""
 
     def test_display_with_line_start(self):
         """Result with line_start appends :N to location."""
