@@ -255,7 +255,7 @@ def test_index_requires_explicit_borrow_gpu_when_no_service_is_available(
     assert result.output == (
         '{"ok": false, "command": "index", "error": "borrow_gpu_required", '
         '"message": "No compatible running service is available for delegated '
-        'indexing. Start a compatible service, or explicitly rerun with '
+        "indexing. Start a compatible service, or explicitly rerun with "
         '--borrow-gpu."}\n'
     )
 
