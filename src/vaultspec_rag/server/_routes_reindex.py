@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse
@@ -29,6 +29,16 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from ..indexer._codebase_indexer import CodeIndexPreflight
+    from ..indexer._document_indexer import DocumentIndexPreflight
+    from ..job_models import JobInitiator, JobSpec
+
+    _ValidatedIndexRequest = tuple[
+        JobSpec,
+        JobInitiator,
+        bool,
+        str | None,
+        CodeIndexPreflight | DocumentIndexPreflight | None,
+    ]
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -134,11 +144,14 @@ async def _validate_reindex_domains(
     source_type: PublicSourceType,
     *,
     clean: bool,
-) -> tuple[list[tuple[PublicSourceType, Any]], dict[str, _DomainResponse]]:
+) -> tuple[
+    list[tuple[PublicSourceType, _ValidatedIndexRequest]],
+    dict[str, _DomainResponse],
+]:
     """Validate every requested domain without collapsing combined admission."""
     from ._routes import InvalidJobRequestError, validated_index_request
 
-    validated: list[tuple[PublicSourceType, Any]] = []
+    validated: list[tuple[PublicSourceType, _ValidatedIndexRequest]] = []
     failures: dict[str, _DomainResponse] = {}
     for source in _reindex_sources(source_type):
         canonical_payload = {
@@ -169,7 +182,7 @@ async def _validate_reindex_domains(
 
 
 async def _create_reindex_domains(
-    validated: list[tuple[PublicSourceType, Any]],
+    validated: list[tuple[PublicSourceType, _ValidatedIndexRequest]],
     source_type: PublicSourceType,
     domain_responses: dict[str, _DomainResponse],
 ) -> tuple[Path | None, CodeIndexPreflight | None]:

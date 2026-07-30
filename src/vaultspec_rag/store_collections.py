@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from qdrant_client import QdrantClient
     from qdrant_client.http.models import (
         OptimizersConfigDiff,
+        PayloadSchemaType,
         QuantizationConfig,
         WalConfigDiff,
     )
@@ -70,7 +71,7 @@ class _VaultCollectionMixin:
             self,
             collection_name: str,
             field_name: str,
-            field_schema: Any,
+            field_schema: PayloadSchemaType,
         ) -> None: ...
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...

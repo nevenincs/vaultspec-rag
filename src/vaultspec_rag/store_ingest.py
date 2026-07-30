@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from qdrant_client import QdrantClient
-    from qdrant_client.http.models import Vector
+    from qdrant_client.http.models import PointStruct, Vector
 
 
 logger = logging.getLogger(__name__)
@@ -139,7 +139,7 @@ class _VaultIngestMixin:
 
         from qdrant_client import models
 
-        points: list[Any] = []
+        points: list[PointStruct] = []
         for doc in docs:
             points.append(
                 models.PointStruct(
@@ -189,7 +189,7 @@ class _VaultIngestMixin:
 
         from qdrant_client import models
 
-        points: list[Any] = []
+        points: list[PointStruct] = []
         for chunk in chunks:
             points.append(
                 models.PointStruct(
@@ -289,7 +289,7 @@ class _VaultIngestMixin:
 
         from qdrant_client import models
 
-        points: list[Any] = []
+        points: list[PointStruct] = []
         for chunk in chunks:
             points.append(
                 models.PointStruct(
@@ -324,7 +324,7 @@ class _VaultIngestMixin:
 
         from qdrant_client import models
 
-        points: list[Any] = []
+        points: list[PointStruct] = []
         for chunk in chunks:
             points.append(
                 models.PointStruct(
@@ -352,7 +352,7 @@ class _VaultIngestMixin:
     def _guarded_upsert(
         self,
         collection_name: str,
-        points: list[Any],
+        points: list[PointStruct],
         description: str,
         *,
         write_policy: StoreWritePolicy | None,

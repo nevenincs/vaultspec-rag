@@ -21,6 +21,7 @@ from .search._result_shaping import PHASE_MODEL_LOAD, PHASE_PROJECT_LEASE
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable
 
     from .indexer import IndexResult
     from .indexer._codebase_indexer import CodeIndexPreflight, ContentScanResult
@@ -360,7 +361,7 @@ def index_documents(
     return result
 
 
-def _domain_outcome(operation: Any) -> DomainIndexOutcome:
+def _domain_outcome(operation: Callable[[], IndexResult]) -> DomainIndexOutcome:
     """Run one domain operation while retaining its explicit failure."""
     try:
         return DomainIndexOutcome(result=operation())

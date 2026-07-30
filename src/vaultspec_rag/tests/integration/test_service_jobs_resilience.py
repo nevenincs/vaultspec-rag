@@ -25,10 +25,13 @@ from ...job_models import (
     JobSpec,
     JobState,
 )
+from .._job_manager_transition_helpers import pending_attempt
 from ._service_jobs_support import _canonical_resilience_server, runner
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ...job_manager.state import AttemptExit
 
 
 async def _seed_terminal_resilience_job(
@@ -50,12 +53,12 @@ async def _seed_terminal_resilience_job(
     )
     assert created.job is not None
     job_id = created.job.id
-    owner_task: asyncio.Task[object] | None = None
+    owner_task: asyncio.Task[AttemptExit] | None = None
     if outcome_name == "controlled":
         terminal = manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
         terminal_outcome = JobState.CANCELLED.value
     elif outcome_name == "interrupted":
-        owner_task = asyncio.create_task(asyncio.Event().wait())
+        owner_task = asyncio.create_task(pending_attempt())
         started = manager.start_attempt(
             job_id,
             task=owner_task,

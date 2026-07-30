@@ -259,7 +259,7 @@ def _scroll_stored_route_page(
 
 
 def _classify_stored_route_rows(
-    rows: list[dict[str, Any]],
+    rows: list[dict[str, object]],
     policy: ResolvedIndexPolicy,
     stored_kind: ContentKind,
     *,
@@ -269,13 +269,17 @@ def _classify_stored_route_rows(
     """Freshly classify the usable source paths from one stored page."""
     page: list[StoredRouteRow] = []
     for row in rows:
-        raw_path = row["payload"].get(path_key)
+        payload = row["payload"]
+        if not isinstance(payload, dict):
+            continue
+        payload = cast("dict[str, object]", payload)
+        raw_path = payload.get(path_key)
         if not isinstance(raw_path, str) or not raw_path:
             continue
         disposition = policy.classify(raw_path).disposition
         page.append(
             StoredRouteRow(
-                point_id=str(row["payload"].get(id_key) or row["id"]),
+                point_id=str(payload.get(id_key) or row["id"]),
                 source_path=raw_path,
                 stored_kind=stored_kind,
                 current_kind=disposition.kind,

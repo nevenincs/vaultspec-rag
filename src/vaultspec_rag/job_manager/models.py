@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import asyncio
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         ProcessResourceSnapshot,
     )
     from .manager import JobManager
+    from .state import AttemptExit
 
 
 MAX_RECORDS = 256
@@ -106,7 +107,7 @@ class ProgressUpdate:
     """One exact-attempt progress publication request."""
 
     attempt: int
-    task: asyncio.Task[Any]
+    task: asyncio.Task[AttemptExit]
     step: str
     completed: int = 0
     total: int | None = None
@@ -133,7 +134,7 @@ class JobAttemptContext:
     manager: JobManager
     job_id: str
     attempt: int
-    task: asyncio.Task[Any]
+    task: asyncio.Task[AttemptExit]
     control: RunControlToken
 
     def update_progress(

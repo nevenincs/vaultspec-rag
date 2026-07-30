@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..job_models import (
     DesiredJobState,
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from ..job_control import RunControlToken
     from .models import ProgressUpdate, ResourceUpdate
+    from .state import AttemptExit
 
 logger = logging.getLogger("vaultspec_rag.jobs")
 
@@ -39,7 +40,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         control: RunControlToken,
     ) -> JobOutcome:
         """Atomically claim and start the queued attempt for one exact job."""
@@ -228,7 +229,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         active: bool,
         worker_thread: threading.Thread | None = None,
     ) -> bool:
@@ -257,7 +258,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         update: ResourceUpdate,
     ) -> bool:
         with self._lock:
@@ -323,7 +324,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         resilience: IndexResilienceSnapshot,
     ) -> bool:
         """Publish resilience state only for the currently attached attempt."""
@@ -375,7 +376,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         finished: ProcessResourceSnapshot,
     ) -> bool:
         """Atomically clear worker and physical ownership for one exact attempt."""
@@ -413,7 +414,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         resources: JobResourceSnapshot,
     ) -> bool:
         """Publish resource ownership for the exact currently running attempt."""

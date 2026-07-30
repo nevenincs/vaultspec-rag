@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
     from qdrant_client import QdrantClient
     from qdrant_client.http.models.models import (
+        PayloadSchemaType,
         Record,
     )
 
@@ -421,7 +422,7 @@ class VaultStore(
         self,
         collection_name: str,
         field_name: str,
-        field_schema: Any,
+        field_schema: PayloadSchemaType,
     ) -> None:
         """Create one payload index idempotently under the bounded retry.
 

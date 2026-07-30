@@ -13,7 +13,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import typer
 
@@ -28,6 +28,7 @@ from ..commands._models import SYNC_COUNTERS
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
+    from ..commands._models import InstallReport, UninstallReport
     from ..commands._provision import ProvisionOutcome
     from ..serviceclient._compat import ServiceVersionVerdict
 
@@ -597,9 +598,13 @@ def _render_provider_outcome(provider: str, outcome: dict[str, object]) -> None:
                 _plain(f"  {label[:-1]}: {message}")
 
 
-def _render_provider_sync(report: Any) -> None:
+def _render_provider_sync(report: object) -> None:
     """Render the same per-provider MCP outcomes exposed by report JSON."""
-    data = report.to_dict()
+    to_dict = getattr(report, "to_dict", None)
+    raw_data: object = to_dict() if callable(to_dict) else {}
+    data: dict[str, object] = (
+        cast("dict[str, object]", raw_data) if isinstance(raw_data, dict) else {}
+    )
     providers = data.get("sync_providers")
     if isinstance(providers, dict):
         for provider, raw_outcome in cast("dict[object, object]", providers).items():
@@ -635,7 +640,7 @@ def _print_warning_or_note(warning: object) -> None:
     _plain(f"{prefix}: {text}")
 
 
-def _render_mcp_extra(report: Any) -> None:
+def _render_mcp_extra(report: object) -> None:
     """Render the structured MCP optional-dependency lifecycle result."""
     action = getattr(report, "mcp_extra_action", "skipped")
     if action == "skipped":
@@ -671,7 +676,7 @@ def _render_provider_and_torch_sections(report: object) -> None:
         _plain(f"  conflict: {conflict}")
 
 
-def _render_install_report(report: Any) -> None:
+def _render_install_report(report: InstallReport) -> None:
     """Render an install report as plain CLI lines."""
     title = {
         "install": "vaultspec-rag installed",
@@ -773,7 +778,7 @@ def _render_provisioning_outcome(outcome: ProvisionOutcome | None) -> None:
         _plain(f"  {label}: {phrase}{suffix}")
 
 
-def _render_uninstall_report(report: Any) -> None:
+def _render_uninstall_report(report: UninstallReport) -> None:
     """Render an uninstall report as plain CLI lines."""
     title = {
         "uninstall": "vaultspec-rag uninstalled",

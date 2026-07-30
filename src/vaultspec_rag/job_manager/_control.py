@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -47,6 +47,7 @@ from .state import (
 
 if TYPE_CHECKING:
     from .. import job_persistence as _job_persistence
+    from .state import AttemptExit
 
 logger = logging.getLogger("vaultspec_rag.jobs")
 
@@ -122,7 +123,7 @@ class _RequestAttribution:
 @dataclass(frozen=True, slots=True)
 class AttemptTerminal:
     attempt: int
-    task: asyncio.Task[Any]
+    task: asyncio.Task[AttemptExit]
     state: JobState
     result: str | None = None
     error_kind: str | None = None
@@ -749,7 +750,7 @@ class JobManagerControl(JobManagerState):
         job_id: str,
         *,
         attempt: int,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
     ) -> JobOutcome:
         """Acknowledge safe attempt unwind without accepting stale callbacks."""
         command = "acknowledge_control"

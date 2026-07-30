@@ -397,14 +397,16 @@ def read_service_status() -> dict[str, Any] | None:
         return None
 
 
-def _coerce_port(port: Any) -> int | None:
+def _coerce_port(port: object) -> int | None:
     """Coerce a discovery-payload ``port`` field to ``int`` or ``None``."""
     if isinstance(port, bool):
         return None
     if isinstance(port, int):
         return port
+    if port is None:
+        return None
     try:
-        return int(port) if port is not None else None
+        return int(cast("str | float", port))
     except (TypeError, ValueError) as exc:
         logger.debug("discovery port %r not coercible: %s", port, exc)
         return None
