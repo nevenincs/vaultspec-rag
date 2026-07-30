@@ -61,8 +61,8 @@ Replace the shared hold gate with a registry-owned controller that drains cooper
 Establish the one stateful quiesce authority, its admission epochs and drain evidence, and reversible GPU-stack release and rebuild without closing stores.
 
 - [x] `W02.P04.S10` - Create the serialized resource-quiesce controller with state transitions, epoch-scoped compute tickets, bounded drain acknowledgement and truthful safety snapshots; `src/vaultspec_rag/service_quiesce.py`.
-- [x] `W02.P04.S11` - Own controller lifecycle and reversible GPU dependency detachment and rebuild while retaining stores and project identity; `src/vaultspec_rag/service.py`.
-- [x] `W02.P04.S12` - Prove CPU-only controller transitions, ticket drain ordering, idempotency and fail-closed timeout outcomes with real threads and conditions; `src/vaultspec_rag/tests/test_service_quiesce_controller.py`.
+- [ ] `W02.P04.S11` - Serialize pause and resume through one registry transition coordinator so detach, rebuild, job convergence, and controller acknowledgement cannot overlap; `src/vaultspec_rag/service.py`.
+- [ ] `W02.P04.S12` - Prove transition-coordinator exclusion, idempotency, and fail-closed pause and resume races with real threads and CPU-only registry dependencies; `src/vaultspec_rag/tests/test_service_quiesce_controller.py`.
 
 ### Phase `W02.P05` - Cooperative job and search drain
 
@@ -71,9 +71,9 @@ Make global quiesce unwind managed attempts and drain search work without lettin
 - [x] `W02.P05.S13` - Separate token-local cancellation and shutdown from global resource-quiesce signalling while preserving protected checkpoint semantics; `src/vaultspec_rag/job_control.py`.
 - [x] `W02.P05.S14` - Reconcile globally quiesced attempts by releasing every managed resource and requeueing the same logical job only after controller resume; `src/vaultspec_rag/job_manager`.
 - [x] `W02.P05.S15` - Guard index streaming safe boundaries so quiesce observations remain outside GPU locks and indivisible storage mutations; `src/vaultspec_rag/indexer/_streaming.py`.
-- [x] `W02.P05.S16` - Admit search work through controller tickets before project and GPU ownership and return a retryable quiescing outcome instead of parking references; `src/vaultspec_rag/search/_searcher.py`.
+- [ ] `W02.P05.S16` - Translate controller-closed search admission into the canonical retryable HTTP 503 response before project or GPU ownership; `src/vaultspec_rag/server/_routes_search.py`.
 - [x] `W02.P05.S17` - Prove cancellation isolation, managed-resource release and same-ID requeue across global quiesce using CPU-only real runtime fixtures; `src/vaultspec_rag/tests/test_job_manager_quiesce.py`.
-- [x] `W02.P05.S18` - Prove search tickets drain before quiescence without acquiring or initializing CUDA; `src/vaultspec_rag/tests/test_search_quiesce_admission.py`.
+- [ ] `W02.P05.S18` - Prove closed search admission returns the canonical structured HTTP 503 while retaining no project, model, reranker, or CUDA state; `src/vaultspec_rag/tests/test_search_quiesce_admission.py`.
 
 ## Wave `W03` - Publish truthful lifecycle status
 
@@ -99,24 +99,24 @@ Have every adapter render service-owned quiesce truth, while preserving the MCP 
 - [ ] `W03.P07.S27` - Render controller state, GPU release evidence and borrower safety in the jobs TUI header and status details; `src/vaultspec_rag/cli/_jobs_tui.py`.
 - [ ] `W03.P07.S28` - Prove CLI, MCP and TUI adapters preserve one controller vocabulary and never initialize torch on service paths; `src/vaultspec_rag/tests/test_service_quiesce_adapters.py`.
 
-## Wave `W04` - Contain external GPU borrowing
+## Wave `W04` - Authorize external GPU borrowing
 
-Add a distinct borrower lease and CPU-only guard coverage so service discovery, live tests, and local execution cannot silently contend for the GPU. This wave completes only after W02 and W03 are stable.
+Require a distinct machine-global borrower lease plus acknowledged service quiescence across every local and CI GPU entry point. Device load and free-capacity readings remain torch-free diagnostics only and can never authorize GPU work.
 
-### Phase `W04.P08` - Distinct borrower lease and containment
+### Phase `W04.P08` - Borrower lease and transition orchestration
 
-Create a machine-global borrower lease separate from service identity and use it to make intentional external GPU work crash-safe and explicit.
+Create the distinct machine-global borrower lease and one crash-safe coordinator that acquires the lease before requesting pause, admits work only from a strict acknowledged-quiescence snapshot, resumes before release, and never starts another service.
 
-- [ ] `W04.P08.S29` - Implement a distinct machine-global GPU borrower lease with exact ownership and crash-release semantics without touching the service identity lock; `src/vaultspec_rag/gpu_borrow_lease.py`.
-- [ ] `W04.P08.S30` - Add explicit borrower lease orchestration around acknowledged pause and resume and observe lease release on the existing lifecycle cadence without starting another service; `src/vaultspec_rag/cli/_gpu_lease.py`.
-- [ ] `W04.P08.S31` - Prove second-lease refusal, child-process crash release and singleton separation using real OS locks without CUDA; `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`.
+- [ ] `W04.P08.S29` - Implement a distinct machine-global GPU borrower lease with exact typed ownership, nonblocking refusal, and OS-backed crash release without touching the service identity lock; `src/vaultspec_rag/gpu_borrow_lease.py`.
+- [ ] `W04.P08.S30` - Orchestrate borrower lease acquisition, acknowledged pause, child GPU work, guaranteed resume, and lease release without starting another service; `src/vaultspec_rag/cli/_gpu_lease.py`.
+- [ ] `W04.P08.S31` - Make service preflight a torch-free diagnostic over a strict typed quiescence snapshot that reports capacity but never authorizes GPU work and fails closed on unreachable, missing, unknown, stale, or version-skewed evidence; `src/vaultspec_rag/cli/_service_preflight.py`.
 
-### Phase `W04.P09` - Static safety gates and non-GPU validation
+### Phase `W04.P09` - Torch-free diagnostics and GPU entry-point enforcement
 
-Prove the implementation cannot silently allocate or co-schedule GPU work and run the focused quality gates without any live service or CUDA execution.
+Keep service diagnostics torch-free and strictly typed, fail closed on missing, unknown, stale, or version-skewed quiescence evidence, and require the same borrower lease plus acknowledged quiescence in pytest and self-hosted CI.
 
-- [ ] `W04.P09.S32` - Add source and fresh-interpreter guards for torch-free controller and adapter imports and explicit GPU lease preconditions; `src/vaultspec_rag/tests/test_service_quiesce_import_guards.py`.
-- [ ] `W04.P09.S33` - Add CLI fallback and machine-singleton regression coverage that refuses local GPU escalation from unreachable or untrusted service discovery; `src/vaultspec_rag/tests/test_cli_index_gpu_containment.py`.
+- [ ] `W04.P09.S32` - Require selected GPU pytest lanes to hold the borrower lease and acknowledged quiescence for the session lifetime, with guaranteed resume and release and no capacity-only authorization; `conftest.py`.
+- [ ] `W04.P09.S33` - Wrap the self-hosted GPU tier in borrower orchestration that holds the lease and acknowledged quiescence throughout, fails closed on unsafe or skewed service state, and always resumes and releases; `.github/workflows/ci.yml`.
 
 ## Parallelization
 

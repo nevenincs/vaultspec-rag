@@ -9,20 +9,24 @@ step_id: 'S11'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
-# Controller-owned GPU residency lifecycle
+# Registry transition coordinator remediation
+
+## Status
+
+Unresolved. The earlier completion claim is withdrawn.
 
 ## Description
 
-Completed the registry lifecycle, residency-detach, and warming-rebuild obligation.
+The landed registry can detach GPU residency after drain and rebuild it before reopening admission. That evidence does not prove that overlapping pause and resume requests are serialized across the full detach, rebuild, controller acknowledgement, and job-convergence sequence.
 
 ## Outcome
 
-`ServiceRegistry` owns the serialized controller, acquires controller tickets before project or compute ownership, detaches only GPU-backed dependencies after drain, and retains storage slots and project identity for warming rebuild.
+Pending: implement one registry-owned transition coordinator that prevents pause, resume, detach, rebuild, and same-ID job convergence from overlapping. A failed or competing transition must remain admission-closed and return the controller's truthful non-success outcome.
 
 ## Evidence
 
-The W02 source audit and focused CPU suite exercised quiesce and warming paths without constructing CUDA. The earlier approved Sol-bound lifecycle evidence remains the live proof; this execution did not start a service, RAG endpoint, or GPU workload.
+No evidence currently satisfies the reopened Step's end-to-end transition-coordination acceptance criteria.
 
 ## Notes
 
-No service process, CUDA allocation, or GPU test was run.
+This record tracks unimplemented remedial work. No service, RAG endpoint, CUDA allocation, or GPU test was run during reconciliation.

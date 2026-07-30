@@ -100,8 +100,11 @@ def _recorded_owner(anchor: Path) -> int:
         recorded = json.loads(anchor.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return 0
-    pid = recorded.get("pid") if isinstance(recorded, dict) else None
-    return pid if isinstance(pid, int) else 0
+    match recorded:
+        case {"pid": int() as pid}:
+            return pid
+        case _:
+            return 0
 
 
 def claim_anchor(

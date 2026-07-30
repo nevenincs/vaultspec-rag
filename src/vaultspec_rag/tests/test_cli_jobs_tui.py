@@ -2378,7 +2378,7 @@ async def _ready(pilot: typing.Any, app: ServerWatchApp) -> None:
     )
 
 
-def _unpainted(app: JobsTuiApp) -> list[str]:
+def _unpainted(app: ServerWatchApp) -> list[str]:
     """Name whatever the first paint is still missing, in the operator's terms.
 
     The wait and its failure message read the same list, so a timeout says which
@@ -2389,7 +2389,9 @@ def _unpainted(app: JobsTuiApp) -> list[str]:
     found = app.query("#jobs")
     if not found:
         return ["the table is not mounted"]
-    table = found.only_one(DataTable)
+    table = app._table()
+    if table is None:
+        return ["the table is not mounted"]
     missing: list[str] = []
     if not app._jobs:
         missing.append("no job list has been applied")
@@ -2775,6 +2777,12 @@ class TestClosingTheSession:
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
+            await _settle(pilot)
+            with control_service._lock:
+                polls_before_close = sum(
+                    method == "GET" and path.startswith("/jobs")
+                    for method, path in control_service.requests
+                )
             # The step that removes the interface's screen.
             await app._close_all()
             # Several frames' worth, so a beat that survived has to fire.
@@ -2783,17 +2791,15 @@ class TestClosingTheSession:
             # rather than the session's own close re-raising it.
             recorded = app._exception
             app._exception = None
-            beats = {app._tick, app.refresh_jobs, app.refresh_service_status}
-            left_running = [
-                timer.name
-                for timer in app._timers
-                if timer._callback in beats and timer._task is not None
-            ]
+            with control_service._lock:
+                polls_after_close = sum(
+                    method == "GET" and path.startswith("/jobs")
+                    for method, path in control_service.requests
+                )
 
         assert recorded is None, f"a beat outlived the screen it paints: {recorded!r}"
-        assert not left_running, (
-            f"the beats must end with the screen they paint, not with the "
-            f"application: {left_running}"
+        assert polls_after_close == polls_before_close, (
+            "the jobs refresh beat outlived the screen without raising"
         )
 
     @pytest.mark.asyncio

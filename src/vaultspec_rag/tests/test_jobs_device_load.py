@@ -26,7 +26,7 @@ _T0 = 200_000.0
 
 
 @pytest.fixture(autouse=True)
-def _clear_device_load_cache() -> Iterator[None]:
+def clear_device_load_cache() -> Iterator[None]:
     """Isolate the module-level snapshot cache across tests.
 
     The cache is a bare module global, so a reading left over from one test

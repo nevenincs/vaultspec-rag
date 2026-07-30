@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 import pytest
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.testclient import TestClient
 
+import vaultspec_rag.server as server
+
+from ..server._routes_search import search_route
+from ..server._state import search_activity_ledger
 from ..service import ServiceRegistry
 from ..service_quiesce import (
     QuiesceAdmissionClosedError,
@@ -17,6 +27,146 @@ pytestmark = [pytest.mark.unit]
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+_QUIESCE_SEARCH_MESSAGE = (
+    "Search is temporarily unavailable while service compute admission is closed; "
+    "retry after the service returns to running."
+)
+
+
+class _QuiesceSearchEnvelopeHandler(BaseHTTPRequestHandler):
+    """Serve the canonical quiesce rejection through a real HTTP socket."""
+
+    def do_POST(self) -> None:
+        assert self.path == "/search"
+        response = {
+            "ok": False,
+            "error": "quiesce_admission_closed",
+            "message": _QUIESCE_SEARCH_MESSAGE,
+            "retryable": True,
+            "request_id": "loopback-quiesce-admission",
+            "quiesce": {
+                "state": "quiesced",
+                "admission_epoch": 4,
+                "safe_to_borrow_gpu": True,
+            },
+        }
+        payload = json.dumps(response).encode("utf-8")
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, format: str, *args: object) -> None:
+        """Keep the focused transport proof's loopback request silent."""
+
+
+def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
+    tmp_path: Path,
+) -> None:
+    """Closed admission rejects before any source can construct compute work."""
+    from time import time_ns
+
+    root = tmp_path / "vault"
+    (root / ".vault").mkdir(parents=True)
+    registry = ServiceRegistry()
+    assert registry.quiesce_resources(timeout_seconds=0).achieved
+    previous_registry = server._registry
+    previous_token = server._SERVICE_TOKEN
+    server._registry = registry
+    server._SERVICE_TOKEN = "closed-admission-token"
+    app = Starlette(routes=[Route("/search", search_route, methods=["POST"])])
+    marker = f"quiesce-admission-{time_ns()}"
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            responses = {
+                source: client.post(
+                    "/search",
+                    headers={"Authorization": "Bearer closed-admission-token"},
+                    json={
+                        "query": f"{marker}-{source}",
+                        "type": source,
+                        "project_root": str(root),
+                    },
+                )
+                for source in ("vault", "code", "document", "combined")
+            }
+    finally:
+        server._registry = previous_registry
+        server._SERVICE_TOKEN = previous_token
+
+    snapshot = registry.quiesce_snapshot()
+    for source, response in responses.items():
+        payload: dict[str, object] = response.json()
+        request_id = payload.get("request_id")
+        assert isinstance(request_id, str), source
+        assert response.status_code == 503, source
+        assert payload == {
+            "ok": False,
+            "error": "quiesce_admission_closed",
+            "message": _QUIESCE_SEARCH_MESSAGE,
+            "retryable": True,
+            "request_id": request_id,
+            "quiesce": {
+                "state": "quiesced",
+                "admission_epoch": snapshot.admission_epoch,
+                "safe_to_borrow_gpu": True,
+            },
+        }
+
+    activity = search_activity_ledger().snapshot(include_query=True)
+    recent = activity["recent"]
+    for source in ("vault", "code", "document", "combined"):
+        records = [
+            record
+            for record in recent
+            if record.get("query") == f"{marker}-{source}"
+        ]
+        assert len(records) == 1
+        record = records[0]
+        assert record["status_code"] == 503
+        assert record["outcome"] == "unavailable"
+        assert record["error_code"] == "quiesce_admission_closed"
+        assert record["error_message"] == _QUIESCE_SEARCH_MESSAGE
+    assert registry.snapshot() == []
+    assert registry.quiesce_snapshot().active_compute_tickets == 0
+
+
+def test_search_transport_preserves_the_exact_quiesce_envelope() -> None:
+    """The client returns the service's rejection unchanged, without fallback."""
+    from ..serviceclient._transport import _try_http_search
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _QuiesceSearchEnvelopeHandler)
+    server_thread = threading.Thread(target=httpd.serve_forever)
+    server_thread.start()
+    try:
+        response = _try_http_search(
+            query="closed admission must not fall back",
+            search_type="vault",
+            top_k=1,
+            port=httpd.server_address[1],
+            project_root="C:/loopback-vault",
+        )
+    finally:
+        httpd.shutdown()
+        server_thread.join(timeout=5)
+        httpd.server_close()
+
+    assert not server_thread.is_alive()
+    assert response == {
+        "ok": False,
+        "error": "quiesce_admission_closed",
+        "message": _QUIESCE_SEARCH_MESSAGE,
+        "retryable": True,
+        "request_id": "loopback-quiesce-admission",
+        "quiesce": {
+            "state": "quiesced",
+            "admission_epoch": 4,
+            "safe_to_borrow_gpu": True,
+        },
+    }
 
 
 def test_admission_ticket_must_drain_before_registry_becomes_quiesced() -> None:

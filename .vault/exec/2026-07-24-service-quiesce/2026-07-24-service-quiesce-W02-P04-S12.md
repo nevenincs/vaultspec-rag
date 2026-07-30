@@ -9,20 +9,24 @@ step_id: 'S12'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
-# CPU controller transition proof
+# CPU transition-coordinator proof remediation
+
+## Status
+
+Unresolved. The earlier completion claim is withdrawn.
 
 ## Description
 
-Completed real CPU-only controller lifecycle and bounded-drain coverage.
+The existing CPU-only controller tests prove condition-lock ticket transitions in isolation. They do not prove exclusion across concurrent registry pause and resume orchestration or fail-closed behavior when detach, rebuild, and acknowledgement race.
 
 ## Outcome
 
-The controller proves serialized pause, ticket drain ordering, idempotent lifecycle calls, and a fail-closed timeout using real threads and condition synchronization.
+Pending: add real-thread, CPU-only proof that the registry transition coordinator serializes pause and resume end to end, preserves idempotency, and leaves admissions closed on timeout, rebuild failure, or a competing transition.
 
 ## Evidence
 
-`test_service_quiesce_controller.py` passed in the focused CPU-only W02 suite. Ruff, ty, and basedpyright all passed after the final review correction.
+No evidence currently satisfies the reopened Step's concurrent registry-transition acceptance criteria.
 
 ## Notes
 
-No service process, CUDA allocation, or GPU test was run.
+This record tracks unimplemented remedial proof. No service, RAG endpoint, CUDA allocation, or GPU test was run during reconciliation.

@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
     reset_config,
 )
@@ -40,6 +41,8 @@ if TYPE_CHECKING:
     from ...store_runtime import VaultStore
 
 pytestmark = [pytest.mark.integration]
+
+_TAG_LIST = TypeAdapter(list[str])
 
 
 def _write_preserving_newlines(path: Path, text: str) -> None:
@@ -138,9 +141,12 @@ def _stored_tags(store: VaultStore, point_key: str) -> list[str]:
     of as a confusing membership error inside a guard about refreshing.
     """
     points = store.retrieve_donor_points(store.TABLE_NAME, [point_key])
-    tags = points[point_key].payload.get("tags")
-    assert isinstance(tags, list), f"{point_key} has no tag list: {tags!r}"
-    return [str(tag) for tag in tags]
+    payload: dict[str, object] = dict(points[point_key].payload)
+    raw_tags: object = payload.get("tags")
+    try:
+        return _TAG_LIST.validate_python(raw_tags, strict=True)
+    except ValidationError as exc:
+        raise AssertionError(f"{point_key} has no tag list: {raw_tags!r}") from exc
 
 
 def _build_vault(
