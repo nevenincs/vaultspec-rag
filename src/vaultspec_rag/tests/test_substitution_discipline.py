@@ -37,6 +37,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "override, so a real run cannot be driven under it; production's own "
         "ensure_disk_headroom raises, classifies and words the refusal",
     ),
+    "test_cli_server.py": (
+        1,
+        "asserts which watch mode 'server --watch' dispatches, which is only "
+        "observable at the run_service_jobs boundary - driving it for real "
+        "opens the full-screen interactive app and never returns; the "
+        'source-scan this replaced matched the literal watch_mode="server" '
+        "and so passed while the verb really dispatched jobs mode",
+    ),
     "test_cli_progress_surfaces.py": (
         1,
         "no substitute source can be staged - the provisioner requires https "
@@ -59,6 +67,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "requires forcing a controlled reading (and counting how often it is "
         "taken) - neither reachable through a real device on a CPU-only "
         "runner",
+    ),
+    "test_server.py": (
+        3,
+        "asserts the stdio runner wires watcher cleanup and loads no model - "
+        "both observable only at the instant the MCP transport is entered, "
+        "and mcp.run(transport='stdio') blocks on real stdin forever, so the "
+        "transport, the lifetime watchdog it arms, and the model load it must "
+        "not perform are the three boundaries substituted; the source scans "
+        "these replaced read main(), a two-line dispatcher containing neither "
+        "contract, and passed against a real load added one frame down",
     ),
     "test_service_preflight_cli.py": (
         4,
