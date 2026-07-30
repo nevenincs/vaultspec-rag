@@ -1,4 +1,4 @@
-"""CPU-only guards against local indexing after delegated failures."""
+"""CPU-only guards against local indexing after delegated refusals."""
 
 from __future__ import annotations
 
@@ -102,7 +102,6 @@ try:
             "vault",
             "--port",
             str(port),
-            "--allow-fallback",
             *( ["--json"] if mode != "dead_human" else [] ),
         ],
         terminal_width=200,
@@ -139,15 +138,10 @@ print(
     )
 
 
-def test_allow_fallback_refuses_a_dead_delegated_port_without_local_imports(
+def test_delegation_refuses_a_dead_port_without_local_imports(
     tmp_path: Path,
 ) -> None:
-    """A selected but unreachable service cannot authorize local indexing.
-
-    Mutation: restore ``local_fallback_available=True`` at the delegated
-    refusal call. This test's canonical refusal assertion fails; the isolated
-    process also reports any model/index import that fallback would reach.
-    """
+    """A selected but unreachable service cannot authorize local indexing."""
     completed = _run_delegation_refusal_probe(tmp_path, "dead")
 
     assert completed.returncode == 0, completed.stderr
