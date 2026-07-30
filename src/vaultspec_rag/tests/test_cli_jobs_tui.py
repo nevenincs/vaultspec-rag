@@ -35,6 +35,7 @@ from ..cli._jobs_tui import (
     ServerWatchApp,
 )
 from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
+from ..service_quiesce import QuiesceSnapshot, QuiesceState
 from ..serviceclient._transport import DEFAULT_ADMIN_TIMEOUT_SECONDS, _try_http_admin
 
 pytestmark = [pytest.mark.unit]
@@ -224,6 +225,10 @@ class _JobService:
         # When set, the jobs listing carries this machine pressure block;
         # ``None`` omits the key - a daemon that predates the tier.
         self.pressure: dict[str, object] | None = None
+        # When set, the jobs listing carries this quiesce controller
+        # observation; ``None`` omits the key, which is how a daemon older
+        # than the controller answers.
+        self.quiesce: dict[str, object] | None = None
         # What ``/health`` reports as the daemon's release. ``None`` omits
         # the field, which is how a daemon that predates version reporting
         # answers - not an empty string, and never the client's own number.
@@ -359,6 +364,35 @@ class _JobService:
             return [path for method, path in self.requests if method != "GET"]
 
 
+def _quiesce_block(
+    *,
+    state: QuiesceState,
+    vram_released: bool,
+    safe_to_borrow_gpu: bool,
+) -> dict[str, object]:
+    """Publish one controller observation exactly as the service renders it.
+
+    Built through the controller's own snapshot rather than as a literal
+    mapping, so a field added to or dropped from the canonical vocabulary
+    reaches this fixture instead of leaving it asserting against a shape the
+    service stopped publishing.
+    """
+    return QuiesceSnapshot(
+        state=state,
+        admission_epoch=7,
+        admissions_open=state is QuiesceState.RUNNING,
+        active_compute_tickets=0,
+        drain_complete=state is not QuiesceState.RUNNING,
+        vram_released=vram_released,
+        safe_to_borrow_gpu=safe_to_borrow_gpu,
+        pause_requested_at=None,
+        drain_acknowledged_at=None,
+        quiesced_at=None,
+        warming_started_at=None,
+        failure_reason=None,
+    ).as_envelope()
+
+
 def _jobs_payload(
     service: _JobService, query: dict[str, list[str]]
 ) -> dict[str, object]:
@@ -368,6 +402,7 @@ def _jobs_payload(
         held = list(service.jobs)
         gpu = service.gpu
         pressure = service.pressure
+        quiesce = service.quiesce
     page = held[:limit]
     payload: dict[str, object] = {
         "ok": True,
@@ -382,6 +417,8 @@ def _jobs_payload(
         payload["gpu"] = gpu
     if pressure is not None:
         payload["pressure"] = pressure
+    if quiesce is not None:
+        payload["quiesce"] = quiesce
     return payload
 
 
@@ -2034,6 +2071,75 @@ class TestHeaderCounts:
 
         assert "pressure catastrophic" in painted, (
             "an unrecognised tier is the service's verdict and is shown as given"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_running_controller_spends_no_header_width(
+        self, control_service: _JobService
+    ) -> None:
+        """The controller's steady state is the one that must stay silent.
+
+        A running controller holding its VRAM with no borrower admitted is
+        what an operator already assumes, and it is what every healthy daemon
+        publishes on every refresh. Spending the widest cell in the bar on it
+        sheds the state labels for a claim nobody was waiting on - and the
+        evidence is not lost by the silence, because the detail row carries
+        the whole block whatever the pill decides.
+
+        Proven able to fail: returning the evidence pill for the running
+        steady state - the shape that renders every observation alike -
+        paints ``borrower safety unsafe`` and fails the first two assertions
+        below by name; restored, it passes.
+        """
+        control_service.quiesce = _quiesce_block(
+            state=QuiesceState.RUNNING,
+            vram_released=False,
+            safe_to_borrow_gpu=False,
+        )
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "borrower safety" not in painted, (
+            "a controller in its steady state must not spend header width saying so"
+        )
+        assert "▶ 1 running" in painted, (
+            "and the labels the pill would have cost must still be painted"
+        )
+        assert "quiesce details:" in painted, (
+            "silence in the header is not silence on screen: the detail row "
+            "still carries the block the service published"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_quiesced_controller_keeps_its_cell_over_the_labels(
+        self, control_service: _JobService
+    ) -> None:
+        """Controller news outranks every label the bar could have kept.
+
+        A controller past running is the window in which an operator needs
+        all three facts at once, so the cell is painted whole and the labels
+        go instead - the reverse of the steady-state case, from the same
+        header width.
+        """
+        control_service.quiesce = _quiesce_block(
+            state=QuiesceState.QUIESCED,
+            vram_released=True,
+            safe_to_borrow_gpu=True,
+        )
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "quiesce quiesced" in painted
+        assert "vram released" in painted
+        assert "borrower safety safe" in painted, (
+            "the borrower's own answer is the reason the cell exists"
+        )
+        assert "▶ 1 running" not in painted, (
+            "reported controller evidence is never shed; the labels are"
         )
 
     @pytest.mark.asyncio
