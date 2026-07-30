@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from ._file_state import FileStateKind, validate_rel_path
 from ._run_ledger_models import (
@@ -529,16 +529,26 @@ def retained_point_ids_sql(*, scoped_to_path: bool, keyset: bool) -> str:
 
 def _commit_unit_from_row(row: _CommitUnitRow) -> CommitUnit:
     try:
-        point_ids = json.loads(row["point_ids_json"])
-        if not isinstance(point_ids, list):
+        decoded = json.loads(row["point_ids_json"])
+        if not isinstance(decoded, list):
             raise TypeError("point_ids_json must contain a list")
+        # Entry types are checked, not asserted: a stored list of integers
+        # satisfies every downstream invariant CommitUnit enforces (truthy,
+        # unique, ordered) and would otherwise reach the store as point
+        # identities of the wrong type.
+        stored_ids = cast("list[Any]", decoded)
+        point_ids = tuple(
+            point_id for point_id in stored_ids if isinstance(point_id, str)
+        )
+        if len(point_ids) != len(stored_ids):
+            raise TypeError("point_ids_json must contain only strings")
         return CommitUnit(
             rel_path=row["rel_path"],
             kind=CommitUnitKind(row["unit_kind"]),
             source_digest=row["source_digest"],
             segment_ordinal=row["segment_ordinal"],
             is_file_end=bool(row["is_file_end"]),
-            point_ids=tuple(cast("list[str]", point_ids)),
+            point_ids=point_ids,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise RunLedgerCorruptionError("stored commit unit is malformed") from exc

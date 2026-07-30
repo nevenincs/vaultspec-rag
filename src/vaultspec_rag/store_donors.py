@@ -22,6 +22,27 @@ from .store_runtime import DONOR_RETRIEVE_BATCH_SIZE, DonorPoint  # noqa: E402
 __all__ = ["_VaultDonorMixin"]
 
 
+def _numeric_list(raw: Any) -> list[float] | None:
+    """Return *raw* as floats when it is a list of numbers, else ``None``.
+
+    Every vector half a donor record can carry - dense entries, sparse
+    indices, sparse values - is a list of numbers, so one check covers all
+    three. Entry types are verified before conversion because a stored
+    vector is untrusted input: converting first turns a malformed entry
+    into an exception escaping the read path instead of the miss this
+    module promises. An empty list is a list of numbers and is returned as
+    one; only the dense caller additionally requires it to be non-empty.
+    """
+    if not isinstance(raw, list):
+        return None
+    numbers: list[float] = []
+    for value in cast("list[Any]", raw):
+        if not isinstance(value, (int, float)):
+            return None
+        numbers.append(float(value))
+    return numbers
+
+
 class _VaultDonorMixin:
     """Read-only donor-vector reuse behaviour supplied to :class:`VaultStore`."""
 
@@ -151,22 +172,23 @@ class _VaultDonorMixin:
     def _donor_point_from_record(record: Record) -> DonorPoint | None:
         """Convert one retrieved record into a :class:`DonorPoint`.
 
-        Requires the named dense vector; a point without one is useless
-        for vector adoption and reads as a miss (``None``). The named
-        sparse vector is optional - points are written without one when
-        sparse encoding is disabled - and is accepted in both the client
-        model form (``.indices``/``.values``) and the plain dict form.
+        Requires the named dense vector; a point without one - or one whose
+        stored entries are not numbers - is useless for vector adoption and
+        reads as a miss (``None``). The named sparse vector is optional -
+        points are written without one when sparse encoding is disabled -
+        and is accepted in both the client model form (``.indices``/
+        ``.values``) and the plain dict form. A sparse vector that is
+        malformed in any way, in its shape or in its entries, is dropped
+        exactly like an absent one: the point still reads as a hit carrying
+        its usable dense vector, and adoption declines it downstream when
+        the run needs sparse vectors.
         """
         vectors = record.vector
         if not isinstance(vectors, dict):
             return None
-        dense_raw = cast("Any", vectors.get(store_schema.DENSE_VECTOR_NAME))
-        if not isinstance(dense_raw, list) or not dense_raw:
+        dense = _numeric_list(cast("Any", vectors.get(store_schema.DENSE_VECTOR_NAME)))
+        if not dense:
             return None
-        dense_items = cast("list[Any]", dense_raw)
-        if not all(isinstance(value, (int, float)) for value in dense_items):
-            return None
-        dense = [float(value) for value in cast("list[float]", dense_raw)]
         sparse_raw = cast("Any", vectors.get(store_schema.SPARSE_VECTOR_NAME))
         indices: Any = None
         values: Any = None
@@ -177,11 +199,13 @@ class _VaultDonorMixin:
         else:
             indices = getattr(sparse_raw, "indices", None)
             values = getattr(sparse_raw, "values", None)
+        raw_indices = _numeric_list(indices)
+        sparse_values = _numeric_list(values)
         sparse_indices: list[int] | None = None
-        sparse_values: list[float] | None = None
-        if isinstance(indices, list) and isinstance(values, list):
-            sparse_indices = [int(index) for index in cast("list[int]", indices)]
-            sparse_values = [float(value) for value in cast("list[float]", values)]
+        if raw_indices is None or sparse_values is None:
+            sparse_values = None
+        else:
+            sparse_indices = [int(index) for index in raw_indices]
         payload: dict[str, object] = dict(record.payload) if record.payload else {}
         return DonorPoint(
             dense=dense,
