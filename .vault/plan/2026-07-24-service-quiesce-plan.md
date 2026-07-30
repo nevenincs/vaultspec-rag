@@ -107,15 +107,15 @@ Require a distinct machine-global borrower lease plus acknowledged service quies
 
 Create the distinct machine-global borrower lease and one crash-safe coordinator that acquires the lease before requesting pause, admits work only from a strict acknowledged-quiescence snapshot, resumes before release, and never starts another service.
 
-- [ ] `W04.P08.S29` - Repair the borrower lease by providing the narrow captured-service-anchor acquisition path that preserves one fresh opaque capability and the unchanged service-side sibling-anchor verifier; `src/vaultspec_rag/gpu_borrow_lease.py, src/vaultspec_rag/tests/test_gpu_borrow_lease.py`.
-- [ ] `W04.P08.S30` - Repair captured pre-isolation service targeting by pinning the borrower lease to the target's original sibling anchor before revalidation and by using the minimal typed initial-bearer transport for token-safe pause and resume; `src/vaultspec_rag/cli/_gpu_lease.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/tests/test_gpu_borrow_cli.py, src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`.
+- [ ] `W04.P08.S29` - Repair the borrower lease with a one-shot opaque pre-registration captured-service authority that is the sole contained exception and preserves the existing service-side sibling-anchor verifier; `src/vaultspec_rag/gpu_borrow_lease.py, src/vaultspec_rag/_test_isolation.py, src/vaultspec_rag/tests/test_gpu_borrow_lease.py`.
+- [ ] `W04.P08.S30` - Repair captured pre-isolation service targeting by minting and consuming the opaque authority before post-lease revalidation and by using typed initial-bearer transport with one same-token authenticated 401 retry; `src/vaultspec_rag/cli/_gpu_lease.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/tests/test_gpu_borrow_cli.py, src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`.
 - [ ] `W04.P08.S31` - Make service preflight a torch-free remote observation of strict typed quiescence and device capacity that never authorizes GPU work or falls back to a local probe; `src/vaultspec_rag/cli/_service_preflight.py, src/vaultspec_rag/tests/test_service_preflight_cli.py`.
 
 ### Phase `W04.P09` - Torch-free diagnostics and GPU entry-point enforcement
 
 Keep service diagnostics torch-free and strictly typed, fail closed on missing, unknown, stale, or version-skewed quiescence evidence, and require the same borrower lease plus acknowledged quiescence in pytest and self-hosted CI.
 
-- [ ] `W04.P09.S32` - Repair GPU pytest coordination by capturing and passing the host service target while retaining isolated test paths and by validating runner Qdrant only for selected fixture closures that require an isolated child; `conftest.py, src/vaultspec_rag/tests/test_gpu_session_lock.py`.
+- [ ] `W04.P09.S32` - Repair GPU pytest coordination by capturing the opaque host-service authority before root registration, passing it unchanged through the guarded coordinator, and validating runner Qdrant only for selected fixture closures that require an isolated child; `conftest.py, src/vaultspec_rag/tests/test_gpu_session_lock.py`.
 - [ ] `W04.P09.S33` - Route self-hosted CI and Just GPU tiers through S32's guarded coordinator only, remove direct GPU preflight and Qdrant installation, and declare the compatible resident service plus runner Qdrant binary and manifest as external prerequisites; `.github/workflows/ci.yml, Justfile`.
 
 ## Parallelization
