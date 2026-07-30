@@ -24,11 +24,10 @@ from .._operator_commands import (
     server_start_command,
     server_status_command,
 )
-from ..commands._models import SYNC_COUNTERS
+from ..commands._models import SYNC_COUNTERS, InstallReport, UninstallReport
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
-    from ..commands._models import InstallReport, UninstallReport
     from ..commands._provision import ProvisionOutcome
     from ..serviceclient._compat import ServiceVersionVerdict
 
@@ -659,17 +658,21 @@ def _print_warning_or_note(warning: object) -> None:
     _plain(f"{prefix}: {text}")
 
 
-def _render_mcp_extra(report: object) -> None:
+def _render_mcp_extra(report: InstallReport | UninstallReport) -> None:
     """Render the structured MCP optional-dependency lifecycle result."""
-    action = getattr(report, "mcp_extra_action", "skipped")
+    action = report.mcp_extra_action
     if action == "skipped":
         return
-    location = getattr(report, "mcp_extra_location", "")
+    # Only the uninstall report carries a location for the mcp extra: install
+    # never removes from more than one place, so InstallReport has no field.
+    location = report.mcp_extra_location if isinstance(report, UninstallReport) else ""
     suffix = f" ({location})" if location else ""
     _plain(f"MCP optional dependency: {_action_label(action)}{suffix}")
 
 
-def _render_provider_and_torch_sections(report: object) -> None:
+def _render_provider_and_torch_sections(
+    report: InstallReport | UninstallReport,
+) -> None:
     """Render the sections install and uninstall report identically.
 
     Provider sync, the MCP extra, and the whole PyTorch block read the same
@@ -679,19 +682,20 @@ def _render_provider_and_torch_sections(report: object) -> None:
     that stops being true without anything failing. Each report then
     continues differently, which is why only the shared part moved.
 
-    Reads through ``getattr`` with defaults because the two report shapes are
-    separate dataclasses and not every field exists on both.
+    Every field this function reads is declared on both dataclasses, so it
+    reads them directly; ``_render_mcp_extra`` is the one exception, since
+    ``mcp_extra_location`` exists only on ``UninstallReport``.
     """
     _render_provider_sync(report)
     _render_mcp_extra(report)
-    tc_action = getattr(report, "torch_config_action", "skipped")
+    tc_action = report.torch_config_action
     _plain(f"PyTorch configuration: {_action_label(tc_action)}")
-    td_action = getattr(report, "torch_direct_dep_action", "skipped")
+    td_action = report.torch_direct_dep_action
     if td_action not in ("skipped",):
-        td_location = getattr(report, "torch_direct_dep_location", "")
+        td_location = report.torch_direct_dep_location
         suffix = f" ({td_location})" if td_location else ""
         _plain(f"PyTorch dependency: {_action_label(td_action)}{suffix}")
-    for conflict in getattr(report, "torch_config_conflicts", []):
+    for conflict in report.torch_config_conflicts:
         _plain(f"  conflict: {conflict}")
 
 
