@@ -32,9 +32,10 @@ _RESUME_COMMAND = "service.resume"
 def _quiesce(*, pause: bool, command: str, port: int | None, json_mode: bool) -> None:
     """Drive one pause/resume transition and emit exactly one outcome.
 
-    Only a service-owned ``ok: true`` response is successful. Every failure
-    keeps the service's error, status, message, retryability, and full quiesce
-    envelope intact for operators and machine consumers.
+    Only a service-owned ``ok: true`` response whose canonical quiesce state
+    achieved the requested direction is successful. Every failure keeps the
+    service's error, status, message, retryability, and full quiesce envelope
+    intact for operators and machine consumers.
     """
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
@@ -45,7 +46,14 @@ def _quiesce(*, pause: bool, command: str, port: int | None, json_mode: bool) ->
     if result is None:
         _fail_unreachable(command, json_mode, port=resolved_port)
         return
-    if result.get("ok") is True:
+    expected_state = "quiesced" if pause else "running"
+    quiesce_state: str | None = None
+    match result.get("quiesce"):
+        case {"state": str(state)}:
+            quiesce_state = state
+        case _:
+            pass
+    if result.get("ok") is True and quiesce_state == expected_state:
         if json_mode:
             _emit_json(True, command, data=result)
             raise typer.Exit(0)

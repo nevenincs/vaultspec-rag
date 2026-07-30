@@ -183,6 +183,45 @@ def test_resume_already_running_is_idempotent_success() -> None:
     assert _json(result)["data"]["status"] == "running"
 
 
+@pytest.mark.parametrize(
+    ("verb", "status", "snapshot"),
+    [
+        ("pause", "quiesced", _RUNNING_SNAPSHOT),
+        ("resume", "running", _QUIESCED_SNAPSHOT),
+    ],
+)
+def test_ok_response_with_unachieved_canonical_state_is_failure(
+    verb: str,
+    status: str,
+    snapshot: dict[str, object],
+) -> None:
+    """An ``ok`` flag cannot override the canonical quiesce state.
+
+    The status deliberately claims the requested terminal state, proving the
+    adapter reads the canonical ``quiesce.state`` rather than inferring local
+    success from an advisory response field.
+
+    Mutation: remove the expected-state condition in ``_quiesce``. Both cases
+    become false exit-zero successes instead of preserving the wire payload.
+    """
+    envelope: dict[str, object] = {
+        "ok": True,
+        "status": status,
+        "quiesce": snapshot,
+    }
+    with _quiesce_service(envelope) as port:
+        result = _invoke(verb, port)
+
+    assert result.exit_code == 1, result.output
+    assert _json(result) == {
+        "ok": False,
+        "command": f"service.{verb}",
+        "error": "invalid_service_response",
+        "message": "The service returned an invalid quiesce response.",
+        "data": envelope,
+    }
+
+
 def test_retryable_pause_failure_preserves_the_service_owned_envelope() -> None:
     """An unachieved retryable transition keeps every service-owned field."""
     with _quiesce_service(_RETRYABLE_FAILURE) as port:
