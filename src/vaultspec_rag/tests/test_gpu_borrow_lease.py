@@ -99,6 +99,25 @@ def _isolated_borrower_anchor(tmp_path: Path) -> Generator[None]:
 
 
 @contextmanager
+def _unavailable_borrower_anchor(tmp_path: Path) -> Generator[None]:
+    """Point the borrower anchor under a real file, so its parent cannot exist."""
+    storage_key = EnvVar.QDRANT_STORAGE_DIR.value
+    previous_storage = os.environ.get(storage_key)
+    blocked_parent = tmp_path / "borrower-anchor-parent-file"
+    blocked_parent.write_text("not a directory", encoding="ascii")
+    os.environ[storage_key] = str(blocked_parent / "storage")
+    reset_config()
+    try:
+        yield
+    finally:
+        if previous_storage is None:
+            os.environ.pop(storage_key, None)
+        else:
+            os.environ[storage_key] = previous_storage
+        reset_config()
+
+
+@contextmanager
 def _borrower_process() -> Generator[BorrowerProcess]:
     """Spawn a process that holds a real borrower lease and returns its secret."""
     from tempfile import NamedTemporaryFile
@@ -348,6 +367,22 @@ def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
                     json={"borrower_capability": borrower.capability},
                 )
             )
+            with _unavailable_borrower_anchor(tmp_path):
+                assert (
+                    borrower_lease_status(borrower.capability)
+                    is BorrowerLeaseStatus.UNAVAILABLE
+                )
+                _assert_borrower_refusal(
+                    routes.client.post(
+                        "/pause",
+                        headers=_HEADERS,
+                        json={"borrower_capability": borrower.capability},
+                    ),
+                    "borrower_lease_unavailable",
+                    state="quiesced",
+                )
+                asyncio.run(_borrower_lease_recovery_tick(routes.registry))
+                assert routes.registry.quiesce_snapshot().state.value == "quiesced"
             borrower.process.kill()
             borrower.process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
             assert borrower.process.poll() is not None, (
