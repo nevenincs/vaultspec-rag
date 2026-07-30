@@ -22,6 +22,21 @@ if TYPE_CHECKING:
     import asyncio
 
     from ..job_manager.manager import JobManager
+    from ..job_manager.state import AttemptExit
+
+
+async def pending_attempt() -> AttemptExit:
+    """A coroutine standing in for a live, never-completing managed attempt.
+
+    Every caller wraps this in a task and cancels it during cleanup, so it
+    never actually returns; the ``AttemptExit`` annotation documents the real
+    production contract (:meth:`JobManagerExecution._run_attempt`) these
+    stand-in tasks are typed against, matching ``JobRuntimeOwner.task``.
+    """
+    import asyncio
+
+    await asyncio.Event().wait()
+    raise AssertionError("pending_attempt task ran to completion")
 
 
 def create_paused_vault_job(manager: JobManager) -> str:
@@ -80,7 +95,7 @@ def resume_paused_job(manager: JobManager, job_id: str) -> None:
 def assert_delivered_pause_requeues_resume(
     manager: JobManager,
     job_id: str,
-    task: asyncio.Task[object],
+    task: asyncio.Task[AttemptExit],
     control: RunControlToken,
 ) -> None:
     started = manager.start_attempt(job_id, task=task, control=control)

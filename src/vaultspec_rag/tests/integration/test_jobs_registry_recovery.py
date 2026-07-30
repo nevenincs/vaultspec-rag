@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path  # noqa: TC003
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -31,6 +31,10 @@ from ...job_models import (
 from ...server._routes import _service_job_snapshot
 from ...server._routes_jobs import _job_with_liveness
 from ...service_quiesce import ServiceQuiesceController
+from .._job_manager_transition_helpers import pending_attempt
+
+if TYPE_CHECKING:
+    from ...job_manager.state import AttemptExit
 
 
 def _exited_process_pid() -> int:
@@ -418,8 +422,8 @@ class TestManagedJobPersistence:
         initiator = JobInitiator("cli", "server job create", str(tmp_path))
         created = manager.create(spec, initiator)
         assert created.job is not None
-        owner_task = asyncio.create_task(asyncio.Event().wait())
-        stale_task = asyncio.create_task(asyncio.Event().wait())
+        owner_task = asyncio.create_task(pending_attempt())
+        stale_task = asyncio.create_task(pending_attempt())
         try:
             started = manager.start_attempt(
                 created.job.id,
@@ -494,8 +498,8 @@ class TestManagedJobPersistence:
             JobInitiator("http", "POST /jobs", str(completed_root)),
         )
         assert completed.job is not None
-        completed_task = asyncio.create_task(asyncio.Event().wait())
-        interrupted_task = asyncio.create_task(asyncio.Event().wait())
+        completed_task = asyncio.create_task(pending_attempt())
+        interrupted_task = asyncio.create_task(pending_attempt())
         try:
             assert (
                 manager.start_attempt(
@@ -760,7 +764,7 @@ class TestManagedJobPersistence:
         initiator = JobInitiator("cli", "server job create", str(tmp_path))
         created = manager.create(spec, initiator)
         assert created.job is not None
-        task = asyncio.create_task(asyncio.Event().wait())
+        task = asyncio.create_task(pending_attempt())
         try:
             manager.start_attempt(
                 created.job.id,
@@ -997,7 +1001,7 @@ class TestManagedJobPersistence:
             max_nonterminal=3,
             state_path=state_path,
         )
-        tasks: list[asyncio.Task[bool]] = []
+        tasks: list[asyncio.Task[AttemptExit]] = []
         try:
             for index in range(3):
                 root = tmp_path / f"project-{index}"
@@ -1011,8 +1015,7 @@ class TestManagedJobPersistence:
                     JobInitiator("watcher", "watcher_vault_index", str(root)),
                 )
                 assert created.job is not None
-                event = asyncio.Event()
-                task = asyncio.create_task(event.wait())
+                task = asyncio.create_task(pending_attempt())
                 tasks.append(task)
                 assert (
                     manager.start_attempt(

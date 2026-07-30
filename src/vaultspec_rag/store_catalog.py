@@ -728,7 +728,7 @@ class _VaultCatalogMixin:
             )
         scroll_filter = models.Filter(must=conditions)
 
-        docs: list[dict[str, Any]] = []
+        docs: list[dict[str, object]] = []
         offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
         while True:
             with self._point_lock(self.TABLE_NAME):

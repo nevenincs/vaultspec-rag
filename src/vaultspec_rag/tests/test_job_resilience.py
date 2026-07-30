@@ -24,6 +24,7 @@ from ..job_models import (
 )
 from ..jobs import index_job_status
 from ..service_quiesce import ServiceQuiesceController
+from ._job_manager_transition_helpers import pending_attempt
 
 pytestmark = [pytest.mark.unit]
 
@@ -51,8 +52,8 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
         JobInitiator("cli", "server job create", str(tmp_path)),
     )
     assert created.job is not None
-    owner_task = asyncio.create_task(asyncio.Event().wait())
-    stale_task = asyncio.create_task(asyncio.Event().wait())
+    owner_task = asyncio.create_task(pending_attempt())
+    stale_task = asyncio.create_task(pending_attempt())
     resilience = IndexResilienceSnapshot(
         generation_id="generation-7",
         committed_units=41,

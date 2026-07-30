@@ -26,6 +26,7 @@ from ..jobs import (
     reset,
     snapshot,
 )
+from ._job_manager_transition_helpers import pending_attempt
 from ._jobs_restore_helpers import job_recorded_by_a_now_dead_process
 
 pytestmark = [pytest.mark.unit]
@@ -67,7 +68,7 @@ class TestInterruptedJobDegradationSplit:
             JobInitiator("service", "degradation split coverage", str(tmp_path)),
         )
         assert created.job is not None
-        task = asyncio.create_task(asyncio.Event().wait())
+        task = asyncio.create_task(pending_attempt())
         try:
             started = manager.start_attempt(
                 created.job.id,

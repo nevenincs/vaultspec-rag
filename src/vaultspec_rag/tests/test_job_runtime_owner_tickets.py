@@ -28,6 +28,7 @@ from ..job_models import (
     JobState,
 )
 from ..service_quiesce import ServiceQuiesceController
+from ._job_manager_transition_helpers import pending_attempt
 from ._job_roots import _TEST_PROJECT_ROOT
 
 pytestmark = [pytest.mark.unit]
@@ -52,16 +53,12 @@ def _admitted_job(controller: ServiceQuiesceController) -> tuple[JobManager, str
     return manager, created.job.id
 
 
-async def _idle_attempt() -> None:
-    await asyncio.Event().wait()
-
-
 @pytest.mark.asyncio
 async def test_finish_attempt_releases_the_attempts_compute_ticket() -> None:
     """A terminal commit gives back the admission its attempt still holds."""
     controller = ServiceQuiesceController()
     manager, job_id = _admitted_job(controller)
-    task = asyncio.get_running_loop().create_task(_idle_attempt())
+    task = asyncio.get_running_loop().create_task(pending_attempt())
     try:
         started = manager.start_attempt(job_id, task=task, control=RunControlToken())
         assert started.code == "attempt_started"
@@ -88,7 +85,7 @@ async def test_acknowledge_control_releases_the_attempts_compute_ticket() -> Non
     """An unwound attempt gives back the admission it still holds."""
     controller = ServiceQuiesceController()
     manager, job_id = _admitted_job(controller)
-    task = asyncio.get_running_loop().create_task(_idle_attempt())
+    task = asyncio.get_running_loop().create_task(pending_attempt())
     try:
         started = manager.start_attempt(job_id, task=task, control=RunControlToken())
         assert started.code == "attempt_started"

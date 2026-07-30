@@ -40,7 +40,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict, Unpack, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NoReturn,
+    Protocol,
+    TypedDict,
+    Unpack,
+    cast,
+)
 
 from .._loopback_http import (
     FAST_CONNECT_TIMEOUT_SECONDS,
@@ -303,9 +312,21 @@ class ServiceResponseTooLargeError(ValueError):
     """Raised before a service response can exceed the client memory bound."""
 
 
-def read_service_response(response: Any) -> bytes:
+class _ReadableResponse(Protocol):
+    """The one method this transport needs from an opened HTTP response.
+
+    Structural rather than ``http.client.HTTPResponse`` by name: the opener
+    yields whatever handler chain produced it (typed ``Any`` upstream), and
+    ``urllib.error.HTTPError`` reaches this same call as the response for a
+    non-2xx status. Both share only this read method.
+    """
+
+    def read(self, amt: int, /) -> bytes: ...
+
+
+def read_service_response(response: _ReadableResponse) -> bytes:
     """Read at most one byte beyond the finite service-response ceiling."""
-    raw = cast("bytes", response.read(MAX_SERVICE_RESPONSE_BYTES + 1))
+    raw = response.read(MAX_SERVICE_RESPONSE_BYTES + 1)
     if len(raw) > MAX_SERVICE_RESPONSE_BYTES:
         raise ServiceResponseTooLargeError(
             "service response exceeded the "

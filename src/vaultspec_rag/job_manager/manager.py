@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict, deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Never, cast
+from typing import TYPE_CHECKING, Literal, Never, cast
 
 if TYPE_CHECKING:
     import asyncio
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
     from .. import job_persistence as _job_persistence
     from ..service_quiesce import ServiceQuiesceController
+    from .state import AttemptExit
 
 from ..config._settings import get_config, managed_status_dir
 from ._control import JobManagerControl
@@ -105,7 +106,7 @@ class JobManager(
         # process that never adopted one (the local CLI), where a loopless
         # dispatch is a genuine caller error rather than a thread boundary.
         self._service_loop: asyncio.AbstractEventLoop | None = None
-        self._retiring_tasks: set[asyncio.Task[Any]] = set()
+        self._retiring_tasks: set[asyncio.Task[AttemptExit]] = set()
         self._persistence_dirty = False
         self._accepting_dispatch = True
         self._lifecycle_state: Literal["new", "running", "stopping", "stopped"] = "new"
