@@ -77,6 +77,12 @@ class _DispatchAdmission:
 
 
 class JobManagerExecution(JobManagerState):
+    #: Declared here because this owner both adopts and reads it. Adoption
+    #: only ever stores a live loop, so a type inferred from that write alone
+    #: would define the unadopted case out of existence and silently retire
+    #: the rejection a loopless dispatch depends on.
+    _service_loop: asyncio.AbstractEventLoop | None
+
     def bind_dispatch(
         self,
         job_id: str,
