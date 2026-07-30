@@ -33,9 +33,11 @@ The strict quiesce parser allowed null transition timestamps and the safe predic
 
 Non-ready discovery or absent port is `service_discovery_unavailable`; an unusable heartbeat window is `service_discovery_incomplete`; a future heartbeat is `service_discovery_unknown`; a stale heartbeat is `service_discovery_stale`; and an explicit port conflict is `service_port_mismatch`. Unreachable health is `service_unreachable`; missing, partial, or invalid capacity is `device_capacity_unavailable`; partial quiesce is `service_state_incomplete`; and a valid but unsafe snapshot is `service_not_safe_to_borrow_gpu`. Every error and success retains `authorized: false` and `lease_required: true`.
 
-### required-real-route-proof | high | Existing tests do not exercise the identity or partial-evidence refusal paths
+### required-real-route-proof | high | Existing tests do not exercise reachable identity and authentication refusals
 
-S31 must add CPU-only real production-route coverage for unknown and incomplete discovery, discovery version unreported and mismatch, unreachable health, health identity and version mismatch, partial capacity, partial quiesce, and incomplete claimed-safe timestamps. It must also prove bearer pinning with a contended machine-pointer identity and a deliberately different isolated ambient status token: the old ambient route would receive 401, while the explicit discovered bearer succeeds. The proof must not use mocks, patches, source mutation, a local GPU, Qdrant child, model, or daemon lifespan.
+S31 must add CPU-only real production-route coverage for unknown and incomplete discovery, discovery version unreported and mismatch, unreachable health, health identity and version mismatch, authenticated service-state refusal, and successful safe versus unsafe observation. It must also prove bearer pinning with a contended machine-pointer identity and a deliberately different isolated ambient status token: the old ambient route would receive 401, while the explicit discovered bearer succeeds. The proof must not use mocks, patches, source mutation, a local GPU, Qdrant child, model, or daemon lifespan.
+
+The canonical production health route always emits the complete device-capacity mapping and the production service-state route always serializes the complete controller envelope. Partial capacity, partial quiesce, and missing-safe-timestamp mappings therefore cannot be induced through a real production route without a forbidden proxy, hook, patch, or source mutation. `_strict_capacity` and `_strict_quiesce`, including the finite safe-timestamp guard, remain static unexercised defense-in-depth for older services, proxies, and future wire drift; no fabricated malformed-success test seam is permitted.
 
 ## Recommendations
 
