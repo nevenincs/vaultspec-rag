@@ -1926,16 +1926,21 @@ class ServiceRegistry:
 
         # Dropping the references is not enough: both stacks are reachable only
         # through reference cycles, so their device memory survives until a
-        # collection runs. Until it does the process holds gigabytes it no
-        # longer has a handle on, and the recorded resident baseline keeps
-        # describing them - which would put every later index ceiling out of
-        # reach, since enforcement clamps a job's peak net of that figure at
-        # zero. Collect, then re-establish the baseline from what is genuinely
-        # left resident.
-        from .memory_probe import rebase_resident_cuda_baseline
-
-        gc.collect()
-        rebase_resident_cuda_baseline()
+        # collection runs, and the blocks a collection frees stay checked out
+        # of the device until the allocator cache is flushed. One release
+        # sequence owns all three steps; running a shortened copy here rebased
+        # the baseline against this process's own cache, so the figure
+        # described memory nothing held and the next load was refused on a card
+        # that had room. A failure has nowhere to go at shutdown, but it must
+        # not pass silently either.
+        try:
+            self._release_gpu_residency()
+        except GPUResidencyTransitionError:
+            logger.warning(
+                "GPU residency release failed during shutdown; the device may "
+                "hold memory this process no longer references",
+                exc_info=True,
+            )
         logger.info("ServiceRegistry shut down")
 
     # -- introspection -----------------------------------------------------
