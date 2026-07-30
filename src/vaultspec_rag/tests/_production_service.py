@@ -138,3 +138,10 @@ def production_service(status_dir: Path) -> Generator[ProductionService]:
             # learn nothing.
             _try_http_admin("resume_service", {}, port)
             service.stop()
+        # Withdraw the record this block published. The listener is gone, so a
+        # record naming its port would advertise an address nothing answers on,
+        # and the production client has no way to tell that from a wedged
+        # daemon: a caller that runs a service-first command after this block
+        # would be routed at the dead port instead of taking the local path it
+        # would have taken had the host never existed.
+        (status_dir / SERVICE_STATUS_FILENAME).unlink(missing_ok=True)

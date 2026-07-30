@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._production_service import production_service
 from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:
@@ -90,13 +91,32 @@ class TestCLIIndex:
     """Tests for ``vaultspec-rag index``.
 
     Marked ``subprocess_gpu`` - index subprocesses load GPU models.
+
+    Local GPU indexing is reached the way an operator reaches it: ``index``
+    delegates to a running service, and running the work locally instead
+    requires ``--borrow-gpu`` plus a live compatible service to quiesce. Each
+    test therefore stands up the real authenticated route host in this process
+    and publishes it through the production discovery writer at the status dir
+    the subprocess reads, so the subprocess's own coordinator discovers it,
+    pauses it, and only then runs the indexing these tests assert on. Nothing
+    is rehearsed: a refusal from the borrower gate reaches no summary at all
+    and fails every assertion below.
     """
 
     @pytest.mark.timeout(300)
     def test_index_vault_produces_summary(self, cli_vault: Path) -> None:
         """``vaultspec-rag index --type vault`` should print a summary."""
         root = str(cli_vault)
-        result = _run_cli("--target", root, "index", "--type", "vault", cwd=root)
+        with production_service(cli_vault):
+            result = _run_cli(
+                "--target",
+                root,
+                "index",
+                "--type",
+                "vault",
+                "--borrow-gpu",
+                cwd=root,
+            )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Indexing summary" in result.stdout
 
@@ -104,15 +124,17 @@ class TestCLIIndex:
     def test_index_rebuild_flag_works(self, cli_vault: Path) -> None:
         """``vaultspec-rag index --type vault --rebuild`` exits zero."""
         root = str(cli_vault)
-        result = _run_cli(
-            "--target",
-            root,
-            "index",
-            "--type",
-            "vault",
-            "--rebuild",
-            cwd=root,
-        )
+        with production_service(cli_vault):
+            result = _run_cli(
+                "--target",
+                root,
+                "index",
+                "--type",
+                "vault",
+                "--rebuild",
+                "--borrow-gpu",
+                cwd=root,
+            )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Vault" in result.stdout
 
@@ -120,7 +142,16 @@ class TestCLIIndex:
     def test_index_code_produces_summary(self, cli_vault: Path) -> None:
         """``vaultspec-rag index --type code`` prints summary."""
         root = str(cli_vault)
-        result = _run_cli("--target", root, "index", "--type", "code", cwd=root)
+        with production_service(cli_vault):
+            result = _run_cli(
+                "--target",
+                root,
+                "index",
+                "--type",
+                "code",
+                "--borrow-gpu",
+                cwd=root,
+            )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Indexing summary" in result.stdout
         assert "Source code" in result.stdout
@@ -129,7 +160,16 @@ class TestCLIIndex:
     def test_index_all_produces_both_rows(self, cli_vault: Path) -> None:
         """``vaultspec-rag index --type all`` shows Vault and Codebase."""
         root = str(cli_vault)
-        result = _run_cli("--target", root, "index", "--type", "all", cwd=root)
+        with production_service(cli_vault):
+            result = _run_cli(
+                "--target",
+                root,
+                "index",
+                "--type",
+                "all",
+                "--borrow-gpu",
+                cwd=root,
+            )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Vault" in result.stdout
         assert "Source code" in result.stdout
@@ -151,8 +191,22 @@ class TestCLISearch:
     def test_search_vault_returns_results(self, cli_vault: Path) -> None:
         """``vaultspec-rag search`` should return ranked results."""
         root = str(cli_vault)
-        # Ensure indexed first
-        _run_cli("--target", root, "index", "--type", "vault", cwd=root)
+        # Ensure indexed first. Local indexing needs the borrower lease, which
+        # needs a live compatible service to quiesce, so the real route host
+        # stands up for the index and is gone before the search: search is
+        # service-first, and a discoverable host with no project loaded would
+        # answer the query itself and return nothing, which is a different
+        # subject from the local ranked search asserted below.
+        with production_service(cli_vault):
+            _run_cli(
+                "--target",
+                root,
+                "index",
+                "--type",
+                "vault",
+                "--borrow-gpu",
+                cwd=root,
+            )
         result = _run_cli(
             "--target",
             root,
