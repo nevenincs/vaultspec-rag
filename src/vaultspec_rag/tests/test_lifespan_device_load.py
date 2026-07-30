@@ -35,7 +35,16 @@ def test_health_payload_carries_the_device_load_key() -> None:
     from starlette.routing import Route
     from starlette.testclient import TestClient
 
+    from ..server._runtime import ServerRouteRuntime, install_route_runtime
+    from ..service import ServiceRegistry
+
     app = Starlette(routes=[Route("/health", health_handler)], lifespan=_empty_lifespan)
+    # The handler resolves its registry from the application hosting it,
+    # so a bare route host cannot answer. Installed rather than swapping
+    # in the full application, which would stop this isolating /health.
+    install_route_runtime(
+        app, ServerRouteRuntime(token="lifespan-test", registry=ServiceRegistry())
+    )
     client = cast("Any", TestClient(app))
     data = client.get("/health").json()
 
