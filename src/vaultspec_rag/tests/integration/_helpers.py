@@ -26,7 +26,7 @@ from .._ports import free_loopback_port
 
 if TYPE_CHECKING:
     import subprocess
-    from collections.abc import Generator, Mapping
+    from collections.abc import Callable, Generator, Mapping
     from pathlib import Path
 
     from ...embeddings import EmbeddingModel
@@ -47,6 +47,7 @@ __all__ = [
     "_resolve_host_provisioned_qdrant",
     "_service_env",
     "_wait_for_exit",
+    "cpu_backed_embedding_model",
     "provisioned_qdrant_binary",
     "serve_qdrant",
 ]
@@ -99,6 +100,53 @@ def serve_qdrant(binary: Path, root: Path) -> Generator[QdrantSupervisor]:
         yield supervisor
     finally:
         supervisor.stop()
+
+
+def cpu_backed_embedding_model(
+    vocabulary: list[str],
+    configure: Callable[[int], None],
+) -> EmbeddingModel:
+    """Build the production ``EmbeddingModel`` around a tiny CPU BoW encoder.
+
+    Loading Qwen3 is what makes ``__init__`` unusable here, so the backend
+    is substituted and the rest of the instance is initialised by the
+    production path itself. Assembling that rest by hand is what this
+    exists to prevent: a second copy of those assignments cannot be kept
+    in step with ``__init__``, and each knob it falls behind on surfaces
+    only when an encode reaches for it, as an attribute error nowhere near
+    the fixture that owed it a value.
+
+    ``configure`` receives the backend's width and must install the
+    caller's configuration, embedding dimension included. It runs between
+    the two because the substituted backend - not the configuration -
+    decides how wide a vector comes back, and the state built afterwards
+    reads that width back out of the configuration.
+    """
+    from sentence_transformers.sentence_transformer import SentenceTransformer
+    from sentence_transformers.sentence_transformer.modules import BoW
+
+    from ...config._settings import get_config
+    from ...embeddings import EmbeddingModel
+
+    backend = SentenceTransformer(modules=[BoW(vocabulary)], device="cpu")
+    dimension = backend.get_embedding_dimension()
+    assert dimension is not None
+    configure(dimension)
+
+    cfg = get_config()
+    assert cfg.embedding_dimension == dimension, (
+        "configure() must set embedding_dimension to the backend's width: "
+        f"backend={dimension}, configured={cfg.embedding_dimension}"
+    )
+
+    model = EmbeddingModel.__new__(EmbeddingModel)
+    model._dense_model = backend
+    # What ``__init__`` records for a root that disabled sparse vectors, so
+    # a path reaching sparse here fails the way production would.
+    model._sparse_model = None
+    model.sparse_dimension = None
+    model._init_encode_state(cfg, device="cpu")
+    return model
 
 
 def _document_policy(pattern: str) -> RootContentPolicy:
