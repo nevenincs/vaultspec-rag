@@ -441,7 +441,7 @@ class ResolvedIndexPolicy:
         html_strip = cast("object", self.html_strip)
         if not isinstance(html_strip, bool):
             raise ValueError("html_strip must be a boolean")
-        validate_max_emitted_bytes(cast("object", self.max_emitted_bytes))
+        validate_max_emitted_bytes(self.max_emitted_bytes)
         if self.execution_mode not in {"default", "off"}:
             raise ValueError(
                 f"unknown preprocess execution mode {self.execution_mode!r}"

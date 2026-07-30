@@ -198,7 +198,7 @@ class RunLedgerCommitMethods:
             f"{unit.rel_path!r}",
             generation_id=generation_id,
             rel_path=unit.rel_path,
-            indexed_digest=cast("str | None", indexed["content_hash"]),
+            indexed_digest=indexed["content_hash"],
             unit_digest=unit_digest,
         )
 
@@ -526,7 +526,7 @@ def _commit_unit_from_row(row: Mapping[str, Any]) -> CommitUnit:
             kind=CommitUnitKind(row["unit_kind"]),
             source_digest=row["source_digest"],
             segment_ordinal=row["segment_ordinal"],
-            is_file_end=bool(cast("int", row["is_file_end"])),
+            is_file_end=bool(row["is_file_end"]),
             point_ids=tuple(cast("list[str]", point_ids)),
         )
     except (KeyError, TypeError, ValueError) as exc:

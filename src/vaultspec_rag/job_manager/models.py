@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import asyncio
+    from types import EllipsisType
 
     from ..job_control import RunControlToken
     from ..job_models import (
@@ -115,8 +116,8 @@ class ProgressUpdate:
 class ResourceUpdate:
     """One partial update to exact-attempt resource ownership."""
 
-    started: ProcessResourceSnapshot | object | None = ...
-    finished: ProcessResourceSnapshot | object | None = ...
+    started: ProcessResourceSnapshot | EllipsisType | None = ...
+    finished: ProcessResourceSnapshot | EllipsisType | None = ...
     index_capacity_held: bool | None = None
     project_lease_held: bool | None = None
     writer_lock_held: bool | None = None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, Unpack, overload
 
 from .. import store_schema
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
@@ -79,6 +79,24 @@ class DocumentRunOpenRequest:
     configuration: DocumentRunConfiguration
 
 
+class _DocumentRunOpenKwargs(TypedDict):
+    """Keyword shape accepted by ``DocumentRunCheckpoint.open``'s legacy path.
+
+    Mirrors ``DocumentRunOpenRequest`` field-for-field so ``Unpack`` type-checks
+    every call site against the request's real field types.
+    """
+
+    data_root: Path
+    root_dir: Path
+    policy: ResolvedIndexPolicy
+    run_policy: RunPolicy
+    operation: RunOperation
+    clean: bool
+    model_identity: str
+    dense_dimensions: int
+    configuration: DocumentRunConfiguration
+
+
 @dataclass(slots=True)
 class DocumentRunCheckpoint(RunCheckpointBase):
     """One document generation's durable storage and publication authority."""
@@ -87,14 +105,24 @@ class DocumentRunCheckpoint(RunCheckpointBase):
     _kind_label: ClassVar[str] = "document"
 
     @classmethod
+    @overload
+    def open(cls, request: DocumentRunOpenRequest, /) -> DocumentRunCheckpoint: ...
+    @classmethod
+    @overload
+    def open(
+        cls,
+        request: None = None,
+        **legacy: Unpack[_DocumentRunOpenKwargs],
+    ) -> DocumentRunCheckpoint: ...
+    @classmethod
     def open(
         cls,
         request: DocumentRunOpenRequest | None = None,
-        **legacy: object,
+        **legacy: Any,
     ) -> DocumentRunCheckpoint:
         """Open or resume the compatible document generation for one attempt."""
         if request is None:
-            request = DocumentRunOpenRequest(**cast("dict[str, Any]", legacy))
+            request = DocumentRunOpenRequest(**legacy)
         elif legacy:
             raise TypeError("use either a DocumentRunOpenRequest or named inputs")
         fingerprints = request.policy.fingerprints_for(ContentKind.DOCUMENT)
