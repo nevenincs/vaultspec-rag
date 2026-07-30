@@ -35,6 +35,10 @@ related:
   - '[[2026-07-24-service-quiesce-W03-P07-S26]]'
   - '[[2026-07-24-service-quiesce-W03-P07-S27]]'
   - '[[2026-07-24-service-quiesce-W03-P07-S28]]'
+  - '[[2026-07-24-service-quiesce-W04-P08-S29]]'
+  - '[[2026-07-24-service-quiesce-W04-P08-S30]]'
+  - '[[2026-07-24-service-quiesce-W04-P09-S32]]'
+  - '[[2026-07-24-service-quiesce-W04-P09-S33]]'
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-plan]]'
   - '[[2026-07-24-service-quiesce-research]]'
@@ -44,6 +48,8 @@ related:
   - '[[2026-07-30-service-quiesce-s32-acceptance-audit]]'
   - '[[2026-07-30-service-quiesce-w02-resume-recovery-audit]]'
   - '[[2026-07-30-service-quiesce-w03-acceptance-audit]]'
+  - '[[2026-07-31-service-quiesce-s31-identity-binding-directive-audit]]'
+  - '[[2026-07-31-service-quiesce-w04-s29-s33-final-acceptance-audit]]'
 ---
 
 # `service-quiesce` feature index
@@ -64,6 +70,8 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-30-service-quiesce-s32-acceptance-audit` - `service-quiesce` audit: `S32 GPU pytest borrower integration`
 - `2026-07-30-service-quiesce-w02-resume-recovery-audit` - `service-quiesce` audit: `w02 resume recovery`
 - `2026-07-30-service-quiesce-w03-acceptance-audit` - `service-quiesce` audit: `w03 acceptance`
+- `2026-07-31-service-quiesce-s31-identity-binding-directive-audit` - `service-quiesce` audit: `S31 identity-binding directive`
+- `2026-07-31-service-quiesce-w04-s29-s33-final-acceptance-audit` - `service-quiesce` audit: `W04 S29-S33 final acceptance`
 
 ### exec
 
@@ -95,6 +103,10 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-24-service-quiesce-W03-P07-S26` - Expose the service-owned quiesce block through existing MCP service-state delegation without adding public lifecycle mutation tools
 - `2026-07-24-service-quiesce-W03-P07-S27` - Render controller state, GPU release evidence and borrower safety in the jobs TUI header and status details
 - `2026-07-24-service-quiesce-W03-P07-S28` - Replace server globals with an immutable app-scoped runtime that owns token registry and port, and prove isolated CPU lifecycle behavior
+- `2026-07-24-service-quiesce-W04-P08-S29` - Repair borrower authority with an opaque captured machine-lock witness, remove raw-path minting, add no-create momentary original-path observation, and make the service machine-lock owner PID durably recoverable
+- `2026-07-24-service-quiesce-W04-P08-S30` - Repair captured service targeting with typed pre-isolation machine-pointer capture and revalidation, then use typed initial-bearer transport with one same-token authenticated 401 retry
+- `2026-07-24-service-quiesce-W04-P09-S32` - Repair GPU pytest coordination by capturing the opaque host-service authority before root registration, passing it unchanged through the guarded coordinator, and validating runner Qdrant only for selected fixture closures that require an isolated child
+- `2026-07-24-service-quiesce-W04-P09-S33` - Route self-hosted CI and Just GPU tiers through S32's guarded coordinator only, remove direct GPU preflight and Qdrant installation, and declare the compatible resident service plus runner Qdrant binary and manifest as external prerequisites
 
 ### plan
 

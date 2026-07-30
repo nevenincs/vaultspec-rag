@@ -1,250 +1,315 @@
-"""Guard: one GPU test session per machine, enforced across processes.
-
-Two test sessions that each load the embedding and reranker stacks onto one card
-exhaust its memory and take the host down together. Nothing else in the harness
-can see that coming: a scheduling group reaches only inside one process, and
-every configured singleton path is redirected into a per-session temporary tree
-so sessions cannot observe each other. So the claim is an OS advisory lock on a
-machine-global anchor, and these tests exercise it with real processes taking
-real locks - a claim that only appears to be held proves nothing.
-
-The claiming mechanism is driven at a temporary anchor rather than the real one,
-so running this suite never reserves the machine's actual device and never
-collides with a concurrent session. That the production anchor is machine-global
-is a separate assertion below. The mutation each test catches is named in its
-own docstring.
-"""
+"""CPU-only coverage for the borrower coordinator used by GPU pytest tiers."""
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
+import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
+import uvicorn
 
-from .._test_isolation import (
-    ManagedSingletonIsolationError,
-    enforce_pytest_singleton_containment,
+from ..cli._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
+from ..config._paths import SERVICE_STATUS_FILENAME
+from ..gpu_borrow_lease import (
+    acquire_gpu_borrow_lease,
+    gpu_borrow_lease_path,
+    release_gpu_borrow_lease,
 )
-from ._gpu_session import (
-    GpuSessionLease,
-    acquire_gpu_session_lock,
-    gpu_session_lock_path,
-    gpu_session_refusal,
-    release_gpu_session_lock,
+from ..server import ServerRouteRuntime, create_http_app
+from ..service import ServiceRegistry
+from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
+from ..serviceclient._discovery import (
+    HEARTBEAT_STALENESS_SECONDS,
+    SERVICE_DISCOVERY_SCHEMA,
+    SERVICE_DISCOVERY_VERSION,
+    _replace_service_status,
 )
+from ._import_probe import assert_fresh_import_excludes, import_probe_source
+from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
-#: Claims the anchor named in argv, reports the owning pid, and holds until its
-#: input closes. Run in a real interpreter so the claim is held by a real
-#: process the operating system can be observed releasing.
-_HOLDER_PROGRAM = (
-    "import pathlib, sys\n"
-    "from vaultspec_rag.tests._gpu_session import acquire_gpu_session_lock\n"
-    "lease, holder = acquire_gpu_session_lock(pathlib.Path(sys.argv[1]))\n"
-    "assert lease is not None, f'anchor already claimed by {holder}'\n"
-    "print(lease.pid, flush=True)\n"
-    "sys.stdin.readline()\n"
+_SERVICE_TOKEN = "gpu-pytest-session-route-token"
+_PROCESS_TIMEOUT_SECONDS = 10.0
+_HOLDER_PROGRAM = """
+import sys
+from pathlib import Path
+
+from vaultspec_rag.gpu_borrow_lease import (
+    acquire_gpu_borrow_lease,
+    release_gpu_borrow_lease,
 )
 
+lease = acquire_gpu_borrow_lease()
+if lease is None:
+    raise RuntimeError("holder could not acquire the borrower lease")
+Path(sys.argv[1]).write_text("held", encoding="ascii")
+try:
+    sys.stdin.readline()
+finally:
+    release_gpu_borrow_lease(lease)
+"""
+_QDRANT_SELECTION_PROGRAM = """
+import pytest
 
-@pytest.fixture
-def anchor(tmp_path: Path) -> Iterator[Path]:
-    """A private anchor, with this process holding no claim either side."""
-    release_gpu_session_lock()
+
+@pytest.mark.subprocess_gpu
+def test_selected_qdrant_runner_prerequisite(
+    required_host_provisioned_qdrant_source: object,
+) -> None:
+    raise AssertionError("selected Qdrant prerequisite test body ran")
+"""
+_BORROWER_CONTENTION_PROBE = """
+from vaultspec_rag.gpu_borrow_lease import (
+    acquire_gpu_borrow_lease,
+    release_gpu_borrow_lease,
+)
+
+lease = acquire_gpu_borrow_lease()
+if lease is None:
+    print("contended", flush=True)
+else:
     try:
-        yield tmp_path / "gpu-session.lock"
+        print("acquired", flush=True)
     finally:
-        release_gpu_session_lock()
+        release_gpu_borrow_lease(lease)
+"""
 
 
-class _Holder:
-    """A live process holding a claim on one anchor."""
+class _ProductionRoutes(NamedTuple):
+    """One real no-lifespan route host and the registry it exposes."""
 
-    def __init__(self, anchor: Path) -> None:
-        self._proc = subprocess.Popen(
-            [sys.executable, "-c", _HOLDER_PROGRAM, str(anchor)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+    registry: ServiceRegistry
+    server: uvicorn.Server
+    thread: threading.Thread
+
+    def stop(self) -> None:
+        """Stop the loopback listener after its borrower has resumed."""
+        self.server.should_exit = True
+        self.thread.join(timeout=_PROCESS_TIMEOUT_SECONDS)
+        assert not self.thread.is_alive(), "production route server did not stop"
+
+
+@contextlib.contextmanager
+def _production_routes(status_dir: Path) -> Generator[_ProductionRoutes]:
+    """Expose the production pause and resume routes without a daemon lifespan."""
+    registry = ServiceRegistry()
+    port = free_loopback_port()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_http_app(
+                ServerRouteRuntime(
+                    token=_SERVICE_TOKEN,
+                    registry=registry,
+                    port=port,
+                ),
+                lifespan=None,
+            ),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            access_log=False,
+            lifespan="off",
         )
-        assert self._proc.stdout is not None
-        # Reading one line either yields the pid or returns empty because the
-        # holder died, so this cannot wait on a process that never claimed.
-        reported = self._proc.stdout.readline().strip()
-        if not reported:
-            _, stderr = self._proc.communicate(timeout=30)
-            pytest.fail(f"the holder process never claimed the anchor: {stderr}")
-        self.pid = int(reported)
-
-    def kill(self) -> None:
-        """Kill the holder without giving it any chance to release."""
-        self._proc.kill()
-        self._proc.wait(timeout=30)
-
-
-def _claim_once_free(anchor: Path, *, timeout: float = 15.0) -> GpuSessionLease | None:
-    """Claim *anchor* as soon as it is observably free, or fail at the deadline.
-
-    A killed holder's lock is released by the kernel while the process is torn
-    down, and that teardown is not finished when waiting on the process returns:
-    the process object is signalled once its threads are gone, before its handle
-    table is dismantled, so a claim attempted immediately can still lose to a
-    holder the operating system has not finished disposing of. Retrying until
-    the release is *observed* takes that off the clock entirely - no duration is
-    ever assumed - while a lock that genuinely never frees still fails the test
-    at the deadline instead of passing on a favourable schedule.
-    """
-    deadline = time.monotonic() + timeout
-    while True:
-        lease, _ = acquire_gpu_session_lock(anchor)
-        if lease is not None:
-            return lease
-        if time.monotonic() >= deadline:
-            return None
-        time.sleep(0.01)
-
-
-class TestTheAnchorIsMachineGlobal:
-    """Where the claim lives decides whether it can be seen at all."""
-
-    def test_the_anchor_escapes_the_session_containment_root(self) -> None:
-        """The device is machine hardware, not per-session state.
-
-        Asserted through the harness's own containment check rather than by
-        comparing paths against an environment variable: that variable is only
-        transport for child processes, any test is free to rewrite it, and a gate
-        reading it would be asserting against whatever the previous test happened
-        to leave there. The containment check refusing this path IS the exemption,
-        stated in the harness's own terms and immune to what ran before.
-
-        Mutation it catches: anchoring the claim through configuration, every
-        value of which this harness redirects into a per-session temporary tree.
-        Each session would then claim an anchor only it could see, both would be
-        admitted, and both would load onto the one card.
-        """
-        with pytest.raises(ManagedSingletonIsolationError):
-            enforce_pytest_singleton_containment(
-                gpu_session_lock_path(),
-                operation="claim this machine's GPU for one test session",
-            )
-
-    def test_another_process_derives_the_same_anchor(self) -> None:
-        """Two sessions must derive one path or they contend on nothing.
-
-        Mutation it catches: deriving the anchor from anything process-specific -
-        a pid, a session temporary directory, a value made per run. Every
-        session would claim its own file, every claim would be granted, and the
-        gate would report a protection it never provided.
-        """
-        probe = (
-            "from vaultspec_rag.tests._gpu_session import gpu_session_lock_path\n"
-            "print(gpu_session_lock_path())\n"
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    routes = _ProductionRoutes(registry, server, thread)
+    thread.start()
+    try:
+        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started, "production route server did not start"
+        _replace_service_status(
+            {
+                "pid": os.getpid(),
+                "port": port,
+                "schema": SERVICE_DISCOVERY_SCHEMA,
+                "version": SERVICE_DISCOVERY_VERSION,
+                SERVICE_VERSION_FIELD: local_package_version(),
+                "service_token": _SERVICE_TOKEN,
+                "last_heartbeat": time.strftime(
+                    "%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()
+                ),
+                "stale_after_s": HEARTBEAT_STALENESS_SECONDS,
+            },
+            path=status_dir / SERVICE_STATUS_FILENAME,
         )
-
-        proc = subprocess.run(
-            [sys.executable, "-c", probe],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-        assert proc.returncode == 0, proc.stderr
-        assert proc.stdout.strip() == str(gpu_session_lock_path())
+        yield routes
+    finally:
+        if thread.is_alive():
+            routes.stop()
 
 
-class TestASecondSessionIsRefused:
-    """The refusal is the whole point; admitting is the failure."""
-
-    def test_a_live_holder_refuses_this_session_and_is_named(
-        self, anchor: Path
-    ) -> None:
-        """Mutation it catches: reporting success when the claim was not taken.
-
-        A second GPU session would proceed to load its own model stack onto a
-        card already carrying one, which is the collision this claim prevents.
-        The holder's pid is asserted too: an operator told only that something
-        holds the device cannot act on it.
-
-        The pid half catches three mutations, each observed to fail on ``assert
-        'process <pid>' in refusal``: not recording the owning pid once the
-        claim is taken; not reading it back when refused; and locking byte zero
-        of an anchor whose body carries that pid, which on a platform with
-        mandatory locks makes the record unreadable to the very contender it
-        exists for.
-        """
-        holder = _Holder(anchor)
+@contextlib.contextmanager
+def _borrower_holder(tmp_path: Path) -> Generator[subprocess.Popen[str]]:
+    """Hold the production borrower lease in a real child process."""
+    marker = tmp_path / "borrower-holder-ready"
+    process = subprocess.Popen(
+        [sys.executable, "-c", _HOLDER_PROGRAM, str(marker)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
+        while not marker.is_file() and process.poll() is None:
+            assert time.monotonic() < deadline, "borrower holder did not start"
+            time.sleep(0.01)
+        assert marker.read_text(encoding="ascii") == "held"
+        yield process
+    finally:
+        if process.poll() is None:
+            assert process.stdin is not None
+            process.stdin.close()
         try:
-            refusal = gpu_session_refusal(anchor)
-        finally:
-            holder.kill()
-
-        assert refusal is not None
-        assert "refusing to start a second GPU test session" in refusal
-        assert f"process {holder.pid}" in refusal
-
-    def test_an_unclaimed_anchor_admits_this_session(self, anchor: Path) -> None:
-        """Mutation it catches: refusing unconditionally.
-
-        That is loud on its own, but it pins the admitting direction so the
-        refusal above cannot be satisfied by a gate that always refuses - which
-        would make the GPU tiers unrunnable.
-        """
-        assert gpu_session_refusal(anchor) is None
+            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+        assert process.stderr is not None
+        stderr = process.stderr.read()
+        process.stderr.close()
+        assert process.returncode == 0, stderr
 
 
-class TestTheClaimOutlivesNothing:
-    """A claim no process holds must not survive to block the next session."""
+def _assert_borrower_lease_released() -> None:
+    """Prove the coordinator released its exact production lease."""
+    successor = acquire_gpu_borrow_lease()
+    assert successor is not None, "the borrower coordinator retained its lease"
+    release_gpu_borrow_lease(successor)
 
-    def test_killing_the_holder_frees_the_anchor(self, anchor: Path) -> None:
-        """Mutation it catches: treating the recorded pid as the authority.
 
-        A killed session never releases anything of its own, so a claim proven
-        by file contents rather than by an OS lock would strand the machine's
-        GPU behind a dead process until someone deleted a file by hand.
-        """
-        holder = _Holder(anchor)
-        holder.kill()
+def _child_borrower_lease_outcome() -> str:
+    """Observe the real configured borrower anchor from a separate process."""
+    process = subprocess.run(
+        [sys.executable, "-c", _BORROWER_CONTENTION_PROBE],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=_PROCESS_TIMEOUT_SECONDS,
+    )
+    assert process.returncode == 0, process.stderr
+    return process.stdout.strip()
 
-        lease = _claim_once_free(anchor)
 
-        assert lease is not None
-        assert lease.pid == os.getpid()
+def test_coordinator_quiesces_real_routes_then_resumes_before_lease_release(
+    isolated_singleton_dirs: Path,
+) -> None:
+    """The pytest coordinator's production path owns one safe pause window."""
+    observed_states: list[str] = []
+    with _production_routes(isolated_singleton_dirs) as routes:
 
-    def test_releasing_hands_the_anchor_to_the_next_session(self, anchor: Path) -> None:
-        """Session teardown must not leave the machine reserved.
+        def observe_safe_pause() -> None:
+            snapshot = routes.registry.quiesce_snapshot()
+            observed_states.append(snapshot.state.value)
+            assert snapshot.safe_to_borrow_gpu is True
 
-        Mutation it catches: releasing the claim record while leaving the OS
-        lock held. The next session on this machine would be refused by a
-        process that has finished with the device.
-        """
-        first, _ = acquire_gpu_session_lock(anchor)
-        assert first is not None
+        run_with_borrowed_gpu(requested_port=None, work=observe_safe_pause)
 
-        release_gpu_session_lock()
+        assert routes.registry.quiesce_snapshot().state.value == "running"
 
-        assert gpu_session_refusal(anchor) is None
+    assert observed_states == ["quiesced"]
+    _assert_borrower_lease_released()
 
-    def test_claiming_twice_reserves_one_anchor(self, anchor: Path) -> None:
-        """Mutation it catches: opening a second descriptor per call.
 
-        The extra descriptor is never released, so the claim would survive its
-        own release and the anchor would stay reserved for the process lifetime.
-        """
-        first, _ = acquire_gpu_session_lock(anchor)
-        second, _ = acquire_gpu_session_lock(anchor)
+def test_coordinator_refuses_a_real_cross_process_borrower_then_observes_release(
+    isolated_singleton_dirs: Path,
+    tmp_path: Path,
+) -> None:
+    """A temporary-anchor holder blocks the exact coordinator before any work."""
+    assert tmp_path in gpu_borrow_lease_path().parents
+    work_ran = False
+    with _production_routes(isolated_singleton_dirs), _borrower_holder(tmp_path):
 
-        assert first is second
+        def forbidden_work() -> None:
+            nonlocal work_ran
+            work_ran = True
 
-        release_gpu_session_lock()
+        with pytest.raises(BorrowGPUError, match="Another process already holds"):
+            run_with_borrowed_gpu(requested_port=None, work=forbidden_work)
 
-        assert gpu_session_refusal(anchor) is None
+    assert work_ran is False
+    _assert_borrower_lease_released()
+
+
+def test_unacknowledged_resume_retains_lease_until_the_borrower_exits(
+    isolated_singleton_dirs: Path,
+) -> None:
+    """A failed resume retains the real lease, so a child cannot borrow early."""
+    error: BorrowGPUError | None = None
+    with _production_routes(isolated_singleton_dirs) as routes:
+
+        def stop_routes_after_acknowledged_pause() -> None:
+            snapshot = routes.registry.quiesce_snapshot()
+            assert snapshot.safe_to_borrow_gpu is True
+            routes.stop()
+
+        try:
+            run_with_borrowed_gpu(
+                requested_port=None,
+                work=stop_routes_after_acknowledged_pause,
+            )
+        except BorrowGPUError as exc:
+            error = exc
+
+    assert error is not None
+    assert error.error == "borrow_gpu_resume_unacknowledged"
+    try:
+        assert _child_borrower_lease_outcome() == "contended"
+    finally:
+        retained_lease = acquire_gpu_borrow_lease()
+        assert retained_lease is not None
+        release_gpu_borrow_lease(retained_lease)
+    assert _child_borrower_lease_outcome() == "acquired"
+
+
+def test_borrower_coordinator_imports_without_torch() -> None:
+    """The pytest GPU admission path remains torch-free before it runs work."""
+    assert_fresh_import_excludes(
+        import_probe_source(
+            "vaultspec_rag.gpu_borrow_lease",
+            "vaultspec_rag.cli._gpu_lease",
+        )
+    )
+
+
+def test_selected_qdrant_fixture_refuses_without_provisioning_before_test_body(
+    tmp_path: Path,
+) -> None:
+    """A selected real Qdrant fixture refuses before borrower or device admission."""
+    test_path = tmp_path / "test_selected_qdrant_runner.py"
+    test_path.write_text(_QDRANT_SELECTION_PROGRAM, encoding="utf-8")
+    host_status_dir = tmp_path / "unprovisioned-host-status"
+    host_storage_dir = tmp_path / "unprovisioned-host-storage"
+    environment = os.environ.copy()
+    environment.pop("VAULTSPEC_RAG_QDRANT_BINARY", None)
+    environment.pop("PYTEST_CURRENT_TEST", None)
+    environment["HF_TOKEN"] = "test-gpu-tier-token"
+    environment["VAULTSPEC_RAG_STATUS_DIR"] = str(host_status_dir)
+    environment["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(host_storage_dir)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "conftest", str(test_path), "-q"],
+        capture_output=True,
+        check=False,
+        cwd=os.getcwd(),
+        env=environment,
+        text=True,
+        timeout=_PROCESS_TIMEOUT_SECONDS,
+    )
+
+    output = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode == 1, output
+    assert "requires a manifest-verified provisioned Qdrant binary" in output
+    assert "selected Qdrant prerequisite test body ran" not in output
