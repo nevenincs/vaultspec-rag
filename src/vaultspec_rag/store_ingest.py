@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from qdrant_client import QdrantClient
+    from qdrant_client.http.models import Vector
 
 
 logger = logging.getLogger(__name__)
@@ -41,11 +42,11 @@ def _point_vector(
     vector: list[float],
     sparse_indices: list[int],
     sparse_values: list[float],
-) -> dict[str, Any]:
+) -> dict[str, Vector]:
     """Build a point's vector payload: a dense vector plus an optional sparse one."""
     from qdrant_client import models
 
-    payload: dict[str, Any] = {store_schema.DENSE_VECTOR_NAME: vector}
+    payload: dict[str, Vector] = {store_schema.DENSE_VECTOR_NAME: vector}
     if sparse_indices:
         payload[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
             indices=sparse_indices,

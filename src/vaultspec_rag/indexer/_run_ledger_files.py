@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypedDict
 
 from ._content_policy import AdmissionReason, ContentKind
 from ._file_state import FileState, FileStateKind, validate_rel_path
@@ -16,10 +16,22 @@ from ._run_ledger_models import (
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator
     from contextlib import AbstractContextManager
 
     from ._run_ledger_models import RunGeneration
+
+
+class _FileStateRow(TypedDict):
+    """The ``file_states`` row columns :func:`file_state_from_row` reads."""
+
+    rel_path: str
+    state: str
+    content_kind: str | None
+    content_hash: str | None
+    admission_reason: str | None
+    error_kind: str | None
+    detail: str | None
 
 
 class RunLedgerFileMethods:
@@ -372,7 +384,7 @@ class RunLedgerFileMethods:
         return frozenset(str(row["point_id"]) for row in rows)
 
 
-def file_state_from_row(row: Mapping[str, Any]) -> FileState:
+def file_state_from_row(row: _FileStateRow) -> FileState:
     from .._job_errors import JobErrorKind
 
     try:

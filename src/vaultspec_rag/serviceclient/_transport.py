@@ -905,7 +905,7 @@ def _try_http_delete_job(
     )
 
 
-def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
+def _admin_url_with_root(base: str, args: dict[str, object]) -> str:
     """Append ?project_root=... to base when args contains it."""
     project_root = args.get("project_root")
     if project_root:
@@ -916,7 +916,7 @@ def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
 _LOGS_PARAMS = {"lines", "source", "job_id", "contains"}
 
 
-def _bounded_route_path(base: str, args: dict[str, Any], allowed: set[str]) -> str:
+def _bounded_route_path(base: str, args: dict[str, object], allowed: set[str]) -> str:
     """Append the allowlisted, non-``None`` entries of ``args`` to ``base``."""
     params = {
         key: value
@@ -928,7 +928,7 @@ def _bounded_route_path(base: str, args: dict[str, Any], allowed: set[str]) -> s
     return base
 
 
-def _logs_route_path(args: dict[str, Any]) -> str:
+def _logs_route_path(args: dict[str, object]) -> str:
     """Build the grouped JSON logs route with source and bounded filters.
 
     The daemon's ``/logs/json`` route returns source-tagged groups which the
@@ -969,7 +969,7 @@ _JOBS_PARAMS = {
 }
 
 
-def _jobs_route_path(args: dict[str, Any]) -> str:
+def _jobs_route_path(args: dict[str, object]) -> str:
     """Build the ``/jobs`` route path with its bounded query filters."""
     return _bounded_route_path("/jobs", args, _JOBS_PARAMS)
 
@@ -984,7 +984,7 @@ _SEARCH_ACTIVITY_PARAMS = {
 }
 
 
-def _search_activity_route_path(args: dict[str, Any]) -> str:
+def _search_activity_route_path(args: dict[str, object]) -> str:
     """Build the bounded active/recent served-search activity route."""
     return _bounded_route_path("/search-activity", args, _SEARCH_ACTIVITY_PARAMS)
 
@@ -992,13 +992,13 @@ def _search_activity_route_path(args: dict[str, Any]) -> str:
 _STORAGE_SURVEY_PARAMS = {"status", "limit", "root", "fresh"}
 
 
-def _storage_survey_route_path(args: dict[str, Any]) -> str:
+def _storage_survey_route_path(args: dict[str, object]) -> str:
     """Build the ``/storage/survey`` route path with its bounded filters."""
     return _bounded_route_path("/storage/survey", args, _STORAGE_SURVEY_PARAMS)
 
 
 def _resolve_admin_call(
-    tool_name: str, args: dict[str, Any]
+    tool_name: str, args: dict[str, object]
 ) -> tuple[str, dict[str, Any] | None] | None:
     """Resolve an admin tool to its ``(path, body)`` pair, or ``None`` if unknown."""
     filtered_routes = {
@@ -1022,7 +1022,7 @@ def _resolve_admin_call(
 
 def _route_admin_tool(
     tool_name: str,
-    args: dict[str, Any],
+    args: dict[str, object],
     port: int,
 ) -> dict[str, Any] | None:
     """Map an admin tool name to an HTTP call and return the raw result."""
@@ -1042,7 +1042,7 @@ def _route_admin_tool(
 
 def _try_http_admin(
     tool_name: str,
-    args: dict[str, Any],
+    args: dict[str, object],
     port: int | None,
     timeout: float | None = None,
 ) -> dict[str, Any] | None:
@@ -1117,7 +1117,7 @@ def _try_http_vault_document(
     the admin-call discrimination (refused -> ``None``). Empty ``project_root``
     is omitted so the daemon resolves its default root.
     """
-    args: dict[str, Any] = {"doc_id": doc_id}
+    args: dict[str, object] = {"doc_id": doc_id}
     if project_root:
         args["project_root"] = project_root
     return _try_http_admin(

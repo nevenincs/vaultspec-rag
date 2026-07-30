@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, NoReturn, cast
+from typing import Annotated, NoReturn, cast
 
 import typer
 
@@ -221,7 +221,7 @@ def _print_project_unload_result(
 
 
 def _handle_evict_json(
-    evicted: bool, reason: str, root: str, result: dict[str, Any]
+    evicted: bool, reason: str, root: str, result: dict[str, object]
 ) -> None:
     if evicted:
         _emit_json(

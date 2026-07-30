@@ -370,7 +370,7 @@ class _VaultSearchMixin:
         """
         results: list[dict[str, Any]] = []
         for point in scored_points:
-            row: dict[str, Any] = dict(point.payload) if point.payload else {}
+            row: dict[str, object] = dict(point.payload) if point.payload else {}
             if id_field not in row:
                 logger.warning(
                     "Point %s missing id field '%s'",

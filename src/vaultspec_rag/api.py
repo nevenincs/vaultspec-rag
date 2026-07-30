@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from ._source_types import PublicSourceType, parse_source_type
 from ._units import bytes_to_mib
@@ -1083,6 +1083,16 @@ def get_readiness() -> dict[str, Any]:
     return compute_readiness().to_dict()
 
 
+class _WatcherState(TypedDict):
+    """The filesystem-watcher section of :func:`get_service_state`."""
+
+    watch_enabled: bool
+    debounce_ms: int
+    cooldown_s: float
+    watching: list[str]
+    running: bool
+
+
 def get_service_state(
     root_dir: pathlib.Path,
     *,
@@ -1151,7 +1161,7 @@ def get_service_state(
 
     cfg = get_config()
     watching = watching_roots or []
-    watcher_data: dict[str, Any] = {
+    watcher_data: _WatcherState = {
         "watch_enabled": bool(cfg.watch_enabled),
         "debounce_ms": int(cfg.watch_debounce_ms),
         "cooldown_s": float(cfg.watch_cooldown_s),

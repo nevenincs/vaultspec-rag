@@ -453,20 +453,20 @@ class SchemaCompatibility(TypedDict):
     reason: str
 
 
-def _as_str_dict(value: object) -> dict[str, Any]:
+def _as_str_dict(value: object) -> dict[str, object]:
     """Narrow an untyped descriptor value to a string-keyed dict (empty if not).
 
-    A consumer descriptor arrives as ``dict[str, Any]`` (or its JSON form), so
-    each nested access is untyped; this narrows one level safely so the
+    A consumer descriptor arrives as ``dict[str, object]`` (or its JSON form),
+    so each nested access is untyped; this narrows one level safely so the
     compatibility checks read typed values rather than ``Unknown``.
     """
     if isinstance(value, dict):
-        return cast("dict[str, Any]", value)
+        return cast("dict[str, object]", value)
     return {}
 
 
 def assert_compatible(
-    descriptor: dict[str, Any],
+    descriptor: dict[str, object],
     *,
     known_version: int,
     expected_dense_dim: int,
@@ -533,7 +533,7 @@ def assert_compatible(
 
 
 def _domain_compatibility_reason(
-    descriptor: dict[str, Any],
+    descriptor: dict[str, object],
     *,
     domain: str,
     dense_vector_name: str,

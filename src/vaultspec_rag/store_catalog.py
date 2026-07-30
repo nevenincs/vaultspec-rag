@@ -677,7 +677,7 @@ class _VaultCatalogMixin:
             if not records:
                 return None
             raw = records[0].payload
-            payload: dict[str, Any] = dict(raw) if raw else {}
+            payload: dict[str, object] = dict(raw) if raw else {}
             payload["id"] = payload.pop("doc_id", doc_id)
             doc_content = payload.pop("doc_content", None)
             if isinstance(doc_content, str):
@@ -742,7 +742,9 @@ class _VaultCatalogMixin:
                 )
             point: Record
             for point in records:
-                payload: dict[str, Any] = dict(point.payload) if point.payload else {}
+                payload: dict[str, object] = (
+                    dict(point.payload) if point.payload else {}
+                )
                 payload["id"] = payload.pop("doc_id", str(point.id))
                 doc_content = payload.pop("doc_content", None)
                 if isinstance(doc_content, str):
