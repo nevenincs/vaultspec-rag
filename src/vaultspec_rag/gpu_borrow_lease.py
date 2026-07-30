@@ -43,6 +43,7 @@ class BorrowerLeaseStatus(StrEnum):
     HELD = "held"
     NOT_HELD = "not_held"
     CAPABILITY_INVALID = "capability_invalid"
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +144,7 @@ def borrower_lease_status(capability: str) -> BorrowerLeaseStatus:
     )
     claim = claim_anchor(path, pid_record=True, create_parent=True)
     if claim.fault is not None:
-        return BorrowerLeaseStatus.NOT_HELD
+        return BorrowerLeaseStatus.UNAVAILABLE
     if claim.descriptor is not None:
         release_anchor_claim(claim.descriptor, pid_record=True)
         return BorrowerLeaseStatus.NOT_HELD

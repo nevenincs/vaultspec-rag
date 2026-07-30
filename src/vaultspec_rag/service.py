@@ -1534,13 +1534,7 @@ class ServiceRegistry:
                 return "borrower_lease_mismatch"
         if capability is None:
             return None
-        match borrower_lease_status(capability):
-            case BorrowerLeaseStatus.HELD:
-                return None
-            case BorrowerLeaseStatus.NOT_HELD:
-                return "borrower_lease_not_held"
-            case BorrowerLeaseStatus.CAPABILITY_INVALID:
-                return "borrower_capability_invalid"
+        return self._borrower_lease_error(capability)
 
     def bind_borrower_capability(self, capability: str) -> bool:
         """Retain a verified borrower only after the registry is safely quiesced."""
@@ -1579,12 +1573,31 @@ class ServiceRegistry:
         snapshot = self._quiesce_controller.snapshot()
         if snapshot.state is not QuiesceState.QUIESCED:
             return None
-        if borrower_lease_status(bound_capability) is not BorrowerLeaseStatus.NOT_HELD:
+        lease_status = borrower_lease_status(bound_capability)
+        if lease_status is BorrowerLeaseStatus.UNAVAILABLE:
+            logger.warning(
+                "GPU borrower lease is unavailable; retaining service quiescence"
+            )
+            return None
+        if lease_status is not BorrowerLeaseStatus.NOT_HELD:
             return None
         transition = self.resume_resources()
         if transition.achieved:
             self.clear_borrower_capability_after_resume(bound_capability)
         return transition
+
+    @staticmethod
+    def _borrower_lease_error(capability: str) -> str | None:
+        """Map one live borrower verification result to its lifecycle error."""
+        match borrower_lease_status(capability):
+            case BorrowerLeaseStatus.HELD:
+                return None
+            case BorrowerLeaseStatus.NOT_HELD:
+                return "borrower_lease_not_held"
+            case BorrowerLeaseStatus.CAPABILITY_INVALID:
+                return "borrower_capability_invalid"
+            case BorrowerLeaseStatus.UNAVAILABLE:
+                return "borrower_lease_unavailable"
 
     def _acquire(self, root: Path) -> ProjectSlot:
         """Admit or fetch *root*'s slot and increment its ``ref_count``.
