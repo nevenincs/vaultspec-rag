@@ -24,12 +24,20 @@ related:
   - '[[2026-07-24-service-quiesce-W02-P05-S16]]'
   - '[[2026-07-24-service-quiesce-W02-P05-S17]]'
   - '[[2026-07-24-service-quiesce-W02-P05-S18]]'
+  - '[[2026-07-24-service-quiesce-W03-P06-S19]]'
+  - '[[2026-07-24-service-quiesce-W03-P06-S20]]'
+  - '[[2026-07-24-service-quiesce-W03-P06-S21]]'
+  - '[[2026-07-24-service-quiesce-W03-P06-S22]]'
+  - '[[2026-07-24-service-quiesce-W03-P06-summary]]'
+  - '[[2026-07-24-service-quiesce-W03-P07-S23]]'
+  - '[[2026-07-24-service-quiesce-W03-P07-S25]]'
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-plan]]'
   - '[[2026-07-24-service-quiesce-research]]'
   - '[[2026-07-29-service-quiesce-w02-audit]]'
   - '[[2026-07-29-service-quiesce-w02-remediation-audit]]'
   - '[[2026-07-30-service-quiesce-w02-resume-recovery-audit]]'
+  - '[[2026-07-30-service-quiesce-w03-acceptance-audit]]'
 ---
 
 # `service-quiesce` feature index
@@ -47,6 +55,7 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-29-service-quiesce-w02-audit` - `service-quiesce` audit: `W02 resource-quiesce implementation review`
 - `2026-07-29-service-quiesce-w02-remediation-audit` - `service-quiesce` audit: `w02 remediation`
 - `2026-07-30-service-quiesce-w02-resume-recovery-audit` - `service-quiesce` audit: `w02 resume recovery`
+- `2026-07-30-service-quiesce-w03-acceptance-audit` - `service-quiesce` audit: `w03 acceptance`
 
 ### exec
 
@@ -67,6 +76,13 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-24-service-quiesce-W02-P05-S16` - Search quiescence HTTP 503 remediation
 - `2026-07-24-service-quiesce-W02-P05-S17` - CPU managed-job recovery proof remediation
 - `2026-07-24-service-quiesce-W02-P05-S18` - CPU search HTTP 503 proof remediation
+- `2026-07-24-service-quiesce-W03-P06-S19` - Map typed resume recovery failure to the canonical authenticated retryable lifecycle envelope while warming admission remains closed, and return a repaired retry as running without changing the logical job identity
+- `2026-07-24-service-quiesce-W03-P06-S20` - Publish the canonical quiesce block through existing health, jobs, and lifecycle heartbeat cadence without adding a poller, duplicating controller computation, or importing GPU dependencies
+- `2026-07-24-service-quiesce-W03-P06-S21` - Add the exact canonical quiesce block to read-only service-state output by projecting the registry controller snapshot once
+- `2026-07-24-service-quiesce-W03-P06-S22` - Prove through the authenticated production routes, real registry, real manager writer, and real filesystem that an unpublished resume write returns resume_recovery_failed in closed warming, then directory repair and a second resume return running with the same logical job ID and one recovered generation
+- `2026-07-24-service-quiesce-W03-P06-summary` - `service-quiesce` `W03.P06` summary
+- `2026-07-24-service-quiesce-W03-P07-S23` - Pass quiesce transition and service-state payloads through the single service-client transport unchanged, including retryable recovery failure, without local GPU behavior
+- `2026-07-24-service-quiesce-W03-P07-S25` - Hard-refuse in-process GPU indexing whenever delegation does not succeed and render truthful human and JSON remediation, because neither --allow-fallback nor a quiesced service block authorizes local compute until verified borrower-lease evidence exists
 
 ### plan
 
