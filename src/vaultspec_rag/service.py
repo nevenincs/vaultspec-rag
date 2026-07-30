@@ -931,6 +931,55 @@ class ServiceRegistry:
 
     # -- per-project slots -------------------------------------------------
 
+    @contextlib.contextmanager
+    def _root_store_admission(self, resolved: Path) -> Generator[None]:
+        """Serialize opening a store on one resolved root, and only that root.
+
+        A local-file store takes an exclusive OS lock on its own storage
+        directory and keeps it for as long as it is open.  That lock is per
+        open handle, so a second store opened on a root this process already
+        has open is refused exactly as a foreign holder's would be.  Slot
+        creation and cold store leases are the two paths that open one, so
+        both run under this guard and it is held for as long as the store it
+        admits stays open - not merely across construction, which would leave
+        the two overlapping in lifetime and racing again.
+
+        The guard is per root, so unrelated roots still open in parallel and
+        no store-wide mutex is introduced.  It is acquired before any store
+        for this root exists, therefore always above that store's own
+        lifecycle and collection locks and never beneath one.
+
+        Raises:
+            RuntimeError: If the registry is shutting down.
+        """
+        with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+            root_lock = self._root_locks.get(resolved)
+            if root_lock is None:
+                root_lock = threading.Lock()
+                self._root_locks[resolved] = root_lock
+        with root_lock:
+            yield
+
+    def _pin_warm_slot(self, resolved: Path) -> ProjectSlot | None:
+        """Bump and return *resolved*'s warm slot, or ``None`` when it has none.
+
+        Raises:
+            RuntimeError: If the registry is shutting down.
+        """
+        with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+            slot = self._projects.get(resolved)
+            if slot is None:
+                return None
+            slot.last_access = time.monotonic()
+            slot.ref_count += 1
+            return slot
+
     def peek_project(self, root: Path) -> ProjectSlot:
         """Return (or lazily create) the slot for *root* without bumping refcount.
 
@@ -938,9 +987,11 @@ class ServiceRegistry:
         preload, tests).  Request-path callers MUST use :meth:`lease`
         instead so eviction refcount accounting is honored.
 
-        Thread-safe: uses a three-level lock dance so that concurrent
-        callers for *different* roots proceed in parallel, while
-        concurrent callers for the *same* root are serialized.
+        Thread-safe: an already-published slot is returned without any
+        locking, and creation runs under :meth:`_root_store_admission`, so
+        concurrent callers for *different* roots proceed in parallel while
+        concurrent callers for the *same* root are serialized - against each
+        other and against a cold store lease alike.
 
         Args:
             root: Workspace root directory (resolved internally).
@@ -956,18 +1007,7 @@ class ServiceRegistry:
         slot = self._projects.get(root)
         if slot is not None:
             return slot
-        with self._lock:
-            if self._shutting_down:
-                msg = "ServiceRegistry is shutting down"
-                raise RuntimeError(msg)
-            slot = self._projects.get(root)
-            if slot is not None:
-                return slot
-            root_lock = self._root_locks.get(root)
-            if root_lock is None:
-                root_lock = threading.Lock()
-                self._root_locks[root] = root_lock
-        with root_lock:
+        with self._root_store_admission(root):
             slot = self._projects.get(root)
             if slot is not None:
                 return slot
@@ -1020,6 +1060,12 @@ class ServiceRegistry:
         store that is always closed on exit and is never added to the project
         registry, preserving model-free empty-index probes and status reads.
 
+        A cold lease holds the root's store admission for its whole life, so a
+        concurrent slot creation for the same root waits for it rather than
+        opening a second store against storage this process has already locked.
+        A warm lease takes no such guard: the slot's store is shared, and
+        serializing on it would queue every reader of that root behind another.
+
         Args:
             root: Workspace root directory.
 
@@ -1030,65 +1076,68 @@ class ServiceRegistry:
             RuntimeError: If the registry is shutting down.
         """
         resolved = root.resolve()
-        with self._lock:
-            if self._shutting_down:
-                msg = "ServiceRegistry is shutting down"
-                raise RuntimeError(msg)
-            slot = self._projects.get(resolved)
+        with contextlib.ExitStack() as stack:
+            slot = self._pin_warm_slot(resolved)
+            if slot is None:
+                stack.enter_context(self._root_store_admission(resolved))
+                # A slot may have been published while this waited for
+                # admission; adopt it rather than opening a second store.
+                slot = self._pin_warm_slot(resolved)
             if slot is not None:
-                slot.last_access = time.monotonic()
-                slot.ref_count += 1
-            else:
+                stack.callback(self._release, slot)
+                yield slot.store
+                return
+
+            with self._lock:
+                if self._shutting_down:
+                    msg = "ServiceRegistry is shutting down"
+                    raise RuntimeError(msg)
                 # Register ownership before VaultStore performs any filesystem
                 # or Qdrant effect. close_all() observes this pending admission
                 # even if shutdown begins while construction is outside _lock.
                 self._transient_store_constructions += 1
 
-        if slot is not None:
+            from .store_runtime import VaultStore
+
             try:
-                yield slot.store
-            finally:
-                self._release(slot)
-            return
-
-        from .store_runtime import VaultStore
-
-        try:
-            store = VaultStore(resolved)
-        except BaseException:
-            with self._lock:
-                self._transient_store_constructions -= 1
-            raise
-
-        with self._lock:
-            shutdown_won = self._shutting_down
-            if not shutdown_won:
-                self._transient_stores.add(store)
-                self._transient_store_constructions -= 1
-
-        if shutdown_won:
-            # Keep the pending-construction count live until close completes,
-            # so close_all() cannot observe a false zero and return while this
-            # late store still owns a client or local storage lock.
-            try:
-                store.close()
-            finally:
+                store = VaultStore(resolved)
+            except BaseException:
                 with self._lock:
                     self._transient_store_constructions -= 1
-            msg = "ServiceRegistry shut down during store construction"
-            raise RuntimeError(msg)
+                raise
 
-        try:
-            yield store
-        finally:
+            with self._lock:
+                shutdown_won = self._shutting_down
+                if not shutdown_won:
+                    self._transient_stores.add(store)
+                    self._transient_store_constructions -= 1
+
+            if shutdown_won:
+                # Keep the pending-construction count live until close
+                # completes, so close_all() cannot observe a false zero and
+                # return while this late store still owns a client or local
+                # storage lock.
+                try:
+                    store.close()
+                finally:
+                    with self._lock:
+                        self._transient_store_constructions -= 1
+                msg = "ServiceRegistry shut down during store construction"
+                raise RuntimeError(msg)
+
             try:
-                store.close()
+                yield store
             finally:
-                # Keep the lease visible to close_all() until resource release
-                # completes; removing it first would let shutdown return while
-                # the Qdrant client or local storage lock was still closing.
-                with self._lock:
-                    self._transient_stores.discard(store)
+                try:
+                    store.close()
+                finally:
+                    # Keep the lease visible to close_all() until resource
+                    # release completes; removing it first would let shutdown
+                    # return while the Qdrant client or local storage lock was
+                    # still closing. The root's store admission is released
+                    # only after that, as the outer stack unwinds.
+                    with self._lock:
+                        self._transient_stores.discard(store)
 
     # -- lease API ---------------------------------------------------------
 
