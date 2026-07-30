@@ -24,7 +24,7 @@ from ..qdrant_runtime._resolve import probe_qdrant_endpoint, resolve_binary
 from ..serviceclient._discovery import read_service_status
 from ._app import JsonMode, server_qdrant_app
 from ._progress import StartupStatusReporter
-from ._render import _emit_json, _plain_line, _print_next_action
+from ._render import _emit_json, _plain_line, _print_next_action, address_line
 
 
 def _action_label(action: object) -> str:
@@ -167,8 +167,7 @@ def _print_qdrant_install_and_state(payload: dict[str, object]) -> None:
     else:
         _plain_line("Executable: not installed")
         _print_next_action("vaultspec-rag server qdrant install")
-    address = f"http://127.0.0.1:{payload['port']}"
-    _plain_line(f"Address: {address}")
+    _plain_line(address_line(payload["port"]))
     if payload["ready"]:
         _plain_line("Connection: accepting requests")
         return

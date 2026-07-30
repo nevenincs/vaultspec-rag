@@ -37,6 +37,23 @@ from .store_runtime import INGEST_FENCE_POINT_ID, IngestVerificationError  # noq
 __all__ = ["_VaultIngestMixin"]
 
 
+def _point_vector(
+    vector: list[float],
+    sparse_indices: list[int],
+    sparse_values: list[float],
+) -> dict[str, Any]:
+    """Build a point's vector payload: a dense vector plus an optional sparse one."""
+    from qdrant_client import models
+
+    payload: dict[str, Any] = {store_schema.DENSE_VECTOR_NAME: vector}
+    if sparse_indices:
+        payload[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
+            indices=sparse_indices,
+            values=sparse_values,
+        )
+    return payload
+
+
 class _VaultIngestMixin:
     """Write-side behaviour supplied to :class:`VaultStore`.
 
@@ -123,18 +140,12 @@ class _VaultIngestMixin:
 
         points: list[Any] = []
         for doc in docs:
-            vector: dict[str, Any] = {
-                store_schema.DENSE_VECTOR_NAME: doc.vector,
-            }
-            if doc.sparse_indices:
-                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
-                    indices=doc.sparse_indices,
-                    values=doc.sparse_values,
-                )
             points.append(
                 models.PointStruct(
                     id=self._stable_id(doc.id),
-                    vector=vector,
+                    vector=_point_vector(
+                        doc.vector, doc.sparse_indices, doc.sparse_values
+                    ),
                     payload=cast("dict[str, Any]", _vault_doc_payload(doc)),
                 ),
             )
@@ -179,18 +190,12 @@ class _VaultIngestMixin:
 
         points: list[Any] = []
         for chunk in chunks:
-            vector: dict[str, Any] = {
-                store_schema.DENSE_VECTOR_NAME: chunk.vector,
-            }
-            if chunk.sparse_indices:
-                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
-                    indices=chunk.sparse_indices,
-                    values=chunk.sparse_values,
-                )
             points.append(
                 models.PointStruct(
                     id=self._stable_id(chunk.point_key),
-                    vector=vector,
+                    vector=_point_vector(
+                        chunk.vector, chunk.sparse_indices, chunk.sparse_values
+                    ),
                     payload=cast("dict[str, Any]", _vault_chunk_payload(chunk)),
                 ),
             )
@@ -285,18 +290,12 @@ class _VaultIngestMixin:
 
         points: list[Any] = []
         for chunk in chunks:
-            vector: dict[str, Any] = {
-                store_schema.DENSE_VECTOR_NAME: chunk.vector,
-            }
-            if chunk.sparse_indices:
-                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
-                    indices=chunk.sparse_indices,
-                    values=chunk.sparse_values,
-                )
             points.append(
                 models.PointStruct(
                     id=self._stable_id(chunk.id),
-                    vector=vector,
+                    vector=_point_vector(
+                        chunk.vector, chunk.sparse_indices, chunk.sparse_values
+                    ),
                     payload=cast("dict[str, Any]", _code_chunk_payload(chunk)),
                 ),
             )
@@ -326,16 +325,12 @@ class _VaultIngestMixin:
 
         points: list[Any] = []
         for chunk in chunks:
-            vector: dict[str, Any] = {store_schema.DENSE_VECTOR_NAME: chunk.vector}
-            if chunk.sparse_indices:
-                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
-                    indices=chunk.sparse_indices,
-                    values=chunk.sparse_values,
-                )
             points.append(
                 models.PointStruct(
                     id=self._stable_id(chunk.id),
-                    vector=vector,
+                    vector=_point_vector(
+                        chunk.vector, chunk.sparse_indices, chunk.sparse_values
+                    ),
                     payload=cast(
                         "dict[str, Any]",
                         self._document_chunk_payload(chunk),
