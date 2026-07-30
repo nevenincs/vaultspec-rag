@@ -9,14 +9,24 @@ taken once per process before the first load and latched afterwards.
 
 Two properties make the gate correct rather than merely present:
 
-- **The reading is only meaningful before the first load.** Once this process's
-  own models are resident, the device-wide figure counts that residency as
-  pressure, so a gate that re-read it would eventually refuse the process it
-  already admitted. The latch is therefore a correctness device, not an
-  optimisation, and a declared release of the resident stack clears it so the
-  next load is admitted against what the card actually has. Only a verdict that
-  reached the floor comparison latches: latching one that never got a figure
-  would retire the gate on a reading that was never taken.
+- **The verdict measures foreign pressure, never this process's own.** The
+  device-wide free figure shrinks with every block this process's allocator
+  checks out - resident models and cache alike - so a verdict over the raw
+  figure would eventually refuse the process it already admitted: a long-lived
+  process that releases one stack while holding another would have its next
+  load judged against a card crowded by its own residency. Crediting the
+  process's own allocator checkout back (``free + own`` against the floor)
+  makes the reading attributable at any point in the process's life: it is the
+  room the card would have if only foreign tenants counted, which is exactly
+  the question admission asks. The latch that then skips later evaluations is
+  still a correctness device and not only a saving: admission is granted to a
+  workload, not to a component, so once a load is admitted the rest of its
+  stack must come up without re-interrogation - a foreign arrival between the
+  embedding and reranker loads must not strand a half-built stack. A declared
+  release of resident models clears the latch so the next load is admitted
+  against a fresh reading. Only a verdict that reached the floor comparison
+  latches: latching one that never got a figure would retire the gate on a
+  reading that was never taken.
 - **Detection alone cannot close the race.** Two processes can read the same
   free figure, both find room, and both load. An OS advisory lock held across
   the check-and-load window makes that sequence atomic between processes: a
@@ -118,12 +128,17 @@ class DeviceAdmission:
     one stable token naming the cause. ``free_mib`` and ``total_mib`` are
     ``None`` when the corresponding figure could not be read, which on a
     GPU-only path is itself disqualifying but is reported rather than raised so
-    a torch-free host can still answer the question.
+    a torch-free host can still answer the question. ``own_mib`` is the device
+    memory this process's own allocator has checked out - resident models and
+    cache alike - which the floor comparison credits back to the free figure,
+    because a process's own residency is not foreign contention; ``None`` when
+    that figure could not be read, in which case nothing was credited.
     """
 
     admitted: bool
     free_mib: int | None
     total_mib: int | None
+    own_mib: int | None
     floor_mib: int
     reason: str
 
@@ -143,9 +158,14 @@ def device_contended_message(admission: DeviceAdmission) -> str:
     total = (
         "" if admission.total_mib is None else f" of {admission.total_mib} MiB total"
     )
+    own = (
+        ""
+        if not admission.own_mib
+        else f" plus {admission.own_mib} MiB this process already holds"
+    )
     phrase = _REASON_PHRASES.get(admission.reason, "the device did not admit a load")
     return (
-        f"{DEVICE_CONTENDED_MESSAGE} Observed {free} free{total} against a "
+        f"{DEVICE_CONTENDED_MESSAGE} Observed {free} free{total}{own} against a "
         f"{admission.floor_mib} MiB floor ({phrase})."
     )
 
@@ -161,6 +181,7 @@ def device_load_wire(admission: DeviceAdmission) -> dict[str, object]:
     return {
         "free_mib": admission.free_mib,
         "total_mib": admission.total_mib,
+        "own_mib": admission.own_mib,
         "floor_mib": admission.floor_mib,
         "admitted": admission.admitted,
         "reason": admission.reason,
@@ -247,21 +268,30 @@ def admission_from_reading(
     query, a figure exactly at the floor - is exercisable without a machine that
     happens to present it, and without initialising a CUDA context to ask.
 
-    A figure exactly at the floor is admitted; only one below it is refused.
+    The compared figure is ``free + own``: the device-wide free reading plus
+    whatever this process's own allocator has checked out of the device, since
+    a process's own residency is not the foreign contention the floor guards
+    against and counting it would refuse the process the gate already admitted.
+    An unreadable own figure credits nothing - the conservative direction. A
+    credited figure exactly at the floor is admitted; only one below it is
+    refused.
 
-    The reading arrives as a float and the verdict carries a whole number of
-    mebibytes, and the truncation between them cannot change the outcome: the
-    floor is an integer, and for an integer bound a truncated value clears it if
-    and only if the original did. So the comparison decides exactly what it
-    would have decided on the float, and the reported figure never claims
-    headroom the device did not have.
+    The readings arrive as floats and the verdict carries whole numbers of
+    mebibytes, truncated - each reported figure understates rather than
+    overstates, so the whole-number comparison can only refuse a load the float
+    figures would have admitted by under two mebibytes, never admit one they
+    refused, and the reported figures always reproduce the verdict.
     """
     total_mib = None if reading.total_mib is None else int(reading.total_mib)
+    own_mib = (
+        None if reading.own_reserved_mib is None else int(reading.own_reserved_mib)
+    )
     if not reading.torch_present:
         return DeviceAdmission(
             admitted=False,
             free_mib=None,
             total_mib=total_mib,
+            own_mib=own_mib,
             floor_mib=floor_mib,
             reason=REASON_TORCH_ABSENT,
         )
@@ -270,6 +300,7 @@ def admission_from_reading(
             admitted=False,
             free_mib=None,
             total_mib=total_mib,
+            own_mib=own_mib,
             floor_mib=floor_mib,
             reason=REASON_NO_CUDA,
         )
@@ -286,17 +317,17 @@ def admission_from_reading(
             admitted=True,
             free_mib=None,
             total_mib=total_mib,
+            own_mib=own_mib,
             floor_mib=floor_mib,
             reason="",
         )
-    # Decision-preserving against an integer floor, and understating rather
-    # than overstating free memory in the figure the operator is shown.
     free_mib = int(reading.free_mib)
-    admitted = free_mib >= floor_mib
+    admitted = free_mib + (own_mib or 0) >= floor_mib
     return DeviceAdmission(
         admitted=admitted,
         free_mib=free_mib,
         total_mib=total_mib,
+        own_mib=own_mib,
         floor_mib=floor_mib,
         reason="" if admitted else REASON_BELOW_FLOOR,
     )
@@ -330,6 +361,7 @@ def evaluate_device_admission() -> DeviceAdmission:
             admitted=False,
             free_mib=None,
             total_mib=None,
+            own_mib=None,
             floor_mib=0,
             reason=REASON_NO_CUDA,
         )
@@ -429,6 +461,7 @@ def device_load_window(
             admitted=False,
             free_mib=None,
             total_mib=None,
+            own_mib=None,
             floor_mib=_configured_floor_mib(),
             reason=REASON_LOAD_IN_PROGRESS,
         )
@@ -448,13 +481,6 @@ def device_load_window(
 
 _admission_guard = threading.Lock()
 _admitted = False
-#: Whether a load has already run in this process under a verdict that never
-#: reached the floor comparison. It is what stops the retry the latch rule
-#: opens from refusing work on a figure it cannot attribute: once a load has gone
-#: through, free memory reflects this process's own residency, and a reading
-#: below the floor may be describing the models this process just brought up
-#: rather than a foreign tenant.
-_unattributable_load = False
 
 
 def _floor_was_evaluated(admission: DeviceAdmission) -> bool:
@@ -472,22 +498,17 @@ def _floor_was_evaluated(admission: DeviceAdmission) -> bool:
 def clear_gpu_admission_latch() -> None:
     """Retire this process's standing admission after a resident release.
 
-    A verdict is taken against the device as it was before this process loaded
-    anything, so it stays honest only while that load is still resident. Once
-    the resident stack has been released the verdict describes a device state
-    that no longer exists, and a later reload has to be admitted against what
-    the card actually holds. Clearing costs one extra reading on the next load;
-    not clearing rides a stale verdict for the rest of the process's life.
-
-    The unattributable-load flag is retired with it: a release is exactly the
-    event that makes free memory attributable again, so carrying that flag
-    across one would let the next load ride an allowance earned by residency
-    that no longer exists.
+    A verdict describes the device as it stood when it was taken, so a release
+    that changes what this process holds retires it, and a later reload is
+    admitted against a fresh reading. The release need not be total: the fresh
+    verdict credits whatever this process still holds, so clearing after a
+    partial release cannot turn the surviving residency into a refusal.
+    Clearing costs one extra reading on the next load; not clearing rides a
+    stale verdict for the rest of the process's life.
     """
-    global _admitted, _unattributable_load
+    global _admitted
     with _admission_guard:
         _admitted = False
-        _unattributable_load = False
 
 
 def admit_gpu_load[T](
@@ -500,8 +521,10 @@ def admit_gpu_load[T](
     The first call evaluates admission inside the load window and raises
     ``RuntimeError`` when the device is contended. Every later call runs *load*
     directly, so it costs exactly what it did before this gate existed - and,
-    the load-bearing half, it takes no second reading, which is what stops the
-    gate from mistaking this process's own residency for foreign pressure.
+    the load-bearing half, admission is granted to a workload rather than to a
+    component: once one load is admitted, the rest of its stack comes up
+    without re-interrogation, so a foreign tenant arriving between two of this
+    process's loads cannot strand a half-built stack.
 
     The process-local guard is what makes the OS lock safe. Two threads racing
     the first load would otherwise have the second refused by this process's own
@@ -533,8 +556,11 @@ def admit_gpu_load[T](
     count, not by time, and the warning the unreadable reading emits repeats
     with them - a handful of lines per process, which is a signal rather than a
     flood, and the honest one to leave in place while the device cannot answer.
+    A refusal a repeat does reach is genuine: the verdict credits whatever this
+    process already holds, so it cannot be describing the models an earlier
+    unevaluated load brought up.
     """
-    global _admitted, _unattributable_load
+    global _admitted
     if _admitted:
         return load()
     with _admission_guard:
@@ -542,25 +568,9 @@ def admit_gpu_load[T](
             return load()
         with window() as admission:
             if admission.reason in _REFUSING_REASONS:
-                if not _unattributable_load:
-                    raise RuntimeError(device_contended_message(admission))
-                # A load already went through here without an evaluated
-                # verdict, so this process holds residency the figure below
-                # cannot be separated from. Refusing now would report this
-                # process's own models as foreign contention and fail the
-                # second stack it needs - the very inversion the latch exists
-                # to prevent. Reported rather than acted on, and the evaluated
-                # verdict latches below, so this is said once per process.
-                logger.warning(
-                    "%s (a load already succeeded here without an evaluated "
-                    "verdict, so this figure cannot be told apart from this "
-                    "process's own residency; the load proceeds)",
-                    device_contended_message(admission),
-                )
+                raise RuntimeError(device_contended_message(admission))
             result = load()
             evaluated = _floor_was_evaluated(admission)
         if evaluated:
             _admitted = True
-        else:
-            _unattributable_load = True
         return result

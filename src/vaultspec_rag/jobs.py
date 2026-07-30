@@ -1245,7 +1245,8 @@ def device_load_snapshot(*, now: float | None = None) -> dict[str, object] | Non
 
     Returns:
         The ``device_load`` wire shape (``free_mib``, ``total_mib``,
-        ``floor_mib``, ``admitted``, ``reason``), or ``None`` when this host's
+        ``own_mib``, ``floor_mib``, ``admitted``, ``reason``), or ``None``
+        when this host's
         reading could not be taken - absent, never raised, so an older reader
         expecting no such key is unaffected. Callers receive a copy; mutating
         it cannot poison the cache.

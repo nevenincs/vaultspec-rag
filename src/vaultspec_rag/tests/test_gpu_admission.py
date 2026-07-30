@@ -18,7 +18,6 @@ hold, and never gets a green result from a lock that was not taken.
 
 from __future__ import annotations
 
-import logging
 import os
 import subprocess
 import sys
@@ -74,19 +73,23 @@ _SCENARIO_MARGIN_MIB = 2048
 _ABOVE_FLOOR_MIB = _FLOOR + _SCENARIO_MARGIN_MIB
 _BELOW_FLOOR_MIB = _FLOOR - _SCENARIO_MARGIN_MIB
 
-#: Room to spare, and the same device with a resident stack on it. The pair is
-#: what the floor is meant to separate.
+#: Room to spare, and the same device with a FOREIGN tenant's stack resident on
+#: it. The pair is what the floor is meant to separate. Both carry a zero own
+#: checkout on purpose: the crowding is entirely another process's, so nothing
+#: is credited back and the free figure alone decides.
 _ROOMY = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
     free_mib=float(_ABOVE_FLOOR_MIB),
     total_mib=float(_SCENARIO_TOTAL_MIB),
+    own_reserved_mib=0.0,
 )
 _CROWDED = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
     free_mib=float(_BELOW_FLOOR_MIB),
     total_mib=float(_SCENARIO_TOTAL_MIB),
+    own_reserved_mib=0.0,
 )
 
 #: A present device whose driver answered presence and then refused the memory
@@ -100,6 +103,7 @@ _UNREADABLE = CudaDeviceMemory(
     cuda_present=True,
     free_mib=None,
     total_mib=None,
+    own_reserved_mib=None,
 )
 
 #: Two measured properties of this project's MODELS, in MiB: what the embedding,
@@ -226,12 +230,68 @@ class TestTheFloorPredicate:
             cuda_present=True,
             free_mib=float(_FLOOR),
             total_mib=float(_SCENARIO_TOTAL_MIB),
+            own_reserved_mib=0.0,
         )
 
         admission = admission_from_reading(reading, floor_mib=_FLOOR)
 
         assert admission.admitted is True
         assert admission.reason == ""
+
+    def test_the_process_s_own_checkout_is_credited_back_to_free(self) -> None:
+        """A card crowded by this process's own residency admits its reload.
+
+        The device-wide free figure counts every block this process's own
+        allocator has checked out - resident models and cache alike - so a
+        long-lived process releasing one stack while still holding another
+        would otherwise be refused on its own memory, with the refusal naming
+        a foreign consumer that does not exist. The comparison is therefore
+        ``free + own`` against the floor, boundary inclusive; an unreadable
+        own figure credits nothing, the conservative direction.
+
+        Mutation: dropped the credit from the comparison, back to ``free_mib
+        >= floor_mib``. Observed this assertion fail on ``covered.admitted is
+        True``.
+        """
+        gap = _FLOOR - _BELOW_FLOOR_MIB
+        covered = admission_from_reading(
+            CudaDeviceMemory(
+                torch_present=True,
+                cuda_present=True,
+                free_mib=float(_BELOW_FLOOR_MIB),
+                total_mib=float(_SCENARIO_TOTAL_MIB),
+                own_reserved_mib=float(gap),
+            ),
+            floor_mib=_FLOOR,
+        )
+        short = admission_from_reading(
+            CudaDeviceMemory(
+                torch_present=True,
+                cuda_present=True,
+                free_mib=float(_BELOW_FLOOR_MIB),
+                total_mib=float(_SCENARIO_TOTAL_MIB),
+                own_reserved_mib=float(gap - 1),
+            ),
+            floor_mib=_FLOOR,
+        )
+        unreadable_own = admission_from_reading(
+            CudaDeviceMemory(
+                torch_present=True,
+                cuda_present=True,
+                free_mib=float(_BELOW_FLOOR_MIB),
+                total_mib=float(_SCENARIO_TOTAL_MIB),
+                own_reserved_mib=None,
+            ),
+            floor_mib=_FLOOR,
+        )
+
+        assert covered.admitted is True
+        assert covered.reason == ""
+        assert covered.own_mib == gap
+        assert short.admitted is False
+        assert short.reason == REASON_BELOW_FLOOR
+        assert unreadable_own.admitted is False
+        assert unreadable_own.own_mib is None
 
     def test_free_memory_is_truncated_never_rounded_up(self) -> None:
         """The float-to-whole-MiB step must not decide anything on its own.
@@ -253,6 +313,7 @@ class TestTheFloorPredicate:
                 cuda_present=True,
                 free_mib=_FLOOR - 0.4,
                 total_mib=float(_SCENARIO_TOTAL_MIB),
+                own_reserved_mib=0.0,
             ),
             floor_mib=_FLOOR,
         )
@@ -262,6 +323,7 @@ class TestTheFloorPredicate:
                 cuda_present=True,
                 free_mib=_FLOOR + 0.4,
                 total_mib=float(_SCENARIO_TOTAL_MIB),
+                own_reserved_mib=0.0,
             ),
             floor_mib=_FLOOR,
         )
@@ -283,6 +345,7 @@ class TestTheFloorPredicate:
                 cuda_present=False,
                 free_mib=None,
                 total_mib=None,
+                own_reserved_mib=None,
             ),
             floor_mib=_FLOOR,
         )
@@ -292,6 +355,7 @@ class TestTheFloorPredicate:
                 cuda_present=False,
                 free_mib=None,
                 total_mib=None,
+                own_reserved_mib=None,
             ),
             floor_mib=_FLOOR,
         )
@@ -320,6 +384,7 @@ class TestTheFloorPredicate:
                 cuda_present=True,
                 free_mib=None,
                 total_mib=float(_SCENARIO_TOTAL_MIB),
+                own_reserved_mib=None,
             ),
             floor_mib=_FLOOR,
         )
@@ -342,6 +407,34 @@ class TestTheFloorPredicate:
         assert f"{_BELOW_FLOOR_MIB} MiB free" in message
         assert f"{_FLOOR} MiB floor" in message
         assert EnvVar.GPU_ADMISSION_FLOOR_MIB.value in message
+
+    def test_the_refusal_message_names_the_process_s_own_checkout(self) -> None:
+        """A refusal that credited residency must show the credited figure.
+
+        Without it the message's free reading understates what the comparison
+        actually saw, and an operator reconciling the figure against the floor
+        would find a verdict the printed numbers do not reproduce.
+
+        Mutation: dropped the own-checkout clause from the rendered message.
+        Observed this assertion fail on the ``already holds`` membership
+        check.
+        """
+        own = _SCENARIO_MARGIN_MIB // 2
+        message = device_contended_message(
+            admission_from_reading(
+                CudaDeviceMemory(
+                    torch_present=True,
+                    cuda_present=True,
+                    free_mib=float(_BELOW_FLOOR_MIB),
+                    total_mib=float(_SCENARIO_TOTAL_MIB),
+                    own_reserved_mib=float(own),
+                ),
+                floor_mib=_FLOOR,
+            )
+        )
+
+        assert f"plus {own} MiB this process already holds" in message
+        assert f"{_BELOW_FLOOR_MIB} MiB free" in message
 
 
 class TestTheFloorIsDerivedFromTheWorkload:
@@ -711,6 +804,7 @@ class TestTheAdmissionLatch:
             cuda_present=False,
             free_mib=None,
             total_mib=None,
+            own_reserved_mib=None,
         )
         source = _windowed(tmp_path / "load-window.lock", [cpu_only], entries)
 
@@ -808,66 +902,25 @@ class TestTheAdmissionLatch:
         assert admit_gpu_load(lambda: "second", window=source) == "second"
         assert len(entries) == 2
 
-    def test_an_unattributable_figure_does_not_refuse_the_second_stack(
-        self,
-        tmp_path: Path,
-        floor: int,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """The retry must not refuse a process on its own residency.
-
-        The counterpart to the guard above, and the reason it is safe. Once a
-        load has gone through without an evaluated verdict, this process holds
-        models the device-wide figure includes, so a below-floor reading may be
-        describing them rather than a foreign tenant - and refusing here would
-        fail the second stack a search path needs while naming another consumer
-        as the cause. The figure is reported and the load proceeds, and because
-        this verdict did reach the floor it also latches, so the report is made
-        once per process rather than at every later load site.
-
-        Mutation: forced the escape's flag read - ``if not
-        _unattributable_load:`` to ``if True:`` - so the refusal always fires.
-        Observed this assertion fail on ``RuntimeError`` naming the contended
-        device, raised from the second ``admit_gpu_load``.
-        """
-        del floor
-        entries: list[int] = []
-        source = _windowed(
-            tmp_path / "load-window.lock",
-            [_UNREADABLE, _CROWDED, _CROWDED],
-            entries,
-        )
-
-        assert admit_gpu_load(lambda: "first", window=source) == "first"
-        with caplog.at_level(logging.WARNING, logger="vaultspec_rag._gpu_admission"):
-            assert admit_gpu_load(lambda: "second", window=source) == "second"
-        assert any(
-            "cannot be told apart from this process's own residency"
-            in record.getMessage()
-            for record in caplog.records
-        ), [record.getMessage() for record in caplog.records]
-
-        # Evaluated, so latched: the third load neither re-reads nor repeats it.
-        assert admit_gpu_load(lambda: "third", window=source) == "third"
-        assert len(entries) == 2
-
-    def test_a_release_retires_the_unattributable_allowance_too(
+    def test_a_refusal_reached_after_an_unevaluated_load_still_refuses(
         self,
         tmp_path: Path,
         floor: int,
     ) -> None:
-        """A release makes the figure attributable again, so the allowance ends.
+        """No allowance survives a load that ran without a verdict.
 
-        Without this the flag would outlive the residency that justified it: a
-        process that once loaded under an unevaluated verdict would carry a
-        standing permission to ignore the floor across every later release,
-        which is the permanent no-op this whole change removes, reintroduced by
-        the mechanism that fixes it.
+        The first load here went through under a driver that refused the
+        memory query, so no floor was consulted and nothing latched. The retry
+        that opens must still be a real gate: the verdict it reaches credits
+        whatever this process holds, so a below-floor figure with a zero own
+        checkout - as here - is genuinely foreign crowding and refuses. An
+        escape for "the figure might be my own residency" would let one probe
+        hiccup exempt the process from the floor for its remaining loads.
 
-        Mutation: left ``_unattributable_load`` set in
-        ``clear_gpu_admission_latch``. Observed this assertion fail on
-        ``pytest.raises(RuntimeError)`` - the post-release load rode the stale
-        allowance and was admitted onto a card below the floor.
+        Mutation: reintroduced that escape - recorded the unevaluated load in a
+        flag and downgraded the refusal to a warning while it was set. Observed
+        this assertion fail on ``pytest.raises(RuntimeError)``, the second load
+        proceeding over the crowded verdict.
         """
         del floor
         entries: list[int] = []
@@ -878,9 +931,9 @@ class TestTheAdmissionLatch:
         )
 
         assert admit_gpu_load(lambda: "first", window=source) == "first"
-        clear_gpu_admission_latch()
         with pytest.raises(RuntimeError, match="too contended"):
             admit_gpu_load(lambda: "second", window=source)
+        assert len(entries) == 2
 
     def test_two_threads_racing_the_first_load_are_both_admitted(
         self,
@@ -943,12 +996,15 @@ class TestTheWireReading:
 
         Mutation: renamed the ``free_mib`` key to ``free_mb`` in the
         projection. Observed this assertion fail on
-        ``wire["free_mib"] == 2000``.
+        ``wire["free_mib"] == 2000``. Re-proven for the own-checkout figure:
+        renaming the ``own_mib`` key failed this test on
+        ``wire["own_mib"] == 384`` with ``KeyError: 'own_mib'``.
         """
         admission = DeviceAdmission(
             admitted=False,
             free_mib=2000,
             total_mib=_SCENARIO_TOTAL_MIB,
+            own_mib=384,
             floor_mib=6400,
             reason=REASON_BELOW_FLOOR,
         )
@@ -957,6 +1013,7 @@ class TestTheWireReading:
 
         assert wire["free_mib"] == 2000
         assert wire["total_mib"] == _SCENARIO_TOTAL_MIB
+        assert wire["own_mib"] == 384
         assert wire["floor_mib"] == 6400
         assert wire["admitted"] is False
         assert wire["reason"] == REASON_BELOW_FLOOR
@@ -975,6 +1032,7 @@ class TestTheWireReading:
             admitted=True,
             free_mib=9000,
             total_mib=_SCENARIO_TOTAL_MIB,
+            own_mib=None,
             floor_mib=6400,
             reason="",
         )

@@ -67,6 +67,7 @@ def _admission_from_block(block: dict[str, object]) -> DeviceAdmission:
         admitted=bool(block.get("admitted")),
         free_mib=_optional_int(block.get("free_mib")),
         total_mib=_optional_int(block.get("total_mib")),
+        own_mib=_optional_int(block.get("own_mib")),
         floor_mib=floor if floor is not None else 0,
         reason=str(block.get("reason") or ""),
     )
@@ -128,6 +129,8 @@ def _render_human(admission: DeviceAdmission, source: str) -> None:
         "" if admission.total_mib is None else f" of {admission.total_mib} MiB total"
     )
     _plain(f"  free: {free}{total}")
+    if admission.own_mib is not None:
+        _plain(f"  held by the reporting process: {admission.own_mib} MiB")
     _plain(f"  floor: {admission.floor_mib} MiB")
     _plain(f"  verdict: {'admitted' if admission.admitted else 'refused'}")
     if not admission.admitted:

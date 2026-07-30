@@ -1928,11 +1928,10 @@ class ServiceRegistry:
         # through reference cycles, so their device memory survives until a
         # collection runs, and the blocks a collection frees stay checked out
         # of the device until the allocator cache is flushed. One release
-        # sequence owns all three steps; running a shortened copy here rebased
-        # the baseline against this process's own cache, so the figure
-        # described memory nothing held and the next load was refused on a card
-        # that had room. A failure has nowhere to go at shutdown, but it must
-        # not pass silently either.
+        # sequence owns all three steps; a shortened copy here once skipped the
+        # cache flush, leaving the freed stacks invisible to the device-wide
+        # free reading a later in-process load is admitted against. A failure
+        # has nowhere to go at shutdown, but it must not pass silently either.
         try:
             self._release_gpu_residency()
         except GPUResidencyTransitionError:
