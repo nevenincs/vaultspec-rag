@@ -97,6 +97,8 @@ def test_registry_reports_unpublished_recovery_without_reopening_admission(
     assert not failed.achieved
     assert failed.snapshot.state is QuiesceState.WARMING
     assert not failed.snapshot.admissions_open
+    assert not failed.snapshot.vram_released
+    assert not failed.snapshot.safe_to_borrow_gpu
     assert failed.snapshot.failure_reason == "job_resume_persistence_unpublished"
     retained = manager.get(job_id)
     assert retained is not None
