@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
@@ -12,13 +14,26 @@ from starlette.testclient import TestClient
 
 import vaultspec_rag.server as server
 
+from ..job_manager.manager import JobManager
+from ..job_manager.models import JobAttemptContext, JobExecutionResult
+from ..job_models import (
+    JobInitiator,
+    JobMode,
+    JobOperation,
+    JobSnapshot,
+    JobSource,
+    JobSpec,
+    JobState,
+)
 from ..server._routes import pause_service_route, resume_service_route
 from ..service import ServiceRegistry
 from ..service_quiesce import QuiesceState, QuiesceTransition
+from ._job_roots import _TEST_PROJECT_ROOT
 from ._quiesce_helpers import QUIESCE_THREAD_TIMEOUT, wait_for_quiesce_state
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -45,6 +60,96 @@ class QuiesceRoutes(NamedTuple):
 
     client: TestClient
     registry: ServiceRegistry
+
+
+@contextmanager
+def _running_service_loop() -> Generator[asyncio.AbstractEventLoop]:
+    """Run the recovery manager on its real adopted service loop."""
+    loop = asyncio.new_event_loop()
+    ready = threading.Event()
+
+    def run_loop() -> None:
+        asyncio.set_event_loop(loop)
+        ready.set()
+        loop.run_forever()
+        loop.close()
+
+    owner = threading.Thread(target=run_loop, name="resume-route-recovery-loop")
+    owner.start()
+    if not ready.wait(timeout=QUIESCE_THREAD_TIMEOUT):
+        raise AssertionError("the adopted recovery service loop did not start")
+    try:
+        yield loop
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        owner.join(timeout=QUIESCE_THREAD_TIMEOUT)
+        assert not owner.is_alive(), "the adopted recovery service loop did not stop"
+
+
+def _attach_durable_quiesced_job(
+    registry: ServiceRegistry,
+    state_path: Path,
+) -> tuple[JobManager, str]:
+    """Attach a real durable paused job to the registry route authority."""
+    manager = JobManager(
+        max_nonterminal=1,
+        state_path=state_path,
+        quiesce_controller=registry._quiesce_controller,
+    )
+    registry._job_manager = manager
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            _TEST_PROJECT_ROOT,
+            JobMode.REBUILD,
+        ),
+        JobInitiator("test", "resume-route-recovery", _TEST_PROJECT_ROOT),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    assert (
+        manager.defer_unstarted_for_quiesce(job_id).code
+        == "quiesce_deferred_before_start"
+    )
+    assert registry.quiesce_resources(timeout_seconds=0).achieved
+    return manager, job_id
+
+
+def _assert_unpublished_resume_failure(payload: dict[str, object]) -> None:
+    """Assert the canonical route evidence for durable recovery failure."""
+    assert set(payload) == {
+        "ok",
+        "status",
+        "quiesce",
+        "error",
+        "message",
+        "retryable",
+    }
+    assert payload["ok"] is False
+    assert payload["status"] == "resume_recovery_failed"
+    assert payload["error"] == payload["status"]
+    assert payload["retryable"] is True
+    assert "job_resume_persistence_unpublished" in str(payload["message"])
+    quiesce = payload["quiesce"]
+    assert isinstance(quiesce, dict)
+    assert quiesce["state"] == "warming"
+    assert quiesce["admissions_open"] is False
+    assert quiesce["safe_to_borrow_gpu"] is False
+    assert quiesce["failure_reason"] == "job_resume_persistence_unpublished"
+
+
+def _assert_achieved_resume(payload: dict[str, object]) -> None:
+    """Assert that a service-owned success carries no failure fields."""
+    assert set(payload) == {"ok", "status", "quiesce"}
+    assert payload["ok"] is True
+    assert payload["status"] == "running"
+    quiesce = payload["quiesce"]
+    assert isinstance(quiesce, dict)
+    assert quiesce["state"] == "running"
+    assert quiesce["admissions_open"] is True
+    assert quiesce["safe_to_borrow_gpu"] is False
+    assert quiesce["failure_reason"] is None
 
 
 @pytest.fixture
@@ -98,6 +203,8 @@ def test_pause_resume_routes_return_the_complete_controller_envelope(
     assert pause_payload["quiesce"]["safe_to_borrow_gpu"] is True
     assert pause_payload["quiesce"]["failure_reason"] is None
     assert "error" not in pause_payload
+    assert "message" not in pause_payload
+    assert "retryable" not in pause_payload
 
     assert resume_payload["ok"] is True
     assert resume_payload["status"] == "running"
@@ -106,6 +213,8 @@ def test_pause_resume_routes_return_the_complete_controller_envelope(
     assert resume_payload["quiesce"]["safe_to_borrow_gpu"] is False
     assert resume_payload["quiesce"]["failure_reason"] is None
     assert "error" not in resume_payload
+    assert "message" not in resume_payload
+    assert "retryable" not in resume_payload
 
 
 def test_resume_releases_a_daemon_a_failed_pause_left_held(
@@ -131,6 +240,76 @@ def test_resume_releases_a_daemon_a_failed_pause_left_held(
     assert payload["quiesce"]["admissions_open"] is True
     assert payload["quiesce"]["failure_reason"] is None
     assert registry.quiesce_snapshot().state is QuiesceState.RUNNING
+
+
+def test_resume_reports_unpublished_recovery_then_recovers_one_same_id_attempt(
+    quiesce_routes: QuiesceRoutes,
+    tmp_path: Path,
+) -> None:
+    """The authenticated route retains a failed recovery until one repair runs it.
+
+    Making the failed-envelope ``retryable`` value false makes the named
+    assertion fail, proving the route reports a recoverable service outcome.
+    """
+    client, registry = quiesce_routes
+    state_path = tmp_path / "managed" / "jobs.json"
+    manager, job_id = _attach_durable_quiesced_job(registry, state_path)
+    attempts: list[int] = []
+    runner_finished = threading.Event()
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        attempts.append(context.attempt)
+        return JobExecutionResult(summary="resume route recovery completed")
+
+    def on_finished(
+        snapshot: JobSnapshot,
+        duration_seconds: float,
+        result: JobExecutionResult | None,
+        error: BaseException | None,
+    ) -> None:
+        del snapshot, duration_seconds, result, error
+        runner_finished.set()
+
+    assert (
+        manager.bind_dispatch(job_id, runner, on_finished=on_finished).code
+        == "dispatch_bound"
+    )
+    state_path.unlink()
+    state_path.parent.rmdir()
+    state_path.parent.write_text("not a directory", encoding="utf-8")
+
+    failed = client.post("/resume", headers=_HEADERS)
+
+    assert failed.status_code == 200
+    failed_payload: dict[str, object] = failed.json()
+    _assert_unpublished_resume_failure(failed_payload)
+    retained = manager.get(job_id)
+    assert retained is not None
+    assert retained.id == job_id
+    assert retained.state is JobState.PAUSED
+    assert retained.attempt.number == 1
+    initial_generation = manager._next_quiesced_dispatch_generation
+
+    state_path.parent.unlink()
+    state_path.parent.mkdir()
+    with _running_service_loop() as service_loop:
+        manager.adopt_service_loop(service_loop)
+        recovered = client.post("/resume", headers=_HEADERS)
+        assert runner_finished.wait(timeout=QUIESCE_THREAD_TIMEOUT), (
+            "the repaired authenticated resume did not execute its bound runner"
+        )
+
+    assert recovered.status_code == 200
+    recovered_payload: dict[str, object] = recovered.json()
+    _assert_achieved_resume(recovered_payload)
+    completed = manager.get(job_id)
+    assert completed is not None
+    assert completed.id == job_id
+    assert completed.state is JobState.SUCCEEDED
+    assert completed.attempt.number == 2
+    assert attempts == [2]
+    assert manager._next_quiesced_dispatch_generation == initial_generation + 1
+    assert manager._pending_quiesced_dispatches == {}
 
 
 def test_a_joined_pause_that_outwaits_its_owner_answers_with_an_envelope(
@@ -166,6 +345,7 @@ def test_a_joined_pause_that_outwaits_its_owner_answers_with_an_envelope(
     assert payload["ok"] is False
     assert payload["status"] == "quiesce_transition_wait_timed_out"
     assert payload["error"] == "quiesce_transition_wait_timed_out"
+    assert payload["retryable"] is True
     assert "pause" in payload["message"]
     assert set(payload["quiesce"]) == _ENVELOPE_KEYS
     assert not owner.is_alive()
@@ -199,6 +379,7 @@ def test_a_resume_opposing_an_owned_pause_answers_with_an_envelope(
     assert payload["ok"] is False
     assert payload["status"] == "quiesce_transition_conflict"
     assert payload["error"] == "quiesce_transition_conflict"
+    assert payload["retryable"] is True
     assert "resume" in payload["message"]
     assert payload["quiesce"]["state"] == "pausing"
     assert not owner.is_alive()
