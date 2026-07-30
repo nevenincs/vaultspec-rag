@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from qdrant_client import QdrantClient
+    from qdrant_client.conversions.common_types import PointsSelector
     from qdrant_client.http.models import PointStruct, Vector
 
 
@@ -91,7 +92,12 @@ class _VaultIngestMixin:
             policy: StoreWritePolicy | None,
         ) -> AbstractContextManager[None]: ...
 
-        def _delete_points(self, **kwargs: Any) -> None: ...
+        def _delete_points(
+            self,
+            *,
+            collection_name: str,
+            points_selector: PointsSelector,
+        ) -> None: ...
 
     @staticmethod
     def _document_chunk_payload(
