@@ -58,7 +58,10 @@ class TestSearchSafetyContract:
         normalized = " ".join(result.output.split())
         assert "unreachable" in normalized.lower()
         assert "allow-fallback" in normalized.lower()
-        assert "local search index" in normalized
+        # The refusal has to say it declined to run locally, not merely that
+        # the service is down: an operator who reads only the first clause
+        # would otherwise assume the search had silently fallen back.
+        assert "run search locally" in normalized
         assert "one user only" in normalized
         assert "agents waiting" not in normalized
         assert "single-agent" not in normalized
