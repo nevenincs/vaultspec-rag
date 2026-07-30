@@ -1558,7 +1558,7 @@ finally:
         assert constrained["status_code"] != 429
         counts = cast("dict[str, int]", result["counts"])
         assert counts["active"] == result["remaining_active"]
-        assert counts["active_overflow"] == 0
+        assert counts["total"] == counts["active"] + counts["recent"]
         terminal = cast("list[dict[str, object]]", result["terminal"])
         assert len(terminal) == 1
         assert terminal[0]["state"] == "terminal"
