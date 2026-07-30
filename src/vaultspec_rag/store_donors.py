@@ -10,7 +10,6 @@ from . import store_schema
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from contextlib import AbstractContextManager
-    from uuid import UUID
 
     from qdrant_client.http.models.models import Record
 
@@ -125,7 +124,7 @@ class _VaultDonorMixin:
             with self._point_lock(donor_collection):
                 return self._retrieve(
                     collection_name=donor_collection,
-                    ids=cast("list[int | str | UUID]", point_ids),
+                    ids=point_ids,
                     with_payload=True,
                     with_vectors=True,
                 )
