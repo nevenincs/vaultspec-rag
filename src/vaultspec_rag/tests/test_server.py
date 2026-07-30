@@ -755,74 +755,72 @@ class TestHttpModeResolveRoot:
 
 
 class TestMainTransportSetup:
-    """Verify main() correctly sets transport mode and lifecycle hooks."""
+    """The stdio runner's lifecycle wiring, driven for real."""
 
-    def test_http_mode_flag_for_http(self) -> None:
-        """port=8888 → _http_mode=True."""
-        from typing import cast
+    def test_stdio_runner_wires_cleanup_and_loads_no_model(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stdio is a thin client: it wires watcher cleanup and loads nothing.
 
+        Two contracts share one drive of ``_run_stdio_mcp`` because both are
+        observed at the same instant - when the transport is entered - and
+        because each extra substitution site has to earn itself (see
+        ``test_substitution_discipline``).
+
+        The previous tests here asserted neither contract. One scanned
+        ``inspect.getsource(server.main)`` for ``"load_model"``, but ``main``
+        only dispatches to ``_run_stdio_mcp``, so a load added where the work
+        actually happens passed the scan untouched. The other assigned
+        ``registry._on_close_project`` in the test body and then asserted its
+        own assignment, never calling production at all.
+
+        Mutations this catches: any ``load_model()`` reachable from
+        ``_run_stdio_mcp``, and dropping its ``_on_close_project`` wiring.
+        """
         import vaultspec_rag.server as mod
 
-        orig = mod._http_mode
-        try:
-            port: int | None = cast("int | None", 8888)
-            mod._http_mode = port is not None
-            assert mod._http_mode is True
-        finally:
-            mod._http_mode = orig
-
-    def test_http_mode_flag_for_stdio(self):
-        """port=None → _http_mode=False."""
-        import vaultspec_rag.server as mod
-
-        orig = mod._http_mode
-        try:
-            port = None
-            mod._http_mode = port is not None
-            assert mod._http_mode is False
-        finally:
-            mod._http_mode = orig
-
-    def test_stdio_wires_on_close_project(self):
-        """Stdio path must wire _on_close_project for watcher cleanup."""
-        import vaultspec_rag.server as mod
-
+        from ..server import _main
+        from ..server import _stdio_lifetime as stdio_lifetime
         from ..service import ServiceRegistry
 
-        registry = ServiceRegistry()
-        orig = registry._on_close_project
+        loads: list[str | None] = []
+
+        def _record_load(_self: ServiceRegistry, model_name: str | None = None) -> None:
+            loads.append(model_name)
+
+        def _no_watchdog(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        seen_hooks: list[object] = []
+        entered: list[str] = []
+
+        class _FakeMcp:
+            @staticmethod
+            def run(transport: str) -> None:
+                entered.append(transport)
+                seen_hooks.append(mod._registry._on_close_project)
+
+        monkeypatch.setattr(ServiceRegistry, "load_model", _record_load)
+        monkeypatch.setattr(
+            stdio_lifetime, "install_stdio_lifetime_watchdog", _no_watchdog
+        )
+        monkeypatch.setattr("vaultspec_rag.mcp.mcp", _FakeMcp())
+
+        original_hook = mod._registry._on_close_project
+        mod._registry._on_close_project = None
         try:
-            # Simulate what main(port=None) does before mcp.run()
-            registry._on_close_project = mod._stop_watcher
-            assert registry._on_close_project is mod._stop_watcher
+            _main._run_stdio_mcp(None)
         finally:
-            registry._on_close_project = orig
+            mod._registry._on_close_project = original_hook
 
-    def test_stdio_does_not_load_a_model(self):
-        """Stdio MCP is a thin client: main() must not call load_model().
-
-        The MCP server is a thin service client, so the in-process GPU model
-        load is removed from the stdio branch - every tool delegates to
-        the daemon over HTTP, so a model loaded here would be dead weight
-        and would violate the thin-client "load no Torch" contract.
-        """
-        import inspect
-
-        from .. import server
-
-        source = inspect.getsource(server.main)
-        assert "load_model" not in source, (
+        # Non-emptiness first: if the runner never reached the transport, the
+        # two assertions below would both hold vacuously.
+        assert entered == ["stdio"], entered
+        assert seen_hooks == [mod._stop_watcher], seen_hooks
+        assert loads == [], (
             "stdio MCP must not load a model; it delegates to the daemon"
         )
-
-    def test_stop_all_watchers_clears_state(self):
-        """_stop_all_watchers empties both dicts even when empty."""
-        import vaultspec_rag.server as mod
-
-        # Verify it's safe to call with no watchers running
-        mod._stop_all_watchers()
-        assert len(mod._watcher_tasks) == 0
-        assert len(mod._watcher_stops) == 0
 
 
 class TestServiceRegistryIntegration:
@@ -961,44 +959,79 @@ class TestHealthInfoReduction:
 
 
 class TestMultiProjectWatcher:
-    """Module-level watcher state supports multiple projects (PHASE3-001)."""
+    """``_stop_all_watchers`` really drains every registered project root."""
 
-    def test_watcher_tasks_is_dict(self):
-        from ..server import _watcher_tasks
+    def test_stop_watcher_on_an_unregistered_root_returns_no_cleanup(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """An unknown root has nothing to drain, so no cleanup task is owed.
 
-        assert isinstance(_watcher_tasks, dict)
-
-    def test_watcher_stops_is_dict(self):
-        from ..server import _watcher_stops
-
-        assert isinstance(_watcher_stops, dict)
-
-    def test_stop_all_watchers_callable(self):
-        from ..server import _stop_all_watchers
-
-        assert callable(_stop_all_watchers)
-
-    def test_stop_watcher_callable(self):
+        Mutation this catches: manufacturing a drain (and therefore a cleanup
+        task) for a root that was never registered. The earlier version of
+        this test called ``_stop_watcher`` and asserted nothing at all, so it
+        held for any return value.
+        """
+        from .. import server
         from ..server import _stop_watcher
+        from ..server import _watcher as watcher_lifecycle
 
-        assert callable(_stop_watcher)
+        root = tmp_path.resolve()
+        assert root not in server._watcher_tasks
 
-    def test_ensure_watcher_callable(self):
-        from ..server import _ensure_watcher
+        assert _stop_watcher(root) is None
+        assert root not in watcher_lifecycle._watcher_drains
 
-        assert callable(_ensure_watcher)
+    async def test_stop_all_watchers_drains_every_registered_root(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Two roots are registered; one call must clear intake for both.
 
-    def test_stop_all_on_empty_is_safe(self):
-        """Calling _stop_all_watchers with no running watchers is a no-op."""
-        from ..server import _stop_all_watchers
+        Mutation this catches: an early ``return ()`` from
+        ``_stop_all_watchers``, or a body that visits only one root. The
+        previous tests here asserted ``callable(...)``, ``isinstance(..., dict)``
+        and "does not raise" against already-empty state, so all of them held
+        against a ``_stop_all_watchers`` whose body did nothing at all.
+        """
+        from .. import server
+        from ..server import _stop_all_watchers, _watcher_stops, _watcher_tasks
+        from ..server import _watcher as watcher_lifecycle
 
-        _stop_all_watchers()  # must not raise
+        release = asyncio.Event()
 
-    def test_stop_watcher_nonexistent_root_is_safe(self, tmp_path: Path) -> None:
-        """Stopping a watcher for a root that was never started is safe."""
-        from ..server import _stop_watcher
+        async def _intake() -> None:
+            await release.wait()
 
-        _stop_watcher(tmp_path)  # must not raise
+        roots = [(tmp_path / "a").resolve(), (tmp_path / "b").resolve()]
+        intakes: dict[Path, asyncio.Task[None]] = {}
+        try:
+            for root in roots:
+                root.mkdir()
+                intakes[root] = asyncio.create_task(_intake())
+                with server._watcher_lock:
+                    _watcher_tasks[root] = intakes[root]
+                    _watcher_stops[root] = asyncio.Event()
+
+            # Precondition: both roots really are registered, so the
+            # post-conditions below cannot pass over empty state.
+            assert all(root in _watcher_tasks for root in roots)
+
+            cleanups = _stop_all_watchers()
+
+            assert len(cleanups) == len(roots), cleanups
+            for root in roots:
+                assert root not in _watcher_tasks, root
+                assert root not in _watcher_stops, root
+                assert root in watcher_lifecycle._watcher_drains, root
+        finally:
+            release.set()
+            for root in roots:
+                assert await server._wait_for_watcher_cleanup(root, timeout_seconds=10)
+            await asyncio.gather(*intakes.values(), return_exceptions=True)
+
+        for root in roots:
+            assert root not in watcher_lifecycle._watcher_drains, root
 
 
 class TestRegistryFullErrorShape:
@@ -1057,41 +1090,46 @@ class TestRegistryFullErrorShape:
 
 
 class TestDaemonServesNativeRestOnly:
-    """The HTTP daemon serves native REST only - no MCP mount, no wrapper.
+    """The HTTP daemon serves native REST only - no MCP surface is mounted.
 
-    Stdio is the sole MCP
-    transport. The daemon's ``Mount("/mcp")`` and the ``_mcp_no_redirect``
-    ASGI path-rewrite wrapper were removed outright (no shim, no
-    feature-flagged path), so a tool call no longer loops back into the
-    daemon that serves it. The function-source check is cheap, stable,
-    and survives refactors that keep the no-mount intent.
+    Stdio is the sole MCP transport. The daemon's ``Mount("/mcp")`` and the
+    ``_mcp_no_redirect`` ASGI path-rewrite wrapper were removed outright (no
+    shim, no feature-flagged path), so a tool call no longer loops back into
+    the daemon that serves it.
+
+    This drives the real route factory and reads the real route table, rather
+    than scanning ``main``'s source. The scan could not see this contract at
+    all: ``main`` is a two-line dispatcher, so it contains neither the mount
+    nor the app it would be added to.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_main_has_no_mcp_mount_or_redirect_wrapper(self):
-        """Regression guard: main() must not mount the MCP app or wrap ASGI."""
-        import inspect
-
-        from .. import server
-
-        source = inspect.getsource(server.main)
-        assert "_mcp_no_redirect" not in source, (
-            "main() must not reintroduce the /mcp redirect wrapper"
+    @staticmethod
+    def _served_paths() -> list[str]:
+        """Return the real route paths of the app the daemon serves."""
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="native-rest-only-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
         )
-        assert "/mcp" not in source, "main() must not reintroduce the daemon /mcp mount"
-        assert "streamable_http_app" not in source, (
-            "the daemon must not serve the streamable-HTTP MCP app"
-        )
+        return [str(getattr(route, "path", "")) for route in app.routes]
 
-    def test_main_hands_raw_app_to_uvicorn(self):
-        """The HTTP app is handed to uvicorn directly, with no ASGI wrapper."""
-        import inspect
+    def test_daemon_mounts_no_mcp_surface(self) -> None:
+        """No route the daemon serves sits under /mcp.
 
-        from .. import server
+        Mutation this catches: adding a ``Mount("/mcp", ...)`` - with or
+        without the streamable-HTTP app behind it - to the route table.
+        """
+        paths = self._served_paths()
 
-        source = inspect.getsource(server._main._run_http_daemon)
-        assert "uvicorn.run(\n            app," in source
+        # Non-emptiness first: an empty route table would satisfy the
+        # no-/mcp assertion below while proving nothing.
+        assert "/health" in paths, paths
+        assert not [p for p in paths if p.startswith("/mcp")], paths
 
 
 class TestDaemonLifecycleHelpers:
