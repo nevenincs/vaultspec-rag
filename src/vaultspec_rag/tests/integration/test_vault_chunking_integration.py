@@ -159,7 +159,7 @@ class TestChunkedVaultLayout:
         raw = (root / ".vault" / f"{doc_id}.md").read_text(encoding="utf-8")
         body = raw.split("---", 2)[2].strip()
         assert payload["content"] == body
-        assert _TAIL_NEEDLE in payload["content"]
+        assert _TAIL_NEEDLE in str(payload["content"])
 
     def test_list_all_documents_one_row_per_document(
         self, chunked_corpus: _ChunkedCorpus
@@ -170,7 +170,7 @@ class TestChunkedVaultLayout:
         assert len(ids) == len(set(ids))
         assert set(ids) == store.get_all_ids()
         long_doc = next(d for d in docs if d["id"] == chunked_corpus["long_doc_id"])
-        assert _TAIL_NEEDLE in long_doc["content"]
+        assert _TAIL_NEEDLE in str(long_doc["content"])
 
 
 class TestChunkedVaultLifecycle:
@@ -210,7 +210,7 @@ class TestChunkedVaultLifecycle:
             assert counts_after[long_doc_id] == 1
             payload = store.get_by_id(long_doc_id)
             assert payload is not None
-            assert _TAIL_NEEDLE not in payload["content"]
+            assert _TAIL_NEEDLE not in str(payload["content"])
         finally:
             store.close()
 
