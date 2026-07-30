@@ -98,8 +98,6 @@ def test_search_activity_transitions_once_from_active_to_terminal() -> None:
     assert snapshot["active"] == []
     assert snapshot["counts"] == {
         "active": 0,
-        "active_visible": 0,
-        "active_overflow": 0,
         "recent": 1,
         "total": 1,
     }
@@ -159,8 +157,6 @@ def test_search_activity_capacity_backpressures_until_every_query_is_reviewable(
     bounded = ledger.snapshot(include_query=True)
     assert bounded["counts"] == {
         "active": 1,
-        "active_visible": 1,
-        "active_overflow": 0,
         "recent": 0,
         "total": 1,
     }
@@ -183,8 +179,6 @@ def test_search_activity_capacity_backpressures_until_every_query_is_reviewable(
     terminal_records = ledger.snapshot(include_query=True)
     assert terminal_records["counts"] == {
         "active": 0,
-        "active_visible": 0,
-        "active_overflow": 0,
         "recent": 2,
         "total": 2,
     }
@@ -276,6 +270,42 @@ def test_search_activity_retains_every_terminal_failure_outcome() -> None:
     assert records["unavailable"]["availability_cause"] == "collection_missing"
 
 
+def test_search_activity_retention_evicts_the_oldest_query_text() -> None:
+    """Terminal retention is finite, and eviction takes the query text with it.
+
+    Proven able to fail: dropping the ``popleft`` eviction from the ledger's
+    recent ring keeps every terminal record, and this test then fails on the
+    retained-identity assertion below because the two oldest requests are still
+    present. Restored, only the newest two survive and the evicted query text is
+    unreachable through any serialization.
+    """
+    ledger = SearchActivityLedger(max_active=4, max_recent=2)
+    evicted_query = "the oldest served query must not outlive its retention window"
+    for index, query in enumerate(
+        (evicted_query, "second query", "third query", "fourth query")
+    ):
+        ticket = _start(ledger, f"retained-{index}", query=query)
+        assert ledger.finish(
+            ticket,
+            completion=SearchActivityCompletion(outcome="success", status_code=200),
+        )
+
+    snapshot = ledger.snapshot(include_query=True)
+    assert [record["request_id"] for record in snapshot["recent"]] == [
+        "retained-3",
+        "retained-2",
+    ]
+    assert snapshot["counts"] == {"active": 0, "recent": 2, "total": 2}
+    assert evicted_query not in str(snapshot)
+    assert (
+        ledger.snapshot(
+            include_query=True,
+            filters=SearchActivityFilters(request_id="retained-0"),
+        )["recent"]
+        == []
+    )
+
+
 def test_search_activity_handles_concurrent_start_and_finish() -> None:
     ledger = SearchActivityLedger(max_active=2, max_recent=24)
     participants = 16
@@ -305,8 +335,6 @@ def test_search_activity_handles_concurrent_start_and_finish() -> None:
     snapshot = ledger.snapshot(include_query=True)
     assert snapshot["counts"] == {
         "active": 0,
-        "active_visible": 0,
-        "active_overflow": 0,
         "recent": participants,
         "total": participants,
     }
