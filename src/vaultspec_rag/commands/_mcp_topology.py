@@ -13,7 +13,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Protocol, cast
 
-from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
     init_paths,
 )
 

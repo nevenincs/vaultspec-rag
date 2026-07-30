@@ -788,7 +788,7 @@ def _watcher_attempt_resilience(
     if slot.source in {JobSource.CODE, JobSource.DOCUMENT}:
         # Package-internal resilience projectors, shared with the dispatcher.
         from .job_dispatch import (
-            _admitted_resilience,  # pyright: ignore[reportPrivateUsage]
+            _admitted_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
         )
 
         base = _admitted_resilience(slot.source)
@@ -805,9 +805,9 @@ def _publish_watcher_index_resilience(
     """Publish checkpoint evidence for watcher-owned code and document work."""
     # Package-internal resilience projectors, shared with the dispatcher.
     from .job_dispatch import (
-        _code_resilience,  # pyright: ignore[reportPrivateUsage]
-        _document_resilience,  # pyright: ignore[reportPrivateUsage]
-        _publish_resilience,  # pyright: ignore[reportPrivateUsage]
+        _code_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+        _document_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+        _publish_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     )
 
     if slot.source not in {JobSource.CODE, JobSource.DOCUMENT}:
