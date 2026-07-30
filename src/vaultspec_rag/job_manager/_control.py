@@ -109,7 +109,7 @@ def _log_rejection(
 
 
 @dataclass(frozen=True, slots=True)
-class _RequestAttribution:
+class RequestAttribution:
     """Who asked for a rejected command, and which resource they named.
 
     Rejection logging needs both even when the target job does not exist or
@@ -422,7 +422,7 @@ class JobManagerControl(JobManagerState):
                 "force_termination_unavailable",
                 "Per-job force termination is unavailable for this runtime.",
                 target,
-                attribution=_RequestAttribution(job_id=job_id),
+                attribution=RequestAttribution(job_id=job_id),
             )
         if mode != "graceful":
             return None, self._error(
@@ -430,7 +430,7 @@ class JobManagerControl(JobManagerState):
                 "invalid_control_mode",
                 f"Unsupported control mode {mode!r}.",
                 target,
-                attribution=_RequestAttribution(job_id=job_id),
+                attribution=RequestAttribution(job_id=job_id),
             )
         if managed is None:
             return None, self._terminal_control_target_outcome(
@@ -470,7 +470,7 @@ class JobManagerControl(JobManagerState):
                 command,
                 "job_not_found",
                 "The job was not found.",
-                attribution=_RequestAttribution(job_id=job_id),
+                attribution=RequestAttribution(job_id=job_id),
             )
         if (
             terminal.snapshot.state is JobState.CANCELLED
@@ -699,7 +699,7 @@ class JobManagerControl(JobManagerState):
             )
             if binding is None:
                 return False
-            owner_loop = binding.loop if binding is not None else None
+            owner_loop = binding.loop
         if (
             owner_loop is None
             or owner_loop is current_loop
@@ -831,7 +831,7 @@ class JobManagerControl(JobManagerState):
                 command,
                 "job_not_found",
                 "The job was not found.",
-                attribution=_RequestAttribution(job_id=job_id),
+                attribution=RequestAttribution(job_id=job_id),
             )
         return JobOutcome(
             command=command,
@@ -959,7 +959,7 @@ class JobManagerControl(JobManagerState):
                     command,
                     "job_not_found",
                     "The job was not found.",
-                    attribution=_RequestAttribution(job_id=job_id),
+                    attribution=RequestAttribution(job_id=job_id),
                 )
             if (
                 managed.snapshot.attempt.number != terminal.attempt
@@ -1032,7 +1032,7 @@ class JobManagerControl(JobManagerState):
                     command,
                     "job_not_found",
                     "The job was not found.",
-                    attribution=_RequestAttribution(job_id=job_id),
+                    attribution=RequestAttribution(job_id=job_id),
                 )
             if (
                 managed.snapshot.state is not JobState.QUEUED
@@ -1104,7 +1104,7 @@ class JobManagerControl(JobManagerState):
                         "job creation."
                     ),
                     parent,
-                    attribution=_RequestAttribution(initiator=initiator),
+                    attribution=RequestAttribution(initiator=initiator),
                 )
             if len(self._active) >= self._max_nonterminal:
                 return self._error(
@@ -1115,7 +1115,7 @@ class JobManagerControl(JobManagerState):
                         f"capacity ({self._max_nonterminal})."
                     ),
                     parent,
-                    attribution=_RequestAttribution(initiator=initiator),
+                    attribution=RequestAttribution(initiator=initiator),
                 )
             equivalent = self._find_equivalent_active_locked(parent.snapshot.spec)
             if equivalent is not None:
@@ -1196,14 +1196,14 @@ class JobManagerControl(JobManagerState):
                 command,
                 "job_not_found",
                 "The job was not found.",
-                attribution=_RequestAttribution(job_id=job_id, initiator=initiator),
+                attribution=RequestAttribution(job_id=job_id, initiator=initiator),
             )
         return self._error(
             command,
             "job_not_terminal",
             "Only terminal jobs can be retried.",
             active,
-            attribution=_RequestAttribution(initiator=initiator),
+            attribution=RequestAttribution(initiator=initiator),
         )
 
     def _resolve_retry_ancestry_locked(
@@ -1271,7 +1271,7 @@ class JobManagerControl(JobManagerState):
                     command,
                     "job_not_found",
                     "The job was not found.",
-                    attribution=_RequestAttribution(job_id=job_id),
+                    attribution=RequestAttribution(job_id=job_id),
                 )
             self._terminal.remove(terminal)
             self._forget_idempotency_locked(job_id)
@@ -1520,7 +1520,7 @@ class JobManagerControl(JobManagerState):
         message: str,
         managed: ManagedJob | None = None,
         *,
-        attribution: _RequestAttribution | None = None,
+        attribution: RequestAttribution | None = None,
     ) -> JobOutcome:
         snapshot = self._snapshot_locked(managed) if managed is not None else None
         job_id = attribution.job_id if attribution is not None else None
