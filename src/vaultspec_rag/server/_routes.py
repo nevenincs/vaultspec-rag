@@ -513,7 +513,7 @@ def _normalise_controllable_filter(raw: str | None) -> bool | None:
     value = _normalise_filter_value(raw)
     if value is None:
         return None
-    if value in {"1", "true", "yes"}:
+    if value in _TRUTHY_QUERY_VALUES:
         return True
     if value in {"0", "false", "no"}:
         return False
