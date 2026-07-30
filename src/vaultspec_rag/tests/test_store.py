@@ -789,6 +789,28 @@ class TestCountsCreateNothing:
             store.close()
 
 
+# Annotated rather than inferred so each lambda's parameter has a declared
+# type; strict mode rejects a bare lambda in a parametrize list.
+_CATALOG_READS: list[tuple[Callable[[VaultStore], object], object, str]] = [
+    (lambda s: s.get_chunk_counts(), {}, "TABLE_NAME"),
+    (lambda s: s.get_stored_chunk_ordinals({"adr/absent"}), {}, "TABLE_NAME"),
+    (lambda s: s.list_all_documents(), [], "TABLE_NAME"),
+    (lambda s: s.scroll_code_content(), ([], None), "CODE_TABLE_NAME"),
+    (lambda s: s.scroll_document_content(), ([], None), "DOCUMENT_TABLE_NAME"),
+    (lambda s: s.code_content_ids_exist(["absent"]), False, "CODE_TABLE_NAME"),
+    (lambda s: s.document_content_ids_exist(["absent"]), False, "DOCUMENT_TABLE_NAME"),
+    (lambda s: s.get_all_document_content_ids(), set(), "DOCUMENT_TABLE_NAME"),
+]
+
+#: The subset that pushes a filter down through a declared payload index, so
+#: the schema reconcile must survive the non-creating guard.
+_FILTERED_CATALOG_READS: list[tuple[Callable[[VaultStore], object], str, str]] = [
+    (lambda s: s.get_chunk_counts(), "TABLE_NAME", "ensure_table"),
+    (lambda s: s.list_all_documents(), "TABLE_NAME", "ensure_table"),
+    (lambda s: s.scroll_code_content(), "CODE_TABLE_NAME", "ensure_code_table"),
+]
+
+
 class TestReadsCreateNothing:
     """Reading an absent collection answers empty and leaves it absent.
 
@@ -819,6 +841,87 @@ class TestReadsCreateNothing:
             assert store.get_by_id("adr/nothing-was-ever-indexed") is None
             assert not store.client.collection_exists(store.TABLE_NAME), (
                 f"get_by_id() created {store.TABLE_NAME}; a read must not create"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        ("read", "empty", "collection_attr"),
+        _CATALOG_READS,
+        ids=[
+            "get_chunk_counts",
+            "get_stored_chunk_ordinals",
+            "list_all_documents",
+            "scroll_code_content",
+            "scroll_document_content",
+            "code_content_ids_exist",
+            "document_content_ids_exist",
+            "get_all_document_content_ids",
+        ],
+    )
+    def test_every_catalog_read_of_an_unindexed_root_creates_no_collection(
+        self,
+        tmp_path: Path,
+        read: Callable[[VaultStore], object],
+        empty: object,
+        collection_attr: str,
+    ) -> None:
+        """Every catalog read answers for an absent collection, creating none.
+
+        One proof for the whole family rather than eight near-identical ones:
+        they differ only in which collection they address and what their empty
+        answer looks like, and the contract under test is the same sentence for
+        all of them.
+        """
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            collection = getattr(store, collection_attr)
+            assert not store.client.collection_exists(collection)
+
+            assert read(store) == empty
+            assert not store.client.collection_exists(collection), (
+                f"a catalog read created {collection}; a read must not create"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        ("read", "collection_attr", "ensure_attr"),
+        _FILTERED_CATALOG_READS,
+        ids=["get_chunk_counts", "list_all_documents", "scroll_code_content"],
+    )
+    def test_a_filtered_catalog_read_still_reconciles_an_existing_collection(
+        self,
+        tmp_path: Path,
+        read: Callable[[VaultStore], object],
+        collection_attr: str,
+        ensure_attr: str,
+    ) -> None:
+        """A read that pushes a filter down keeps its schema reconcile.
+
+        These three address their collection through a payload-indexed field -
+        ``doc_id``, ``chunk_ordinal``/``doc_type``, ``path`` - so the reconcile
+        is what applies a newly declared index to data indexed before the
+        declaration. Dropping it alongside the create would leave the filter
+        doing a linear scan for the life of the collection with nothing to
+        report it. The guard must skip creation, not the reconcile.
+        """
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            collection = getattr(store, collection_attr)
+            store._ensure_collection(collection)
+            assert store.client.collection_exists(collection)
+            assert not store._ensured.get(collection)
+
+            read(store)
+
+            assert store._ensured.get(collection), (
+                f"reading {collection} skipped the ensure; a newly declared "
+                f"payload index would never reach it ({ensure_attr})"
             )
         finally:
             store.close()
