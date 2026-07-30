@@ -394,11 +394,10 @@ def _commit_mcp_placement_and_mode(request: _McpPlacementCommitRequest) -> bool:
         ):
             rollback_errors = rollback_file_snapshots(snapshots)
             if rollback_errors:
-                rollback_message = "MCP transaction rollback failed: " + "; ".join(
-                    rollback_errors
+                record_mcp_failure(
+                    request.report,
+                    "MCP transaction rollback failed: " + "; ".join(rollback_errors),
                 )
-                request.report.mcp_errors.append(rollback_message)
-                request.report.warnings.append(rollback_message)
             return False
         if request.persist_mode:
             persist_rag_mode(request.target, request.mode)
@@ -422,11 +421,10 @@ def _commit_mcp_placement_and_mode(request: _McpPlacementCommitRequest) -> bool:
             request.report, exc, configure_torch=request.configure_torch
         )
         if rollback_errors:
-            rollback_message = "MCP transaction rollback failed: " + "; ".join(
-                rollback_errors
+            record_mcp_failure(
+                request.report,
+                "MCP transaction rollback failed: " + "; ".join(rollback_errors),
             )
-            request.report.mcp_errors.append(rollback_message)
-            request.report.warnings.append(rollback_message)
         return False
     return True
 
