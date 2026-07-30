@@ -13,20 +13,20 @@ related:
 
 ## Status
 
-Unresolved. The earlier completion claim is withdrawn.
+Satisfied by the landed manager recovery implementation and its checked-in CPU proof. No test command was rerun during this release review.
 
 ## Description
 
-The prior CPU proof covers successful same-ID resume but not recovery persistence failure, partial durable publication, restart recovery, or duplicate-attempt prevention.
+Manager proof covers real unpublished-write rollback and retry, durable queued-state restart recovery, and an atomic exact-attempt dispatch claim across concurrent and loopless scheduling.
 
 ## Outcome
 
-Pending: use the real manager, production persistence writer, real filesystem failure, and real async dispatch to prove unpublished-write failure stays closed and retries; separately restore a real durably queued desired-running generation to prove post-publication restart recovery. Both paths must preserve one logical ID, increment the attempt only once, dispatch once, and leave desired paused or cancelled work untouched.
+A pending recovery token binds the logical job ID, attempt, dispatcher binding nonce, and claim generation under the manager lock. Canonical dispatch consumes only that exact token; concurrent scans report one claimant, while cancellation, shutdown, missing or stopped loops, and later owner-loop recovery clear or supersede stale claims without creating another attempt. The manager tests retain one ID, increment the resumed attempt once, and dispatch once.
 
 ## Evidence
 
-No current test satisfies both observable persistence outcomes without fakes, mocks, patches, monkeypatches, skips, or xfails.
+The checked-in tests use the production manager, real filesystem persistence, real threads, real event loops, and real runners. They cover unpublished failure and repaired retry, durable queued restart, concurrent claim coalescing, loopless dispatch through the adopted service loop, blocked callback invalidation, and recovery after missing or stopped loop ownership. Commit `b0d28a30` routes recovery through canonical manager dispatch rather than a second callback implementation.
 
 ## Notes
 
-All required proof is CPU-only. No service process, RAG endpoint, CUDA allocation, or GPU test was run.
+This closes the manager boundary only. Registry-owned persistence-before-admission and repaired concurrent retry are satisfied separately under S12 by `bbf02d53`. The independent loopless-callback finding was rejected during final acceptance: canonical admission consumes the exact claim before task creation, and every earlier refusal or loop handoff failure clears that exact claim, so the alleged retained pending claim has neither a valid source path nor a real reproducer. No speculative task-factory repair was committed. No service, RAG endpoint, CUDA allocation, GPU test, or CPU test was run in this reconciliation.

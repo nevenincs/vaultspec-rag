@@ -61,19 +61,19 @@ Replace the shared hold gate with a registry-owned controller that drains cooper
 Establish the one stateful quiesce authority, its admission epochs and drain evidence, and reversible GPU-stack release and rebuild without closing stores.
 
 - [x] `W02.P04.S10` - Create the serialized resource-quiesce controller with state transitions, epoch-scoped compute tickets, bounded drain acknowledgement and truthful safety snapshots; `src/vaultspec_rag/service_quiesce.py`.
-- [ ] `W02.P04.S11` - Keep warming admission closed through durable same-ID recovery preparation, then open the new epoch and publish typed recovery failure truth; `src/vaultspec_rag/service.py`.
-- [ ] `W02.P04.S12` - Prove persistence-before-admission ordering, coalesced retry, and fail-closed recovery races with real threads and CPU-only registry dependencies; `src/vaultspec_rag/tests/test_service_registry_quiesce_transitions.py`.
+- [x] `W02.P04.S11` - Keep warming admission closed through durable same-ID recovery preparation, open the new epoch only for prepared or no-work, and preserve exhaustive durable, unpublished, and published-not-durable typed evidence; `src/vaultspec_rag/service.py`.
+- [x] `W02.P04.S12` - Prove with real threads, real manager persistence, and a bound runner that recovery is durable before admission and execution, repaired concurrent retries coalesce, failure stays closed, and one dispatch claim starts one attempt; `src/vaultspec_rag/tests/test_service_registry_recovery.py`.
 
 ### Phase `W02.P05` - Cooperative job and search drain
 
 Make global quiesce unwind managed attempts and drain search work without letting token-local cancellation or protected mutations corrupt controller state.
 
 - [x] `W02.P05.S13` - Separate token-local cancellation and shutdown from global resource-quiesce signalling while preserving protected checkpoint semantics; `src/vaultspec_rag/job_control.py`.
-- [ ] `W02.P05.S14` - Prepare durable same-ID recovery by scanning paused and queued desired-running jobs, preserving operator intent, and returning typed persistence outcomes; `src/vaultspec_rag/job_manager`.
+- [x] `W02.P05.S14` - Prepare durable same-ID recovery across paused and queued desired-running jobs, preserve operator intent, and return exhaustive typed durable, unpublished, or published-not-durable persistence evidence; `src/vaultspec_rag/job_manager`.
 - [x] `W02.P05.S15` - Guard index streaming safe boundaries so quiesce observations remain outside GPU locks and indivisible storage mutations; `src/vaultspec_rag/indexer/_streaming.py`.
-- [ ] `W02.P05.S16` - Translate controller-closed search admission into the canonical retryable HTTP 503 response before project or GPU ownership; `src/vaultspec_rag/server/_routes_search.py`.
-- [ ] `W02.P05.S17` - Prove real unpublished-write retry and published queued-state restart recovery without duplicate attempts or dispatch; `src/vaultspec_rag/tests/test_job_manager_quiesce.py`.
-- [ ] `W02.P05.S18` - Prove closed search admission returns the canonical structured HTTP 503 while retaining no project, model, reranker, or CUDA state; `src/vaultspec_rag/tests/test_search_quiesce_admission.py`.
+- [x] `W02.P05.S16` - Translate controller-closed search admission into the canonical retryable HTTP 503 response before project or GPU ownership; `src/vaultspec_rag/server/_routes_search.py`.
+- [x] `W02.P05.S17` - Prove real unpublished-write retry, durable queued restart recovery, and atomic exact-attempt dispatch-token coalescing across concurrent and loopless callbacks without duplicate attempts or dispatch; `src/vaultspec_rag/tests/test_job_manager_quiesce.py`.
+- [x] `W02.P05.S18` - Prove closed search admission returns the canonical structured HTTP 503 while retaining no project, model, reranker, or CUDA state; `src/vaultspec_rag/tests/test_search_quiesce_admission.py`.
 
 ## Wave `W03` - Publish truthful lifecycle status
 

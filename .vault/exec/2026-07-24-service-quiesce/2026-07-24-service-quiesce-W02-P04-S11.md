@@ -13,20 +13,20 @@ related:
 
 ## Status
 
-Unresolved. The earlier completion claim remains withdrawn.
+Satisfied by the landed W02 implementation and reconciled source inspection. No runtime or test command was executed during this release review.
 
 ## Description
 
-The registry transition owner must keep the controller in `warming` with compute admission closed through GPU rebuild and durable same-ID recovery preparation. Recovery preparation persists eligible `paused` and `queued` jobs whose desired state is `running` before `complete_warming` opens the new admission epoch.
+The registry transition owner keeps the controller in `warming` with compute admission closed through GPU rebuild and durable same-ID recovery preparation. Recovery preparation returns exhaustive typed evidence for `durable`, `not_required`, `unpublished`, and `published_not_durable` outcomes before `complete_warming` may open the new admission epoch.
 
 ## Outcome
 
-Pending: order resume as warming, rebuild, typed durable recovery preparation, controller acknowledgement, and dispatch. A recovery persistence failure must return `resume_recovery_failed`, retain `warming`, and remain admission-closed. A later resume must retry recovery instead of taking an unconditional already-running shortcut.
+`ServiceRegistry._resume_resources_once` opens admission only for prepared or no-work results. Unpublished rollback and published-but-not-durable retention map to distinct failure reasons under the one `resume_recovery_failed` transition, remain in `warming`, and schedule no work. A later resume retries the same paused-plus-queued scan.
 
 ## Evidence
 
-The accepted ADR now binds persistence-before-admission and typed fail-closed recovery. No implementation evidence currently satisfies this reopened Step.
+Source inspection of the landed resume-recovery model and registry coordinator confirms exhaustive enum matching and distinct controller failure truth. The manager dispatch repair in `b0d28a30` does not supply this ordering by itself; the governing implementation is the typed recovery work landed earlier and retained at current HEAD.
 
 ## Notes
 
-The registry transition condition owns serialization only; GPU and job-manager locks remain unnested. No service, RAG endpoint, CUDA allocation, or GPU test was run.
+The registry transition condition owns serialization only; GPU and job-manager locks remain unnested. Public route-envelope rendering remains W03 work. No service, RAG endpoint, CUDA allocation, GPU test, or CPU test was run in this reconciliation.
