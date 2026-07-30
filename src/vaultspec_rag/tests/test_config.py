@@ -183,7 +183,7 @@ def _restore_resilience_env(saved: dict[EnvVar, str | None]) -> None:
 
 def test_service_idle_ttl_default() -> None:
     cfg = get_config()
-    assert cast("int", cfg.service_idle_ttl_seconds) == 1800
+    assert cfg.service_idle_ttl_seconds == 1800
 
 
 @pytest.mark.parametrize(
@@ -230,7 +230,7 @@ def test_empty_path_env_falls_back_to_default_not_cwd() -> None:
     prev = set_env(EnvVar.STATUS_DIR, "   ")
     reset_config()
     try:
-        resolved = cast("str", get_config().status_dir)
+        resolved = get_config().status_dir
         assert resolved == default
         assert resolved not in ("", ".")
     finally:
@@ -243,7 +243,7 @@ def test_nonempty_path_env_is_still_honoured() -> None:
     prev = set_env(EnvVar.STATUS_DIR, "/custom/status/dir")
     reset_config()
     try:
-        assert cast("str", get_config().status_dir) == "/custom/status/dir"
+        assert get_config().status_dir == "/custom/status/dir"
     finally:
         restore_env(EnvVar.STATUS_DIR, prev)
         reset_config()
@@ -251,17 +251,17 @@ def test_nonempty_path_env_is_still_honoured() -> None:
 
 def test_service_max_projects_default() -> None:
     cfg = get_config()
-    assert cast("int", cfg.service_max_projects) == 16
+    assert cfg.service_max_projects == 16
 
 
 def test_managed_log_max_bytes_default() -> None:
     cfg = get_config()
-    assert cast("int", cfg.managed_log_max_bytes) == 2097152
+    assert cfg.managed_log_max_bytes == 2097152
 
 
 def test_managed_log_backup_count_default() -> None:
     cfg = get_config()
-    assert cast("int", cfg.managed_log_backup_count) == 5
+    assert cfg.managed_log_backup_count == 5
 
 
 def test_managed_log_environment_names_are_generic_only() -> None:
@@ -395,12 +395,10 @@ def test_document_encode_batch_is_independent_of_vault_and_code() -> None:
     # path back at embedding_encode_batch_size would silently reintroduce the
     # window-sized-batch overrun the dedicated knob exists to prevent.
     cfg = get_config()
-    assert cast("int", cfg.embedding_document_encode_batch_size) == 12
-    assert cast("int", cfg.embedding_encode_batch_size) == 32
-    assert cast("int", cfg.embedding_code_encode_batch_size) == 32
-    assert cast("int", cfg.embedding_document_encode_batch_size) != cast(
-        "int", cfg.embedding_encode_batch_size
-    )
+    assert cfg.embedding_document_encode_batch_size == 12
+    assert cfg.embedding_encode_batch_size == 32
+    assert cfg.embedding_code_encode_batch_size == 32
+    assert cfg.embedding_document_encode_batch_size != cfg.embedding_encode_batch_size
 
 
 def test_document_encode_batch_env_override_is_independent() -> None:
@@ -410,11 +408,11 @@ def test_document_encode_batch_env_override_is_independent() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("int", cfg.embedding_document_encode_batch_size)
+        value = cfg.embedding_document_encode_batch_size
         assert value == 5
         assert isinstance(value, int)
-        assert cast("int", cfg.embedding_encode_batch_size) == 32
-        assert cast("int", cfg.embedding_code_encode_batch_size) == 32
+        assert cfg.embedding_encode_batch_size == 32
+        assert cfg.embedding_code_encode_batch_size == 32
     finally:
         restore_env(EnvVar.EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE, prev)
         reset_config()
@@ -425,7 +423,7 @@ def test_service_idle_ttl_env_override() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("int", cfg.service_idle_ttl_seconds)
+        value = cfg.service_idle_ttl_seconds
         assert value == 60
         assert isinstance(value, int)
     finally:
@@ -438,7 +436,7 @@ def test_service_max_projects_env_override() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("int", cfg.service_max_projects)
+        value = cfg.service_max_projects
         assert value == 4
         assert isinstance(value, int)
     finally:
@@ -451,7 +449,7 @@ def test_managed_log_max_bytes_env_override() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("int", cfg.managed_log_max_bytes)
+        value = cfg.managed_log_max_bytes
         assert value == 4096
         assert isinstance(value, int)
     finally:
@@ -464,7 +462,7 @@ def test_managed_log_backup_count_env_override() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("int", cfg.managed_log_backup_count)
+        value = cfg.managed_log_backup_count
         assert value == 2
         assert isinstance(value, int)
     finally:
@@ -478,7 +476,7 @@ def test_managed_log_max_bytes_rejects_unbounded_values(raw: str) -> None:
     try:
         reset_config()
         with pytest.raises(ValueError, match="must be a positive integer"):
-            _ = cast("int", get_config().managed_log_max_bytes)
+            _ = get_config().managed_log_max_bytes
     finally:
         restore_env(EnvVar.MANAGED_LOG_MAX_BYTES, prev)
         reset_config()
@@ -489,7 +487,7 @@ def test_managed_log_backup_count_rejects_negative_value() -> None:
     try:
         reset_config()
         with pytest.raises(ValueError, match="must be a non-negative integer"):
-            _ = cast("int", get_config().managed_log_backup_count)
+            _ = get_config().managed_log_backup_count
     finally:
         restore_env(EnvVar.MANAGED_LOG_BACKUP_COUNT, prev)
         reset_config()
@@ -622,12 +620,12 @@ def test_cuda_ceiling_accepts_zero_sentinel_but_rejects_negative() -> None:
     try:
         os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "0"
         reset_config()
-        assert cast("float", get_config().index_cuda_ceiling_mib) == 0.0
+        assert get_config().index_cuda_ceiling_mib == 0.0
 
         os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "-1"
         reset_config()
         with pytest.raises(ValueError, match="index_cuda_ceiling_mib"):
-            _ = cast("float", get_config().index_cuda_ceiling_mib)
+            _ = get_config().index_cuda_ceiling_mib
     finally:
         _restore_resilience_env(saved)
         reset_config()
@@ -640,7 +638,7 @@ def test_resilience_positive_float_settings_reject_nonfinite(raw: str) -> None:
     try:
         reset_config()
         with pytest.raises(ValueError, match="index_no_progress_timeout_seconds"):
-            _ = cast("float", get_config().index_no_progress_timeout_seconds)
+            _ = get_config().index_no_progress_timeout_seconds
     finally:
         _restore_resilience_env(saved)
         reset_config()
@@ -655,7 +653,7 @@ def test_watch_retry_jitter_rejects_values_outside_closed_unit_interval(
     try:
         reset_config()
         with pytest.raises(ValueError, match="watch_retry_jitter_fraction"):
-            _ = cast("float", get_config().watch_retry_jitter_fraction)
+            _ = get_config().watch_retry_jitter_fraction
     finally:
         _restore_resilience_env(saved)
         reset_config()
@@ -670,7 +668,7 @@ def test_cuda_allocator_fraction_rejects_values_outside_open_closed_interval(
     try:
         reset_config()
         with pytest.raises(ValueError, match="index_cuda_allocator_fraction"):
-            _ = cast("float", get_config().index_cuda_allocator_fraction)
+            _ = get_config().index_cuda_allocator_fraction
     finally:
         _restore_resilience_env(saved)
         reset_config()
@@ -721,7 +719,7 @@ def test_index_support_profile_rejects_unknown_name() -> None:
     try:
         reset_config()
         with pytest.raises(ValueError, match="index_support_profile"):
-            _ = cast("str", get_config().index_support_profile)
+            _ = get_config().index_support_profile
     finally:
         _restore_resilience_env(saved)
         reset_config()
@@ -803,8 +801,8 @@ def test_low_configured_memory_budget_accepts_exact_limit_and_latches_rss() -> N
         reset_config()
         cfg = get_config()
         budget = MemoryBudget(
-            rss_ceiling_mib=cast("float", cfg.index_rss_ceiling_mib),
-            cuda_ceiling_mib=cast("float", cfg.index_cuda_ceiling_mib),
+            rss_ceiling_mib=cfg.index_rss_ceiling_mib,
+            cuda_ceiling_mib=cfg.index_cuda_ceiling_mib,
         )
         exact = budget.observe(
             label="exact-low-limits",
@@ -848,9 +846,7 @@ def test_low_configured_cuda_budget_returns_typed_failure() -> None:
     os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "3"
     try:
         reset_config()
-        budget = MemoryBudget(
-            cuda_ceiling_mib=cast("float", get_config().index_cuda_ceiling_mib)
-        )
+        budget = MemoryBudget(cuda_ceiling_mib=get_config().index_cuda_ceiling_mib)
         with pytest.raises(JobError) as failure:
             budget.observe(
                 label="cuda-failure",
@@ -880,9 +876,7 @@ def test_cuda_reserved_above_ceiling_is_diagnostic_not_enforced() -> None:
     os.environ[EnvVar.INDEX_CUDA_CEILING_MIB.value] = "3"
     try:
         reset_config()
-        budget = MemoryBudget(
-            cuda_ceiling_mib=cast("float", get_config().index_cuda_ceiling_mib)
-        )
+        budget = MemoryBudget(cuda_ceiling_mib=get_config().index_cuda_ceiling_mib)
         snapshot = budget.observe(
             label="reserved-retention-only",
             rss_mib=0.0,
@@ -995,21 +989,21 @@ print(f"{rss_kind},{cuda_kind}")
 
 def test_watch_enabled_default() -> None:
     cfg = get_config()
-    value = cast("bool", cfg.watch_enabled)
+    value = cfg.watch_enabled
     assert value is True
     assert isinstance(value, bool)
 
 
 def test_watch_debounce_ms_default() -> None:
     cfg = get_config()
-    value = cast("int", cfg.watch_debounce_ms)
+    value = cfg.watch_debounce_ms
     assert value == 2000
     assert isinstance(value, int)
 
 
 def test_watch_cooldown_s_default() -> None:
     cfg = get_config()
-    value = cast("float", cfg.watch_cooldown_s)
+    value = cfg.watch_cooldown_s
     assert value == 30.0
     assert isinstance(value, float)
 
@@ -1019,7 +1013,7 @@ def test_watch_debounce_ms_env_override() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("int", cfg.watch_debounce_ms)
+        value = cfg.watch_debounce_ms
         assert value == 500
         assert isinstance(value, int)
     finally:
@@ -1033,9 +1027,9 @@ def test_watch_debounce_ms_env_zero_means_no_delay() -> None:
     try:
         reset_config()
         cfg = get_config()
-        assert cast("int", cfg.watch_debounce_ms) == 0
+        assert cfg.watch_debounce_ms == 0
         # The watcher stays enabled; only watch_enabled disables it.
-        assert cast("bool", cfg.watch_enabled) is True
+        assert cfg.watch_enabled is True
     finally:
         restore_env(EnvVar.WATCH_DEBOUNCE_MS, prev)
         reset_config()
@@ -1046,7 +1040,7 @@ def test_watch_cooldown_s_env_override() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("float", cfg.watch_cooldown_s)
+        value = cfg.watch_cooldown_s
         assert value == 1.5
         assert isinstance(value, float)
     finally:
@@ -1064,7 +1058,7 @@ def test_watch_enabled_env_falsey(raw: str) -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("bool", cfg.watch_enabled)
+        value = cfg.watch_enabled
         assert value is False
         assert isinstance(value, bool)
     finally:
@@ -1082,7 +1076,7 @@ def test_watch_enabled_env_truthy(raw: str) -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("bool", cfg.watch_enabled)
+        value = cfg.watch_enabled
         assert value is True
         assert isinstance(value, bool)
     finally:
@@ -1114,7 +1108,7 @@ def test_qdrant_server_default_is_true() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("bool", cfg.qdrant_server)
+        value = cfg.qdrant_server
         assert value is True
         assert isinstance(value, bool)
     finally:
@@ -1127,7 +1121,7 @@ def test_local_only_default_is_false() -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("bool", cfg.local_only)
+        value = cfg.local_only
         assert value is False
         assert isinstance(value, bool)
     finally:
@@ -1160,8 +1154,8 @@ def test_local_only_env_flips_effective_mode_off(raw: str) -> None:
         # local-only deterministically wins over the server default:
         # qdrant_server stays its default-true while effective mode is
         # forced off.
-        assert cast("bool", cfg.qdrant_server) is True
-        assert cast("bool", cfg.local_only) is True
+        assert cfg.qdrant_server is True
+        assert cfg.local_only is True
         assert cfg.effective_server_mode() is False
     finally:
         _restore_server_mode_env(saved)
@@ -1175,7 +1169,7 @@ def test_local_only_env_falsey_keeps_server_mode(raw: str) -> None:
     try:
         reset_config()
         cfg = get_config()
-        assert cast("bool", cfg.local_only) is False
+        assert cfg.local_only is False
         assert cfg.effective_server_mode() is True
     finally:
         _restore_server_mode_env(saved)
@@ -1190,8 +1184,8 @@ def test_qdrant_server_env_off_disables_effective_mode() -> None:
         cfg = get_config()
         # The redundant server-mode env knob set off also disables
         # effective mode, independently of local_only.
-        assert cast("bool", cfg.qdrant_server) is False
-        assert cast("bool", cfg.local_only) is False
+        assert cfg.qdrant_server is False
+        assert cfg.local_only is False
         assert cfg.effective_server_mode() is False
     finally:
         _restore_server_mode_env(saved)
@@ -1205,8 +1199,8 @@ def test_local_only_wins_even_when_server_env_on() -> None:
     try:
         reset_config()
         cfg = get_config()
-        assert cast("bool", cfg.qdrant_server) is True
-        assert cast("bool", cfg.local_only) is True
+        assert cfg.qdrant_server is True
+        assert cfg.local_only is True
         assert cfg.effective_server_mode() is False
     finally:
         _restore_server_mode_env(saved)
@@ -1219,8 +1213,8 @@ def test_code_noise_profile_defaults() -> None:
     assert cfg.code_noise_demote_domains == frozenset(
         {"tests", "docs", "locale", "vendored"}
     )
-    assert cast("float", cfg.code_noise_demote_penalty) == pytest.approx(0.3)
-    assert cast("bool", cfg.dedup_locales_default) is True
+    assert cfg.code_noise_demote_penalty == pytest.approx(0.3)
+    assert cfg.dedup_locales_default is True
 
 
 def test_parse_domain_set_drops_unknown_and_prod() -> None:
@@ -1256,8 +1250,8 @@ def test_code_noise_env_override_penalty_and_dedup() -> None:
     try:
         reset_config()
         cfg = get_config()
-        assert cast("float", cfg.code_noise_demote_penalty) == pytest.approx(0.5)
-        assert cast("bool", cfg.dedup_locales_default) is False
+        assert cfg.code_noise_demote_penalty == pytest.approx(0.5)
+        assert cfg.dedup_locales_default is False
     finally:
         restore_env(EnvVar.CODE_NOISE_DEMOTE_PENALTY, prev_pen)
         restore_env(EnvVar.DEDUP_LOCALES_DEFAULT, prev_dedup)
@@ -1268,7 +1262,7 @@ def test_reranker_enabled_env_override() -> None:
     prev = set_env(EnvVar.RERANKER_ENABLED, "0")
     try:
         reset_config()
-        assert cast("bool", get_config().reranker_enabled) is False
+        assert get_config().reranker_enabled is False
     finally:
         restore_env(EnvVar.RERANKER_ENABLED, prev)
         reset_config()
@@ -1278,7 +1272,7 @@ def test_index_reuse_enabled_default() -> None:
     # Encode-seam vector reuse ships on: the fork-index GPU win is the default,
     # and the off-switch is the opt-out, not the opt-in.
     cfg = get_config()
-    value = cast("bool", cfg.index_reuse_enabled)
+    value = cfg.index_reuse_enabled
     assert value is True
     assert isinstance(value, bool)
 
@@ -1295,7 +1289,7 @@ def test_index_reuse_enabled_env_falsey(raw: str) -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("bool", cfg.index_reuse_enabled)
+        value = cfg.index_reuse_enabled
         assert value is False
         assert isinstance(value, bool)
     finally:
@@ -1313,7 +1307,7 @@ def test_index_reuse_enabled_env_truthy(raw: str) -> None:
     try:
         reset_config()
         cfg = get_config()
-        value = cast("bool", cfg.index_reuse_enabled)
+        value = cfg.index_reuse_enabled
         assert value is True
         assert isinstance(value, bool)
     finally:
@@ -1326,8 +1320,8 @@ def test_index_reuse_enabled_not_gated_by_support_profile() -> None:
     # selecting the lightweight profile must never flip the reuse knob off.
     try:
         cfg = get_config({"index_support_profile": "embedded-local"})
-        assert cast("str", cfg.index_support_profile) == "embedded-local"
-        assert cast("bool", cfg.index_reuse_enabled) is True
+        assert cfg.index_support_profile == "embedded-local"
+        assert cfg.index_reuse_enabled is True
     finally:
         reset_config()
 
@@ -1340,12 +1334,12 @@ def test_index_reuse_enabled_reset_config_picks_up_change() -> None:
     try:
         reset_config()
         first = get_config()
-        assert cast("bool", first.index_reuse_enabled) is True
+        assert first.index_reuse_enabled is True
         os.environ[EnvVar.INDEX_REUSE.value] = "0"
         reset_config()
         second = get_config()
         assert second is not first
-        assert cast("bool", second.index_reuse_enabled) is False
+        assert second.index_reuse_enabled is False
     finally:
         restore_env(EnvVar.INDEX_REUSE, prev)
         reset_config()
@@ -1378,7 +1372,7 @@ def test_negative_idle_ttl_is_rejected_while_zero_is_admitted() -> None:
     prev = set_env(EnvVar.SERVICE_IDLE_TTL_SECONDS, "0")
     try:
         reset_config()
-        assert cast("int", get_config().service_idle_ttl_seconds) == 0
+        assert get_config().service_idle_ttl_seconds == 0
 
         os.environ[EnvVar.SERVICE_IDLE_TTL_SECONDS.value] = "-5"
         reset_config()
@@ -1454,8 +1448,8 @@ def test_document_chunk_ratio_resolves_through_the_canonical_map() -> None:
     try:
         reset_config()
         cfg = get_config()
-        assert cast("int", cfg.document_chunk_chars_per_token) == 4
-        assert cfg.document_chunk_chars == cast("int", cfg.embedding_max_seq_length) * 4
+        assert cfg.document_chunk_chars_per_token == 4
+        assert cfg.document_chunk_chars == cfg.embedding_max_seq_length * 4
     finally:
         restore_env(EnvVar.DOCUMENT_CHUNK_CHARS_PER_TOKEN, prev)
         reset_config()

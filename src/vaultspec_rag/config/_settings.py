@@ -932,6 +932,114 @@ class VaultSpecConfigWrapper:
             return "default"
         return cast("PreprocessMode", configured)
 
+    # Declared types for every RAG setting ``__getattr__`` resolves below.
+    # A bare annotation creates no instance attribute - ``__getattr__`` is
+    # still the sole runtime source of every one of these values, unchanged -
+    # but it gives the type checker a declared member to resolve the read
+    # against, so `cfg.qdrant_port` types as ``int`` instead of ``Any``
+    # without a property method body per key. The type of every entry here
+    # is not a guess: it is exactly what ``_checked``/``_resolve_rag_default``
+    # already narrows the value to, via ``SETTING_BOUNDS`` (numeric and
+    # choice bounds) or the declared-bool defaults in ``_RAG_DEFAULTS``
+    # itself; a key with neither stays the type of its shipped default.
+    # Settings covered by an explicit ``@property`` above are intentionally
+    # absent - that property's own return annotation already types their
+    # reads, and a second declaration here would be a second, driftable
+    # source of truth for the same key.
+    qdrant_url: str | None
+    qdrant_api_key: str | None
+    qdrant_quantization: str | None
+    qdrant_server: bool
+    local_only: bool
+    qdrant_port: int
+    qdrant_binary: str | None
+    qdrant_storage_dir: str
+    storage_autoprune: bool
+    storage_autoprune_interval_minutes: float
+    storage_autoprune_grace_hours: float
+    storage_autoprune_grace_hours_data: float
+    storage_autoprune_archive_retention_days: float
+    storage_autoprune_archive_max_gb: float
+    storage_autoprune_max_per_cycle: int
+    storage_autoprune_ephemeral_idle_hours: float
+    integrity_auto_repair: bool
+    storage_reconcile: bool
+    storage_reconcile_max_per_cycle: int
+    storage_reconcile_budget_seconds: float
+    data_dir: str
+    qdrant_dir: str
+    index_metadata_file: str
+    code_index_metadata_file: str
+    status_dir: str
+    log_file: str
+    graph_ttl_seconds: float
+    embedding_batch_size: int
+    embedding_encode_batch_size: int
+    max_embed_chars: int
+    embedding_max_seq_length: int
+    index_chunk_workers: int
+    embedding_code_encode_batch_size: int
+    embedding_document_encode_batch_size: int
+    embedding_encode_token_budget: int
+    embedding_encode_chars_per_token: int
+    index_cache_flush_slices: int
+    vault_cache_flush_slices: int
+    document_cache_flush_slices: int
+    index_parallel_min_bytes: int
+    dense_backend: str
+    dense_onnx_file: str
+    embedding_model: str
+    embedding_dimension: int
+    sparse_enabled: bool
+    sparse_model: str
+    reranker_enabled: bool
+    reranker_model: str
+    reranker_batch_size: int
+    reranker_max_length: int
+    vault_chunk_chars: int
+    vault_intent_default: str
+    vault_intent_ranking_enabled: bool
+    vault_intent_type_cap: int
+    search_concurrency: int
+    index_job_concurrency: int
+    index_reuse_enabled: bool
+    mcp_port: int
+    log_level: str
+    service_idle_ttl_seconds: int
+    service_max_projects: int
+    service_search_timeout_seconds: float
+    service_admin_timeout_seconds: float
+    qdrant_ready_timeout_seconds: float
+    managed_log_max_bytes: int
+    managed_log_backup_count: int
+    job_max_nonterminal: int
+    job_shutdown_timeout_seconds: float
+    store_operation_timeout_seconds: float
+    store_write_retry_attempts: int
+    index_no_progress_timeout_seconds: float
+    watch_retry_jitter_fraction: float
+    watch_circuit_failure_threshold: int
+    index_rss_ceiling_mib: float
+    index_cuda_ceiling_mib: float
+    index_cuda_headroom_mib: float
+    index_cuda_allocator_fraction: float
+    gpu_admission_floor_mib: int
+    index_support_profile: str
+    watch_enabled: bool
+    watch_debounce_ms: int
+    watch_cooldown_s: float
+    preprocess_max_emitted_bytes: int
+    document_chunk_chars_per_token: int
+    html_strip: bool
+    code_noise_demote_penalty: float
+    dedup_locales_default: bool
+
+    # The one base-``VaultSpecConfig`` field the RAG package actually reads
+    # through ``get_config()`` (the rest of that dataclass's fields are
+    # never accessed off the wrapper). Declared for the same reason as the
+    # RAG keys above - ``__getattr__`` still does the delegating.
+    docs_dir: str
+
     def __getattr__(self, name: str) -> Any:
         """Return a config attribute, checking env overrides then defaults.
 
@@ -1061,6 +1169,27 @@ _orphaned_bounds = sorted(set(SETTING_BOUNDS) - set(_all_defaults))
 if _orphaned_bounds:
     raise RuntimeError(
         "bounds declared for unknown settings: " + ", ".join(_orphaned_bounds)
+    )
+
+# Every RAG setting must have a declared read type - either the class
+# annotation block above ``__getattr__`` or a shadowing ``@property`` -
+# so a read never silently regresses to ``Any``. Checked at import for the
+# same reason as the two checks above: the omission is invisible at every
+# other gate (ruff, ty, a green ``basedpyright`` run on the day the key was
+# added) and only shows up as a widening Any surface far from its cause.
+_declared_types = set(vars(VaultSpecConfigWrapper).get("__annotations__", {}))
+_declared_properties = {
+    name
+    for name, value in vars(VaultSpecConfigWrapper).items()
+    if isinstance(value, property)
+}
+_undeclared_settings = sorted(
+    set(_all_defaults) - _declared_types - _declared_properties
+)
+if _undeclared_settings:
+    raise RuntimeError(
+        "settings have no declared read type (add a class annotation or an "
+        "explicit @property): " + ", ".join(_undeclared_settings)
     )
 
 
