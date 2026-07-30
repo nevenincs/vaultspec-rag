@@ -500,8 +500,8 @@ def _display_port_unreachable_error(
         f"open the local search index directly "
         f"and block other users waiting on the service.\n"
         f"Next actions:\n"
-        f"  1. Check status:  vaultspec-rag server status\n"
-        f"  2. Start service: vaultspec-rag server start\n"
+        f"  1. Check status:  {server_status_command()}\n"
+        f"  2. Start service: {server_start_command()}\n"
         f"  3. Or run locally anyway: re-run with "
         f"--allow-fallback (one user only)."
     )
@@ -547,7 +547,7 @@ def _display_service_version_error(
         f"Next actions:\n"
         f"  1. Restart the service: vaultspec-rag server stop, then "
         f"vaultspec-rag server start\n"
-        f"  2. Confirm the release:  vaultspec-rag server status"
+        f"  2. Confirm the release:  {server_status_command()}"
     )
 
 

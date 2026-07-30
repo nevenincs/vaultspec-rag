@@ -20,7 +20,12 @@ from .storage_manifest import (
     write_snapshot_manifest,
 )
 from .storage_reconciliation import ReconcileBatch, reconcile_collections
-from .storage_survey_ops import DeleteResult, delete_prefix, gather_survey
+from .storage_survey_ops import (
+    DeleteResult,
+    delete_prefix,
+    directory_size_bytes,
+    gather_survey,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -578,7 +583,7 @@ def _archive_directories(archive_dir: Path) -> list[tuple[float, int, Path]]:
         completed_at = _archive_completion_timestamp(path)
         if completed_at is None:
             continue
-        archives.append((completed_at, _archive_size(path), path))
+        archives.append((completed_at, directory_size_bytes(path), path))
     return archives
 
 
@@ -597,18 +602,6 @@ def _archive_completion_timestamp(archive: Path) -> float | None:
         field="archive completed_at",
     )
     return None if completed_at is None else completed_at.timestamp()
-
-
-def _archive_size(archive: Path) -> int:
-    """Return all readable artifact bytes belonging to one archive."""
-    total = 0
-    for artifact in archive.rglob("*"):
-        if artifact.is_file():
-            try:
-                total += artifact.stat().st_size
-            except OSError:
-                continue
-    return total
 
 
 def _delete_archive_directory(archive: Path) -> bool:

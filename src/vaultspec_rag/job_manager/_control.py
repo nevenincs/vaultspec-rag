@@ -228,7 +228,7 @@ class JobManagerControl(JobManagerState):
             for job_id, managed in self._active.items():
                 snapshot = managed.snapshot
                 if (
-                    snapshot.state not in {JobState.PAUSED, JobState.QUEUED}
+                    not snapshot.state.is_idle
                     or snapshot.desired_state is not DesiredJobState.RUNNING
                     or managed.runtime.task is not None
                 ):
@@ -1415,7 +1415,7 @@ class JobManagerControl(JobManagerState):
         state: JobState,
     ) -> JobOutcome:
         now = time.time()
-        if state in {JobState.QUEUED, JobState.PAUSED}:
+        if state.is_idle:
             self._replace_snapshot_locked(
                 managed,
                 state=JobState.CANCELLED,
