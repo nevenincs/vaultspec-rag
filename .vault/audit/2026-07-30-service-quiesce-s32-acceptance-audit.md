@@ -32,8 +32,12 @@ The captured target correctly keeps only a token digest after pytest redirects s
 
 The captured transport invokes its refresh callback after a 401 but retries only if the callback returns a different token. Strict revalidation requires the captured token digest to remain unchanged, so the valid token is normally the same string and no retry occurs. Token rotation must remain a target-change refusal; the repair is one same-token authenticated retry after successful pinned revalidation, with no status-file fallback.
 
+### unrecoverable-machine-holder | high | Production machine lock leaves a stale owner PID
+
+A real nested route host acquired the production machine lock with PID 7172, but a separate contender observed its lock record still naming PID 43480 and therefore reported holder PID zero. The owner-record write is best-effort today, yet capture requires lock-holder, pointer, and health PID agreement. Do not synthesize a test PID or weaken that correlation: make the production machine-lock record update durable and fail acquisition when it cannot be established, then require a separate real contender to observe the exact positive owner PID before the CPU host signals ready.
+
 ## Recommendations
 
-- Do not accept or commit S29, S30, or S32 until the recorded opaque-authority and same-token retry repairs are implemented and focused CPU tests prove mint timing, one-shot consumption, forged and stale authority refusal, exact release, first-request authentication, 401 same-token retry, token-rotation refusal, and the redirected-path pause-work-resume topology.
+- Do not accept or commit S29, S30, or S32 until the recorded durable machine-owner record, opaque-authority, and same-token retry repairs are implemented and focused CPU tests prove real cross-process owner visibility, mint timing, one-shot/forged/stale refusal, exact release, first-request authentication, same-token 401 retry, token-rotation refusal, and the redirected-path pause-work-resume topology.
 - Retain root pytest singleton-path isolation. The opaque authority registry is the sole narrow exception and must not be implemented by restoring global environment or by accepting arbitrary caller paths.
 - Keep the captured target non-secret. Revalidation may hold the raw service token only in its local call stack and pass it directly to typed transport parameters without serialization or logging.
