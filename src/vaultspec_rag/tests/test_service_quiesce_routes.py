@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 import pytest
 from starlette.applications import Starlette
@@ -131,8 +131,11 @@ def _assert_unpublished_resume_failure(payload: dict[str, object]) -> None:
     assert payload["error"] == payload["status"]
     assert payload["retryable"] is True
     assert "job_resume_persistence_unpublished" in str(payload["message"])
-    quiesce = payload["quiesce"]
-    assert isinstance(quiesce, dict)
+    raw_quiesce = payload["quiesce"]
+    assert isinstance(raw_quiesce, dict)
+    # isinstance narrows an unparameterised builtin only to an unknown-keyed
+    # mapping, so the key type has to be stated before any lookup reads.
+    quiesce = cast("dict[str, object]", raw_quiesce)
     assert quiesce["state"] == "warming"
     assert quiesce["admissions_open"] is False
     assert quiesce["safe_to_borrow_gpu"] is False
@@ -144,8 +147,9 @@ def _assert_achieved_resume(payload: dict[str, object]) -> None:
     assert set(payload) == {"ok", "status", "quiesce"}
     assert payload["ok"] is True
     assert payload["status"] == "running"
-    quiesce = payload["quiesce"]
-    assert isinstance(quiesce, dict)
+    raw_quiesce = payload["quiesce"]
+    assert isinstance(raw_quiesce, dict)
+    quiesce = cast("dict[str, object]", raw_quiesce)
     assert quiesce["state"] == "running"
     assert quiesce["admissions_open"] is True
     assert quiesce["safe_to_borrow_gpu"] is False
