@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from typing import get_args
 
 import pytest
 
@@ -12,6 +13,9 @@ from ..service_quiesce import (
     QuiesceTransition,
     QuiesceTransitionCode,
     ServiceQuiesceController,
+    TerminalFailureCode,
+    _failure_targets,
+    _pin_terminal_failure_codes,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -273,3 +277,42 @@ def test_abort_pause_is_idempotent_and_refuses_a_completed_pause() -> None:
     assert not refused.achieved
     assert refused.snapshot.state is QuiesceState.QUIESCED
     assert refused.snapshot.safe_to_borrow_gpu
+
+
+def test_terminal_failure_codes_match_the_enum_naming_rule() -> None:
+    """Every ``_FAILED`` member is accepted by ``fail_transition``, nothing else."""
+    named = {code for code in QuiesceTransitionCode if code.name.endswith("_FAILED")}
+
+    accepted = set(get_args(TerminalFailureCode))
+
+    assert accepted == named
+    assert named == {
+        QuiesceTransitionCode.QUIESCE_FAILED,
+        QuiesceTransitionCode.WARMUP_FAILED,
+        QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+    }
+
+
+def test_every_accepted_terminal_failure_code_has_a_failure_target() -> None:
+    """No accepted code reaches ``fail_transition`` without a failure target."""
+    targets = {code: _failure_targets(code) for code in get_args(TerminalFailureCode)}
+
+    assert targets == {
+        QuiesceTransitionCode.QUIESCE_FAILED: (
+            QuiesceState.PAUSING,
+            QuiesceTransitionCode.QUIESCE_UNAVAILABLE,
+        ),
+        QuiesceTransitionCode.WARMUP_FAILED: (
+            QuiesceState.WARMING,
+            QuiesceTransitionCode.WARMUP_UNAVAILABLE,
+        ),
+        QuiesceTransitionCode.RESUME_RECOVERY_FAILED: (
+            QuiesceState.WARMING,
+            QuiesceTransitionCode.WARMUP_UNAVAILABLE,
+        ),
+    }
+
+
+def test_import_time_pin_accepts_the_shipped_vocabulary() -> None:
+    """The import-time drift guard passes against the shipped enum."""
+    _pin_terminal_failure_codes()
