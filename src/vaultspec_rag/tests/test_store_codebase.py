@@ -107,10 +107,15 @@ class TestStoreCodebase:
         assert isinstance(result, models.Filter)
         assert isinstance(result.must, list)
         assert len(result.must) == 2
-        keys = {
-            cond.key for cond in result.must if isinstance(cond, models.FieldCondition)
-        }
-        assert keys == {"language", "path"}
+        # Keys alone leave the values unasserted, and a filter built on the
+        # right keys with the wrong values is well-formed, pushed down, and
+        # silently wrong. Pin both halves.
+        assert {
+            (cond.key, cond.match.value)
+            for cond in result.must
+            if isinstance(cond, models.FieldCondition)
+            and isinstance(cond.match, models.MatchValue)
+        } == {("language", "python"), ("path", "src/indexer.py")}
 
     def test_build_code_filter_exclude_domains_must_not(self) -> None:
         """exclude_domains becomes a must_not MatchAny on the domain field."""
