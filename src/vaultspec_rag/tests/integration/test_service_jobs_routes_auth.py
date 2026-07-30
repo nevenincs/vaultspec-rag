@@ -67,6 +67,7 @@ def test_jobs_route_200_with_bearer_token(
         "gpu",
         "pressure",
         "device_load",
+        "quiesce",
     }
     assert len(payload["jobs"]) == 1
     assert payload["jobs"][0]["source"] == "vault"
