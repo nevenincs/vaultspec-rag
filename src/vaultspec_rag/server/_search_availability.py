@@ -76,7 +76,13 @@ def _availability_context(
     context: SearchAvailabilityContext | None,
     values: Mapping[str, object],
 ) -> SearchAvailabilityContext:
-    """Normalize legacy keyword callers at the request-classification seam."""
+    """Normalize legacy keyword callers at the request-classification seam.
+
+    Each field below is already the type its one caller built, before
+    ``**values: object`` erased it crossing the keyword-argument boundary;
+    nothing here re-verifies that, it only restores what the caller already
+    established.
+    """
     if context is not None:
         return context
     return SearchAvailabilityContext(
@@ -166,6 +172,8 @@ def _matching_jobs(
     for candidate in snapshot:
         if not isinstance(candidate, Mapping):
             continue
+        # Mapping is invariant in its key type, so isinstance narrows only to
+        # Mapping[Unknown, object]; every job record is str-keyed JSON.
         record = cast("Mapping[str, object]", candidate)
         spec = record.get("spec")
         if not isinstance(spec, Mapping):

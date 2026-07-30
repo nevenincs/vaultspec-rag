@@ -162,7 +162,7 @@ def _run_service_logs(options: _ServiceLogsOptions) -> None:
             job_id=filters.get("job_id"),
             contains=filters.get("contains"),
         )
-        groups = cast("list[ManagedLogGroup]", payload["groups"])
+        groups = payload["groups"]
     else:
         if result.get("ok") is False:
             _exit_live_log_error(result, json_mode=options.json_mode)

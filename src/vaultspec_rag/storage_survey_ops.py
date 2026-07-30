@@ -6,7 +6,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from .storage_manifest import load_manifest, remove_prefix
 from .storage_survey import (
@@ -156,7 +156,19 @@ def debris_surveys(
     ]
 
 
-def backend_totals(surveys: list[NamespaceSurvey]) -> dict[str, object]:
+class BackendTotals(TypedDict):
+    """The whole-backend rollup :func:`backend_totals` reports."""
+
+    total_bytes: int
+    namespaces: int
+    points: int
+    vault_points: int
+    code_points: int
+    document_points: int
+    by_status_bytes: dict[str, int]
+
+
+def backend_totals(surveys: list[NamespaceSurvey]) -> BackendTotals:
     """Aggregate backend size over a classified survey.
 
     The incident's 117.9 GB pile was invisible to every metric because

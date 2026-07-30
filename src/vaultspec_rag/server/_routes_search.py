@@ -291,7 +291,8 @@ def _empty_search_diagnostics(
         # The search proved this: candidates matched the query and the path
         # patterns removed every one. Saying so, with the patterns, is the
         # difference between a fixable typo and an operator concluding the
-        # filter is unsupported.
+        # filter is unsupported. "patterns" is always a list: the search
+        # response builds it from the normalized include-glob patterns.
         patterns = ", ".join(
             str(p) for p in cast("list[object]", path_filter["patterns"])
         )
@@ -324,6 +325,10 @@ def _classify_search_result(
     """Apply availability classification and stable-empty diagnostics."""
     from ._routes import canonical_job_snapshot
 
+    # A completed search always builds "index_state" from search_index_state(),
+    # which returns a dict; absent means the envelope never carried a search
+    # outcome (the quiesce/collection-disappearance synthetic results), which
+    # the default covers.
     index_state = cast("dict[str, object]", result.get("index_state", {}))
     classification = classify_search_response(
         result,
@@ -786,6 +791,9 @@ def _normalise_search_request(
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
     project_root = payload.get("project_root")
+    # _search_field_error narrows query to str, top_k to a non-bool int, and
+    # project_root to str | None; a None return means every field already
+    # has the type each cast below asserts.
     field_error = _search_field_error(query, top_k, project_root)
     if field_error is not None:
         return field_error
@@ -803,7 +811,7 @@ def _normalise_search_request(
         root=root,
         query=query,
         top_k=_clamp_top_k(cast("int", top_k)),
-        payload=cast("dict[str, Any]", payload),
+        payload=payload,
         search_type=search_type,
         request_id=request_id,
     )
@@ -840,6 +848,7 @@ def _bad_search_field(error_code: str, message: str) -> SearchRouteError:
 
 def _search_root(project_root: object) -> Path | SearchRouteError:
     """Resolve the validated root while preserving the established envelopes."""
+    # Only reached after _search_field_error confirmed project_root is str | None.
     try:
         return _resolve_root(cast("str | None", project_root))
     except ProjectRootRequiredError:
