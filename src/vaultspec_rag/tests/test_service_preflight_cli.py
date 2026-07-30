@@ -172,7 +172,12 @@ def test_daemon_missing_device_load_block_never_falls_back_locally(
 
     def _tracked_local_admission() -> DeviceAdmission:
         admission = DeviceAdmission(
-            admitted=True, free_mib=9000, total_mib=16376, floor_mib=6400, reason=""
+            admitted=True,
+            free_mib=9000,
+            total_mib=16376,
+            own_mib=None,
+            floor_mib=6400,
+            reason="",
         )
         local_calls.append(admission)
         return admission
@@ -199,7 +204,12 @@ def test_unreachable_daemon_never_falls_back_locally(
 
     def _tracked_local_admission() -> DeviceAdmission:
         admission = DeviceAdmission(
-            admitted=True, free_mib=9000, total_mib=16376, floor_mib=6400, reason=""
+            admitted=True,
+            free_mib=9000,
+            total_mib=16376,
+            own_mib=None,
+            floor_mib=6400,
+            reason="",
         )
         local_calls.append(admission)
         return admission
@@ -232,7 +242,12 @@ def test_no_daemon_discovered_falls_back_to_the_local_probe(
         _service_preflight,
         "_local_admission",
         lambda: DeviceAdmission(
-            admitted=True, free_mib=9000, total_mib=16376, floor_mib=6400, reason=""
+            admitted=True,
+            free_mib=9000,
+            total_mib=16376,
+            own_mib=None,
+            floor_mib=6400,
+            reason="",
         ),
     )
     result = runner.invoke(app, ["server", "preflight", "--json"])
