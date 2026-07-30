@@ -39,7 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Literal,
@@ -65,6 +65,8 @@ from .._source_types import (
 from ..config._settings import get_config, rag_default
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     # The job-source vocabulary has one declaration, the canonical enum.
     # Annotation-only, so the client does not import the domain at runtime.
     from ..job_models import DesiredJobState, JobMode, JobSource
@@ -131,7 +133,14 @@ type HTTPMethod = Literal["GET", "POST", "PUT", "DELETE"]
 type JobControlMode = Literal["graceful", "force"]
 
 
-class HTTPCallOptions(TypedDict, total=False):
+class InitialBearerOptions(TypedDict, total=False):
+    """Ephemeral bearer controls for a caller that has pinned its target."""
+
+    initial_bearer_token: str | None
+    refresh_bearer_token: Callable[[], str] | None
+
+
+class HTTPCallOptions(InitialBearerOptions, total=False):
     """Optional wire controls retained by the general HTTP-call surface."""
 
     method: HTTPMethod | None
@@ -145,9 +154,11 @@ class _HTTPCallRequest:
     port: int
     path: str
     payload: dict[str, object] | None
-    token: str
+    token: str = field(repr=False)
     method: HTTPMethod | None = None
     headers: dict[str, str] | None = None
+    initial_bearer_token: str | None = field(default=None, repr=False)
+    refresh_bearer_token: Callable[[], str] | None = field(default=None, repr=False)
 
 
 class JobCallOptions(TypedDict, total=False):
@@ -675,12 +686,13 @@ def _do_http_call(
 ) -> dict[str, object] | None:
     """Call a service route, recovering the auth token on a 401.
 
-    The token from the local status file is sent first (it may be empty or
-    stale). Only if the route rejects it with 401 does the client fetch the
-    live token from the target port's ungated ``/health`` and retry once. This
-    keeps the happy path a single request while letting ``--port`` authenticate
-    against a service started out-of-band (missing status file) or restarted
-    (rotated token), without an extra round-trip when the first call succeeds.
+    An ``initial_bearer_token`` is sent before the local status-file token.
+    That option exists for a caller that has already pinned the service identity
+    through an independent coordination witness. It must provide
+    ``refresh_bearer_token`` as well: after a 401 only that caller's renewed
+    witness may supply a retry credential. The ordinary path retains its
+    status-file-first request and one ``/health`` token refresh, preserving
+    support for an explicitly addressed service outside the local status dir.
 
     An omitted or ``None`` timeout resolves through the administrative timeout
     policy rather than to no bound at all, so the operator override applies here
@@ -746,25 +758,50 @@ def _do_http_call(
                 deadline=deadline,
             )
 
-    token = _status_file_token()
+    initial_bearer_token = request_options.initial_bearer_token
+    token = (
+        initial_bearer_token
+        if initial_bearer_token is not None
+        else _status_file_token()
+    )
     status_code, result = send("initial request", token)
     remaining("initial response")
 
     if status_code == 401:
-        try:
-            fresh = _fetch_health_token(port, remaining("health-token request"))
-        except Exception as exc:
-            _raise_deadline_exhausted(
-                exc,
-                stage="health-token request",
-                timeout=resolved_timeout,
-                started=started,
-                deadline=deadline,
-            )
-        remaining("health-token response")
-        if fresh and fresh != token:
+        if initial_bearer_token is not None:
+            refresh_bearer_token = request_options.refresh_bearer_token
+            if refresh_bearer_token is None:
+                return result
+            try:
+                fresh = refresh_bearer_token()
+            except Exception as exc:
+                _raise_deadline_exhausted(
+                    exc,
+                    stage="verified-token refresh",
+                    timeout=resolved_timeout,
+                    started=started,
+                    deadline=deadline,
+                )
+            remaining("verified-token refresh")
+        else:
+            try:
+                fresh = _fetch_health_token(port, remaining("health-token request"))
+            except Exception as exc:
+                _raise_deadline_exhausted(
+                    exc,
+                    stage="health-token request",
+                    timeout=resolved_timeout,
+                    started=started,
+                    deadline=deadline,
+                )
+            remaining("health-token response")
+        # A captured caller has just revalidated one pinned identity.  A 401 can
+        # be a transient authentication race even when that identity retains
+        # the same bearer, so it receives exactly one authenticated retry.  The
+        # ordinary status-file flow still retries only a changed health token.
+        if fresh and (initial_bearer_token is not None or fresh != token):
             logger.debug(
-                "token rejected on port %s; retrying with the /health token", port
+                "token rejected on port %s; retrying with a refreshed token", port
             )
             _, result = send("authenticated retry", fresh)
             remaining("authenticated retry response")
@@ -1106,11 +1143,11 @@ def _route_admin_tool(
     tool_name: str,
     args: dict[str, object],
     port: int,
+    *,
+    timeout: float,
+    **auth: Unpack[InitialBearerOptions],
 ) -> dict[str, object] | None:
     """Map an admin tool name to an HTTP call and return the raw result."""
-    raw_timeout = args.get("_timeout")
-    timeout = float(raw_timeout) if isinstance(raw_timeout, int | float) else None
-    args = {key: value for key, value in args.items() if key != "_timeout"}
     resolved = _resolve_admin_call(tool_name, args)
     if resolved is None:
         return {
@@ -1119,7 +1156,13 @@ def _route_admin_tool(
             "message": f"Tool {tool_name} not mapped",
         }
     path, body = resolved
-    return _do_http_call(port, path, body, timeout=timeout)
+    return _do_http_call(
+        port,
+        path,
+        body,
+        timeout=timeout,
+        **auth,
+    )
 
 
 def _try_http_admin(
@@ -1127,12 +1170,25 @@ def _try_http_admin(
     args: dict[str, object],
     port: int | None,
     timeout: float | None = None,
+    **auth: Unpack[InitialBearerOptions],
 ) -> dict[str, object] | None:
+    """Run one admin call without serializing caller-held bearer credentials.
+
+    A caller that supplies ``initial_bearer_token`` has independently pinned a
+    service identity. Its refresh callable is consulted only after that exact
+    bearer receives a 401; neither value becomes part of the route body.
+    """
     if port is None:
         return None
     resolved_timeout = _get_admin_timeout(timeout)
     try:
-        res = _route_admin_tool(tool_name, {**args, "_timeout": resolved_timeout}, port)
+        res = _route_admin_tool(
+            tool_name,
+            args,
+            port,
+            timeout=resolved_timeout,
+            **auth,
+        )
         return res if res is not None else {}
     except Exception as exc:
         if _is_connection_refused(exc):
