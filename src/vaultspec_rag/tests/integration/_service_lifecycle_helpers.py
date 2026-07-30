@@ -584,6 +584,7 @@ try:
             ServerRouteRuntime(
                 token=os.environ["VAULTSPEC_TEST_HEALTH_TOKEN"],
                 registry=ServiceRegistry(),
+                port=int(os.environ["VAULTSPEC_TEST_HEALTH_PORT"]),
             ),
             lifespan=None,
         ),

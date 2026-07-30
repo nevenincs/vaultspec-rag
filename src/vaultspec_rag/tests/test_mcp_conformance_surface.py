@@ -97,6 +97,7 @@ def service_routes() -> Iterator[int]:
                 ServerRouteRuntime(
                     token=_CONTRACT_SERVICE_TOKEN,
                     registry=ServiceRegistry(),
+                    port=port,
                 ),
                 lifespan=None,
             ),

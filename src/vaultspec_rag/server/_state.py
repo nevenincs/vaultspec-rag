@@ -44,7 +44,6 @@ __all__ = [
     "_http_mode",
     "_launch_token",
     "_registry",
-    "_service_port",
     "_shutdown_hooks_installed",
     "_shutdown_recorded",
     "_start_time",
@@ -96,7 +95,6 @@ _start_time: float = 0.0
 # job is judged against, never narrow it.
 _start_wall_time: float = 0.0
 _http_mode: bool = False  # set once in main() before event loop starts
-_service_port: int = 0  # set by main() before the HTTP lifespan starts
 _launch_token: str = ""  # unique CLI launch-attempt witness, HTTP mode only
 
 # Standalone-daemon exit backstop. ``_daemon_process`` is set True exactly once

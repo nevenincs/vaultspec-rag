@@ -68,7 +68,19 @@ class TestServerRouteRuntime:
 
     def test_empty_token_is_rejected_before_an_app_can_be_built(self) -> None:
         with pytest.raises(ValueError, match="non-empty service token"):
-            ServerRouteRuntime(token="", registry=ServiceRegistry())
+            ServerRouteRuntime(token="", registry=ServiceRegistry(), port=8765)
+
+    @pytest.mark.parametrize("port", [0, 65536])
+    def test_invalid_port_is_rejected_before_an_app_can_be_built(
+        self,
+        port: int,
+    ) -> None:
+        with pytest.raises(ValueError, match=r"port in 1\.\.65535"):
+            ServerRouteRuntime(
+                token="invalid-runtime-port-test-token",
+                registry=ServiceRegistry(),
+                port=port,
+            )
 
     def test_factory_installs_the_exact_runtime_and_missing_state_fails_closed(
         self,
@@ -80,10 +92,12 @@ class TestServerRouteRuntime:
         runtime = ServerRouteRuntime(
             token="direct-runtime-test-token",
             registry=ServiceRegistry(),
+            port=8765,
         )
         app = create_http_app(runtime, lifespan=None)
 
         assert get_app_runtime(app) is runtime
+        assert get_app_runtime(app).port == 8765
         with pytest.raises(RuntimeError, match="no valid server route runtime"):
             get_app_runtime(Starlette())
 
@@ -118,7 +132,6 @@ class TestPackageEntryPoint:
 @pytest.fixture
 def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
     """Retain a real isolated discovery owner for lifecycle helper tests."""
-    from .. import server as server_state
     from .._machine_lock import (
         acquire_machine_lock_lease,
         release_machine_lock_lease,
@@ -130,16 +143,18 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
         status_key: os.environ.get(status_key),
         storage_key: os.environ.get(storage_key),
     }
-    previous_port = server_state._service_port
     os.environ[status_key] = str(tmp_path / "status")
     os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
     reset_config()
-    server_state._service_port = 8766
     lease, holder = acquire_machine_lock_lease()
     assert lease is not None
     assert holder == os.getpid()
     publisher = _DiscoveryPublisher(
-        ServerRouteRuntime(token="test-owner-token", registry=ServiceRegistry()),
+        ServerRouteRuntime(
+            token="test-owner-token",
+            registry=ServiceRegistry(),
+            port=8766,
+        ),
         lease,
     )
     try:
@@ -148,7 +163,6 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
         publisher.quiesce()
         publisher.cleanup()
         release_machine_lock_lease(lease)
-        server_state._service_port = previous_port
         for key, value in previous_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -835,7 +849,9 @@ class TestHealthHandler:
 
         app = create_http_app(
             ServerRouteRuntime(
-                token="health-response-token", registry=ServiceRegistry()
+                token="health-response-token",
+                registry=ServiceRegistry(),
+                port=8765,
             ),
             lifespan=None,
         )
@@ -848,6 +864,7 @@ class TestHealthHandler:
         assert "models_loaded" in data
         assert "project_count" in data
         assert "uptime_s" in data
+        assert data["port"] == 8765
         capabilities = cast("dict[str, object]", data["backend_capabilities"])
         assert capabilities["concurrent_search_supported"] is True
         assert capabilities["same_project_search_strategy"] == "serialized"
@@ -877,7 +894,9 @@ class TestHealthHandler:
 
         app = create_http_app(
             ServerRouteRuntime(
-                token="health-model-state-token", registry=ServiceRegistry()
+                token="health-model-state-token",
+                registry=ServiceRegistry(),
+                port=8765,
             ),
             lifespan=None,
         )
@@ -899,6 +918,7 @@ class TestHealthInfoReduction:
             ServerRouteRuntime(
                 token="health-project-path-token",
                 registry=ServiceRegistry(),
+                port=8765,
             ),
             lifespan=None,
         )
@@ -915,7 +935,9 @@ class TestHealthInfoReduction:
 
         app = create_http_app(
             ServerRouteRuntime(
-                token="health-gpu-name-token", registry=ServiceRegistry()
+                token="health-gpu-name-token",
+                registry=ServiceRegistry(),
+                port=8765,
             ),
             lifespan=None,
         )
@@ -1286,7 +1308,11 @@ class TestRouteMissingProjectRoot:
 
     def _make_app(self) -> Starlette:
         return create_http_app(
-            ServerRouteRuntime(token=self._TOKEN, registry=ServiceRegistry()),
+            ServerRouteRuntime(
+                token=self._TOKEN,
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
             lifespan=None,
         )
 
@@ -1458,7 +1484,7 @@ previous_mode = server._http_mode
 server._http_mode = True
 try:
     app = create_http_app(
-        ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+        ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
         lifespan=None,
     )
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -1722,7 +1748,7 @@ server._http_mode = True
 try:
     with TestClient(
         create_http_app(
-            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
             lifespan=None,
         )
     ) as client:

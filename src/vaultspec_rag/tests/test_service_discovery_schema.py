@@ -100,15 +100,17 @@ def status_dir(tmp_path: Path) -> Iterator[Path]:
 def owner_publisher(status_dir: Path) -> Iterator[_DiscoveryPublisher]:
     """Retain the real isolated machine owner for daemon publications."""
     assert status_dir == _status_file().parent
-    prior_port = _m._service_port
     prior_launch = _m._launch_token
-    _m._service_port = 8766
     _m._launch_token = "test-launch-token"
     lease, holder = acquire_machine_lock_lease()
     assert lease is not None
     assert holder == os.getpid()
     publisher = _DiscoveryPublisher(
-        ServerRouteRuntime(token="test-token", registry=ServiceRegistry()),
+        ServerRouteRuntime(
+            token="test-token",
+            registry=ServiceRegistry(),
+            port=8766,
+        ),
         lease,
     )
     try:
@@ -117,7 +119,6 @@ def owner_publisher(status_dir: Path) -> Iterator[_DiscoveryPublisher]:
         publisher.quiesce()
         publisher.cleanup()
         release_machine_lock_lease(lease)
-        _m._service_port = prior_port
         _m._launch_token = prior_launch
 
 

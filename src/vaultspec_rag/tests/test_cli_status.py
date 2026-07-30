@@ -556,8 +556,6 @@ class TestServiceTokenIdentity:
     ):
         import json
 
-        import vaultspec_rag.server as server_state
-
         from .._machine_lock import (
             acquire_machine_lock_lease,
             release_machine_lock_lease,
@@ -569,8 +567,6 @@ class TestServiceTokenIdentity:
         os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(tmp_path / "qdrant" / "storage")
         reset_base_config()
         reset_rag_config()
-        previous_port = server_state._service_port
-        server_state._service_port = 8766
         lease, holder = acquire_machine_lock_lease()
         assert lease is not None
         assert holder == os.getpid()
@@ -581,6 +577,7 @@ class TestServiceTokenIdentity:
             ServerRouteRuntime(
                 token="phase-stamp-test-token",
                 registry=ServiceRegistry(),
+                port=8766,
             ),
             lease,
         )
@@ -604,7 +601,6 @@ class TestServiceTokenIdentity:
             publisher.quiesce()
             publisher.cleanup()
             release_machine_lock_lease(lease)
-            server_state._service_port = previous_port
             os.environ.pop(EnvVar.STATUS_DIR, None)
             os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
             reset_base_config()

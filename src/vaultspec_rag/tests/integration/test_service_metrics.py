@@ -279,6 +279,7 @@ def _routes_app(  # pyright: ignore[reportUnusedFunction]
         ServerRouteRuntime(
             token="test-token-metrics",
             registry=ServiceRegistry(),
+            port=8765,
         ),
         lifespan=None,
     )
