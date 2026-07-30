@@ -48,6 +48,7 @@ related:
   - '[[2026-07-30-service-quiesce-s32-acceptance-audit]]'
   - '[[2026-07-30-service-quiesce-w02-resume-recovery-audit]]'
   - '[[2026-07-30-service-quiesce-w03-acceptance-audit]]'
+  - '[[2026-07-31-service-quiesce-s31-identity-binding-directive-audit]]'
   - '[[2026-07-31-service-quiesce-w04-s29-s33-final-acceptance-audit]]'
 ---
 
@@ -69,6 +70,7 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-30-service-quiesce-s32-acceptance-audit` - `service-quiesce` audit: `S32 GPU pytest borrower integration`
 - `2026-07-30-service-quiesce-w02-resume-recovery-audit` - `service-quiesce` audit: `w02 resume recovery`
 - `2026-07-30-service-quiesce-w03-acceptance-audit` - `service-quiesce` audit: `w03 acceptance`
+- `2026-07-31-service-quiesce-s31-identity-binding-directive-audit` - `service-quiesce` audit: `S31 identity-binding directive`
 - `2026-07-31-service-quiesce-w04-s29-s33-final-acceptance-audit` - `service-quiesce` audit: `W04 S29-S33 final acceptance`
 
 ### exec
