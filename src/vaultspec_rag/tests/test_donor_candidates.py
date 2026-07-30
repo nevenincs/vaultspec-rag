@@ -101,6 +101,10 @@ def _write_code_sidecar(
     marker: str = CODE_EMBED_SCHEMA,
     drop_epoch_key: bool = False,
 ) -> Path:
+    # Derived from config, deliberately, not through ``index_meta_path``: this
+    # spelling is the value ``test_both_kinds_read_the_shared_resolver_path``
+    # pins the resolver against. Routing it through the resolver would leave
+    # that assertion comparing the resolver to itself.
     cfg = get_config()
     path = root / cfg.data_dir / cfg.code_index_metadata_file
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,15 +116,21 @@ def _write_code_sidecar(
 
 
 def _write_vault_sidecar(
-    root: Path, *, epoch: str, marker: str = _VAULT_SCHEMA
+    root: Path,
+    *,
+    epoch: str,
+    marker: str = _VAULT_SCHEMA,
+    drop_epoch_key: bool = False,
 ) -> Path:
+    # Independent spelling, as in ``_write_code_sidecar`` above, and for the
+    # same reason: it is what the resolver is pinned against.
     cfg = get_config()
     path = root / cfg.data_dir / cfg.index_metadata_file
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({_VAULT_SCHEMA_KEY: marker, _VAULT_EPOCH_KEY: epoch}),
-        encoding="utf-8",
-    )
+    payload = {_VAULT_SCHEMA_KEY: marker}
+    if not drop_epoch_key:
+        payload[_VAULT_EPOCH_KEY] = epoch
+    path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
@@ -500,12 +510,7 @@ class TestRecordedState:
         self, tmp_path: Path
     ) -> None:
         donor = _make_root(tmp_path, "donor")
-        cfg = get_config()
-        path = donor / cfg.data_dir / cfg.index_metadata_file
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps({_VAULT_SCHEMA_KEY: _VAULT_SCHEMA}), encoding="utf-8"
-        )
+        _write_vault_sidecar(donor, epoch="vault-epoch", drop_epoch_key=True)
 
         assert read_donor_recorded_state(donor, CollectionKind.VAULT) is None
 
