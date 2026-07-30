@@ -306,8 +306,6 @@ class SearchActivityLedger:
             recent = list(reversed(self._recent))
             counts = {
                 "active": len(active),
-                "active_visible": len(active),
-                "active_overflow": 0,
                 "recent": len(recent),
                 "total": len(active) + len(recent),
             }
