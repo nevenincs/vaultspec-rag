@@ -1107,13 +1107,7 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
         {
             "ok": transition.achieved,
             "status": status,
-            "quiesce": {
-                "state": snapshot.state.value,
-                "admission_epoch": snapshot.admission_epoch,
-                "drain_complete": snapshot.drain_complete,
-                "vram_released": snapshot.vram_released,
-                "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
-            },
+            "quiesce": snapshot.as_envelope(),
         },
     )
 

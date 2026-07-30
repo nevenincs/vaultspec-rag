@@ -131,3 +131,43 @@ def test_drain_timeout_keeps_admission_closed_and_gpu_borrowing_unsafe() -> None
     assert ticket.release()
     assert controller.wait_for_drain(timeout=0).code is QuiesceTransitionCode.DRAINED
     assert controller.acknowledge_vram_released().code is QuiesceTransitionCode.QUIESCED
+
+
+def test_a_failed_transition_records_only_the_direction_its_caller_owns() -> None:
+    """A failure report names its own transition and never the live one."""
+    controller = ServiceQuiesceController()
+
+    assert controller.begin_pause().code is QuiesceTransitionCode.PAUSE_STARTED
+    mismatched = controller.fail_transition(
+        owned_state=QuiesceState.WARMING,
+        reason="gpu_dependency_rebuild_failed",
+    )
+    failed_pause = controller.fail_transition(
+        owned_state=QuiesceState.PAUSING,
+        reason="gpu_dependency_release_failed",
+    )
+
+    assert mismatched.code is QuiesceTransitionCode.WARMUP_UNAVAILABLE
+    assert mismatched.snapshot.failure_reason is None
+    assert failed_pause.code is QuiesceTransitionCode.QUIESCE_FAILED
+    assert not failed_pause.achieved
+    assert failed_pause.snapshot.state is QuiesceState.PAUSING
+    assert not failed_pause.snapshot.admissions_open
+    assert not failed_pause.snapshot.safe_to_borrow_gpu
+    assert failed_pause.snapshot.failure_reason == "gpu_dependency_release_failed"
+
+    assert controller.wait_for_drain(timeout=0).code is QuiesceTransitionCode.DRAINED
+    assert controller.acknowledge_vram_released().code is QuiesceTransitionCode.QUIESCED
+    assert controller.begin_warming().code is QuiesceTransitionCode.WARMING_STARTED
+    failed_warming = controller.fail_transition(
+        owned_state=QuiesceState.WARMING,
+        reason="gpu_dependency_rebuild_failed",
+    )
+
+    assert failed_warming.code is QuiesceTransitionCode.WARMUP_FAILED
+    assert failed_warming.snapshot.state is QuiesceState.WARMING
+    assert not failed_warming.snapshot.admissions_open
+    assert not failed_warming.snapshot.safe_to_borrow_gpu
+    assert failed_warming.snapshot.failure_reason == "gpu_dependency_rebuild_failed"
+    with pytest.raises(ValueError, match="failure reason must not be empty"):
+        controller.fail_transition(owned_state=QuiesceState.WARMING, reason="   ")

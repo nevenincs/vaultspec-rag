@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Final, Literal, Self
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -62,6 +62,23 @@ class QuiesceTransitionCode(StrEnum):
     WARMUP_FAILED = "warmup_failed"
 
 
+# The only two closed transitions a caller can own, each mapped to the code
+# for a request that arrived after the controller moved on and the code that
+# records the owned transition failing.
+_FAILURE_CODES: Final[
+    dict[QuiesceState, tuple[QuiesceTransitionCode, QuiesceTransitionCode]]
+] = {
+    QuiesceState.PAUSING: (
+        QuiesceTransitionCode.QUIESCE_UNAVAILABLE,
+        QuiesceTransitionCode.QUIESCE_FAILED,
+    ),
+    QuiesceState.WARMING: (
+        QuiesceTransitionCode.WARMUP_UNAVAILABLE,
+        QuiesceTransitionCode.WARMUP_FAILED,
+    ),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class QuiesceSnapshot:
     """Immutable controller evidence rendered identically by all adapters."""
@@ -78,6 +95,23 @@ class QuiesceSnapshot:
     quiesced_at: float | None
     warming_started_at: float | None
     failure_reason: str | None
+
+    def as_envelope(self) -> dict[str, object]:
+        """Render the whole observation as one adapter-agnostic payload."""
+        return {
+            "state": self.state.value,
+            "admission_epoch": self.admission_epoch,
+            "admissions_open": self.admissions_open,
+            "active_compute_tickets": self.active_compute_tickets,
+            "drain_complete": self.drain_complete,
+            "vram_released": self.vram_released,
+            "safe_to_borrow_gpu": self.safe_to_borrow_gpu,
+            "pause_requested_at": self.pause_requested_at,
+            "drain_acknowledged_at": self.drain_acknowledged_at,
+            "quiesced_at": self.quiesced_at,
+            "warming_started_at": self.warming_started_at,
+            "failure_reason": self.failure_reason,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,21 +360,27 @@ class ServiceQuiesceController:
                 achieved=True,
             )
 
-    def fail_quiesce(self, reason: str) -> QuiesceTransition:
-        """Keep admission closed when cooperative unwind or residency release fails."""
+    def fail_transition(
+        self,
+        *,
+        owned_state: Literal[QuiesceState.PAUSING, QuiesceState.WARMING],
+        reason: str,
+    ) -> QuiesceTransition:
+        """Keep admission closed and unsafe when an owned transition fails.
+
+        ``owned_state`` names the closed transition the caller was driving, so
+        a report arriving after the controller has already moved on is
+        answered as unavailable for that transition rather than recorded
+        against whichever one is now live.
+        """
         failure_reason = _require_reason(reason)
+        unavailable, failed = _FAILURE_CODES[owned_state]
         with self._condition:
-            if self._state is not QuiesceState.PAUSING:
-                return self._transition_locked(
-                    QuiesceTransitionCode.QUIESCE_UNAVAILABLE,
-                    achieved=False,
-                )
+            if self._state is not owned_state:
+                return self._transition_locked(unavailable, achieved=False)
             self._vram_released = False
             self._failure_reason = failure_reason
-            return self._transition_locked(
-                QuiesceTransitionCode.QUIESCE_FAILED,
-                achieved=False,
-            )
+            return self._transition_locked(failed, achieved=False)
 
     def begin_warming(self) -> QuiesceTransition:
         """Enter closed ``warming`` before the registry rebuilds GPU residency."""
@@ -382,22 +422,6 @@ class ServiceQuiesceController:
             self._failure_reason = None
             self._condition.notify_all()
             return self._transition_locked(QuiesceTransitionCode.RUNNING, achieved=True)
-
-    def fail_warming(self, reason: str) -> QuiesceTransition:
-        """Record a rebuild failure while keeping admission closed and unsafe."""
-        failure_reason = _require_reason(reason)
-        with self._condition:
-            if self._state is not QuiesceState.WARMING:
-                return self._transition_locked(
-                    QuiesceTransitionCode.WARMUP_UNAVAILABLE,
-                    achieved=False,
-                )
-            self._vram_released = False
-            self._failure_reason = failure_reason
-            return self._transition_locked(
-                QuiesceTransitionCode.WARMUP_FAILED,
-                achieved=False,
-            )
 
     def _snapshot_locked(self) -> QuiesceSnapshot:
         active_tickets = len(self._active_ticket_epochs)
