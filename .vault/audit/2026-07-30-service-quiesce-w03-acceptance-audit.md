@@ -32,11 +32,14 @@ related:
 
 ## Scope
 
-Static Sol-only acceptance review of `0df85c2c`, `04660476`, `9fc85828`,
-`f7fd4bd5`, and `4e9ef7ef` against the clarified W03 plan. The review inspected
-the production route, projection, transport, CLI, and renderer changes plus
-their checked-in CPU proof. It made no architectural inference from a delegated
-review and ran no service, RAG, CUDA, GPU, test, mutation, lint, or type gate.
+Sol-only acceptance and reconciliation against the clarified W03 plan. The
+review retained the earlier S19-S25 evidence and additionally inspected the
+complete S28 sequence from `71b446db` through `3d524e3b`: immutable app
+runtime construction, loopback binding, discovery publication, lifecycle,
+authentication, request-side registry ownership, and watcher continuations.
+It ran 198 focused CPU-only tests from the current checkout, plus `ruff check
+src tools` and `ty check`. No service process, RAG endpoint, managed Qdrant,
+model, Torch, CUDA, or GPU test was started.
 
 ## Findings
 
@@ -55,6 +58,13 @@ No other acceptance-blocking defect was found in S19 through S23 or S25 by
 static inspection. Those Steps are accepted from the named commits and their
 checked-in proof, subject to the unrun validation boundary below.
 
+### strict-type-stubs-baseline | low | repository strict typing is not green outside S28
+
+The configured full basedpyright gate reports 98 `reportMissingTypeStubs`
+errors for `vaultspec_core.*` imports. The failures are an existing Core-stub
+baseline outside S28's runtime files, not a passing gate and not grounds to
+claim full W03 acceptance.
+
 ## Recommendations
 
 For `requested-state-validation`, keep S24 open. Validate the canonical quiesce
@@ -64,10 +74,14 @@ loopback CLI guards for mismatched and malformed `ok: true` responses in both
 human and JSON modes. Prove each negative guard red then green under the
 project's no-mock test discipline.
 
-After S24 remediation, complete the remaining approved P07 Steps: expose the
-already-authoritative service-state block through the read-only MCP delegation
-in S26, render it in the jobs TUI in S27, and prove shared vocabulary plus
-Torch-free service paths in S28. These Steps depend on the P06 route vocabulary,
-so starting them before P06 acceptance would have forced adapter-side inference
-or duplicated an unstable contract. P06 is now accepted; W04 remains out of
-scope and must not start.
+S28 is accepted for the immutable runtime seam: token, registry, and port are
+one app authority; the daemon binds and publishes the same validated port;
+request-side registry reads and test hosts no longer rely on server-global
+assignment. Its CPU-only proof is complete. Live GPU/Qdrant integration remains
+delegated and unverified.
+
+W03.P07 remains in progress. Next, remediate the S24 high finding, then expose
+the already-authoritative block in S26 and render it in S27. Re-run the W03
+CPU acceptance suite after those three steps and resolve the Core-stub baseline
+before calling the full strict gate green. W04 remains out of scope and must
+not start.
