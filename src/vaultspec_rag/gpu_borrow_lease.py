@@ -15,21 +15,28 @@ import secrets
 import threading
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING, NoReturn, SupportsIndex, TypeGuard
 
 from ._anchor_claim import claim_anchor, release_anchor_claim
-from ._machine_lock import machine_lock_path
+from ._machine_lock import (
+    CapturedMachineLockWitness,
+    consume_captured_machine_lock_for_borrower_authority,
+    machine_lock_path,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
     "BorrowerLeaseStatus",
+    "CapturedBorrowerLeaseAuthority",
     "GPUBorrowLease",
     "acquire_gpu_borrow_lease",
+    "acquire_gpu_borrow_lease_for_captured_authority",
     "borrower_lease_status",
     "gpu_borrow_lease_path",
     "is_borrower_capability",
+    "mint_captured_borrower_lease_authority",
     "release_gpu_borrow_lease",
 ]
 
@@ -46,6 +53,32 @@ class BorrowerLeaseStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+@dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
+class CapturedBorrowerLeaseAuthority:
+    """One redacted, in-process handle for a pre-isolation borrower anchor.
+
+    The handle deliberately carries no path, service token, or borrower
+    capability.  This module alone associates its object identity with the
+    original anchor, and it rejects serialization or direct construction.
+    """
+
+    def __init__(self) -> None:
+        raise TypeError("captured borrower lease authorities are minted internally")
+
+    def __repr__(self) -> str:
+        """Keep the handle useful in diagnostics without projecting its authority."""
+        return "CapturedBorrowerLeaseAuthority(<redacted>)"
+
+    def __reduce__(self) -> NoReturn:
+        """Forbid serializing an authority beyond this process."""
+        raise TypeError("captured borrower lease authorities are not serializable")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        """Forbid protocol-specific serialization too."""
+        del protocol
+        return self.__reduce__()
+
+
 @dataclass(frozen=True, slots=True)
 class GPUBorrowLease:
     """One process-local handle retaining the external borrower anchor."""
@@ -56,6 +89,8 @@ class GPUBorrowLease:
 
 
 _held_leases: dict[str, GPUBorrowLease] = {}
+_captured_service_lease_paths: set[str] = set()
+_captured_authority_paths: dict[CapturedBorrowerLeaseAuthority, Path] = {}
 _lease_guard = threading.RLock()
 
 
@@ -85,11 +120,82 @@ def is_borrower_capability(capability: object) -> bool:
 def acquire_gpu_borrow_lease() -> GPUBorrowLease | None:
     """Acquire and retain the borrower lease, or return ``None`` on contention."""
     path = gpu_borrow_lease_path()
+    return _acquire_gpu_borrow_lease_at(
+        path,
+        operation="acquire the GPU borrower lease",
+        captured_service_anchor=False,
+    )
+
+
+def mint_captured_borrower_lease_authority(
+    witness: object,
+) -> CapturedBorrowerLeaseAuthority:
+    """Mint one authority for a pre-registration validated service target.
+
+    Only the bootstrap window can mint. The machine-lock registry derives and
+    retains the borrower anchor from one opaque witness; callers receive no
+    anchor path and cannot select one for a later acquisition.
+    """
+    if not isinstance(witness, CapturedMachineLockWitness):
+        raise PermissionError(
+            "a captured GPU borrower lease requires a machine witness"
+        )
+    from ._test_isolation import pytest_singleton_bootstrap_window
+
+    with pytest_singleton_bootstrap_window(
+        operation="mint a captured GPU borrower lease authority"
+    ):
+        path = consume_captured_machine_lock_for_borrower_authority(witness)
+        authority = object.__new__(CapturedBorrowerLeaseAuthority)
+        with _lease_guard:
+            _captured_authority_paths[authority] = path
+    return authority
+
+
+def acquire_gpu_borrow_lease_for_captured_authority(
+    authority: object,
+) -> GPUBorrowLease | None:
+    """Acquire the one private borrower anchor named by *authority*.
+
+    The opaque handle is consumed before the first lock claim, so a contention
+    or fault cannot be retried after the holder or path has changed.  The
+    configured pytest paths remain contained; only the registry-owned anchor
+    is exempt from effect-target containment.
+    """
+    from ._test_isolation import require_pytest_singleton_root_registration
+
+    require_pytest_singleton_root_registration(
+        operation="acquire a captured GPU borrower lease authority"
+    )
+    if not isinstance(authority, CapturedBorrowerLeaseAuthority):
+        raise PermissionError(
+            "a captured GPU borrower lease requires a valid opaque authority"
+        )
+    with _lease_guard:
+        path = _captured_authority_paths.pop(authority, None)
+    if path is None:
+        raise PermissionError(
+            "the captured GPU borrower lease authority is stale or already consumed"
+        )
+    return _acquire_gpu_borrow_lease_at(
+        path,
+        operation="acquire the captured GPU borrower lease authority",
+        captured_service_anchor=True,
+    )
+
+
+def _acquire_gpu_borrow_lease_at(
+    path: Path,
+    *,
+    operation: str,
+    captured_service_anchor: bool,
+) -> GPUBorrowLease | None:
+    """Acquire a validated borrower anchor while preserving its exact handle."""
     from ._test_isolation import enforce_pytest_managed_singleton_containment
 
     enforce_pytest_managed_singleton_containment(
-        operation="acquire the GPU borrower lease",
-        targets=(path,),
+        operation=operation,
+        targets=() if captured_service_anchor else (path,),
     )
     with _lease_guard:
         retained = _held_leases.get(str(path))
@@ -113,6 +219,8 @@ def acquire_gpu_borrow_lease() -> GPUBorrowLease | None:
             capability=capability,
         )
         _held_leases[str(path)] = lease
+        if captured_service_anchor:
+            _captured_service_lease_paths.add(str(path))
     return lease
 
 
@@ -120,14 +228,23 @@ def release_gpu_borrow_lease(lease: GPUBorrowLease) -> None:
     """Release *lease* only when it is this process's retained exact handle."""
     from ._test_isolation import enforce_pytest_managed_singleton_containment
 
+    path_key = str(lease.path)
+    with _lease_guard:
+        captured_service_anchor = (
+            _held_leases.get(path_key) is lease
+            and path_key in _captured_service_lease_paths
+        )
     enforce_pytest_managed_singleton_containment(
-        operation="release the GPU borrower lease",
-        targets=(lease.path,),
+        operation="release the captured service GPU borrower lease"
+        if captured_service_anchor
+        else "release the GPU borrower lease",
+        targets=() if captured_service_anchor else (lease.path,),
     )
     with _lease_guard:
-        if _held_leases.get(str(lease.path)) is not lease:
+        if _held_leases.get(path_key) is not lease:
             return
-        _held_leases.pop(str(lease.path))
+        _held_leases.pop(path_key)
+        _captured_service_lease_paths.discard(path_key)
         release_anchor_claim(lease.descriptor, pid_record=True)
 
 
