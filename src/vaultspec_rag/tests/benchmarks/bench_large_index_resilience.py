@@ -29,7 +29,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, Final, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,6 +37,35 @@ if TYPE_CHECKING:
     from ...indexer import CodebaseIndexer
     from ...indexer._codebase_indexer import CodeIndexPreflight
     from ...indexer._vault_prep import IndexResult
+
+    # The subset of ``torch.cuda`` this harness's native peak reset/read
+    # needs. ``load_torch()`` returns ``ModuleType`` (attribute access on a
+    # bare module type is unavoidably ``Any``), so this narrows the one
+    # dynamic handle to what the sampler actually calls.
+    class _TorchCudaModule(Protocol):
+        def reset_peak_memory_stats(self, device: int | None = ...) -> None: ...
+        def max_memory_allocated(self, device: int | None = ...) -> int: ...
+        def max_memory_reserved(self, device: int | None = ...) -> int: ...
+
+    class _TorchModule(Protocol):
+        cuda: _TorchCudaModule
+
+    # ``argparse.Namespace`` attribute access is unavoidably ``Any`` (the
+    # parser has no static view of what ``add_argument`` calls produced).
+    # This mirrors ``_parser()``'s declared arguments so a single cast in
+    # ``main()`` replaces every per-attribute ``Any`` read below it.
+    class _ParsedArgs(Protocol):
+        root: Path
+        files: int
+        chunks_per_file: int
+        expected_chunks: int | None
+        clean: bool
+        local_files_only: bool
+        prepare_only: bool
+        admission_only: bool
+        sample_interval: float
+        json: Path | None
+
 
 _SCHEMA_VERSION: Final = 1
 _TEMPLATE_VERSION: Final = "python-three-functions-v5"
@@ -171,14 +200,14 @@ class _ResourceSampler:
     def _reset_native_cuda_peak() -> None:
         from ..._gpu import load_torch
 
-        torch = load_torch()
+        torch = cast("_TorchModule", load_torch())
         torch.cuda.reset_peak_memory_stats()
 
     @staticmethod
     def _native_cuda_peak() -> tuple[float, float]:
         from ..._gpu import load_torch
 
-        torch = load_torch()
+        torch = cast("_TorchModule", load_torch())
         mib = 1024**2
         return (
             float(torch.cuda.max_memory_allocated() / mib),
@@ -324,7 +353,10 @@ def _load_marker(root: Path) -> dict[str, object] | None:
     marker = root / _MARKER_NAME
     if not marker.is_file():
         return None
-    parsed: object = json.loads(marker.read_text(encoding="utf-8"))
+    # json.loads' return is typed Any (the document's shape is unknown
+    # until parsed); cast to object at extraction, then the isinstance
+    # check below is the real, load-bearing narrowing.
+    parsed = cast("object", json.loads(marker.read_text(encoding="utf-8")))
     if not isinstance(parsed, dict):
         raise RuntimeError(f"invalid corpus marker at {marker}")
     return {
@@ -422,7 +454,7 @@ def validate_acceptance_admission(
     from ...jobs import validate_code_job_admission
 
     cfg = get_config()
-    if str(cfg.index_support_profile) != "managed-service":
+    if str(cast("object", cfg.index_support_profile)) != "managed-service":
         raise RuntimeError(
             "large-corpus acceptance requires the managed-service support profile"
         )
@@ -494,8 +526,8 @@ def run_acceptance(request: AcceptanceRequest) -> AcceptanceReport:
         return AcceptanceReport(
             schema_version=_SCHEMA_VERSION,
             root=str(resolved),
-            profile=str(cfg.index_support_profile),
-            backend="server" if cfg.qdrant_server else "local",
+            profile=str(cast("object", cfg.index_support_profile)),
+            backend="server" if cast("object", cfg.qdrant_server) else "local",
             corpus={
                 **asdict(request.spec),
                 **asdict(preparation),
@@ -547,7 +579,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Prepare and optionally execute the managed-service acceptance run."""
-    args = _parser().parse_args(argv)
+    args = cast("_ParsedArgs", _parser().parse_args(argv))
     spec = CorpusSpec(args.files, args.chunks_per_file)
     expected_chunks = args.expected_chunks or spec.expected_chunks
     if spec.files == _DEFAULT_FILES and expected_chunks < _DEFAULT_EXPECTED_CHUNKS:
@@ -567,7 +599,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             preflight = validate_acceptance_admission(args.root, spec)
             payload.update(
                 {
-                    "profile": str(get_config().index_support_profile),
+                    "profile": str(cast("object", get_config().index_support_profile)),
                     "admission": asdict(preflight.scan.measurement),
                 }
             )

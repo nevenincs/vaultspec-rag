@@ -19,7 +19,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
 from ._env_values import BOOL_SHAPE, parse_bool, rejection
 from ._job_errors import JobError, JobErrorKind
@@ -27,6 +27,38 @@ from ._units import bytes_to_mib, mib_to_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
+
+    import psutil
+
+    # Typing-only surface for the ``torch.cuda`` calls this probe makes.
+    # Never imported at runtime (see the module docstring and the
+    # function-local ``import torch`` calls below) so a spawn worker
+    # reaching this module never initializes CUDA.
+    class _CudaDeviceProperties(Protocol):
+        """The subset of a ``torch.cuda`` device-properties result read here."""
+
+        total_memory: int
+
+    class _TorchCudaModule(Protocol):
+        """The subset of ``torch.cuda`` this probe calls."""
+
+        def is_available(self) -> bool: ...
+        def memory_allocated(self, device: int | None = ...) -> int: ...
+        def memory_reserved(self, device: int | None = ...) -> int: ...
+        def get_device_properties(self, device: int) -> _CudaDeviceProperties: ...
+        def current_device(self) -> int: ...
+        def mem_get_info(self, device: int | None = ...) -> tuple[int, int]: ...
+        def is_initialized(self) -> bool: ...
+        def utilization(self, device: int | None = ...) -> int: ...
+        def empty_cache(self) -> None: ...
+        def reset_peak_memory_stats(self, device: int | None = ...) -> None: ...
+        def max_memory_allocated(self, device: int | None = ...) -> int: ...
+
+    class _TorchModule(Protocol):
+        """The subset of the ``torch`` package this probe touches."""
+
+        cuda: _TorchCudaModule
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +97,10 @@ ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
 # ``current_cuda_mib`` are called once per 250 ms by the background
 # sampler - re-importing psutil/torch and re-instantiating
 # ``psutil.Process`` on every call is wasteful. Cache on first use.
-# ``Any`` is intentional: torch is an optional dependency on some
-# install matrices, and ty cannot narrow our own sentinel probe.
-_psutil_process: Any = None
-_torch_module: Any = None
+# Both annotations are typing-only: the classes they name are never
+# imported at runtime, only under ``TYPE_CHECKING`` above.
+_psutil_process: psutil.Process | None = None
+_torch_module: _TorchModule | None = None
 _torch_probed: bool = False
 _torch_has_cuda: bool = False
 
@@ -106,7 +138,8 @@ def _measure_rss_mib() -> float | None:
     try:
         if _psutil_process is None:
             _psutil_process = psutil.Process(os.getpid())
-        return bytes_to_mib(_psutil_process.memory_info().rss)
+        rss_bytes = cast("int", _psutil_process.memory_info().rss)
+        return bytes_to_mib(rss_bytes)
     except (
         psutil.NoSuchProcess,
         psutil.AccessDenied,
@@ -152,11 +185,12 @@ def _measure_cuda_mib() -> tuple[float, float] | None:
             _torch_has_cuda = False
             _torch_probed = True
         else:
+            torch_module = cast("_TorchModule", _torch)
             try:
-                has_cuda = _torch.cuda.is_available()
+                has_cuda = torch_module.cuda.is_available()
             except (RuntimeError, AssertionError):
                 return None
-            _torch_module = _torch
+            _torch_module = torch_module
             _torch_has_cuda = has_cuda
             _torch_probed = True
     if _torch_module is None or not _torch_has_cuda:
