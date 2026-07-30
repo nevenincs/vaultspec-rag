@@ -48,10 +48,19 @@ class SearchFilterOptions:
 
 
 class InvalidPreferValueError(ValueError):
-    """Raised when the --prefer value is not supported."""
+    """Raised when the --prefer value is not supported.
 
-    def __init__(self, message: str, prefer_value: str) -> None:
-        super().__init__(message)
+    The refusal sentence is built here rather than by each raiser, because the
+    CLI's own long-name normaliser refuses the same values before validation
+    ever runs and must show the operator one wording, not a second one that
+    drifts from this.
+    """
+
+    def __init__(self, prefer_value: str) -> None:
+        super().__init__(
+            "--prefer must be one of production, tests, or documentation; "
+            f"got {prefer_value!r}."
+        )
         self.prefer_value = prefer_value
 
 
@@ -100,13 +109,7 @@ def _format_flags(names: list[str]) -> list[str]:
 
 def _validate_prefer(prefer: str | None) -> None:
     if prefer is not None and prefer not in {"prod", "tests", "docs"}:
-        raise InvalidPreferValueError(
-            (
-                "--prefer must be one of production, tests, or documentation; "
-                f"got {prefer!r}."
-            ),
-            prefer_value=prefer,
-        )
+        raise InvalidPreferValueError(prefer)
 
 
 def _validate_domains(
