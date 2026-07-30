@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, overload
 
 from ..logging_config import log_event
+from ._run_ledger_models import RunOperation
 
 if TYPE_CHECKING:
     import pathlib
@@ -60,6 +61,19 @@ class _IndexLifecycleKwargs(TypedDict):
     root: pathlib.Path
     run_control: RunControl
     completion_fields: NotRequired[Callable[[IndexResult], Mapping[str, object]] | None]
+
+
+def incremental_mode(*, scoped: bool) -> str:
+    """The run-shape label an incremental run's events carry.
+
+    Every content domain branches on the same thing - whether the caller
+    named the paths to reconcile - so the two spellings are chosen here
+    once. Derived from the closed run-operation vocabulary rather than
+    respelled, so the event label and the ledger's recorded operation
+    cannot say different words for the same run.
+    """
+    operation = RunOperation.SCOPED_INCREMENTAL if scoped else RunOperation.INCREMENTAL
+    return operation.value
 
 
 def preprocess_completion_fields(result: IndexResult) -> dict[str, object]:

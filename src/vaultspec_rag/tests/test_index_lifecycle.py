@@ -18,6 +18,7 @@ import logging
 import pathlib
 import pkgutil
 from datetime import UTC, datetime
+from types import CodeType
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -57,6 +58,11 @@ _BODY_SENTINEL = "1999-01-01T00:00:00+00:00"
 
 #: The run entry points every indexer exposes to callers.
 _RUN_ENTRY_POINTS = ("full_index", "incremental_index")
+
+#: The two spellings an incremental run's ``mode`` field may carry. An entry
+#: point holding either as its own literal is respelling a label the shared
+#: lifecycle owns.
+_INCREMENTAL_MODE_SPELLINGS = frozenset({"incremental", "scoped_incremental"})
 
 
 def _result() -> IndexResult:
@@ -356,7 +362,35 @@ def _indexer_run_entry_points() -> list[tuple[str, FunctionType]]:
     return found
 
 
+def _string_constants(code: CodeType) -> set[str]:
+    """Every string literal ``code`` carries, nested code objects included.
+
+    The run bodies are handed to the wrapper as lambdas, so a literal can
+    sit one code object down from the entry point's own.
+    """
+    found: set[str] = set()
+    for const in code.co_consts:
+        if isinstance(const, str):
+            found.add(const)
+        elif isinstance(const, CodeType):
+            found |= _string_constants(const)
+    return found
+
+
 class TestNoIndexerCarriesItsOwnCopy:
+    """Every guard here is proved by mutating one indexer, not this file.
+
+    All five were driven both directions against
+    ``_vault_indexer.VaultIndexer``: rename ``full_index`` for the
+    enumeration guard, call the locked body directly for the routing
+    guard, paste a ``touch_manifest_last_indexed`` into the entry point
+    for the stamp guard, spell the event namespace at module scope for
+    the emitter guard, and inline the mode ternary for the label guard.
+    Each landed on its own assertion below and nowhere else. A guard that
+    stops naming exactly one indexer under its own mutation has been
+    loosened; restore it rather than widening the matcher.
+    """
+
     def test_the_package_still_exposes_every_known_run_entry_point(self) -> None:
         """Guards the enumeration itself: a silent empty sweep proves nothing."""
         names = {name for name, _ in _indexer_run_entry_points()}
@@ -402,6 +436,31 @@ class TestNoIndexerCarriesItsOwnCopy:
         assert not direct, (
             f"these run entry points stamp the activity clock directly instead "
             f"of through the shared index lifecycle: {direct}"
+        )
+
+    def test_no_run_entry_point_spells_the_incremental_mode_itself(self) -> None:
+        """One branch, one spelling, or the label drifts per content domain.
+
+        Every domain decides scoped against unscoped on the same
+        condition, so three copies of the ternary are three chances for
+        one of them to be renamed alone. Reading the literals out of the
+        code object rather than the source keeps the check on what the
+        entry point actually carries.
+
+        Mutation-proved by restoring the inline
+        ``"scoped_incremental" if changed_paths is not None else "incremental"``
+        ternary in one indexer's ``incremental_index``: the entry point is
+        named below. Do not weaken this to a substring match - the
+        entry-point docstrings contain the word.
+        """
+        respelled = [
+            name
+            for name, method in _indexer_run_entry_points()
+            if _string_constants(method.__code__) & _INCREMENTAL_MODE_SPELLINGS
+        ]
+        assert not respelled, (
+            f"these run entry points spell the incremental mode label themselves "
+            f"instead of deriving it from the shared index lifecycle: {respelled}"
         )
 
     def test_only_the_shared_lifecycle_names_the_index_event_namespace(self) -> None:
