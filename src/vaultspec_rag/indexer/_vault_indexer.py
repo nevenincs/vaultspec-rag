@@ -284,8 +284,9 @@ class VaultIndexer:
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the latest immutable observed-memory reading."""
-        budget = self._memory_budget
-        return budget.snapshot if budget is not None else None
+        from ..memory_probe import held_budget_snapshot
+
+        return held_budget_snapshot(self._memory_budget)
 
     @contextlib.contextmanager
     def _memory_telemetry(self) -> Generator[None]:

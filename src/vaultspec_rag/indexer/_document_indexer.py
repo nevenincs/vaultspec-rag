@@ -396,8 +396,9 @@ class DocumentIndexer:
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the latest immutable enforced-memory observation."""
-        budget = self._memory_budget
-        return budget.snapshot if budget is not None else None
+        from ..memory_probe import held_budget_snapshot
+
+        return held_budget_snapshot(self._memory_budget)
 
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve the immutable admission and extraction policy for one run."""
