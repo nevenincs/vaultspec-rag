@@ -10,7 +10,7 @@ mocks; the descriptor is torch-free so these stay in the unit gate.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -96,7 +96,7 @@ class TestReadinessDescriptor:
 
     def test_descriptor_version_matches_constant(self) -> None:
         report = compute_readiness().to_dict()
-        schema = cast("dict[str, Any]", report["schema"])
+        schema = cast("dict[str, object]", report["schema"])
         assert schema["version"] == store_schema.STORAGE_SCHEMA_VERSION
 
     def test_report_is_json_serialisable_with_schema(self) -> None:
@@ -116,7 +116,7 @@ class TestHealthSchemaVersion:
         app = Starlette(routes=[Route("/health", health_handler)])
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         resp: httpx.Response = client.get("/health")
-        data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+        data: dict[str, object] = cast("dict[str, object]", resp.json())
         assert data["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
 
 
@@ -162,14 +162,15 @@ class TestHealthJobsRollup:
 
         app = Starlette(routes=[Route("/health", health_handler)])
         client: httpx.Client = cast("httpx.Client", TestClient(app))
-        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
-        jobs = cast("dict[str, Any]", data["jobs"])
+        raw = client.get("/health").json()
+        data: dict[str, object] = cast("dict[str, object]", raw)
+        jobs = cast("dict[str, object]", data["jobs"])
         assert jobs["running"] == 1
         assert jobs["paused"] == 1
         assert jobs["active"] == 2
         assert jobs["transitional"] == 0
         assert jobs["stalled"] == 0
-        last_failed = cast("dict[str, Any]", jobs["last_failed"])
+        last_failed = cast("dict[str, object]", jobs["last_failed"])
         assert last_failed["id"] == failed_id
         assert last_failed["error_kind"] == "disk_full"
         del running_id
@@ -204,7 +205,7 @@ class TestHealthFailureGenerationBound:
         jobs_health, degraded_reasons = _jobs_health()
 
         assert degraded_reasons == []
-        last_failed = cast("dict[str, Any]", jobs_health["last_failed"])
+        last_failed = cast("dict[str, object]", jobs_health["last_failed"])
         assert last_failed["id"] == failed_id
         assert last_failed["error_kind"] == "disk_full"
         assert isinstance(last_failed["finished_at"], float)
@@ -221,7 +222,7 @@ class TestHealthFailureGenerationBound:
         jobs_health, degraded_reasons = _jobs_health()
 
         assert degraded_reasons == ["the latest indexing job failed: disk_full"]
-        assert cast("dict[str, Any]", jobs_health["last_failed"])["id"] == failed_id
+        assert cast("dict[str, object]", jobs_health["last_failed"])["id"] == failed_id
 
     def test_stalled_job_degrades_regardless_of_generation(self) -> None:
         """Stall is a live condition, so the generation bound must not reach it.
@@ -235,8 +236,9 @@ class TestHealthFailureGenerationBound:
         running_id = record_start(JobSource.CODE, "watcher")
         record_progress(running_id, "embed", 3, 20)
         with activity_record(running_id) as record:
-            progress = cast("dict[str, Any]", record["progress"])
-            progress["last_updated"] -= STALL_THRESHOLD_SECONDS + 60.0
+            progress = cast("dict[str, object]", record["progress"])
+            last_updated = cast("float", progress["last_updated"])
+            progress["last_updated"] = last_updated - (STALL_THRESHOLD_SECONDS + 60.0)
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
         _begin_generation()
 
@@ -267,9 +269,8 @@ class TestHealthFailureGenerationBound:
         jobs_health, degraded_reasons = _jobs_health()
 
         assert degraded_reasons == ["the latest indexing job failed: disk_full"]
-        assert (
-            cast("dict[str, Any]", jobs_health["last_failed"])["finished_at"] == stamp
-        )
+        last_failed = cast("dict[str, object]", jobs_health["last_failed"])
+        assert last_failed["finished_at"] == stamp
 
     def test_stale_failure_leaves_the_health_verdict_unchanged(self) -> None:
         """The served verdict with a stale failure on file matches having none.
@@ -287,19 +288,24 @@ class TestHealthFailureGenerationBound:
         app = Starlette(routes=[Route("/health", health_handler)])
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         _begin_generation()
-        baseline: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
+        raw_baseline = client.get("/health").json()
+        baseline: dict[str, object] = cast("dict[str, object]", raw_baseline)
 
         failed_id = record_start(JobSource.CODE, "tool")
         record_finish(failed_id, error=_DISK_FULL)
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
         _begin_generation()
 
-        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
+        raw_data = client.get("/health").json()
+        data: dict[str, object] = cast("dict[str, object]", raw_data)
 
         assert data["degraded_reasons"] == baseline["degraded_reasons"]
         assert data["status"] == baseline["status"]
-        assert cast("dict[str, Any]", baseline["jobs"])["last_failed"] is None
-        assert cast("dict[str, Any]", data["jobs"])["last_failed"]["id"] == failed_id
+        assert cast("dict[str, object]", baseline["jobs"])["last_failed"] is None
+        last_failed = cast(
+            "dict[str, object]", cast("dict[str, object]", data["jobs"])["last_failed"]
+        )
+        assert last_failed["id"] == failed_id
 
 
 class TestServiceStateSchemaVersion:

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
@@ -114,10 +114,10 @@ async def _post(
     client: httpx.AsyncClient,
     path: str,
     body: dict[str, object],
-) -> dict[str, Any]:
+) -> dict[str, object]:
     response = await client.post(path, json=body)
     assert response.status_code == 200
-    return cast("dict[str, Any]", response.json())
+    return cast("dict[str, object]", response.json())
 
 
 @pytest.mark.usefixtures("watching_service")
