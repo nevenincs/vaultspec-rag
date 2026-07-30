@@ -115,8 +115,8 @@ Create the distinct machine-global borrower lease and one crash-safe coordinator
 
 Keep service diagnostics torch-free and strictly typed, fail closed on missing, unknown, stale, or version-skewed quiescence evidence, and require the same borrower lease plus acknowledged quiescence in pytest and self-hosted CI.
 
-- [ ] `W04.P09.S32` - Replace the separate GPU-test-session lock with the borrower lease coordinator for every selected GPU pytest lane, preserving resume-before-release and no capacity-only authorization; `conftest.py, src/vaultspec_rag/tests/_gpu_session.py, src/vaultspec_rag/tests/test_gpu_session_lock.py`.
-- [ ] `W04.P09.S33` - Route self-hosted GPU CI and Just GPU recipes through the borrower coordinator, fail closed on service or lease evidence, and always resume before release; `.github/workflows/ci.yml, Justfile`.
+- [ ] `W04.P09.S32` - Replace the GPU-test-session lock with the borrower coordinator for every selected GPU pytest lane while retaining only read-only runner Qdrant binary and manifest verification for tests that launch isolated children, never provisioning, preflighting, or starting a service; `conftest.py, src/vaultspec_rag/tests/_gpu_session.py, src/vaultspec_rag/tests/test_gpu_session_lock.py`.
+- [ ] `W04.P09.S33` - Route self-hosted CI and Just GPU tiers through S32's guarded coordinator only, remove direct GPU preflight and Qdrant installation, and declare the pinned Qdrant binary and manifest a runner-image prerequisite; `.github/workflows/ci.yml, Justfile`.
 
 ## Parallelization
 

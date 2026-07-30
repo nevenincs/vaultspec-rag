@@ -49,6 +49,7 @@ The shipped hold gate can report pause before compute drains or resident GPU mem
 - Resume recovery holds the job-manager lock only for scan, state mutation, and persistence; dispatch occurs after that lock is released. The registry transition condition serializes transition ownership only, and the GPU lock remains confined to GPU residency rebuild work; these locks are not nested across recovery or admission waits.
 - No service start, local fallback, or GPU-live test may silently allocate while a machine singleton is live, undiscoverable, pausing, warming, or otherwise unsafe. Intentional local GPU work requires a distinct machine-global borrower lease and a verified safe condition.
 - The existing loopback service token remains mandatory for every pause and resume request. A borrower capability is a second coordination factor, never a replacement for route authentication, and it must not appear in lifecycle snapshots, status, discovery, logs, errors, or tracebacks.
+- GPU pytest and CI never provision Qdrant, run a direct GPU-admission preflight, or start the resident service. The self-hosted GPU runner image supplies the pinned, manifest-verified Qdrant binary required only by tests that launch their own isolated child; test code may read and mirror that evidence, but a missing prerequisite is a tier refusal rather than an install instruction. GPU ownership remains exclusively the borrower coordinator's concern.
 
 ## Implementation
 
