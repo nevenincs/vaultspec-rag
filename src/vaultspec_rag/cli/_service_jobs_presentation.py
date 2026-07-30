@@ -12,6 +12,7 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediation
+from .._operator_commands import server_status_command
 from ..jobs import count, measurement
 from ._cli_format import (
     _counted_unit,
@@ -19,6 +20,7 @@ from ._cli_format import (
     _format_milliseconds,
     _format_seconds,
     _path_label,
+    _project_name,
     compact_duration,
 )
 from ._render import _plain, address_line
@@ -29,6 +31,7 @@ from ._service_jobs_query import (
     job_is_waiting,
     jobs_from_result,
 )
+from ._service_lifecycle import _print_lifecycle_next_actions
 
 _RESULT_RE = re.compile(
     r"^\+(?P<added>\d+)\s*/(?P<updated>\d+)\s*-(?P<removed>\d+)"
@@ -159,8 +162,7 @@ def project_label(job: dict[str, object]) -> str:
     project_root = cast("dict[str, object]", initiator).get("project_root")
     if not project_root:
         return "project not reported"
-    parts = str(project_root).replace("\\", "/").rstrip("/").split("/")
-    return parts[-1] if parts and parts[-1] else str(project_root)
+    return _project_name(project_root)
 
 
 def _project_phrase(job: dict[str, object]) -> str:
@@ -901,9 +903,10 @@ def _render_empty_jobs_result(
     _plain("Order: latest job appears last")
     _render_filter_and_watch(filter_text, monitoring=monitoring, watch_text=watch_text)
     _cli.console.print(empty_jobs_message(result, job_id))
-    _plain("Next actions:")
-    _plain(f"  vaultspec-rag server status --port {port}")
-    _plain(f"  vaultspec-rag server logs --limit 20 --port {port}")
+    _print_lifecycle_next_actions(
+        server_status_command(port),
+        f"vaultspec-rag server logs --limit 20 --port {port}",
+    )
 
 
 def _render_job_progress_detail(job: dict[str, object]) -> None:
