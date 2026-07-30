@@ -28,6 +28,7 @@ from ._document_meta import (
 )
 from ._file_state import FileStateKind
 from ._index_lifecycle import (
+    IndexLifecycleRequest,
     incremental_mode,
     preprocess_completion_fields,
     run_index_lifecycle,
@@ -1108,14 +1109,16 @@ class DocumentIndexer:
                         run_control=run_control,
                     ),
                 ),
-                event_logger=logger,
-                store=self.store,
-                source="document",
-                mode="full",
-                clean=clean,
-                root=self.root_dir,
-                run_control=run_control,
-                completion_fields=preprocess_completion_fields,
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=self.store,
+                    source="document",
+                    mode="full",
+                    clean=clean,
+                    root=self.root_dir,
+                    run_control=run_control,
+                    completion_fields=preprocess_completion_fields,
+                ),
             )
 
     def _full_index_locked(
@@ -1353,14 +1356,16 @@ class DocumentIndexer:
                     ),
                     previous=previous,
                 ),
-                event_logger=logger,
-                store=self.store,
-                source="document",
-                mode=incremental_mode(scoped=changed_paths is not None),
-                clean=False,
-                root=self.root_dir,
-                run_control=run_control,
-                completion_fields=preprocess_completion_fields,
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=self.store,
+                    source="document",
+                    mode=incremental_mode(scoped=changed_paths is not None),
+                    clean=False,
+                    root=self.root_dir,
+                    run_control=run_control,
+                    completion_fields=preprocess_completion_fields,
+                ),
             )
 
     def _incremental_index_locked(
