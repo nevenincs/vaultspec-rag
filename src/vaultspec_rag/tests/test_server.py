@@ -807,12 +807,21 @@ class TestMainTransportSetup:
         )
         monkeypatch.setattr("vaultspec_rag.mcp.mcp", _FakeMcp())
 
+        from ..registry import reset_registry
+
         original_hook = mod._registry._on_close_project
         mod._registry._on_close_project = None
         try:
             _main._run_stdio_mcp(None)
         finally:
             mod._registry._on_close_project = original_hook
+            # The runner closes the process-wide registry on its way out, so
+            # driving it for real - which is what stopped this being a source
+            # scan - leaves the singleton refusing every later lease. Discard
+            # it here or the next file to reach the registry inherits a
+            # shut-down one and fails for reasons that have nothing to do with
+            # it.
+            reset_registry()
 
         # Non-emptiness first: if the runner never reached the transport, the
         # two assertions below would both hold vacuously.
