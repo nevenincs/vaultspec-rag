@@ -10,7 +10,6 @@ import sys
 import threading
 import typing
 import uuid
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -35,7 +34,8 @@ from ..server import (
     ProjectRootRequiredError,
     SearchResponse,
     SearchResultItem,
-    health_handler,
+    ServerRouteRuntime,
+    create_http_app,
 )
 from ..server._lifecycle import _DiscoveryPublisher
 from ..server._utils import (
@@ -45,6 +45,7 @@ from ..server._utils import (
     _resolve_root,
     _validate_vault_root,
 )
+from ..service import ServiceRegistry
 
 pytestmark = [pytest.mark.unit]
 
@@ -62,14 +63,34 @@ def test_missing_mcp_extra_guidance_respects_all_install_modes() -> None:
     assert "uv add vaultspec-rag[mcp]" not in message
 
 
+class TestServerRouteRuntime:
+    """The HTTP app owns one explicit, fail-closed route authority."""
+
+    def test_empty_token_is_rejected_before_an_app_can_be_built(self) -> None:
+        with pytest.raises(ValueError, match="non-empty service token"):
+            ServerRouteRuntime(token="", registry=ServiceRegistry())
+
+    def test_factory_installs_the_exact_runtime_and_missing_state_fails_closed(
+        self,
+    ) -> None:
+        from starlette.applications import Starlette
+
+        from ..server._runtime import get_app_runtime
+
+        runtime = ServerRouteRuntime(
+            token="direct-runtime-test-token",
+            registry=ServiceRegistry(),
+        )
+        app = create_http_app(runtime, lifespan=None)
+
+        assert get_app_runtime(app) is runtime
+        with pytest.raises(RuntimeError, match="no valid server route runtime"):
+            get_app_runtime(Starlette())
+
+
 def _run[T](coro: Coroutine[object, object, T]) -> T:
     """Run an async coroutine synchronously."""
     return asyncio.run(coro)
-
-
-@asynccontextmanager
-async def _empty_lifespan(_app: object) -> typing.AsyncGenerator[None]:
-    yield
 
 
 class TestPackageEntryPoint:
@@ -110,16 +131,17 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
         storage_key: os.environ.get(storage_key),
     }
     previous_port = server_state._service_port
-    previous_token = server_state._SERVICE_TOKEN
     os.environ[status_key] = str(tmp_path / "status")
     os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
     reset_config()
     server_state._service_port = 8766
-    server_state._SERVICE_TOKEN = "test-owner-token"
     lease, holder = acquire_machine_lock_lease()
     assert lease is not None
     assert holder == os.getpid()
-    publisher = _DiscoveryPublisher(lease)
+    publisher = _DiscoveryPublisher(
+        ServerRouteRuntime(token="test-owner-token", registry=ServiceRegistry()),
+        lease,
+    )
     try:
         yield publisher
     finally:
@@ -127,7 +149,6 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
         publisher.cleanup()
         release_machine_lock_lease(lease)
         server_state._service_port = previous_port
-        server_state._SERVICE_TOKEN = previous_token
         for key, value in previous_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -752,13 +773,16 @@ class TestMainTransportSetup:
         """Stdio path must wire _on_close_project for watcher cleanup."""
         import vaultspec_rag.server as mod
 
-        orig = mod._registry._on_close_project
+        from ..service import ServiceRegistry
+
+        registry = ServiceRegistry()
+        orig = registry._on_close_project
         try:
             # Simulate what main(port=None) does before mcp.run()
-            mod._registry._on_close_project = mod._stop_watcher
-            assert mod._registry._on_close_project is mod._stop_watcher
+            registry._on_close_project = mod._stop_watcher
+            assert registry._on_close_project is mod._stop_watcher
         finally:
-            mod._registry._on_close_project = orig
+            registry._on_close_project = orig
 
     def test_stdio_does_not_load_a_model(self):
         """Stdio MCP is a thin client: main() must not call load_model().
@@ -807,13 +831,13 @@ class TestHealthHandler:
 
     def test_health_handler_returns_json(self):
         """health_handler returns a JSONResponse with expected keys."""
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        app = Starlette(
-            routes=[Route("/health", health_handler)],
-            lifespan=_empty_lifespan,
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-response-token", registry=ServiceRegistry()
+            ),
+            lifespan=None,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         resp: httpx.Response = client.get("/health")
@@ -847,36 +871,21 @@ class TestHealthHandler:
     def test_health_status_reflects_model_state(self):
         """Without models loaded, status should not be 'ready'.
 
-        Swaps in a fresh, model-less registry for the duration of the
-        test and restores the original in finally.
+        Uses a fresh, model-less registry to keep the route state isolated.
         """
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        import vaultspec_rag.server as mod
-
-        from ..service import ServiceRegistry
-
-        orig_registry = mod._registry
-        orig_start = mod._start_time
-
-        try:
-            mod._registry = ServiceRegistry()
-            mod._start_time = 0.0
-
-            app = Starlette(
-                routes=[Route("/health", health_handler)],
-                lifespan=_empty_lifespan,
-            )
-            client: httpx.Client = cast("httpx.Client", TestClient(app))
-            resp: httpx.Response = client.get("/health")
-            data: dict[str, object] = cast("dict[str, object]", resp.json())
-            assert data["status"] == "error"
-            assert data["models_loaded"] is False
-        finally:
-            mod._registry = orig_registry
-            mod._start_time = orig_start
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-model-state-token", registry=ServiceRegistry()
+            ),
+            lifespan=None,
+        )
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        resp: httpx.Response = client.get("/health")
+        data: dict[str, object] = cast("dict[str, object]", resp.json())
+        assert data["status"] == "error"
+        assert data["models_loaded"] is False
 
 
 class TestHealthInfoReduction:
@@ -884,13 +893,14 @@ class TestHealthInfoReduction:
 
     def test_health_no_project_paths(self):
         """Health response must not contain absolute project paths."""
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        app = Starlette(
-            routes=[Route("/health", health_handler)],
-            lifespan=_empty_lifespan,
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-project-path-token",
+                registry=ServiceRegistry(),
+            ),
+            lifespan=None,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         raw = client.get("/health").json()
@@ -901,13 +911,13 @@ class TestHealthInfoReduction:
 
     def test_health_no_gpu_name(self):
         """Health response must not contain GPU device name."""
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        app = Starlette(
-            routes=[Route("/health", health_handler)],
-            lifespan=_empty_lifespan,
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-gpu-name-token", registry=ServiceRegistry()
+            ),
+            lifespan=None,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         raw = client.get("/health").json()
@@ -981,7 +991,7 @@ class TestRegistryFullErrorShape:
         from ..service import RegistryFullError
 
         exc = RegistryFullError(_registry.max_projects)
-        result = _registry_full_error_dict(exc)
+        result = _registry_full_error_dict(exc, _registry)
         assert result["ok"] is False
         assert result["error"] == "registry_full"
         assert result["max_projects"] == _registry.max_projects
@@ -1263,30 +1273,22 @@ class TestRouteMissingProjectRoot:
     """Routes return HTTP 400 (not 500) when project_root is absent in HTTP mode.
 
     The Starlette TestClient drives the route handlers synchronously.
-    Module state (``_http_mode`` and ``_SERVICE_TOKEN``) is set for the
-    duration of each test and restored in ``finally`` blocks.  No GPU,
+    Module state (``_http_mode``) is set for the duration of each test and
+    restored in ``finally`` blocks.  No GPU,
     no Qdrant, no model loading - the validation fires before any
     model/store access.
 
-    The token gate (``require_token``) is satisfied by setting a known
-    token on ``_SERVICE_TOKEN`` and passing it as a bearer header so the
-    handler proceeds to the root-validation guard.
+    The app-scoped runtime carries the known token used by the bearer header,
+    so the handler proceeds to the root-validation guard.
     """
 
     _TOKEN = "test-token-s07"
 
     def _make_app(self) -> Starlette:
-        from contextlib import asynccontextmanager
-
-        from starlette.applications import Starlette
-
-        from ..server._routes import ROUTES
-
-        @asynccontextmanager
-        async def _lifespan(_app: object) -> typing.AsyncGenerator[None]:
-            yield
-
-        return Starlette(routes=ROUTES, lifespan=_lifespan)
+        return create_http_app(
+            ServerRouteRuntime(token=self._TOKEN, registry=ServiceRegistry()),
+            lifespan=None,
+        )
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._TOKEN}"}
@@ -1300,10 +1302,8 @@ class TestRouteMissingProjectRoot:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         query = f"search-activity-missing-root-{uuid.uuid4().hex}"
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1333,7 +1333,6 @@ class TestRouteMissingProjectRoot:
             ]
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_search_route_records_invalid_bodies_as_validation_rejections(self):
         """Malformed and non-object bodies finish once before search admission."""
@@ -1345,9 +1344,7 @@ class TestRouteMissingProjectRoot:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1395,7 +1392,6 @@ class TestRouteMissingProjectRoot:
                 ), label
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_unauthenticated_search_activity_route_never_exposes_query(self):
         """The token gate rejects the in-memory query-review surface."""
@@ -1443,27 +1439,28 @@ import json
 import threading
 import time
 
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 import vaultspec_rag.server as server
-from vaultspec_rag.server._routes import ROUTES
+from vaultspec_rag.server import ServerRouteRuntime, create_http_app
 from vaultspec_rag.server._search_activity import (
     DEFAULT_MAX_ACTIVE_SEARCHES,
     SearchActivityCompletion,
     SearchActivityStart,
 )
+from vaultspec_rag.service import ServiceRegistry
 from vaultspec_rag.server._state import search_activity_ledger
 
 
 token = "activity-capacity-route-token"
 waiting_query = "wait for activity capacity before validation"
 previous_mode = server._http_mode
-previous_token = server._SERVICE_TOKEN
 server._http_mode = True
-server._SERVICE_TOKEN = token
 try:
-    app = Starlette(routes=ROUTES)
+    app = create_http_app(
+        ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+        lifespan=None,
+    )
     with TestClient(app, raise_server_exceptions=False) as client:
         baseline = client.post(
             "/search",
@@ -1534,7 +1531,6 @@ try:
     )
 finally:
     server._http_mode = previous_mode
-    server._SERVICE_TOKEN = previous_token
 """
         completed = subprocess.run(
             [sys.executable, "-c", child],
@@ -1573,9 +1569,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1592,7 +1586,6 @@ finally:
             assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_reindex_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
@@ -1601,9 +1594,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1620,7 +1611,6 @@ finally:
             assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_service_state_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
@@ -1629,9 +1619,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1647,7 +1635,6 @@ finally:
             assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_code_file_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
@@ -1656,9 +1643,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1675,7 +1660,6 @@ finally:
             assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_vault_document_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
@@ -1684,9 +1668,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1703,7 +1685,6 @@ finally:
             assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
 
 class TestReindexPreprocessPreflight:
@@ -1724,20 +1705,27 @@ class TestReindexPreprocessPreflight:
 import json
 import sys
 
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 import vaultspec_rag.jobs as jobs
 import vaultspec_rag.server as server
-from vaultspec_rag.server._routes import ROUTES  # absolute-import-ok
+from vaultspec_rag.server import (  # absolute-import-ok
+    ServerRouteRuntime,
+    create_http_app,
+)
+from vaultspec_rag.service import ServiceRegistry  # absolute-import-ok
 
 token = "isolated-preflight-token"
 jobs.reset()
 jobs.get_job_manager().begin_shutdown()
 server._http_mode = True
-server._SERVICE_TOKEN = token
 try:
-    with TestClient(Starlette(routes=ROUTES)) as client:
+    with TestClient(
+        create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            lifespan=None,
+        )
+    ) as client:
         response = client.post(
             "/reindex",
             json={"type": "code", "project_root": sys.argv[1]},

@@ -12,10 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 import uvicorn
-from starlette.applications import Starlette
 from typer.testing import CliRunner
-
-import vaultspec_rag.server as _server_state
 
 from ...cli import app
 from ...config._settings import reset_config
@@ -32,7 +29,8 @@ from ...jobs import get_job_manager
 from ...jobs import reset as reset_jobs
 from ...mcp._mcp import mcp
 from ...mcp._tools import reindex_vault
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 from ...serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ...serviceclient._transport import (
     _try_http_create_job,
@@ -61,7 +59,6 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
     token = "real-job-control-token"
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)
-    prior_token = _server_state._SERVICE_TOKEN
     server: uvicorn.Server | None = None
     thread: threading.Thread | None = None
     stopped = True
@@ -71,7 +68,6 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
         os.environ[EnvVar.WATCH_ENABLED] = "false"
         reset_config()
         reset_jobs()
-        _server_state._SERVICE_TOKEN = token
         (status_dir / "service.json").write_text(
             json.dumps(
                 {
@@ -89,7 +85,10 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
 
         server = uvicorn.Server(
             uvicorn.Config(
-                Starlette(routes=ROUTES),
+                create_http_app(
+                    ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+                    lifespan=None,
+                ),
                 host="127.0.0.1",
                 port=port,
                 log_config=None,
@@ -111,7 +110,6 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
             thread.join(timeout=5.0)
             stopped = not thread.is_alive()
         reset_jobs()
-        _server_state._SERVICE_TOKEN = prior_token
         if prior_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:

@@ -536,25 +536,21 @@ class TestJobsRoutePressureExposure:
 
     @pytest.mark.usefixtures("fresh_evaluator")
     def test_the_listing_envelope_carries_the_pressure_block(self) -> None:
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from .. import server as server_package
-        from ..server._routes import jobs_route
+        from ..server import ServerRouteRuntime, create_http_app
+        from ..service import ServiceRegistry
 
         token = "pressure-exposure-test-token"
-        previous_token = server_package._SERVICE_TOKEN
-        server_package._SERVICE_TOKEN = token
-        try:
-            app = Starlette(routes=[Route("/jobs", jobs_route)])
-            client: httpx.Client = cast("httpx.Client", TestClient(app))
-            response: httpx.Response = client.get(
-                "/jobs", headers={"Authorization": f"Bearer {token}"}
-            )
-            payload = _as_map(cast("object", response.json()))
-        finally:
-            server_package._SERVICE_TOKEN = previous_token
+        app = create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            lifespan=None,
+        )
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        response: httpx.Response = client.get(
+            "/jobs", headers={"Authorization": f"Bearer {token}"}
+        )
+        payload = _as_map(cast("object", response.json()))
         pressure = _as_map(payload["pressure"])
         assert set(pressure) == _PRESSURE_KEYS, (
             "the polled listing is where every adapter reads the tier from"
