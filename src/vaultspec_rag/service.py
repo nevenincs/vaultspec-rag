@@ -1672,6 +1672,22 @@ class ServiceRegistry:
         with self._lock:
             return [r for r, s in self._projects.items() if s.ref_count > 0]
 
+    def projects_envelope(self, projects: list[dict[str, Any]]) -> dict[str, Any]:
+        """Wrap an already-shaped project list in its published bounds.
+
+        The per-project entries differ by surface - the route publishes the
+        slots as they are, the consolidated state adds derived timings - but
+        the bounds beside them are this registry's own and are read the same
+        way by both. Written out at each surface they agree only until one
+        gains a field, and nothing reports the disagreement because each
+        surface still answers with a well-formed payload.
+        """
+        return {
+            "projects": projects,
+            "max_projects": self.max_projects,
+            "idle_ttl_seconds": self.idle_ttl_seconds,
+        }
+
     def snapshot(self) -> list[dict[str, Any]]:
         """Return a list of per-slot diagnostic dicts (for ``list_projects``).
 
