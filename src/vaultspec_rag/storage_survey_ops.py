@@ -216,6 +216,8 @@ def prune_debris(
     results: list[DeleteResult] = []
     reclaimed = 0
     for survey in debris_surveys(live_names, storage_dir):
+        # debris_surveys() returns [] whenever storage_dir is None, so a
+        # non-empty survey here proves storage_dir was given.
         for name in survey.collections:
             path = cast("Path", storage_dir) / name
             size = directory_size_bytes(path)
