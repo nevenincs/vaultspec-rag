@@ -158,12 +158,11 @@ class CodebaseIndexer:
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
-        from ..config._settings import get_config
+        from .._store_writes import workspace_volume_path
 
-        cfg = get_config()
         # The data root also locates the generation lifecycle's artifacts and
         # the preprocess context, so it stays independent of the sidecar.
-        self._data_root = root_dir / cfg.data_dir
+        self._data_root = workspace_volume_path(root_dir)
         self._meta_path = index_meta_path(root_dir, PublicSourceType.CODE)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
