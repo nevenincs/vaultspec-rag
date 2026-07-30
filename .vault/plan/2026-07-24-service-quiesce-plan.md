@@ -3,7 +3,7 @@ tags:
   - '#plan'
   - '#service-quiesce'
 date: '2026-07-24'
-modified: '2026-07-30'
+modified: '2026-07-31'
 tier: L3
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
@@ -107,8 +107,8 @@ Require a distinct machine-global borrower lease plus acknowledged service quies
 
 Create the distinct machine-global borrower lease and one crash-safe coordinator that acquires the lease before requesting pause, admits work only from a strict acknowledged-quiescence snapshot, resumes before release, and never starts another service.
 
-- [ ] `W04.P08.S29` - Repair the borrower lease with a one-shot opaque pre-registration captured-service authority and make the service machine-lock owner PID durably recoverable by a cross-process contender; `src/vaultspec_rag/gpu_borrow_lease.py, src/vaultspec_rag/_test_isolation.py, src/vaultspec_rag/_anchor_claim.py, src/vaultspec_rag/_machine_lock.py, src/vaultspec_rag/tests/test_gpu_borrow_lease.py, src/vaultspec_rag/tests/test_machine_discovery.py, src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py`.
-- [ ] `W04.P08.S30` - Repair captured pre-isolation service targeting by minting and consuming the opaque authority before post-lease revalidation and by using typed initial-bearer transport with one same-token authenticated 401 retry; `src/vaultspec_rag/cli/_gpu_lease.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/tests/test_gpu_borrow_cli.py, src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`.
+- [ ] `W04.P08.S29` - Repair the borrower lease with one-shot opaque pre-registration captured-service authority, a no-create momentary original-path machine-lock observation, and a durably recoverable service machine-lock owner PID; `src/vaultspec_rag/gpu_borrow_lease.py, src/vaultspec_rag/_test_isolation.py, src/vaultspec_rag/_anchor_claim.py, src/vaultspec_rag/_machine_lock.py, src/vaultspec_rag/tests/test_gpu_borrow_lease.py, src/vaultspec_rag/tests/test_machine_discovery.py, src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py`.
+- [ ] `W04.P08.S30` - Repair captured pre-isolation service targeting through shared original-path pointer validation, mint and consume opaque authority before post-lease revalidation, and use typed initial-bearer transport with one same-token authenticated 401 retry; `src/vaultspec_rag/cli/_gpu_lease.py, src/vaultspec_rag/serviceclient/_discovery.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/tests/test_gpu_borrow_cli.py, src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py, src/vaultspec_rag/tests/test_machine_discovery.py`.
 - [ ] `W04.P08.S31` - Make service preflight a torch-free remote observation of strict typed quiescence and device capacity that never authorizes GPU work or falls back to a local probe; `src/vaultspec_rag/cli/_service_preflight.py, src/vaultspec_rag/tests/test_service_preflight_cli.py`.
 
 ### Phase `W04.P09` - Torch-free diagnostics and GPU entry-point enforcement
