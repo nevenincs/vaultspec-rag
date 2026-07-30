@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 
     import httpx
 
+from ..server._runtime import ServerRouteRuntime, install_route_runtime
+from ..service import ServiceRegistry
+
 pytestmark = [pytest.mark.unit]
 
 # A disk-full error text classifies to a stable, asserted ``error_kind``, so the
@@ -114,6 +117,13 @@ class TestHealthSchemaVersion:
         from starlette.testclient import TestClient
 
         app = Starlette(routes=[Route("/health", health_handler)])
+        # The handler resolves its registry from the application it is
+        # hosted on, so a bare route host has no authority to answer
+        # from. Installed rather than switched to the full app, so these
+        # keep isolating the one handler under test.
+        install_route_runtime(
+            app, ServerRouteRuntime(token="route-test", registry=ServiceRegistry())
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         resp: httpx.Response = client.get("/health")
         data: dict[str, object] = cast("dict[str, object]", resp.json())
@@ -161,6 +171,13 @@ class TestHealthJobsRollup:
         assert paused.job is not None
 
         app = Starlette(routes=[Route("/health", health_handler)])
+        # The handler resolves its registry from the application it is
+        # hosted on, so a bare route host has no authority to answer
+        # from. Installed rather than switched to the full app, so these
+        # keep isolating the one handler under test.
+        install_route_runtime(
+            app, ServerRouteRuntime(token="route-test", registry=ServiceRegistry())
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         raw = client.get("/health").json()
         data: dict[str, object] = cast("dict[str, object]", raw)
@@ -286,6 +303,13 @@ class TestHealthFailureGenerationBound:
         from ..jobs import record_finish, record_start
 
         app = Starlette(routes=[Route("/health", health_handler)])
+        # The handler resolves its registry from the application it is
+        # hosted on, so a bare route host has no authority to answer
+        # from. Installed rather than switched to the full app, so these
+        # keep isolating the one handler under test.
+        install_route_runtime(
+            app, ServerRouteRuntime(token="route-test", registry=ServiceRegistry())
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         _begin_generation()
         raw_baseline = client.get("/health").json()
@@ -328,7 +352,11 @@ class TestServiceStateSchemaVersion:
         )
         reset_config()
         try:
-            state = vr.get_service_state(tmp_path)
+            from ..service import ServiceRegistry
+
+            # The route runtime owns the registry now, so the state
+            # reader takes it explicitly rather than reaching a global.
+            state = vr.get_service_state(tmp_path, registry=ServiceRegistry())
             assert state["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
         finally:
             for key, value in prior.items():
