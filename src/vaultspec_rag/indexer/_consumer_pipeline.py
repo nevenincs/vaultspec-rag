@@ -492,9 +492,7 @@ class CodeConsumerPipeline:
                 consumer_exceptions=consumer_run.consumer_exceptions,
                 on_wait=self._sample_memory_budget,
                 run_control=run_control,
-                run_policy=(
-                    checkpoint.run_policy if checkpoint is not None else None
-                ),
+                run_policy=(checkpoint.run_policy if checkpoint is not None else None),
             ),
         )
 

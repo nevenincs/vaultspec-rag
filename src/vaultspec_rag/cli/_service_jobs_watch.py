@@ -1,4 +1,4 @@
-"""Entry to the interactive jobs interface for ``server jobs --watch``.
+"""Entry to the jobs-focused canonical server watch for ``server jobs --watch``.
 
 The live view is an application that owns the terminal, not a loop that
 reprints. A reprint loop cannot offer selection, per-row control, or a log
@@ -9,7 +9,7 @@ all - so ``--watch`` hands the screen to the interface instead.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Literal, NoReturn
 
 import typer
 
@@ -29,6 +29,7 @@ class JobsWatchRequest:
     port: int
     interval: float
     client_state: str | None
+    watch_mode: Literal["server", "jobs"]
 
 
 def exit_invalid_watch_args(json_mode: bool, interval: float) -> NoReturn:
@@ -50,7 +51,7 @@ def watch_jobs(request: JobsWatchRequest) -> None:
     """
     # Imported here so the one-shot and structured paths never pay for the
     # interface, and a terminal-less host can still read the plain feed.
-    from ._jobs_tui import run_jobs_tui
+    from ._jobs_tui import run_server_watch
 
     def watched_fetch() -> dict[str, object] | None:
         result = request.fetch()
@@ -58,4 +59,9 @@ def watch_jobs(request: JobsWatchRequest) -> None:
             return None
         return apply_client_state_filter(result, request.client_state)
 
-    run_jobs_tui(watched_fetch, port=request.port, interval=request.interval)
+    run_server_watch(
+        watched_fetch,
+        port=request.port,
+        interval=request.interval,
+        watch_mode=request.watch_mode,
+    )

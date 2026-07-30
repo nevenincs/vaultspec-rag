@@ -22,6 +22,7 @@ from .._operator_commands import (
 )
 from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
+from .._typed_fields import str_or_empty
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 if TYPE_CHECKING:
@@ -250,8 +251,7 @@ class DegradedFinding:
         """Rebuild a finding a caller carried through a JSON envelope."""
 
         def text(key: str) -> str:
-            value = payload.get(key)
-            return value if isinstance(value, str) else ""
+            return str_or_empty(payload.get(key))
 
         return cls(
             cause=text("cause"),
