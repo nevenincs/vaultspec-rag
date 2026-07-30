@@ -275,6 +275,39 @@ def _render_empty_index_state(
 def _handle_vaultstore_locked_error(
     exc: VaultStoreLockedError, json_mode: bool
 ) -> NoReturn:
+    if exc.held_in_process:
+        # The lock table proves the blocker: a store this same process opened
+        # earlier in the run is still open, not a foreign holder to wait out.
+        if json_mode:
+            _emit_json_error_and_exit(
+                "search",
+                "local_store_locked",
+                (
+                    f"The local search index at {exc.db_path} is busy. "
+                    "This command already opened it earlier in this run, and "
+                    "a local store cannot be opened twice from the same "
+                    "process. Send the search through the running service "
+                    "instead, for example with --port 8766."
+                ),
+                1,
+                db_path=str(exc.db_path),
+                routing_mode="direct_local_search",
+                remediation=[
+                    "vaultspec-rag search ... --port 8766",
+                    "Rerun the command.",
+                ],
+            )
+        _plain(
+            f"Error: The local search index at {exc.db_path} is busy.\n\n"
+            "  This command already opened it earlier in this run, and a "
+            "local store cannot be opened twice from the same process.\n\n"
+            "  Next actions:\n"
+            "    1. Send this search through a running "
+            "service on a port, e.g.:\n"
+            "         vaultspec-rag search ... --port 8766\n"
+            "    2. Rerun the command."
+        )
+        raise typer.Exit(code=1) from exc
     if json_mode:
         _emit_json_error_and_exit(
             "search",
