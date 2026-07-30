@@ -8,20 +8,14 @@ it.
 
 from __future__ import annotations
 
-import typing
-from contextlib import asynccontextmanager
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
-from ..server._lifespan import health_handler
+from ..server import ServerRouteRuntime, create_http_app
+from ..service import ServiceRegistry
 
 pytestmark = [pytest.mark.unit]
-
-
-@asynccontextmanager
-async def _empty_lifespan(_app: object) -> typing.AsyncGenerator[None]:
-    yield
 
 
 def test_health_payload_carries_the_device_load_key() -> None:
@@ -31,12 +25,16 @@ def test_health_payload_carries_the_device_load_key() -> None:
     the ``health_handler`` response body. Observed this assertion fail on
     ``"device_load" in data``.
     """
-    from starlette.applications import Starlette
-    from starlette.routing import Route
     from starlette.testclient import TestClient
 
-    app = Starlette(routes=[Route("/health", health_handler)], lifespan=_empty_lifespan)
-    client = cast("Any", TestClient(app))
-    data = client.get("/health").json()
+    app = create_http_app(
+        ServerRouteRuntime(
+            token="lifespan-device-load-test-token",
+            registry=ServiceRegistry(),
+            port=8765,
+        ),
+        lifespan=None,
+    )
+    data = cast("dict[str, object]", TestClient(app).get("/health").json())
 
     assert "device_load" in data

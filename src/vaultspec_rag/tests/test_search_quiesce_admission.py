@@ -75,7 +75,11 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
     registry = ServiceRegistry()
     assert registry.quiesce_resources(timeout_seconds=0).achieved
     app = create_http_app(
-        ServerRouteRuntime(token="closed-admission-token", registry=registry),
+        ServerRouteRuntime(
+            token="closed-admission-token",
+            registry=registry,
+            port=8765,
+        ),
         lifespan=None,
     )
     marker = f"quiesce-admission-{time_ns()}"

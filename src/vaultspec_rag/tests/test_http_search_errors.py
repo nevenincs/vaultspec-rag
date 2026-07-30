@@ -159,6 +159,7 @@ def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
         ServerRouteRuntime(
             token="runtime-registry-search-token",
             registry=runtime_registry,
+            port=8765,
         ),
         lifespan=None,
     )
@@ -331,7 +332,11 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
         registry = ServiceRegistry()
         assert registry.quiesce_resources(timeout_seconds=0).achieved
         app = create_http_app(
-            ServerRouteRuntime(token="combined-carve-out-token", registry=registry),
+            ServerRouteRuntime(
+                token="combined-carve-out-token",
+                registry=registry,
+                port=8765,
+            ),
             lifespan=None,
         )
         with TestClient(app, raise_server_exceptions=False) as client:

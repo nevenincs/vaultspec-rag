@@ -37,6 +37,7 @@ def canonical_routes(tmp_path: Path) -> Iterator[tuple[TestClient, str]]:
                 ServerRouteRuntime(
                     token="canonical-source-test-token",
                     registry=ServiceRegistry(),
+                    port=8765,
                 ),
                 lifespan=None,
             )

@@ -178,7 +178,7 @@ def _refusing_admission_service(tmp_path: Path) -> Generator[Path]:
 async def _post_index_job(token: str, root: Path, source: str) -> httpx.Response:
     transport = httpx.ASGITransport(
         app=create_http_app(
-            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
             lifespan=None,
         )
     )

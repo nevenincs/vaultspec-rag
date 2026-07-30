@@ -34,6 +34,7 @@ def _routes_app() -> Iterator[tuple[TestClient, str]]:  # pyright: ignore[report
             ServerRouteRuntime(
                 token="test-token-readiness",
                 registry=ServiceRegistry(),
+                port=8765,
             ),
             lifespan=None,
         )

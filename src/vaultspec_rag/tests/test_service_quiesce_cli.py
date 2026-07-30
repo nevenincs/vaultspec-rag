@@ -70,7 +70,11 @@ def _quiesce_service(tmp_path: Path) -> Generator[tuple[int, ServiceRegistry]]:
     route_server = uvicorn.Server(
         uvicorn.Config(
             create_http_app(
-                ServerRouteRuntime(token=_SERVICE_TOKEN, registry=registry),
+                ServerRouteRuntime(
+                    token=_SERVICE_TOKEN,
+                    registry=registry,
+                    port=port,
+                ),
                 lifespan=None,
             ),
             host="127.0.0.1",
