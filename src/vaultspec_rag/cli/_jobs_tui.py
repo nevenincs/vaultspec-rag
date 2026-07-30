@@ -696,8 +696,18 @@ def _search_request_cell(search: dict[str, object], cells: int) -> Text:
 
 
 def _search_query_cell(search: dict[str, object], cells: int) -> Text:
-    """Render authenticated in-memory query text, never a result payload."""
-    query = _search_text(search.get("query"), fallback="query unavailable")
+    """Render authenticated in-memory query text, never a result payload.
+
+    A redacted record is shown as redacted rather than as missing: the
+    service withheld the text deliberately, and an operator reading
+    "query unavailable" would go looking for a fault that is not there.
+    """
+    fallback = (
+        "query redacted"
+        if search.get("query_redacted") is True
+        else "query unavailable"
+    )
+    query = _search_text(search.get("query"), fallback=fallback)
     availability = _search_text(search.get("availability_cause"), fallback="")
     error = _search_text(search.get("error_message"), fallback="")
     return _two_line(query, availability or error, cells, top_style="bold")
@@ -882,6 +892,7 @@ class ServerWatchApp(App[None]):
         self._jobs: list[dict[str, object]] = []
         self._searches: list[dict[str, object]] = []
         self._search_counts: dict[str, int] = {}
+        self._search_returned = 0
         self._pending: dict[str, _Pending] = {}
         # Rows the operator deleted, held briefly so the deletion is seen.
         self._tombstones: dict[str, _Tombstone] = {}
@@ -1305,6 +1316,9 @@ class ServerWatchApp(App[None]):
         self._search_counts = {
             name: count(counts.get(name)) or 0 for name in ("active", "recent", "total")
         }
+        # Counts are computed over every record; the rows are the bounded
+        # projection. Keeping the served figure is what lets the title say so.
+        self._search_returned = count(payload.get("returned")) or 0
         self._search_activity_error = None
         self._search_activity_last_refresh = time.time()
         self._layout_search_columns()
@@ -1712,6 +1726,15 @@ class ServerWatchApp(App[None]):
         active = self._search_counts.get("active", 0)
         recent = self._search_counts.get("recent", 0)
         title = Text(f"Served searches · {active} active · {recent} recent")
+        # The counts above cover every record the service holds; the table
+        # holds the bounded projection. Without this an operator scrolls to
+        # the end of 100 rows and concludes they have seen all 300.
+        total = self._search_counts.get("total", 0)
+        if 0 < self._search_returned < total:
+            title.append(
+                f" · showing {self._search_returned} of {total}",
+                style="dim",
+            )
         if self._search_activity_last_refresh is not None:
             stamp = time.strftime(
                 "%H:%M:%S", time.localtime(self._search_activity_last_refresh)
@@ -2874,11 +2897,19 @@ def _search_activity_records_error(
                 return "served-search activity unavailable: invalid record"
             entry = cast("dict[str, object]", record)
             request_id = _search_id(entry)
+            # A record carries either the query or the service's own redaction
+            # signal, never neither and never both. Requiring the text outright
+            # made a supported service mode read as a broken service: the
+            # serializer omits `query` and sets `query_redacted` whenever it is
+            # asked not to disclose it, and this lane blanked entirely rather
+            # than degrading to redacted rows.
+            disclosed = isinstance(entry.get("query"), str)
+            redacted = entry.get("query_redacted") is True
             if (
                 not request_id
                 or request_id in seen
                 or entry.get("state") != state
-                or not isinstance(entry.get("query"), str)
+                or disclosed == redacted
             ):
                 return "served-search activity unavailable: invalid record"
             seen.add(request_id)
