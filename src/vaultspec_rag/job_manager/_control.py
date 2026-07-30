@@ -37,11 +37,12 @@ from .models import (
     QuiescedResumeStatus,
 )
 from .state import (
+    UNOWNED_RUNTIME,
     JobDispatchBinding,
     JobManagerState,
-    JobRuntimeOwner,
     ManagedJob,
     ManagerStateBackup,
+    assign_runtime_owner,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ logger = logging.getLogger("vaultspec_rag.jobs")
 #: is an answerable request and logs at WARNING.
 _INTERNAL_REJECTION_CODES = frozenset(
     {
+        "dispatch_loop_unresponsive",
         "dispatch_not_bound",
         "event_loop_required",
         "invalid_progress",
@@ -789,7 +791,7 @@ class JobManagerControl(JobManagerState):
                 )
 
             now = time.time()
-            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            assign_runtime_owner(managed, UNOWNED_RUNTIME)
             if (
                 state is JobState.PAUSING
                 and managed.snapshot.desired_state is DesiredJobState.RUNNING
@@ -961,7 +963,7 @@ class JobManagerControl(JobManagerState):
                 )
 
             now = time.time()
-            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            assign_runtime_owner(managed, UNOWNED_RUNTIME)
             self._replace_snapshot_locked(
                 managed,
                 state=terminal.state,
@@ -1142,7 +1144,7 @@ class JobManagerControl(JobManagerState):
             )
             managed = ManagedJob(
                 snapshot=retried,
-                runtime=JobRuntimeOwner(task=None, control=None),
+                runtime=UNOWNED_RUNTIME,
             )
             self._active[new_id] = managed
             persistence_error = self._persist_locked()

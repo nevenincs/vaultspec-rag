@@ -73,6 +73,7 @@ class _VaultSearchMixin:
         TABLE_NAME: str
         CODE_TABLE_NAME: str
         DOCUMENT_TABLE_NAME: str
+        _ensured: dict[str, bool]
 
         @property
         def client(self) -> QdrantClient: ...
@@ -83,10 +84,40 @@ class _VaultSearchMixin:
 
         def ensure_document_table(self) -> None: ...
 
+        def _collection_exists(self, name: str) -> bool: ...
+
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
         @staticmethod
         def _stable_id(string_id: str) -> int: ...
+
+    def _searchable(self, collection: str, ensure: Callable[[], None]) -> bool:
+        """Return whether *collection* can be queried, creating nothing.
+
+        A query never creates the collection it failed to find. An absent
+        collection has no results to give, and materialising one as a side
+        effect of a read would put a second owner on it: a store opened for
+        searching is a different instance from the one an index run writes
+        through, with its own lifecycle lock and its own ensure latch, so
+        neither serialises against the other and both would issue the create.
+        Creation belongs to the index path, the only caller that must have the
+        collection before it can proceed. It also keeps the answer honest -
+        a fabricated empty collection reads downstream as an index that exists
+        and holds nothing, rather than as no index at all.
+
+        A collection that IS there still goes through *ensure*, which is what
+        applies a newly declared payload index to data indexed before the
+        declaration - a search-only store over an already-indexed root is
+        otherwise the one caller that would never apply it. The ensure latch
+        gates the existence probe, so the extra round trip is paid once per
+        store open per collection rather than once per query.
+        """
+        if not self._ensured.get(collection) and not self._collection_exists(
+            collection
+        ):
+            return False
+        ensure()
+        return True
 
     def hybrid_search(
         self,
@@ -198,12 +229,16 @@ class _VaultSearchMixin:
             doc_id: Document stem from a prior search result.
 
         Returns:
-            The integer point id to feed into the recommend query.
+            The integer point id to feed into the recommend query. Falls back
+            to the head chunk when the collection is not there to probe -
+            resolving an anchor must not be what brings it into being, and the
+            search this anchors returns nothing either way.
         """
         head_id = self._stable_id(f"{doc_id}#c0")
         bare_id = self._stable_id(doc_id)
         try:
-            self.ensure_table()
+            if not self._searchable(self.TABLE_NAME, self.ensure_table):
+                return head_id
             with self._point_lock(self.TABLE_NAME):
                 # Interactive search reads deliberately stay single-shot
                 # rather than routing through the store's bounded retry:
@@ -299,11 +334,13 @@ class _VaultSearchMixin:
         )
 
         if source == "code":
-            self.ensure_code_table()
+            ensure: Callable[[], None] = self.ensure_code_table
         elif source == "document":
-            self.ensure_document_table()
+            ensure = self.ensure_document_table
         else:
-            self.ensure_table()
+            ensure = self.ensure_table
+        if not self._searchable(collection_name, ensure):
+            return []
 
         with self._point_lock(collection_name):
             if len(query.prefetch) < 2:

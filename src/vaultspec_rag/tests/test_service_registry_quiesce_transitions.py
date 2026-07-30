@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -30,18 +29,11 @@ from ._job_roots import _TEST_PROJECT_ROOT
 
 if TYPE_CHECKING:
     from pathlib import Path
+from ._quiesce_helpers import QUIESCE_THREAD_TIMEOUT, wait_for_quiesce_state
 
 pytestmark = [pytest.mark.unit]
 
-_THREAD_TIMEOUT = 5.0
-
-
-def _wait_for_state(registry: ServiceRegistry, state: QuiesceState) -> None:
-    deadline = time.monotonic() + _THREAD_TIMEOUT
-    while registry.quiesce_snapshot().state is not state:
-        if time.monotonic() >= deadline:
-            raise AssertionError(f"registry did not reach {state.value!r}")
-        time.sleep(0.001)
+_THREAD_TIMEOUT = QUIESCE_THREAD_TIMEOUT
 
 
 def test_concurrent_pause_calls_share_one_terminal_transition() -> None:
@@ -62,7 +54,7 @@ def test_concurrent_pause_calls_share_one_terminal_transition() -> None:
         worker.start()
     launch.wait()
     try:
-        _wait_for_state(registry, QuiesceState.PAUSING)
+        wait_for_quiesce_state(registry, QuiesceState.PAUSING)
         held_ticket.release()
         for worker in workers:
             worker.join(timeout=_THREAD_TIMEOUT)
@@ -108,7 +100,7 @@ def test_resume_conflicts_immediately_while_pause_is_owned() -> None:
     worker = threading.Thread(target=pause, name="pause-owner")
     worker.start()
     try:
-        _wait_for_state(registry, QuiesceState.PAUSING)
+        wait_for_quiesce_state(registry, QuiesceState.PAUSING)
         with pytest.raises(ServiceQuiesceTransitionConflictError) as raised:
             registry.resume_resources(timeout_seconds=_THREAD_TIMEOUT)
         conflict = raised.value
@@ -141,7 +133,7 @@ def test_joined_pause_shares_the_owner_drain_timeout() -> None:
     follower = threading.Thread(target=follower_pause, name="pause-timeout-follower")
     owner.start()
     try:
-        _wait_for_state(registry, QuiesceState.PAUSING)
+        wait_for_quiesce_state(registry, QuiesceState.PAUSING)
         follower.start()
         owner.join(timeout=_THREAD_TIMEOUT)
         follower.join(timeout=_THREAD_TIMEOUT)
@@ -167,12 +159,14 @@ def test_joined_resume_wait_is_bounded_without_changing_owner_truth() -> None:
     owner_outcomes: list[QuiesceTransition] = []
 
     def resume() -> None:
-        owner_outcomes.append(registry.resume_resources(timeout_seconds=_THREAD_TIMEOUT))
+        owner_outcomes.append(
+            registry.resume_resources(timeout_seconds=_THREAD_TIMEOUT)
+        )
 
     owner = threading.Thread(target=resume, name="resume-bounded-owner")
     owner.start()
     try:
-        _wait_for_state(registry, QuiesceState.WARMING)
+        wait_for_quiesce_state(registry, QuiesceState.WARMING)
         with pytest.raises(ServiceQuiesceTransitionWaitTimeoutError) as raised:
             registry.resume_resources(timeout_seconds=0)
         assert raised.value.direction == "resume"
@@ -186,6 +180,60 @@ def test_joined_resume_wait_is_bounded_without_changing_owner_truth() -> None:
 
     assert not owner.is_alive()
     assert owner_outcomes[0].code is QuiesceTransitionCode.RUNNING
+
+
+def test_resume_returns_a_drain_timed_out_pause_to_running() -> None:
+    """A pause that outran its drain budget is recoverable without a restart."""
+    registry = ServiceRegistry()
+    stuck_ticket = registry.acquire_compute_ticket()
+    try:
+        timed_out = registry.quiesce_resources(timeout_seconds=0)
+        assert timed_out.code is QuiesceTransitionCode.DRAIN_TIMED_OUT
+        assert timed_out.snapshot.state is QuiesceState.PAUSING
+        assert not timed_out.snapshot.admissions_open
+
+        recovered = registry.resume_resources(timeout_seconds=_THREAD_TIMEOUT)
+    finally:
+        stuck_ticket.release()
+
+    assert recovered.code is QuiesceTransitionCode.PAUSE_ABORTED
+    assert recovered.achieved
+    assert recovered.snapshot.state is QuiesceState.RUNNING
+    assert recovered.snapshot.admissions_open
+    assert recovered.snapshot.failure_reason is None
+    readmitted = registry.acquire_compute_ticket()
+    readmitted.release()
+
+
+def test_aborting_a_stranded_pause_never_waits_on_the_held_gpu_lock() -> None:
+    """The way out of a stranded pause cannot queue behind what stranded it.
+
+    A drain times out because an admitted slice did not reach a checkpoint,
+    and that slice is exactly the caller most likely to be holding the GPU
+    lock.  Recovery therefore rebuilds only residency the pause actually
+    released, and a pause that never got past its drain released none.
+    """
+    registry = ServiceRegistry()
+    stuck_ticket = registry.acquire_compute_ticket()
+    recovered: list[QuiesceTransition] = []
+    assert registry.gpu_lock.acquire(timeout=_THREAD_TIMEOUT)
+    try:
+        timed_out = registry.quiesce_resources(timeout_seconds=0)
+        assert timed_out.code is QuiesceTransitionCode.DRAIN_TIMED_OUT
+
+        def resume() -> None:
+            recovered.append(registry.resume_resources(timeout_seconds=_THREAD_TIMEOUT))
+
+        worker = threading.Thread(target=resume, name="abort-under-held-gpu-lock")
+        worker.start()
+        worker.join(timeout=_THREAD_TIMEOUT)
+        assert not worker.is_alive()
+    finally:
+        registry.gpu_lock.release()
+        stuck_ticket.release()
+
+    assert recovered[0].code is QuiesceTransitionCode.PAUSE_ABORTED
+    assert recovered[0].snapshot.state is QuiesceState.RUNNING
 
 
 def test_concurrent_resume_calls_share_one_terminal_transition() -> None:
@@ -207,7 +255,7 @@ def test_concurrent_resume_calls_share_one_terminal_transition() -> None:
         worker.start()
     launch.wait()
     try:
-        _wait_for_state(registry, QuiesceState.WARMING)
+        wait_for_quiesce_state(registry, QuiesceState.WARMING)
         registry.gpu_lock.release()
         for worker in workers:
             worker.join(timeout=_THREAD_TIMEOUT)

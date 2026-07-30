@@ -60,6 +60,20 @@ def _validate_resource_transition_timeout(timeout_seconds: float) -> None:
             "timeout_seconds must be a finite value greater than or equal to zero"
         )
 
+
+def _require_present[T](value: T | None, unavailable: str) -> T:
+    """Return a lifecycle-owned reference, or name the step that never ran.
+
+    Reaching one of these accessors with its reference unset means a caller
+    skipped the lifecycle step that establishes it.  That is a wiring bug, and
+    it should name itself rather than surface as an attribute error on ``None``
+    several frames deeper.
+    """
+    if value is None:
+        raise RuntimeError(unavailable)
+    return value
+
+
 __all__ = [
     "ComputeLease",
     "GPURebuildEvidence",
@@ -262,9 +276,7 @@ class ComputeLease:
     @property
     def runtime(self) -> ProjectComputeRuntime:
         """Return the runtime only while this lease is entered."""
-        if self._runtime is None:
-            raise RuntimeError("compute lease is not active")
-        return self._runtime
+        return _require_present(self._runtime, "compute lease is not active")
 
 
 @dataclass(slots=True)
@@ -446,11 +458,10 @@ class ServiceRegistry:
         Raises:
             RuntimeError: If ``load_model()`` has not been called.
         """
-        if self._model is None:
-            raise RuntimeError(
-                "EmbeddingModel not loaded - call load_model() first",
-            )
-        return self._model
+        return _require_present(
+            self._model,
+            "EmbeddingModel not loaded - call load_model() first",
+        )
 
     @property
     def gpu_lock(self) -> threading.Lock:
@@ -558,13 +569,20 @@ class ServiceRegistry:
                 admission_epoch=drained.snapshot.admission_epoch,
             )
         except (GPUResidencyTransitionError, QuiesceInvariantError):
-            return self._quiesce_controller.fail_quiesce(
-                "gpu_dependency_release_failed"
+            return self._quiesce_controller.fail_transition(
+                owned_state=QuiesceState.PAUSING,
+                reason="gpu_dependency_release_failed",
             )
         return self._quiesce_controller.acknowledge_vram_released()
 
     def resume_resources(self, *, timeout_seconds: float = 5.0) -> QuiesceTransition:
-        """Rebuild shared GPU residency before reopening compute admission."""
+        """Rebuild shared GPU residency before reopening compute admission.
+
+        Resume is the single operator-facing way back to ``running``, from a
+        completed quiesce and from a pause that failed alike.  An operator
+        whose pause was stranded has no way to know which of the two they are
+        looking at, so the verb - not the operator - picks the recovery.
+        """
         return self._run_resource_transition(
             direction="resume",
             timeout_seconds=timeout_seconds,
@@ -572,7 +590,10 @@ class ServiceRegistry:
         )
 
     def _resume_resources_once(self) -> QuiesceTransition:
-        """Rebuild, durably prepare recovery, then open one new admission epoch."""
+        """Recover a failed pause or rebuild, prepare recovery, and reopen admission."""
+        observed = self._quiesce_controller.snapshot()
+        if observed.state is QuiesceState.PAUSING:
+            return self._abort_pause_once(observed.admission_epoch)
         warming = self._quiesce_controller.begin_warming()
         if warming.snapshot.state is not QuiesceState.WARMING:
             return warming
@@ -581,8 +602,9 @@ class ServiceRegistry:
                 admission_epoch=warming.snapshot.admission_epoch,
             )
         except (GPUResidencyTransitionError, QuiesceInvariantError):
-            return self._quiesce_controller.fail_warming(
-                "gpu_dependency_rebuild_failed"
+            return self._quiesce_controller.fail_transition(
+                owned_state=QuiesceState.WARMING,
+                reason="gpu_dependency_rebuild_failed",
             )
         from .job_manager.models import QuiescedResumeStatus
 
@@ -615,6 +637,29 @@ class ServiceRegistry:
             achieved=True,
             snapshot=snapshot,
         )
+
+    def _abort_pause_once(self, admission_epoch: int) -> QuiesceTransition:
+        """Return a failed pause to running, rebuilding what it already released.
+
+        A resume aimed at ``pausing`` is aimed at a pause that stopped without
+        quiescing, so there is no ``warming`` to enter and no quiesced
+        evidence to rebuild against.  Restoring residency first is what makes
+        the reopening honest: the residency-release failure path detaches the
+        shared model and reranker before it reports, so flipping admission
+        open without rebuilding them would readmit compute against a stack
+        that is no longer there.
+        """
+        try:
+            self._restore_paused_gpu_dependencies(admission_epoch=admission_epoch)
+        except (GPUResidencyTransitionError, QuiesceInvariantError):
+            return self._quiesce_controller.fail_transition(
+                owned_state=QuiesceState.PAUSING,
+                reason="gpu_dependency_rebuild_failed",
+            )
+        aborted = self._quiesce_controller.abort_pause()
+        if aborted.achieved and aborted.snapshot.state is QuiesceState.RUNNING:
+            self.create_job_manager().recover_running_quiesced_resume()
+        return aborted
 
     def _run_resource_transition(
         self,
@@ -732,7 +777,12 @@ class ServiceRegistry:
     ) -> GPUReleaseEvidence:
         """Detach GPU objects only after the current epoch has fully drained."""
         snapshot = self._quiesce_controller.snapshot()
-        self._require_detach_invariants(snapshot, admission_epoch)
+        self._require_drained_closed_epoch(
+            snapshot,
+            admission_epoch,
+            expected_state=QuiesceState.PAUSING,
+            operation="detach",
+        )
         with self._gpu_lock, self._lock:
             detached_slot_count = len(self._projects)
             model_detached = self._model is not None
@@ -762,7 +812,56 @@ class ServiceRegistry:
     ) -> GPURebuildEvidence:
         """Rebuild shared dependencies while the controller keeps admission closed."""
         snapshot = self._quiesce_controller.snapshot()
-        self._require_warming_invariants(snapshot, admission_epoch)
+        self._require_drained_closed_epoch(
+            snapshot,
+            admission_epoch,
+            expected_state=QuiesceState.WARMING,
+            operation="rebuild",
+        )
+        return self._restore_gpu_residency(admission_epoch=admission_epoch)
+
+    def _restore_paused_gpu_dependencies(self, *, admission_epoch: int) -> None:
+        """Rebuild the residency a failed pause released, before it reopens.
+
+        A pause that never got past its drain released nothing, so this must
+        not reach for the GPU lock the unfinished slice is still holding -
+        doing so would make the way out of a stranded pause wait on exactly
+        the work that stranded it.  Only a pause that already detached
+        residency has anything to rebuild, and detaching is reachable only
+        from a drained closed epoch, so every restore that actually allocates
+        is still guarded by the full drained-epoch invariant.
+        """
+        snapshot = self._quiesce_controller.snapshot()
+        if (
+            snapshot.state is not QuiesceState.PAUSING
+            or snapshot.admission_epoch != admission_epoch
+            or snapshot.admissions_open
+        ):
+            raise QuiesceInvariantError(
+                "GPU restore requires the closed epoch its failed pause left behind"
+            )
+        if not self._gpu_residency_detached():
+            return
+        self._require_drained_closed_epoch(
+            snapshot,
+            admission_epoch,
+            expected_state=QuiesceState.PAUSING,
+            operation="restore",
+        )
+        self._restore_gpu_residency(admission_epoch=admission_epoch)
+
+    def _gpu_residency_detached(self) -> bool:
+        """Report whether the recipe names residency the registry no longer holds."""
+        with self._lock:
+            recipe = self._gpu_residency_recipe
+            if recipe is None:
+                return False
+            return (recipe.restore_model and self._model is None) or (
+                recipe.restore_reranker and self._reranker is None
+            )
+
+    def _restore_gpu_residency(self, *, admission_epoch: int) -> GPURebuildEvidence:
+        """Reconstruct the recipe's shared GPU stack, failing closed on any error."""
         recipe = self._gpu_residency_recipe
         try:
             with self._gpu_lock:
@@ -776,9 +875,7 @@ class ServiceRegistry:
                 reranker_rebuilt = self._reranker is not None
         except Exception as exc:
             self._clear_partial_gpu_dependencies()
-            raise GPUResidencyTransitionError(
-                "GPU dependency rebuild failed"
-            ) from exc
+            raise GPUResidencyTransitionError("GPU dependency rebuild failed") from exc
         return GPURebuildEvidence(
             admission_epoch=admission_epoch,
             model_rebuilt=model_rebuilt,
@@ -786,37 +883,26 @@ class ServiceRegistry:
             lazy_slot_count=lazy_slot_count,
         )
 
-    def _require_detach_invariants(
+    def _require_drained_closed_epoch(
         self,
         snapshot: QuiesceSnapshot,
         admission_epoch: int,
+        *,
+        expected_state: QuiesceState,
+        operation: str,
     ) -> None:
-        """Reject detach unless the current closed epoch has drained."""
+        """Reject ``operation`` unless its own closed epoch has drained."""
         if (
-            snapshot.state is not QuiesceState.PAUSING
+            snapshot.state is not expected_state
             or snapshot.admission_epoch != admission_epoch
             or snapshot.admissions_open
             or snapshot.active_compute_tickets != 0
             or not snapshot.drain_complete
             or snapshot.drain_acknowledged_at is None
         ):
-            raise QuiesceInvariantError("GPU detach requires a drained closed epoch")
-
-    def _require_warming_invariants(
-        self,
-        snapshot: QuiesceSnapshot,
-        admission_epoch: int,
-    ) -> None:
-        """Reject rebuild unless the current warming epoch remains closed."""
-        if (
-            snapshot.state is not QuiesceState.WARMING
-            or snapshot.admission_epoch != admission_epoch
-            or snapshot.admissions_open
-            or snapshot.active_compute_tickets != 0
-            or not snapshot.drain_complete
-            or snapshot.drain_acknowledged_at is None
-        ):
-            raise QuiesceInvariantError("GPU rebuild requires a drained closed epoch")
+            raise QuiesceInvariantError(
+                f"GPU {operation} requires a drained closed epoch"
+            )
 
     def _release_gpu_residency(self) -> None:
         """Collect detached references and release allocator cache outside locks."""

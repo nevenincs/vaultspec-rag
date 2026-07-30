@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Final, Literal, Self
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -56,11 +56,30 @@ class QuiesceTransitionCode(StrEnum):
     WARMING_STARTED = "warming_started"
     ALREADY_WARMING = "already_warming"
     WARMING_UNAVAILABLE = "warming_unavailable"
+    PAUSE_ABORTED = "pause_aborted"
+    PAUSE_ABORT_UNAVAILABLE = "pause_abort_unavailable"
     RUNNING = "running"
     WARMUP_UNAVAILABLE = "warmup_unavailable"
     QUIESCE_FAILED = "quiesce_failed"
     WARMUP_FAILED = "warmup_failed"
     RESUME_RECOVERY_FAILED = "resume_recovery_failed"
+
+
+# The only two closed transitions a caller can own, each mapped to the code
+# for a request that arrived after the controller moved on and the code that
+# records the owned transition failing.
+_FAILURE_CODES: Final[
+    dict[QuiesceState, tuple[QuiesceTransitionCode, QuiesceTransitionCode]]
+] = {
+    QuiesceState.PAUSING: (
+        QuiesceTransitionCode.QUIESCE_UNAVAILABLE,
+        QuiesceTransitionCode.QUIESCE_FAILED,
+    ),
+    QuiesceState.WARMING: (
+        QuiesceTransitionCode.WARMUP_UNAVAILABLE,
+        QuiesceTransitionCode.WARMUP_FAILED,
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +98,23 @@ class QuiesceSnapshot:
     quiesced_at: float | None
     warming_started_at: float | None
     failure_reason: str | None
+
+    def as_envelope(self) -> dict[str, object]:
+        """Render the whole observation as one adapter-agnostic payload."""
+        return {
+            "state": self.state.value,
+            "admission_epoch": self.admission_epoch,
+            "admissions_open": self.admissions_open,
+            "active_compute_tickets": self.active_compute_tickets,
+            "drain_complete": self.drain_complete,
+            "vram_released": self.vram_released,
+            "safe_to_borrow_gpu": self.safe_to_borrow_gpu,
+            "pause_requested_at": self.pause_requested_at,
+            "drain_acknowledged_at": self.drain_acknowledged_at,
+            "quiesced_at": self.quiesced_at,
+            "warming_started_at": self.warming_started_at,
+            "failure_reason": self.failure_reason,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +217,13 @@ class ServiceQuiesceController:
     GPU-owning registry can subsequently acknowledge released residency with
     :meth:`acknowledge_vram_released`.  Resume is similarly closed until the
     registry reports a successful rebuild through :meth:`complete_warming`.
+
+    A pause that fails - a drain that outran its budget, a residency release
+    that raised - stops in ``pausing`` with admission closed.  That state has
+    no route through ``warming``, because ``warming`` presupposes the
+    quiesced evidence the pause never produced, so :meth:`abort_pause` is the
+    one way back to ``running`` and keeps a failed pause from holding the
+    whole daemon shut until it is restarted.
     """
 
     def __init__(self) -> None:
@@ -327,20 +370,63 @@ class ServiceQuiesceController:
                 achieved=True,
             )
 
-    def fail_quiesce(self, reason: str) -> QuiesceTransition:
-        """Keep admission closed when cooperative unwind or residency release fails."""
+    def fail_transition(
+        self,
+        *,
+        owned_state: Literal[QuiesceState.PAUSING, QuiesceState.WARMING],
+        reason: str,
+    ) -> QuiesceTransition:
+        """Keep admission closed and unsafe when an owned transition fails.
+
+        ``owned_state`` names the closed transition the caller was driving, so
+        a report arriving after the controller has already moved on is
+        answered as unavailable for that transition rather than recorded
+        against whichever one is now live.
+        """
         failure_reason = _require_reason(reason)
+        unavailable, failed = _FAILURE_CODES[owned_state]
         with self._condition:
-            if self._state is not QuiesceState.PAUSING:
-                return self._transition_locked(
-                    QuiesceTransitionCode.QUIESCE_UNAVAILABLE,
-                    achieved=False,
-                )
+            if self._state is not owned_state:
+                return self._transition_locked(unavailable, achieved=False)
             self._vram_released = False
             self._failure_reason = failure_reason
+            return self._transition_locked(failed, achieved=False)
+
+    def abort_pause(self) -> QuiesceTransition:
+        """Reopen the admission epoch a pause closed but never quiesced.
+
+        ``pausing`` is the one state a pause can fail into, and it closes
+        admission without ever reaching the evidence that lets ``warming``
+        start.  Aborting is therefore the only way back for a drain that
+        timed out or a residency release that failed, and the registry must
+        have restored whatever residency it already detached before calling
+        it.  The admission epoch is deliberately not advanced: an aborted
+        pause never finished closing its generation of admitted work, so the
+        tickets it failed to drain stay releasable against the epoch that
+        issued them.
+        """
+        with self._condition:
+            if self._state is QuiesceState.RUNNING:
+                return self._transition_locked(
+                    QuiesceTransitionCode.RUNNING,
+                    achieved=True,
+                )
+            if self._state is not QuiesceState.PAUSING:
+                return self._transition_locked(
+                    QuiesceTransitionCode.PAUSE_ABORT_UNAVAILABLE,
+                    achieved=False,
+                )
+            self._state = QuiesceState.RUNNING
+            self._pause_requested_at = None
+            self._drain_acknowledged_at = None
+            self._quiesced_at = None
+            self._warming_started_at = None
+            self._vram_released = False
+            self._failure_reason = None
+            self._condition.notify_all()
             return self._transition_locked(
-                QuiesceTransitionCode.QUIESCE_FAILED,
-                achieved=False,
+                QuiesceTransitionCode.PAUSE_ABORTED,
+                achieved=True,
             )
 
     def begin_warming(self) -> QuiesceTransition:
@@ -415,7 +501,6 @@ class ServiceQuiesceController:
                 QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
                 achieved=False,
             )
-
     def _snapshot_locked(self) -> QuiesceSnapshot:
         active_tickets = len(self._active_ticket_epochs)
         admissions_open = self._state is QuiesceState.RUNNING

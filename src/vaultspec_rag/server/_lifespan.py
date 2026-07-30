@@ -578,6 +578,12 @@ async def _start_job_manager(manager: JobManager) -> None:
     from .. import jobs as _jobs_module
     from ..job_models import JobOutcomeStatus, JobState
 
+    # Adopt this service's loop before any restore can dispatch onto it, and
+    # before the first search can prove an index shrunken. Work admitted from
+    # a worker thread resolves its loop through here; without the adoption
+    # every such dispatch is rejected for want of a loop that is in fact
+    # running, one thread away.
+    manager.adopt_service_loop(asyncio.get_running_loop())
     restore_required = manager.prepare_startup()
     if restore_required:
         outcome = await _run_in_thread(manager.restore_persisted)
