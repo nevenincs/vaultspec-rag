@@ -17,7 +17,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
+from vaultspec_core.vaultcore import (
     get_doc_type,
     scan_vault,
 )
