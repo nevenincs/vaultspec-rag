@@ -47,7 +47,13 @@ class _NumericBound:
         return self.maximum is None or numeric <= self.maximum
 
     def narrow(self, value: object) -> object:
-        """Return *value* as this bound's declared type."""
+        """Return *value* as this bound's declared type.
+
+        Only reached through ``_checked`` (config/_settings.py), which calls
+        ``admits`` first; ``admits`` is what establishes ``value`` is an
+        ``int`` (or ``int | float``) here, since this method has no isinstance
+        check of its own.
+        """
         return int(cast("int", value)) if self.integral else float(cast("float", value))
 
 
@@ -72,7 +78,12 @@ class _ChoiceBound:
         return isinstance(value, str) and value.strip().lower() in self.allowed
 
     def narrow(self, value: object) -> object:
-        """Return the normalised choice name."""
+        """Return the normalised choice name.
+
+        Only reached through ``_checked`` (config/_settings.py), which calls
+        ``admits`` first; ``admits`` is what establishes ``value`` is a
+        ``str`` here, since this method has no isinstance check of its own.
+        """
         return cast("str", value).strip().lower()
 
 
