@@ -501,21 +501,6 @@ async def reindex_all(
     return await _reindex_source("combined", project_root)
 
 
-def _service_state_or_raise(result: dict[str, object]) -> dict[str, object]:
-    """Return the bare service-state response without lifecycle interpretation.
-
-    Service state is an observation document, not a quiesce transition
-    acknowledgement. Its controller-owned ``quiesce`` block therefore travels
-    unchanged to MCP callers; only a transport-owned failure envelope fails the
-    tool call.
-    """
-    if result.get("ok") is False:
-        error = str(result.get("error") or "status_failed")
-        message = str(result.get("message") or "The status request failed.")
-        raise RuntimeError(f"{error}: {message}")
-    return result
-
-
 @mcp.tool(title="Get index status", annotations=_READ_ONLY)
 async def get_index_status(
     project_root: str | None = None,
@@ -531,7 +516,7 @@ async def get_index_status(
             port,
         )
     )
-    return _service_state_or_raise(result)
+    return result
 
 
 async def _clean_source(

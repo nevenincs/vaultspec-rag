@@ -138,7 +138,6 @@ try:
     from vaultspec_rag.mcp._tools import get_index_status
 
     result = asyncio.run(get_index_status(project_root=str(workspace)))
-    assert result == direct, (result, direct)
     quiesce = result["quiesce"]
     assert isinstance(quiesce, dict), quiesce
     assert set(quiesce) == {
@@ -159,8 +158,12 @@ try:
     assert quiesce["vram_released"] is True, quiesce
     assert quiesce["safe_to_borrow_gpu"] is True, quiesce
     mcp_imports = forbidden.intersection(name.split(".", 1)[0] for name in sys.modules)
-    assert mcp_imports == route_imports, (route_imports, mcp_imports)
-    print(json.dumps(result))
+    print(json.dumps({
+        "direct": direct,
+        "mcp": result,
+        "route_imports": sorted(route_imports),
+        "mcp_imports": sorted(mcp_imports),
+    }))
 finally:
     _try_http_admin("resume_service", {}, port)
     server.should_exit = True
@@ -192,8 +195,12 @@ def test_mcp_service_state_preserves_the_production_quiesce_block(
     assert completed.returncode == 0, completed.stderr
     from ..jobs import mapping
 
-    result = mapping(json.loads(completed.stdout))
+    payload = mapping(json.loads(completed.stdout))
+    direct = mapping(payload.get("direct"))
+    result = mapping(payload.get("mcp"))
     quiesce = mapping(result.get("quiesce"))
+    assert result == direct
+    assert payload["mcp_imports"] == payload["route_imports"]
     assert set(quiesce) == _QUIESCE_FIELDS
     assert quiesce["state"] == "quiesced"
     assert quiesce["vram_released"] is True
