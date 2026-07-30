@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING, ClassVar
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 from ._process_probe_guard_helpers import (
     _PACKAGE_ROOT,
     _production_sources,
     every_production_file,
-    function_nodes,
     parsed_production_sources,
 )
 
@@ -82,6 +82,103 @@ def _duplicate_function_body_groups(min_nodes: int) -> dict[tuple[str, ...], lis
         for members in groups.values()
         if len(set(members)) > 1
     }
+
+
+def _self_call_names(node: ast.AST) -> set[str]:
+    """Return every ``self.x(...)`` callee name anywhere under *node*."""
+    return {
+        inner.func.attr
+        for inner in ast.walk(node)
+        if isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Attribute)
+        and isinstance(inner.func.value, ast.Name)
+        and inner.func.value.id == "self"
+    }
+
+
+def _enters_self_lock(block: ast.With | ast.AsyncWith, lock_attr: str) -> bool:
+    """Report whether *block* enters ``self.<lock_attr>``.
+
+    Checks every context manager in the ``with`` header, because the registry
+    takes the GPU lock and this one together in a single statement.
+    """
+    return any(
+        isinstance(item.context_expr, ast.Attribute)
+        and item.context_expr.attr == lock_attr
+        and isinstance(item.context_expr.value, ast.Name)
+        and item.context_expr.value.id == "self"
+        for item in block.items
+    )
+
+
+def _class_methods(
+    source: str, class_name: str
+) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return the directly-declared methods of *class_name* in *source*."""
+    return {
+        member.name: member
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+        for member in node.body
+        if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+
+
+def _methods_reaching(
+    methods: Mapping[str, ast.FunctionDef | ast.AsyncFunctionDef],
+    seeds: frozenset[str],
+) -> set[str]:
+    """Close *seeds* over ``self.`` calls to a fixed point.
+
+    Returns every method that can reach a seed, at any depth. Lexical
+    containment is not enough here: a caller can hold a lock and delegate the
+    forbidden work to a helper one or more frames down.
+    """
+    reaching = set(seeds)
+    growing = True
+    while growing:
+        growing = False
+        for name, node in methods.items():
+            if name not in reaching and _self_call_names(node) & reaching:
+                reaching.add(name)
+                growing = True
+    return reaching
+
+
+def _locked_load_offenders(
+    source: str,
+    *,
+    class_name: str,
+    lock_attr: str,
+    load_seeds: frozenset[str],
+) -> tuple[list[str], int, set[str]]:
+    """Find lock-held paths that reach a model load.
+
+    Returns the offenders, the number of blocks taking the lock (the scanned
+    population), and the transitive set of methods that reach a load.
+    """
+    methods = _class_methods(source, class_name)
+    reaching = _methods_reaching(methods, load_seeds)
+    offenders: list[str] = []
+    locked_blocks = 0
+    for name, node in methods.items():
+        for block in ast.walk(node):
+            if not isinstance(block, ast.With | ast.AsyncWith):
+                continue
+            if not _enters_self_lock(block, lock_attr):
+                continue
+            locked_blocks += 1
+            if name in load_seeds:
+                # The load's own double-check. This block IS the critical
+                # section the lock exists for, not work stacked around it.
+                continue
+            reached = sorted(
+                _self_call_names(ast.Module(body=block.body, type_ignores=[]))
+                & reaching
+            )
+            if reached:
+                offenders.append(f"{class_name}.{name}:{block.lineno} calls {reached}")
+    return offenders, locked_blocks, reaching
 
 
 class TestOperatorAddressLineHasOneTemplate:
@@ -295,10 +392,6 @@ class TestNoStructurallyIdenticalFunctions:
             "watcher_runtime.py:pending_count",
         ): _SMALL_GUARD,
         (
-            "embeddings.py:_require_sparse_model",
-            "service.py:model",
-        ): _SMALL_GUARD,
-        (
             "commands/_provision.py:to_dict",
             "indexer/_drift_owner.py:snapshot",
         ): _SERIALISATION,
@@ -429,105 +522,133 @@ class TestAtomicReplaceHasOneImplementation:
         assert replace_atomically is not replace_durably
 
 
-class TestModelLoadsBeforeTheLeaseEverywhere:
-    """Nothing takes a project lease and then loads the model.
+class TestTheRegistryLockNeverCoversAModelLoad:
+    """No registry method holds ``_lock`` across a path that loads the model.
 
-    Loading the model is the long, GPU-touching step. Doing it while holding a
-    project lease blocks every other root for its whole duration, so the order
-    is a rule, not a preference.
+    ``_lock`` is one lock for the whole registry - every root behind it - so
+    every millisecond it is held beyond the state mutation it protects is a
+    millisecond every other root waits. Bringing the GPU model up is the
+    longest step the registry has.
 
-    The scan keys on the LEASE call, and asks whether a model load sits after
-    it. It used to key on the PAIRING - a function naming both calls - which
-    made its population the callers that spelled the load themselves. That
-    population is exactly what gets removed as the lease accessors take the
-    ordering over, so the scan drained to empty and went on reporting no
-    violations. A population that shrinks as the code improves cannot carry a
-    sanity floor; the set of lease HOLDERS can, because it only grows as more
-    callers reach project compute.
+    The registry already spells this rule twice in its own code, which is why
+    it is worth guarding rather than inventing: slot creation runs outside
+    ``_lock`` to preserve the parallel cold-start guarantee, and the GPU
+    residency rebuild takes the GPU lock for the load and ``_lock`` only
+    afterwards, for the cheap state reads.
+
+    Keyed on ``_lock`` because that is what actually serializes. The previous
+    version keyed on the project LEASE and named the lease as the blocker,
+    which was never true: taking a lease locks only long enough to bump a
+    refcount and a last-access stamp, and releases before the caller's body
+    runs, so concurrent leases on one root and on different roots both
+    proceed. The mis-keying also made the scan structurally empty - it
+    required a lease call and a load call in ONE function body, and no
+    function has ever had both - so it reported a clean codebase while a real
+    violation sat in it.
+
+    The scan follows ``self.`` calls transitively. Lexical containment inside
+    the ``with`` block is not enough, because the way this goes wrong in
+    practice is a method that holds the lock and delegates the loading to a
+    builder a frame or two down.
     """
 
-    #: The registry accessors that hand a caller a project lease. Every one is
-    #: asserted to exist below, because a renamed accessor is the exact way
-    #: this scan goes blind.
-    _LEASE_CALLS: ClassVar[frozenset[str]] = frozenset(
-        {"lease", "compute_lease", "search_lease"}
-    )
-    #: The registry entry points that bring the GPU model up. The private one
-    #: counts: reaching past the ticketed wrapper is not an exemption.
-    _MODEL_LOAD_CALLS: ClassVar[frozenset[str]] = frozenset(
-        {"load_model", "_load_model"}
-    )
-    #: Below the real count of lease holders, with room for the public API's
-    #: near-identical entry points to be consolidated. Renaming or moving any
-    #: single lease accessor takes out more than the slack at once, so the
-    #: floor still fires before the scan can go quiet.
-    _MIN_LEASE_HOLDERS: ClassVar[int] = 15
+    #: The registry attribute holding the one process-wide registry lock.
+    _LOCK_ATTR: ClassVar[str] = "_lock"
+    #: The class the lock is private to, so the scan needs no cross-module
+    #: receiver inference to know whose lock it is looking at.
+    _REGISTRY: ClassVar[str] = "ServiceRegistry"
+    #: The methods that bring the GPU model up. The private one counts:
+    #: reaching past the ticketed wrapper is not an exemption. Both are
+    #: asserted to exist below, because a rename is how the scan goes blind.
+    _LOAD_SEEDS: ClassVar[frozenset[str]] = frozenset({"load_model", "_load_model"})
+    #: Below the real count of blocks taking ``_lock``. Renaming the attribute
+    #: drops this to zero, so the floor fires long before the scan can go
+    #: quiet by looking at nothing.
+    _MIN_LOCKED_BLOCKS: ClassVar[int] = 20
 
-    @staticmethod
-    def _attribute_calls(
-        function: ast.FunctionDef | ast.AsyncFunctionDef,
-    ) -> list[tuple[str, tuple[int, int]]]:
-        """Return each attribute call's name with its source position."""
-        return [
-            (inner.func.attr, (inner.lineno, inner.col_offset))
-            for inner in ast.walk(function)
-            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)
-        ]
+    @classmethod
+    def _scan(cls, source: str) -> tuple[list[str], int, set[str]]:
+        """Run the scan over *source* under this guard's own names."""
+        return _locked_load_offenders(
+            source,
+            class_name=cls._REGISTRY,
+            lock_attr=cls._LOCK_ATTR,
+            load_seeds=cls._LOAD_SEEDS,
+        )
+
+    @classmethod
+    def _scan_service_source(cls) -> tuple[list[str], int, set[str]]:
+        return cls._scan((_PACKAGE_ROOT / "service.py").read_text(encoding="utf-8"))
 
     def test_the_scanned_names_are_the_registry_s_own(self) -> None:
-        """A renamed accessor fails here rather than emptying the scan.
+        """A renamed load entry point fails here rather than emptying the scan.
 
         Proven able to fail: adding a name the registry does not define to
-        either set fails on the missing-name assertion, which is what a rename
-        that left the scan behind looks like.
+        ``_LOAD_SEEDS`` fails on the missing-name assertion, which is what a
+        rename that left the scan behind looks like.
         """
         from ..service import ServiceRegistry
 
         missing = sorted(
-            name
-            for name in self._LEASE_CALLS | self._MODEL_LOAD_CALLS
-            if not hasattr(ServiceRegistry, name)
+            name for name in self._LOAD_SEEDS if not hasattr(ServiceRegistry, name)
         )
         assert not missing, (
             f"the scan looks for {missing}, which the registry no longer "
-            "defines; repoint the name sets at the current accessors instead "
-            "of letting the scan match nothing"
+            "defines; repoint the seed set at the current load entry points "
+            "instead of letting the scan match nothing"
         )
 
-    def test_no_function_loads_the_model_inside_a_lease(self) -> None:
-        """Order the calls by position; no load may follow the first lease.
+    def test_the_scan_follows_a_load_reached_through_a_helper(self) -> None:
+        """The detector itself, against a known positive and a known negative.
 
-        Proven able to fail: a function taking a compute lease and calling
-        ``registry.load_model()`` in its body is reported by name, and the
-        report goes away when the call does.
+        The failure mode being covered is the one that killed the previous
+        guard: a scan that matches nothing and reports success. Here the
+        positive holds the lock and reaches the load two frames down, which a
+        lexical scan of the ``with`` body would miss.
         """
-        find_offenders: list[str] = []
-        checked = 0
-        for path, tree in parsed_production_sources(every_production_file(), set()):
-            relative = path.relative_to(_PACKAGE_ROOT).as_posix()
-            for node in function_nodes(tree):
-                calls = self._attribute_calls(node)
-                leases = sorted(
-                    position for name, position in calls if name in self._LEASE_CALLS
-                )
-                if not leases:
-                    continue
-                checked += 1
-                loads = sorted(
-                    position
-                    for name, position in calls
-                    if name in self._MODEL_LOAD_CALLS
-                )
-                if loads and loads[-1] > leases[0]:
-                    find_offenders.append(f"{relative}:{node.lineno} {node.name}")
-        assert checked >= self._MIN_LEASE_HOLDERS, (
-            f"only {checked} functions take a project lease; the scan is "
+        positive = (
+            "class ServiceRegistry:\n"
+            "    def _load_model(self): ...\n"
+            "    def _build(self): self._load_model()\n"
+            "    def _runtime(self):\n"
+            "        with self._lock:\n"
+            "            return self._build()\n"
+        )
+        negative = (
+            "class ServiceRegistry:\n"
+            "    def _load_model(self): ...\n"
+            "    def _build(self): self._load_model()\n"
+            "    def _runtime(self):\n"
+            "        runtime = self._build()\n"
+            "        with self._lock:\n"
+            "            return runtime\n"
+        )
+        seen, _, reaching = self._scan(positive)
+        assert seen == ["ServiceRegistry._runtime:5 calls ['_build']"], seen
+        assert reaching == self._LOAD_SEEDS | {"_build", "_runtime"}, reaching
+        assert not self._scan(negative)[0]
+
+    def test_no_registry_method_holds_the_lock_across_a_model_load(self) -> None:
+        """The lock may cover the load's own critical section and nothing else.
+
+        Proven able to fail: this reports the offending method, its line, and
+        the call it reaches the load through, and the report goes away when
+        the construction moves back outside the lock.
+        """
+        find_offenders, locked_blocks, reaching = self._scan_service_source()
+        assert locked_blocks >= self._MIN_LOCKED_BLOCKS, (
+            f"only {locked_blocks} blocks take {self._LOCK_ATTR}; the scan is "
             "looking wrongly, not the code getting cleaner"
         )
+        assert reaching > self._LOAD_SEEDS, (
+            "no method reaches a model load through another; the call graph "
+            "walk has stopped working and the scan now sees only direct calls"
+        )
         assert not find_offenders, (
-            f"these load the model while holding a project lease: {find_offenders}; "
-            "the load is the long GPU step and the lease blocks every other "
-            "root for its duration"
+            f"these hold the registry lock across a model load: {find_offenders}; "
+            "build outside the lock and take it only to publish the result, as "
+            "slot creation and the residency rebuild already do - one lock "
+            "covers every root, so a cold start under it stalls all of them"
         )
 
 
