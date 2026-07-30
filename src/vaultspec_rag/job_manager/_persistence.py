@@ -55,7 +55,7 @@ PROGRESS_FLUSH_BUDGET_SECONDS = 0.2
 class JobManagerPersistence(JobManagerState):
     def _restore_snapshot_locked(self, snapshot: JobSnapshot, *, now: float) -> None:
         """Restore one validated snapshot with no live execution resources."""
-        resumable = snapshot.state in {JobState.QUEUED, JobState.PAUSED}
+        resumable = snapshot.state.is_idle
         restored_runtime = (
             self._process_runtime_snapshot()
             if resumable
@@ -147,9 +147,7 @@ class JobManagerPersistence(JobManagerState):
 
         restored_jobs = persisted.jobs
         restored_bindings = persisted.bindings
-        active_count = sum(
-            job.state in {JobState.QUEUED, JobState.PAUSED} for job in restored_jobs
-        )
+        active_count = sum(job.state.is_idle for job in restored_jobs)
         if active_count > self._max_nonterminal:
             return self._persistence_error(
                 command,

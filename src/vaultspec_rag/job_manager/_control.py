@@ -1066,7 +1066,7 @@ class JobManagerControl(JobManagerState):
         state: JobState,
     ) -> JobOutcome:
         now = time.time()
-        if state in {JobState.QUEUED, JobState.PAUSED}:
+        if state.is_idle:
             self._replace_snapshot_locked(
                 managed,
                 state=JobState.CANCELLED,

@@ -262,7 +262,7 @@ def sync_legacy_snapshot(
             result=snapshot.result,
             phase="cancelled",
         )
-    elif snapshot.state in {JobState.PAUSED, JobState.QUEUED}:
+    elif snapshot.state.is_idle:
         _jobs.record_progress(snapshot.id, snapshot.state.value)
 
 

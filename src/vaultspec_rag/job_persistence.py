@@ -362,7 +362,7 @@ def _validate_persisted_lifecycle(job: JobSnapshot) -> None:
         raise ValueError(f"job {job.id}: observed and desired states disagree")
     if job.state.is_live_attempt and job.timestamps.started_at is None:
         raise ValueError(f"job {job.id}: live attempt lacks a start time")
-    if job.state not in {JobState.QUEUED, JobState.PAUSED}:
+    if not job.state.is_idle:
         return
     resources = job.resources
     if job.runtime.task_active or job.runtime.worker_active or resources.holds_anything:
