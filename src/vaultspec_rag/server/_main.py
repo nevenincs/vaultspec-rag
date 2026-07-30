@@ -133,6 +133,7 @@ def _run_http_daemon(port: int) -> None:
     runtime = ServerRouteRuntime(
         token=uuid.uuid4().hex,
         registry=get_registry(),
+        port=port,
     )
     daemon_exit_code = 0
     try:
@@ -149,7 +150,7 @@ def _run_http_daemon(port: int) -> None:
         uvicorn.run(
             app,
             host="127.0.0.1",
-            port=port,
+            port=runtime.port,
             timeout_graceful_shutdown=30,
             # Uvicorn's default log config is a second logging configuration:
             # it installs its own formatters and handlers and clears
@@ -226,7 +227,6 @@ def main(port: int | None = None) -> None:
         _m._launch_token = ""
 
     _m._http_mode = port is not None
-    _m._service_port = port or 0
 
     if port is not None:
         _run_http_daemon(port)

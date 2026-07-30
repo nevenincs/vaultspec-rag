@@ -123,8 +123,6 @@ def _stamp_qdrant_identity(
         raise RuntimeError(
             f"supervised Qdrant identity failed final publication validation: {reason}"
         )
-    if _m._service_port <= 0:
-        raise RuntimeError("service port is unavailable during Qdrant publication")
     publisher.publish_phase("warming")
 
 
@@ -1209,6 +1207,7 @@ async def health_handler(request: Request) -> object:
             "qdrant": qdrant_state.to_dict(),
             "pid": os.getpid(),
             "parent_pid": os.getppid(),
+            "port": runtime.port,
             **interpreter_fields(),
             "cuda": reg_health["cuda"],
             "models_loaded": reg_health["model_loaded"],

@@ -21,15 +21,18 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class ServerRouteRuntime:
-    """The immutable token and registry owned by one HTTP application."""
+    """The immutable token, registry, and port owned by one HTTP application."""
 
     token: str
     registry: ServiceRegistry
+    port: int
 
     def __post_init__(self) -> None:
-        """Refuse route hosts that cannot authenticate their requests."""
+        """Refuse route hosts that cannot authenticate or publish themselves."""
         if not self.token:
             raise ValueError("server route runtime requires a non-empty service token")
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
+            raise ValueError("server route runtime requires a port in 1..65535")
 
 
 class _RouteRuntimeState(Protocol):
