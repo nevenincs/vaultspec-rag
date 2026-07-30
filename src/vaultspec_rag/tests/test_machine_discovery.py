@@ -23,7 +23,9 @@ from .._machine_lock import (
 )
 from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ..server import ServerRouteRuntime
 from ..server._lifecycle import _DiscoveryPublisher
+from ..service import ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -46,15 +48,16 @@ def owner_publisher(
     os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
     reset_config()
     prior_port = server_state._service_port
-    prior_token = server_state._SERVICE_TOKEN
     prior_launch_token = server_state._launch_token
     server_state._service_port = 8766
-    server_state._SERVICE_TOKEN = "test-owner-token"
     server_state._launch_token = "test-launch-token"
     lease, holder = acquire_machine_lock_lease()
     assert lease is not None
     assert holder == os.getpid()
-    publisher = _DiscoveryPublisher(lease)
+    publisher = _DiscoveryPublisher(
+        ServerRouteRuntime(token="test-owner-token", registry=ServiceRegistry()),
+        lease,
+    )
     try:
         yield publisher
     finally:
@@ -62,7 +65,6 @@ def owner_publisher(
         publisher.cleanup()
         release_machine_lock_lease(lease)
         server_state._service_port = prior_port
-        server_state._SERVICE_TOKEN = prior_token
         server_state._launch_token = prior_launch_token
         for key, value in prior.items():
             if value is None:
@@ -179,7 +181,11 @@ class TestBoundedShutdownGuard:
         from .._machine_lock import MachineLockLease
 
         publisher = _DiscoveryPublisher(
-            MachineLockLease(machine_lock_path(), os.getpid(), 0)
+            ServerRouteRuntime(
+                token="bounded-quiesce-token",
+                registry=ServiceRegistry(),
+            ),
+            MachineLockLease(machine_lock_path(), os.getpid(), 0),
         )
         held = threading.Event()
         release = threading.Event()

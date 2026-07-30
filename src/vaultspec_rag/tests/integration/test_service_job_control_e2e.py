@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 import uvicorn
-from starlette.applications import Starlette
 from typer.testing import CliRunner
 
 from ... import jobs, server
@@ -36,9 +35,8 @@ from ...job_models import (
     JobState,
 )
 from ...registry import get_registry, reset_registry
-from ...server import WatcherStartOutcome
+from ...server import ServerRouteRuntime, WatcherStartOutcome, create_http_app
 from ...server import _lifespan as server_lifespan
-from ...server._routes import ROUTES
 from ...service_quiesce import ServiceQuiesceController
 from ...serviceclient._transport import (
     _try_http_create_job,
@@ -71,7 +69,6 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
     token = "service-job-control-e2e-token"
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)
-    prior_token = server._SERVICE_TOKEN
     live_server: uvicorn.Server | None = None
     thread: threading.Thread | None = None
     stopped = True
@@ -81,7 +78,6 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
         os.environ[EnvVar.WATCH_ENABLED] = "false"
         reset_config()
         jobs.reset()
-        server._SERVICE_TOKEN = token
         (status_dir / "service.json").write_text(
             json.dumps(
                 {
@@ -94,7 +90,10 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
         )
         live_server = uvicorn.Server(
             uvicorn.Config(
-                Starlette(routes=ROUTES),
+                create_http_app(
+                    ServerRouteRuntime(token=token, registry=get_registry()),
+                    lifespan=None,
+                ),
                 host="127.0.0.1",
                 port=port,
                 log_config=None,
@@ -116,7 +115,6 @@ def _real_job_control_server(tmp_path: Path) -> Generator[int]:
             thread.join(timeout=5.0)
             stopped = not thread.is_alive()
         jobs.reset()
-        server._SERVICE_TOKEN = prior_token
         if prior_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:
@@ -903,7 +901,7 @@ async def test_restart_dispatches_queued_preserves_pause_and_links_retry(
 
     jobs.reset()
     restarted = jobs.get_job_manager()
-    await server_lifespan._start_job_manager(restarted)
+    await server_lifespan._start_job_manager(restarted, registry)
 
     restored_queued, restored_paused, restored_interrupted = (
         _assert_restored_restart_state(
