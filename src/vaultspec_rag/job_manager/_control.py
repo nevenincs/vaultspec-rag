@@ -299,7 +299,8 @@ class JobManagerControl(JobManagerState):
             )
         scheduled: list[str] = []
         for claim in claims:
-            if self._schedule_dispatch(claim.job_id, quiesced_claim=claim):
+            dispatched = self.dispatch(claim.job_id, _quiesced_claim=claim)
+            if dispatched.code == "attempt_started":
                 scheduled.append(claim.job_id)
         return tuple(scheduled)
 
