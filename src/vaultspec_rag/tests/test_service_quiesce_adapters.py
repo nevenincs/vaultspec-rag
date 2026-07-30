@@ -1,44 +1,36 @@
-"""CPU-only adapter guards for the canonical service quiesce vocabulary."""
+"""CPU-only adapter guards over the production quiesce route contracts."""
 
 from __future__ import annotations
 
 import contextlib
-import http.server
 import json
 import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+import uvicorn
+from starlette.applications import Starlette
 
+from ..config._types import EnvVar
 from ..service_quiesce import (
     QUIESCE_ENVELOPE_FIELDS,
     QuiesceSnapshot,
     QuiesceState,
 )
+from ._ports import free_loopback_port
+from .conftest import managed_env
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
 pytestmark = [pytest.mark.unit]
 
-_QUIESCED_BLOCK = {
-    "state": "quiesced",
-    "admission_epoch": 7,
-    "admissions_open": False,
-    "active_compute_tickets": 0,
-    "drain_complete": True,
-    "vram_released": True,
-    "safe_to_borrow_gpu": True,
-    "pause_requested_at": 100.0,
-    "drain_acknowledged_at": 101.0,
-    "quiesced_at": 102.0,
-    "warming_started_at": None,
-    "failure_reason": None,
-}
+_SERVICE_TOKEN = "quiesce-adapter-route-token"
 
 
 def test_the_envelope_field_set_is_derived_from_the_snapshot() -> None:
@@ -70,117 +62,117 @@ def test_the_envelope_field_set_is_derived_from_the_snapshot() -> None:
     assert set(snapshot.as_envelope()) == set(QUIESCE_ENVELOPE_FIELDS)
 
 
-def test_the_adapter_fixture_block_matches_the_canonical_vocabulary() -> None:
-    """The fixture below stands in for a real daemon response.
-
-    A fixture carrying a stale key set would keep the adapter guards passing
-    against a block no service sends, which is the failure mode those guards
-    exist to catch.
-    """
-    assert set(_QUIESCED_BLOCK) == set(QUIESCE_ENVELOPE_FIELDS)
-
-
 def _run_mcp_service_state_probe(tmp_path: Path) -> subprocess.CompletedProcess[str]:
-    """Drive the MCP service-state tool through discovery and a real socket."""
+    """Drive MCP through discovery to the production service-state route."""
     probe = r"""
 import asyncio
-import http.server
 import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
+
+import uvicorn
+from starlette.applications import Starlette
 
 base = Path(sys.argv[1])
 status_dir = base / "status"
-status_dir.mkdir()
 workspace = base / "workspace"
 (workspace / ".vault").mkdir(parents=True)
 (workspace / ".vaultspec").mkdir()
 os.environ["VAULTSPEC_RAG_STATUS_DIR"] = str(status_dir)
 os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(base / "qdrant")
+os.environ["VAULTSPEC_RAG_LOCAL_ONLY"] = "true"
 
 from vaultspec_rag.config._settings import reset_config
 
 reset_config()
 
-# Handed in rather than restated: a second copy of the block here would go
-# stale against the controller's vocabulary without failing the pin that
-# guards the one above it.
-quiesce = json.loads(sys.argv[2])
-service_state = {
-    "index": {"status": "ready"},
-    "projects": {"projects": []},
-    "watcher": {"watching": []},
-    "qdrant": {"alive": True},
-    "quiesce": quiesce,
-    "schema_version": 1,
-}
-body = json.dumps(service_state).encode("utf-8")
+from vaultspec_rag import server as server_module
+from vaultspec_rag.config._paths import SERVICE_STATUS_FILENAME
+from vaultspec_rag.server._routes import ROUTES
+from vaultspec_rag.serviceclient._compat import (
+    SERVICE_VERSION_FIELD,
+    local_package_version,
+)
+from vaultspec_rag.serviceclient._discovery import (
+    SERVICE_DISCOVERY_SCHEMA,
+    SERVICE_DISCOVERY_VERSION,
+    _replace_service_status,
+)
+from vaultspec_rag.serviceclient._transport import _try_http_admin
+from vaultspec_rag.tests._ports import free_loopback_port
 
-
-class ServiceStateResponder(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path.split("?", 1)[0] != "/service-state":
-            self.send_response(404)
-            self.end_headers()
-            return
-        token = self.headers.get("Authorization")
-        assert token == "Bearer quiesce-adapter-token", token
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, _format, *_args):
-        return
-
-
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ServiceStateResponder)
-thread = threading.Thread(target=server.serve_forever, daemon=True)
+token = "quiesce-adapter-route-token"
+port = free_loopback_port()
+prior_token = server_module._SERVICE_TOKEN
+server_module._SERVICE_TOKEN = token
+server = uvicorn.Server(
+    uvicorn.Config(
+        Starlette(routes=ROUTES),
+        host="127.0.0.1",
+        port=port,
+        log_config=None,
+        access_log=False,
+        lifespan="off",
+    )
+)
+thread = threading.Thread(target=server.run, daemon=True)
 thread.start()
 try:
-    from vaultspec_rag.config._paths import SERVICE_STATUS_FILENAME
-    from vaultspec_rag.serviceclient._compat import (
-        SERVICE_VERSION_FIELD,
-        local_package_version,
-    )
-    from vaultspec_rag.serviceclient._discovery import (
-        SERVICE_DISCOVERY_SCHEMA,
-        SERVICE_DISCOVERY_VERSION,
+    deadline = time.monotonic() + 5.0
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started
+    _replace_service_status(
+        {
+            "pid": os.getpid(),
+            "port": port,
+            "schema": SERVICE_DISCOVERY_SCHEMA,
+            "version": SERVICE_DISCOVERY_VERSION,
+            SERVICE_VERSION_FIELD: local_package_version(),
+            "service_token": token,
+        },
+        path=status_dir / SERVICE_STATUS_FILENAME,
     )
 
-    (status_dir / SERVICE_STATUS_FILENAME).write_text(
-        json.dumps(
-            {
-                "pid": os.getpid(),
-                "port": server.server_address[1],
-                "schema": SERVICE_DISCOVERY_SCHEMA,
-                "version": SERVICE_DISCOVERY_VERSION,
-                SERVICE_VERSION_FIELD: local_package_version(),
-                "service_token": "quiesce-adapter-token",
-            }
-        ),
-        encoding="utf-8",
+    pause = _try_http_admin("pause_service", {}, port)
+    assert pause is not None and pause["ok"] is True, pause
+    direct = _try_http_admin(
+        "get_service_state", {"project_root": str(workspace)}, port
+    )
+    assert direct is not None, direct
+    forbidden = {"torch", "sentence_transformers", "transformers", "qdrant_client"}
+    route_imports = forbidden.intersection(
+        name.split(".", 1)[0] for name in sys.modules
     )
 
     from vaultspec_rag.mcp._tools import get_index_status
+    from vaultspec_rag.service_quiesce import QUIESCE_ENVELOPE_FIELDS
 
     result = asyncio.run(get_index_status(project_root=str(workspace)))
-    assert result == service_state, result
-    forbidden = {"torch", "sentence_transformers", "transformers", "qdrant_client"}
-    assert not forbidden.intersection(name.split(".", 1)[0] for name in sys.modules)
+    assert result == direct, (result, direct)
+    quiesce = result["quiesce"]
+    assert isinstance(quiesce, dict), quiesce
+    assert set(quiesce) == set(QUIESCE_ENVELOPE_FIELDS), quiesce
+    assert quiesce["state"] == "quiesced", quiesce
+    assert quiesce["vram_released"] is True, quiesce
+    assert quiesce["safe_to_borrow_gpu"] is True, quiesce
+    mcp_imports = forbidden.intersection(name.split(".", 1)[0] for name in sys.modules)
+    assert mcp_imports == route_imports, (route_imports, mcp_imports)
     print(json.dumps(result))
 finally:
-    server.shutdown()
-    server.server_close()
+    _try_http_admin("resume_service", {}, port)
+    server.should_exit = True
     thread.join(timeout=5)
+    server_module._SERVICE_TOKEN = prior_token
+    assert not thread.is_alive()
 """
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(Path.cwd() / "src")
     return subprocess.run(
-        [sys.executable, "-c", probe, str(tmp_path), json.dumps(_QUIESCED_BLOCK)],
+        [sys.executable, "-c", probe, str(tmp_path)],
         capture_output=True,
         text=True,
         check=False,
@@ -188,140 +180,182 @@ finally:
     )
 
 
-def test_mcp_service_state_keeps_the_canonical_quiesce_block_verbatim(
+def test_mcp_service_state_preserves_the_production_quiesce_block(
     tmp_path: Path,
 ) -> None:
-    """MCP observes a bare service-state document without lifecycle inference.
+    """MCP returns the bare authenticated route document without inference.
 
     Mutation: wrap the successful service-state result in a new envelope.
-    Exact equality fails, proving the adapter cannot hide, rename, or recreate
-    the controller-owned quiesce block.
+    Exact equality with the same production route response fails, proving the
+    adapter cannot hide, rename, or recreate the controller-owned block.
     """
     completed = _run_mcp_service_state_probe(tmp_path)
 
     assert completed.returncode == 0, completed.stderr
-    result = json.loads(completed.stdout)
-    assert result["quiesce"] == _QUIESCED_BLOCK
-    assert set(result["quiesce"]) == set(_QUIESCED_BLOCK)
+    from ..jobs import mapping
+
+    result = mapping(json.loads(completed.stdout))
+    quiesce = mapping(result.get("quiesce"))
+    assert set(quiesce) == QUIESCE_ENVELOPE_FIELDS
+    assert quiesce["state"] == "quiesced"
+    assert quiesce["vram_released"] is True
+    assert quiesce["safe_to_borrow_gpu"] is True
 
 
-def _jobs_payload(quiesce: object | None) -> dict[str, object]:
-    """Return one real jobs-route payload, optionally carrying quiesce truth."""
-    payload: dict[str, object] = {
-        "jobs": [],
-        "total": 0,
-        "returned": 0,
-        "summary": {},
-        "gpu": {},
-        "pressure": {},
-    }
-    if quiesce is not None:
-        payload["quiesce"] = quiesce
-    return payload
+def _publish_service_discovery(status_dir: Path, *, port: int) -> None:
+    """Publish the route host through the production discovery writer."""
+    from ..config._paths import SERVICE_STATUS_FILENAME
+    from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
+    from ..serviceclient._discovery import (
+        SERVICE_DISCOVERY_SCHEMA,
+        SERVICE_DISCOVERY_VERSION,
+        _replace_service_status,
+    )
+
+    _replace_service_status(
+        {
+            "pid": os.getpid(),
+            "port": port,
+            "schema": SERVICE_DISCOVERY_SCHEMA,
+            "version": SERVICE_DISCOVERY_VERSION,
+            SERVICE_VERSION_FIELD: local_package_version(),
+            "service_token": _SERVICE_TOKEN,
+        },
+        path=status_dir / SERVICE_STATUS_FILENAME,
+    )
 
 
 @contextlib.contextmanager
-def _jobs_tui_responder(payload: dict[str, object]) -> Generator[int]:
-    """Serve the jobs and observability exchanges over a real loopback socket."""
-    service = payload
-    observability: dict[str, dict[str, object]] = {
-        "/health": {"status": "ready"},
-        "/projects": {"projects": [], "max_projects": 1},
-        "/watcher": {"watching": []},
-        "/search-activity": {
-            "active": [],
-            "recent": [],
-            "counts": {"active": 0, "recent": 0, "total": 0},
-            "returned": 0,
-            "filters": {},
-        },
-        "/logs/json": {"source": "all", "limit": 200, "groups": [], "filters": {}},
-        "/storage/survey": {"totals": {}},
-    }
+def _production_routes(status_dir: Path) -> Generator[int]:
+    """Serve the real route table without starting the daemon lifespan."""
+    from .. import server as server_module
+    from ..server._routes import ROUTES
+    from ..serviceclient._transport import _try_http_admin
 
-    class JobsTuiResponder(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            path = self.path.split("?", 1)[0]
-            empty_response: dict[str, object] = {}
-            body: dict[str, object] = (
-                service if path == "/jobs" else observability.get(path, empty_response)
-            )
-            encoded = json.dumps(body).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
-
-        def log_message(self, format: str, *args: object) -> None:
-            del format, args
-            return
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), JobsTuiResponder)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    port = free_loopback_port()
+    prior_token = server_module._SERVICE_TOKEN
+    server_module._SERVICE_TOKEN = _SERVICE_TOKEN
+    server = uvicorn.Server(
+        uvicorn.Config(
+            Starlette(routes=ROUTES),
+            host="127.0.0.1",
+            port=port,
+            log_config=None,
+            access_log=False,
+            lifespan="off",
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     try:
-        yield int(server.server_address[1])
+        deadline = time.monotonic() + 5.0
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        _publish_service_discovery(status_dir, port=port)
+        yield port
     finally:
-        server.shutdown()
-        server.server_close()
+        _try_http_admin("resume_service", {}, port)
+        server.should_exit = True
         thread.join(timeout=5)
+        server_module._SERVICE_TOKEN = prior_token
         assert not thread.is_alive()
 
 
-async def _paint_quiesce_jobs_tui(payload: dict[str, object]) -> tuple[object, str]:
-    """Run the actual Textual jobs surface over the production admin transport."""
+async def _paint_quiesce_jobs_tui(
+    *,
+    port: int,
+    job_args: dict[str, object],
+) -> tuple[object, str, str | None]:
+    """Run the Textual jobs surface over authenticated production transport."""
     from ..cli._jobs_tui import ServerWatchApp
     from ..serviceclient._transport import _try_http_admin
 
-    with _jobs_tui_responder(payload) as port:
+    def fetch() -> dict[str, object] | None:
+        return _try_http_admin("get_jobs", job_args, port)
 
-        def fetch() -> dict[str, object] | None:
-            return _try_http_admin("get_jobs", {}, port)
-
-        app = ServerWatchApp(
-            fetch=fetch,
-            port=port,
-            interval=3600.0,
-            watch_mode="jobs",
+    app = ServerWatchApp(
+        fetch=fetch,
+        port=port,
+        interval=3600.0,
+        watch_mode="jobs",
+    )
+    async with app.run_test(size=(220, 50), notifications=True) as pilot:
+        for _ in range(100):
+            await pilot.pause()
+            if app._last_refresh is not None or app._last_error is not None:
+                break
+        assert app._last_refresh is not None or app._last_error is not None
+        painted = "\n".join(
+            strip.text.replace("\u2800", " ")
+            for strip in app.screen._compositor.render_strips()
         )
-        async with app.run_test(size=(220, 50), notifications=True) as pilot:
-            for _ in range(100):
-                await pilot.pause()
-                if app._last_refresh is not None:
-                    break
-            assert app._last_refresh is not None
-            painted = "\n".join(
-                strip.text.replace("\u2800", " ")
-                for strip in app.screen._compositor.render_strips()
-            )
-            return app._quiesce, painted
+        return app._quiesce, painted, app._last_error
 
 
 @pytest.mark.asyncio
-async def test_jobs_tui_renders_the_reported_quiesce_controller_evidence() -> None:
+async def test_jobs_tui_renders_production_quiesce_controller_evidence(
+    tmp_path: Path,
+) -> None:
     """TUI presents controller state without translating it into permission.
 
     Mutation: remove the quiesce payload capture in ``_apply_result``. The
     direct transport still succeeds, but the retained canonical block and all
     three operator-visible controller facts disappear.
     """
-    quiesce, painted = await _paint_quiesce_jobs_tui(_jobs_payload(_QUIESCED_BLOCK))
+    status_dir = tmp_path / "status"
+    with (
+        managed_env(
+            **{
+                EnvVar.STATUS_DIR.value: str(status_dir),
+                EnvVar.LOCAL_ONLY.value: "true",
+            }
+        ),
+        _production_routes(status_dir) as port,
+    ):
+        from ..serviceclient._transport import _try_http_admin
 
-    assert quiesce == _QUIESCED_BLOCK
+        pause = _try_http_admin("pause_service", {}, port)
+        assert pause is not None and pause["ok"] is True, pause
+        quiesce, painted, fetch_error = await _paint_quiesce_jobs_tui(
+            port=port,
+            job_args={},
+        )
+
+    from ..jobs import mapping
+
+    canonical = mapping(quiesce)
+    assert set(canonical) == QUIESCE_ENVELOPE_FIELDS
+    assert canonical["state"] == "quiesced"
+    assert canonical["vram_released"] is True
+    assert canonical["safe_to_borrow_gpu"] is True
+    assert fetch_error is None
     assert "quiesce quiesced" in painted
     assert "vram released" in painted
     assert "borrower safety safe" in painted
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("quiesce", [None, {"state": "quiesced"}])
-async def test_jobs_tui_treats_missing_or_invalid_quiesce_as_unavailable(
-    quiesce: object | None,
+async def test_jobs_tui_shows_quiesce_unavailable_after_a_route_error(
+    tmp_path: Path,
 ) -> None:
-    """No incomplete service observation may be rendered as borrower safety."""
-    retained, painted = await _paint_quiesce_jobs_tui(_jobs_payload(quiesce))
+    """A rejected production jobs request cannot render borrower safety."""
+    status_dir = tmp_path / "status"
+    with (
+        managed_env(
+            **{
+                EnvVar.STATUS_DIR.value: str(status_dir),
+                EnvVar.LOCAL_ONLY.value: "true",
+            }
+        ),
+        _production_routes(status_dir) as port,
+    ):
+        retained, painted, fetch_error = await _paint_quiesce_jobs_tui(
+            port=port,
+            job_args={"controllable": "not-a-boolean"},
+        )
 
     assert retained is None
+    assert fetch_error == "controllable must be true or false when provided."
     assert "quiesce unavailable" in painted
     assert "borrower safety safe" not in painted
