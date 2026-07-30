@@ -401,8 +401,8 @@ def qdrant_quarantine(
     reversible (the files are preserved under ``quarantine/``).
     """
     from ..qdrant_runtime._supervise import (
-        _list_on_disk_collections,  # pyright: ignore[reportPrivateUsage]
-        _quarantine_collection,  # pyright: ignore[reportPrivateUsage]
+        _list_on_disk_collections,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+        _quarantine_collection,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     )
 
     storage = Path(str(get_config().qdrant_storage_dir)).expanduser()
