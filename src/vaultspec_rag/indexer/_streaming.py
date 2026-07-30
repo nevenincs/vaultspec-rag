@@ -598,7 +598,13 @@ class _SliceWriter:
         self._poll_seconds = poll_seconds
         self._shutdown_timeout = shutdown_timeout_seconds
         self._failure: BaseException | None = None
-        self._thread = threading.Thread(target=self._run, name=name)
+        # Daemon because both shutdown paths are bounded and both document
+        # giving up: close raises once the bound expires and abandon logs and
+        # returns, each leaving a thread that may still be parked or wedged in
+        # a store call. A non-daemon thread makes that documented decision
+        # unreachable - the interpreter then waits on the very thread the
+        # bound exists to stop waiting for, and the process never exits.
+        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         self._thread.start()
 
     def _run(self) -> None:
@@ -652,7 +658,22 @@ class _SliceWriter:
         Raises the writer's recorded failure once the thread settles, and
         raises :class:`UnsettledStoreWriterError` when the sentinel cannot be
         delivered or the thread does not terminate within the shutdown bound.
+
+        Any exit that leaves the thread running abandons it here rather than
+        propagating first. The checkpoint below raises on a cancel or a pause,
+        and it does so before the sentinel is delivered, so the thread is left
+        parked on an empty queue; a caller's error path cannot cover that,
+        because the exception is raised *by* the shutdown it would run after.
         """
+        try:
+            self._drain_and_stop(run_control)
+        except BaseException:
+            self.abandon()
+            raise
+        self._raise_if_failed()
+
+    def _drain_and_stop(self, run_control: RunControl) -> None:
+        """Deliver the sentinel and wait for the thread, both bounded."""
         deadline = time.monotonic() + self._shutdown_timeout
         sentinel_delivered = False
         while self._thread.is_alive() and not sentinel_delivered:
@@ -680,7 +701,6 @@ class _SliceWriter:
                 f"store writer {self._thread.name!r} did not terminate within "
                 f"{self._shutdown_timeout:.0f}s"
             )
-        self._raise_if_failed()
 
     def abandon(self) -> None:
         """Best-effort bounded shutdown for the encoding side's error path.
