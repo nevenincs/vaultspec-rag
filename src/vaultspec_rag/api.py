@@ -741,39 +741,32 @@ def clean(
     source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
     from ._index_breadth import index_meta_path
-    from .registry import get_registry
-    from .store_runtime import VaultStore
 
     cleared: list[str] = []
-
-    # Evict project from registry to close Qdrant connections and release locks
-    registry = get_registry()
-    registry.close_project(root)
 
     combined = source_type is PublicSourceType.COMBINED
     do_vault = source_type is PublicSourceType.VAULT or combined
     do_code = source_type is PublicSourceType.CODE or combined
     do_document = source_type is PublicSourceType.DOCUMENT or combined
 
-    # Sidecars go before collections, and the ordering is load-bearing: a
-    # sidecar is a breadth claim, and a crash between the two steps must
-    # never leave a claim standing over data that is already gone - a
-    # serve-time check would read that as a full index over an empty husk.
-    # The safe interruption is the reverse: intact data with no claim, which
-    # reads as honestly unverifiable.
-    if do_vault:
-        index_meta_path(root, PublicSourceType.VAULT).unlink(missing_ok=True)
-    if do_code:
-        index_meta_path(root, PublicSourceType.CODE).unlink(missing_ok=True)
-    if do_document:
-        # Documents publish a differently shaped record under an independently
-        # chosen name, so it resolves through its own owner rather than here.
-        from .indexer._document_meta import document_metadata_path
+    with get_registry().lease_maintenance_store(root) as store:
+        # Sidecars go before collections, and the ordering is load-bearing: a
+        # sidecar is a breadth claim, and a crash between the two steps must
+        # never leave a claim standing over data that is already gone - a
+        # serve-time check would read that as a full index over an empty husk.
+        # The safe interruption is the reverse: intact data with no claim, which
+        # reads as honestly unverifiable.
+        if do_vault:
+            index_meta_path(root, PublicSourceType.VAULT).unlink(missing_ok=True)
+        if do_code:
+            index_meta_path(root, PublicSourceType.CODE).unlink(missing_ok=True)
+        if do_document:
+            # Documents publish a differently shaped record under an independently
+            # chosen name, so it resolves through its own owner rather than here.
+            from .indexer._document_meta import document_metadata_path
 
-        document_metadata_path(root).unlink(missing_ok=True)
+            document_metadata_path(root).unlink(missing_ok=True)
 
-    store = VaultStore(root)
-    try:
         if do_vault:
             store.drop_table()
             store.ensure_table()
@@ -786,8 +779,6 @@ def clean(
             store.drop_document_table()
             store.ensure_document_table()
             cleared.append("document")
-    finally:
-        store.close()
 
     return cleared
 
