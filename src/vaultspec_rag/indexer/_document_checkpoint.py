@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, Unpack, overload
+from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
@@ -66,24 +66,11 @@ class DocumentRunConfiguration:
 
 @dataclass(frozen=True, slots=True)
 class DocumentRunOpenRequest:
-    """All compatibility inputs for opening one document generation."""
+    """All compatibility inputs for opening one document generation.
 
-    data_root: Path
-    root_dir: Path
-    policy: ResolvedIndexPolicy
-    run_policy: RunPolicy
-    operation: RunOperation
-    clean: bool
-    model_identity: str
-    dense_dimensions: int
-    configuration: DocumentRunConfiguration
-
-
-class _DocumentRunOpenKwargs(TypedDict):
-    """Keyword shape accepted by ``DocumentRunCheckpoint.open``'s legacy path.
-
-    Mirrors ``DocumentRunOpenRequest`` field-for-field so ``Unpack`` type-checks
-    every call site against the request's real field types.
+    One grouped shape rather than a spread of keywords, so a field added
+    here is declared once and every call site is re-checked against its
+    real type.
     """
 
     data_root: Path
@@ -105,26 +92,8 @@ class DocumentRunCheckpoint(RunCheckpointBase):
     _kind_label: ClassVar[str] = "document"
 
     @classmethod
-    @overload
-    def open(cls, request: DocumentRunOpenRequest, /) -> DocumentRunCheckpoint: ...
-    @classmethod
-    @overload
-    def open(
-        cls,
-        request: None = None,
-        **legacy: Unpack[_DocumentRunOpenKwargs],
-    ) -> DocumentRunCheckpoint: ...
-    @classmethod
-    def open(
-        cls,
-        request: DocumentRunOpenRequest | None = None,
-        **legacy: Any,
-    ) -> DocumentRunCheckpoint:
+    def open(cls, request: DocumentRunOpenRequest, /) -> DocumentRunCheckpoint:
         """Open or resume the compatible document generation for one attempt."""
-        if request is None:
-            request = DocumentRunOpenRequest(**legacy)
-        elif legacy:
-            raise TypeError("use either a DocumentRunOpenRequest or named inputs")
         fingerprints = request.policy.fingerprints_for(ContentKind.DOCUMENT)
         signature = RunSignature(
             root_identity=str(request.root_dir.resolve()),

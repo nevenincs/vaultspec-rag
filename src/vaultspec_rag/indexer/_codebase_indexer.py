@@ -51,7 +51,11 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
-from ._generation_lifecycle import CodeGenerationBindings, CodeGenerationLifecycle
+from ._generation_lifecycle import (
+    CodeGenerationBindings,
+    CodeGenerationLifecycle,
+    CodeGenerationOpenRequest,
+)
 from ._incremental_commit import (
     CodeIncrementalCommit,
     IncrementalPublicationRequest,
@@ -817,13 +821,15 @@ class CodebaseIndexer:
         )
         limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._lifecycle.open_checkpoint(
-            policy=policy,
-            operation=RunOperation.FULL,
-            clean=effective_clean,
-            configuration=limits.run_configuration,
-            dense_dimensions=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            run_control=run_control,
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=effective_clean,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                run_control=run_control,
+            )
         )
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
@@ -1115,13 +1121,15 @@ class CodebaseIndexer:
         limits = self._consumer_pipeline.resolve_limits()
         try:
             checkpoint = self._lifecycle.open_checkpoint(
-                policy=policy,
-                operation=RunOperation.INCREMENTAL,
-                clean=False,
-                configuration=limits.run_configuration,
-                dense_dimensions=limits.dense_dimension,
-                sparse_enabled=limits.sparse_enabled,
-                run_control=run_control,
+                CodeGenerationOpenRequest(
+                    policy=policy,
+                    operation=RunOperation.INCREMENTAL,
+                    clean=False,
+                    configuration=limits.run_configuration,
+                    dense_dimensions=limits.dense_dimension,
+                    sparse_enabled=limits.sparse_enabled,
+                    run_control=run_control,
+                )
             )
         except RunLedgerCompatibilityError:
             logger.info(
@@ -1340,13 +1348,15 @@ class CodebaseIndexer:
         limits = self._consumer_pipeline.resolve_limits()
         try:
             checkpoint = self._lifecycle.open_checkpoint(
-                policy=policy,
-                operation=RunOperation.SCOPED_INCREMENTAL,
-                clean=False,
-                configuration=limits.run_configuration,
-                dense_dimensions=limits.dense_dimension,
-                sparse_enabled=limits.sparse_enabled,
-                run_control=run_control,
+                CodeGenerationOpenRequest(
+                    policy=policy,
+                    operation=RunOperation.SCOPED_INCREMENTAL,
+                    clean=False,
+                    configuration=limits.run_configuration,
+                    dense_dimensions=limits.dense_dimension,
+                    sparse_enabled=limits.sparse_enabled,
+                    run_control=run_control,
+                )
             )
         except RunLedgerCompatibilityError:
             logger.info(

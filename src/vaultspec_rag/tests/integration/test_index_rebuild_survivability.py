@@ -425,7 +425,11 @@ def _open_clean_code_generation(root: Path) -> Any:
         IndexPolicyResolutionOptions,
         resolve_index_policy,
     )
-    from ...indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
+    from ...indexer._run_checkpoint import (
+        CodeRunCheckpoint,
+        CodeRunConfiguration,
+        CodeRunOpenRequest,
+    )
     from ...indexer._run_ledger_models import RunOperation
     from ...indexer._run_policy import RunPolicy
 
@@ -436,26 +440,28 @@ def _open_clean_code_generation(root: Path) -> Any:
         ),
     )
     return CodeRunCheckpoint.open(
-        data_root=root / ".state",
-        root_dir=root,
-        policy=policy,
-        run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
-        operation=RunOperation.FULL,
-        clean=True,
-        model_identity="model-v1",
-        dense_dimensions=_embedding_dimension(),
-        configuration=CodeRunConfiguration(
-            segment_max_chunks=1,
-            segment_max_bytes=1024,
-            queue_max_chunks=2,
-            queue_max_bytes=2048,
-            slice_max_chunks=2,
-            slice_max_bytes=2048,
-            sparse_enabled=False,
-            sparse_dimension=1,
-            encode_batch_size=2,
-            flush_slices=4,
-        ),
+        CodeRunOpenRequest(
+            data_root=root / ".state",
+            root_dir=root,
+            policy=policy,
+            run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
+            operation=RunOperation.FULL,
+            clean=True,
+            model_identity="model-v1",
+            dense_dimensions=_embedding_dimension(),
+            configuration=CodeRunConfiguration(
+                segment_max_chunks=1,
+                segment_max_bytes=1024,
+                queue_max_chunks=2,
+                queue_max_bytes=2048,
+                slice_max_chunks=2,
+                slice_max_bytes=2048,
+                sparse_enabled=False,
+                sparse_dimension=1,
+                encode_batch_size=2,
+                flush_slices=4,
+            ),
+        )
     )
 
 

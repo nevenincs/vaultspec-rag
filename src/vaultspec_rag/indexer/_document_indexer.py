@@ -18,7 +18,11 @@ from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
-from ._document_checkpoint import DocumentRunCheckpoint, DocumentRunConfiguration
+from ._document_checkpoint import (
+    DocumentRunCheckpoint,
+    DocumentRunConfiguration,
+    DocumentRunOpenRequest,
+)
 from ._document_meta import (
     DocumentFileMetadata,
     DocumentIndexMetadata,
@@ -800,23 +804,25 @@ class DocumentIndexer:
             separators=(",", ":"),
         )
         checkpoint = DocumentRunCheckpoint.open(
-            data_root=self._data_root,
-            root_dir=self.root_dir,
-            policy=policy,
-            run_policy=RunPolicy.from_config(run_control=run_control),
-            operation=operation,
-            clean=clean,
-            model_identity=model_identity,
-            dense_dimensions=int(config.embedding_dimension),
-            configuration=DocumentRunConfiguration(
-                slice_max_chunks=max(1, int(config.embedding_batch_size)),
-                source_bytes=limits.source_bytes,
-                generated_chunks=limits.generated_chunks,
-                weighted_bytes=limits.weighted_bytes,
-                sparse_enabled=sparse_enabled,
-                sparse_dimension=sparse_dimension,
-                encode_batch_size=int(config.embedding_document_encode_batch_size),
-            ),
+            DocumentRunOpenRequest(
+                data_root=self._data_root,
+                root_dir=self.root_dir,
+                policy=policy,
+                run_policy=RunPolicy.from_config(run_control=run_control),
+                operation=operation,
+                clean=clean,
+                model_identity=model_identity,
+                dense_dimensions=int(config.embedding_dimension),
+                configuration=DocumentRunConfiguration(
+                    slice_max_chunks=max(1, int(config.embedding_batch_size)),
+                    source_bytes=limits.source_bytes,
+                    generated_chunks=limits.generated_chunks,
+                    weighted_bytes=limits.weighted_bytes,
+                    sparse_enabled=sparse_enabled,
+                    sparse_dimension=sparse_dimension,
+                    encode_batch_size=int(config.embedding_document_encode_batch_size),
+                ),
+            )
         )
         self._last_checkpoint = checkpoint
         return checkpoint

@@ -20,7 +20,11 @@ from ..indexer._resolved_policy import (
     IndexPolicyResolutionOptions,
     resolve_index_policy,
 )
-from ..indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
+from ..indexer._run_checkpoint import (
+    CodeRunCheckpoint,
+    CodeRunConfiguration,
+    CodeRunOpenRequest,
+)
 from ..indexer._run_ledger_models import (
     FinalizationPhase,
     RunLedgerCompatibilityError,
@@ -96,15 +100,17 @@ def _open(
         ),
     )
     return CodeRunCheckpoint.open(
-        data_root=tmp_path / ".state",
-        root_dir=tmp_path,
-        policy=policy,
-        run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
-        operation=operation,
-        clean=False,
-        model_identity="model-v1",
-        dense_dimensions=8,
-        configuration=configuration or _configuration(),
+        CodeRunOpenRequest(
+            data_root=tmp_path / ".state",
+            root_dir=tmp_path,
+            policy=policy,
+            run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
+            operation=operation,
+            clean=False,
+            model_identity="model-v1",
+            dense_dimensions=8,
+            configuration=configuration or _configuration(),
+        )
     )
 
 
