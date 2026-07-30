@@ -785,7 +785,10 @@ def _watcher_attempt_resilience(
     slot: WatcherConvergenceSlot,
 ) -> IndexResilienceSnapshot:
     """Project admission and retry truth before model acquisition."""
-    if slot.source in {JobSource.CODE, JobSource.DOCUMENT}:
+    # Spelled as a tuple, not a set: only the two mapped sources have admitted
+    # limits, and the tuple form is the one both type checkers narrow, so the
+    # guard is what proves the delegation below is a legal call.
+    if slot.source in (JobSource.CODE, JobSource.DOCUMENT):
         # Package-internal resilience projectors, shared with the dispatcher.
         from .job_dispatch import (
             _admitted_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam

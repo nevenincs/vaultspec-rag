@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from ._units import bytes_to_mib
 from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceUpdate
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .index_profiles import IndexDomain
     from .indexer import (
         CodebaseIndexer,
         DocumentIndexer,
@@ -216,9 +217,17 @@ def _run_indexing_attempt(
     context.control.checkpoint()
     if dispatch.source is JobSource.CODE:
         code_preflight = validate_code_job_admission(dispatch.root)
-    else:
+    elif dispatch.source is JobSource.DOCUMENT:
         document_preflight = validate_document_job_admission(
             dispatch.root, run_control=context.control
+        )
+    else:
+        # Naming the document arm rather than taking every non-code source
+        # keeps the third branch a refusal instead of a silent enrolment: a
+        # source with no admission preflight of its own would otherwise be
+        # validated, admitted and reported as a document run.
+        raise RuntimeError(
+            f"indexing attempt cannot run source: {dispatch.source.value}"
         )
     context.set_resilience(_admitted_resilience(dispatch.source))
     context.control.checkpoint()
@@ -305,15 +314,46 @@ def _run_indexing_attempt(
     )
 
 
-def _admitted_resilience(source: JobSource) -> IndexResilienceSnapshot:
+def _resilience_domain(
+    source: Literal[JobSource.CODE, JobSource.DOCUMENT],
+) -> IndexDomain:
+    """Resolve the domain whose admitted limits describe one source.
+
+    Only code and document have an entry in the support profiles, so every
+    other source has no limits to report at all. A two-way fallback would
+    hand such a source the document domain's ceilings and profile name and
+    say nothing, and the numbers are plausible enough that an operator
+    reading them has no way to tell. Worse, code and document currently
+    carry identical ceilings in every shipped profile, so a mis-mapping
+    between those two is invisible in the snapshot as well - the mapping has
+    to be right by construction, because nothing downstream can catch it.
+
+    So the parameter admits only the two mapped sources, which makes the bad
+    call a type error at every call site rather than a wrong number at
+    runtime, and the residual arm is ``assert_never``, so widening the
+    parameter to admit a third source fails the type check here until that
+    source is mapped. It is a call, not a bare assertion, so the refusal
+    also survives optimised bytecode for anyone who reaches it dynamically.
+    """
+    from .index_profiles import IndexDomain
+
+    if source is JobSource.CODE:
+        return IndexDomain.CODE
+    if source is JobSource.DOCUMENT:
+        return IndexDomain.DOCUMENT
+    assert_never(source)
+
+
+def _admitted_resilience(
+    source: Literal[JobSource.CODE, JobSource.DOCUMENT],
+) -> IndexResilienceSnapshot:
     """Freeze the selected profile and domain ceilings before model loading."""
     from .config._settings import get_config
-    from .index_profiles import IndexDomain, get_index_support_profile
+    from .index_profiles import get_index_support_profile
 
     config = get_config()
     profile = get_index_support_profile(config.index_support_profile)
-    domain = IndexDomain.CODE if source is JobSource.CODE else IndexDomain.DOCUMENT
-    limits = profile.limits_for(domain)
+    limits = profile.limits_for(_resilience_domain(source))
     from .memory_probe import (
         resident_cuda_baseline_mib,
         resolve_index_cuda_ceiling_mib,

@@ -30,6 +30,7 @@ pytestmark = [pytest.mark.unit]
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Literal
 
     from ..embeddings import EmbeddingModel
     from ..indexer import VaultIndexer
@@ -561,3 +562,53 @@ def test_vault_resilience_is_empty_before_any_observation(tmp_path: Path) -> Non
     indexer = _vault_indexer_for_telemetry(tmp_path)
 
     assert _vault_resilience(indexer) == IndexResilienceSnapshot()
+
+
+def test_resilience_domain_maps_only_the_profiled_sources() -> None:
+    """The source-to-domain mapping is total and refuses what it cannot map.
+
+    Only code and document have support-profile entries, so any other source
+    has no admitted limits at all. Both mapped sources are asserted here
+    because the snapshot cannot check them: code and document carry
+    identical ceilings in every shipped profile, so swapping the two arms is
+    invisible downstream and only the domain identity can catch it.
+
+    Proven able to fail: replacing the body with the two-way fallback
+    ``IndexDomain.CODE if source is JobSource.CODE else IndexDomain.DOCUMENT``
+    returns ``IndexDomain.DOCUMENT`` for both unmapped sources, and this
+    fails inside the ``pytest.raises`` block with DID NOT RAISE. Swapping
+    the two mapped arms instead fails the first identity assertion above.
+    """
+    from ..index_profiles import IndexDomain
+    from ..job_dispatch import _resilience_domain
+
+    assert _resilience_domain(JobSource.CODE) is IndexDomain.CODE
+    assert _resilience_domain(JobSource.DOCUMENT) is IndexDomain.DOCUMENT
+
+    for unmapped in (JobSource.VAULT, JobSource.MAINTENANCE):
+        # The checker rejects this call outright; the cast reproduces the
+        # only way the refusal is reachable at all - a caller that got past
+        # it - and the message must name the source that arrived.
+        with pytest.raises(AssertionError, match=unmapped.value):
+            _resilience_domain(cast("Literal[JobSource.CODE]", unmapped))
+
+
+def test_admitted_resilience_refuses_a_source_with_no_admitted_limits() -> None:
+    """Admission must never stamp another domain's ceilings onto a source.
+
+    The failure this guards is silent by construction: the snapshot carries
+    a real profile name and plausible ceilings, so a source that borrowed
+    them reads exactly like one that owns them.
+
+    Proven able to fail: restoring the two-way fallback in
+    ``_resilience_domain`` makes this return a populated snapshot carrying
+    the document domain's ``cuda_ceiling_mib`` and ``support_profile``, and
+    this fails inside the ``pytest.raises`` block with DID NOT RAISE.
+    """
+    from ..job_dispatch import _admitted_resilience
+
+    admitted = _admitted_resilience(JobSource.CODE)
+    assert admitted.support_profile is not None
+
+    with pytest.raises(AssertionError, match="vault"):
+        _admitted_resilience(cast("Literal[JobSource.CODE]", JobSource.VAULT))
