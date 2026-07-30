@@ -20,7 +20,8 @@ from .._readiness import compute_readiness
 from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..job_models import JobSource
-from ..server import health_handler
+from ..server import ServerRouteRuntime, create_http_app
+from ..service import ServiceRegistry
 from ._job_records import activity_record
 
 if TYPE_CHECKING:
@@ -109,11 +110,15 @@ class TestHealthSchemaVersion:
     """/health echoes the bare schema_version for a cheap pre-read gate."""
 
     def test_health_echoes_schema_version(self) -> None:
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        app = Starlette(routes=[Route("/health", health_handler)])
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-schema-version-token",
+                registry=ServiceRegistry(),
+            ),
+            lifespan=None,
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         resp: httpx.Response = client.get("/health")
         data: dict[str, object] = cast("dict[str, object]", resp.json())
@@ -128,8 +133,6 @@ class TestHealthJobsRollup:
         self,
         tmp_path: Path,
     ) -> None:
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
         from ..job_models import (
@@ -160,7 +163,13 @@ class TestHealthJobsRollup:
         )
         assert paused.job is not None
 
-        app = Starlette(routes=[Route("/health", health_handler)])
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-jobs-rollup-token",
+                registry=ServiceRegistry(),
+            ),
+            lifespan=None,
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         raw = client.get("/health").json()
         data: dict[str, object] = cast("dict[str, object]", raw)
@@ -279,13 +288,17 @@ class TestHealthFailureGenerationBound:
         without a loaded model: whatever the rest of the environment contributes
         cancels out, so any difference is the stale failure's doing.
         """
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
         from ..jobs import record_finish, record_start
 
-        app = Starlette(routes=[Route("/health", health_handler)])
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-stale-failure-token",
+                registry=ServiceRegistry(),
+            ),
+            lifespan=None,
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         _begin_generation()
         raw_baseline = client.get("/health").json()
