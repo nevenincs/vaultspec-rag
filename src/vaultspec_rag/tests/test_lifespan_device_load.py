@@ -27,6 +27,8 @@ def test_health_payload_carries_the_device_load_key() -> None:
     """
     from starlette.testclient import TestClient
 
+    # The handler resolves its registry from the application hosting it, so
+    # the route runtime carries the registry the assertion depends on.
     app = create_http_app(
         ServerRouteRuntime(
             token="lifespan-device-load-test-token",

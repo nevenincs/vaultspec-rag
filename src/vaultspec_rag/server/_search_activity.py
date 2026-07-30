@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_MAX_ACTIVE_SEARCHES",
     "DEFAULT_MAX_RECENT_SEARCHES",
+    "DEFAULT_SEARCH_ACTIVITY_ROWS",
     "MAX_SEARCH_ACTIVITY_QUERY_CHARS",
     "SearchActivityCompletion",
     "SearchActivityFilters",
@@ -26,6 +27,15 @@ __all__ = [
 DEFAULT_MAX_ACTIVE_SEARCHES = 256
 DEFAULT_MAX_RECENT_SEARCHES = 512
 MAX_SEARCH_ACTIVITY_QUERY_CHARS = 10_000
+
+#: Rows an unfiltered activity read returns when the caller names no limit.
+#:
+#: The retention bounds above are a memory ceiling, not a response size: all
+#: 768 records carrying queries of the length allowed above serialize to
+#: several megabytes, built in one pass while every other route waits. An
+#: operator list is bounded by default and widened on request, so the ceiling
+#: is what the caller asked for rather than what the ledger happens to hold.
+DEFAULT_SEARCH_ACTIVITY_ROWS = 200
 
 type ActivityState = Literal["active", "terminal"]
 
@@ -306,8 +316,6 @@ class SearchActivityLedger:
             recent = list(reversed(self._recent))
             counts = {
                 "active": len(active),
-                "active_visible": len(active),
-                "active_overflow": 0,
                 "recent": len(recent),
                 "total": len(active) + len(recent),
             }

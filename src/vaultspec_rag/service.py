@@ -1672,6 +1672,22 @@ class ServiceRegistry:
         with self._lock:
             return [r for r, s in self._projects.items() if s.ref_count > 0]
 
+    def projects_envelope(self, projects: list[dict[str, Any]]) -> dict[str, Any]:
+        """Wrap an already-shaped project list in its published bounds.
+
+        The per-project entries differ by surface - the route publishes the
+        slots as they are, the consolidated state adds derived timings - but
+        the bounds beside them are this registry's own and are read the same
+        way by both. Written out at each surface they agree only until one
+        gains a field, and nothing reports the disagreement because each
+        surface still answers with a well-formed payload.
+        """
+        return {
+            "projects": projects,
+            "max_projects": self.max_projects,
+            "idle_ttl_seconds": self.idle_ttl_seconds,
+        }
+
     def snapshot(self) -> list[dict[str, Any]]:
         """Return a list of per-slot diagnostic dicts (for ``list_projects``).
 
@@ -1926,16 +1942,20 @@ class ServiceRegistry:
 
         # Dropping the references is not enough: both stacks are reachable only
         # through reference cycles, so their device memory survives until a
-        # collection runs. Until it does the process holds gigabytes it no
-        # longer has a handle on, and the recorded resident baseline keeps
-        # describing them - which would put every later index ceiling out of
-        # reach, since enforcement clamps a job's peak net of that figure at
-        # zero. Collect, then re-establish the baseline from what is genuinely
-        # left resident.
-        from .memory_probe import rebase_resident_cuda_baseline
-
-        gc.collect()
-        rebase_resident_cuda_baseline()
+        # collection runs, and the blocks a collection frees stay checked out
+        # of the device until the allocator cache is flushed. One release
+        # sequence owns all three steps; a shortened copy here once skipped the
+        # cache flush, leaving the freed stacks invisible to the device-wide
+        # free reading a later in-process load is admitted against. A failure
+        # has nowhere to go at shutdown, but it must not pass silently either.
+        try:
+            self._release_gpu_residency()
+        except GPUResidencyTransitionError:
+            logger.warning(
+                "GPU residency release failed during shutdown; the device may "
+                "hold memory this process no longer references",
+                exc_info=True,
+            )
         logger.info("ServiceRegistry shut down")
 
     # -- introspection -----------------------------------------------------

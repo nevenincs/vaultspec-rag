@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from threading import Event, Thread
+from typing import cast
 
 import pytest
 from vaultspec_core.core.enums import (
@@ -110,28 +111,40 @@ class TestInstallPreviewTopology:
                 encoding="utf-8",
             )
         elif relative == Path(".vaultspec") / "mcp-ownership.json":
-            state = json.loads(linked_target.read_text(encoding="utf-8"))
+            state = cast(
+                "dict[str, dict[str, object]]",
+                json.loads(linked_target.read_text(encoding="utf-8")),
+            )
             del state["targets"]["claude:project"]
             linked_target.write_text(
                 json.dumps(state, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
         elif relative == Path(".vaultspec") / "providers.json":
-            manifest = json.loads(linked_target.read_text(encoding="utf-8"))
+            manifest = cast(
+                "dict[str, object]",
+                json.loads(linked_target.read_text(encoding="utf-8")),
+            )
             manifest["installed"] = []
             linked_target.write_text(
                 json.dumps(manifest, indent=2) + "\n",
                 encoding="utf-8",
             )
         elif relative == Path(".vaultspec") / "workspace.json":
-            workspace = json.loads(linked_target.read_text(encoding="utf-8"))
+            workspace = cast(
+                "dict[str, dict[str, dict[str, object]]]",
+                json.loads(linked_target.read_text(encoding="utf-8")),
+            )
             workspace["packages"]["vaultspec-rag"]["install_mode"] = "dependency"
             linked_target.write_text(
                 json.dumps(workspace, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
         else:
-            definition = json.loads(linked_target.read_text(encoding="utf-8"))
+            definition = cast(
+                "dict[str, object]",
+                json.loads(linked_target.read_text(encoding="utf-8")),
+            )
             definition["_vaultspec_mode_tool_spec"] = "operator-drift"
             linked_target.write_text(
                 json.dumps(definition, indent=2) + "\n",
@@ -234,7 +247,10 @@ class TestInstallPreviewTopology:
     ) -> None:
         _install(fresh_workspace, mode=InstallMode.TOOL)
         ownership = fresh_workspace / ".vaultspec" / "mcp-ownership.json"
-        state = json.loads(ownership.read_text(encoding="utf-8"))
+        state = cast(
+            "dict[str, dict[str, object]]",
+            json.loads(ownership.read_text(encoding="utf-8")),
+        )
         del state["targets"]["claude:project"]
         ownership.write_text(
             json.dumps(state, indent=2, sort_keys=True) + "\n",
@@ -901,10 +917,10 @@ class TestInstallPreviewTopology:
         )
 
         assert result.exit_code == 2, result.output
-        report = json.loads(result.output)
+        report = cast("dict[str, object]", json.loads(result.output))
         assert report["mcp_failed"] is True
         assert "required MCP topology preflight failed" in " ".join(
-            report["mcp_errors"]
+            cast("list[str]", report["mcp_errors"])
         )
         assert _node_signature(claude) == signature
         assert preserved.read_bytes() == preserved_before

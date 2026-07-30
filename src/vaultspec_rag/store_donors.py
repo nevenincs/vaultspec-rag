@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from contextlib import AbstractContextManager
 
+    from qdrant_client.conversions.common_types import PointId
     from qdrant_client.http.models.models import Record
 
     from ._store_locks import ReentrantLock
@@ -57,7 +58,14 @@ class _VaultDonorMixin:
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
-        def _retrieve(self, **kwargs: Any) -> list[Record]: ...
+        def _retrieve(
+            self,
+            *,
+            collection_name: str,
+            ids: Sequence[PointId],
+            with_payload: bool | Sequence[str] = ...,
+            with_vectors: bool | Sequence[str] = ...,
+        ) -> list[Record]: ...
 
     def supports_donor_reads(self, donor_collection: str) -> bool:
         """Return whether this handle can read from *donor_collection*.

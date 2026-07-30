@@ -14,13 +14,17 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ... import EmbeddingModel
+    from ...indexer import DocumentIndexer
     from ...indexer._content_policy import RootContentPolicy
     from ...indexer._vault_prep import IndexResult
+    from ...job_control import RunControlToken
+    from ...store_runtime import VaultStore
 
 _SCHEMA_VERSION: Final = 1
 _MARKER_NAME: Final = ".document-index-resilience-workload.json"
@@ -294,10 +298,14 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
     )
 
     resolved = root.resolve()
+    # Measurement only exercises preflight, support-limit, and preprocess-
+    # context resolution, none of which touch `self.model` or `self.store`;
+    # the constructor requires both, so cast the unused placeholders to
+    # their real types rather than loading a model or opening a store here.
     indexer = DocumentIndexer(
         resolved,
-        cast("Any", None),
-        cast("Any", None),
+        cast("EmbeddingModel", None),
+        cast("VaultStore", None),
         content_policy=_policy(),
     )
     preflight = indexer.preflight_content()
@@ -374,7 +382,7 @@ def _validate_measurement(
 
 
 def _run_interrupted_index(
-    indexer: Any,
+    indexer: DocumentIndexer,
     root: Path,
     *,
     interrupt_after_units: int,
@@ -420,8 +428,8 @@ def _run_interrupted_index(
 
 
 def _capture_interrupted_run(
-    indexer: Any,
-    token: Any,
+    indexer: DocumentIndexer,
+    token: RunControlToken,
     failures: list[BaseException],
 ) -> None:
     """Capture the terminal signal from one benchmark index thread."""
@@ -440,7 +448,7 @@ def _capture_interrupted_run(
 def _wait_for_interruption_boundary(
     ledger_path: Path,
     worker: threading.Thread,
-    token: Any,
+    token: RunControlToken,
     *,
     interrupt_after_units: int,
 ) -> tuple[str, int]:

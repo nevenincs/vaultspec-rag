@@ -19,10 +19,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from contextlib import AbstractContextManager
 
-    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_models import GenerationRow, RunGeneration
 
 
-class _FileStateRow(TypedDict):
+class FileStateRow(TypedDict):
     """The ``file_states`` row columns :func:`file_state_from_row` reads."""
 
     rel_path: str
@@ -44,7 +44,7 @@ class RunLedgerFileMethods:
         @staticmethod
         def _require_mutable_generation(
             connection: sqlite3.Connection, generation_id: str
-        ) -> sqlite3.Row: ...
+        ) -> GenerationRow: ...
 
         @staticmethod
         def _file_completion_evidence(
@@ -52,7 +52,7 @@ class RunLedgerFileMethods:
         ) -> tuple[bool, str | None]: ...
 
         @staticmethod
-        def _generation_from_row(row: sqlite3.Row) -> RunGeneration: ...
+        def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
 
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
@@ -384,7 +384,7 @@ class RunLedgerFileMethods:
         return frozenset(str(row["point_id"]) for row in rows)
 
 
-def file_state_from_row(row: _FileStateRow) -> FileState:
+def file_state_from_row(row: FileStateRow) -> FileState:
     from .._job_errors import JobErrorKind
 
     try:

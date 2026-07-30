@@ -35,6 +35,7 @@ from ..cli._jobs_tui import (
     ServerWatchApp,
 )
 from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
+from ..service_quiesce import QuiesceSnapshot, QuiesceState
 from ..serviceclient._transport import DEFAULT_ADMIN_TIMEOUT_SECONDS, _try_http_admin
 
 pytestmark = [pytest.mark.unit]
@@ -217,6 +218,10 @@ class _JobService:
         self.qdrant_log_lines: list[str] = ["a qdrant log line"]
         self.search_active: list[dict[str, object]] = []
         self.search_recent: list[dict[str, object]] = []
+        # When set, the response reports more retained records than it
+        # returns, which is what a bounded projection over a busy ledger
+        # looks like. Absent, every record is served and no marker is due.
+        self.search_total_override: int | None = None
         # When set, the jobs listing carries this GPU pressure block; when
         # ``None`` the key is omitted entirely, which is how a daemon older
         # than the field answers.
@@ -224,6 +229,10 @@ class _JobService:
         # When set, the jobs listing carries this machine pressure block;
         # ``None`` omits the key - a daemon that predates the tier.
         self.pressure: dict[str, object] | None = None
+        # When set, the jobs listing carries this quiesce controller
+        # observation; ``None`` omits the key, which is how a daemon older
+        # than the controller answers.
+        self.quiesce: dict[str, object] | None = None
         # What ``/health`` reports as the daemon's release. ``None`` omits
         # the field, which is how a daemon that predates version reporting
         # answers - not an empty string, and never the client's own number.
@@ -359,6 +368,35 @@ class _JobService:
             return [path for method, path in self.requests if method != "GET"]
 
 
+def _quiesce_block(
+    *,
+    state: QuiesceState,
+    vram_released: bool,
+    safe_to_borrow_gpu: bool,
+) -> dict[str, object]:
+    """Publish one controller observation exactly as the service renders it.
+
+    Built through the controller's own snapshot rather than as a literal
+    mapping, so a field added to or dropped from the canonical vocabulary
+    reaches this fixture instead of leaving it asserting against a shape the
+    service stopped publishing.
+    """
+    return QuiesceSnapshot(
+        state=state,
+        admission_epoch=7,
+        admissions_open=state is QuiesceState.RUNNING,
+        active_compute_tickets=0,
+        drain_complete=state is not QuiesceState.RUNNING,
+        vram_released=vram_released,
+        safe_to_borrow_gpu=safe_to_borrow_gpu,
+        pause_requested_at=None,
+        drain_acknowledged_at=None,
+        quiesced_at=None,
+        warming_started_at=None,
+        failure_reason=None,
+    ).as_envelope()
+
+
 def _jobs_payload(
     service: _JobService, query: dict[str, list[str]]
 ) -> dict[str, object]:
@@ -368,6 +406,7 @@ def _jobs_payload(
         held = list(service.jobs)
         gpu = service.gpu
         pressure = service.pressure
+        quiesce = service.quiesce
     page = held[:limit]
     payload: dict[str, object] = {
         "ok": True,
@@ -382,6 +421,8 @@ def _jobs_payload(
         payload["gpu"] = gpu
     if pressure is not None:
         payload["pressure"] = pressure
+    if quiesce is not None:
+        payload["quiesce"] = quiesce
     return payload
 
 
@@ -447,7 +488,7 @@ def _search_activity_payload(service: _JobService) -> dict[str, object]:
         "counts": {
             "active": len(active),
             "recent": len(recent),
-            "total": len(active) + len(recent),
+            "total": service.search_total_override or (len(active) + len(recent)),
         },
         "returned": len(active) + len(recent),
         "filters": {
@@ -2037,6 +2078,75 @@ class TestHeaderCounts:
         )
 
     @pytest.mark.asyncio
+    async def test_a_running_controller_spends_no_header_width(
+        self, control_service: _JobService
+    ) -> None:
+        """The controller's steady state is the one that must stay silent.
+
+        A running controller holding its VRAM with no borrower admitted is
+        what an operator already assumes, and it is what every healthy daemon
+        publishes on every refresh. Spending the widest cell in the bar on it
+        sheds the state labels for a claim nobody was waiting on - and the
+        evidence is not lost by the silence, because the detail row carries
+        the whole block whatever the pill decides.
+
+        Proven able to fail: returning the evidence pill for the running
+        steady state - the shape that renders every observation alike -
+        paints ``borrower safety unsafe`` and fails the first two assertions
+        below by name; restored, it passes.
+        """
+        control_service.quiesce = _quiesce_block(
+            state=QuiesceState.RUNNING,
+            vram_released=False,
+            safe_to_borrow_gpu=False,
+        )
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "borrower safety" not in painted, (
+            "a controller in its steady state must not spend header width saying so"
+        )
+        assert "▶ 1 running" in painted, (
+            "and the labels the pill would have cost must still be painted"
+        )
+        assert "quiesce details:" in painted, (
+            "silence in the header is not silence on screen: the detail row "
+            "still carries the block the service published"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_quiesced_controller_keeps_its_cell_over_the_labels(
+        self, control_service: _JobService
+    ) -> None:
+        """Controller news outranks every label the bar could have kept.
+
+        A controller past running is the window in which an operator needs
+        all three facts at once, so the cell is painted whole and the labels
+        go instead - the reverse of the steady-state case, from the same
+        header width.
+        """
+        control_service.quiesce = _quiesce_block(
+            state=QuiesceState.QUIESCED,
+            vram_released=True,
+            safe_to_borrow_gpu=True,
+        )
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "quiesce quiesced" in painted
+        assert "vram released" in painted
+        assert "borrower safety safe" in painted, (
+            "the borrower's own answer is the reason the cell exists"
+        )
+        assert "▶ 1 running" not in painted, (
+            "reported controller evidence is never shed; the labels are"
+        )
+
+    @pytest.mark.asyncio
     async def test_a_narrow_bar_sheds_labels_before_counts_or_cells(
         self, control_service: _JobService
     ) -> None:
@@ -2909,3 +3019,113 @@ class TestClosingTheSession:
         assert failure is None, (
             f"a log answer arriving after the screen went must be dropped: {failure!r}"
         )
+
+
+class TestRedactedSearchActivity:
+    """A service that withholds query text is serving, not broken.
+
+    The ledger's serializer omits ``query`` and publishes ``query_redacted``
+    whenever it is asked not to disclose the text, and a test pins that
+    contract. The console required the text outright, so a supported service
+    mode made the whole lane read as an invalid response - counts, rows and
+    detail all replaced by an error string.
+    """
+
+    def test_a_redacted_record_is_accepted(self) -> None:
+        """Mutation: requiring ``query`` again fails this on the returned error."""
+        from ..cli._jobs_tui import _search_activity_records_error
+
+        redacted: dict[str, object] = {
+            "request_id": "r-1",
+            "state": "active",
+            "query_redacted": True,
+        }
+        assert _search_activity_records_error([redacted], []) is None
+
+    def test_a_record_carrying_neither_query_nor_redaction_is_rejected(self) -> None:
+        """Silence about the text is not the same as a declared redaction.
+
+        A record that simply lost the field must still fail: the check is that
+        exactly one of the two is present, not that the strict one was relaxed.
+        """
+        from ..cli._jobs_tui import _search_activity_records_error
+
+        silent: dict[str, object] = {"request_id": "r-2", "state": "active"}
+        assert _search_activity_records_error([silent], []) is not None
+
+    def test_a_record_claiming_both_is_rejected(self) -> None:
+        """Disclosed and redacted at once describes no service state."""
+        from ..cli._jobs_tui import _search_activity_records_error
+
+        both: dict[str, object] = {
+            "request_id": "r-3",
+            "state": "active",
+            "query": "vector search",
+            "query_redacted": True,
+        }
+        assert _search_activity_records_error([both], []) is not None
+
+    def test_the_cell_says_redacted_rather_than_unavailable(self) -> None:
+        """An operator must not go looking for a fault that is not there."""
+        from ..cli._jobs_tui import _search_query_cell
+
+        rendered = _search_query_cell({"query_redacted": True}, 40).plain
+        assert "redacted" in rendered
+        assert "unavailable" not in rendered
+
+
+class TestBoundedSearchProjectionAnnouncesItself:
+    """A limited row set beside an unlimited count must say so.
+
+    The counts are computed over every retained record; the rows are the
+    bounded projection the route returned. Rendering the first beside the
+    second with nothing between them lets an operator scroll to the end of
+    the table and conclude they have seen everything.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_truncated_projection_renders_its_served_figure(
+        self, control_service: _JobService
+    ) -> None:
+        """Mutation: dropping the marker leaves only the unqualified counts.
+
+        Removing the ``showing`` append in ``_render_search_title`` fails this
+        on the membership assertion below, not on a count.
+        """
+        control_service.set_search_activity(
+            active=[_served_search("search-active-001", query="a served query")],
+            recent=[],
+        )
+        control_service.search_total_override = 300
+        app = _app(control_service, [_job("abc123def456")], watch_mode="server")
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "showing 1 of 300" in painted, (
+            "a bounded projection must name what it served against what exists"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_untruncated_projection_spends_no_width_saying_so(
+        self, control_service: _JobService
+    ) -> None:
+        """Every record served is the ordinary case and stays silent.
+
+        Asserted on a two-record figure rather than the bare phrase: the jobs
+        header carries its own ``showing N of M`` for the work list, so a
+        looser matcher passes on that one and proves nothing about this lane.
+        """
+        control_service.set_search_activity(
+            active=[
+                _served_search("search-active-002", query="a served query"),
+                _served_search("search-active-003", query="another served query"),
+            ],
+            recent=[],
+        )
+        app = _app(control_service, [_job("abc123def456")], watch_mode="server")
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "showing 2 of 2" not in painted

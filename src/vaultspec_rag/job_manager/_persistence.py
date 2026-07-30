@@ -370,7 +370,7 @@ class JobManagerPersistence(JobManagerState):
         """Advance the in-memory generation past the last durable write."""
         self._state_generation = self._state_generation + 1
 
-    def _begin_progress_flush_locked(self) -> _PendingProgressFlush | None:
+    def _begin_progress_flush_locked(self) -> PendingProgressFlush | None:
         """Claim and serialize one deferred progress flush, or decline.
 
         Called with the manager lock held, immediately after a progress-only
@@ -397,7 +397,7 @@ class JobManagerPersistence(JobManagerState):
             return None
         if not self._write_lock.acquire(blocking=False):
             return None
-        return _PendingProgressFlush(
+        return PendingProgressFlush(
             path=path,
             state=self._persisted_generation_locked(),
             generation=self._state_generation,
@@ -405,7 +405,7 @@ class JobManagerPersistence(JobManagerState):
 
     def _complete_progress_flush(
         self,
-        pending: _PendingProgressFlush,
+        pending: PendingProgressFlush,
     ) -> _job_persistence.PersistenceWriteError | None:
         """Write one claimed serialization outside the manager lock.
 
@@ -452,7 +452,7 @@ class JobManagerPersistence(JobManagerState):
 
 
 @dataclass(frozen=True, slots=True)
-class _PendingProgressFlush:
+class PendingProgressFlush:
     """One claimed, serialized generation awaiting its out-of-lock write."""
 
     path: Path

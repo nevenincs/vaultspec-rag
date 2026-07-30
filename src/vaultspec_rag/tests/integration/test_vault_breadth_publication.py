@@ -35,6 +35,7 @@ from ..._index_breadth import (
 from ..._source_types import PublicSourceType
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from ...indexer import VaultIndexer
@@ -393,7 +394,7 @@ class TestAnAbsentFigureCannotTell:
         assert claim is not None
         assert claim.published_points == expected
 
-    def _write_sidecar(self, root: Path, payload: dict[str, Any]) -> None:
+    def _write_sidecar(self, root: Path, payload: Mapping[str, object]) -> None:
         """Write a vault sidecar verbatim, as a build of any vintage would."""
         path = index_meta_path(root, PublicSourceType.VAULT)
         path.parent.mkdir(parents=True, exist_ok=True)

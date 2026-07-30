@@ -6,6 +6,11 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import threading
+    from collections import OrderedDict, deque
 
 from .. import job_persistence as _job_persistence
 from .._runtime_identity import process_identity_fields
@@ -34,6 +39,7 @@ from ..job_models import (
 )
 from .state import (
     UNOWNED_RUNTIME,
+    JobDispatchBinding,
     JobManagerState,
     ManagedJob,
     ManagerStateBackup,
@@ -60,6 +66,21 @@ class _CreateRequest:
 
 
 class JobManagerRecords(JobManagerState):
+    #: Owned and initialized by the composed ``JobManager`` (``manager.py``).
+    #: The shared ``JobManagerState`` protocol exposes every attribute it does
+    #: not enumerate through one catch-all ``Any`` fallback; redeclaring the
+    #: concrete types this owner actually reads keeps that fallback from
+    #: leaking into every lock, map and count access below.
+    _lock: threading.RLock
+    _active: dict[str, ManagedJob]
+    _terminal: deque[ManagedJob]
+    _dispatchers: dict[str, JobDispatchBinding]
+    _idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding]
+    _job_idempotency_keys: dict[str, set[str]]
+    _max_nonterminal: int
+    _max_terminal_history: int
+    _max_idempotency: int
+
     def _replay_idempotent_locked(
         self,
         normalized_key: str | None,

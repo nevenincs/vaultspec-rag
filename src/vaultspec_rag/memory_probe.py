@@ -19,7 +19,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
 from ._env_values import BOOL_SHAPE, parse_bool, rejection
 from ._job_errors import JobError, JobErrorKind
@@ -27,6 +27,38 @@ from ._units import bytes_to_mib, mib_to_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
+
+    import psutil
+
+    # Typing-only surface for the ``torch.cuda`` calls this probe makes.
+    # Never imported at runtime (see the module docstring and the
+    # function-local ``import torch`` calls below) so a spawn worker
+    # reaching this module never initializes CUDA.
+    class _CudaDeviceProperties(Protocol):
+        """The subset of a ``torch.cuda`` device-properties result read here."""
+
+        total_memory: int
+
+    class _TorchCudaModule(Protocol):
+        """The subset of ``torch.cuda`` this probe calls."""
+
+        def is_available(self) -> bool: ...
+        def memory_allocated(self, device: int | None = ...) -> int: ...
+        def memory_reserved(self, device: int | None = ...) -> int: ...
+        def get_device_properties(self, device: int) -> _CudaDeviceProperties: ...
+        def current_device(self) -> int: ...
+        def mem_get_info(self, device: int | None = ...) -> tuple[int, int]: ...
+        def is_initialized(self) -> bool: ...
+        def utilization(self, device: int | None = ...) -> int: ...
+        def empty_cache(self) -> None: ...
+        def reset_peak_memory_stats(self, device: int | None = ...) -> None: ...
+        def max_memory_allocated(self, device: int | None = ...) -> int: ...
+
+    class _TorchModule(Protocol):
+        """The subset of the ``torch`` package this probe touches."""
+
+        cuda: _TorchCudaModule
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +97,10 @@ ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
 # ``current_cuda_mib`` are called once per 250 ms by the background
 # sampler - re-importing psutil/torch and re-instantiating
 # ``psutil.Process`` on every call is wasteful. Cache on first use.
-# ``Any`` is intentional: torch is an optional dependency on some
-# install matrices, and ty cannot narrow our own sentinel probe.
-_psutil_process: Any = None
-_torch_module: Any = None
+# Both annotations are typing-only: the classes they name are never
+# imported at runtime, only under ``TYPE_CHECKING`` above.
+_psutil_process: psutil.Process | None = None
+_torch_module: _TorchModule | None = None
 _torch_probed: bool = False
 _torch_has_cuda: bool = False
 
@@ -106,7 +138,8 @@ def _measure_rss_mib() -> float | None:
     try:
         if _psutil_process is None:
             _psutil_process = psutil.Process(os.getpid())
-        return bytes_to_mib(_psutil_process.memory_info().rss)
+        rss_bytes = cast("int", _psutil_process.memory_info().rss)
+        return bytes_to_mib(rss_bytes)
     except (
         psutil.NoSuchProcess,
         psutil.AccessDenied,
@@ -152,11 +185,12 @@ def _measure_cuda_mib() -> tuple[float, float] | None:
             _torch_has_cuda = False
             _torch_probed = True
         else:
+            torch_module = cast("_TorchModule", _torch)
             try:
-                has_cuda = _torch.cuda.is_available()
+                has_cuda = torch_module.cuda.is_available()
             except (RuntimeError, AssertionError):
                 return None
-            _torch_module = _torch
+            _torch_module = torch_module
             _torch_has_cuda = has_cuda
             _torch_probed = True
     if _torch_module is None or not _torch_has_cuda:
@@ -215,15 +249,21 @@ class CudaDeviceMemory:
     The presence flags travel with the figures because absence has two distinct
     causes a caller may have to tell apart - torch is not installed at all, or
     it is installed without a usable device - and a pair of ``None`` readings
-    cannot say which. Both figures are ``None`` whenever ``cuda_present`` is
-    false, and either may be ``None`` on a device whose driver refused the
-    query.
+    cannot say which. Every figure is ``None`` whenever ``cuda_present`` is
+    false, and any may be ``None`` on a device whose driver refused the query.
+
+    ``own_reserved_mib`` is what this process's caching allocator has checked
+    out of the device: resident tensors plus the cache of freed blocks, both of
+    which the device-wide ``free_mib`` counts as used. It travels with the
+    device figures because separating a process's own checkout from foreign
+    pressure is only possible while the two were read together.
     """
 
     torch_present: bool
     cuda_present: bool
     free_mib: float | None
     total_mib: float | None
+    own_reserved_mib: float | None
 
 
 def cuda_device_memory() -> CudaDeviceMemory:
@@ -236,7 +276,7 @@ def cuda_device_memory() -> CudaDeviceMemory:
     raises: a torch-free host, a CPU-only build, and a driver that refuses the
     query all report absence.
     """
-    _measure_cuda_mib()
+    measured = _measure_cuda_mib()
     # A completed probe holding no module means the import itself failed, which
     # is permanent. An incomplete probe means the import succeeded and only the
     # availability query misfired, so torch IS present on this host.
@@ -247,12 +287,14 @@ def cuda_device_memory() -> CudaDeviceMemory:
             cuda_present=False,
             free_mib=None,
             total_mib=None,
+            own_reserved_mib=None,
         )
     return CudaDeviceMemory(
         torch_present=True,
         cuda_present=True,
         free_mib=cuda_free_memory_mib(),
         total_mib=cuda_device_total_mib(),
+        own_reserved_mib=None if measured is None else measured[1],
     )
 
 
@@ -488,13 +530,12 @@ def rebase_resident_cuda_baseline() -> float:
         The re-established baseline in MiB (unchanged off the GPU path).
     """
     global _resident_baseline_mib
-    # A release is also what retires the standing load-admission verdict: that
-    # verdict was taken against the device as it was before these models
-    # loaded, so it describes a state that no longer exists once they are gone,
-    # and the next load must be admitted against what the card actually holds.
-    # Cleared unconditionally, before the reading: an over-clear costs one
-    # extra reading, while an under-clear rides a stale verdict for the life of
-    # the process.
+    # A release is also what retires the standing load-admission verdict: it
+    # described the device as it stood when taken, and this release just
+    # changed that. Cleared unconditionally, before the reading: an over-clear
+    # costs one extra reading, while an under-clear rides a stale verdict for
+    # the life of the process. Clearing while sibling residency survives is
+    # safe because the next verdict credits whatever this process still holds.
     from ._gpu_admission import clear_gpu_admission_latch
 
     clear_gpu_admission_latch()

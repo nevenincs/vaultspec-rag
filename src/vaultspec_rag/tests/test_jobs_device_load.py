@@ -21,7 +21,14 @@ if TYPE_CHECKING:
 
     import httpx
 
-_DEVICE_LOAD_KEYS = {"free_mib", "total_mib", "floor_mib", "admitted", "reason"}
+_DEVICE_LOAD_KEYS = {
+    "free_mib",
+    "total_mib",
+    "own_mib",
+    "floor_mib",
+    "admitted",
+    "reason",
+}
 _T0 = 200_000.0
 
 
@@ -44,6 +51,7 @@ def _reading(**overrides: object) -> dict[str, object]:
     base: dict[str, object] = {
         "free_mib": 9000,
         "total_mib": 16376,
+        "own_mib": 0,
         "floor_mib": 6400,
         "admitted": True,
         "reason": "",

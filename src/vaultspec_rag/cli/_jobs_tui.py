@@ -32,6 +32,8 @@ from textual.worker import WorkerState
 from ..job_models import DesiredJobState, JobState
 from ..jobs import count, mapping, measurement, text
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
+from ..search._outcomes import FAILED_ACTIVITY_OUTCOMES
+from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS, QuiesceState
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_delete_job,
@@ -117,23 +119,6 @@ _CONTROL_GROUP = "jobs-control"
 # controls can destroy a control request before it is ever sent.
 _STATUS_GROUP = "jobs-service-status"
 
-_CANONICAL_QUIESCE_FIELDS = frozenset(
-    {
-        "state",
-        "admission_epoch",
-        "admissions_open",
-        "active_compute_tickets",
-        "drain_complete",
-        "vram_released",
-        "safe_to_borrow_gpu",
-        "pause_requested_at",
-        "drain_acknowledged_at",
-        "quiesced_at",
-        "warming_started_at",
-        "failure_reason",
-    }
-)
-
 _REQUEST_GROUPS = frozenset(
     {
         _REFRESH_GROUP,
@@ -157,7 +142,7 @@ def _canonical_quiesce_block(raw: object) -> object | None:
     the canonical shape is therefore shown as unavailable rather than safe.
     """
     block = mapping(raw)
-    if frozenset(block) != _CANONICAL_QUIESCE_FIELDS:
+    if frozenset(block) != QUIESCE_ENVELOPE_FIELDS:
         return None
     return block
 
@@ -685,7 +670,7 @@ def _search_state_cell(
     state = _search_text(search.get("state"), fallback="unknown")
     outcome = _search_text(search.get("outcome"), fallback="serving")
     tone = "good" if state == "active" else "muted"
-    if outcome in {"failed", "unavailable", "validation_rejected"}:
+    if outcome in FAILED_ACTIVITY_OUTCOMES:
         tone = "bad"
     return _two_line(
         state,
@@ -711,8 +696,18 @@ def _search_request_cell(search: dict[str, object], cells: int) -> Text:
 
 
 def _search_query_cell(search: dict[str, object], cells: int) -> Text:
-    """Render authenticated in-memory query text, never a result payload."""
-    query = _search_text(search.get("query"), fallback="query unavailable")
+    """Render authenticated in-memory query text, never a result payload.
+
+    A redacted record is shown as redacted rather than as missing: the
+    service withheld the text deliberately, and an operator reading
+    "query unavailable" would go looking for a fault that is not there.
+    """
+    fallback = (
+        "query redacted"
+        if search.get("query_redacted") is True
+        else "query unavailable"
+    )
+    query = _search_text(search.get("query"), fallback=fallback)
     availability = _search_text(search.get("availability_cause"), fallback="")
     error = _search_text(search.get("error_message"), fallback="")
     return _two_line(query, availability or error, cells, top_style="bold")
@@ -897,6 +892,7 @@ class ServerWatchApp(App[None]):
         self._jobs: list[dict[str, object]] = []
         self._searches: list[dict[str, object]] = []
         self._search_counts: dict[str, int] = {}
+        self._search_returned = 0
         self._pending: dict[str, _Pending] = {}
         # Rows the operator deleted, held briefly so the deletion is seen.
         self._tombstones: dict[str, _Tombstone] = {}
@@ -1320,6 +1316,9 @@ class ServerWatchApp(App[None]):
         self._search_counts = {
             name: count(counts.get(name)) or 0 for name in ("active", "recent", "total")
         }
+        # Counts are computed over every record; the rows are the bounded
+        # projection. Keeping the served figure is what lets the title say so.
+        self._search_returned = count(payload.get("returned")) or 0
         self._search_activity_error = None
         self._search_activity_last_refresh = time.time()
         self._layout_search_columns()
@@ -1727,6 +1726,15 @@ class ServerWatchApp(App[None]):
         active = self._search_counts.get("active", 0)
         recent = self._search_counts.get("recent", 0)
         title = Text(f"Served searches · {active} active · {recent} recent")
+        # The counts above cover every record the service holds; the table
+        # holds the bounded projection. Without this an operator scrolls to
+        # the end of 100 rows and concludes they have seen all 300.
+        total = self._search_counts.get("total", 0)
+        if 0 < self._search_returned < total:
+            title.append(
+                f" · showing {self._search_returned} of {total}",
+                style="dim",
+            )
         if self._search_activity_last_refresh is not None:
             stamp = time.strftime(
                 "%H:%M:%S", time.localtime(self._search_activity_last_refresh)
@@ -2019,16 +2027,42 @@ class ServerWatchApp(App[None]):
             return None
         return f"pressure {tier}", "bad" if tier == "critical" else "attention"
 
-    def _quiesce_cell(self) -> tuple[str, str]:
-        """Render only service-reported controller evidence, never authority."""
+    def _quiesce_cell(self) -> tuple[str, str] | None:
+        """The controller-evidence pill as (text, tone), or nothing to show.
+
+        Only service-reported evidence is rendered, never authority: this
+        client repairs no block it was sent and derives no permission from
+        one. What it does decide is whether the evidence is news, on the same
+        rule the pressure pill keeps. A daemon that reports no controller
+        block has made no observation, and a controller that is running, is
+        holding its VRAM and has admitted no borrower is the steady state an
+        operator already assumes; neither earns a cell, because a pill nobody
+        needs never costs a label somebody does. Silence here is never a
+        claim of safety - it is only the absence of a claim - and the detail
+        row states the controller's whole answer on every render, absent,
+        foreign or canonical alike, so nothing is lost by staying quiet.
+
+        Everything else is news, and news is never shed and never abbreviated.
+        A block this build cannot read is a contradiction between a daemon
+        that owns a controller and a report nothing may be trusted from, so
+        it is the loud tone rather than the muted one. Any other state, any
+        released VRAM and any admitted borrower is exactly the window in
+        which an operator needs all three facts at once.
+        """
         if not self._quiesce_reported:
-            return "quiesce unavailable", "muted"
+            return None
         match self._quiesce:
             case {
                 "state": str(state),
                 "vram_released": bool(vram_released),
                 "safe_to_borrow_gpu": bool(safe_to_borrow_gpu),
             }:
+                if (
+                    state == QuiesceState.RUNNING
+                    and not vram_released
+                    and not safe_to_borrow_gpu
+                ):
+                    return None
                 vram = "released" if vram_released else "held"
                 safety = "safe" if safe_to_borrow_gpu else "unsafe"
                 tone = "good" if safe_to_borrow_gpu else "attention"
@@ -2037,17 +2071,28 @@ class ServerWatchApp(App[None]):
                 return "quiesce unavailable", "bad"
 
     def _append_quiesce_detail(self, line: Text, tones: dict[str, str]) -> None:
-        """Show the full controller block a received jobs snapshot carried."""
+        """State the controller's whole answer on its own unbounded row.
+
+        The header pill is a summary that speaks only when the controller has
+        news; this row is where the answer is readable whatever it is, so it
+        is the one that carries an absence the pill does not paint. Both ways
+        an answer can go missing read as ``quiesce unavailable`` and differ
+        only in the reason given, because they leave an operator in the same
+        position and one condition must not wear two names.
+        """
         if self._quiesce is not None:
             line.append("\nquiesce details: ", style="dim")
             line.append(str(self._quiesce), style="dim")
         elif self._quiesce_reported:
             line.append(
-                "\nquiesce details unavailable: invalid service response",
+                "\nquiesce unavailable: invalid service response",
                 style=tone_style(tones, "bad", bold=True),
             )
         else:
-            line.append("\nquiesce details unavailable", style="dim")
+            line.append(
+                "\nquiesce unavailable: no controller evidence reported",
+                style="dim",
+            )
 
     def _compose_header_line(
         self,
@@ -2060,11 +2105,12 @@ class ServerWatchApp(App[None]):
     ) -> Text:
         """Build the header row: grouped pills, condition, GPU, page count.
 
-        The groups - state pills, health tallies, service condition, quiesce,
-        GPU, and the page count - are divided by dim separators so the row
-        reads as cells rather than one cramped run. Labels are a width
-        decision made by the caller; the condition, quiesce, and GPU cells are
-        never dropped.
+        The groups - state pills, health tallies, service condition, GPU, the
+        exception cells, and the page count - are divided by dim separators so
+        the row reads as cells rather than one cramped run. Labels are a width
+        decision made by the caller; the condition and GPU cells are never
+        dropped, and neither is an exception cell on the occasions it has
+        something to report at all.
         ``split_before_service`` is the last width fallback: the row breaks
         deliberately at the service-group boundary instead of wherever the
         wrapper would land - never through the middle of a pill.
@@ -2110,14 +2156,16 @@ class ServerWatchApp(App[None]):
             unicode_ok=unicode_ok,
         )
         self._append_separator(line, unicode_ok=unicode_ok)
-        quiesce_text, quiesce_tone = self._quiesce_cell()
-        _append_pill(
-            line,
-            quiesce_text,
-            fills[quiesce_tone],
-            unicode_ok=unicode_ok,
-        )
-        self._append_separator(line, unicode_ok=unicode_ok)
+        quiesce_cell = self._quiesce_cell()
+        if quiesce_cell is not None:
+            quiesce_text, quiesce_tone = quiesce_cell
+            _append_pill(
+                line,
+                quiesce_text,
+                fills[quiesce_tone],
+                unicode_ok=unicode_ok,
+            )
+            self._append_separator(line, unicode_ok=unicode_ok)
         gpu_text, gpu_tone, _gpu_bold = self._gpu_cell()
         _append_pill(line, gpu_text, fills[gpu_tone], unicode_ok=unicode_ok)
         pressure_cell = self._pressure_cell()
@@ -2156,8 +2204,11 @@ class ServerWatchApp(App[None]):
         width = self._summary_width()
         # Widest fitting form wins: labels leave the state pills first, then
         # the health tallies. Counts, the condition and the GPU cell are
-        # never shed, and neither is the pressure pill on the occasions it
-        # is painted at all; past the narrowest form the bar wraps.
+        # never shed, and neither are the quiesce and pressure pills on the
+        # occasions they are painted at all - a cell that only speaks when it
+        # has news has already paid for the width it takes, and shedding it
+        # would hide the very thing it was painted to say; past the narrowest
+        # form the bar wraps.
         line = self._compose_header_line(tones, state_labels=True, health_labels=True)
         if 0 < width < _widest_line(line):
             line = self._compose_header_line(
@@ -2846,11 +2897,19 @@ def _search_activity_records_error(
                 return "served-search activity unavailable: invalid record"
             entry = cast("dict[str, object]", record)
             request_id = _search_id(entry)
+            # A record carries either the query or the service's own redaction
+            # signal, never neither and never both. Requiring the text outright
+            # made a supported service mode read as a broken service: the
+            # serializer omits `query` and sets `query_redacted` whenever it is
+            # asked not to disclose it, and this lane blanked entirely rather
+            # than degrading to redacted rows.
+            disclosed = isinstance(entry.get("query"), str)
+            redacted = entry.get("query_redacted") is True
             if (
                 not request_id
                 or request_id in seen
                 or entry.get("state") != state
-                or not isinstance(entry.get("query"), str)
+                or disclosed == redacted
             ):
                 return "served-search activity unavailable: invalid record"
             seen.add(request_id)

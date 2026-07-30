@@ -36,14 +36,54 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 import pytest
 
 if TYPE_CHECKING:
-    from types import ModuleType
+    import re
+    from collections.abc import Callable
 
 pytestmark = [pytest.mark.unit]
+
+
+class _GateModule(Protocol):
+    """Structural view of the dynamically-loaded ``tools/citation_gate.py``.
+
+    ``importlib.util.module_from_spec`` returns ``ModuleType``, whose
+    ``__getattr__`` types every attribute access ``Any``. Casting the loaded
+    module to this Protocol once, at the load site, recovers the real
+    signatures for every call site below.
+    """
+
+    RULE_STEMS: tuple[str, ...]
+    RESERVED_IDENTITY_TOKENS: frozenset[str]
+
+    scan_file: Callable[..., list[tuple[str, int, str, str]]]
+    scan_file_paths: Callable[
+        ...,
+        tuple[list[tuple[str, int, str, str]], list[tuple[str, int, str, str]]],
+    ]
+    scan_text: Callable[
+        ...,
+        tuple[
+            list[tuple[str, int, str, str]],
+            list[tuple[str, int, str, str]],
+            list[tuple[str, int, str, str]],
+        ],
+    ]
+    collect_findings: Callable[
+        ...,
+        tuple[
+            list[tuple[str, int, str, str]],
+            list[tuple[str, int, str, str]],
+            list[tuple[str, int, str, str]],
+            list[tuple[str, int, str, str]],
+        ],
+    ]
+    discover_machine_identity: Callable[..., tuple[str, ...]]
+    machine_identity_patterns: Callable[..., tuple[tuple[str, re.Pattern[str]], ...]]
+
 
 # repo-root/src/vaultspec_rag/tests/<this file> -> parents[3] is the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -66,18 +106,18 @@ _STEM = "2026-06-02-index-perf-hardening"
 _INJECTED_IDENTITY = "qzrblex"
 
 
-def _load_gate() -> ModuleType:
+def _load_gate() -> _GateModule:
     """Import the gate from ``tools/``, which is not an installed package."""
     spec = importlib.util.spec_from_file_location("_citation_gate", _GATE_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    return module
+    return cast("_GateModule", module)
 
 
 @pytest.fixture(scope="module")
-def gate() -> ModuleType:
+def gate() -> _GateModule:
     return _load_gate()
 
 
@@ -101,7 +141,7 @@ def _git_tree(root: Path) -> None:
     subprocess.run(["git", "init", "-q", str(root)], check=True)
 
 
-def test_the_reported_shape_is_seen(gate: ModuleType, tmp_path: Path) -> None:
+def test_the_reported_shape_is_seen(gate: _GateModule, tmp_path: Path) -> None:
     """A bare dated stem in a module docstring - the shape reported as clean.
 
     The module docstring was never the problem: the pattern was. It required a
@@ -127,7 +167,7 @@ def test_the_reported_shape_is_seen(gate: ModuleType, tmp_path: Path) -> None:
 
 
 def test_a_citation_is_reported_on_its_own_line_not_the_opening_quote(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """The reported line must land on the offending line inside the docstring.
 
@@ -207,7 +247,7 @@ _CONSTRUCTS: tuple[tuple[str, str], ...] = (
     ("label", "body"), _CONSTRUCTS, ids=[c[0] for c in _CONSTRUCTS]
 )
 def test_every_prose_construct_is_scanned(
-    gate: ModuleType, tmp_path: Path, label: str, body: str
+    gate: _GateModule, tmp_path: Path, label: str, body: str
 ) -> None:
     """Mutation proving this can fail: drop ``ast.JoinedStr`` or ``ast.BinOp``
     from the bare-statement check, or delete the documentary-keyword branch,
@@ -249,7 +289,7 @@ _TOKEN_CLASSES: tuple[tuple[str, str], ...] = (
     ("slug", "token"), _TOKEN_CLASSES, ids=[c[0] for c in _TOKEN_CLASSES]
 )
 def test_every_token_class_is_matched_in_prose(
-    gate: ModuleType, tmp_path: Path, slug: str, token: str
+    gate: _GateModule, tmp_path: Path, slug: str, token: str
 ) -> None:
     """Mutation proving this can fail: delete the pattern named by the row's
     slug. The row reds on its own slug, which no other pattern supplies.
@@ -260,7 +300,7 @@ def test_every_token_class_is_matched_in_prose(
 
 
 def test_a_rule_name_is_a_citation_wherever_the_prose_sits(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """A codified rule name is dev metadata as much as a dated stem is.
 
@@ -283,7 +323,7 @@ def test_a_rule_name_is_a_citation_wherever_the_prose_sits(
 
 
 def test_a_citation_wrapped_across_a_line_break_is_seen(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """Prose is hard-wrapped, and a citation does not respect the wrap.
 
@@ -313,7 +353,7 @@ def test_a_citation_wrapped_across_a_line_break_is_seen(
 
 
 def test_joining_never_splices_two_separate_paragraphs(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """A paragraph boundary ends a block, so joining cannot invent a phrase.
 
@@ -342,7 +382,7 @@ def test_joining_never_splices_two_separate_paragraphs(
 
 
 def test_product_rule_vocabulary_is_not_a_rule_citation(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """This product ships rules, indexes rules, and wraps linters that have rules.
 
@@ -370,7 +410,7 @@ def test_product_rule_vocabulary_is_not_a_rule_citation(
 
 
 def test_a_retired_rule_name_is_still_a_citation(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """The stem list knows today's rules; citations outlive the rules they name.
 
@@ -393,7 +433,7 @@ def test_a_retired_rule_name_is_still_a_citation(
     assert _slugs(findings) == ["rule-citation"]
 
 
-def test_the_rule_stem_list_still_matches_the_rules_on_disk(gate: ModuleType) -> None:
+def test_the_rule_stem_list_still_matches_the_rules_on_disk(gate: _GateModule) -> None:
     """The gate holds the rule stems as a literal, so they can fall behind.
 
     Spelling them out is what lets the gate keep working once the harness
@@ -415,7 +455,7 @@ def test_the_rule_stem_list_still_matches_the_rules_on_disk(gate: ModuleType) ->
 
 
 def test_a_vault_shaped_string_value_is_data_and_never_a_citation(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """Fixture filenames are values the indexer is tested against, not pointers.
 
@@ -437,7 +477,7 @@ def test_a_vault_shaped_string_value_is_data_and_never_a_citation(
 
 
 def test_a_log_substitution_argument_is_a_value_not_a_message(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """Only the message argument of a message call is prose.
 
@@ -461,7 +501,7 @@ def test_a_log_substitution_argument_is_a_value_not_a_message(
 
 
 def test_product_vocabulary_and_instructional_prose_are_not_citations(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """The product indexes a vault, so it must be able to talk about one.
 
@@ -512,7 +552,7 @@ _SURFACES: tuple[str, ...] = (
 
 @pytest.mark.parametrize("rel", _SURFACES)
 def test_every_product_surface_is_reached_by_the_walk(
-    gate: ModuleType, tmp_path: Path, rel: str
+    gate: _GateModule, tmp_path: Path, rel: str
 ) -> None:
     """Which surfaces are reached is as much the gate as which patterns match.
 
@@ -558,7 +598,7 @@ def test_every_product_surface_is_reached_by_the_walk(
     ],
 )
 def test_an_excluded_surface_is_not_scanned(
-    gate: ModuleType, tmp_path: Path, rel: str
+    gate: _GateModule, tmp_path: Path, rel: str
 ) -> None:
     """Each exclusion is a place where a vault reference is the subject matter.
 
@@ -579,7 +619,7 @@ def test_an_excluded_surface_is_not_scanned(
 
 
 def test_a_git_ignored_tree_is_not_a_product_surface(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """Git decides what is tracked source, because that is git's own notion.
 
@@ -600,7 +640,7 @@ def test_a_git_ignored_tree_is_not_a_product_surface(
 
 
 def test_a_new_untracked_file_is_scanned_before_it_is_ever_committed(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """A citation should be caught in the file that introduces it, not later.
 
@@ -619,7 +659,7 @@ def test_a_new_untracked_file_is_scanned_before_it_is_ever_committed(
 
 
 def test_a_real_account_name_is_an_identity_leak(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """A home-directory path naming an account names the developer.
 
@@ -647,7 +687,7 @@ def test_a_real_account_name_is_an_identity_leak(
 
 
 def test_a_documentation_placeholder_account_is_not_a_leak(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """Documentation has to show an operator where their own home directory is.
 
@@ -670,7 +710,7 @@ def test_a_documentation_placeholder_account_is_not_a_leak(
 
 
 def test_a_citation_exempt_subtree_is_still_scanned_for_identity(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """The citation exemptions do not excuse a subtree from the privacy scan.
 
@@ -707,7 +747,7 @@ def test_a_citation_exempt_subtree_is_still_scanned_for_identity(
 
 
 def test_a_rendered_asset_is_scanned_for_identity(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """A capture rendered for documentation carries whatever produced it.
 
@@ -749,7 +789,7 @@ _IDENTITY_SURFACES: tuple[tuple[str, str], ...] = (
     ("rel", "body"), _IDENTITY_SURFACES, ids=[s[0] for s in _IDENTITY_SURFACES]
 )
 def test_the_scanning_machines_own_identity_is_a_leak_wherever_it_sits(
-    gate: ModuleType, tmp_path: Path, rel: str, body: str
+    gate: _GateModule, tmp_path: Path, rel: str, body: str
 ) -> None:
     """A bare identity token, in no path at all, on an ordinary tracked file.
 
@@ -777,7 +817,7 @@ def test_the_scanning_machines_own_identity_is_a_leak_wherever_it_sits(
 
 
 def test_an_identity_token_matches_case_folded_and_across_an_underscore(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """One identity, many spellings: a path lowercases it, a signature capitalises
     it, and a filename welds it to a separator.
@@ -808,7 +848,7 @@ def test_an_identity_token_matches_case_folded_and_across_an_underscore(
 
 @pytest.mark.parametrize("rel", ["LICENSE", "justfile", ".env.example"])
 def test_the_identity_walk_reaches_a_file_with_no_scanned_suffix(
-    gate: ModuleType, tmp_path: Path, rel: str
+    gate: _GateModule, tmp_path: Path, rel: str
 ) -> None:
     """A recipe file and a comment-bearing dotfile hold hand-typed paths.
 
@@ -836,7 +876,7 @@ def test_the_identity_walk_reaches_a_file_with_no_scanned_suffix(
 
 
 def test_declared_authorship_is_exempt_and_those_files_are_still_path_scanned(
-    gate: ModuleType, tmp_path: Path
+    gate: _GateModule, tmp_path: Path
 ) -> None:
     """A licence and a package manifest publish an author by intent.
 
@@ -878,7 +918,7 @@ def test_declared_authorship_is_exempt_and_those_files_are_still_path_scanned(
 
 
 def test_an_ordinary_word_or_a_short_handle_never_becomes_a_pattern(
-    gate: ModuleType,
+    gate: _GateModule,
 ) -> None:
     """A detector that fires everywhere is one that gets switched off.
 
@@ -907,7 +947,7 @@ def test_an_ordinary_word_or_a_short_handle_never_becomes_a_pattern(
 
 
 def test_discovery_reads_the_account_and_the_git_identity_never_the_domain(
-    gate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    gate: _GateModule, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Which sources are read bounds what the tripwire can ever catch.
 
@@ -944,7 +984,7 @@ def test_discovery_reads_the_account_and_the_git_identity_never_the_domain(
 
 
 def test_the_gates_own_file_is_exempt_from_path_literals_not_from_identity(
-    gate: ModuleType,
+    gate: _GateModule,
 ) -> None:
     """The file whose job is keeping names out must not be where nothing looks.
 
@@ -982,7 +1022,7 @@ def test_the_gates_own_file_is_exempt_from_path_literals_not_from_identity(
 
 
 def test_the_checkout_carries_no_active_citation_or_identity_leak(
-    gate: ModuleType,
+    gate: _GateModule,
 ) -> None:
     """Regression guard on the tree, not evidence about the gate.
 

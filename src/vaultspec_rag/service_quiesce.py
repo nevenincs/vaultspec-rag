@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import StrEnum
 from math import isfinite
 from typing import TYPE_CHECKING, Final, Literal, Self, assert_never, get_args
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 __all__ = [
+    "QUIESCE_ENVELOPE_FIELDS",
     "ComputeTicket",
     "QuiesceAdmissionClosedError",
     "QuiesceSnapshot",
@@ -174,6 +175,18 @@ class QuiesceSnapshot:
             "warming_started_at": self.warming_started_at,
             "failure_reason": self.failure_reason,
         }
+
+
+QUIESCE_ENVELOPE_FIELDS: Final = frozenset(f.name for f in fields(QuiesceSnapshot))
+"""The controller-owned vocabulary of :meth:`QuiesceSnapshot.as_envelope`.
+
+Derived, never restated. An adapter that wants to reject an incomplete or
+foreign block needs the canonical name set, and a hand-written copy of it in an
+entry point turns any field the controller adds into a silent rendering
+failure there: the copy stops matching, the block reads as unrecognised, and
+the surface reports the daemon as unavailable rather than showing the evidence
+it just received.
+"""
 
 
 @dataclass(frozen=True, slots=True)

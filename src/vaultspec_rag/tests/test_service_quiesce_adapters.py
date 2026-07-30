@@ -16,6 +16,11 @@ import pytest
 import uvicorn
 
 from ..config._types import EnvVar
+from ..service_quiesce import (
+    QUIESCE_ENVELOPE_FIELDS,
+    QuiesceSnapshot,
+    QuiesceState,
+)
 from ._ports import free_loopback_port
 from .conftest import managed_env
 
@@ -25,22 +30,35 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 _SERVICE_TOKEN = "quiesce-adapter-route-token"
-_QUIESCE_FIELDS = frozenset(
-    {
-        "state",
-        "admission_epoch",
-        "admissions_open",
-        "active_compute_tickets",
-        "drain_complete",
-        "vram_released",
-        "safe_to_borrow_gpu",
-        "pause_requested_at",
-        "drain_acknowledged_at",
-        "quiesced_at",
-        "warming_started_at",
-        "failure_reason",
-    }
-)
+
+
+def test_the_envelope_field_set_is_derived_from_the_snapshot() -> None:
+    """The published vocabulary must be what the controller actually renders.
+
+    ``QUIESCE_ENVELOPE_FIELDS`` is derived from the dataclass, while
+    ``as_envelope`` builds a dict literal; nothing but this makes the two agree.
+    Adapters reject a block whose key set differs from the constant, so a field
+    added to one and not the other would not fail here first - it would show up
+    as every surface reporting the daemon unavailable.
+
+    Mutation proof: renaming ``vram_released`` in ``as_envelope`` alone fails
+    this on the key-set comparison below, not on an import or a lookup.
+    """
+    snapshot = QuiesceSnapshot(
+        state=QuiesceState.RUNNING,
+        admission_epoch=0,
+        admissions_open=True,
+        active_compute_tickets=0,
+        drain_complete=False,
+        vram_released=False,
+        safe_to_borrow_gpu=False,
+        pause_requested_at=None,
+        drain_acknowledged_at=None,
+        quiesced_at=None,
+        warming_started_at=None,
+        failure_reason=None,
+    )
+    assert set(snapshot.as_envelope()) == set(QUIESCE_ENVELOPE_FIELDS)
 
 
 def _run_mcp_service_state_probe(tmp_path: Path) -> subprocess.CompletedProcess[str]:
@@ -136,24 +154,12 @@ try:
     )
 
     from vaultspec_rag.mcp._tools import get_index_status
+    from vaultspec_rag.service_quiesce import QUIESCE_ENVELOPE_FIELDS
 
     result = asyncio.run(get_index_status(project_root=str(workspace)))
     quiesce = result["quiesce"]
     assert isinstance(quiesce, dict), quiesce
-    assert set(quiesce) == {
-        "state",
-        "admission_epoch",
-        "admissions_open",
-        "active_compute_tickets",
-        "drain_complete",
-        "vram_released",
-        "safe_to_borrow_gpu",
-        "pause_requested_at",
-        "drain_acknowledged_at",
-        "quiesced_at",
-        "warming_started_at",
-        "failure_reason",
-    }, quiesce
+    assert set(quiesce) == set(QUIESCE_ENVELOPE_FIELDS), quiesce
     assert quiesce["state"] == "quiesced", quiesce
     assert quiesce["vram_released"] is True, quiesce
     assert quiesce["safe_to_borrow_gpu"] is True, quiesce
@@ -201,7 +207,7 @@ def test_mcp_service_state_preserves_the_production_quiesce_block(
     quiesce = mapping(result.get("quiesce"))
     assert result == direct
     assert payload["mcp_imports"] == payload["route_imports"]
-    assert set(quiesce) == _QUIESCE_FIELDS
+    assert set(quiesce) == QUIESCE_ENVELOPE_FIELDS
     assert quiesce["state"] == "quiesced"
     assert quiesce["vram_released"] is True
     assert quiesce["safe_to_borrow_gpu"] is True
@@ -334,7 +340,7 @@ async def test_jobs_tui_renders_production_quiesce_controller_evidence(
     from ..jobs import mapping
 
     canonical = mapping(quiesce)
-    assert set(canonical) == _QUIESCE_FIELDS
+    assert set(canonical) == QUIESCE_ENVELOPE_FIELDS
     assert canonical["state"] == "quiesced"
     assert canonical["vram_released"] is True
     assert canonical["safe_to_borrow_gpu"] is True

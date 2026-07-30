@@ -39,13 +39,7 @@ async def list_projects_route(request: Request) -> JSONResponse:
     projects = registry.snapshot()
     for p in projects:
         p["root"] = str(p["root"])
-    return JSONResponse(
-        {
-            "projects": projects,
-            "max_projects": registry.max_projects,
-            "idle_ttl_seconds": registry.idle_ttl_seconds,
-        }
-    )
+    return JSONResponse(registry.projects_envelope(projects))
 
 
 async def evict_project_route(request: Request) -> JSONResponse:
