@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict, deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Never, cast
+from typing import TYPE_CHECKING, Never, cast
 
 if TYPE_CHECKING:
     import asyncio
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
     from .. import job_persistence as _job_persistence
     from ..service_quiesce import ServiceQuiesceController
-    from .state import AttemptExit
+    from .state import AttemptExit, JobLifecycleState
 
 from ..config._settings import get_config, managed_status_dir
 from ._control import JobManagerControl
@@ -109,7 +109,7 @@ class JobManager(
         self._retiring_tasks: set[asyncio.Task[AttemptExit]] = set()
         self._persistence_dirty = False
         self._accepting_dispatch = True
-        self._lifecycle_state: Literal["new", "running", "stopping", "stopped"] = "new"
+        self._lifecycle_state: JobLifecycleState = "new"
         self._startup_restore_incomplete = False
 
     def prepare_startup(self) -> bool:
