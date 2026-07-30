@@ -16,6 +16,7 @@ from ._process_probe_guard_helpers import (
     _PACKAGE_ROOT,
     _production_sources,
     every_production_file,
+    function_nodes,
     parsed_production_sources,
 )
 
@@ -435,43 +436,93 @@ class TestModelLoadsBeforeTheLeaseEverywhere:
     project lease blocks every other root for its whole duration, so the order
     is a rule, not a preference.
 
-    Fourteen functions across five modules pair the two calls. Two of them were
-    guarded - the vault and indexing dispatch runners - by a pair of test
-    methods that differed only in the function they named. The other twelve,
-    including four in the public API and one in the watcher, were not guarded
-    at all: the rule held there by habit.
-
-    So this replaces those two methods rather than joining them. A rule checked
-    on two of its fourteen sites by two copies of one check is worse than it
-    looks, because the copies make it read as covered.
+    The scan keys on the LEASE call, and asks whether a model load sits after
+    it. It used to key on the PAIRING - a function naming both calls - which
+    made its population the callers that spelled the load themselves. That
+    population is exactly what gets removed as the lease accessors take the
+    ordering over, so the scan drained to empty and went on reporting no
+    violations. A population that shrinks as the code improves cannot carry a
+    sanity floor; the set of lease HOLDERS can, because it only grows as more
+    callers reach project compute.
     """
 
+    #: The registry accessors that hand a caller a project lease. Every one is
+    #: asserted to exist below, because a renamed accessor is the exact way
+    #: this scan goes blind.
+    _LEASE_CALLS: ClassVar[frozenset[str]] = frozenset(
+        {"lease", "compute_lease", "search_lease"}
+    )
+    #: The registry entry points that bring the GPU model up. The private one
+    #: counts: reaching past the ticketed wrapper is not an exemption.
+    _MODEL_LOAD_CALLS: ClassVar[frozenset[str]] = frozenset(
+        {"load_model", "_load_model"}
+    )
+    #: Below the real count of lease holders, with room for the public API's
+    #: near-identical entry points to be consolidated. Renaming or moving any
+    #: single lease accessor takes out more than the slack at once, so the
+    #: floor still fires before the scan can go quiet.
+    _MIN_LEASE_HOLDERS: ClassVar[int] = 15
+
+    @staticmethod
+    def _attribute_calls(
+        function: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> list[tuple[str, tuple[int, int]]]:
+        """Return each attribute call's name with its source position."""
+        return [
+            (inner.func.attr, (inner.lineno, inner.col_offset))
+            for inner in ast.walk(function)
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)
+        ]
+
+    def test_the_scanned_names_are_the_registry_s_own(self) -> None:
+        """A renamed accessor fails here rather than emptying the scan.
+
+        Proven able to fail: adding a name the registry does not define to
+        either set fails on the missing-name assertion, which is what a rename
+        that left the scan behind looks like.
+        """
+        from ..service import ServiceRegistry
+
+        missing = sorted(
+            name
+            for name in self._LEASE_CALLS | self._MODEL_LOAD_CALLS
+            if not hasattr(ServiceRegistry, name)
+        )
+        assert not missing, (
+            f"the scan looks for {missing}, which the registry no longer "
+            "defines; repoint the name sets at the current accessors instead "
+            "of letting the scan match nothing"
+        )
+
     def test_no_function_loads_the_model_inside_a_lease(self) -> None:
-        """Order the calls by position; the first lease must come after."""
+        """Order the calls by position; no load may follow the first lease.
+
+        Proven able to fail: a function taking a compute lease and calling
+        ``registry.load_model()`` in its body is reported by name, and the
+        report goes away when the call does.
+        """
         find_offenders: list[str] = []
         checked = 0
-        for path in every_production_file():
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-            except SyntaxError:  # pragma: no cover - parsed elsewhere
-                continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                    continue
-                calls = [
-                    inner.func.attr
-                    for inner in ast.walk(node)
-                    if isinstance(inner, ast.Call)
-                    and isinstance(inner.func, ast.Attribute)
-                ]
-                if "load_model" not in calls or "lease" not in calls:
+        for path, tree in parsed_production_sources(every_production_file(), set()):
+            relative = path.relative_to(_PACKAGE_ROOT).as_posix()
+            for node in function_nodes(tree):
+                calls = self._attribute_calls(node)
+                leases = sorted(
+                    position for name, position in calls if name in self._LEASE_CALLS
+                )
+                if not leases:
                     continue
                 checked += 1
-                if calls.index("load_model") > calls.index("lease"):
-                    find_offenders.append(f"{path.name}:{node.lineno} {node.name}")
-        assert checked >= 10, (
-            f"only {checked} functions pair load_model with lease; the scan "
-            "is looking wrongly, not the code getting cleaner"
+                loads = sorted(
+                    position
+                    for name, position in calls
+                    if name in self._MODEL_LOAD_CALLS
+                )
+                if loads and loads[-1] > leases[0]:
+                    find_offenders.append(f"{relative}:{node.lineno} {node.name}")
+        assert checked >= self._MIN_LEASE_HOLDERS, (
+            f"only {checked} functions take a project lease; the scan is "
+            "looking wrongly, not the code getting cleaner"
         )
         assert not find_offenders, (
             f"these load the model while holding a project lease: {find_offenders}; "
