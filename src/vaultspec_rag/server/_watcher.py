@@ -1,10 +1,8 @@
 """Filesystem-watcher lifecycle for resident projects.
 
-Split out of the original ``server.py`` monolith. The watcher bookkeeping dicts and lock
-are mutated in place; the registry is read through the package alias so
-a test rebind of ``_registry`` is observed. ``_ensure_watcher`` keeps
-its literal ``_registry.peek_project`` call - a source-inspection
-regression test asserts that string is present.
+Split out of the original ``server.py`` monolith. The watcher bookkeeping
+dicts and lock are process-owned, while every watcher start receives the
+request or lifecycle owner's registry explicitly.
 """
 
 from __future__ import annotations
@@ -62,6 +60,15 @@ class _StartWatcherRequest:
     expected_generation: int
 
 
+@dataclass(frozen=True, slots=True)
+class _WatcherRestartRequest:
+    """One deferred watcher request and its explicit registry authority."""
+
+    registry: ServiceRegistry
+    debounce_ms: int | None
+    cooldown_s: float | None
+
+
 class WatcherStartOutcome(StrEnum):
     """What a start request achieved for one root, at the moment it returned.
 
@@ -111,10 +118,10 @@ class WatcherStartOutcome(StrEnum):
 _deferred_watcher_tasks: set[asyncio.Task[None]] = set()
 _deferred_watcher_roots: dict[Path, asyncio.Task[None]] = {}
 _suppressed_deferred_watcher_roots: dict[Path, asyncio.Task[None]] = {}
-_deferred_watcher_restarts: dict[Path, tuple[int | None, float | None]] = {}
+_deferred_watcher_restarts: dict[Path, _WatcherRestartRequest] = {}
 _watcher_stop_generations: dict[Path, int] = {}
 _watcher_starting_generations: dict[Path, int] = {}
-_watcher_starting_restarts: dict[Path, tuple[int | None, float | None]] = {}
+_watcher_starting_restarts: dict[Path, _WatcherRestartRequest] = {}
 
 
 def _forget_stop_generation_if_idle(root: Path) -> None:
@@ -149,10 +156,14 @@ _watcher_drains: dict[Path, _WatcherDrain] = {}
 # Reconfigure is a synchronous stop-then-start adapter. If the old owner is
 # still draining, retain the requested overrides and start exactly once after
 # release instead of overlapping two watcher generations.
-_watcher_restarts: dict[Path, tuple[int | None, float | None]] = {}
+_watcher_restarts: dict[Path, _WatcherRestartRequest] = {}
 
 
-def _watcher_task_done(root: Path, task: asyncio.Task[None]) -> None:
+def _watcher_task_done(
+    root: Path,
+    registry: ServiceRegistry,
+    task: asyncio.Task[None],
+) -> None:
     """Turn a natural intake exit into the normal drain/restart lifecycle."""
     from ..watcher_intake import WatcherInitializationError
 
@@ -176,7 +187,7 @@ def _watcher_task_done(root: Path, task: asyncio.Task[None]) -> None:
         # unreadable state, so it terminally removes the watcher (no re-arm)
         # rather than looping a doomed replacement generation.
         if not init_failed:
-            _watcher_restarts[root] = (None, None)
+            _watcher_restarts[root] = _WatcherRestartRequest(registry, None, None)
     log_event(
         logger,
         "service.watcher",
@@ -188,7 +199,7 @@ def _watcher_task_done(root: Path, task: asyncio.Task[None]) -> None:
     _schedule_watcher_drain(root, drain)
 
 
-def _ensure_watcher_soon(root: Path) -> None:
+def _ensure_watcher_soon(root: Path, registry: ServiceRegistry) -> None:
     """Ensure a watcher for *root* without blocking the event loop.
 
     Per-request callers (the search and reindex routes) must not pay
@@ -210,20 +221,27 @@ def _ensure_watcher_soon(root: Path) -> None:
         if root in _suppressed_deferred_watcher_roots:
             # This explicit new request revives the already-running warm only
             # after its registry I/O finishes; it never overlaps that I/O.
-            _deferred_watcher_restarts[root] = (None, None)
+            _deferred_watcher_restarts[root] = _WatcherRestartRequest(
+                registry,
+                None,
+                None,
+            )
             return
         if root in _watcher_drains:
-            _watcher_restarts[root] = (None, None)
+            _watcher_restarts[root] = _WatcherRestartRequest(registry, None, None)
             drain = _watcher_drains[root]
         elif root in _watcher_starting_generations:
-            _watcher_starting_restarts[root] = (None, None)
+            _watcher_starting_restarts[root] = _WatcherRestartRequest(
+                registry,
+                None,
+                None,
+            )
         else:
             generation = _watcher_stop_generations.get(root, 0)
-            owner_registry = _m._registry
             # Register under the same lock as the probes. A cross-thread stop
             # can therefore suppress this exact task or advance its epoch.
             task = asyncio.create_task(
-                _run_deferred_watcher_start(root, generation, owner_registry)
+                _run_deferred_watcher_start(root, generation, registry)
             )
             _deferred_watcher_roots[root] = task
             _deferred_watcher_tasks.add(task)
@@ -251,6 +269,7 @@ async def _run_deferred_watcher_start(
     current = asyncio.current_task()
     if current is None:
         return
+    replacement: asyncio.Task[None] | None = None
     with _m._watcher_lock:
         active = _deferred_watcher_roots.get(root) is current
         suppressed = _suppressed_deferred_watcher_roots.get(root) is current
@@ -265,19 +284,32 @@ async def _run_deferred_watcher_start(
             _suppressed_deferred_watcher_roots.pop(root, None)
         if not should_start:
             _forget_stop_generation_if_idle(root)
+        elif restart is not None and restart.registry is not owner_registry:
+            next_generation = _watcher_stop_generations.get(root, 0)
+            replacement = asyncio.create_task(
+                _run_deferred_watcher_start(root, next_generation, restart.registry)
+            )
+            _deferred_watcher_roots[root] = replacement
+            _deferred_watcher_tasks.add(replacement)
         else:
-            debounce_ms, cooldown_s = restart or (None, None)
+            restart_request = restart or _WatcherRestartRequest(
+                owner_registry,
+                None,
+                None,
+            )
             _start_watcher_locked(
                 _StartWatcherRequest(
                     root,
                     slot,
-                    owner_registry,
+                    restart_request.registry,
                     get_config(),
-                    debounce_ms,
-                    cooldown_s,
+                    restart_request.debounce_ms,
+                    restart_request.cooldown_s,
                     _watcher_stop_generations.get(root, 0),
                 )
             )
+    if replacement is not None:
+        replacement.add_done_callback(partial(_forget_deferred_watcher, root))
 
 
 def _forget_deferred_watcher(root: Path, done: asyncio.Task[None]) -> None:
@@ -293,6 +325,7 @@ def _forget_deferred_watcher(root: Path, done: asyncio.Task[None]) -> None:
 
 def _ensure_watcher(
     root: Path,
+    registry: ServiceRegistry,
     *,
     debounce_ms: int | None = None,
     cooldown_s: float | None = None,
@@ -332,7 +365,6 @@ def _ensure_watcher(
     root = root.resolve()
     drain: _WatcherDrain | None = None
     generation: int | None = None
-    owner_registry: ServiceRegistry | None = None
     with _m._watcher_lock:
         if root in _m._watcher_tasks:
             return WatcherStartOutcome.ALREADY_RUNNING
@@ -340,27 +372,36 @@ def _ensure_watcher(
             root in _deferred_watcher_roots
             or root in _suppressed_deferred_watcher_roots
         ):
-            _deferred_watcher_restarts[root] = (debounce_ms, cooldown_s)
+            _deferred_watcher_restarts[root] = _WatcherRestartRequest(
+                registry,
+                debounce_ms,
+                cooldown_s,
+            )
             return WatcherStartOutcome.PENDING
         if root in _watcher_drains:
-            _watcher_restarts[root] = (debounce_ms, cooldown_s)
+            _watcher_restarts[root] = _WatcherRestartRequest(
+                registry,
+                debounce_ms,
+                cooldown_s,
+            )
             drain = _watcher_drains[root]
         elif root in _watcher_starting_generations:
-            _watcher_starting_restarts[root] = (debounce_ms, cooldown_s)
+            _watcher_starting_restarts[root] = _WatcherRestartRequest(
+                registry,
+                debounce_ms,
+                cooldown_s,
+            )
             return WatcherStartOutcome.PENDING
         else:
             generation = _watcher_stop_generations.get(root, 0)
             _watcher_starting_generations[root] = generation
-            owner_registry = _m._registry
     if drain is not None:
         _schedule_watcher_drain(root, drain)
         return WatcherStartOutcome.QUEUED_BEHIND_DRAIN
-    assert generation is not None and owner_registry is not None
-    # Preserve the package's rebindable ``_registry.peek_project`` ownership
-    # seam while the private helper performs the potentially cold open.
+    assert generation is not None
     return _warm_and_publish_watcher(
         _WarmWatcherRequest(
-            root, owner_registry, cfg, debounce_ms, cooldown_s, generation
+            root, registry, cfg, debounce_ms, cooldown_s, generation
         )
     )
 
@@ -387,6 +428,7 @@ def _warm_and_publish_watcher(
                 _watcher_starting_generations.pop(root, None)
                 _watcher_starting_restarts.pop(root, None)
         raise
+    next_request: _WarmWatcherRequest | None = None
     with _m._watcher_lock:
         if _watcher_starting_generations.get(root) == expected_generation:
             _watcher_starting_generations.pop(root, None)
@@ -397,24 +439,38 @@ def _warm_and_publish_watcher(
         ):
             _forget_stop_generation_if_idle(root)
             return WatcherStartOutcome.UNAVAILABLE
-        requested_debounce, requested_cooldown = restart or (
+        restart_request = restart or _WatcherRestartRequest(
+            registry,
             debounce_ms,
             cooldown_s,
         )
-        outcome = _start_watcher_locked(
-            _StartWatcherRequest(
+        if restart_request.registry is not registry:
+            next_request = _WarmWatcherRequest(
                 root,
-                slot,
-                registry,
+                restart_request.registry,
                 cfg,
-                requested_debounce,
-                requested_cooldown,
+                restart_request.debounce_ms,
+                restart_request.cooldown_s,
                 _watcher_stop_generations.get(root, 0),
             )
-        )
-        if not (outcome.running or outcome.pending):
-            _forget_stop_generation_if_idle(root)
-        return outcome
+            _watcher_starting_generations[root] = next_request.expected_generation
+        else:
+            outcome = _start_watcher_locked(
+                _StartWatcherRequest(
+                    root,
+                    slot,
+                    restart_request.registry,
+                    cfg,
+                    restart_request.debounce_ms,
+                    restart_request.cooldown_s,
+                    _watcher_stop_generations.get(root, 0),
+                )
+            )
+            if not (outcome.running or outcome.pending):
+                _forget_stop_generation_if_idle(root)
+            return outcome
+    assert next_request is not None
+    return _warm_and_publish_watcher(next_request)
 
 
 def _start_watcher_locked(request: _StartWatcherRequest) -> WatcherStartOutcome:
@@ -433,9 +489,13 @@ def _start_watcher_locked(request: _StartWatcherRequest) -> WatcherStartOutcome:
     if root in _m._watcher_tasks:
         return WatcherStartOutcome.ALREADY_RUNNING
     if root in _watcher_drains:
-        _watcher_restarts[root] = (debounce_ms, cooldown_s)
+        _watcher_restarts[root] = _WatcherRestartRequest(
+            registry,
+            debounce_ms,
+            cooldown_s,
+        )
         return WatcherStartOutcome.QUEUED_BEHIND_DRAIN
-    if registry is not _m._registry or getattr(registry, "_shutting_down", False):
+    if getattr(registry, "_shutting_down", False):
         return WatcherStartOutcome.UNAVAILABLE
     if not bool(cfg.watch_enabled):
         return WatcherStartOutcome.DISABLED
@@ -465,7 +525,7 @@ def _start_watcher_locked(request: _StartWatcherRequest) -> WatcherStartOutcome:
     )
     _m._watcher_tasks[root] = task
     _m._watcher_stops[root] = stop_event
-    task.add_done_callback(partial(_watcher_task_done, root))
+    task.add_done_callback(partial(_watcher_task_done, root, registry))
     log_event(logger, "service.watcher", "task_started", root=root)
     return WatcherStartOutcome.STARTED
 
@@ -620,28 +680,24 @@ async def _drain_watcher(root: Path, drain: _WatcherDrain) -> bool:
             if restart is None:
                 _forget_stop_generation_if_idle(root)
                 restart_generation = None
-                restart_registry = None
             else:
                 restart_generation = _watcher_stop_generations.get(root, 0)
                 _watcher_starting_generations[root] = restart_generation
-                restart_registry = _m._registry
         drain.last_error = None
         succeeded = True
         log_event(logger, "service.watcher", "task_stopped", root=root)
         if (
             restart is not None
             and restart_generation is not None
-            and restart_registry is not None
         ):
-            debounce_ms, cooldown_s = restart
             try:
                 _warm_and_publish_watcher(
                     _WarmWatcherRequest(
                         root,
-                        restart_registry,
+                        restart.registry,
                         get_config(),
-                        debounce_ms,
-                        cooldown_s,
+                        restart.debounce_ms,
+                        restart.cooldown_s,
                         restart_generation,
                     )
                 )

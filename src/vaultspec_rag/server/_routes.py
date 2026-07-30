@@ -1010,10 +1010,16 @@ async def benchmark_route(request: Request) -> JSONResponse:
     except ProjectRootRequiredError:
         return _BAD_REQUEST_MISSING_ROOT
 
+    registry = get_request_runtime(request).registry
+
     def _run():
         import vaultspec_rag
 
-        return vaultspec_rag.run_benchmark(root, n_queries=n_queries)
+        return vaultspec_rag.run_benchmark(
+            root,
+            n_queries=n_queries,
+            registry=registry,
+        )
 
     from anyio.to_thread import run_sync as _run_in_thread
 
@@ -1026,10 +1032,12 @@ async def quality_route(request: Request) -> JSONResponse:
     if denied is not None:
         return denied
 
+    registry = get_request_runtime(request).registry
+
     def _run():
         import vaultspec_rag
 
-        return vaultspec_rag.run_quality_probe()
+        return vaultspec_rag.run_quality_probe(registry=registry)
 
     from anyio.to_thread import run_sync as _run_in_thread
 

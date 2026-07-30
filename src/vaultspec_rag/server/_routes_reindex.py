@@ -23,6 +23,7 @@ import vaultspec_rag.server as _m
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from ._auth import require_token
+from ._runtime import get_request_runtime
 from ._utils import ProjectRootRequiredError, _resolve_root
 
 if TYPE_CHECKING:
@@ -289,7 +290,7 @@ async def reindex_route(request: Request) -> JSONResponse:
     )
 
     if first_root is not None:
-        _m._ensure_watcher_soon(first_root)
+        _m._ensure_watcher_soon(first_root, get_request_runtime(request).registry)
     if source_type is PublicSourceType.COMBINED:
         successes = sum(bool(item["ok"]) for item in domain_responses.values())
         return JSONResponse(
@@ -354,6 +355,8 @@ async def clean_route(request: Request) -> JSONResponse:
 
     import vaultspec_rag
 
+    registry = get_request_runtime(request).registry
+
     sources = (
         (
             PublicSourceType.VAULT,
@@ -367,7 +370,12 @@ async def clean_route(request: Request) -> JSONResponse:
     for source in sources:
         try:
             cleared = await _run_in_thread(
-                partial(vaultspec_rag.clean, root, clean_type=source.value)
+                partial(
+                    vaultspec_rag.clean,
+                    root,
+                    clean_type=source.value,
+                    registry=registry,
+                )
             )
         except Exception as exc:
             logger.exception("Index clean failed for %s", source.value)
