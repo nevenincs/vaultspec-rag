@@ -14,6 +14,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..service_quiesce import (
+    QUIESCE_ENVELOPE_FIELDS,
+    QuiesceSnapshot,
+    QuiesceState,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -33,6 +39,45 @@ _QUIESCED_BLOCK = {
     "warming_started_at": None,
     "failure_reason": None,
 }
+
+
+def test_the_envelope_field_set_is_derived_from_the_snapshot() -> None:
+    """The published vocabulary must be what the controller actually renders.
+
+    ``QUIESCE_ENVELOPE_FIELDS`` is derived from the dataclass, while
+    ``as_envelope`` builds a dict literal; nothing but this makes the two agree.
+    Adapters reject a block whose key set differs from the constant, so a field
+    added to one and not the other would not fail here first - it would show up
+    as every surface reporting the daemon unavailable.
+
+    Mutation proof: renaming ``vram_released`` in ``as_envelope`` alone fails
+    this on the key-set comparison below, not on an import or a lookup.
+    """
+    snapshot = QuiesceSnapshot(
+        state=QuiesceState.RUNNING,
+        admission_epoch=0,
+        admissions_open=True,
+        active_compute_tickets=0,
+        drain_complete=False,
+        vram_released=False,
+        safe_to_borrow_gpu=False,
+        pause_requested_at=None,
+        drain_acknowledged_at=None,
+        quiesced_at=None,
+        warming_started_at=None,
+        failure_reason=None,
+    )
+    assert set(snapshot.as_envelope()) == set(QUIESCE_ENVELOPE_FIELDS)
+
+
+def test_the_adapter_fixture_block_matches_the_canonical_vocabulary() -> None:
+    """The fixture below stands in for a real daemon response.
+
+    A fixture carrying a stale key set would keep the adapter guards passing
+    against a block no service sends, which is the failure mode those guards
+    exist to catch.
+    """
+    assert set(_QUIESCED_BLOCK) == set(QUIESCE_ENVELOPE_FIELDS)
 
 
 def _run_mcp_service_state_probe(tmp_path: Path) -> subprocess.CompletedProcess[str]:
@@ -59,20 +104,10 @@ from vaultspec_rag.config._settings import reset_config
 
 reset_config()
 
-quiesce = {
-    "state": "quiesced",
-    "admission_epoch": 7,
-    "admissions_open": False,
-    "active_compute_tickets": 0,
-    "drain_complete": True,
-    "vram_released": True,
-    "safe_to_borrow_gpu": True,
-    "pause_requested_at": 100.0,
-    "drain_acknowledged_at": 101.0,
-    "quiesced_at": 102.0,
-    "warming_started_at": None,
-    "failure_reason": None,
-}
+# Handed in rather than restated: a second copy of the block here would go
+# stale against the controller's vocabulary without failing the pin that
+# guards the one above it.
+quiesce = json.loads(sys.argv[2])
 service_state = {
     "index": {"status": "ready"},
     "projects": {"projects": []},
@@ -145,7 +180,7 @@ finally:
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(Path.cwd() / "src")
     return subprocess.run(
-        [sys.executable, "-c", probe, str(tmp_path)],
+        [sys.executable, "-c", probe, str(tmp_path), json.dumps(_QUIESCED_BLOCK)],
         capture_output=True,
         text=True,
         check=False,
