@@ -223,7 +223,8 @@ def test_mutating_routes_reject_a_closed_runtime_before_global_or_gpu_work(
             quality = client.post("/quality", headers=headers)
 
         assert global_registry is not runtime_registry
-        assert watcher.status_code == 500, watcher.text
+        assert watcher.status_code == 200, watcher.text
+        assert watcher.json()["status"] == "unavailable"
         assert clean.status_code == 409, clean.text
         clean_domains = clean.json()["domains"]
         assert clean_domains["vault"]["error_kind"] == "RuntimeError"
