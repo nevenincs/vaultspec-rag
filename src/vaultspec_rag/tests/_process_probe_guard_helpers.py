@@ -27,9 +27,11 @@ _ALLOWED: dict[str, str] = {
     # toolhelp snapshot to find them. That is handle lifetime management, not
     # a point-in-time probe, and it needs its own `use_last_error` WinDLL.
     "_stdio_lifetime.py": "holds waitable ancestor handles",
-    # Windows Job Object management for the managed child; kernel32 here is
-    # about job assignment, not about inspecting a pid.
-    "_supervise.py": "manages a Job Object",
+    # Windows Job Object management (CreateJobObjectW, SetInformationJobObject,
+    # AssignProcessToJobObject); kernel32 here is about job assignment, not
+    # about inspecting a pid. `_supervise.py` and `_test_isolation.py` both
+    # call through this module's wrappers rather than declaring their own.
+    "_win32.py": "manages a Job Object",
 }
 
 
