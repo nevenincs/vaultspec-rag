@@ -212,6 +212,8 @@ def _ensure_watcher_soon(root: Path, registry: ServiceRegistry) -> None:
 
     if not get_config().watch_enabled:
         return
+    if getattr(registry, "_shutting_down", False):
+        return
     root = root.resolve()
     task: asyncio.Task[None] | None = None
     drain: _WatcherDrain | None = None
@@ -359,9 +361,14 @@ def _ensure_watcher(
     cfg = get_config()
     # watch_enabled is the sole opt-out: when disabled the service is
     # pull-only and no watcher is ever started - including explicit
-    # start/reconfigure requests.
-    if not cfg.watch_enabled:
-        return WatcherStartOutcome.DISABLED
+    # start/reconfigure requests. A closed request-owned registry is likewise
+    # unavailable before any project-slot I/O is attempted.
+    if not cfg.watch_enabled or getattr(registry, "_shutting_down", False):
+        return (
+            WatcherStartOutcome.DISABLED
+            if not cfg.watch_enabled
+            else WatcherStartOutcome.UNAVAILABLE
+        )
     root = root.resolve()
     drain: _WatcherDrain | None = None
     generation: int | None = None
