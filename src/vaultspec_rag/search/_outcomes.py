@@ -8,9 +8,23 @@ from .._source_types import PublicSourceType
 from ._models import DocumentSearchResult, SearchResult
 from ._result_shaping import select_combined_results
 
-__all__ = ["CombinedSearchOutcome", "SearchDomainOutcome"]
+__all__ = [
+    "COMBINED_SEARCH_FAILED",
+    "COMBINED_SEARCH_FAILED_MESSAGE",
+    "CombinedSearchOutcome",
+    "SearchDomainOutcome",
+]
 
 type AnySearchResult = SearchResult | DocumentSearchResult
+
+#: Wire error kind for a combined search in which no domain completed. Named
+#: here, beside the outcome that decides the condition, because the service
+#: route and the in-process CLI path both report it and an operator hitting the
+#: same failure through either must be told the same thing.
+COMBINED_SEARCH_FAILED = "combined_search_failed"
+
+#: The one sentence describing that condition on every surface.
+COMBINED_SEARCH_FAILED_MESSAGE = "Every combined-search domain failed."
 
 
 @dataclass(frozen=True, slots=True)

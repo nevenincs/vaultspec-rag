@@ -8,8 +8,12 @@ import os
 import threading
 import time
 import typing
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    import pathlib
 
 from ._cli_helpers import (
     DEFAULT_SEARCH_TIMEOUT_SECONDS,
@@ -357,6 +361,27 @@ class TestMcpFastPath:
         assert "production, tests, or documentation" in result.output
         assert "prod|tests|docs" not in result.output
 
+    def test_cli_prefer_refusal_is_the_search_domains_own_sentence(self):
+        """The CLI must show the validator's wording, not a second copy of it.
+
+        Compared against the owning error's rendering rather than a literal, so
+        the assertion cannot pass while the two wordings drift apart - which is
+        the whole failure mode a restated message causes for an operator.
+        """
+        import json as _json
+
+        from ..search import InvalidPreferValueError
+
+        result = runner.invoke(
+            app,
+            ["search", "anything", "--type", "code", "--prefer", "bogus", "--json"],
+        )
+        assert result.exit_code == 2
+        payload = _json.loads(result.output)
+        assert payload["error"] == "invalid_prefer_value"
+        assert payload["value"] == "bogus"
+        assert payload["message"] == str(InvalidPreferValueError("bogus"))
+
     @pytest.mark.parametrize("prefer", ["prod", "docs"])
     def test_search_cmd_rejects_internal_prefer_values(self, prefer: str):
         result = runner.invoke(
@@ -374,6 +399,64 @@ class TestMcpFastPath:
         assert result.exit_code == 2
         assert "production, tests, or documentation" in result.output
         assert prefer in result.output
+
+    def test_in_process_combined_failure_derives_the_service_vocabulary(
+        self,
+        tmp_path: pathlib.Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The local render path reports the search domain's own kind, message
+        and per-domain status - not a hand-built copy of any of the three.
+
+        ``domains`` is compared against the outcome's own payload rather than a
+        literal, so a rebuilt dict that drifts in a key name or a value fails
+        here instead of reaching an operator as a differently-shaped report.
+        """
+        import json as _json
+
+        import typer
+
+        from .._source_types import PublicSourceType
+        from ..cli._search import _InProcessRenderRequest, _render_in_process_results
+        from ..search._outcomes import (
+            COMBINED_SEARCH_FAILED,
+            COMBINED_SEARCH_FAILED_MESSAGE,
+            CombinedSearchOutcome,
+            SearchDomainOutcome,
+        )
+
+        outcome = CombinedSearchOutcome(
+            SearchDomainOutcome.failure(
+                PublicSourceType.VAULT, "index_unavailable", "vault index missing"
+            ),
+            SearchDomainOutcome.failure(
+                PublicSourceType.CODE, "index_unavailable", "code index missing"
+            ),
+            SearchDomainOutcome.failure(
+                PublicSourceType.DOCUMENT, "index_unavailable", "document index missing"
+            ),
+            top_k=5,
+        )
+        with pytest.raises(typer.Exit) as raised:
+            _render_in_process_results(
+                _InProcessRenderRequest(
+                    results=outcome,
+                    query="anything",
+                    search_type=PublicSourceType.COMBINED,
+                    json_mode=True,
+                    show_scores=False,
+                    target=tmp_path,
+                )
+            )
+
+        assert raised.value.exit_code == 1
+        emitted = capsys.readouterr().out.strip().splitlines()
+        assert len(emitted) == 1, "JSON mode must emit exactly one envelope"
+        payload = _json.loads(emitted[0])
+        assert payload["ok"] is False
+        assert payload["error"] == COMBINED_SEARCH_FAILED
+        assert payload["message"] == COMBINED_SEARCH_FAILED_MESSAGE
+        assert payload["domains"] == outcome.domain_status_payload()
 
     def test_path_filter_with_code_attempts_call(self):
         """--path with --type code reaches the call path."""

@@ -549,6 +549,35 @@ def _build_call_request(
     return urllib.request.Request(url, headers=headers, method=resolved_method)
 
 
+def _foreign_peer_body(code: int, url: str, detail: str) -> dict[str, object]:
+    """Describe a response body that cannot have come from this daemon.
+
+    Returned rather than raised, for the reason :func:`_try_http_health` gives
+    for its own sentinel: several callers sit inside lifecycle verbs that must
+    emit exactly one structured outcome on every exit path, and an escaping
+    exception there would become a second one. The ``ok=False`` shape is the
+    one every ``_try_http_*`` wrapper and every CLI reader already branches on.
+    """
+    return {
+        "ok": False,
+        "error": "http_error",
+        "http_code": code,
+        "message": (
+            f"HTTP {code} from {url} with {detail}. This usually means the "
+            "request reached a service that is not the vaultspec-rag daemon "
+            "(for example the Qdrant port). Confirm the running service with "
+            "`vaultspec-rag server status`."
+        ),
+    }
+
+
+def _non_object_body(code: int, url: str, parsed: object) -> dict[str, object]:
+    """Report valid JSON that is not an object as a foreign-peer answer."""
+    kind = type(parsed).__name__
+    logger.debug("call to %s returned a non-object body (%s)", url, kind)
+    return _foreign_peer_body(code, url, f"a JSON body that is not an object ({kind})")
+
+
 def _send_call(
     req: urllib.request.Request, timeout: float | None
 ) -> tuple[int, dict[str, object]]:
@@ -558,32 +587,32 @@ def _send_call(
     returned alongside their status code rather than raised, so the caller can
     react to a 401 by refreshing the token. Connection-level failures still
     propagate to the caller's unreachable handling.
+
+    A body that decodes as JSON but is not an object is not an answer from this
+    daemon on either path, so it is reported as a foreign-peer failure rather
+    than passed through. Passing it through would hand every caller a value it
+    immediately reads as a mapping, and the failure would surface as an
+    ``AttributeError`` inside whichever verb read it, far from this cause.
     """
     try:
         with LOOPBACK_OPENER.open(req, timeout=timeout) as resp:
-            body = cast(
-                "dict[str, object]",
-                json.loads(read_service_response(resp).decode("utf-8")),
-            )
-            return int(resp.status), body
+            parsed: object = json.loads(read_service_response(resp).decode("utf-8"))
+            code = int(resp.status)
+            if not isinstance(parsed, dict):
+                return code, _non_object_body(code, req.full_url, parsed)
+            return code, cast("dict[str, object]", parsed)
     except urllib.error.HTTPError as e:
         raw = read_service_response(e).decode("utf-8")
         try:
-            return e.code, cast("dict[str, object]", json.loads(raw))
+            error_body: object = json.loads(raw)
         except json.JSONDecodeError:
             detail = raw.strip() or "(empty response body)"
-            return e.code, {
-                "ok": False,
-                "error": "http_error",
-                "http_code": e.code,
-                "message": (
-                    f"HTTP {e.code} from {req.full_url} with a non-JSON body: "
-                    f"{detail}. This usually means the request reached a service "
-                    "that is not the vaultspec-rag daemon (for example the Qdrant "
-                    "port). Confirm the running service with `vaultspec-rag server "
-                    "status`."
-                ),
-            }
+            return e.code, _foreign_peer_body(
+                e.code, req.full_url, f"a non-JSON body: {detail}"
+            )
+        if not isinstance(error_body, dict):
+            return e.code, _non_object_body(e.code, req.full_url, error_body)
+        return e.code, cast("dict[str, object]", error_body)
 
 
 def _raise_deadline_exhausted(
