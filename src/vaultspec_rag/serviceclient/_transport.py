@@ -305,6 +305,10 @@ class ServiceResponseTooLargeError(ValueError):
 
 def read_service_response(response: Any) -> bytes:
     """Read at most one byte beyond the finite service-response ceiling."""
+    # response is untyped (Any) so both an addinfourl and an HTTPError can be
+    # passed; .read() returning bytes is established by the stdlib
+    # http.client/urllib response protocol both implement, not by this
+    # function's own signature.
     raw = cast("bytes", response.read(MAX_SERVICE_RESPONSE_BYTES + 1))
     if len(raw) > MAX_SERVICE_RESPONSE_BYTES:
         raise ServiceResponseTooLargeError(
@@ -1410,7 +1414,7 @@ def _validate_search_request(
         return None, refusal
     try:
         validate_search_filters(
-            cast("Any", source.value),
+            source.value,
             SearchFilterOptions(
                 language=request.language,
                 path=request.path,
