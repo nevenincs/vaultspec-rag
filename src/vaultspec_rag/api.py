@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     )
     from .progress import ProgressReporter
     from .search import SearchResult
+    from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -791,7 +792,11 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     Returns:
         Dict containing RAG status information.
     """
-    root = _resolve(root_dir)
+    return _get_status(_resolve(root_dir), get_registry())
+
+
+def _get_status(root: pathlib.Path, registry: ServiceRegistry) -> dict[str, object]:
+    """Build status for one explicit registry and resolved workspace root."""
     torch: Any = None
     try:
         import torch as _torch
@@ -815,9 +820,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     from .config._settings import get_config
     from .index_profiles import index_support_profile_status
     from .jobs import index_job_status
-    from .registry import get_registry
 
-    registry = get_registry()
     with registry.lease_store(root) as store:
         vault_count = store.count()
         code_count = store.count_code()
@@ -1086,12 +1089,14 @@ class _WatcherState(TypedDict):
 def get_service_state(
     root_dir: pathlib.Path,
     *,
+    registry: ServiceRegistry,
     watching_roots: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return a consolidated read-only snapshot of the service's state.
 
     Args:
         root_dir: Workspace root directory.
+        registry: Registry that owns the observed service generation.
         watching_roots: Optional list of root paths currently watched.
 
     Returns:
@@ -1101,13 +1106,12 @@ def get_service_state(
 
     from ._store_locks import VaultStoreLockedError
     from .config._settings import get_config
-    from .registry import get_registry
     from .service import RegistryFullError
 
     root = _resolve(root_dir)
 
     try:
-        index_data = get_status(root)
+        index_data = _get_status(root, registry)
     except RegistryFullError as exc:
         index_data = {
             "error": "registry_full",
@@ -1125,7 +1129,6 @@ def get_service_state(
             "message": str(exc),
         }
 
-    registry = get_registry()
     snapshot = registry.snapshot()
     wall_now = datetime.now().astimezone()
     projects: list[dict[str, object]] = []
