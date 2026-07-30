@@ -215,15 +215,21 @@ class CudaDeviceMemory:
     The presence flags travel with the figures because absence has two distinct
     causes a caller may have to tell apart - torch is not installed at all, or
     it is installed without a usable device - and a pair of ``None`` readings
-    cannot say which. Both figures are ``None`` whenever ``cuda_present`` is
-    false, and either may be ``None`` on a device whose driver refused the
-    query.
+    cannot say which. Every figure is ``None`` whenever ``cuda_present`` is
+    false, and any may be ``None`` on a device whose driver refused the query.
+
+    ``own_reserved_mib`` is what this process's caching allocator has checked
+    out of the device: resident tensors plus the cache of freed blocks, both of
+    which the device-wide ``free_mib`` counts as used. It travels with the
+    device figures because separating a process's own checkout from foreign
+    pressure is only possible while the two were read together.
     """
 
     torch_present: bool
     cuda_present: bool
     free_mib: float | None
     total_mib: float | None
+    own_reserved_mib: float | None
 
 
 def cuda_device_memory() -> CudaDeviceMemory:
@@ -236,7 +242,7 @@ def cuda_device_memory() -> CudaDeviceMemory:
     raises: a torch-free host, a CPU-only build, and a driver that refuses the
     query all report absence.
     """
-    _measure_cuda_mib()
+    measured = _measure_cuda_mib()
     # A completed probe holding no module means the import itself failed, which
     # is permanent. An incomplete probe means the import succeeded and only the
     # availability query misfired, so torch IS present on this host.
@@ -247,12 +253,14 @@ def cuda_device_memory() -> CudaDeviceMemory:
             cuda_present=False,
             free_mib=None,
             total_mib=None,
+            own_reserved_mib=None,
         )
     return CudaDeviceMemory(
         torch_present=True,
         cuda_present=True,
         free_mib=cuda_free_memory_mib(),
         total_mib=cuda_device_total_mib(),
+        own_reserved_mib=None if measured is None else measured[1],
     )
 
 
@@ -488,13 +496,12 @@ def rebase_resident_cuda_baseline() -> float:
         The re-established baseline in MiB (unchanged off the GPU path).
     """
     global _resident_baseline_mib
-    # A release is also what retires the standing load-admission verdict: that
-    # verdict was taken against the device as it was before these models
-    # loaded, so it describes a state that no longer exists once they are gone,
-    # and the next load must be admitted against what the card actually holds.
-    # Cleared unconditionally, before the reading: an over-clear costs one
-    # extra reading, while an under-clear rides a stale verdict for the life of
-    # the process.
+    # A release is also what retires the standing load-admission verdict: it
+    # described the device as it stood when taken, and this release just
+    # changed that. Cleared unconditionally, before the reading: an over-clear
+    # costs one extra reading, while an under-clear rides a stale verdict for
+    # the life of the process. Clearing while sibling residency survives is
+    # safe because the next verdict credits whatever this process still holds.
     from ._gpu_admission import clear_gpu_admission_latch
 
     clear_gpu_admission_latch()
