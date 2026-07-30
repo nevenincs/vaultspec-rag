@@ -1191,6 +1191,7 @@ async def health_handler(_request: Request) -> object:
     )
 
     reg_health = _m._registry.health()
+    quiesce = _m._registry.quiesce_snapshot().as_envelope()
     uptime = _uptime_seconds()
     from ..qdrant_runtime import _supervise
 
@@ -1216,6 +1217,7 @@ async def health_handler(_request: Request) -> object:
             "models_loaded": reg_health["model_loaded"],
             "reranker_loaded": reg_health["reranker_loaded"],
             "project_count": reg_health["project_count"],
+            "quiesce": quiesce,
             # The structured signal behind the conformance degradation reason.
             # The CLI derives its remediation from this rather than parsing the
             # prose, so rewording the reason costs its pairing, never its

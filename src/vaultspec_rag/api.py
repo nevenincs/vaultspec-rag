@@ -1158,6 +1158,7 @@ def get_service_state(
         "projects": projects_data,
         "watcher": watcher_data,
         "qdrant": runtime_state().to_dict(),
+        "quiesce": registry.quiesce_snapshot().as_envelope(),
         # Bare storage-schema version echo: lets a consumer polling
         # /service-state for freshness also pre-check the data shape without a
         # separate /readiness round-trip. The full descriptor is on /readiness.
