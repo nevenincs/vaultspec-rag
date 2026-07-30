@@ -1130,6 +1130,7 @@ def _quiesce_envelope(
                 snapshot,
             )
         )
+        payload["retryable"] = True
     return JSONResponse(payload)
 
 

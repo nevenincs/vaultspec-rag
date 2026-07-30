@@ -13,20 +13,20 @@ related:
 
 ## Status
 
-Unresolved. The earlier completion claim is withdrawn.
+Satisfied by the landed W02 implementation and reconciled source inspection. No runtime or test command was executed during this release review.
 
 ## Description
 
-The existing same-ID requeue path is insufficient because it scans only `paused` work after admission is already open and collapses persistence failure into an empty success-like result.
+The manager prepares same-ID recovery while the controller remains `warming`, scans both paused and queued active jobs whose desired state is `running`, preserves operator pause and cancellation intent, and returns exhaustive typed persistence evidence.
 
 ## Outcome
 
-Pending: prepare recovery while the controller remains `warming`; scan both `paused` and `queued` active jobs whose desired state is `running`; preserve desired paused and cancelled intent; retain the logical job ID; increment a resumed attempt at most once; persist the complete generation before admission opens; and return a typed preparation or persistence-failure result.
+Paused work advances to one queued reconciliation attempt; an already queued generation converges without incrementing again. `QuiescedResumeStatus` and `QuiescedResumePersistence` distinguish prepared durable work, no-work, unpublished rollback, and published-but-not-durable retention. Unpublished failure restores the in-memory generation; published uncertainty retains the visible queued generation for the same retry scan.
 
 ## Evidence
 
-The formal W02 remediation audit identifies the stranded-job failure. No implementation evidence currently satisfies the amended durable recovery contract.
+Current source carries the exhaustive status-to-persistence invariant in `QuiescedResumeResult` and maps the production writer's publication flag without collapsing it. The implementation retains one logical job ID and preserves desired paused or cancelled work.
 
 ## Notes
 
-Published and unpublished persistence failures share the same safe retry scan while admission remains closed. No service, RAG endpoint, CUDA allocation, or GPU test was run.
+Dispatch-token ownership is intentionally outside this Step and is reconciled under S17. No service, RAG endpoint, CUDA allocation, GPU test, or CPU test was run in this reconciliation.

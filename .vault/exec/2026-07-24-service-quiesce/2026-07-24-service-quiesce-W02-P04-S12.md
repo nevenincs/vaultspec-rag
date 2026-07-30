@@ -13,20 +13,20 @@ related:
 
 ## Status
 
-Unresolved. The earlier completion claim remains withdrawn.
+Satisfied by the focused registry recovery evidence landed in `bbf02d53` and reconciled source inspection. No test command was rerun during this acceptance review.
 
 ## Description
 
-CPU-only registry proof must cover persistence-before-admission ordering, coalesced recovery retries, and the exact fail-closed state when same-ID recovery cannot be persisted.
+CPU-only registry proof uses real threads, the real manager persistence writer, a real service-loop thread, and a bound runner to demonstrate that same-ID recovery is durable before execution. It also covers fail-closed unpublished recovery, repaired concurrent retry, and one exact dispatch claim reaching one attempt.
 
 ## Outcome
 
-Pending: use real threads and real CPU registry dependencies to prove concurrent resume callers share one typed result, `resume_recovery_failed` leaves `warming` admission closed, and a repaired idempotent retry reaches `running` without duplicate recovery or dispatch.
+The ordering case blocks the adopted service loop, observes the production queued desired-running attempt 2 on disk with the controller at the reopened epoch, and proves the runner has not started. Releasing the loop then drives canonical registry dispatch to one successful same-ID attempt. The repaired-retry case first produces a real unpublished filesystem failure in `warming`, repairs the directory, and drives two concurrent resume callers through one shared transition, one epoch increment, one dispatch-claim generation, and one attempt.
 
 ## Evidence
 
-No evidence currently covers the durable recovery failure and retry boundary required by the amended ADR.
+`bbf02d53` extends the focused registry test with a real event-loop owner, blocked callback rendezvous, production persisted-state reads, a bound recording runner, real concurrent resume threads, shared transition identity, exact epoch assertions, one claim-generation increment, an empty pending-claim map after dispatch, and one attempt-2 completion. This supplies the registry-owned ordering and repaired concurrent retry evidence that manager-cache and loopless-dispatch tests alone did not provide.
 
 ## Notes
 
-No service process, RAG endpoint, CUDA allocation, or GPU test was run.
+A deterministic real post-publication directory-sync failure remains non-portable on Windows and is not manufactured. S11 and S14 own exhaustive typed published-not-durable propagation; S17 owns manager-level dispatch-token races. S16 and S18 are satisfied by the landed route mapping and closed-admission ownership proof, so this Step no longer blocks W02 completion. No service, RAG endpoint, CUDA allocation, GPU test, or CPU test was run in this reconciliation.

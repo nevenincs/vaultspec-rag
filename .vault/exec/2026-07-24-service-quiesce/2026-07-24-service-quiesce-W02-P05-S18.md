@@ -13,20 +13,20 @@ related:
 
 ## Status
 
-Unresolved. The earlier completion claim is withdrawn.
+Satisfied by the checked-in CPU route proof strengthened in `18977d3c`. No test command was rerun during this acceptance review.
 
 ## Description
 
-The existing CPU-only test proves that closed controller admission raises before constructing project or compute resources. It does not exercise the service search route or prove the canonical structured HTTP 503 contract.
+The CPU-only proof exercises the production service search route against a real quiesced registry for every public search source. It proves both the canonical structured HTTP 503 contract and rejection before any project or compute resource is retained.
 
 ## Outcome
 
-Pending: add real CPU-only route proof that quiescing search returns the canonical retryable HTTP 503 response and retains no project slot, model, reranker, or CUDA state. The proof must fail against the current exception-to-500 behavior.
+For `vault`, `code`, `document`, and `combined`, the route returns the exact typed retryable 503 envelope and records one matching unavailable activity. After all refusals, the same registry has no project slots, no model, no reranker, no CUDA state, no active compute ticket, and an unchanged quiesced snapshot that remains VRAM-released and safe to borrow.
 
 ## Evidence
 
-No evidence currently satisfies the reopened Step's route-level regression acceptance criteria.
+The checked-in test constructs a real `ServiceRegistry`, drives it to quiesced, installs it as the route's live registry, and sends authenticated requests through Starlette's production route. Commit `18977d3c` adds the complete health and controller-snapshot assertions and records the guard mutation that turns the named 503 assertion red when the typed route handling is replaced by a runtime error.
 
 ## Notes
 
-This record tracks unimplemented remedial proof. No service, RAG endpoint, CUDA allocation, or GPU test was run during reconciliation.
+The broader W02 ownership audit also inspected `cf9a0b1e` and `85fa25f2`: capped project construction is serialized under registry admission, and cleanup uses the registry's exclusive maintenance-store lease rather than bypassing registry ownership. These commits preserve the resource-ownership premise exercised by the closed-admission proof; they are not substitutes for its direct route assertions. No service process, RAG endpoint, CUDA allocation, GPU test, or CPU test was run during this reconciliation.
