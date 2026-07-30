@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
-from typing import TYPE_CHECKING, Final, Literal, Self
+from typing import TYPE_CHECKING, Final, Literal, Self, assert_never, get_args
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -29,6 +29,7 @@ __all__ = [
     "ServiceQuiesceController",
     "ServiceQuiesceTransitionConflictError",
     "ServiceQuiesceTransitionWaitTimeoutError",
+    "TerminalFailureCode",
 ]
 
 
@@ -42,7 +43,16 @@ class QuiesceState(StrEnum):
 
 
 class QuiesceTransitionCode(StrEnum):
-    """Machine-readable result for one controller transition or observation."""
+    """Machine-readable result for one controller transition or observation.
+
+    A member whose name ends in ``_FAILED`` is a terminal failure the caller
+    owning a transition reports back through
+    :meth:`ServiceQuiesceController.fail_transition`.  That is the whole
+    membership rule, and it is what separates those members from a failure the
+    controller observes for itself, such as a drain that outran its budget.
+    Every such member must be accepted by ``fail_transition`` and must be given
+    a failure target; this module refuses to import when one is not.
+    """
 
     PAUSE_STARTED = "pause_started"
     ALREADY_PAUSING = "already_pausing"
@@ -65,24 +75,70 @@ class QuiesceTransitionCode(StrEnum):
     RESUME_RECOVERY_FAILED = "resume_recovery_failed"
 
 
-# Every terminal failure code maps to the controller state it can truthfully
-# record and the result for a report that arrives after the controller moved on.
-_FAILURE_CODES: Final[
-    dict[QuiesceTransitionCode, tuple[QuiesceState, QuiesceTransitionCode]]
-] = {
-    QuiesceTransitionCode.QUIESCE_FAILED: (
-        QuiesceState.PAUSING,
-        QuiesceTransitionCode.QUIESCE_UNAVAILABLE,
-    ),
-    QuiesceTransitionCode.WARMUP_FAILED: (
-        QuiesceState.WARMING,
-        QuiesceTransitionCode.WARMUP_UNAVAILABLE,
-    ),
-    QuiesceTransitionCode.RESUME_RECOVERY_FAILED: (
-        QuiesceState.WARMING,
-        QuiesceTransitionCode.WARMUP_UNAVAILABLE,
-    ),
-}
+#: The codes :meth:`ServiceQuiesceController.fail_transition` accepts.  PEP 586
+#: requires every ``Literal`` argument to be a literal expression, so this set
+#: cannot be computed from the enum at a level a type checker honours; it is a
+#: plain alias rather than a ``type`` statement so ``get_args`` can still
+#: recover the members at runtime, which a ``type`` statement does not allow.
+TerminalFailureCode = Literal[
+    QuiesceTransitionCode.QUIESCE_FAILED,
+    QuiesceTransitionCode.WARMUP_FAILED,
+    QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+]
+
+_TERMINAL_FAILURE_SUFFIX: Final = "_FAILED"
+
+
+def _pin_terminal_failure_codes() -> None:
+    """Refuse to import when the enum and the accepted codes disagree.
+
+    The hand-written ``Literal`` above is the half no type checker can tie back
+    to the enum.  A new terminal failure member would otherwise reach no
+    failure target, and a member dropped from the enum would leave the
+    ``Literal`` naming a code that no longer exists; neither disagreement is
+    visible to a caller, so it is refused loudly here instead of carried.
+    """
+    accepted = frozenset(get_args(TerminalFailureCode))
+    named = frozenset(
+        code
+        for code in QuiesceTransitionCode
+        if code.name.endswith(_TERMINAL_FAILURE_SUFFIX)
+    )
+    if accepted != named:
+        unaccepted = sorted(code.value for code in named - accepted)
+        unnamed = sorted(code.value for code in accepted - named)
+        raise RuntimeError(
+            "quiesce terminal failure codes have drifted from "
+            "QuiesceTransitionCode: named by the enum but not accepted by "
+            f"fail_transition {unaccepted!r}; accepted by fail_transition but "
+            f"not named by the enum {unnamed!r}"
+        )
+
+
+_pin_terminal_failure_codes()
+
+
+def _failure_targets(
+    code: TerminalFailureCode,
+) -> tuple[QuiesceState, QuiesceTransitionCode]:
+    """Return the state a terminal failure records in, and its stale-report code.
+
+    A failure can only be recorded truthfully against the state whose
+    transition it belongs to; a report arriving after the controller has moved
+    on is answered with the second code instead.  The final ``assert_never``
+    makes an accepted code left without a target here a type error rather than
+    a lookup that fails only once that code is reported.
+    """
+    match code:
+        case QuiesceTransitionCode.QUIESCE_FAILED:
+            return (QuiesceState.PAUSING, QuiesceTransitionCode.QUIESCE_UNAVAILABLE)
+        case (
+            QuiesceTransitionCode.WARMUP_FAILED
+            | QuiesceTransitionCode.RESUME_RECOVERY_FAILED
+        ):
+            return (QuiesceState.WARMING, QuiesceTransitionCode.WARMUP_UNAVAILABLE)
+        case _:
+            assert_never(code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,11 +432,7 @@ class ServiceQuiesceController:
     def fail_transition(
         self,
         *,
-        code: Literal[
-            QuiesceTransitionCode.QUIESCE_FAILED,
-            QuiesceTransitionCode.WARMUP_FAILED,
-            QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
-        ],
+        code: TerminalFailureCode,
         reason: str,
     ) -> QuiesceTransition:
         """Keep admission closed and unsafe when an owned transition fails.
@@ -391,7 +443,7 @@ class ServiceQuiesceController:
         against whichever one is now live.
         """
         failure_reason = _require_reason(reason)
-        required_state, unavailable = _FAILURE_CODES[code]
+        required_state, unavailable = _failure_targets(code)
         with self._condition:
             if self._state is not required_state:
                 return self._transition_locked(unavailable, achieved=False)
