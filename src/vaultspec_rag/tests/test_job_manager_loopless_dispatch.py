@@ -98,9 +98,9 @@ class TestDispatchFromALooplessThread:
         never reaches the runner at all.
         """
         manager = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
             state_path=None,
+            quiesce_controller=ServiceQuiesceController(),
         )
         job_id = _queued_code_job(manager)
         ran, finished = _bind_recording_runner(manager, job_id)
@@ -123,9 +123,9 @@ class TestDispatchFromALooplessThread:
         reporting success there would strand the attempt unrun.
         """
         manager = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
             state_path=None,
+            quiesce_controller=ServiceQuiesceController(),
         )
         job_id = _queued_code_job(manager)
         ran, _finished = _bind_recording_runner(manager, job_id)
@@ -138,9 +138,9 @@ class TestDispatchFromALooplessThread:
     async def test_dispatch_on_the_loop_itself_is_unchanged(self) -> None:
         """The ordinary on-loop caller keeps its direct, unmarshalled path."""
         manager = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
             state_path=None,
+            quiesce_controller=ServiceQuiesceController(),
         )
         job_id = _queued_code_job(manager)
         ran, finished = _bind_recording_runner(manager, job_id)
@@ -166,9 +166,9 @@ class TestTheServiceWiresItsOwnLoop:
         from ..server._lifespan import _start_job_manager
 
         manager = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
             state_path=None,
+            quiesce_controller=ServiceQuiesceController(),
         )
         await _start_job_manager(manager)
 

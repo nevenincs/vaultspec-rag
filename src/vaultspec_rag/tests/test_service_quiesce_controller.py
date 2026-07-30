@@ -133,6 +133,26 @@ def test_drain_timeout_keeps_admission_closed_and_gpu_borrowing_unsafe() -> None
     assert controller.acknowledge_vram_released().code is QuiesceTransitionCode.QUIESCED
 
 
+def test_resume_recovery_failure_keeps_warming_closed_and_unsafe() -> None:
+    """A durable recovery failure is truthful without inventing a fifth state."""
+    controller = ServiceQuiesceController()
+
+    assert controller.begin_pause().achieved is False
+    assert controller.wait_for_drain(timeout=0).achieved
+    assert controller.acknowledge_vram_released().achieved
+    assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
+
+    failed = controller.fail_resume_recovery("job_resume_persistence_failed")
+
+    assert failed.code is QuiesceTransitionCode.RESUME_RECOVERY_FAILED
+    assert not failed.achieved
+    assert failed.snapshot.state is QuiesceState.WARMING
+    assert not failed.snapshot.admissions_open
+    assert not failed.snapshot.safe_to_borrow_gpu
+    assert failed.snapshot.failure_reason == "job_resume_persistence_failed"
+    with pytest.raises(QuiesceAdmissionClosedError):
+        controller.acquire_ticket()
+
 def test_a_failed_transition_records_only_the_direction_its_caller_owns() -> None:
     """A failure report names its own transition and never the live one."""
     controller = ServiceQuiesceController()

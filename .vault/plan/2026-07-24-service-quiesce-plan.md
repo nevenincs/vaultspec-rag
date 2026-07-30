@@ -61,18 +61,18 @@ Replace the shared hold gate with a registry-owned controller that drains cooper
 Establish the one stateful quiesce authority, its admission epochs and drain evidence, and reversible GPU-stack release and rebuild without closing stores.
 
 - [x] `W02.P04.S10` - Create the serialized resource-quiesce controller with state transitions, epoch-scoped compute tickets, bounded drain acknowledgement and truthful safety snapshots; `src/vaultspec_rag/service_quiesce.py`.
-- [ ] `W02.P04.S11` - Serialize pause and resume through one registry transition coordinator so detach, rebuild, job convergence, and controller acknowledgement cannot overlap; `src/vaultspec_rag/service.py`.
-- [ ] `W02.P04.S12` - Prove transition-coordinator exclusion, idempotency, and fail-closed pause and resume races with real threads and CPU-only registry dependencies; `src/vaultspec_rag/tests/test_service_quiesce_controller.py`.
+- [ ] `W02.P04.S11` - Keep warming admission closed through durable same-ID recovery preparation, then open the new epoch and publish typed recovery failure truth; `src/vaultspec_rag/service.py`.
+- [ ] `W02.P04.S12` - Prove persistence-before-admission ordering, coalesced retry, and fail-closed recovery races with real threads and CPU-only registry dependencies; `src/vaultspec_rag/tests/test_service_registry_quiesce_transitions.py`.
 
 ### Phase `W02.P05` - Cooperative job and search drain
 
 Make global quiesce unwind managed attempts and drain search work without letting token-local cancellation or protected mutations corrupt controller state.
 
 - [x] `W02.P05.S13` - Separate token-local cancellation and shutdown from global resource-quiesce signalling while preserving protected checkpoint semantics; `src/vaultspec_rag/job_control.py`.
-- [x] `W02.P05.S14` - Reconcile globally quiesced attempts by releasing every managed resource and requeueing the same logical job only after controller resume; `src/vaultspec_rag/job_manager`.
+- [ ] `W02.P05.S14` - Prepare durable same-ID recovery by scanning paused and queued desired-running jobs, preserving operator intent, and returning typed persistence outcomes; `src/vaultspec_rag/job_manager`.
 - [x] `W02.P05.S15` - Guard index streaming safe boundaries so quiesce observations remain outside GPU locks and indivisible storage mutations; `src/vaultspec_rag/indexer/_streaming.py`.
 - [ ] `W02.P05.S16` - Translate controller-closed search admission into the canonical retryable HTTP 503 response before project or GPU ownership; `src/vaultspec_rag/server/_routes_search.py`.
-- [x] `W02.P05.S17` - Prove cancellation isolation, managed-resource release and same-ID requeue across global quiesce using CPU-only real runtime fixtures; `src/vaultspec_rag/tests/test_job_manager_quiesce.py`.
+- [ ] `W02.P05.S17` - Prove real unpublished-write retry and published queued-state restart recovery without duplicate attempts or dispatch; `src/vaultspec_rag/tests/test_job_manager_quiesce.py`.
 - [ ] `W02.P05.S18` - Prove closed search admission returns the canonical structured HTTP 503 while retaining no project, model, reranker, or CUDA state; `src/vaultspec_rag/tests/test_search_quiesce_admission.py`.
 
 ## Wave `W03` - Publish truthful lifecycle status
@@ -83,10 +83,10 @@ Expose the controller achieved states through routes and adapters while refusing
 
 Make the service route await achieved quiesce or running, emit one truthful envelope, and publish the identical controller block through health and service state.
 
-- [ ] `W03.P06.S19` - Replace raw gate mutations with acknowledged controller transitions and structured timeout and failure envelopes; `src/vaultspec_rag/server/_routes.py`.
+- [ ] `W03.P06.S19` - Map typed resume recovery failure to one retryable lifecycle envelope while warming admission remains closed; `src/vaultspec_rag/server/_routes.py`.
 - [ ] `W03.P06.S20` - Publish controller health and lifecycle cadence without a free-running poller or GPU import; `src/vaultspec_rag/server/_lifespan.py`.
 - [ ] `W03.P06.S21` - Add the canonical quiesce block to read-only service-state output without duplicating lifecycle computation; `src/vaultspec_rag/api.py`.
-- [ ] `W03.P06.S22` - Prove route authentication, idempotency, drain acknowledgement, timeout truthfulness and one-envelope JSON outcomes on a CPU-only service fixture; `src/vaultspec_rag/tests/test_service_quiesce_routes.py`.
+- [ ] `W03.P06.S22` - Prove resume recovery failure and repaired idempotent retry through one CPU-only authenticated route envelope; `src/vaultspec_rag/tests/test_service_quiesce_routes.py`.
 
 ### Phase `W03.P07` - Adapter visibility and fallback refusal
 
