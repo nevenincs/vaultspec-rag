@@ -223,29 +223,38 @@ class TestSearchPowerUser:
             encoding="utf-8",
         )
 
+        from .._production_service import production_service
         from ._helpers import _service_env
 
         # Index/search in the same isolated service-state environment
         # so an unrelated resident service cannot claim this workspace.
         with _service_env(root):
-            index_result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "vaultspec_rag",
-                    "--target",
-                    str(root),
-                    "index",
-                    "--type",
-                    "code",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=300,
-                cwd=str(root),
-                encoding="utf-8",
-                errors="replace",
-            )
+            # Local GPU indexing requires ``--borrow-gpu`` and a live
+            # compatible service to quiesce, so the real authenticated route
+            # host runs here and is published through production discovery at
+            # the status dir this subprocess reads. It is withdrawn before the
+            # search, which is service-first: a discoverable host holding no
+            # project would answer the query itself and return nothing.
+            with production_service(root):
+                index_result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "vaultspec_rag",
+                        "--target",
+                        str(root),
+                        "index",
+                        "--type",
+                        "code",
+                        "--borrow-gpu",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    cwd=str(root),
+                    encoding="utf-8",
+                    errors="replace",
+                )
             assert index_result.returncode == 0, (
                 f"index --type code failed:\nstdout: {index_result.stdout}\n"
                 f"stderr: {index_result.stderr}"
