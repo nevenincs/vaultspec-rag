@@ -36,6 +36,8 @@ pytestmark = [pytest.mark.unit]
 runner = CliRunner()
 
 _SERVICE_TOKEN = "quiesce-cli-route-token"
+
+
 def _publish_service_discovery(status_dir: Path, *, port: int) -> None:
     """Publish the in-process route host with the production writer."""
     from ..config._paths import SERVICE_STATUS_FILENAME
