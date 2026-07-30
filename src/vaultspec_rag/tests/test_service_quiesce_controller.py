@@ -142,7 +142,10 @@ def test_resume_recovery_failure_keeps_warming_closed_and_unsafe() -> None:
     assert controller.acknowledge_vram_released().achieved
     assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
 
-    failed = controller.fail_resume_recovery("job_resume_persistence_failed")
+    failed = controller.fail_transition(
+        code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+        reason="job_resume_persistence_failed",
+    )
 
     assert failed.code is QuiesceTransitionCode.RESUME_RECOVERY_FAILED
     assert not failed.achieved
@@ -153,22 +156,17 @@ def test_resume_recovery_failure_keeps_warming_closed_and_unsafe() -> None:
     with pytest.raises(QuiesceAdmissionClosedError):
         controller.acquire_ticket()
 
-def test_a_failed_transition_records_only_the_direction_its_caller_owns() -> None:
-    """A failure report names its own transition and never the live one."""
+
+def test_failure_transition_records_its_matching_terminal_code() -> None:
+    """A matching failure report keeps its transition closed and unsafe."""
     controller = ServiceQuiesceController()
 
     assert controller.begin_pause().code is QuiesceTransitionCode.PAUSE_STARTED
-    mismatched = controller.fail_transition(
-        owned_state=QuiesceState.WARMING,
-        reason="gpu_dependency_rebuild_failed",
-    )
     failed_pause = controller.fail_transition(
-        owned_state=QuiesceState.PAUSING,
+        code=QuiesceTransitionCode.QUIESCE_FAILED,
         reason="gpu_dependency_release_failed",
     )
 
-    assert mismatched.code is QuiesceTransitionCode.WARMUP_UNAVAILABLE
-    assert mismatched.snapshot.failure_reason is None
     assert failed_pause.code is QuiesceTransitionCode.QUIESCE_FAILED
     assert not failed_pause.achieved
     assert failed_pause.snapshot.state is QuiesceState.PAUSING
@@ -180,7 +178,7 @@ def test_a_failed_transition_records_only_the_direction_its_caller_owns() -> Non
     assert controller.acknowledge_vram_released().code is QuiesceTransitionCode.QUIESCED
     assert controller.begin_warming().code is QuiesceTransitionCode.WARMING_STARTED
     failed_warming = controller.fail_transition(
-        owned_state=QuiesceState.WARMING,
+        code=QuiesceTransitionCode.WARMUP_FAILED,
         reason="gpu_dependency_rebuild_failed",
     )
 
@@ -190,7 +188,37 @@ def test_a_failed_transition_records_only_the_direction_its_caller_owns() -> Non
     assert not failed_warming.snapshot.safe_to_borrow_gpu
     assert failed_warming.snapshot.failure_reason == "gpu_dependency_rebuild_failed"
     with pytest.raises(ValueError, match="failure reason must not be empty"):
-        controller.fail_transition(owned_state=QuiesceState.WARMING, reason="   ")
+        controller.fail_transition(
+            code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+            reason="   ",
+        )
+
+
+def test_failure_transition_refuses_every_code_from_the_wrong_state() -> None:
+    """A stale failure report cannot overwrite the controller's live truth."""
+    controller = ServiceQuiesceController()
+
+    wrong_pause = controller.fail_transition(
+        code=QuiesceTransitionCode.QUIESCE_FAILED,
+        reason="gpu_dependency_release_failed",
+    )
+    wrong_warmup = controller.fail_transition(
+        code=QuiesceTransitionCode.WARMUP_FAILED,
+        reason="gpu_dependency_rebuild_failed",
+    )
+    wrong_recovery = controller.fail_transition(
+        code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+        reason="job_resume_persistence_failed",
+    )
+
+    assert wrong_pause.code is QuiesceTransitionCode.QUIESCE_UNAVAILABLE
+    assert wrong_warmup.code is QuiesceTransitionCode.WARMUP_UNAVAILABLE
+    assert wrong_recovery.code is QuiesceTransitionCode.WARMUP_UNAVAILABLE
+    for transition in (wrong_pause, wrong_warmup, wrong_recovery):
+        assert not transition.achieved
+        assert transition.snapshot.state is QuiesceState.RUNNING
+        assert transition.snapshot.admissions_open
+        assert transition.snapshot.failure_reason is None
 
 
 def test_abort_pause_reopens_the_epoch_a_failed_pause_closed() -> None:
