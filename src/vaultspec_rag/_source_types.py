@@ -61,10 +61,12 @@ _NON_COMBINED_SOURCES = {
     for member in PublicSourceType
     if member is not PublicSourceType.COMBINED
 }
-assert set(INDEX_SOURCES) == _NON_COMBINED_SOURCES, (
-    "IndexSource has drifted from PublicSourceType: update the Literal in "
-    "_source_types.py to match every non-combined PublicSourceType member"
-)
+if set(INDEX_SOURCES) != _NON_COMBINED_SOURCES:
+    _drift_message = (
+        "IndexSource has drifted from PublicSourceType: update the Literal in "
+        "_source_types.py to match every non-combined PublicSourceType member"
+    )
+    raise RuntimeError(_drift_message)
 
 
 @dataclass(frozen=True, slots=True)
