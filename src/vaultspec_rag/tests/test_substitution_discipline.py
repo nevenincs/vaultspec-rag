@@ -78,14 +78,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "these replaced read main(), a two-line dispatcher containing neither "
         "contract, and passed against a real load added one frame down",
     ),
-    "test_service_preflight_cli.py": (
-        4,
-        "the guard under test is whether the local device-load probe ran at "
-        "all - it substitutes that boundary function (and, once, service "
-        "discovery) so the assertion can observe a call that must not happen, "
-        "which no real CUDA-dependent probe or live-daemon race can force "
-        "deterministically on a CPU-only runner",
-    ),
 }
 
 
