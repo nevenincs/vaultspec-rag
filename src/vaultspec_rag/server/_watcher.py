@@ -455,9 +455,6 @@ def _start_watcher_locked(request: _StartWatcherRequest) -> WatcherStartOutcome:
             WatcherConfiguration(
                 root_dir=root,
                 vault_dir=root / VAULT_DIR,
-                vault_indexer=slot.vault_indexer,
-                code_indexer=slot.code_indexer,
-                document_indexer=slot.document_indexer,
                 stop_event=stop_event,
                 graph_cache=slot.graph_cache,
                 debounce=debounce,

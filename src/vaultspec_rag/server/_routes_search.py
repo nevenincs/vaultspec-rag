@@ -49,6 +49,7 @@ from ..search._result_shaping import (
     PHASE_RERANK,
 )
 from ..service import RegistryFullError
+from ..service_quiesce import QuiesceAdmissionClosedError
 from ._auth import require_token
 from ._search_activity import (
     SearchActivityCompletion,
@@ -76,6 +77,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from .._index_integrity import IndexIntegrity
+    from ..service_quiesce import QuiesceSnapshot
 logger = logging.getLogger("vaultspec_rag.server")
 
 __all__ = ["search_route"]
@@ -464,7 +466,7 @@ def _activity_timings(
 def _activity_outcome(result: dict[str, object], status_code: int) -> str:
     """Classify one terminal response for bounded activity review."""
     error = result.get("error")
-    if error == "index_unavailable":
+    if error in ("index_unavailable", "quiesce_admission_closed"):
         return "unavailable"
     if error == "combined_search_failed":
         return "combined_failed"
@@ -620,6 +622,7 @@ def _dispatch_public_search(
 
 def _execute_search_request(request: SearchRequest) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
+    ticket = _m._registry.acquire_compute_ticket()
     try:
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
@@ -702,6 +705,8 @@ def _execute_search_request(request: SearchRequest) -> dict[str, object]:
         return _m._registry_full_error_dict(exc)
     except VaultStoreLockedError as exc:
         return _m._local_store_locked_error_dict(exc)
+    finally:
+        ticket.release()
 
 
 async def search_route(request: Request) -> JSONResponse:
@@ -894,18 +899,48 @@ async def _execute_search_route(
     )
     run = partial(_execute_search_request, search_request)
     started = time.perf_counter()
-    if search_request.search_type is PublicSourceType.COMBINED:
-        result = await _run_in_thread(run, limiter=get_search_limiter())
-        classification = None
-    else:
-        result, classification = await _run_search_with_availability(
-            run,
-            availability_context,
+    try:
+        if search_request.search_type is PublicSourceType.COMBINED:
+            result = await _run_in_thread(run, limiter=get_search_limiter())
+            classification = None
+        else:
+            result, classification = await _run_search_with_availability(
+                run,
+                availability_context,
+            )
+    except QuiesceAdmissionClosedError as exc:
+        total_seconds = time.perf_counter() - started
+        result = _quiesce_admission_closed_result(
+            exc.snapshot,
+            request_id=search_request.request_id,
+        )
+        _m.incr("search_total")
+        _m.observe("search_last_duration_seconds", total_seconds)
+        log_event(
+            logger,
+            "service.search",
+            "unavailable",
+            fields={
+                "status_code": 503,
+                "error": "quiesce_admission_closed",
+                "request_id": search_request.request_id,
+                "source": search_request.search_type.value,
+                "search_type": search_request.search_type.value,
+                "root": search_request.root,
+                "results": 0,
+                "total_seconds": f"{total_seconds:.3f}",
+            },
+        )
+        return SearchRouteResult(
+            result=result,
+            status_code=503,
+            total_seconds=total_seconds,
+            availability_cause=None,
         )
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
-    response_status = _search_response_status(search_request, result)
+    response_status = _search_response_status(result)
     classification = _classify_completed_search(
         result,
         search_request,
@@ -931,17 +966,38 @@ async def _execute_search_route(
     )
 
 
-def _search_response_status(
-    search_request: SearchRequest,
-    result: dict[str, object],
-) -> int:
-    """Apply the combined-search response status rule before classification."""
-    if (
-        search_request.search_type is PublicSourceType.COMBINED
-        and result.get("ok") is False
-    ):
-        return 503
-    return 200
+def _search_response_status(result: dict[str, object]) -> int:
+    """Fail the response status for any envelope that declares itself failed.
+
+    Retrieval envelopes carry no ``ok`` key, so only a failure declares one.
+    Keying the status on that declaration rather than on which failures the
+    route happens to enumerate means a newly added error envelope reports a
+    failure status the day it is written.
+    """
+    return 503 if result.get("ok") is False else 200
+
+
+def _quiesce_admission_closed_result(
+    snapshot: QuiesceSnapshot,
+    *,
+    request_id: str,
+) -> dict[str, object]:
+    """Render retryable admission closure without a local remediation path."""
+    return {
+        "ok": False,
+        "error": "quiesce_admission_closed",
+        "message": (
+            "Search is temporarily unavailable while service compute admission is "
+            "closed; retry after the service returns to running."
+        ),
+        "retryable": True,
+        "request_id": request_id,
+        "quiesce": {
+            "state": snapshot.state.value,
+            "admission_epoch": snapshot.admission_epoch,
+            "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
+        },
+    }
 
 
 def _classify_completed_search(
@@ -951,10 +1007,17 @@ def _classify_completed_search(
     classification: SearchResponseClassification | None,
     total_seconds: float,
 ) -> SearchResponseClassification | None:
-    """Classify an ordinary completed source search after adding route timing."""
+    """Classify an ordinary completed source search after adding route timing.
+
+    Availability classification refines a successful retrieval into an
+    index-unavailable verdict, so a failed envelope is skipped on its own
+    declaration.  Skipping on an absent ``results`` key instead would tie
+    "did this fail" to "does the payload carry hits", which silently held
+    every failure envelope at the success status.
+    """
     if (
         classification is not None
-        or "results" not in result
+        or result.get("ok") is False
         or search_request.search_type is PublicSourceType.COMBINED
     ):
         return classification

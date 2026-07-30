@@ -45,6 +45,29 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "every run, which the suite's mirror-the-installed-binary design "
         "exists to avoid",
     ),
+    "test_gpu_admission.py": (
+        2,
+        "asserts the shared device-load reading's raise-swallowing behaviour "
+        "and its composition with the live evaluator, which requires forcing "
+        "a specific reading and a raised exception from it - neither "
+        "reachable through a real device on a CPU-only runner",
+    ),
+    "test_jobs_device_load.py": (
+        5,
+        "asserts the jobs-listing cache's call count and its handling of a "
+        "cached-absent reading against the shared device-load reading, which "
+        "requires forcing a controlled reading (and counting how often it is "
+        "taken) - neither reachable through a real device on a CPU-only "
+        "runner",
+    ),
+    "test_service_preflight_cli.py": (
+        4,
+        "the guard under test is whether the local device-load probe ran at "
+        "all - it substitutes that boundary function (and, once, service "
+        "discovery) so the assertion can observe a call that must not happen, "
+        "which no real CUDA-dependent probe or live-daemon race can force "
+        "deterministically on a CPU-only runner",
+    ),
 }
 
 

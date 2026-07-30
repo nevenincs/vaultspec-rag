@@ -128,9 +128,9 @@ class TestClosingReleasesTheResidentBaseline:
         it the model, for as long as the test that loaded it runs.
 
         Proven able to fail, both directions on the same assertion: dropping the
-        rebase call leaves the baseline at ``raised_mb``, and dropping only the
+        rebase call leaves the baseline at ``raised_mib``, and dropping only the
         ``gc.collect()`` leaves the cycle-held tensor still allocated for the
-        rebase to measure. Either way ``released_mb < raised_mb`` fails.
+        rebase to measure. Either way ``released_mib < raised_mib`` fails.
         Restored, the baseline returns to the session model's own residency.
         """
         # Requested for its residency rather than its value: the session model
@@ -138,14 +138,14 @@ class TestClosingReleasesTheResidentBaseline:
         del embedding_model
         from .._gpu import load_torch
         from ..memory_probe import (
-            current_cuda_mb,
-            resident_cuda_baseline_mb,
+            current_cuda_mib,
+            resident_cuda_baseline_mib,
             sample_resident_cuda_baseline,
         )
 
         torch = load_torch()
-        resident_mb = sample_resident_cuda_baseline()
-        assert resident_mb > 0.0, (
+        resident_mib = sample_resident_cuda_baseline()
+        assert resident_mib > 0.0, (
             "premise: the session embedding model must be resident on the device"
         )
 
@@ -158,20 +158,20 @@ class TestClosingReleasesTheResidentBaseline:
             dtype=torch.float32,
             device="cuda",
         )
-        raised_mb = sample_resident_cuda_baseline()
-        assert raised_mb > resident_mb, (
+        raised_mib = sample_resident_cuda_baseline()
+        assert raised_mib > resident_mib, (
             "premise: the ballast must be a real added device allocation"
         )
         del holder
 
         ServiceRegistry().close_all()
 
-        released_mb = resident_cuda_baseline_mb()
-        assert released_mb < raised_mb
+        released_mib = resident_cuda_baseline_mib()
+        assert released_mib < raised_mib
         # The figure describes what is still resident - the session model - and
         # not the allocation that was released.
-        assert released_mb == pytest.approx(current_cuda_mb()[0], abs=1.0)
-        assert released_mb == pytest.approx(resident_mb, abs=1.0)
+        assert released_mib == pytest.approx(current_cuda_mib()[0], abs=1.0)
+        assert released_mib == pytest.approx(resident_mib, abs=1.0)
 
 
 class TestGetProject:
@@ -188,10 +188,11 @@ class TestGetProject:
         slot = registry.peek_project(root)
         try:
             assert slot.store is not None
-            assert slot.searcher is not None
-            assert slot.vault_indexer is not None
-            assert slot.code_indexer is not None
             assert slot.graph_cache is not None
+            with registry.compute_lease(root) as lease:
+                assert lease.runtime.searcher is not None
+                assert lease.runtime.vault_indexer is not None
+                assert lease.runtime.code_indexer is not None
         finally:
             registry.close_project(root)
 
@@ -214,9 +215,10 @@ class TestGetProject:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        slot = registry.peek_project(root)
+        registry.peek_project(root)
         try:
-            assert slot.searcher.model is registry.model
+            with registry.compute_lease(root) as lease:
+                assert lease.runtime.searcher.model is registry.model
         finally:
             registry.close_project(root)
 
@@ -236,8 +238,12 @@ class TestMultiProject:
         slot_a = registry.peek_project(root_a)
         slot_b = registry.peek_project(root_b)
         try:
-            # Same EmbeddingModel instance
-            assert slot_a.searcher.model is slot_b.searcher.model
+            with (
+                registry.compute_lease(root_a) as first,
+                registry.compute_lease(root_b) as second,
+            ):
+                # Same EmbeddingModel instance
+                assert first.runtime.searcher.model is second.runtime.searcher.model
             # Different stores (independent Qdrant)
             assert slot_a.store is not slot_b.store
             # Different graph caches
@@ -411,7 +417,7 @@ class TestMultiProjectSearch:
         self,
         registry: ServiceRegistry,
         tmp_path: Path,
-    ) -> Iterator[tuple[Path, ProjectSlot, Path, ProjectSlot]]:
+    ) -> Iterator[tuple[Path, Path]]:
         """Create and index two projects with non-overlapping content."""
         root_a = _make_project(
             tmp_path,
@@ -455,33 +461,40 @@ class TestMultiProjectSearch:
             },
         )
 
-        slot_a = registry.peek_project(root_a)
-        slot_b = registry.peek_project(root_b)
-
         # Index both (real GPU encoding - no mocks)
-        slot_a.vault_indexer.full_index(reporter=NullProgressReporter())
-        slot_b.vault_indexer.full_index(reporter=NullProgressReporter())
+        with (
+            registry.compute_lease(root_a) as first,
+            registry.compute_lease(root_b) as second,
+        ):
+            first.runtime.vault_indexer.full_index(reporter=NullProgressReporter())
+            second.runtime.vault_indexer.full_index(reporter=NullProgressReporter())
 
-        yield root_a, slot_a, root_b, slot_b
+        yield root_a, root_b
 
         registry.close_project(root_a)
         registry.close_project(root_b)
 
     def test_each_project_returns_its_own_docs(
         self,
-        two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
+        registry: ServiceRegistry,
+        two_projects: tuple[Path, Path],
     ) -> None:
         """Search results are isolated: project A docs never appear in B."""
-        _root_a, slot_a, _root_b, slot_b = two_projects
-
-        results_a = slot_a.searcher.search_vault(
-            "PostgreSQL database persistence",
-            top_k=5,
-        )
-        results_b = slot_b.searcher.search_vault(
-            "embedding model semantic search",
-            top_k=5,
-        )
+        root_a, root_b = two_projects
+        results_a: list[SearchResult] = []
+        results_b: list[SearchResult] = []
+        with (
+            registry.search_lease(root_a) as first,
+            registry.search_lease(root_b) as second,
+        ):
+            results_a = first.searcher.search_vault(
+                "PostgreSQL database persistence",
+                top_k=5,
+            )
+            results_b = second.searcher.search_vault(
+                "embedding model semantic search",
+                top_k=5,
+            )
 
         assert len(results_a) > 0, "Project A search returned no results"
         assert len(results_b) > 0, "Project B search returned no results"
@@ -492,24 +505,26 @@ class TestMultiProjectSearch:
 
     def test_concurrent_searches_two_projects(
         self,
-        two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
+        registry: ServiceRegistry,
+        two_projects: tuple[Path, Path],
     ) -> None:
         """Two threads searching different projects concurrently."""
-        _root_a, slot_a, _root_b, slot_b = two_projects
+        root_a, root_b = two_projects
         results: dict[str, list[SearchResult]] = {}
         barrier = threading.Barrier(2)
 
-        def search(slot: ProjectSlot, query: str, key: str) -> None:
+        def search(root: Path, query: str, key: str) -> None:
             barrier.wait()
-            results[key] = slot.searcher.search_vault(query, top_k=3)
+            with registry.search_lease(root) as lease:
+                results[key] = lease.searcher.search_vault(query, top_k=3)
 
         t1 = threading.Thread(
             target=search,
-            args=(slot_a, "REST API design", "a"),
+            args=(root_a, "REST API design", "a"),
         )
         t2 = threading.Thread(
             target=search,
-            args=(slot_b, "vector database Qdrant", "b"),
+            args=(root_b, "vector database Qdrant", "b"),
         )
         t1.start()
         t2.start()
@@ -525,33 +540,35 @@ class TestMultiProjectSearch:
 
     def test_four_concurrent_searches(
         self,
-        two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
+        registry: ServiceRegistry,
+        two_projects: tuple[Path, Path],
     ) -> None:
         """Four threads (2 per project) all complete with valid results."""
-        _root_a, slot_a, _root_b, slot_b = two_projects
+        root_a, root_b = two_projects
         results: dict[str, list[SearchResult]] = {}
         barrier = threading.Barrier(4)
 
-        def search(slot: ProjectSlot, query: str, key: str) -> None:
+        def search(root: Path, query: str, key: str) -> None:
             barrier.wait()
-            results[key] = slot.searcher.search_vault(query, top_k=3)
+            with registry.search_lease(root) as lease:
+                results[key] = lease.searcher.search_vault(query, top_k=3)
 
         threads = [
             threading.Thread(
                 target=search,
-                args=(slot_a, "database transactions", "a1"),
+                args=(root_a, "database transactions", "a1"),
             ),
             threading.Thread(
                 target=search,
-                args=(slot_a, "REST API pagination", "a2"),
+                args=(root_a, "REST API pagination", "a2"),
             ),
             threading.Thread(
                 target=search,
-                args=(slot_b, "embedding models Qwen3", "b1"),
+                args=(root_b, "embedding models Qwen3", "b1"),
             ),
             threading.Thread(
                 target=search,
-                args=(slot_b, "SPLADE sparse vectors", "b2"),
+                args=(root_b, "SPLADE sparse vectors", "b2"),
             ),
         ]
         for t in threads:
@@ -572,13 +589,19 @@ class TestMultiProjectSearch:
 
     def test_search_vault_across_projects(
         self,
-        two_projects: tuple[Path, ProjectSlot, Path, ProjectSlot],
+        registry: ServiceRegistry,
+        two_projects: tuple[Path, Path],
     ) -> None:
         """search_vault() on each project only returns that project's docs."""
-        _root_a, slot_a, _root_b, slot_b = two_projects
-
-        all_a = slot_a.searcher.search_vault("architecture", top_k=5)
-        all_b = slot_b.searcher.search_vault("research", top_k=5)
+        root_a, root_b = two_projects
+        all_a: list[SearchResult] = []
+        all_b: list[SearchResult] = []
+        with (
+            registry.search_lease(root_a) as first,
+            registry.search_lease(root_b) as second,
+        ):
+            all_a = first.searcher.search_vault("architecture", top_k=5)
+            all_b = second.searcher.search_vault("research", top_k=5)
 
         assert len(all_a) > 0
         assert len(all_b) > 0
@@ -616,13 +639,20 @@ class TestSharedReranker:
     ) -> None:
         root_a = _make_vault_dir(tmp_path / "proj_a")
         root_b = _make_vault_dir(tmp_path / "proj_b")
-        slot_a = registry.peek_project(root_a)
-        slot_b = registry.peek_project(root_b)
+        registry.peek_project(root_a)
+        registry.peek_project(root_b)
         try:
-            # Both searchers share the same CrossEncoder instance
-            assert slot_a.searcher._reranker is slot_b.searcher._reranker
-            # And it's the registry's shared instance
-            assert slot_a.searcher._reranker is registry.get_reranker()
+            with (
+                registry.compute_lease(root_a) as first,
+                registry.compute_lease(root_b) as second,
+            ):
+                # Both searchers share the same CrossEncoder instance
+                assert (
+                    first.runtime.searcher._reranker
+                    is second.runtime.searcher._reranker
+                )
+                # And it's the registry's shared instance
+                assert first.runtime.searcher._reranker is registry.get_reranker()
         finally:
             registry.close_project(root_a)
             registry.close_project(root_b)
@@ -683,9 +713,10 @@ class TestGpuLock:
         tmp_path: Path,
     ) -> None:
         root = _make_vault_dir(tmp_path)
-        slot = registry.peek_project(root)
+        registry.peek_project(root)
         try:
-            assert slot.searcher._gpu_lock is registry.gpu_lock
+            with registry.compute_lease(root) as lease:
+                assert lease.runtime.searcher._gpu_lock is registry.gpu_lock
         finally:
             registry.close_project(root)
 
@@ -696,10 +727,17 @@ class TestGpuLock:
     ) -> None:
         root_a = _make_vault_dir(tmp_path / "proj_a")
         root_b = _make_vault_dir(tmp_path / "proj_b")
-        slot_a = registry.peek_project(root_a)
-        slot_b = registry.peek_project(root_b)
+        registry.peek_project(root_a)
+        registry.peek_project(root_b)
         try:
-            assert slot_a.searcher._gpu_lock is slot_b.searcher._gpu_lock
+            with (
+                registry.compute_lease(root_a) as first,
+                registry.compute_lease(root_b) as second,
+            ):
+                assert (
+                    first.runtime.searcher._gpu_lock
+                    is second.runtime.searcher._gpu_lock
+                )
         finally:
             registry.close_project(root_a)
             registry.close_project(root_b)

@@ -495,7 +495,7 @@ def store_volume_path(root: pathlib.Path) -> pathlib.Path:
     cfg = get_config()
     if cfg.effective_server_mode():
         return pathlib.Path(str(cfg.qdrant_storage_dir)).expanduser()
-    return pathlib.Path(root) / cfg.data_dir / cfg.qdrant_dir
+    return workspace_volume_path(root) / cfg.qdrant_dir
 
 
 def workspace_volume_path(root: pathlib.Path) -> pathlib.Path:
@@ -505,6 +505,16 @@ def workspace_volume_path(root: pathlib.Path) -> pathlib.Path:
     volume holding the indexed tree. They are bounded metadata rather than
     vectors, so this target's requirement is the small shared write floor,
     never the store's profile-scoped headroom.
+
+    Every one of those tenants resolves the directory through this function
+    rather than joining the configured name onto a root itself. A site that
+    respells the join reads as correct and drifts silently: the same root
+    then names two directories, and whichever tenant missed the change writes
+    its bookkeeping where nothing reads it.
+
+    *root* is taken as given. Callers that need a canonical root resolve it
+    before calling, because whether a symlinked or relative root should be
+    normalised is the caller's question, not this directory's.
     """
     from .config._settings import get_config
 

@@ -147,10 +147,15 @@ class DocumentIndexMetadata:
 
 
 def document_metadata_path(root_dir: Path) -> Path:
-    """Return the independently named document sidecar path for one root."""
-    from ..config._settings import get_config
+    """Return the independently named document sidecar path for one root.
 
-    return root_dir.resolve() / get_config().data_dir / DOCUMENT_META_FILENAME
+    Independent naming, shared directory: the filename is this domain's alone,
+    while the directory is the one project data dir every index writes its
+    bookkeeping into, resolved by its owner rather than respelled here.
+    """
+    from .._store_writes import workspace_volume_path
+
+    return workspace_volume_path(root_dir.resolve()) / DOCUMENT_META_FILENAME
 
 
 def _object_dict(value: object, message: str) -> dict[str, object]:

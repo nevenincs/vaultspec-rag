@@ -19,13 +19,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
-from sentence_transformers.sentence_transformer import SentenceTransformer
-from sentence_transformers.sentence_transformer.modules import BoW
 
 from ... import jobs
+from ..._index_breadth import index_meta_path
+from ..._source_types import PublicSourceType
 from ...concurrency import limiter_stats, reset_limiters
 from ...config._settings import get_config, reset_config
-from ...embeddings import EmbeddingModel, QueryEmbeddingCache
+from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer, VaultIndexer  # noqa: TC001
 from ...indexer._vault_prep import prepare_document
 from ...job_control import (
@@ -44,6 +44,7 @@ from ...job_models import (
 from ...progress import NullProgressReporter
 from ...registry import get_registry, reset_registry
 from ...store_runtime import VaultStore
+from ._helpers import cpu_backed_embedding_model
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Generator
@@ -114,33 +115,28 @@ def cpu_embedding_model(clean_config: None) -> EmbeddingModel:
         "document",
         "content",
     ]
-    backend = SentenceTransformer(modules=[BoW(vocabulary)], device="cpu")
-    dimension = backend.get_embedding_dimension()
-    assert dimension is not None
-    get_config(
-        {
-            "data_dir": ".index-control",
-            "embedding_batch_size": 1,
-            "embedding_dimension": dimension,
-            "embedding_encode_batch_size": 1,
-            "index_chunk_workers": 2,
-            # Force more than one durable weighted slice so pause/cancel can
-            # be observed between production publication checkpoints. The
-            # batch-size setting intentionally does not cap segment capacity.
-            "index_segment_max_chunks": 8,
-            "index_queue_max_chunks": 16,
-            "qdrant_url": None,
-            "sparse_enabled": False,
-            "vault_chunk_chars": 10_000,
-        }
-    )
 
-    model = EmbeddingModel.__new__(EmbeddingModel)
-    model._dense_model = backend
-    model._device = "cpu"
-    model.dimension = dimension
-    model.query_cache = QueryEmbeddingCache()
-    return model
+    def configure(dimension: int) -> None:
+        get_config(
+            {
+                "data_dir": ".index-control",
+                "embedding_batch_size": 1,
+                "embedding_dimension": dimension,
+                "embedding_encode_batch_size": 1,
+                "index_chunk_workers": 2,
+                # Force more than one durable weighted slice so pause/cancel
+                # can be observed between production publication checkpoints.
+                # The batch-size setting intentionally does not cap segment
+                # capacity.
+                "index_segment_max_chunks": 8,
+                "index_queue_max_chunks": 16,
+                "qdrant_url": None,
+                "sparse_enabled": False,
+                "vault_chunk_chars": 10_000,
+            }
+        )
+
+    return cpu_backed_embedding_model(vocabulary, configure)
 
 
 def write_vault_documents(root: Path, count: int) -> list[VaultDocument]:
@@ -267,7 +263,8 @@ def _attempt_task(job_id: str, attempt: int) -> asyncio.Task[object] | None:
 
 def _assert_manager_resources_released(
     snapshot: JobSnapshot,
-    slot: ProjectSlot,
+    registry: ServiceRegistry,
+    root: Path,
     *,
     code: bool,
 ) -> None:
@@ -284,10 +281,12 @@ def _assert_manager_resources_released(
         capacity = limiter_stats()[pool]
         assert capacity["borrowed_tokens"] == 0
         assert capacity["waiting"] == 0
+    slot = registry.peek_project(root)
     assert slot.ref_count == 0
-    indexer = slot.code_indexer if code else slot.vault_indexer
-    assert indexer._writer_lock.acquire(blocking=False)
-    indexer._writer_lock.release()
+    with registry.compute_lease(root) as lease:
+        indexer = lease.runtime.code_indexer if code else lease.runtime.vault_indexer
+        assert indexer._writer_lock.acquire(blocking=False)
+        indexer._writer_lock.release()
     if code:
         _assert_code_resources_released()
 
@@ -422,7 +421,11 @@ async def assert_cancelled_vault_stops_writes(
     slot: ProjectSlot,
     root: Path,
 ) -> None:
-    metadata_path = root / get_config().data_dir / get_config().index_metadata_file
+    # Resolve through production rather than deriving the path here: every
+    # assertion below tolerates the sidecar being absent, so a path that did
+    # not name the file the indexer writes would compare None against None and
+    # report a pass without ever observing the writes it exists to forbid.
+    metadata_path = index_meta_path(root, PublicSourceType.VAULT)
     metadata = metadata_path.read_bytes() if metadata_path.exists() else None
     metadata_mtime = (
         metadata_path.stat().st_mtime_ns if metadata_path.exists() else None
@@ -521,7 +524,8 @@ async def request_cancel_at_the_write_gate(
 async def assert_cancel_wins_at_the_write_gate(
     manager: JobManager,
     cancelled_id: str,
-    slot: ProjectSlot,
+    registry: ServiceRegistry,
+    root: Path,
 ) -> None:
     joined = await manager.wait_for_attempt(
         cancelled_id,
@@ -539,8 +543,9 @@ async def assert_cancel_wins_at_the_write_gate(
     # persisted.
     assert cancelled.error_kind is None
     assert cancelled.result is None
+    slot = registry.peek_project(root)
     assert slot.store.count_code() == 0
-    _assert_manager_resources_released(cancelled, slot, code=True)
+    _assert_manager_resources_released(cancelled, registry, root, code=True)
 
 
 @pytest.fixture(scope="module")
@@ -647,16 +652,26 @@ def assert_current_code_state(
 
 
 def _wait_for_clean_vault_publication(
-    token: RunControlToken, store: VaultStore
+    token: RunControlToken, store: VaultStore, served_count: int
 ) -> None:
+    """Wait for the protected span, with every served point still readable.
+
+    A clean rebuild replaces in place: it upserts over the live points and
+    purges what the new corpus no longer holds only once the stream has
+    proved the replacement whole. So the collection is never emptied, and
+    waiting for an empty one waits forever. Requiring the served count
+    instead binds that promise - reinstating an up-front drop takes the
+    count to zero here and this never returns.
+    """
     deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
     while time.monotonic() < deadline:
         state = token.snapshot()
-        if state.protected_depth == 1 and store.count() == 0:
+        if state.protected_depth == 1 and store.count() == served_count:
             return
         time.sleep(_CONTROL_POLL_SECONDS)
     raise AssertionError(
-        "clean rebuild did not reach its protected empty-collection span"
+        "clean rebuild did not reach its protected span with the served "
+        f"points intact: count={store.count()}, expected {served_count}"
     )
 
 
@@ -665,6 +680,7 @@ def pause_clean_vault_rebuild(
     store: VaultStore,
     token: RunControlToken,
     gpu_lock: threading.Lock,
+    served_count: int,
 ) -> None:
     with ThreadPoolExecutor(max_workers=1) as executor:
         gpu_lock.acquire()
@@ -675,7 +691,7 @@ def pause_clean_vault_rebuild(
                 reporter=NullProgressReporter(),
                 run_control=token,
             )
-            _wait_for_clean_vault_publication(token, store)
+            _wait_for_clean_vault_publication(token, store, served_count)
             assert token.request_pause()
             pending = token.snapshot()
             assert pending.desired is ControlRequest.PAUSE

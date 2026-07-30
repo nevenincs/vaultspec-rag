@@ -61,25 +61,12 @@ def _configure_cpu_code_index(
 def cpu_code_embedding_model(clean_config: None) -> EmbeddingModel:
     """Build the production embedding API around a real CPU BoW encoder."""
     del clean_config
-    from sentence_transformers.sentence_transformer import SentenceTransformer
-    from sentence_transformers.sentence_transformer.modules import BoW
+    from ._helpers import cpu_backed_embedding_model
 
-    from ...embeddings import EmbeddingModel, QueryEmbeddingCache
-
-    backend = SentenceTransformer(
-        modules=[BoW(["alpha", "beta", "gamma", "index", "memory"])],
-        device="cpu",
+    return cpu_backed_embedding_model(
+        ["alpha", "beta", "gamma", "index", "memory"],
+        _configure_cpu_code_index,
     )
-    dimension = backend.get_embedding_dimension()
-    assert dimension is not None
-    _configure_cpu_code_index(dimension)
-
-    model = EmbeddingModel.__new__(EmbeddingModel)
-    model._dense_model = backend
-    model._device = "cpu"
-    model.dimension = dimension
-    model.query_cache = QueryEmbeddingCache()
-    return model
 
 
 def _write_code_memory_corpus(root: Path, count: int = 4) -> None:
@@ -233,7 +220,7 @@ class TestLargeCodeIndexHighWater:
         two_n_resources = two_n_run.resources
         n_chunks = n_run.result.total
         two_n_chunks = two_n_run.result.total
-        growth_allowance_mb = {
+        growth_allowance_mib = {
             "rss": 512.0,
             "cuda_allocated": 256.0,
             "cuda_reserved": 512.0,
@@ -242,25 +229,25 @@ class TestLargeCodeIndexHighWater:
         mib = 1024**2
         checks = {
             "chunk_count_doubled": two_n_chunks == n_chunks * 2,
-            "rss_growth_bounded": two_n_resources.rss_growth_mb
-            <= n_resources.rss_growth_mb + growth_allowance_mb["rss"],
+            "rss_growth_bounded": two_n_resources.rss_growth_mib
+            <= n_resources.rss_growth_mib + growth_allowance_mib["rss"],
             "cuda_allocated_growth_bounded": (
-                two_n_resources.cuda_allocated_growth_mb
-                <= n_resources.cuda_allocated_growth_mb
-                + growth_allowance_mb["cuda_allocated"]
+                two_n_resources.cuda_allocated_growth_mib
+                <= n_resources.cuda_allocated_growth_mib
+                + growth_allowance_mib["cuda_allocated"]
             ),
             "cuda_reserved_growth_bounded": (
-                two_n_resources.cuda_reserved_growth_mb
-                <= n_resources.cuda_reserved_growth_mb
-                + growth_allowance_mb["cuda_reserved"]
+                two_n_resources.cuda_reserved_growth_mib
+                <= n_resources.cuda_reserved_growth_mib
+                + growth_allowance_mib["cuda_reserved"]
             ),
-            "n_rss_within_profile": n_resources.peak_rss_mb * mib <= limits.rss_bytes,
-            "two_n_rss_within_profile": two_n_resources.peak_rss_mb * mib
+            "n_rss_within_profile": n_resources.peak_rss_mib * mib <= limits.rss_bytes,
+            "two_n_rss_within_profile": two_n_resources.peak_rss_mib * mib
             <= limits.rss_bytes,
-            "n_cuda_within_profile": n_resources.peak_cuda_reserved_mb * mib
+            "n_cuda_within_profile": n_resources.peak_cuda_reserved_mib * mib
             <= limits.cuda_bytes,
             "two_n_cuda_within_profile": (
-                two_n_resources.peak_cuda_reserved_mb * mib <= limits.cuda_bytes
+                two_n_resources.peak_cuda_reserved_mib * mib <= limits.cuda_bytes
             ),
         }
         retain_benchmark_evidence(
@@ -278,8 +265,8 @@ class TestLargeCodeIndexHighWater:
                     "wall_seconds": two_n_run.wall_seconds,
                     "resources": asdict(two_n_resources),
                 },
-                "growth_allowance_mb": growth_allowance_mb,
-                "profile_ceilings_mb": {
+                "growth_allowance_mib": growth_allowance_mib,
+                "profile_ceilings_mib": {
                     "rss": limits.rss_bytes / mib,
                     "cuda_reserved": limits.cuda_bytes / mib,
                 },
@@ -293,16 +280,17 @@ class TestLargeCodeIndexHighWater:
         # allocator to its next block, but cannot retain corpus-proportional
         # process or device memory.
         assert checks["rss_growth_bounded"]
-        assert two_n_resources.cuda_allocated_growth_mb <= (
-            n_resources.cuda_allocated_growth_mb + growth_allowance_mb["cuda_allocated"]
+        assert two_n_resources.cuda_allocated_growth_mib <= (
+            n_resources.cuda_allocated_growth_mib
+            + growth_allowance_mib["cuda_allocated"]
         )
-        assert two_n_resources.cuda_reserved_growth_mb <= (
-            n_resources.cuda_reserved_growth_mb + growth_allowance_mb["cuda_reserved"]
+        assert two_n_resources.cuda_reserved_growth_mib <= (
+            n_resources.cuda_reserved_growth_mib + growth_allowance_mib["cuda_reserved"]
         )
 
         for resources in (n_resources, two_n_resources):
-            assert resources.peak_rss_mb * mib <= limits.rss_bytes
-            assert resources.peak_cuda_reserved_mb * mib <= limits.cuda_bytes
+            assert resources.peak_rss_mib * mib <= limits.rss_bytes
+            assert resources.peak_cuda_reserved_mib * mib <= limits.cuda_bytes
 
 
 class TestCodeIndexMemoryCeilings:
@@ -321,7 +309,7 @@ class TestCodeIndexMemoryCeilings:
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
-            index_rss_ceiling_mb=1.0,
+            index_rss_ceiling_mib=1.0,
         )
         _write_code_memory_corpus(tmp_path)
 
@@ -341,13 +329,13 @@ class TestCodeIndexMemoryCeilings:
             assert snapshot is not None
             assert snapshot.label == "before code dispatch"
             assert snapshot.rss_available
-            rss_ceiling_mb = snapshot.rss_ceiling_mb
-            assert rss_ceiling_mb is not None
-            assert rss_ceiling_mb == 1.0
-            assert snapshot.peak_rss_mb > rss_ceiling_mb
+            rss_ceiling_mib = snapshot.rss_ceiling_mib
+            assert rss_ceiling_mib is not None
+            assert rss_ceiling_mib == 1.0
+            assert snapshot.peak_rss_mib > rss_ceiling_mib
             resilience = _code_resilience(indexer)
-            assert resilience.rss_ceiling_mb == rss_ceiling_mb
-            assert resilience.peak_rss_mb == snapshot.peak_rss_mb
+            assert resilience.rss_ceiling_mib == rss_ceiling_mib
+            assert resilience.peak_rss_mib == snapshot.peak_rss_mib
             assert store.count_code() == 0
             _assert_code_pipeline_released(indexer)
 
@@ -381,32 +369,32 @@ class TestCodeIndexMemoryCeilings:
         from ...config._settings import get_config
         from ...job_dispatch import _code_resilience
         from ...memory_probe import (
-            current_cuda_mb,
-            current_rss_mb,
+            current_cuda_mib,
+            current_rss_mib,
             sample_resident_cuda_baseline,
         )
         from ...store_runtime import VaultStore
 
         # The same call production makes once each shared model finishes
         # loading; the fixture above loaded one.
-        baseline_mb = sample_resident_cuda_baseline()
-        assert baseline_mb > 0.0, (
+        baseline_mib = sample_resident_cuda_baseline()
+        assert baseline_mib > 0.0, (
             "premise: the embedding model must be resident on the device"
         )
         # Stated because the whole guard rests on it, and because its absence is
         # otherwise unreadable: enforcement clamps the peak net of this figure at
         # zero, so a baseline describing memory already released puts every
         # ceiling out of reach and this test fails with a bare DID NOT RAISE.
-        assert baseline_mb == pytest.approx(current_cuda_mb()[0], abs=1.0), (
+        assert baseline_mib == pytest.approx(current_cuda_mib()[0], abs=1.0), (
             "premise: the recorded baseline must describe memory still resident"
         )
         # Positive headroom, so admission admits the run; small enough that the
         # first real forward's activations cross it.
-        ceiling_mb = baseline_mb + 0.001
+        ceiling_mib = baseline_mib + 0.001
         get_config(
             {
-                "index_cuda_ceiling_mb": ceiling_mb,
-                "index_rss_ceiling_mb": current_rss_mb() + 1024.0,
+                "index_cuda_ceiling_mib": ceiling_mib,
+                "index_rss_ceiling_mib": current_rss_mib() + 1024.0,
             }
         )
         _write_code_memory_corpus(tmp_path)
@@ -424,17 +412,19 @@ class TestCodeIndexMemoryCeilings:
             assert snapshot is not None
             assert "after-dense-forward" in snapshot.label
             assert snapshot.cuda_available
-            cuda_ceiling_mb = snapshot.cuda_ceiling_mb
-            assert cuda_ceiling_mb is not None
-            assert cuda_ceiling_mb == ceiling_mb
+            cuda_ceiling_mib = snapshot.cuda_ceiling_mib
+            assert cuda_ceiling_mib is not None
+            assert cuda_ceiling_mib == ceiling_mib
             # The captured forward peak is what the ceiling governs; reserved
             # rides above it as a diagnostic the comparison never reads.
-            assert snapshot.peak_cuda_allocated_mb > cuda_ceiling_mb
-            assert snapshot.peak_cuda_reserved_mb >= snapshot.peak_cuda_allocated_mb
+            assert snapshot.peak_cuda_allocated_mib > cuda_ceiling_mib
+            assert snapshot.peak_cuda_reserved_mib >= snapshot.peak_cuda_allocated_mib
             resilience = _code_resilience(indexer)
-            assert resilience.cuda_ceiling_mb == cuda_ceiling_mb
-            assert resilience.peak_cuda_allocated_mb == snapshot.peak_cuda_allocated_mb
-            assert resilience.peak_cuda_reserved_mb == snapshot.peak_cuda_reserved_mb
+            assert resilience.cuda_ceiling_mib == cuda_ceiling_mib
+            assert (
+                resilience.peak_cuda_allocated_mib == snapshot.peak_cuda_allocated_mib
+            )
+            assert resilience.peak_cuda_reserved_mib == snapshot.peak_cuda_reserved_mib
             assert store.count_code() == 0
             _assert_code_pipeline_released(indexer)
 
@@ -533,7 +523,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
-            index_rss_ceiling_mb=4096.0,
+            index_rss_ceiling_mib=4096.0,
         )
         source = tmp_path / "bounded.txt"
         source.write_text("alpha beta document memory", encoding="utf-8")
@@ -557,16 +547,16 @@ class TestDocumentIndexMemoryAndWriteDeadline:
             assert result.total > 0
             snapshot = indexer.memory_budget_snapshot
             assert snapshot is not None
-            assert snapshot.peak_rss_mb > 0.0
-            assert snapshot.rss_ceiling_mb == min(
+            assert snapshot.peak_rss_mib > 0.0
+            assert snapshot.rss_ceiling_mib == min(
                 4096.0,
                 indexer._support_limits().rss_bytes / 1024**2,
             )
             resilience = _document_resilience(indexer)
-            assert resilience.peak_rss_mb == snapshot.peak_rss_mb
-            assert resilience.peak_cuda_allocated_mb == 0.0
-            assert resilience.peak_cuda_reserved_mb == 0.0
-            assert resilience.rss_ceiling_mb == snapshot.rss_ceiling_mb
+            assert resilience.peak_rss_mib == snapshot.peak_rss_mib
+            assert resilience.peak_cuda_allocated_mib == 0.0
+            assert resilience.peak_cuda_reserved_mib == 0.0
+            assert resilience.rss_ceiling_mib == snapshot.rss_ceiling_mib
             assert resilience.support_profile == get_config().index_support_profile
 
     @pytest.mark.timeout(30)
@@ -582,7 +572,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
-            index_rss_ceiling_mb=1.0,
+            index_rss_ceiling_mib=1.0,
         )
         source = tmp_path / "limited.txt"
         source.write_text("alpha beta document ceiling", encoding="utf-8")
@@ -607,10 +597,10 @@ class TestDocumentIndexMemoryAndWriteDeadline:
             assert stopped.value.error_kind is JobErrorKind.RSS_MEMORY_CEILING
             snapshot = indexer.memory_budget_snapshot
             assert snapshot is not None
-            assert snapshot.peak_rss_mb > 1.0
+            assert snapshot.peak_rss_mib > 1.0
             resilience = _document_resilience(indexer)
-            assert resilience.peak_rss_mb == snapshot.peak_rss_mb
-            assert resilience.rss_ceiling_mb == snapshot.rss_ceiling_mb == 1.0
+            assert resilience.peak_rss_mib == snapshot.peak_rss_mib
+            assert resilience.rss_ceiling_mib == snapshot.rss_ceiling_mib == 1.0
             assert resilience.terminal_outcome == "failed"
             assert store.count_document() == 0
 
@@ -1123,11 +1113,11 @@ class TestNoCudaHeadroomRefusedAtAdmission:
         # Production records the baseline after each shared model finishes
         # loading; the fixture above loaded one, so this is that same call
         # rather than a figure invented here.
-        baseline_mb = sample_resident_cuda_baseline()
-        assert baseline_mb > 0.0, (
+        baseline_mib = sample_resident_cuda_baseline()
+        assert baseline_mib > 0.0, (
             "premise: the embedding model must be resident on the device"
         )
-        get_config({"index_cuda_ceiling_mb": baseline_mb})
+        get_config({"index_cuda_ceiling_mib": baseline_mib})
         _write_code_memory_corpus(tmp_path)
 
         with VaultStore(tmp_path, embedding_dim=embedding_model.dimension) as store:

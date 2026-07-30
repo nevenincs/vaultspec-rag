@@ -9,7 +9,7 @@ from . import store_schema
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from contextlib import AbstractContextManager
 
     from qdrant_client import QdrantClient
@@ -353,6 +353,46 @@ class _VaultCollectionMixin:
             # stamp that creation wrote, not against a half-built state.
             self._verify_conformance(collection)
             self._ensured[collection] = True
+
+    def _reconcile_for_read(self, collection: str, ensure: Callable[[], None]) -> bool:
+        """Return whether *collection* is there, reconciling it, creating nothing.
+
+        The contract every read that pushes a filter down through a declared
+        payload index is held to.
+
+        A read never creates the collection it failed to find. An absent
+        collection has nothing to answer with, and materialising one as a side
+        effect of a read would put a second owner on it: the handle a read runs
+        through need not be the handle an index run writes through, and two
+        handles carry their own lifecycle lock and their own ensure latch, so
+        neither serialises against the other and both would issue the create.
+        Creation belongs to the index path, the only caller that must have the
+        collection before it can proceed. It also keeps the answer honest - a
+        fabricated empty collection reads downstream as an index that exists
+        and holds nothing, rather than as no index at all.
+
+        A collection that IS there still goes through *ensure*, because that is
+        what applies a newly declared payload index to data indexed before the
+        declaration. Dropping it would leave the filter this read is about to
+        push down doing a linear scan for the life of the collection, with
+        nothing to report it. The ensure latch gates the existence probe, so the
+        extra round trip is paid once per store open per collection rather than
+        once per call.
+
+        Args:
+            collection: The collection about to be read.
+            ensure: The entry point that reconciles *collection* to its
+                declared schema.
+
+        Returns:
+            Whether the collection exists and has been reconciled.
+        """
+        if not self._ensured.get(collection) and not self._collection_exists(
+            collection
+        ):
+            return False
+        ensure()
+        return True
 
     def _live_dense_dim(self, collection: str) -> int | None:
         """Return the live collection's dense width, or ``None`` if unreadable.

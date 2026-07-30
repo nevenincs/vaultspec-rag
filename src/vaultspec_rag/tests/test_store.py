@@ -746,6 +746,285 @@ class TestDropTable:
             store.close()
 
 
+class TestCountsCreateNothing:
+    """Counting an absent collection answers zero and leaves it absent.
+
+    Creation belongs to the index path alone. A count runs on whatever handle
+    its caller holds - including a handle opened alongside the one an index run
+    writes through, with its own lifecycle lock and ensure latch - so a
+    creating count gives the collection a second owner, and two owners that
+    each find it absent each issue the create. It also fabricates an empty
+    collection where the honest answer is that no index exists.
+    """
+
+    @pytest.mark.parametrize(
+        ("count_attr", "collection_attr"),
+        [
+            ("count", "TABLE_NAME"),
+            ("count_code", "CODE_TABLE_NAME"),
+            ("count_document", "DOCUMENT_TABLE_NAME"),
+        ],
+        ids=["vault", "code", "document"],
+    )
+    def test_counting_an_unindexed_root_creates_no_collection(
+        self,
+        tmp_path: Path,
+        count_attr: str,
+        collection_attr: str,
+    ) -> None:
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            collection = getattr(store, collection_attr)
+            assert not store.client.collection_exists(collection)
+
+            counted: object = getattr(store, count_attr)()
+
+            assert counted == 0
+            assert not store.client.collection_exists(collection), (
+                f"{count_attr}() created {collection}; counting must not create"
+            )
+        finally:
+            store.close()
+
+
+# Annotated rather than inferred so each lambda's parameter has a declared
+# type; strict mode rejects a bare lambda in a parametrize list.
+_CATALOG_READS: list[tuple[Callable[[VaultStore], object], object, str]] = [
+    (lambda s: s.get_chunk_counts(), {}, "TABLE_NAME"),
+    (lambda s: s.get_stored_chunk_ordinals({"adr/absent"}), {}, "TABLE_NAME"),
+    (lambda s: s.list_all_documents(), [], "TABLE_NAME"),
+    (lambda s: s.scroll_code_content(), ([], None), "CODE_TABLE_NAME"),
+    (lambda s: s.scroll_document_content(), ([], None), "DOCUMENT_TABLE_NAME"),
+    (lambda s: s.code_content_ids_exist(["absent"]), False, "CODE_TABLE_NAME"),
+    (lambda s: s.document_content_ids_exist(["absent"]), False, "DOCUMENT_TABLE_NAME"),
+    (lambda s: s.get_all_document_content_ids(), set(), "DOCUMENT_TABLE_NAME"),
+]
+
+#: The subset that pushes a filter down through a declared payload index, so
+#: the schema reconcile must survive the non-creating guard.
+_FILTERED_CATALOG_READS: list[tuple[Callable[[VaultStore], object], str, str]] = [
+    (lambda s: s.get_chunk_counts(), "TABLE_NAME", "ensure_table"),
+    (lambda s: s.list_all_documents(), "TABLE_NAME", "ensure_table"),
+    (lambda s: s.scroll_code_content(), "CODE_TABLE_NAME", "ensure_code_table"),
+]
+
+
+class TestReadsCreateNothing:
+    """Reading an absent collection answers empty and leaves it absent.
+
+    The contract counting already holds, extended to the reads that share its
+    shape. A read runs on whatever handle its caller holds, which need not be
+    the handle the index run writes through, and two handles each carry their
+    own lifecycle lock and their own ensure latch - so a read that created the
+    name it failed to find would give the collection a second owner, and both
+    owners would find it absent and both would issue the create.
+    """
+
+    _DIM = 8
+
+    def test_reading_an_unindexed_root_creates_no_collection(
+        self, tmp_path: Path
+    ) -> None:
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            assert not store.client.collection_exists(store.TABLE_NAME)
+
+            assert store.get_all_ids() == set()
+            assert not store.client.collection_exists(store.TABLE_NAME), (
+                f"get_all_ids() created {store.TABLE_NAME}; a read must not create"
+            )
+
+            assert store.get_by_id("adr/nothing-was-ever-indexed") is None
+            assert not store.client.collection_exists(store.TABLE_NAME), (
+                f"get_by_id() created {store.TABLE_NAME}; a read must not create"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        ("read", "empty", "collection_attr"),
+        _CATALOG_READS,
+        ids=[
+            "get_chunk_counts",
+            "get_stored_chunk_ordinals",
+            "list_all_documents",
+            "scroll_code_content",
+            "scroll_document_content",
+            "code_content_ids_exist",
+            "document_content_ids_exist",
+            "get_all_document_content_ids",
+        ],
+    )
+    def test_every_catalog_read_of_an_unindexed_root_creates_no_collection(
+        self,
+        tmp_path: Path,
+        read: Callable[[VaultStore], object],
+        empty: object,
+        collection_attr: str,
+    ) -> None:
+        """Every catalog read answers for an absent collection, creating none.
+
+        One proof for the whole family rather than eight near-identical ones:
+        they differ only in which collection they address and what their empty
+        answer looks like, and the contract under test is the same sentence for
+        all of them.
+        """
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            collection = getattr(store, collection_attr)
+            assert not store.client.collection_exists(collection)
+
+            assert read(store) == empty
+            assert not store.client.collection_exists(collection), (
+                f"a catalog read created {collection}; a read must not create"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        ("read", "collection_attr", "ensure_attr"),
+        _FILTERED_CATALOG_READS,
+        ids=["get_chunk_counts", "list_all_documents", "scroll_code_content"],
+    )
+    def test_a_filtered_catalog_read_still_reconciles_an_existing_collection(
+        self,
+        tmp_path: Path,
+        read: Callable[[VaultStore], object],
+        collection_attr: str,
+        ensure_attr: str,
+    ) -> None:
+        """A read that pushes a filter down keeps its schema reconcile.
+
+        These three address their collection through a payload-indexed field -
+        ``doc_id``, ``chunk_ordinal``/``doc_type``, ``path`` - so the reconcile
+        is what applies a newly declared index to data indexed before the
+        declaration. Dropping it alongside the create would leave the filter
+        doing a linear scan for the life of the collection with nothing to
+        report it. The guard must skip creation, not the reconcile.
+        """
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            collection = getattr(store, collection_attr)
+            store._ensure_collection(collection)
+            assert store.client.collection_exists(collection)
+            assert not store._ensured.get(collection)
+
+            read(store)
+
+            assert store._ensured.get(collection), (
+                f"reading {collection} skipped the ensure; a newly declared "
+                f"payload index would never reach it ({ensure_attr})"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        ("search_attr", "collection_attr"),
+        [
+            ("hybrid_search", "TABLE_NAME"),
+            ("hybrid_search_codebase", "CODE_TABLE_NAME"),
+            ("hybrid_search_document", "DOCUMENT_TABLE_NAME"),
+        ],
+        ids=["vault", "code", "document"],
+    )
+    def test_searching_an_unindexed_root_creates_no_collection(
+        self,
+        tmp_path: Path,
+        search_attr: str,
+        collection_attr: str,
+    ) -> None:
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path, embedding_dim=self._DIM)
+        try:
+            collection = getattr(store, collection_attr)
+            assert not store.client.collection_exists(collection)
+
+            rows = getattr(store, search_attr)(
+                HybridSearchRequest(
+                    query_vector=[0.1] * self._DIM,
+                    query_text="a query against a root nobody indexed",
+                )
+            )
+
+            assert rows == []
+            assert not store.client.collection_exists(collection), (
+                f"{search_attr}() created {collection}; a search must not create"
+            )
+        finally:
+            store.close()
+
+    def test_feedback_anchor_on_an_unindexed_root_creates_no_collection(
+        self, tmp_path: Path
+    ) -> None:
+        """A like/unlike search resolves its anchor without creating anything.
+
+        The anchor probe is the first thing a feedback search touches, so it
+        is the site that would create the collection. Asserted against the
+        resolver rather than through ``hybrid_search``: were the probe to
+        create, the query behind it would then reach a real empty collection
+        and raise on the missing recommend point, so the creation would land
+        as an unrelated error instead of on the assertion naming it.
+        """
+        from ..store_runtime import VaultStore
+
+        doc_id = "adr/nothing-was-ever-indexed"
+        store = VaultStore(tmp_path, embedding_dim=self._DIM)
+        try:
+            assert not store.client.collection_exists(store.TABLE_NAME)
+
+            anchor = store._resolve_vault_feedback_id(doc_id)
+
+            assert anchor == store._stable_id(f"{doc_id}#c0")
+            assert not store.client.collection_exists(store.TABLE_NAME), (
+                f"resolving a feedback anchor created {store.TABLE_NAME}; "
+                "a search must not create"
+            )
+        finally:
+            store.close()
+
+    def test_searching_an_existing_collection_still_reconciles_its_schema(
+        self, tmp_path: Path
+    ) -> None:
+        """A collection that IS there still goes through the ensure.
+
+        The ensure is what applies a newly declared payload index to data
+        indexed before the declaration, and a search-only store over an
+        already-indexed root is the one caller that would otherwise never
+        apply it. The guard must skip creation, not the reconcile.
+        """
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path, embedding_dim=self._DIM)
+        try:
+            store._ensure_collection(store.CODE_TABLE_NAME)
+            assert store.client.collection_exists(store.CODE_TABLE_NAME)
+            assert not store._ensured.get(store.CODE_TABLE_NAME)
+
+            rows = store.hybrid_search_codebase(
+                HybridSearchRequest(
+                    query_vector=[0.1] * self._DIM,
+                    query_text="a query against a collection that exists",
+                )
+            )
+
+            assert rows == []
+            assert store._ensured.get(store.CODE_TABLE_NAME), (
+                f"searching {store.CODE_TABLE_NAME} skipped the ensure; a newly "
+                "declared payload index would never reach an existing collection"
+            )
+        finally:
+            store.close()
+
+
 class TestServerModeNamespacing:
     """Per-root collection namespacing in server mode.
 

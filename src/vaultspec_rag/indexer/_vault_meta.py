@@ -24,6 +24,7 @@ from typing import Final
 
 __all__ = [
     "VAULT_CONTENT_EPOCH_KEY",
+    "VAULT_FINGERPRINT_SCHEME_KEY",
     "VAULT_POINT_SCHEMA",
     "VAULT_POINT_SCHEMA_KEY",
 ]
@@ -37,6 +38,14 @@ VAULT_POINT_SCHEMA: Final = "2"
 #: Reserved key carrying the layout version inside the hash-metadata sidecar.
 #: Never collides with document ids, which are relative paths.
 VAULT_POINT_SCHEMA_KEY: Final = "__vault_point_schema__"
+
+#: Reserved key carrying the scheme the sidecar's per-document fingerprints
+#: were written under. A sidecar predating the split fingerprint carries bare
+#: raw-file digests and no such key; the difference is recognised rather than
+#: misread, so the migration run can say so once instead of silently deciding
+#: that every document changed. Entries carry their own scheme tag as well, so
+#: this key is the sidecar's summary of them and never their authority.
+VAULT_FINGERPRINT_SCHEME_KEY: Final = "__vault_fingerprint_scheme__"
 
 #: Reserved key carrying the content epoch over ``vault_chunk_chars``. A
 #: mismatch means the chunk boundary changed, so every document re-chunks with

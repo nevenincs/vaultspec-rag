@@ -23,6 +23,7 @@ from ..jobs import (
     reset,
     snapshot,
 )
+from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
 from ._jobs_restore_helpers import job_recorded_by_a_now_dead_process
 
@@ -184,7 +185,11 @@ class TestJobStallShaping:
     """The /jobs shaping computes the service-domain ``stalled`` flag."""
 
     def _paused_canonical_record(self) -> dict[str, object]:
-        manager = JobManager(max_nonterminal=2, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=None,
+        )
         created = manager.create(
             JobSpec(
                 JobOperation.INDEX,
@@ -399,7 +404,11 @@ class TestJobStallShaping:
 def test_index_job_status_reports_latest_generation_and_degradation(
     tmp_path: Path,
 ) -> None:
-    manager = JobManager(max_nonterminal=3, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=3,
+        state_path=None,
+    )
     initiator = JobInitiator("service", "status coverage", str(tmp_path))
     created = {
         source: manager.create(

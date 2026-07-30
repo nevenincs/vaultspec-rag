@@ -140,7 +140,7 @@ class TestPerformance:
     # -- Resource tests --
 
     def test_store_disk_footprint(self, rag_components_full: RagComponentsWithManifest):
-        """The Qdrant data directory should be under 50MB for the full corpus."""
+        """The Qdrant data directory should be under 50MiB for the full corpus."""
         from ...config._settings import get_config
 
         cfg = get_config()
@@ -149,9 +149,11 @@ class TestPerformance:
         assert db_dir.exists(), f"db_dir does not exist: {db_dir}"
 
         total_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
-        total_mb = total_bytes / (1024 * 1024)
+        total_mib = total_bytes / (1024 * 1024)
 
-        assert total_mb < 50, f"Qdrant directory is {total_mb:.1f}MB, expected < 50MB"
+        assert total_mib < 50, (
+            f"Qdrant directory is {total_mib:.1f}MiB, expected < 50MiB"
+        )
 
     def test_index_result_has_timing(self, rag_components: RagComponentsWithManifest):
         """IndexResult should report valid timing metadata."""
@@ -314,18 +316,18 @@ class TestPerformance:
                 wall_seconds = time.perf_counter() - start
                 probe.checkpoint("after-index")
 
-            baseline_mb: float = probe.samples[0].rss_mb
-            delta_mb: float = probe.peak_rss_mb - baseline_mb
+            baseline_mib: float = probe.samples[0].rss_mib
+            delta_mib: float = probe.peak_rss_mib - baseline_mib
             assert result.added >= 120, (
                 f"Expected ~135 docs indexed, got {result.added}"
             )
-            # Memory ceiling: +4 GB from baseline. Empirical
-            # measurement after the wall-clock fix is ~850 MB
-            # delta on RTX 4080 SUPER; 4 GB leaves >4x headroom.
-            assert delta_mb < 4 * 1024, (
-                f"Peak RSS grew by {delta_mb:.0f}MB during full_index "
-                f"(baseline={baseline_mb:.0f}MB, "
-                f"peak={probe.peak_rss_mb:.0f}MB) - regression of #68 "
+            # Memory ceiling: +4 GiB from baseline. Empirical
+            # measurement after the wall-clock fix is ~850 MiB
+            # delta on RTX 4080 SUPER; 4 GiB leaves >4x headroom.
+            assert delta_mib < 4 * 1024, (
+                f"Peak RSS grew by {delta_mib:.0f}MiB during full_index "
+                f"(baseline={baseline_mib:.0f}MiB, "
+                f"peak={probe.peak_rss_mib:.0f}MiB) - regression of #68 "
                 f"memory fix. Report:\n{probe.report()}"
             )
             # Wall-clock ceiling: <30 s for 135 docs. Empirical

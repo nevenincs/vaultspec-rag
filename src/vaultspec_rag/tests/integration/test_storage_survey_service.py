@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from ..._store_models import root_collection_prefix
+from ...jobs import count
 from ...serviceclient._transport import _do_http_call, _try_http_admin
 
 if TYPE_CHECKING:
@@ -66,8 +67,11 @@ def test_storage_survey_route_returns_bounded_envelope(
     assert isinstance(result.get("namespaces"), list)
     assert "returned" in result
     assert "total" in result
-    limit = result.get("limit")
-    assert isinstance(limit, int)
+    # Routed through the canonical reader because a bare int assert admitted
+    # exactly the value it existed to reject: isinstance(True, int) and
+    # True > 0 both hold, so a published ``limit: True`` passed the pin.
+    limit = count(result.get("limit"))
+    assert limit is not None
     assert limit > 0
 
 

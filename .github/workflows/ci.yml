@@ -248,6 +248,16 @@ jobs:
     # single-test runs; trigger a full tier run on demand with
     # `gh workflow run CI` / the Actions "Run workflow" button.
     #
+    # Contention is now guarded, not just deferred: the "Verify GPU admission"
+    # step below reads the device's admission state, which subsumes the plain
+    # CUDA-visibility check it replaces (an unadmitted device is never a
+    # visible one), and refuses (non-zero exit, job fails fast) when the card
+    # is contended, absent, or torch-free, instead of proceeding to load
+    # models onto a card another process already holds. This does not make
+    # the shared card free - a refusal still means re-run once the other
+    # tenant releases it - it only stops this job from piling on top of
+    # existing load.
+    #
     # SECURITY (public repo, self-hosted runner on a real workstation): running
     # arbitrary code here is RCE on the host. workflow_dispatch requires write
     # access, so a fork PR can never start this job; the hosted tiers above run
@@ -293,8 +303,8 @@ jobs:
       - name: Install dependencies
         run: just deps sync
 
-      - name: Verify CUDA is visible to the runner
-        run: uv run --no-sync python -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable on GPU runner'; print(torch.cuda.get_device_name(0))"
+      - name: Verify GPU admission
+        run: uv run --no-sync vaultspec-rag server preflight
 
       - name: Provision Qdrant server binary
         run: uv run --no-sync vaultspec-rag server qdrant install

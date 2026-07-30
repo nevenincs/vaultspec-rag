@@ -30,7 +30,6 @@ from .watcher_retry import (
 
 if TYPE_CHECKING:
     from .graph_cache import GraphCache
-    from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from .indexer._codebase_indexer import CodeExecutionPreflight
     from .indexer._document_indexer import DocumentExecutionPreflight
     from .indexer._resolved_policy import ResolvedIndexPolicy
@@ -124,11 +123,8 @@ class WatcherConfiguration:
 
     root_dir: Path
     vault_dir: Path
-    vault_indexer: VaultIndexer
-    code_indexer: CodebaseIndexer
     stop_event: asyncio.Event
     graph_cache: GraphCache
-    document_indexer: DocumentIndexer | None = None
     debounce: int = 2000
     cooldown: float = 30.0
     registry: ServiceRegistry | None = None
@@ -262,7 +258,7 @@ def sync_legacy_snapshot(
             result=snapshot.result,
             phase="cancelled",
         )
-    elif snapshot.state in {JobState.PAUSED, JobState.QUEUED}:
+    elif snapshot.state.is_idle:
         _jobs.record_progress(snapshot.id, snapshot.state.value)
 
 
@@ -392,6 +388,23 @@ def _log_managed_transition(
             logger,
             "service.watcher",
             "coalesced_job_completed",
+            source=slot.source.value,
+            job_id=snapshot.id,
+            pending_paths=context.pending_count,
+        )
+    elif snapshot.state is JobState.SUPERSEDED:
+        # A newer job replaced this one, which is routine on a watcher that
+        # coalesces work: worth surfacing, because it tells an operator
+        # coalescing happened, but neither a failure nor progress. Reporting it
+        # on the error channel would be backwards - the replacing work is the
+        # one that ran - and it would put a routine resolution in the place an
+        # operator greps for failures that still need attention. Filing it
+        # under the progress event would be its own lie, since the state is
+        # terminal. It gets an outcome event of its own at ordinary severity.
+        log_event(
+            logger,
+            "service.watcher",
+            "reindex_superseded",
             source=slot.source.value,
             job_id=snapshot.id,
             pending_paths=context.pending_count,

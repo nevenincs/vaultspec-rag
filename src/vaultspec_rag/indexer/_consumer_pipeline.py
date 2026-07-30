@@ -36,13 +36,13 @@ from ._run_ledger_models import RunOperation
 from ._streaming import (
     CodeFileSegmentRequest,
     CodeSliceRequest,
-    _EncodeBucketReporter,
+    EncodeBucketReporter,
     _release_cuda_cache,
-    _report_forward_entry,
-    _report_forward_exit,
     encode_and_upsert_code_slice,
     iter_code_file_segments,
     iter_weighted_code_slices,
+    report_forward_entry,
+    report_forward_exit,
 )
 
 if TYPE_CHECKING:
@@ -492,6 +492,7 @@ class CodeConsumerPipeline:
                 consumer_exceptions=consumer_run.consumer_exceptions,
                 on_wait=self._sample_memory_budget,
                 run_control=run_control,
+                run_policy=(checkpoint.run_policy if checkpoint is not None else None),
             ),
         )
 
@@ -560,14 +561,14 @@ class CodeConsumerPipeline:
                 else None
             )
             before_forward = partial(
-                _report_forward_entry,
+                report_forward_entry,
                 consumer_run.reporter,
                 slice_index,
                 slice_items,
             )
 
             def _after_forward(kind: str) -> None:
-                _report_forward_exit(
+                report_forward_exit(
                     consumer_run.reporter,
                     slice_index,
                     slice_items,
@@ -609,7 +610,7 @@ class CodeConsumerPipeline:
                         on_storage_confirmed=on_storage_confirmed,
                         before_forward=before_forward,
                         after_forward=_after_forward,
-                        on_encode_bucket=_EncodeBucketReporter(
+                        on_encode_bucket=EncodeBucketReporter(
                             consumer_run.reporter,
                             slice_index,
                             slice_items,

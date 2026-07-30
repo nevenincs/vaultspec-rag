@@ -16,7 +16,7 @@ from .._operator_commands import server_status_command
 from ..jobs import count, measurement
 from ._cli_format import (
     _counted_unit,
-    _format_mb,
+    _format_mib,
     _format_milliseconds,
     _format_seconds,
     _path_label,
@@ -72,12 +72,12 @@ def _resource_summary(job: dict[str, object]) -> str:
     if snapshot is None:
         return ""
     parts: list[str] = []
-    if "rss_mb" in snapshot:
-        parts.append(f"process {_format_mb(snapshot.get('rss_mb'))}")
-    if "cuda_allocated_mb" in snapshot:
-        parts.append(f"GPU used {_format_mb(snapshot.get('cuda_allocated_mb'))}")
-    if "cuda_reserved_mb" in snapshot:
-        parts.append(f"GPU reserved {_format_mb(snapshot.get('cuda_reserved_mb'))}")
+    if "rss_mib" in snapshot:
+        parts.append(f"process {_format_mib(snapshot.get('rss_mib'))}")
+    if "cuda_allocated_mib" in snapshot:
+        parts.append(f"GPU used {_format_mib(snapshot.get('cuda_allocated_mib'))}")
+    if "cuda_reserved_mib" in snapshot:
+        parts.append(f"GPU reserved {_format_mib(snapshot.get('cuda_reserved_mib'))}")
     return ", ".join(parts)
 
 
@@ -426,10 +426,10 @@ def _gpu_evidence_line(job: dict[str, object]) -> str | None:
     utilization = measurement(gpu.get("utilization_percent"))
     if utilization is not None:
         parts.append(f"{round(utilization)}% busy")
-    used = gpu.get("memory_used_mb")
-    total = gpu.get("memory_total_mb")
+    used = gpu.get("memory_used_mib")
+    total = gpu.get("memory_total_mib")
     if used is not None or total is not None:
-        parts.append(f"{_format_mb(used)} used of {_format_mb(total)}")
+        parts.append(f"{_format_mib(used)} used of {_format_mib(total)}")
     return f"GPU: {', '.join(parts) if parts else 'no reading'}"
 
 
@@ -1015,22 +1015,22 @@ def _resilience_summary_lines(job: dict[str, object]) -> tuple[str, ...]:
             "Next retry: "
             + time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(next_retry))
         )
-    peak_rss = data.get("peak_rss_mb")
-    rss_ceiling = data.get("rss_ceiling_mb")
+    peak_rss = data.get("peak_rss_mib")
+    rss_ceiling = data.get("rss_ceiling_mib")
     if peak_rss is not None or rss_ceiling is not None:
         lines.append(
-            f"RSS high-water / ceiling: {_format_mb(peak_rss)} / "
-            f"{_format_mb(rss_ceiling)}"
+            f"RSS high-water / ceiling: {_format_mib(peak_rss)} / "
+            f"{_format_mib(rss_ceiling)}"
         )
-    peak_allocated = data.get("peak_cuda_allocated_mb")
+    peak_allocated = data.get("peak_cuda_allocated_mib")
     if peak_allocated is not None:
-        lines.append(f"CUDA allocated high-water: {_format_mb(peak_allocated)}")
-    peak_reserved = data.get("peak_cuda_reserved_mb")
-    cuda_ceiling = data.get("cuda_ceiling_mb")
+        lines.append(f"CUDA allocated high-water: {_format_mib(peak_allocated)}")
+    peak_reserved = data.get("peak_cuda_reserved_mib")
+    cuda_ceiling = data.get("cuda_ceiling_mib")
     if peak_reserved is not None or cuda_ceiling is not None:
         lines.append(
-            f"CUDA reserved high-water / ceiling: {_format_mb(peak_reserved)} / "
-            f"{_format_mb(cuda_ceiling)}"
+            f"CUDA reserved high-water / ceiling: {_format_mib(peak_reserved)} / "
+            f"{_format_mib(cuda_ceiling)}"
         )
     if terminal := data.get("terminal_outcome"):
         lines.append(f"Index outcome: {terminal}")

@@ -94,19 +94,9 @@ def collection_footprints(
     """
     if storage_dir is None:
         return {}
-    sizes: dict[str, int] = {}
-    for name in collection_names:
-        path = storage_dir / name
-        total = 0
-        if path.exists():
-            for dirpath, _, filenames in os.walk(path):
-                for filename in filenames:
-                    try:
-                        total += (Path(dirpath) / filename).stat().st_size
-                    except OSError:
-                        continue
-        sizes[name] = total
-    return sizes
+    # A missing directory needs no guard: os.walk over an absent path
+    # silently yields nothing, so directory_size_bytes already returns 0.
+    return {name: directory_size_bytes(storage_dir / name) for name in collection_names}
 
 
 def directory_size_bytes(path: Path) -> int:

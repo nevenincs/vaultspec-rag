@@ -1,128 +1,206 @@
-"""Search-admission quiesce gating for the GPU section (no GPU required)."""
+"""CPU-only search-admission coverage for service resource quiesce."""
 
 from __future__ import annotations
 
+import json
 import threading
-from typing import TYPE_CHECKING, cast
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import TYPE_CHECKING
 
 import pytest
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.testclient import TestClient
 
-from ..job_control import QuiesceGate
-from ..search import VaultSearcher
+import vaultspec_rag.server as server
+
+from ..server._routes_search import search_route
+from ..server._state import search_activity_ledger
+from ..service import ServiceRegistry
+from ..service_quiesce import (
+    QuiesceAdmissionClosedError,
+    QuiesceState,
+    QuiesceTransitionCode,
+)
+
+pytestmark = [pytest.mark.unit]
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..embeddings import EmbeddingModel
-    from ..store_runtime import VaultStore
 
-pytestmark = [pytest.mark.unit]
-
-_THREAD_TIMEOUT_SECONDS = 5.0
-_PARK_OBSERVE_SECONDS = 0.5
+_QUIESCE_SEARCH_MESSAGE = (
+    "Search is temporarily unavailable while service compute admission is closed; "
+    "retry after the service returns to running."
+)
 
 
-def _make_searcher(
-    root: Path,
-    *,
-    gpu_lock: threading.Lock | None,
-    quiesce_gate: QuiesceGate | None,
-) -> VaultSearcher:
-    """Build a searcher through the real constructor with inert GPU deps.
+class _QuiesceSearchEnvelopeHandler(BaseHTTPRequestHandler):
+    """Serve the canonical quiesce rejection through a real HTTP socket."""
 
-    ``_gpu_section`` never touches the model or the store, so sentinels are
-    sufficient and keep the test CPU-only.
-    """
-    return VaultSearcher(
-        root,
-        cast("EmbeddingModel", object()),
-        cast("VaultStore", object()),
-        gpu_lock=gpu_lock,
-        quiesce_gate=quiesce_gate,
-    )
+    def do_POST(self) -> None:
+        assert self.path == "/search"
+        response = {
+            "ok": False,
+            "error": "quiesce_admission_closed",
+            "message": _QUIESCE_SEARCH_MESSAGE,
+            "retryable": True,
+            "request_id": "loopback-quiesce-admission",
+            "quiesce": {
+                "state": "quiesced",
+                "admission_epoch": 4,
+                "safe_to_borrow_gpu": True,
+            },
+        }
+        payload = json.dumps(response).encode("utf-8")
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, format: str, *args: object) -> None:
+        """Keep the focused transport proof's loopback request silent."""
 
 
-def _join_thread(thread: threading.Thread) -> None:
-    """Join a test worker and fail with a bounded diagnostic if it is stuck."""
-    thread.join(timeout=_THREAD_TIMEOUT_SECONDS)
-    assert not thread.is_alive(), f"worker {thread.name!r} did not stop"
+def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
+    tmp_path: Path,
+) -> None:
+    """Closed admission rejects before any source can construct compute work."""
+    from time import time_ns
 
-
-def test_gpu_section_admission_blocks_until_gate_resumes(tmp_path: Path) -> None:
-    """A paused gate parks GPU-section entry even with no GPU lock configured.
-
-    Guard: the bounded join is mandatory so a broken-open gate (entry proceeds
-    despite pause) fails the still-alive assertion instead of hanging. The
-    mutation that proves red is dropping the gate wait from ``_gpu_section``.
-    """
-    gate = QuiesceGate()
-    searcher = _make_searcher(tmp_path, gpu_lock=None, quiesce_gate=gate)
-    reached = threading.Event()
-    finished: list[str] = []
-    gate.pause()
-
-    def run() -> None:
-        reached.set()
-        with searcher._gpu_section():
-            pass
-        finished.append("returned")
-
-    worker = threading.Thread(target=run, name="search-admission-worker")
-    worker.start()
-    # The gate must reopen even on a red assertion, or the parked non-daemon
-    # worker outlives the test and hangs the whole suite at interpreter exit.
+    root = tmp_path / "vault"
+    (root / ".vault").mkdir(parents=True)
+    registry = ServiceRegistry()
+    assert registry.quiesce_resources(timeout_seconds=0).achieved
+    previous_registry = server._registry
+    previous_token = server._SERVICE_TOKEN
+    server._registry = registry
+    server._SERVICE_TOKEN = "closed-admission-token"
+    app = Starlette(routes=[Route("/search", search_route, methods=["POST"])])
+    marker = f"quiesce-admission-{time_ns()}"
     try:
-        assert reached.wait(timeout=_THREAD_TIMEOUT_SECONDS)
-        worker.join(timeout=_PARK_OBSERVE_SECONDS)
-        assert worker.is_alive(), "search admission did not park at the paused gate"
-        assert finished == []
+        with TestClient(app, raise_server_exceptions=False) as client:
+            responses = {
+                source: client.post(
+                    "/search",
+                    headers={"Authorization": "Bearer closed-admission-token"},
+                    json={
+                        "query": f"{marker}-{source}",
+                        "type": source,
+                        "project_root": str(root),
+                    },
+                )
+                for source in ("vault", "code", "document", "combined")
+            }
     finally:
-        gate.resume()
-    _join_thread(worker)
-    assert finished == ["returned"]
+        server._registry = previous_registry
+        server._SERVICE_TOKEN = previous_token
+
+    snapshot = registry.quiesce_snapshot()
+    for source, response in responses.items():
+        payload: dict[str, object] = response.json()
+        request_id = payload.get("request_id")
+        assert isinstance(request_id, str), source
+        assert response.status_code == 503, source
+        assert payload == {
+            "ok": False,
+            "error": "quiesce_admission_closed",
+            "message": _QUIESCE_SEARCH_MESSAGE,
+            "retryable": True,
+            "request_id": request_id,
+            "quiesce": {
+                "state": "quiesced",
+                "admission_epoch": snapshot.admission_epoch,
+                "safe_to_borrow_gpu": True,
+            },
+        }
+
+    activity = search_activity_ledger().snapshot(include_query=True)
+    recent = activity["recent"]
+    for source in ("vault", "code", "document", "combined"):
+        records = [
+            record for record in recent if record.get("query") == f"{marker}-{source}"
+        ]
+        assert len(records) == 1
+        record = records[0]
+        assert record["status_code"] == 503
+        assert record["outcome"] == "unavailable"
+        assert record["error_code"] == "quiesce_admission_closed"
+        assert record["error_message"] == _QUIESCE_SEARCH_MESSAGE
+    assert registry.snapshot() == []
+    assert registry.quiesce_snapshot().active_compute_tickets == 0
 
 
-def test_admission_wait_parks_before_acquiring_gpu_lock(tmp_path: Path) -> None:
-    """A quiesced entrant must not hold the GPU lock while parked.
+def test_search_transport_preserves_the_exact_quiesce_envelope() -> None:
+    """The client returns the service's rejection unchanged, without fallback."""
+    from ..serviceclient._transport import _try_http_search
 
-    Guard: while the worker is parked at the gate, the shared GPU lock must
-    remain free for tenants already past admission. The mutation that proves
-    red is moving the gate wait after the ``gpu_lock`` acquire.
-    """
-    gate = QuiesceGate()
-    gpu_lock = threading.Lock()
-    searcher = _make_searcher(tmp_path, gpu_lock=gpu_lock, quiesce_gate=gate)
-    reached = threading.Event()
-    finished: list[str] = []
-    gate.pause()
-
-    def run() -> None:
-        reached.set()
-        with searcher._gpu_section():
-            pass
-        finished.append("returned")
-
-    worker = threading.Thread(target=run, name="search-admission-lock-worker")
-    worker.start()
-    # The gate must reopen even on a red assertion, or the parked non-daemon
-    # worker outlives the test and hangs the whole suite at interpreter exit.
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _QuiesceSearchEnvelopeHandler)
+    server_thread = threading.Thread(target=httpd.serve_forever)
+    server_thread.start()
     try:
-        assert reached.wait(timeout=_THREAD_TIMEOUT_SECONDS)
-        worker.join(timeout=_PARK_OBSERVE_SECONDS)
-        assert worker.is_alive(), "search admission did not park at the paused gate"
-        assert gpu_lock.acquire(blocking=False), (
-            "a parked entrant is holding the GPU lock; the gate wait must "
-            "complete before the lock is acquired"
+        response = _try_http_search(
+            query="closed admission must not fall back",
+            search_type="vault",
+            top_k=1,
+            port=httpd.server_address[1],
+            project_root="C:/loopback-vault",
         )
-        gpu_lock.release()
     finally:
-        gate.resume()
-    _join_thread(worker)
-    assert finished == ["returned"]
+        httpd.shutdown()
+        server_thread.join(timeout=5)
+        httpd.server_close()
+
+    assert not server_thread.is_alive()
+    assert response == {
+        "ok": False,
+        "error": "quiesce_admission_closed",
+        "message": _QUIESCE_SEARCH_MESSAGE,
+        "retryable": True,
+        "request_id": "loopback-quiesce-admission",
+        "quiesce": {
+            "state": "quiesced",
+            "admission_epoch": 4,
+            "safe_to_borrow_gpu": True,
+        },
+    }
 
 
-def test_gateless_searcher_admission_is_unchanged(tmp_path: Path) -> None:
-    """Without an injected gate the GPU section admits immediately."""
-    searcher = _make_searcher(tmp_path, gpu_lock=None, quiesce_gate=None)
-    with searcher._gpu_section():
+def test_admission_ticket_must_drain_before_registry_becomes_quiesced() -> None:
+    """A pre-pause compute ticket keeps the shared search boundary fail-closed."""
+    registry = ServiceRegistry()
+    ticket = registry._quiesce_controller.acquire_ticket()
+    try:
+        timed_out = registry.quiesce_resources(timeout_seconds=0)
+
+        assert timed_out.code is QuiesceTransitionCode.DRAIN_TIMED_OUT
+        assert registry.quiesce_snapshot().state is QuiesceState.PAUSING
+        assert registry.quiesce_snapshot().active_compute_tickets == 1
+        assert registry.snapshot() == []
+        assert registry.health()["cuda"] is False
+    finally:
+        assert ticket.release()
+
+    quiesced = registry.quiesce_resources(timeout_seconds=0)
+
+    assert quiesced.achieved
+    assert registry.quiesce_snapshot().state is QuiesceState.QUIESCED
+    assert registry.quiesce_snapshot().active_compute_tickets == 0
+
+
+def test_quiesced_search_lease_rejects_before_project_or_compute_construction(
+    tmp_path: Path,
+) -> None:
+    """Closed search admission cannot construct a store, model, or reranker."""
+    registry = ServiceRegistry()
+
+    assert registry.quiesce_resources(timeout_seconds=0).achieved
+
+    with pytest.raises(QuiesceAdmissionClosedError), registry.search_lease(tmp_path):
         pass
+
+    assert registry.snapshot() == []
+    assert registry.health()["model_loaded"] is False
+    assert registry.health()["reranker_loaded"] is False
+    assert registry.health()["cuda"] is False

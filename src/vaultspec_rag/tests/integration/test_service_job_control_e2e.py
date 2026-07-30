@@ -17,6 +17,8 @@ from starlette.applications import Starlette
 from typer.testing import CliRunner
 
 from ... import jobs, server
+from ..._index_breadth import index_meta_path
+from ..._source_types import PublicSourceType
 from ...cli import app
 from ...concurrency import limiter_stats, reset_limiters
 from ...config._settings import get_config, reset_config
@@ -37,6 +39,7 @@ from ...registry import get_registry, reset_registry
 from ...server import WatcherStartOutcome
 from ...server import _lifespan as server_lifespan
 from ...server._routes import ROUTES
+from ...service_quiesce import ServiceQuiesceController
 from ...serviceclient._transport import (
     _try_http_create_job,
     _try_http_delete_job,
@@ -445,39 +448,40 @@ async def _capture_running_restart_generation(
     state_path = manager.state_path
     assert state_path is not None
     slot = registry.peek_project(root)
-    writer_lock = slot.vault_indexer._writer_lock
-    assert writer_lock.acquire(blocking=False)
-    cleanup_outcomes: list[JobOutcome] = []
-    try:
-        activated = await jobs.activate_index_job(
-            interrupted,
-            code_preflight=None,
-            registry=registry,
-        )
-        assert activated.status is not JobOutcomeStatus.ERROR
-        await _wait_for_job(
-            manager,
-            interrupted.job.id,
-            lambda snapshot: (
-                snapshot.state is JobState.RUNNING
-                and snapshot.runtime.worker_active
-                and snapshot.resources.project_lease_held
-                and snapshot.resources.writer_lock_held
-            ),
-            "production attempt never reached the persisted writer boundary",
-        )
-        shutil.copyfile(state_path, crash_state_path)
-    finally:
+    with registry.compute_lease(root) as lease:
+        writer_lock = lease.runtime.vault_indexer._writer_lock
+        assert writer_lock.acquire(blocking=False)
+        cleanup_outcomes: list[JobOutcome] = []
         try:
-            for snapshot in manager.active():
-                cleanup_outcomes.append(
-                    manager.set_desired_state(
-                        snapshot.id,
-                        DesiredJobState.CANCELLED,
-                    )
-                )
+            activated = await jobs.activate_index_job(
+                interrupted,
+                code_preflight=None,
+                registry=registry,
+            )
+            assert activated.status is not JobOutcomeStatus.ERROR
+            await _wait_for_job(
+                manager,
+                interrupted.job.id,
+                lambda snapshot: (
+                    snapshot.state is JobState.RUNNING
+                    and snapshot.runtime.worker_active
+                    and snapshot.resources.project_lease_held
+                    and snapshot.resources.writer_lock_held
+                ),
+                "production attempt never reached the persisted writer boundary",
+            )
+            shutil.copyfile(state_path, crash_state_path)
         finally:
-            writer_lock.release()
+            try:
+                for snapshot in manager.active():
+                    cleanup_outcomes.append(
+                        manager.set_desired_state(
+                            snapshot.id,
+                            DesiredJobState.CANCELLED,
+                        )
+                    )
+            finally:
+                writer_lock.release()
         for snapshot in manager.active():
             if snapshot.runtime.task_active:
                 joined = await manager.wait_for_attempt(
@@ -497,25 +501,31 @@ async def _capture_running_restart_generation(
 
 async def _exercise_watcher_pause_coalescing(
     manager: JobManager,
+    registry: ServiceRegistry,
     root: Path,
     slot: ProjectSlot,
 ) -> JobSnapshot:
     first_path = root / ".vault" / "adr" / "paused-first.md"
     second_path = root / ".vault" / "adr" / "paused-second.md"
-    writer_lock = slot.vault_indexer._writer_lock
-    assert writer_lock.acquire(blocking=False)
-    try:
-        first_id = _write_watched_document(first_path, root, "paused first")
-        running = await _wait_for_watcher_job(
-            manager,
-            root,
-            _watcher_attempt_owns_runtime,
-            "watcher pause attempt never acquired production resources",
-        )
-        pause = manager.set_desired_state(running.id, DesiredJobState.PAUSED)
-        assert pause.code == "pause_requested"
-    finally:
-        writer_lock.release()
+    first_id: str | None = None
+    running: JobSnapshot | None = None
+    with registry.compute_lease(root) as lease:
+        writer_lock = lease.runtime.vault_indexer._writer_lock
+        assert writer_lock.acquire(blocking=False)
+        try:
+            first_id = _write_watched_document(first_path, root, "paused first")
+            running = await _wait_for_watcher_job(
+                manager,
+                root,
+                _watcher_attempt_owns_runtime,
+                "watcher pause attempt never acquired production resources",
+            )
+            pause = manager.set_desired_state(running.id, DesiredJobState.PAUSED)
+            assert pause.code == "pause_requested"
+        finally:
+            writer_lock.release()
+    assert running is not None
+    assert first_id is not None
     assert (
         await manager.wait_for_attempt(
             running.id,
@@ -556,28 +566,35 @@ async def _exercise_watcher_pause_coalescing(
 
 async def _exercise_watcher_cancel_replacement(
     manager: JobManager,
+    registry: ServiceRegistry,
     root: Path,
     slot: ProjectSlot,
     prior_job_id: str,
 ) -> JobSnapshot:
     third_path = root / ".vault" / "adr" / "cancelled-third.md"
     fourth_path = root / ".vault" / "adr" / "replacement-fourth.md"
-    writer_lock = slot.vault_indexer._writer_lock
-    assert writer_lock.acquire(blocking=False)
-    try:
-        third_id = _write_watched_document(third_path, root, "cancelled third")
-        running = await _wait_for_watcher_job(
-            manager,
-            root,
-            lambda snapshot: (
-                snapshot.id != prior_job_id and _watcher_attempt_owns_runtime(snapshot)
-            ),
-            "watcher cancellation attempt never reached the writer boundary",
-        )
-        cancel = manager.set_desired_state(running.id, DesiredJobState.CANCELLED)
-        assert cancel.code == "cancellation_requested"
-    finally:
-        writer_lock.release()
+    third_id: str | None = None
+    running: JobSnapshot | None = None
+    with registry.compute_lease(root) as lease:
+        writer_lock = lease.runtime.vault_indexer._writer_lock
+        assert writer_lock.acquire(blocking=False)
+        try:
+            third_id = _write_watched_document(third_path, root, "cancelled third")
+            running = await _wait_for_watcher_job(
+                manager,
+                root,
+                lambda snapshot: (
+                    snapshot.id != prior_job_id
+                    and _watcher_attempt_owns_runtime(snapshot)
+                ),
+                "watcher cancellation attempt never reached the writer boundary",
+            )
+            cancel = manager.set_desired_state(running.id, DesiredJobState.CANCELLED)
+            assert cancel.code == "cancellation_requested"
+        finally:
+            writer_lock.release()
+    assert running is not None
+    assert third_id is not None
     assert (
         await manager.wait_for_attempt(
             running.id,
@@ -666,37 +683,41 @@ async def _pause_and_resume_large_job(
 
 async def _cancel_large_job(
     manager: JobManager,
+    registry: ServiceRegistry,
     slot: ProjectSlot,
     root: Path,
 ) -> None:
     """Cancel a writer-blocked job and assert its published state is absorbing."""
     _write_vault_corpus(root, start=384, count=192)
     before_ids = slot.store.get_all_ids()
-    metadata_path = root / get_config().data_dir / get_config().index_metadata_file
+    metadata_path = index_meta_path(root, PublicSourceType.VAULT)
     before_metadata = metadata_path.read_bytes()
-    writer_lock = slot.vault_indexer._writer_lock
-    writer_lock.acquire()
-    try:
-        cancelled_id = jobs.start_reindex_vault(root, clean=False)
-        blocked = await _wait_for_job(
-            manager,
-            cancelled_id,
-            lambda snapshot: (
-                snapshot.state is JobState.RUNNING
-                and snapshot.runtime.worker_active
-                and snapshot.resources.writer_lock_held
-            ),
-            "cancellation probe never reached the real writer boundary",
-        )
-        cancel = manager.set_desired_state(
-            cancelled_id,
-            DesiredJobState.CANCELLED,
-            expected_revision=blocked.revision,
-        )
-        assert cancel.code == "cancellation_requested"
-    finally:
-        writer_lock.release()
+    cancelled_id: str | None = None
+    with registry.compute_lease(root) as lease:
+        writer_lock = lease.runtime.vault_indexer._writer_lock
+        writer_lock.acquire()
+        try:
+            cancelled_id = jobs.start_reindex_vault(root, clean=False)
+            blocked = await _wait_for_job(
+                manager,
+                cancelled_id,
+                lambda snapshot: (
+                    snapshot.state is JobState.RUNNING
+                    and snapshot.runtime.worker_active
+                    and snapshot.resources.writer_lock_held
+                ),
+                "cancellation probe never reached the real writer boundary",
+            )
+            cancel = manager.set_desired_state(
+                cancelled_id,
+                DesiredJobState.CANCELLED,
+                expected_revision=blocked.revision,
+            )
+            assert cancel.code == "cancellation_requested"
+        finally:
+            writer_lock.release()
 
+    assert cancelled_id is not None
     assert (
         await manager.wait_for_attempt(
             cancelled_id,
@@ -729,7 +750,7 @@ async def test_large_corpus_pause_resume_cancel_releases_and_converges(
     _write_vault_corpus(root, start=0, count=384)
     slot = registry.peek_project(root)
     await _pause_and_resume_large_job(manager, slot, root)
-    await _cancel_large_job(manager, slot, root)
+    await _cancel_large_job(manager, registry, slot, root)
 
 
 def _seed_restart_jobs(
@@ -824,7 +845,11 @@ def _assert_restart_delete_and_pause(
     assert still_paused is not None
     assert still_paused.state is JobState.PAUSED
     assert still_paused.desired_state is DesiredJobState.PAUSED
-    observed_after_delete = JobManager(max_nonterminal=3, state_path=state_path)
+    observed_after_delete = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=3,
+        state_path=state_path,
+    )
     assert observed_after_delete.restore_persisted().code == "job_state_restored"
     assert observed_after_delete.get(restored_interrupted.id) is None
     durable_pause = observed_after_delete.get(restored_paused.id)
@@ -973,8 +998,9 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
     slot = registry.peek_project(root)
     added_rel = str(added.relative_to(root)).replace("\\", "/")
     removed_rel = str(removed.relative_to(root)).replace("\\", "/")
-    assert slot.code_indexer._get_chunk_ids_for_files({added_rel})
-    assert not slot.code_indexer._get_chunk_ids_for_files({removed_rel})
+    with registry.compute_lease(root) as lease:
+        assert lease.runtime.code_indexer._get_chunk_ids_for_files({added_rel})
+        assert not lease.runtime.code_indexer._get_chunk_ids_for_files({removed_rel})
     _assert_released(completed, slot)
 
 
@@ -992,11 +1018,13 @@ async def test_watcher_coalesces_replaces_stops_and_closes_store_safely(
     await _start_real_watcher(root)
     paused_generation = await _exercise_watcher_pause_coalescing(
         manager,
+        registry,
         root,
         slot,
     )
     replacement = await _exercise_watcher_cancel_replacement(
         manager,
+        registry,
         root,
         slot,
         paused_generation.id,

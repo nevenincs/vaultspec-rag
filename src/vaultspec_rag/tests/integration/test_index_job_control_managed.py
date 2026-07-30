@@ -320,7 +320,9 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     # slot rather than the wider index partition.
     assert limiter_stats()["encode"]["borrowed_tokens"] == 1
     first_task, paused = await pause_managed_attempt(managed_job_manager, job_id)
-    _assert_manager_resources_released(paused, slot, code=False)
+    _assert_manager_resources_released(
+        paused, managed_facade_registry, root, code=False
+    )
 
     succeeded = await resume_managed_attempt(
         managed_job_manager,
@@ -329,8 +331,11 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
         "fresh reconciliation attempt did not start",
     )
     assert slot.store.get_all_ids() == expected_ids
-    assert set(slot.vault_indexer._load_meta()) == expected_ids
-    _assert_manager_resources_released(succeeded, slot, code=False)
+    with managed_facade_registry.compute_lease(root) as lease:
+        assert set(lease.runtime.vault_indexer._load_meta()) == expected_ids
+    _assert_manager_resources_released(
+        succeeded, managed_facade_registry, root, code=False
+    )
 
 
 @pytest.mark.timeout(300)
@@ -358,8 +363,11 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     assert limiter_stats()["encode"]["borrowed_tokens"] == 1
 
     first_task, paused = await pause_managed_attempt(managed_job_manager, job_id)
-    _assert_manager_resources_released(paused, slot, code=True)
-    assert_current_code_state(slot.code_indexer, slot.store, paths, "initial")
+    _assert_manager_resources_released(paused, managed_facade_registry, root, code=True)
+    with managed_facade_registry.compute_lease(root) as lease:
+        assert_current_code_state(
+            lease.runtime.code_indexer, slot.store, paths, "initial"
+        )
 
     succeeded = await resume_managed_attempt(
         managed_job_manager,
@@ -367,8 +375,13 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
         first_task,
         "fresh code reconciliation attempt did not start",
     )
-    _assert_manager_resources_released(succeeded, slot, code=True)
-    assert_current_code_state(slot.code_indexer, slot.store, paths, "initial")
+    _assert_manager_resources_released(
+        succeeded, managed_facade_registry, root, code=True
+    )
+    with managed_facade_registry.compute_lease(root) as lease:
+        assert_current_code_state(
+            lease.runtime.code_indexer, slot.store, paths, "initial"
+        )
 
 
 @pytest.mark.timeout(300)
@@ -391,7 +404,9 @@ async def test_managed_vault_cancel_is_absorbing_and_stops_all_writes(
     )
     assert live.attempt.number == 1
     cancelled = await cancel_managed_attempt(managed_job_manager, job_id)
-    _assert_manager_resources_released(cancelled, slot, code=False)
+    _assert_manager_resources_released(
+        cancelled, managed_facade_registry, root, code=False
+    )
     await assert_cancelled_vault_stops_writes(
         managed_job_manager,
         job_id,
@@ -441,4 +456,9 @@ async def test_managed_cancel_at_write_gate_wins_without_spurious_failure(
         root,
         slot,
     )
-    await assert_cancel_wins_at_the_write_gate(managed_job_manager, cancelled_id, slot)
+    await assert_cancel_wins_at_the_write_gate(
+        managed_job_manager,
+        cancelled_id,
+        managed_facade_registry,
+        root,
+    )

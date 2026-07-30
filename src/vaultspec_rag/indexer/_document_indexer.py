@@ -28,6 +28,7 @@ from ._document_meta import (
 )
 from ._file_state import FileStateKind
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
+from ._resolved_policy import preprocess_stale_note
 from ._route_migration import reconcile_generation_storage
 from ._run_ledger_models import (
     FinalizationPhase,
@@ -91,9 +92,9 @@ class _DocumentResourceBudget:
     """Aggregate document ceilings enforced at each measurable runtime edge."""
 
     limits: SupportProfileLimits
-    rss_ceiling_mb: float | None = None
-    cuda_ceiling_mb: float | None = None
-    cuda_baseline_mb: float | None = None
+    rss_ceiling_mib: float | None = None
+    cuda_ceiling_mib: float | None = None
+    cuda_baseline_mib: float | None = None
     enforce_cuda: bool = True
     generated_chunks: int = 0
     weighted_bytes: int = 0
@@ -106,20 +107,20 @@ class _DocumentResourceBudget:
         from .._units import bytes_to_mib
         from ..memory_probe import MemoryBudget
 
-        rss_ceiling_mb = (
+        rss_ceiling_mib = (
             bytes_to_mib(self.limits.rss_bytes)
-            if self.rss_ceiling_mb is None
-            else self.rss_ceiling_mb
+            if self.rss_ceiling_mib is None
+            else self.rss_ceiling_mib
         )
-        cuda_ceiling_mb = (
+        cuda_ceiling_mib = (
             bytes_to_mib(self.limits.cuda_bytes)
-            if self.cuda_ceiling_mb is None
-            else self.cuda_ceiling_mb
+            if self.cuda_ceiling_mib is None
+            else self.cuda_ceiling_mib
         )
         self.memory_budget = MemoryBudget(
-            rss_ceiling_mb=rss_ceiling_mb,
-            cuda_ceiling_mb=cuda_ceiling_mb if self.enforce_cuda else None,
-            cuda_baseline_mb=self.cuda_baseline_mb if self.enforce_cuda else None,
+            rss_ceiling_mib=rss_ceiling_mib,
+            cuda_ceiling_mib=cuda_ceiling_mib if self.enforce_cuda else None,
+            cuda_baseline_mib=self.cuda_baseline_mib if self.enforce_cuda else None,
         )
 
     def reserve(
@@ -197,9 +198,9 @@ class _DocumentResourceBudget:
         try:
             snapshot = self.memory_budget.observe(
                 label=label,
-                rss_mb=bytes_to_mib(rss_bytes),
-                cuda_allocated_mb=bytes_to_mib(allocated_bytes),
-                cuda_reserved_mb=bytes_to_mib(cuda_bytes),
+                rss_mib=bytes_to_mib(rss_bytes),
+                cuda_allocated_mib=bytes_to_mib(allocated_bytes),
+                cuda_reserved_mib=bytes_to_mib(cuda_bytes),
             )
         except JobError:
             snapshot = self.memory_budget.snapshot
@@ -310,9 +311,9 @@ class DocumentIndexer:
             SourceProfileVersion.CONVENTIONAL_V1
         )
         self._writer_lock = threading.RLock()
-        from ..config._settings import get_config
+        from .._store_writes import workspace_volume_path
 
-        self._data_root = self.root_dir / get_config().data_dir
+        self._data_root = workspace_volume_path(self.root_dir)
         self._meta_path = document_metadata_path(self.root_dir)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
@@ -421,6 +422,12 @@ class DocumentIndexer:
         """Resolve policy and document discovery before any mutable resource."""
         run_control.checkpoint()
         policy = self.resolve_policy_snapshot()
+        # An execution preflight is the membership observation the run it
+        # authorizes diffs and publishes claims from, so it must see the tree
+        # as it stands now: a cached walk would hide any create or delete
+        # since the walk was taken. The fresh walk re-primes the cache, so
+        # reads inside the authorized run serve this same observation.
+        self._discover_cache.invalidate()
         files = self._discover(policy, run_control=run_control)
         run_control.checkpoint()
         return DocumentIndexPreflight(self.root_dir, policy, files)
@@ -531,9 +538,9 @@ class DocumentIndexer:
         ceilings = admit_index_ceilings(self.model, limits)
         budget = _DocumentResourceBudget(
             limits,
-            rss_ceiling_mb=ceilings.rss_ceiling_mb,
-            cuda_ceiling_mb=ceilings.cuda_ceiling_mb,
-            cuda_baseline_mb=ceilings.cuda_baseline_mb,
+            rss_ceiling_mib=ceilings.rss_ceiling_mib,
+            cuda_ceiling_mib=ceilings.cuda_ceiling_mib,
+            cuda_baseline_mib=ceilings.cuda_baseline_mib,
             enforce_cuda=ceilings.uses_cuda,
         )
         self._memory_budget = budget.memory_budget
@@ -711,7 +718,7 @@ class DocumentIndexer:
         # Route the lock-bracketed forward captures into this job's own
         # budget so checkpoints enforce the job's demand rather than a
         # process-wide high-water.
-        with record_forward_peaks(request.budget.memory_budget.record_forward_peak_mb):
+        with record_forward_peaks(request.budget.memory_budget.record_forward_peak_mib):
             encode_and_upsert_document_slice(
                 DocumentSliceRequest(
                     chunks=request.selected,
@@ -853,16 +860,11 @@ class DocumentIndexer:
         fresh_hashes: dict[str, str] = {}
         for path in paths:
             rel = path.relative_to(self.root_dir).as_posix()
-            if (
-                request.policy.execution_mode == "off"
-                and request.policy.match_preprocess(rel)
-            ):
+            if request.policy.transform_disabled(rel):
                 retained = previous_files.get(rel)
                 if retained is not None:
                     published.append(retained)
-                failures.append(
-                    f"{rel}: preprocessing disabled; retained work as stale"
-                )
+                failures.append(preprocess_stale_note(rel))
                 continue
             metadata, chunk_count, failure = self._publish_file(
                 path,
@@ -975,13 +977,8 @@ class DocumentIndexer:
                     request.checkpoint.record_confirmed_deletion(rel, old.point_ids)
                     counts.removed += len(old.point_ids)
                 continue
-            if (
-                request.policy.execution_mode == "off"
-                and request.policy.match_preprocess(rel)
-            ):
-                failures.append(
-                    f"{rel}: preprocessing disabled; retained work as stale"
-                )
+            if request.policy.transform_disabled(rel):
+                failures.append(preprocess_stale_note(rel))
                 continue
             old = current.get(rel)
             metadata, chunk_count, failure = self._publish_file(
@@ -1047,9 +1044,8 @@ class DocumentIndexer:
         self._resolve_reuse(policy)
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
-        preprocessing_disabled = policy.execution_mode == "off" and any(
-            policy.match_preprocess(path.relative_to(self.root_dir).as_posix())
-            is not None
+        preprocessing_disabled = any(
+            policy.transform_disabled(path.relative_to(self.root_dir).as_posix())
             for path in paths
         )
         effective_clean = clean and not preprocessing_disabled

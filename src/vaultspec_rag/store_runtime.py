@@ -241,8 +241,10 @@ class VaultStore(
 
         Raises:
             ImportError: If qdrant-client is not installed.
-            VaultStoreLockedError: If the Qdrant storage folder is already opened
-                by another process.
+            VaultStoreLockedError: If the Qdrant storage folder could not be
+                locked exclusively. The OS lock is per open handle, so this
+                covers a second store opened on the same root inside this
+                process as well as a holder in another one.
         """
         _check_rag_deps()
         import pathlib as _pathlib
@@ -322,7 +324,10 @@ class VaultStore(
             self._storage_probe_path = local_db_path
             self._lock_helper = FileLock(local_db_path / "exclusive.lock")
             if not self._lock_helper.acquire():
-                raise VaultStoreLockedError(str(self.db_path))
+                raise VaultStoreLockedError(
+                    str(self.db_path),
+                    held_in_process=self._lock_helper.held_elsewhere_in_this_process(),
+                )
             try:
                 with suppress_local_qdrant_warnings():
                     self._client = _QdrantClient(
@@ -331,7 +336,12 @@ class VaultStore(
             except RuntimeError as exc:
                 self._lock_helper.release()
                 if "already accessed by another instance" in str(exc):
-                    raise VaultStoreLockedError(str(self.db_path)) from exc
+                    raise VaultStoreLockedError(
+                        str(self.db_path),
+                        held_in_process=(
+                            self._lock_helper.held_elsewhere_in_this_process()
+                        ),
+                    ) from exc
                 raise
 
         # Default the collection's dense dimension from the same source the wire

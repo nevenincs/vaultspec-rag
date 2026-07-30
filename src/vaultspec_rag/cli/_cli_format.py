@@ -32,7 +32,7 @@ __all__ = [
     "NOT_REPORTED",
     "_counted_unit",
     "_duration_phrase",
-    "_format_mb",
+    "_format_mib",
     "_format_milliseconds",
     "_format_seconds",
     "_path_label",
@@ -124,7 +124,7 @@ def _format_milliseconds(raw: object) -> str:
     return _format_seconds(float(raw) / 1000.0)
 
 
-def _format_mb(raw: object) -> str:
+def _format_mib(raw: object) -> str:
     """Render a mebibyte measurement in operator units.
 
     The value arrives already divided by 1024**2, so it is mebibytes. Labelling

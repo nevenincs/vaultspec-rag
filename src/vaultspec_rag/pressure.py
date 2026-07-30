@@ -51,18 +51,6 @@ _SAMPLE_INTERVAL_SECONDS = 5.0
 #: wrong.
 _ESCALATION_SAMPLES = 3
 
-#: A tier clears one rung only after this long of continuously calmer
-#: samples; any sample back at or above the tier restarts the clock, so a
-#: race can only extend the verdict, never shorten it. Reuses the degraded
-#: threshold: the window that makes a job's silence reportable is the same
-#: order of quiet that makes a machine's recovery believable.
-_CLEAR_WINDOW_SECONDS = DEGRADED_THRESHOLD_SECONDS
-
-#: An in-flight forward pass at least this old is pressure evidence - the
-#: same threshold at which the per-job verdict calls the job degraded, so
-#: the two vocabularies can never disagree about when a stretch begins.
-_FORWARD_ELEVATED_SECONDS = DEGRADED_THRESHOLD_SECONDS
-
 #: The card counts as saturated only when utilization AND device memory are
 #: both at or above this fraction. Either axis alone is a busy card doing
 #: its job; both pinned together is the contention signature under which
@@ -108,8 +96,8 @@ class MachinePressureSignals:
     forward_age_seconds: float | None = None
     forward_thread_alive: bool | None = None
     gpu_utilization_percent: float | None = None
-    gpu_memory_used_mb: float | None = None
-    gpu_memory_total_mb: float | None = None
+    gpu_memory_used_mib: float | None = None
+    gpu_memory_total_mib: float | None = None
     backend_probed: bool = False
     backend_alive: bool | None = None
     backend_latency_seconds: float | None = None
@@ -124,8 +112,8 @@ class MachinePressureSignals:
 
 def _gpu_saturated(signals: MachinePressureSignals) -> bool:
     utilization = signals.gpu_utilization_percent
-    used = signals.gpu_memory_used_mb
-    total = signals.gpu_memory_total_mb
+    used = signals.gpu_memory_used_mib
+    total = signals.gpu_memory_total_mib
     if utilization is None or used is None or total is None or total <= 0:
         return False
     return (
@@ -184,10 +172,14 @@ def _store_failure_findings(signals: MachinePressureSignals) -> set[str]:
 def _elevated_findings(signals: MachinePressureSignals) -> tuple[str, ...]:
     findings: list[str] = []
     age = signals.forward_age_seconds
+    # An in-flight forward at least this old is pressure evidence, measured
+    # against the very threshold at which the per-job verdict calls that job
+    # degraded - so the machine vocabulary and the job vocabulary cannot
+    # disagree about when a stretch begins.
     if (
         signals.forward_in_flight
         and age is not None
-        and age >= _FORWARD_ELEVATED_SECONDS
+        and age >= DEGRADED_THRESHOLD_SECONDS
     ):
         findings.append("forward_stretched")
     if _gpu_saturated(signals):
@@ -309,7 +301,13 @@ class PressureEvaluator:
         if self._clear_started_at is None:
             self._clear_started_at = now
             return
-        if now - self._clear_started_at >= _CLEAR_WINDOW_SECONDS:
+        # A tier clears one rung only after this long of continuously calmer
+        # samples, and any sample back at or above the tier restarts the clock
+        # above - so a race can only extend the verdict, never shorten it. The
+        # window that makes a job's silence reportable is the same order of
+        # quiet that makes a machine's recovery believable, so it is the same
+        # threshold rather than a second number that could drift from it.
+        if now - self._clear_started_at >= DEGRADED_THRESHOLD_SECONDS:
             self._transition(self._tier - 1, now, findings)
             # One rung per window: a further drop restarts the clock rather
             # than cascading, so release stays slow all the way down.

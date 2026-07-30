@@ -10,9 +10,9 @@ from .indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from .logging_config import log_event
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
-    from .indexer import CodebaseIndexer
     from .indexer._resolved_policy import ResolvedIndexPolicy
 
 logger = logging.getLogger(__name__)
@@ -78,13 +78,13 @@ def is_document_change(
 
 
 def refresh_watcher_policy(
-    code_indexer: CodebaseIndexer,
+    resolve_policy: Callable[[], ResolvedIndexPolicy],
     root_dir: Path,
     previous: ResolvedIndexPolicy | None,
 ) -> ResolvedIndexPolicy | None:
     """Advance watcher classification authority or retain fail-closed state."""
     try:
-        policy = code_indexer.resolve_policy_snapshot()
+        policy = resolve_policy()
     except (OSError, ValueError) as exc:
         log_event(
             logger,

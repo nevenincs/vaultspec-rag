@@ -1,26 +1,33 @@
 """The one OS advisory-lock primitive: take and release a byte on an fd.
 
-Three modules carried this same ``msvcrt``/``fcntl`` branch - the machine
-singleton lock, the service status-write lock, and the store's exclusive lock.
-Only the branch is shared. What each caller does AROUND it differs for real
-reasons, so this module owns the platform call and nothing else:
+Every module needing a cross-process lock reaches the ``msvcrt``/``fcntl``
+branch through here, so the platform split has one implementation. This module
+owns the platform call and nothing else, because what a caller does AROUND it
+differs for real reasons:
 
-- **Which file.** The machine lock locks its own payload file; the other two
-  lock a dedicated ``.lock`` sibling nobody reads.
+- **Which file.** A caller may lock its own payload file, or a dedicated
+  ``.lock`` sibling nobody reads.
 - **Which byte.** That distinction is why ``offset`` exists. On Windows
   ``msvcrt.locking`` is MANDATORY - a locked byte cannot be READ by another
   process - so a caller locking a file whose contents others must read has to
-  put the lock byte past the payload. The machine lock does exactly that, and
-  a caller locking a dedicated file does not need to.
+  put the lock byte past the payload, and a caller locking a dedicated file
+  does not need to.
 - **What contention means.** One caller retries until a deadline, one refuses
-  immediately, one records the error for a diagnostic. So this raises
-  ``OSError`` - what the platform calls already do - and lets each decide,
-  rather than flattening the outcome to a bool and discarding the cause.
+  immediately, one records the error for a diagnostic, one degrades to running
+  unserialised. So this raises ``OSError`` - what the platform calls already
+  do - and lets each decide, rather than flattening the outcome to a bool and
+  discarding the cause.
 
 Deliberately NOT handled here: a platform with neither primitive. Proceeding
 unlocked is safe for a status-file merge and catastrophic for a singleton lock
 that two daemons would then both believe they hold, so the import error
 surfaces and each caller decides whether it can tolerate running unlocked.
+
+One sequence built on this call IS shared rather than per-caller, and has its
+own owner in ``_anchor_claim``: open an anchor, claim it without blocking,
+record the owning pid, read that pid back when refused, release on close or on
+process death. A caller wanting only the platform call uses this module
+directly.
 """
 
 from __future__ import annotations

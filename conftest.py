@@ -110,7 +110,22 @@ def _reset_singleton_config_caches() -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Pin singleton containment before pytest imports any test module."""
+    """Refuse a distributed GPU session, then pin singleton containment.
+
+    The refusal comes first and before collection because the process holding
+    the distribution decision is the only one that can make it: once the plugin
+    is distributing, it collects in its workers and calls neither the collection
+    nor the run-loop hooks here, and a worker that refuses its own collection is
+    reported as an internal scheduling fault whose text the operator never sees.
+
+    Raises:
+        pytest.UsageError: When this session would distribute GPU-bound tests
+            across worker processes.
+    """
+    from vaultspec_rag.tests._tier_gate import enforce_serial_gpu_lane
+
+    enforce_serial_gpu_lane(config.option)
+
     global _singleton_prior_env, _singleton_root, _singleton_root_owned
     if _singleton_root is not None:
         return
@@ -159,6 +174,10 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Restore ambient configuration after the complete pytest session."""
     del config
+    from vaultspec_rag.tests._gpu_session import release_gpu_session_lock
+
+    release_gpu_session_lock()
+
     global _singleton_prior_env, _singleton_root
     prior = _singleton_prior_env
     root = _singleton_root
@@ -213,36 +232,60 @@ def _has_hf_token() -> bool:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Group GPU-bound tests for xdist, and refuse any test with a bad tier.
+    """Refuse any collected test that declares no tier, or two lanes.
+
+    Every collected test is checked, not only the selected ones: a run narrowed
+    by a marker expression deselects exactly the tests that declare nothing, so
+    checking the selection would let an untiered test through every run that
+    could have caught it.
 
     Raises:
         pytest.UsageError: When a collected test declares no tier, or declares
             the fast tier alongside a slow one.
     """
-    from vaultspec_rag.tests._tier_gate import enforce_tiers, group_gpu_items
+    from vaultspec_rag.tests._tier_gate import enforce_tiers
 
-    group_gpu_items(items)
     enforce_tiers(items)
 
 
 def pytest_runtestloop(session: pytest.Session) -> None:
-    """Fail fast if Hugging Face auth is missing for selected GPU tests.
+    """Fail fast when the machine cannot satisfy the selected GPU tests.
 
-    Runs after deselection so only *selected* items are checked.
-    This avoids blocking unit-only runs that don't need GPU access.
+    Runs after deselection so only *selected* items are checked, which keeps a
+    unit-only run free of every device precondition. A distributed session never
+    reaches this hook - the plugin owns the run loop in the launched process and
+    in each worker - which costs nothing, because a distributed GPU selection is
+    already refused before collection.
     """
-    from vaultspec_rag.tests._tier_gate import GPU_MARKERS, SUBPROCESS_GPU
+    from vaultspec_rag._gpu_admission import (
+        device_contended_message,
+        evaluate_device_admission,
+    )
+    from vaultspec_rag.tests._gpu_session import (
+        gpu_session_lock_path,
+        gpu_session_refusal,
+    )
+    from vaultspec_rag.tests._tier_gate import (
+        GPU_MARKERS,
+        SLOW_TIERS,
+        SUBPROCESS_GPU,
+        selected_tiers,
+    )
 
-    needs_token = GPU_MARKERS | {SUBPROCESS_GPU}
-    for item in session.items:
-        item_markers = {m.name for m in item.iter_markers()}
-        if item_markers & needs_token:
-            if not _has_hf_token():
-                pytest.exit(
-                    "Hugging Face authentication is required for GPU "
-                    "tests (gated model naver/splade-v3). Set HF_TOKEN, "
-                    "put it in .env, or run `hf auth login` before running "
-                    "tests.",
-                    returncode=1,
-                )
-            break
+    tiers = selected_tiers(session.items)
+    if tiers & (GPU_MARKERS | {SUBPROCESS_GPU}) and not _has_hf_token():
+        pytest.exit(
+            "Hugging Face authentication is required for GPU "
+            "tests (gated model naver/splade-v3). Set HF_TOKEN, "
+            "put it in .env, or run `hf auth login` before running "
+            "tests.",
+            returncode=1,
+        )
+    if not tiers & SLOW_TIERS:
+        return
+    contention = gpu_session_refusal(gpu_session_lock_path())
+    if contention is not None:
+        pytest.exit(contention, returncode=1)
+    admission = evaluate_device_admission()
+    if not admission.admitted:
+        pytest.exit(device_contended_message(admission), returncode=1)

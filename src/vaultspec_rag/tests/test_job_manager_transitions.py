@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import threading
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import pytest
 
-from ..job_control import QuiesceGate, RunControlToken
+from ..job_control import RunControlToken
 from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
 from ..job_manager.models import (
-    JobAttemptContext,
-    JobExecutionResult,
     ProgressUpdate,
 )
 from ..job_models import (
@@ -26,15 +23,13 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..service_quiesce import ServiceQuiesceController
 from ._job_manager_transition_helpers import (
     assert_delivered_pause_requeues_resume,
     create_paused_vault_job,
     resume_paused_job,
 )
 from ._job_roots import _TEST_PROJECT_ROOT
-
-if TYPE_CHECKING:
-    from .. import job_models
 
 pytestmark = [pytest.mark.unit]
 
@@ -44,7 +39,11 @@ class TestManagedJobTransitions:
 
     @pytest.mark.asyncio
     async def test_shutdown_closes_the_attempt_claim_boundary(self) -> None:
-        manager = JobManager(max_nonterminal=1, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         created = manager.create(
             JobSpec(
                 JobOperation.INDEX,
@@ -75,7 +74,11 @@ class TestManagedJobTransitions:
 
     @pytest.mark.asyncio
     async def test_pause_resume_race_requeues_after_delivered_unwind(self) -> None:
-        manager = JobManager(max_nonterminal=2, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=None,
+        )
         job_id = create_paused_vault_job(manager)
         resume_paused_job(manager, job_id)
 
@@ -90,7 +93,11 @@ class TestManagedJobTransitions:
 
     @pytest.mark.asyncio
     async def test_progress_requires_the_exact_current_attempt_and_task(self) -> None:
-        manager = JobManager(max_nonterminal=1, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
@@ -179,7 +186,11 @@ class TestManagedJobTransitions:
         )
         initiator = JobInitiator("cli", "server job stop", _TEST_PROJECT_ROOT)
 
-        queued_manager = JobManager(max_nonterminal=1, state_path=None)
+        queued_manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         queued = queued_manager.create(spec, initiator)
         assert queued.job is not None
         immediate = queued_manager.set_desired_state(
@@ -198,7 +209,11 @@ class TestManagedJobTransitions:
             == "already_satisfied"
         )
 
-        running_manager = JobManager(max_nonterminal=1, state_path=None)
+        running_manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         running = running_manager.create(spec, initiator)
         assert running.job is not None
         task = asyncio.create_task(asyncio.Event().wait())
@@ -272,6 +287,7 @@ class TestManagedJobTransitions:
     @pytest.mark.asyncio
     async def test_terminal_first_writer_retry_and_delete_contract(self) -> None:
         manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=2,
             max_terminal_history=2,
             state_path=None,
@@ -340,70 +356,3 @@ class TestManagedJobTransitions:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-
-
-@pytest.mark.asyncio
-async def test_dispatched_attempt_token_observes_shared_quiesce_gate() -> None:
-    """Pausing the manager-injected gate parks a dispatched attempt's token.
-
-    Guard: the negative half (the attempt does not pass its checkpoint while
-    the gate is paused) is bounded so a token built without the shared gate
-    fails the not-passed assertion instead of hanging. The mutation that
-    proves red is constructing the dispatch token without the manager's gate.
-    """
-    gate = QuiesceGate()
-    manager = JobManager(max_nonterminal=1, state_path=None, quiesce_gate=gate)
-    created = manager.create(
-        JobSpec(
-            JobOperation.INDEX,
-            JobSource.CODE,
-            _TEST_PROJECT_ROOT,
-            JobMode.REBUILD,
-        ),
-        JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT),
-    )
-    assert created.job is not None
-    job_id = created.job.id
-    reached = threading.Event()
-    passed = threading.Event()
-    finished = threading.Event()
-
-    def runner(
-        context: JobAttemptContext,
-    ) -> JobExecutionResult:
-        reached.set()
-        context.control.checkpoint()
-        passed.set()
-        return JobExecutionResult(summary="done")
-
-    def on_finished(
-        snapshot: job_models.JobSnapshot,
-        duration_seconds: float,
-        result: JobExecutionResult | None,
-        error: BaseException | None,
-    ) -> None:
-        del snapshot, duration_seconds, result, error
-        finished.set()
-
-    assert (
-        manager.bind_dispatch(job_id, runner, on_finished=on_finished).code
-        == "dispatch_bound"
-    )
-    gate.pause()
-    # The gate must reopen even on a red assertion, or the parked attempt
-    # worker outlives the test and hangs the suite at interpreter exit.
-    try:
-        assert manager.dispatch(job_id).code == "attempt_started"
-        assert await asyncio.to_thread(reached.wait, 5.0)
-        assert not await asyncio.to_thread(passed.wait, 0.5), (
-            "dispatched attempt did not park at the shared paused gate"
-        )
-    finally:
-        gate.resume()
-    assert await asyncio.to_thread(passed.wait, 5.0), (
-        "dispatched attempt did not resume with the shared gate"
-    )
-    assert await asyncio.to_thread(finished.wait, 5.0)
-    final = manager.get(job_id)
-    assert final is not None
-    assert final.state is JobState.SUCCEEDED
