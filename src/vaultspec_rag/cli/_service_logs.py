@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
 import typer
 from typer._types import TyperChoice
@@ -98,12 +98,12 @@ class _ServiceLogsCommand(TyperCommand):
         params = ctx.params
         return _run_service_logs(
             _ServiceLogsOptions(
-                lines=cast("int", params["limit"]),
-                source=cast("ManagedLogSource", params["source"]),
-                job_id=cast("str | None", params["job_id"]),
-                contains=cast("str | None", params["contains"]),
-                port=cast("int | None", params["port"]),
-                json_mode=cast("bool", params["json"]),
+                lines=params["limit"],
+                source=params["source"],
+                job_id=params["job_id"],
+                contains=params["contains"],
+                port=params["port"],
+                json_mode=params["json"],
             )
         )
 

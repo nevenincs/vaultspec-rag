@@ -1271,10 +1271,14 @@ class ServerWatchApp(App[None]):
             self._render_search_title()
             self._render_summary()
             return
+        # _search_activity_error returns non-None whenever result is None, so
+        # reaching here means result is the dict.
         payload = cast("dict[str, object]", result)
         active = _search_records(payload.get("active"), "active")
         recent = _search_records(payload.get("recent"), "terminal")
         self._searches = active + recent
+        # _search_activity_error (via _search_activity_payload_error) already
+        # confirmed "counts" is a dict before returning None.
         counts = cast("dict[str, object]", payload["counts"])
         self._search_counts = {
             name: count(counts.get(name)) or 0 for name in ("active", "recent", "total")
@@ -1378,6 +1382,8 @@ class ServerWatchApp(App[None]):
             self._last_error = error
             self._render_summary()
             return
+        # _fetch_error returns non-None whenever result is None, so reaching
+        # here means result is the dict.
         payload = cast("dict[str, object]", result)
         raw_jobs = payload.get("jobs")
         previous = self._jobs
@@ -2773,7 +2779,12 @@ def _search_activity_records_error(
 
 
 def _search_records(raw: object, state: str) -> list[dict[str, object]]:
-    """Narrow a validated activity lane to production records."""
+    """Narrow a validated activity lane to production records.
+
+    Callers only reach here once ``_search_activity_error`` has returned
+    None, which means ``_search_activity_payload_error`` already confirmed
+    *raw* is a list.
+    """
     return [
         cast("dict[str, object]", record)
         for record in cast("list[object]", raw)
