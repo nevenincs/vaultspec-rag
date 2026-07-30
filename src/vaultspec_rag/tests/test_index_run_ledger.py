@@ -492,6 +492,46 @@ def test_schema_compatibility_and_corruption_fail_closed(tmp_path: Path) -> None
         malformed.generation(malformed_generation.generation_id)
 
 
+def test_commit_unit_point_ids_of_the_wrong_type_read_as_corruption(
+    tmp_path: Path,
+) -> None:
+    """A stored point identity that is not a string is a detected corruption.
+
+    Integers are the escaping class specifically: `CommitUnit.__post_init__`
+    already rejects a falsy entry, so a stored `null` or `""` is caught
+    incidentally by that emptiness rule and proves nothing about the entry
+    types. A list of non-empty integers satisfies every invariant the unit
+    checks - truthy, unique, orderable - and, without an entry check, reaches
+    the store as point identities of the wrong type.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    unit = _unit("src/a.py", 0, 1)
+    ledger.record_storage_confirmed_unit(generation.generation_id, unit)
+
+    connection = sqlite3.connect(ledger.path)
+    connection.execute(
+        "UPDATE commit_units SET point_ids_json = ? WHERE generation_id = ?",
+        ('["src/a.py:0:0",7]', generation.generation_id),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RunLedgerCorruptionError, match="malformed"):
+        list(ledger.iter_units(generation.generation_id))
+
+
+def test_well_formed_commit_unit_point_ids_still_read_back_exactly(
+    tmp_path: Path,
+) -> None:
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    unit = _unit("src/a.py", 0, 1)
+    ledger.record_storage_confirmed_unit(generation.generation_id, unit)
+
+    assert list(ledger.iter_units(generation.generation_id)) == [unit]
+
+
 def test_bounded_iterator_does_not_hold_a_writer_transaction(tmp_path: Path) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(_signature(tmp_path))
