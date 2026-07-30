@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from .search import DocumentSearchResult
     from .search._outcomes import AnySearchResult
+    from .service import ServiceRegistry
 
 __all__ = [
     "CodeCombinedSearchFilters",
@@ -110,6 +111,8 @@ def search_documents(
 
 def search_documents_timed(
     request: DocumentSearchRequest,
+    *,
+    registry: ServiceRegistry | None = None,
 ) -> tuple[list[DocumentSearchResult], dict[str, float]]:
     """Search documents and return canonical service timing fields."""
     from .search import SearchFilterOptions
@@ -124,13 +127,13 @@ def search_documents_timed(
         ),
     )
     root = pathlib.Path(request.root_dir).resolve()
-    registry = get_registry()
-    indexed_count = registry.document_chunk_count(root)
+    active_registry = registry if registry is not None else get_registry()
+    indexed_count = active_registry.document_chunk_count(root)
     if indexed_count == 0:
         return [], {"indexed_count": 0.0}
     results: list[DocumentSearchResult] | None = None
     timings: dict[str, float] | None = None
-    with registry.search_lease(root) as lease:
+    with active_registry.search_lease(root) as lease:
         results, timings = lease.searcher.search_document_timed(
             request.query,
             top_k=request.top_k,
@@ -161,13 +164,13 @@ def _search_domain(
 
 def _count_combined_domains(
     root: pathlib.Path,
+    registry: ServiceRegistry,
 ) -> tuple[
     dict[PublicSourceType, int],
     dict[PublicSourceType, SearchDomainOutcome],
     dict[str, float],
 ]:
     """Count each domain independently and retain model-free failures."""
-    registry = get_registry()
     operations = {
         PublicSourceType.VAULT: lambda: registry.vault_doc_count(root),
         PublicSourceType.CODE: lambda: registry.code_chunk_count(root),
@@ -233,6 +236,8 @@ def search_combined(
 
 def search_combined_timed(
     request: CombinedSearchRequest,
+    *,
+    registry: ServiceRegistry | None = None,
 ) -> tuple[CombinedSearchOutcome, dict[str, float]]:
     """Search all domains under one lease with explicit partial outcomes."""
     from .search import SearchFilterOptions
@@ -263,15 +268,15 @@ def search_combined_timed(
         ),
     )
     root = pathlib.Path(request.root_dir).resolve()
-    registry = get_registry()
-    counts, count_failures, timings = _count_combined_domains(root)
+    active_registry = registry if registry is not None else get_registry()
+    counts, count_failures, timings = _count_combined_domains(root, active_registry)
     if not any(counts.values()):
         return _empty_or_failed_combined_outcome(count_failures, request.top_k), timings
 
     vault: SearchDomainOutcome | None = None
     code: SearchDomainOutcome | None = None
     document: SearchDomainOutcome | None = None
-    with registry.search_lease(root) as lease:
+    with active_registry.search_lease(root) as lease:
         vault = _indexed_domain_outcome(
             PublicSourceType.VAULT,
             counts,

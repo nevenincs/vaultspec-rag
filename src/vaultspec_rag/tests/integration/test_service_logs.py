@@ -72,7 +72,11 @@ def managed_log_app(
         "HTTPTestClient",
         TestClient(
             create_http_app(
-                ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+                ServerRouteRuntime(
+                    token=token,
+                    registry=ServiceRegistry(),
+                    port=8765,
+                ),
                 lifespan=None,
             )
         ),
@@ -397,7 +401,11 @@ def test_admin_transport_preserves_live_structured_log_error(
     server = uvicorn.Server(
         uvicorn.Config(
             create_http_app(
-                ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+                ServerRouteRuntime(
+                    token=token,
+                    registry=ServiceRegistry(),
+                    port=port,
+                ),
                 lifespan=None,
             ),
             host="127.0.0.1",
@@ -436,7 +444,6 @@ import sys
 from pathlib import Path
 
 import uvicorn
-from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
@@ -445,6 +452,9 @@ from vaultspec_rag.logging_config import (  # absolute-import-ok
     install_daemon_log_capture,
 )
 from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok
+# absolute-import-ok
+from vaultspec_rag.server import ServerRouteRuntime, create_http_app
+from vaultspec_rag.service import ServiceRegistry  # absolute-import-ok
 
 log_path = Path(sys.argv[1])
 port = int(sys.argv[2])
@@ -462,8 +472,16 @@ try:
     # Deliberately not a route the daemon filters out of the access stream:
     # this probe exists to prove access bytes alone drive rollover, so its
     # traffic has to reach the sink.
-    app = Starlette(
-        routes=[
+    app = create_http_app(
+        ServerRouteRuntime(
+            token="uvicorn-access-rollover-probe-token",
+            registry=ServiceRegistry(),
+            port=port,
+        ),
+        lifespan=None,
+    )
+    app.routes.extend(
+        [
             Route("/probe", health_handler),
             Route("/stop", stop_handler),
         ]

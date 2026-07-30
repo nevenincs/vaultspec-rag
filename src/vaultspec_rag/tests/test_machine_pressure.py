@@ -543,7 +543,7 @@ class TestJobsRoutePressureExposure:
 
         token = "pressure-exposure-test-token"
         app = create_http_app(
-            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
             lifespan=None,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))

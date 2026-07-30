@@ -177,14 +177,12 @@ def _daemon_discovery_snapshot(
     if phase not in {SERVICE_PHASE_WARMING, SERVICE_PHASE_RUNNING}:
         msg = f"unsupported daemon discovery phase: {phase!r}"
         raise ValueError(msg)
-    if _m._service_port <= 0:
-        raise RuntimeError("service port is unavailable for discovery publication")
     fields: dict[str, object] = {
         "schema": SERVICE_DISCOVERY_SCHEMA,
         "version": SERVICE_DISCOVERY_VERSION,
         "pid": os.getpid(),
         "parent_pid": os.getppid(),
-        "port": _m._service_port,
+        "port": runtime.port,
         "phase": phase,
         "phase_detail": phase_detail,
         "started_at": started_at,

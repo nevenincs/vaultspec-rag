@@ -57,6 +57,7 @@ def _routes_app(
         ServerRouteRuntime(
             token="test-token-jobs",
             registry=ServiceRegistry(),
+            port=8765,
         ),
         lifespan=None,
     )

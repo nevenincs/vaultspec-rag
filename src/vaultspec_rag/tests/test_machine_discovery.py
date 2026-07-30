@@ -47,15 +47,17 @@ def owner_publisher(
     os.environ[status_key] = str(tmp_path / "status")
     os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
     reset_config()
-    prior_port = server_state._service_port
     prior_launch_token = server_state._launch_token
-    server_state._service_port = 8766
     server_state._launch_token = "test-launch-token"
     lease, holder = acquire_machine_lock_lease()
     assert lease is not None
     assert holder == os.getpid()
     publisher = _DiscoveryPublisher(
-        ServerRouteRuntime(token="test-owner-token", registry=ServiceRegistry()),
+        ServerRouteRuntime(
+            token="test-owner-token",
+            registry=ServiceRegistry(),
+            port=8766,
+        ),
         lease,
     )
     try:
@@ -64,7 +66,6 @@ def owner_publisher(
         publisher.quiesce()
         publisher.cleanup()
         release_machine_lock_lease(lease)
-        server_state._service_port = prior_port
         server_state._launch_token = prior_launch_token
         for key, value in prior.items():
             if value is None:
@@ -184,6 +185,7 @@ class TestBoundedShutdownGuard:
             ServerRouteRuntime(
                 token="bounded-quiesce-token",
                 registry=ServiceRegistry(),
+                port=8766,
             ),
             MachineLockLease(machine_lock_path(), os.getpid(), 0),
         )

@@ -109,7 +109,11 @@ port = free_loopback_port()
 server = uvicorn.Server(
     uvicorn.Config(
         create_http_app(
-            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            ServerRouteRuntime(
+                token=token,
+                registry=ServiceRegistry(),
+                port=port,
+            ),
             lifespan=None,
         ),
         host="127.0.0.1",
@@ -239,6 +243,7 @@ def _production_routes(status_dir: Path) -> Generator[int]:
                 ServerRouteRuntime(
                     token=_SERVICE_TOKEN,
                     registry=ServiceRegistry(),
+                    port=port,
                 ),
                 lifespan=None,
             ),

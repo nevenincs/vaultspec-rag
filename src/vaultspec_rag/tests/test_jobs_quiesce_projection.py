@@ -39,7 +39,7 @@ _ENVELOPE_KEYS = {
 def _jobs_client(registry: ServiceRegistry) -> Generator[TestClient]:
     """Serve the production jobs handler in-process with its real token gate."""
     app = create_http_app(
-        ServerRouteRuntime(token=_TOKEN, registry=registry),
+        ServerRouteRuntime(token=_TOKEN, registry=registry, port=8765),
         lifespan=None,
     )
     with TestClient(app) as client:

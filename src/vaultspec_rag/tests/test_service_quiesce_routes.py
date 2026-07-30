@@ -163,7 +163,7 @@ def quiesce_routes() -> Generator[QuiesceRoutes]:
     """
     registry = ServiceRegistry()
     app = create_http_app(
-        ServerRouteRuntime(token=_TOKEN, registry=registry),
+        ServerRouteRuntime(token=_TOKEN, registry=registry, port=8765),
         lifespan=None,
     )
     with TestClient(app, raise_server_exceptions=False) as client:

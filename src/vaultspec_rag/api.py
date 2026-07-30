@@ -461,6 +461,8 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
 
 def search_vault_timed(
     request: VaultSearchRequest,
+    *,
+    registry: ServiceRegistry | None = None,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search the vault and return phase timings for service diagnostics."""
     from .search import SearchFilterOptions, validate_search_filters
@@ -475,9 +477,9 @@ def search_vault_timed(
         ),
     )
     root = _resolve(request.root_dir)
-    registry = get_registry()
+    active_registry = registry if registry is not None else get_registry()
     # Empty/unbuilt index: return an empty result without loading the model.
-    indexed_count = registry.vault_doc_count(root)
+    indexed_count = active_registry.vault_doc_count(root)
     if indexed_count == 0:
         return [], {
             "indexed_count": indexed_count,
@@ -488,7 +490,7 @@ def search_vault_timed(
     project_lease_seconds: float | None = None
     results: list[SearchResult] | None = None
     timings: dict[str, float] | None = None
-    with registry.search_lease(root) as lease:
+    with active_registry.search_lease(root) as lease:
         project_lease_seconds = time.perf_counter() - phase_started
         results, timings = lease.searcher.search_vault_timed(
             request.query,
@@ -594,6 +596,8 @@ def _code_breadth_timings(
 
 def search_codebase_timed(
     request: CodebaseSearchRequest,
+    *,
+    registry: ServiceRegistry | None = None,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search codebase and return phase timings for service diagnostics."""
     from .search import SearchFilterOptions, validate_search_filters
@@ -616,9 +620,9 @@ def search_codebase_timed(
         ),
     )
     root = _resolve(request.root_dir)
-    registry = get_registry()
+    active_registry = registry if registry is not None else get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
-    indexed_count = registry.code_chunk_count(root)
+    indexed_count = active_registry.code_chunk_count(root)
     # The completeness fact is settled here, once, from the count this path
     # already takes - so it costs no extra store round trip and every adapter
     # reads one conclusion rather than comparing figures for itself.
@@ -634,7 +638,7 @@ def search_codebase_timed(
     project_lease_seconds: float | None = None
     results: list[SearchResult] | None = None
     timings: dict[str, float] | None = None
-    with registry.search_lease(root) as lease:
+    with active_registry.search_lease(root) as lease:
         project_lease_seconds = time.perf_counter() - phase_started
         results, timings = lease.searcher.search_codebase_timed(
             request.query,
