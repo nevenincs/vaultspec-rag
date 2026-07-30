@@ -9,20 +9,24 @@ step_id: 'S16'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
-# Ticketed search admission
+# Search quiescence HTTP 503 remediation
+
+## Status
+
+Unresolved. The earlier completion claim is withdrawn.
 
 ## Description
 
-Completed controller-ticket admission before search project or runtime ownership.
+Search admission currently closes before project or compute ownership and raises the controller admission error. That internal refusal is not yet translated at the service search boundary into the canonical retryable structured HTTP 503 response required by the accepted decision.
 
 ## Outcome
 
-Search admission takes a controller ticket before project-slot or compute-runtime construction, and closed admission raises the retryable quiescing outcome instead of retaining GPU or project references.
+Pending: translate only controller-closed search admission into the canonical retryable HTTP 503 envelope before project, model, reranker, or CUDA ownership. Preserve unrelated search errors and existing availability classifications.
 
 ## Evidence
 
-`test_search_quiesce_admission.py` passed CPU-only proof that a pre-pause ticket prevents quiescence and that a quiesced search lease constructs no project, model, reranker, or CUDA state.
+No evidence currently proves the reopened Step's service-level HTTP 503 contract.
 
 ## Notes
 
-No service process, CUDA allocation, or GPU test was run.
+This record tracks unimplemented remedial work. No service, RAG endpoint, CUDA allocation, or GPU test was run during reconciliation.

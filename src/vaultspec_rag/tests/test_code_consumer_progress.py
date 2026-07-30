@@ -34,8 +34,8 @@ from ..indexer._consumer_pipeline import (
 )
 from ..indexer._streaming import (
     CodeFileSegment,
+    EncodeBucketReporter,
     WeightedCodeSlice,
-    _EncodeBucketReporter,
 )
 from ..job_models import JobSource
 from ..jobs import (
@@ -516,7 +516,7 @@ class TestConsumerAdvancesProgress:
         record stays at 2. Restoring the per-kind key returns it to green.
         """
         job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
-        report = _EncodeBucketReporter(JobProgressReporter(job_id), 0, 4)
+        report = EncodeBucketReporter(JobProgressReporter(job_id), 0, 4)
 
         def _progress(
             kind: str,

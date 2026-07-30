@@ -26,7 +26,7 @@ final before collection starts, and refuses there.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, TypeIs
 
 import pytest
 
@@ -67,6 +67,11 @@ class TieredItem(Protocol):
     def nodeid(self) -> str: ...
 
     def iter_markers(self) -> Iterator[MarkLike]: ...
+
+
+def _is_object_list(value: object) -> TypeIs[list[object]]:
+    """Recognize an option list whose members this gate never inspects."""
+    return isinstance(value, list)
 
 
 #: Tiers whose tests require exclusive GPU access.
@@ -192,11 +197,13 @@ def distributed_worker_count(option: argparse.Namespace) -> int:
     process runs its own tests - which is what a distributed session's workers
     report too, because a worker is told neither the count nor the mode.
     """
-    requested = getattr(option, "numprocesses", None)
+    requested: object = getattr(option, "numprocesses", None)
     if isinstance(requested, int) and requested > 0:
         return requested
-    environments = getattr(option, "tx", None)
-    return len(environments) if isinstance(environments, list) else 0
+    environments: object = getattr(option, "tx", None)
+    if not _is_object_list(environments):
+        return 0
+    return len(environments)
 
 
 def selectable_slow_tiers(markexpr: str) -> list[str]:

@@ -27,6 +27,8 @@ __all__ = [
     "QuiesceTransition",
     "QuiesceTransitionCode",
     "ServiceQuiesceController",
+    "ServiceQuiesceTransitionConflictError",
+    "ServiceQuiesceTransitionWaitTimeoutError",
 ]
 
 
@@ -95,6 +97,41 @@ class QuiesceAdmissionClosedError(RuntimeError):
             "compute admission is closed while service quiesce state is "
             f"{snapshot.state.value!r}"
         )
+        self.snapshot = snapshot
+
+
+class ServiceQuiesceTransitionConflictError(RuntimeError):
+    """Raised when a request opposes the registry's owned transition."""
+
+    code = "quiesce_transition_conflict"
+
+    def __init__(
+        self,
+        *,
+        requested_direction: str,
+        active_direction: str,
+        snapshot: QuiesceSnapshot,
+    ) -> None:
+        super().__init__(
+            "service resource transition conflict: "
+            f"requested {requested_direction!r} while {active_direction!r} owns "
+            "the transition"
+        )
+        self.requested_direction = requested_direction
+        self.active_direction = active_direction
+        self.snapshot = snapshot
+
+
+class ServiceQuiesceTransitionWaitTimeoutError(TimeoutError):
+    """Raised when a same-direction caller outwaits its owned transition."""
+
+    code = "quiesce_transition_wait_timed_out"
+
+    def __init__(self, *, direction: str, snapshot: QuiesceSnapshot) -> None:
+        super().__init__(
+            f"timed out waiting for the service {direction!r} resource transition"
+        )
+        self.direction = direction
         self.snapshot = snapshot
 
 

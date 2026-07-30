@@ -15,7 +15,8 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypedDict
+from math import isfinite
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -36,7 +37,10 @@ from .service_quiesce import (
     QuiesceSnapshot,
     QuiesceState,
     QuiesceTransition,
+    QuiesceTransitionCode,
     ServiceQuiesceController,
+    ServiceQuiesceTransitionConflictError,
+    ServiceQuiesceTransitionWaitTimeoutError,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +51,14 @@ logger = logging.getLogger(__name__)
 # not release; a short bound then force-closes the client rather than blocking
 # the daemon's bounded shutdown on the writer lock indefinitely.
 _STORE_FORCE_CLOSE_SECONDS = 5.0
+
+
+def _validate_resource_transition_timeout(timeout_seconds: float) -> None:
+    """Reject invalid waits before they can close compute admission."""
+    if not isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise ValueError(
+            "timeout_seconds must be a finite value greater than or equal to zero"
+        )
 
 __all__ = [
     "ComputeLease",
@@ -139,6 +151,16 @@ class _GPUResidencyRecipe:
     model_name: str | None
     restore_model: bool
     restore_reranker: bool
+
+
+@dataclass(slots=True)
+class _ResourceTransitionOperation:
+    """One registry-owned side-effect transition shared by concurrent callers."""
+
+    direction: Literal["pause", "resume"]
+    completed: bool = False
+    outcome: QuiesceTransition | None = None
+    failure: BaseException | None = None
 
 
 @dataclass(slots=True)
@@ -308,6 +330,11 @@ class ServiceRegistry:
         self._root_locks: dict[Path, threading.Lock] = {}
         self._gpu_lock = threading.Lock()
         self._quiesce_controller = ServiceQuiesceController()
+        # This condition owns only the right to perform a registry-level
+        # resource transition.  It is never held while the owner drains jobs,
+        # waits for tickets, or takes GPU/registry locks.
+        self._resource_transition_condition = threading.Condition(threading.Lock())
+        self._resource_transition: _ResourceTransitionOperation | None = None
         self._reranker: CrossEncoder | None = None
         self._gpu_residency_recipe: _GPUResidencyRecipe | None = None
         self._reranker_lock = threading.Lock()
@@ -426,6 +453,15 @@ class ServiceRegistry:
         """Return the shared GPU serialization lock."""
         return self._gpu_lock
 
+    def acquire_compute_ticket(self) -> ComputeTicket:
+        """Admit route-owned compute without constructing project runtime state.
+
+        Public search routes acquire this before selecting a corpus so each
+        source shares the controller's one admission decision.  Project,
+        model, and GPU construction remain with the selected operation.
+        """
+        return self._quiesce_controller.acquire_ticket()
+
     def get_reranker(self) -> CrossEncoder:
         """Return the shared CrossEncoder, loading it lazily.
 
@@ -496,6 +532,14 @@ class ServiceRegistry:
 
     def quiesce_resources(self, *, timeout_seconds: float) -> QuiesceTransition:
         """Drain and detach GPU residency through the registry's one façade."""
+        return self._run_resource_transition(
+            direction="pause",
+            timeout_seconds=timeout_seconds,
+            run=lambda: self._quiesce_resources_once(timeout_seconds),
+        )
+
+    def _quiesce_resources_once(self, timeout_seconds: float) -> QuiesceTransition:
+        """Perform the one pause owner's drain and residency-release effects."""
         started = self._quiesce_controller.begin_pause()
         if started.snapshot.state is QuiesceState.QUIESCED:
             return started
@@ -517,8 +561,16 @@ class ServiceRegistry:
             )
         return self._quiesce_controller.acknowledge_vram_released()
 
-    def resume_resources(self) -> QuiesceTransition:
+    def resume_resources(self, *, timeout_seconds: float = 5.0) -> QuiesceTransition:
         """Rebuild shared GPU residency before reopening compute admission."""
+        return self._run_resource_transition(
+            direction="resume",
+            timeout_seconds=timeout_seconds,
+            run=self._resume_resources_once,
+        )
+
+    def _resume_resources_once(self) -> QuiesceTransition:
+        """Perform the one resume owner's residency rebuild and job release."""
         warming = self._quiesce_controller.begin_warming()
         if warming.snapshot.state is not QuiesceState.WARMING:
             return warming
@@ -536,6 +588,119 @@ class ServiceRegistry:
 
             get_job_manager().resume_quiesced_attempts()
         return completed
+
+    def _run_resource_transition(
+        self,
+        *,
+        direction: Literal["pause", "resume"],
+        timeout_seconds: float,
+        run: Callable[[], QuiesceTransition],
+    ) -> QuiesceTransition:
+        """Claim or join one registry side-effect transition without lock nesting."""
+        _validate_resource_transition_timeout(timeout_seconds)
+        conflict_direction: Literal["pause", "resume"] | None = None
+        operation: _ResourceTransitionOperation | None = None
+        owner = False
+        with self._resource_transition_condition:
+            active = self._resource_transition
+            if active is not None:
+                if active.direction != direction:
+                    conflict_direction = active.direction
+                else:
+                    operation = active
+                    owner = False
+            else:
+                operation = _ResourceTransitionOperation(direction=direction)
+                self._resource_transition = operation
+                owner = True
+        if conflict_direction is not None:
+            raise ServiceQuiesceTransitionConflictError(
+                requested_direction=direction,
+                active_direction=conflict_direction,
+                snapshot=self._quiesce_controller.snapshot(),
+            )
+        if operation is None:
+            raise RuntimeError("resource transition claim did not select an operation")
+        if not owner:
+            return self._wait_for_resource_transition(
+                operation,
+                direction=direction,
+                timeout_seconds=timeout_seconds,
+            )
+        observed = self._quiesce_controller.snapshot()
+        if direction == "pause" and observed.state is QuiesceState.QUIESCED:
+            return self._complete_owned_resource_transition(
+                operation,
+                lambda: QuiesceTransition(
+                    code=QuiesceTransitionCode.ALREADY_QUIESCED,
+                    achieved=True,
+                    snapshot=observed,
+                ),
+            )
+        if direction == "resume" and observed.state is QuiesceState.RUNNING:
+            return self._complete_owned_resource_transition(
+                operation,
+                lambda: QuiesceTransition(
+                    code=QuiesceTransitionCode.RUNNING,
+                    achieved=True,
+                    snapshot=observed,
+                ),
+            )
+        return self._complete_owned_resource_transition(operation, run)
+
+    def _wait_for_resource_transition(
+        self,
+        operation: _ResourceTransitionOperation,
+        *,
+        direction: Literal["pause", "resume"],
+        timeout_seconds: float,
+    ) -> QuiesceTransition:
+        """Wait boundedly for the owner without taking registry or GPU locks."""
+        deadline = time.monotonic() + timeout_seconds
+        timed_out = False
+        with self._resource_transition_condition:
+            while not operation.completed:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._resource_transition_condition.wait(
+                    timeout=remaining
+                ):
+                    timed_out = not operation.completed
+                    break
+            if operation.completed:
+                if operation.failure is not None:
+                    raise operation.failure
+                if operation.outcome is None:
+                    raise RuntimeError("completed resource transition has no outcome")
+                return operation.outcome
+        if timed_out:
+            raise ServiceQuiesceTransitionWaitTimeoutError(
+                direction=direction,
+                snapshot=self._quiesce_controller.snapshot(),
+            )
+        raise RuntimeError("resource transition waiter left without an outcome")
+
+    def _complete_owned_resource_transition(
+        self,
+        operation: _ResourceTransitionOperation,
+        run: Callable[[], QuiesceTransition],
+    ) -> QuiesceTransition:
+        """Run owner effects once, then publish their exact terminal truth."""
+        outcome: QuiesceTransition | None = None
+        failure: BaseException | None = None
+        try:
+            outcome = run()
+            return outcome
+        except BaseException as exc:
+            failure = exc
+            raise
+        finally:
+            with self._resource_transition_condition:
+                operation.outcome = outcome
+                operation.failure = failure
+                operation.completed = True
+                if self._resource_transition is operation:
+                    self._resource_transition = None
+                self._resource_transition_condition.notify_all()
 
     def _detach_gpu_dependencies(
         self,
