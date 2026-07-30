@@ -60,6 +60,7 @@ class QuiesceTransitionCode(StrEnum):
     WARMUP_UNAVAILABLE = "warmup_unavailable"
     QUIESCE_FAILED = "quiesce_failed"
     WARMUP_FAILED = "warmup_failed"
+    RESUME_RECOVERY_FAILED = "resume_recovery_failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,6 +397,22 @@ class ServiceQuiesceController:
             self._failure_reason = failure_reason
             return self._transition_locked(
                 QuiesceTransitionCode.WARMUP_FAILED,
+                achieved=False,
+            )
+
+    def fail_resume_recovery(self, reason: str) -> QuiesceTransition:
+        """Keep admission closed when durable same-ID recovery preparation fails."""
+        failure_reason = _require_reason(reason)
+        with self._condition:
+            if self._state is not QuiesceState.WARMING:
+                return self._transition_locked(
+                    QuiesceTransitionCode.WARMUP_UNAVAILABLE,
+                    achieved=False,
+                )
+            self._vram_released = False
+            self._failure_reason = failure_reason
+            return self._transition_locked(
+                QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
                 achieved=False,
             )
 

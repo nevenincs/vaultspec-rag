@@ -13,20 +13,20 @@ related:
 
 ## Status
 
-Unresolved. The earlier completion claim is withdrawn.
+Unresolved. The earlier completion claim remains withdrawn.
 
 ## Description
 
-The existing CPU-only controller tests prove condition-lock ticket transitions in isolation. They do not prove exclusion across concurrent registry pause and resume orchestration or fail-closed behavior when detach, rebuild, and acknowledgement race.
+CPU-only registry proof must cover persistence-before-admission ordering, coalesced recovery retries, and the exact fail-closed state when same-ID recovery cannot be persisted.
 
 ## Outcome
 
-Pending: add real-thread, CPU-only proof that the registry transition coordinator serializes pause and resume end to end, preserves idempotency, and leaves admissions closed on timeout, rebuild failure, or a competing transition.
+Pending: use real threads and real CPU registry dependencies to prove concurrent resume callers share one typed result, `resume_recovery_failed` leaves `warming` admission closed, and a repaired idempotent retry reaches `running` without duplicate recovery or dispatch.
 
 ## Evidence
 
-No evidence currently satisfies the reopened Step's concurrent registry-transition acceptance criteria.
+No evidence currently covers the durable recovery failure and retry boundary required by the amended ADR.
 
 ## Notes
 
-This record tracks unimplemented remedial proof. No service, RAG endpoint, CUDA allocation, or GPU test was run during reconciliation.
+No service process, RAG endpoint, CUDA allocation, or GPU test was run.

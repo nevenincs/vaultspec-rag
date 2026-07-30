@@ -4,17 +4,32 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import pytest
 
+from ..job_manager.manager import JobManager
+from ..job_models import (
+    JobInitiator,
+    JobMode,
+    JobOperation,
+    JobSource,
+    JobSpec,
+    JobState,
+)
 from ..service import ServiceRegistry
 from ..service_quiesce import (
+    QuiesceAdmissionClosedError,
     QuiesceState,
     QuiesceTransition,
     QuiesceTransitionCode,
     ServiceQuiesceTransitionConflictError,
     ServiceQuiesceTransitionWaitTimeoutError,
 )
+from ._job_roots import _TEST_PROJECT_ROOT
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -207,3 +222,64 @@ def test_concurrent_resume_calls_share_one_terminal_transition() -> None:
     assert outcomes[0] is outcomes[1]
     assert outcomes[0].code is QuiesceTransitionCode.RUNNING
     assert outcomes[0].snapshot.state is QuiesceState.RUNNING
+
+
+def test_resume_persistence_failure_stays_closed_until_real_repair(
+    tmp_path: Path,
+) -> None:
+    """A real write failure leaves warming closed until one same-ID retry persists."""
+    registry = ServiceRegistry()
+    state_path = tmp_path / "state" / "jobs.json"
+    manager = JobManager(
+        max_nonterminal=1,
+        state_path=state_path,
+        quiesce_controller=registry._quiesce_controller,
+    )
+    registry._job_manager = manager
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            _TEST_PROJECT_ROOT,
+            JobMode.REBUILD,
+        ),
+        JobInitiator("test", "registry-resume-persistence", _TEST_PROJECT_ROOT),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    assert (
+        manager.defer_unstarted_for_quiesce(job_id).code
+        == "quiesce_deferred_before_start"
+    )
+    assert registry.quiesce_resources(timeout_seconds=0).achieved
+
+    state_path.unlink()
+    state_path.parent.rmdir()
+    state_path.parent.write_text("not a directory", encoding="utf-8")
+
+    failed = registry.resume_resources(timeout_seconds=0)
+
+    assert failed.code is QuiesceTransitionCode.RESUME_RECOVERY_FAILED
+    assert not failed.achieved
+    assert failed.snapshot.state is QuiesceState.WARMING
+    assert not failed.snapshot.admissions_open
+    assert failed.snapshot.failure_reason == "job_resume_persistence_unpublished"
+    with pytest.raises(QuiesceAdmissionClosedError):
+        registry.acquire_compute_ticket()
+    retained = manager.get(job_id)
+    assert retained is not None
+    assert retained.state is JobState.PAUSED
+    assert retained.id == job_id
+
+    state_path.parent.unlink()
+    state_path.parent.mkdir()
+
+    retried = registry.resume_resources(timeout_seconds=0)
+
+    assert retried.code is QuiesceTransitionCode.RUNNING
+    assert retried.achieved
+    assert retried.snapshot.admissions_open
+    repaired = manager.get(job_id)
+    assert repaired is not None
+    assert repaired.state is JobState.QUEUED
+    assert repaired.id == job_id

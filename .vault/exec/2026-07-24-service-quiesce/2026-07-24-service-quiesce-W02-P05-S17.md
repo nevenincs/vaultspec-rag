@@ -9,20 +9,24 @@ step_id: 'S17'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
-# CPU managed-job quiesce proof
+# CPU managed-job recovery proof remediation
+
+## Status
+
+Unresolved. The earlier completion claim is withdrawn.
 
 ## Description
 
-Completed real CPU managed-job resource-release and same-ID resume proof.
+The prior CPU proof covers successful same-ID resume but not recovery persistence failure, partial durable publication, restart recovery, or duplicate-attempt prevention.
 
 ## Outcome
 
-The real manager fixture proves cancellation isolation, resource release, controller-ticket drain, and same-logical-ID reconciliation after a completed resume.
+Pending: use the real manager, production persistence writer, real filesystem failure, and real async dispatch to prove unpublished-write failure stays closed and retries; separately restore a real durably queued desired-running generation to prove post-publication restart recovery. Both paths must preserve one logical ID, increment the attempt only once, dispatch once, and leave desired paused or cancelled work untouched.
 
 ## Evidence
 
-`test_job_manager_quiesce.py` passed in the focused W02 CPU-only suite. Static Ruff, ty, and basedpyright checks passed after the final review fix.
+No current test satisfies both observable persistence outcomes without fakes, mocks, patches, monkeypatches, skips, or xfails.
 
 ## Notes
 
-No service process, CUDA allocation, or GPU test was run.
+All required proof is CPU-only. No service process, RAG endpoint, CUDA allocation, or GPU test was run.

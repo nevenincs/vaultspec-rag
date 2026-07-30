@@ -20,7 +20,7 @@ from ._execution import JobManagerExecution
 from ._persistence import JobManagerPersistence
 from ._progress import JobManagerProgress
 from ._records import JobManagerRecords
-from .models import MAX_RECORDS
+from .models import MAX_RECORDS, QuiescedDispatchClaim
 from .state import (
     CONFIGURED_STATE_PATH,
     MANAGED_STATE_FILENAME,
@@ -95,6 +95,9 @@ class JobManager(
         )
         self._job_idempotency_keys: dict[str, set[str]] = {}
         self._dispatchers: dict[str, JobDispatchBinding] = {}
+        self._next_dispatch_binding_nonce = 0
+        self._next_quiesced_dispatch_generation = 0
+        self._pending_quiesced_dispatches: dict[str, QuiescedDispatchClaim] = {}
         self._retiring_tasks: set[asyncio.Task[Any]] = set()
         self._persistence_dirty = False
         self._accepting_dispatch = True

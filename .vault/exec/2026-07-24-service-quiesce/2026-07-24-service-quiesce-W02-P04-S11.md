@@ -13,20 +13,20 @@ related:
 
 ## Status
 
-Unresolved. The earlier completion claim is withdrawn.
+Unresolved. The earlier completion claim remains withdrawn.
 
 ## Description
 
-The landed registry can detach GPU residency after drain and rebuild it before reopening admission. That evidence does not prove that overlapping pause and resume requests are serialized across the full detach, rebuild, controller acknowledgement, and job-convergence sequence.
+The registry transition owner must keep the controller in `warming` with compute admission closed through GPU rebuild and durable same-ID recovery preparation. Recovery preparation persists eligible `paused` and `queued` jobs whose desired state is `running` before `complete_warming` opens the new admission epoch.
 
 ## Outcome
 
-Pending: implement one registry-owned transition coordinator that prevents pause, resume, detach, rebuild, and same-ID job convergence from overlapping. A failed or competing transition must remain admission-closed and return the controller's truthful non-success outcome.
+Pending: order resume as warming, rebuild, typed durable recovery preparation, controller acknowledgement, and dispatch. A recovery persistence failure must return `resume_recovery_failed`, retain `warming`, and remain admission-closed. A later resume must retry recovery instead of taking an unconditional already-running shortcut.
 
 ## Evidence
 
-No evidence currently satisfies the reopened Step's end-to-end transition-coordination acceptance criteria.
+The accepted ADR now binds persistence-before-admission and typed fail-closed recovery. No implementation evidence currently satisfies this reopened Step.
 
 ## Notes
 
-This record tracks unimplemented remedial work. No service, RAG endpoint, CUDA allocation, or GPU test was run during reconciliation.
+The registry transition condition owns serialization only; GPU and job-manager locks remain unnested. No service, RAG endpoint, CUDA allocation, or GPU test was run.
