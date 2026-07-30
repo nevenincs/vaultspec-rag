@@ -260,7 +260,7 @@ async def _paint_quiesce_jobs_tui(
     *,
     port: int,
     job_args: dict[str, object],
-) -> tuple[object, str]:
+) -> tuple[object, str, str | None]:
     """Run the Textual jobs surface over authenticated production transport."""
     from ..cli._jobs_tui import ServerWatchApp
     from ..serviceclient._transport import _try_http_admin
@@ -284,7 +284,7 @@ async def _paint_quiesce_jobs_tui(
             strip.text.replace("\u2800", " ")
             for strip in app.screen._compositor.render_strips()
         )
-        return app._quiesce, painted
+        return app._quiesce, painted, app._last_error
 
 
 @pytest.mark.asyncio
@@ -308,7 +308,10 @@ async def test_jobs_tui_renders_production_quiesce_controller_evidence(
 
         pause = _try_http_admin("pause_service", {}, port)
         assert pause is not None and pause["ok"] is True, pause
-        quiesce, painted = await _paint_quiesce_jobs_tui(port=port, job_args={})
+        quiesce, painted, fetch_error = await _paint_quiesce_jobs_tui(
+            port=port,
+            job_args={},
+        )
 
     from ..jobs import mapping
 
@@ -317,6 +320,7 @@ async def test_jobs_tui_renders_production_quiesce_controller_evidence(
     assert canonical["state"] == "quiesced"
     assert canonical["vram_released"] is True
     assert canonical["safe_to_borrow_gpu"] is True
+    assert fetch_error is None
     assert "quiesce quiesced" in painted
     assert "vram released" in painted
     assert "borrower safety safe" in painted
@@ -334,11 +338,12 @@ async def test_jobs_tui_shows_quiesce_unavailable_after_a_route_error(
             EnvVar.LOCAL_ONLY.value: "true",
         }
     ), _production_routes(status_dir) as port:
-        retained, painted = await _paint_quiesce_jobs_tui(
+        retained, painted, fetch_error = await _paint_quiesce_jobs_tui(
             port=port,
             job_args={"controllable": "not-a-boolean"},
         )
 
     assert retained is None
+    assert fetch_error == "controllable must be true or false when provided."
     assert "quiesce unavailable" in painted
     assert "borrower safety safe" not in painted
