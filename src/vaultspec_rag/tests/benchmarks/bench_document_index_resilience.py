@@ -14,15 +14,17 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ... import EmbeddingModel
     from ...indexer import DocumentIndexer
     from ...indexer._content_policy import RootContentPolicy
     from ...indexer._vault_prep import IndexResult
     from ...job_control import RunControlToken
+    from ...store_runtime import VaultStore
 
 _SCHEMA_VERSION: Final = 1
 _MARKER_NAME: Final = ".document-index-resilience-workload.json"
@@ -296,10 +298,14 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
     )
 
     resolved = root.resolve()
+    # Measurement only exercises preflight, support-limit, and preprocess-
+    # context resolution, none of which touch `self.model` or `self.store`;
+    # the constructor requires both, so cast the unused placeholders to
+    # their real types rather than loading a model or opening a store here.
     indexer = DocumentIndexer(
         resolved,
-        cast("Any", None),
-        cast("Any", None),
+        cast("EmbeddingModel", None),
+        cast("VaultStore", None),
         content_policy=_policy(),
     )
     preflight = indexer.preflight_content()

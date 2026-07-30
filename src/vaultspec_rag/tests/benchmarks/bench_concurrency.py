@@ -29,7 +29,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 __all__ = [
     "RequestOutcome",
@@ -112,7 +112,10 @@ class ServiceTarget:
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            # The service's response shape is only a contract at the JSON
+            # boundary; decode it once here and let every caller narrow the
+            # specific keys it reads instead of carrying `Any` outward.
+            return cast("dict[str, object]", json.loads(resp.read().decode("utf-8")))
 
 
 @dataclass
@@ -170,7 +173,7 @@ class ScenarioResult:
                 }
         return summary
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         """JSON-serializable report row."""
         return {
             "name": self.name,
@@ -353,16 +356,19 @@ def _start_reindex(target: ServiceTarget, root: str, timeout: float) -> str | No
 
 
 def _print_summary(results: list[ScenarioResult]) -> None:
+    # Read straight off the typed `ScenarioResult`, not the JSON-shaped
+    # `to_dict()` row: that dict exists for serialization, and subscripting
+    # it back out for display would re-widen every field to `object`.
     for result in results:
-        row = result.to_dict()
-        latency = row["latency"]
+        latency = result.latency_percentiles()
         print(
-            f"{row['name']:<24} c={row['concurrency']:<3} "
-            f"n={row['requests']:<4} ok={row['ok']:<4} err={row['errors']:<3} "
-            f"rps={row['throughput_rps']:<7} "
+            f"{result.name:<24} c={result.concurrency:<3} "
+            f"n={result.requests:<4} ok={result.ok_count:<4} "
+            f"err={result.error_count:<3} "
+            f"rps={round(result.throughput_rps, 3):<7} "
             f"p50={latency['p50']}s p95={latency['p95']}s max={latency['max']}s",
         )
-        for key, stats in row["phases"].items():
+        for key, stats in result.phase_summary().items():
             print(f"    {key:<28} mean={stats['mean']}s max={stats['max']}s")
 
 
