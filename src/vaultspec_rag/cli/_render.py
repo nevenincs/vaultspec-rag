@@ -465,46 +465,65 @@ def _display_port_unreachable_error(
     *,
     command: str,
     json_mode: bool = False,
+    local_fallback_available: bool = True,
 ) -> None:
     """Render the standard remediation when ``--port`` is dead.
 
     Mirrors the lock-error UX so users see consistent guidance whether
     the resident service refused the connection or refused parallel
-    access. The CLI used to silently fall back to in-process here; that
-    behaviour is now opt-in via ``--allow-fallback``.
+    access. Callers that cannot safely fall back locally set
+    ``local_fallback_available`` to ``False``.
 
     When ``json_mode`` is True the helper emits a ``port_unreachable``
     envelope and exits with code 1; the prose path is unchanged.
     """
+    unreachable = f"Service on port {port} is unreachable."
+    safe_condition = (
+        "Local indexing requires a borrower lease and a verified safe service "
+        "condition."
+    )
+    if local_fallback_available:
+        message = (
+            f"Service on port {port} is unreachable. "
+            f"The CLI will not silently run {command} locally; "
+            "start the service or re-run with "
+            f"--allow-fallback (one local user only)."
+        )
+        remediation = [
+            server_status_command(),
+            server_start_command(),
+            "rerun with --allow-fallback (one user only)",
+        ]
+    else:
+        message = f"{unreachable} {safe_condition}"
+        remediation = [server_status_command(), server_start_command()]
+
     if json_mode:
         _emit_json_error_and_exit(
             command,
             "port_unreachable",
-            (
-                f"Service on port {port} is unreachable. "
-                f"The CLI will not silently run {command} locally; "
-                f"start the service or re-run with "
-                f"--allow-fallback (one local user only)."
-            ),
+            message,
             1,
             port=port,
-            remediation=[
-                server_status_command(),
-                server_start_command(),
-                "rerun with --allow-fallback (one user only)",
-            ],
+            remediation=remediation,
+        )
+        return
+    if local_fallback_available:
+        _plain(
+            f"{message}\n"
+            f"Next actions:\n"
+            f"  1. Check status:  {server_status_command()}\n"
+            f"  2. Start service: {server_start_command()}\n"
+            "  3. Or run locally anyway: re-run with "
+            "--allow-fallback (one user only)."
         )
         return
     _plain(
-        f"Service on port {port} is unreachable.\n"
-        f"The CLI will not silently run {command} locally because that would "
-        f"open the local search index directly "
-        f"and block other users waiting on the service.\n"
-        f"Next actions:\n"
+        f"{unreachable}\n"
+        f"{safe_condition}\n"
+        "Next actions:\n"
         f"  1. Check status:  {server_status_command()}\n"
-        f"  2. Start service: {server_start_command()}\n"
-        f"  3. Or run locally anyway: re-run with "
-        f"--allow-fallback (one user only)."
+        f"  2. Start service: {server_start_command()}"
     )
 
 
