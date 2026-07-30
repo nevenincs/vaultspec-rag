@@ -407,9 +407,7 @@ def _ensure_watcher(
         return WatcherStartOutcome.QUEUED_BEHIND_DRAIN
     assert generation is not None
     return _warm_and_publish_watcher(
-        _WarmWatcherRequest(
-            root, registry, cfg, debounce_ms, cooldown_s, generation
-        )
+        _WarmWatcherRequest(root, registry, cfg, debounce_ms, cooldown_s, generation)
     )
 
 
@@ -693,10 +691,7 @@ async def _drain_watcher(root: Path, drain: _WatcherDrain) -> bool:
         drain.last_error = None
         succeeded = True
         log_event(logger, "service.watcher", "task_stopped", root=root)
-        if (
-            restart is not None
-            and restart_generation is not None
-        ):
+        if restart is not None and restart_generation is not None:
             try:
                 _warm_and_publish_watcher(
                     _WarmWatcherRequest(
