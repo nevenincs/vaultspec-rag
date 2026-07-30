@@ -91,10 +91,18 @@ class TestEmbeddingModel:
         self,
         embedding_model: EmbeddingModel,
     ) -> None:
-        """Sparse output retention stays on CPU and bounded by one slice."""
-        from ..._gpu import load_torch
+        """Sparse output retention stays on CPU and bounded by one slice.
 
-        torch = load_torch()
+        Imported directly rather than through the compute loader: the fixture
+        above already holds an admitted model stack, so torch is resident and
+        CUDA initialised before this body runs. Asking the admission gate for
+        permission to read allocator counters requests something already
+        granted, and re-evaluates against whatever else holds the card - a
+        daemon a sibling test's fixture spawned is foreign pressure to that
+        reading, so a measurement that allocates nothing was refused outright.
+        """
+        import torch
+
         mib = 1024**2
 
         def _measure(
