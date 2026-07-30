@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Annotated, NamedTuple, cast
 
 if TYPE_CHECKING:
     import pathlib
     from contextlib import AbstractContextManager
+    from types import ModuleType
 
     from .._public_index import DocumentScanResult
     from ..api import AllIndexOutcomes
@@ -848,10 +849,10 @@ def _render_failed_index_rows(rows: list[dict[str, object]]) -> None:
 
 
 def _execute_source_indexing(
-    api: Any,
+    api: ModuleType,
     *,
     request: _IndexRunRequest,
-    reporter: Any,
+    reporter: ProgressReporter,
 ) -> tuple[
     IndexResult | None,
     IndexResult | None,

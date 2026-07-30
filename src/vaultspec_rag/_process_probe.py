@@ -31,11 +31,13 @@ import sys
 import time
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import ctypes
     from collections.abc import Callable
+
+    import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -461,7 +463,7 @@ class _ProcessInfo(Mapping[str, object]):
     missing witness as no evidence rather than as a non-match it may act on.
     """
 
-    def __init__(self, process: Any, attrs: tuple[str, ...]) -> None:
+    def __init__(self, process: psutil.Process, attrs: tuple[str, ...]) -> None:
         self._process = process
         self._attrs = attrs
         self._values: dict[str, object] = {}

@@ -51,7 +51,7 @@ class SearchResults(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    results: list[dict[str, Any]] = []
+    results: list[dict[str, object]] = []
     summary: str | None = None
 
 

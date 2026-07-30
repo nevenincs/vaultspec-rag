@@ -18,6 +18,8 @@ from ..torch_config._constants import TorchConfigAction
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from vaultspec_core.core.types import SyncResult
+
     from ._provision import ProvisionOutcome
 
 ConfirmFn = Callable[[str], bool]
@@ -94,7 +96,9 @@ def _merge_provider_outcome(
         )
 
 
-def _provider_sync_outcomes(results: list[Any]) -> dict[str, dict[str, object]]:
+def _provider_sync_outcomes(
+    results: list[SyncResult],
+) -> dict[str, dict[str, object]]:
     """Aggregate Core's typed ``per_tool`` results without flattening hosts."""
     outcomes: dict[str, dict[str, object]] = {}
     for result in results:
@@ -109,7 +113,7 @@ def _provider_sync_outcomes(results: list[Any]) -> dict[str, dict[str, object]]:
     return {provider: outcomes[provider] for provider in sorted(outcomes)}
 
 
-def _unattributed_sync_errors(results: list[Any]) -> list[str]:
+def _unattributed_sync_errors(results: list[SyncResult]) -> list[str]:
     """Keep Core errors that are not already attributed to a provider."""
     errors: list[str] = []
     for result in results:
@@ -135,7 +139,7 @@ def _unattributed_sync_errors(results: list[Any]) -> list[str]:
     return errors
 
 
-def _mcp_sync_failed(results: list[Any], direct_errors: list[str]) -> bool:
+def _mcp_sync_failed(results: list[SyncResult], direct_errors: list[str]) -> bool:
     if direct_errors:
         return True
     for result in results:
@@ -172,8 +176,8 @@ class InstallReport:
     target: Path
     created_dirs: list[str] = field(default_factory=list)
     seeded: list[tuple[str, str]] = field(default_factory=list)
-    sync_results: list[Any] = field(default_factory=list)
-    mcp_sync_results: list[Any] = field(default_factory=list)
+    sync_results: list[SyncResult] = field(default_factory=list)
+    mcp_sync_results: list[SyncResult] = field(default_factory=list)
     mcp_errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     torch_config_action: TorchConfigAction = TorchConfigAction.SKIPPED
@@ -243,8 +247,8 @@ class UninstallReport:
     target: Path
     removed: list[str] = field(default_factory=list)
     data_removed: bool = False
-    sync_results: list[Any] = field(default_factory=list)
-    mcp_sync_results: list[Any] = field(default_factory=list)
+    sync_results: list[SyncResult] = field(default_factory=list)
+    mcp_sync_results: list[SyncResult] = field(default_factory=list)
     mcp_errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     mcp_extra_action: str = "skipped"

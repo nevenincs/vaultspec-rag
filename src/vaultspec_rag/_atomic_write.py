@@ -36,7 +36,7 @@ import random
 import sys
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ._backoff import jittered_backoff
 
@@ -180,7 +180,7 @@ def _move_file_write_through(source: Path | str, destination: Path | str) -> Non
 
 def write_json_atomically(
     path: Path | str,
-    payload: Any,
+    payload: object,
     options: JsonWriteOptions = _DEFAULT_JSON_WRITE_OPTIONS,
 ) -> None:
     """Publish *payload* as JSON at *path*, atomically, leaving no temp behind.

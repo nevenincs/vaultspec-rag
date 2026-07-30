@@ -20,6 +20,7 @@ from ..job_models import (
     JobState,
 )
 from ..service_quiesce import ServiceQuiesceController
+from ._job_manager_transition_helpers import pending_attempt
 from ._job_roots import _TEST_PROJECT_ROOT
 
 if TYPE_CHECKING:
@@ -54,7 +55,7 @@ async def _finish(
     error_kind: str | None = None,
 ) -> None:
     """Drive one queued job through a started attempt into a terminal state."""
-    task = asyncio.create_task(asyncio.Event().wait())
+    task = asyncio.create_task(pending_attempt())
     try:
         started = manager.start_attempt(job_id, task=task, control=RunControlToken())
         assert started.code == "attempt_started"

@@ -82,7 +82,7 @@ class AttemptExit:
 class JobRuntimeOwner:
     """Strong references to the live execution for one exact job ID."""
 
-    task: asyncio.Task[Any] | None
+    task: asyncio.Task[AttemptExit] | None
     control: RunControlToken | None
     worker_active: bool = False
     worker_thread: threading.Thread | None = None

@@ -33,6 +33,7 @@ from ...job_models import (
 )
 from ...job_persistence import load_persisted_state, save_persisted_state
 from ...service_quiesce import ServiceQuiesceController
+from .._job_manager_transition_helpers import pending_attempt
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,7 +56,7 @@ async def test_progress_publish_amortized_cost(tmp_path: Path) -> None:
     )
     assert created.job is not None
     job_id = created.job.id
-    task = asyncio.create_task(asyncio.Event().wait())
+    task = asyncio.create_task(pending_attempt())
     try:
         started = manager.start_attempt(
             job_id,
