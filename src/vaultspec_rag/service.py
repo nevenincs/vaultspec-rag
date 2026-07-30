@@ -1402,17 +1402,32 @@ class ServiceRegistry:
         slot: ProjectSlot,
         model_name: str | None,
     ) -> ProjectComputeRuntime:
-        """Return a ticket-protected runtime, creating it once per slot."""
+        """Return a ticket-protected runtime, creating it once per slot.
+
+        Construction runs outside ``_lock`` and the lock is taken only to
+        publish the result, exactly as slot creation and the GPU residency
+        rebuild already do.  ``_lock`` covers the whole registry - leasing,
+        refcounting, health, eviction, every root - while building a runtime
+        reaches the shared model and reranker loads, the longest step the
+        registry has.  Holding it across that turns one root's first request
+        into a stall on every other root's bookkeeping, and on ``/health``,
+        which is the window a supervisor is watching.
+
+        The re-check under the lock adopts a concurrent builder's runtime
+        rather than clobbering it.  Losing that race costs only a few cheap
+        objects: the model and reranker are shared and internally
+        double-checked, so the duplicate build never loads either twice.
+        """
         runtime = slot.compute_runtime
         if runtime is not None:
             return runtime
+        built = self._create_compute_runtime(root, slot, model_name)
         with self._lock:
-            runtime = slot.compute_runtime
-            if runtime is not None:
-                return runtime
-            runtime = self._create_compute_runtime(root, slot, model_name)
-            slot.compute_runtime = runtime
-            return runtime
+            published = slot.compute_runtime
+            if published is not None:
+                return published
+            slot.compute_runtime = built
+            return built
 
     def _create_compute_runtime(
         self,
