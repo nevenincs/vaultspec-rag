@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._store_locks import VaultStoreLockedError
-from ..service import ServiceRegistry
+from ..service import ProjectBusyError, ServiceRegistry
 from ..store_runtime import VaultStore
 
 if TYPE_CHECKING:
@@ -51,6 +51,18 @@ def _project_root(tmp_path: Path, name: str) -> Path:
     root = (tmp_path / name).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _wait_for_project_admission(registry: ServiceRegistry, root: Path) -> None:
+    """Wait until *root* owns its real registry construction seat."""
+    deadline = time.monotonic() + _RESUMED_SECONDS
+    while time.monotonic() < deadline:
+        with registry._lock:
+            if root in registry._project_admissions:
+                return
+        time.sleep(0.01)
+    msg = f"project admission for {root} was never recorded"
+    raise AssertionError(msg)
 
 
 class _TeardownRendezvous:
@@ -265,6 +277,279 @@ class TestSameRootStoreAdmission:
 
         assert errors == []
         assert sorted(overlapped) == sorted(roots)
+
+
+class TestProjectAdmissionReservations:
+    """Bounded cold starts account for a seat before a store is constructed."""
+
+    def test_different_roots_never_construct_beyond_the_capped_seat(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A second root waits while the first root owns the sole cold seat."""
+        registry = ServiceRegistry()
+        registry._max_projects = 1
+        first_root = _project_root(tmp_path, "first")
+        second_root = _project_root(tmp_path, "second")
+        first_slots: list[ProjectSlot] = []
+        second_slots: list[ProjectSlot] = []
+        errors: list[BaseException] = []
+
+        def admit(root: Path, slots: list[ProjectSlot]) -> None:
+            try:
+                slots.append(registry.peek_project(root))
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        first = threading.Thread(
+            target=admit,
+            args=(first_root, first_slots),
+            name="first-capped-admission",
+        )
+        second = threading.Thread(
+            target=admit,
+            args=(second_root, second_slots),
+            name="second-capped-admission",
+        )
+        try:
+            with registry._root_store_admission(first_root):
+                first.start()
+                _wait_for_project_admission(registry, first_root)
+                second.start()
+                assert not _finished(second, _BLOCKED_SECONDS), (
+                    "a second root constructed while the sole admission seat was held"
+                )
+                with registry._lock:
+                    occupied = len(registry._projects) + len(
+                        registry._project_admissions
+                    )
+                    assert occupied <= registry.max_projects
+                    assert registry._project_admissions == {first_root}
+                assert not (second_root / ".vault" / "data").exists(), (
+                    "the blocked root reached real store construction"
+                )
+            assert _finished(first, _RESUMED_SECONDS)
+            assert _finished(second, _RESUMED_SECONDS)
+        finally:
+            _join_started(first)
+            _join_started(second)
+            registry.close_all()
+
+        assert errors == []
+        assert [slot.store.root_dir for slot in first_slots] == [first_root]
+        assert [slot.store.root_dir for slot in second_slots] == [second_root]
+
+    def test_lru_replacement_keeps_the_outgoing_slot_and_incoming_seat_atomic(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A paused LRU teardown exposes exactly one accounted seat, never two."""
+        registry = ServiceRegistry()
+        registry._max_projects = 1
+        victim = _project_root(tmp_path, "victim")
+        incoming = _project_root(tmp_path, "incoming")
+        registry.peek_project(victim)
+        rendezvous = _TeardownRendezvous(victim)
+        registry._on_close_project = rendezvous
+        admitted: list[ProjectSlot] = []
+        errors: list[BaseException] = []
+
+        def replace_lru() -> None:
+            try:
+                admitted.append(registry.peek_project(incoming))
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        thread = threading.Thread(target=replace_lru, name="lru-seat-replacement")
+        try:
+            thread.start()
+            assert rendezvous.entered.wait(timeout=_RESUMED_SECONDS), (
+                "the LRU replacement did not enter guarded teardown"
+            )
+            with registry._lock:
+                occupied = len(registry._projects) + len(registry._project_admissions)
+                assert victim not in registry._projects
+                assert registry._project_admissions == {incoming}
+                assert occupied == registry.max_projects
+            assert not (incoming / ".vault" / "data").exists(), (
+                "the incoming store was constructed before the victim closed"
+            )
+            rendezvous.release.set()
+            assert _finished(thread, _RESUMED_SECONDS), (
+                "the LRU replacement did not resume after teardown"
+            )
+        finally:
+            rendezvous.release.set()
+            registry._on_close_project = None
+            _join_started(thread)
+            registry.close_all()
+
+        assert errors == []
+        assert [slot.store.root_dir for slot in admitted] == [incoming]
+
+    def test_same_root_callers_share_the_one_reserved_construction_seat(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Concurrent same-root callers publish and receive one real slot object."""
+        registry = ServiceRegistry()
+        root = _project_root(tmp_path, "shared")
+        slots: list[ProjectSlot] = []
+        errors: list[BaseException] = []
+
+        def admit() -> None:
+            try:
+                slots.append(registry.peek_project(root))
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        owner = threading.Thread(target=admit, name="same-root-owner")
+        joiner = threading.Thread(target=admit, name="same-root-joiner")
+        try:
+            with registry._root_store_admission(root):
+                owner.start()
+                _wait_for_project_admission(registry, root)
+                joiner.start()
+                assert not _finished(joiner, _BLOCKED_SECONDS), (
+                    "the same-root joiner did not wait for the existing seat"
+                )
+                with registry._lock:
+                    assert registry._project_admissions == {root}
+                assert not (root / ".vault" / "data").exists(), (
+                    "a same-root joiner opened its own store"
+                )
+            assert _finished(owner, _RESUMED_SECONDS)
+            assert _finished(joiner, _RESUMED_SECONDS)
+        finally:
+            _join_started(owner)
+            _join_started(joiner)
+            registry.close_all()
+
+        assert errors == []
+        assert len(slots) == 2
+        assert slots[0] is slots[1]
+
+    def test_failed_constructor_releases_its_seat_for_another_root(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A real filesystem constructor failure wakes the blocked next root."""
+        registry = ServiceRegistry()
+        registry._max_projects = 1
+        failed_root = (tmp_path / "not-a-directory").resolve()
+        failed_root.write_text("this root is intentionally a regular file")
+        succeeding_root = _project_root(tmp_path, "succeeds-after-failure")
+        failures: list[BaseException] = []
+        succeeding_slots: list[ProjectSlot] = []
+
+        def fail_constructor() -> None:
+            try:
+                registry.peek_project(failed_root)
+            except BaseException as exc:  # pragma: no cover - reported below
+                failures.append(exc)
+
+        def admit_after_failure() -> None:
+            try:
+                succeeding_slots.append(registry.peek_project(succeeding_root))
+            except BaseException as exc:  # pragma: no cover - reported below
+                failures.append(exc)
+
+        failing = threading.Thread(target=fail_constructor, name="failing-admission")
+        succeeding = threading.Thread(
+            target=admit_after_failure,
+            name="admission-after-failure",
+        )
+        try:
+            with registry._root_store_admission(failed_root):
+                failing.start()
+                _wait_for_project_admission(registry, failed_root)
+                succeeding.start()
+                assert not _finished(succeeding, _BLOCKED_SECONDS), (
+                    "a second root bypassed the failed constructor's reserved seat"
+                )
+            assert _finished(failing, _RESUMED_SECONDS)
+            assert _finished(succeeding, _RESUMED_SECONDS)
+        finally:
+            _join_started(failing)
+            _join_started(succeeding)
+            registry.close_all()
+
+        assert len(failures) == 1
+        assert isinstance(failures[0], FileExistsError)
+        assert [slot.store.root_dir for slot in succeeding_slots] == [succeeding_root]
+        with registry._lock:
+            assert registry._project_admissions == set()
+
+
+class TestMaintenanceStoreLease:
+    """Registry-owned maintenance never shares or escapes a live store owner."""
+
+    def test_maintenance_rejects_a_live_slot_then_accounts_its_replacement(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A busy warm slot remains untouched; an idle one is guarded and replaced."""
+        registry = ServiceRegistry()
+        root = _project_root(tmp_path, "maintained")
+        warm_slot = registry.peek_project(root)
+        maintained: VaultStore | None = None
+        try:
+            with (
+                registry.lease(root),
+                pytest.raises(ProjectBusyError) as excinfo,
+                registry.lease_maintenance_store(root),
+            ):
+                pass
+            assert excinfo.value.root == root
+            assert registry._projects[root] is warm_slot
+            assert warm_slot.store._client is not None
+
+            with registry.lease_maintenance_store(root) as store:
+                maintained = store
+                assert root not in registry._projects
+                assert warm_slot.store._client is None
+                with registry._lock:
+                    assert store in registry._transient_stores
+                assert store._client is not None
+            assert maintained._client is None
+        finally:
+            registry.close_all()
+
+    def test_maintenance_waits_for_a_same_root_cold_store_lease(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The cleanup lease cannot open its store until the cold reader closes."""
+        registry = ServiceRegistry()
+        root = _project_root(tmp_path, "maintenance-after-cold")
+        maintained: list[VaultStore] = []
+        errors: list[BaseException] = []
+
+        def maintain() -> None:
+            try:
+                with registry.lease_maintenance_store(root) as store:
+                    maintained.append(store)
+            except BaseException as exc:  # pragma: no cover - reported below
+                errors.append(exc)
+
+        thread = threading.Thread(target=maintain, name="maintenance-after-cold")
+        try:
+            with registry.lease_store(root) as cold_store:
+                thread.start()
+                assert not _finished(thread, _BLOCKED_SECONDS), (
+                    "maintenance opened a same-root store beside a cold lease"
+                )
+                assert cold_store._client is not None
+            assert _finished(thread, _RESUMED_SECONDS), (
+                "maintenance did not resume after the cold lease closed"
+            )
+        finally:
+            _join_started(thread)
+            registry.close_all()
+
+        assert errors == []
+        assert len(maintained) == 1
+        assert maintained[0]._client is None
 
 
 class TestEvictionHoldsAdmissionUntilTheStoreCloses:
