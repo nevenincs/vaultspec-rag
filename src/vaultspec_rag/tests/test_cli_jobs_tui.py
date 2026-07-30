@@ -2793,6 +2793,21 @@ class TestClosingTheSession:
             # rather than the session's own close re-raising it.
             recorded = app._exception
             app._exception = None
+            # The job interval is an hour, so a misplaced application-owned
+            # timer remains live here without firing during this bounded
+            # window. Its presence is therefore distinct from the real
+            # transport observation below: together they prove teardown
+            # stopped the timer, rather than merely that it happened not to
+            # poll yet.
+            beats = {app._tick, app.refresh_jobs, app.refresh_service_status}
+            timer_names = {
+                timer.name for timer in app._timers if timer._callback in beats
+            }
+            left_running = [
+                task.get_name()
+                for task in asyncio.all_tasks()
+                if task.get_name() in timer_names and not task.done()
+            ]
             with control_service._lock:
                 polls_after_close = sum(
                     method == "GET" and path.startswith("/jobs")
@@ -2800,6 +2815,10 @@ class TestClosingTheSession:
                 )
 
         assert recorded is None, f"a beat outlived the screen it paints: {recorded!r}"
+        assert not left_running, (
+            "the beats must end with the screen they paint, not with the "
+            f"application: {left_running}"
+        )
         assert polls_after_close == polls_before_close, (
             "the jobs refresh beat outlived the screen without raising"
         )

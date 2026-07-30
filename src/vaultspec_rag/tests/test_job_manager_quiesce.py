@@ -5,22 +5,33 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import pytest
 
 from ..job_manager.manager import JobManager
-from ..job_manager.models import JobAttemptContext, JobExecutionResult
+from ..job_manager.models import (
+    JobAttemptContext,
+    JobExecutionResult,
+    QuiescedResumePersistence,
+    QuiescedResumeResult,
+    QuiescedResumeStatus,
+)
 from ..job_models import (
     DesiredJobState,
     JobInitiator,
     JobMode,
     JobOperation,
+    JobOutcomeStatus,
     JobSource,
     JobSpec,
     JobState,
 )
 from ..service_quiesce import QuiesceState, ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -103,6 +114,42 @@ async def _await_state(manager: JobManager, job_id: str, state: JobState) -> Non
         await asyncio.sleep(0.01)
 
 
+def _warming_controller() -> ServiceQuiesceController:
+    controller = ServiceQuiesceController()
+    assert controller.begin_pause().snapshot.state is QuiesceState.PAUSING
+    assert controller.wait_for_drain(timeout=0).achieved
+    assert controller.acknowledge_vram_released().achieved
+    assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
+    return controller
+
+
+def _create_quiesced_job(
+    controller: ServiceQuiesceController,
+    state_path: Path | None,
+) -> tuple[JobManager, str]:
+    manager = JobManager(
+        max_nonterminal=1,
+        state_path=state_path,
+        quiesce_controller=controller,
+    )
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            _TEST_PROJECT_ROOT,
+            JobMode.REBUILD,
+        ),
+        JobInitiator("test", "quiesced-recovery", _TEST_PROJECT_ROOT),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    assert (
+        manager.defer_unstarted_for_quiesce(job_id).code
+        == "quiesce_deferred_before_start"
+    )
+    return manager, job_id
+
+
 @pytest.mark.asyncio
 async def test_quiesce_releases_ticket_and_resources_before_same_id_resume() -> None:
     """A real worker unwinds, drains, and reconciles only after running."""
@@ -149,16 +196,413 @@ async def test_quiesce_releases_ticket_and_resources_before_same_id_resume() -> 
     assert quiesced.desired_state is DesiredJobState.RUNNING
     assert not quiesced.resources.holds_anything
     assert controller.snapshot().active_compute_tickets == 0
-    assert manager.resume_quiesced_attempts() == ()
-
     assert controller.wait_for_drain(timeout=0).achieved
     assert controller.acknowledge_vram_released().achieved
     assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
+    prepared = manager.prepare_quiesced_resume()
+    assert prepared.status is QuiescedResumeStatus.PREPARED
+    assert prepared.persistence is QuiescedResumePersistence.DURABLE
+    assert prepared.job_ids == (job_id,)
     assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
-    assert manager.resume_quiesced_attempts() == (job_id,)
+    assert manager.dispatch_prepared_quiesced_resume(prepared) == (job_id,)
     await _await_state(manager, job_id, JobState.SUCCEEDED)
 
     completed = manager.get(job_id)
     assert completed is not None
     assert completed.id == job_id
     assert completed.attempt.number == 2
+
+
+@pytest.mark.asyncio
+async def test_unpublished_prepare_failure_retries_without_dispatch(
+    tmp_path: Path,
+) -> None:
+    """A real parent-path write failure rolls back and retry dispatches once."""
+    state_path = tmp_path / "state" / "jobs.json"
+    controller = _warming_controller()
+    manager, job_id = _create_quiesced_job(controller, state_path)
+    runner_started = threading.Event()
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        runner_started.set()
+        return JobExecutionResult(summary=f"attempt {context.attempt} complete")
+
+    assert manager.bind_dispatch(job_id, runner).code == "dispatch_bound"
+    state_path.unlink()
+    state_path.parent.rmdir()
+    state_path.parent.write_text("not a directory", encoding="utf-8")
+
+    failed = manager.prepare_quiesced_resume()
+    assert failed.status is QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED
+    assert failed.job_ids == (job_id,)
+    assert failed.persistence is QuiescedResumePersistence.UNPUBLISHED
+    retained = manager.get(job_id)
+    assert retained is not None
+    assert retained.state is JobState.PAUSED
+    assert retained.attempt.number == 1
+    assert manager.dispatch_prepared_quiesced_resume(failed) == ()
+    assert not runner_started.is_set()
+
+    state_path.parent.unlink()
+    state_path.parent.mkdir()
+    retried = manager.prepare_quiesced_resume()
+    assert retried.status is QuiescedResumeStatus.PREPARED
+    queued = manager.get(job_id)
+    assert queued is not None
+    assert queued.state is JobState.QUEUED
+    assert queued.attempt.number == 2
+
+    assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+    assert manager.dispatch_prepared_quiesced_resume(retried) == (job_id,)
+    await _await_state(manager, job_id, JobState.SUCCEEDED)
+    assert runner_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_durable_queued_prepare_recovers_after_restart_without_new_id(
+    tmp_path: Path,
+) -> None:
+    """A durable queued preparation survives a restart and dispatches once."""
+    state_path = tmp_path / "jobs.json"
+    controller = _warming_controller()
+    manager, job_id = _create_quiesced_job(controller, state_path)
+    prepared = manager.prepare_quiesced_resume()
+    assert prepared.status is QuiescedResumeStatus.PREPARED
+    assert prepared.job_ids == (job_id,)
+
+    restarted_controller = _warming_controller()
+    restarted = JobManager(
+        max_nonterminal=1,
+        state_path=state_path,
+        quiesce_controller=restarted_controller,
+    )
+    assert restarted.restore_persisted().code == "job_state_restored"
+    restored = restarted.get(job_id)
+    assert restored is not None
+    assert restored.state is JobState.QUEUED
+    assert restored.attempt.number == 2
+    attempts: list[int] = []
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        attempts.append(context.attempt)
+        return JobExecutionResult(summary="recovered")
+
+    assert restarted.bind_dispatch(job_id, runner).code == "dispatch_bound"
+    assert (
+        restarted_controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+    )
+    assert restarted.recover_running_quiesced_resume() == (job_id,)
+    await _await_state(restarted, job_id, JobState.SUCCEEDED)
+    assert attempts == [2]
+
+
+def test_concurrent_unpublished_preparation_reports_failure_without_dispatch(
+    tmp_path: Path,
+) -> None:
+    """Concurrent warming callers report the same real persistence failure."""
+    state_path = tmp_path / "state" / "jobs.json"
+    controller = _warming_controller()
+    manager, job_id = _create_quiesced_job(controller, state_path)
+    runner_started = threading.Event()
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        del context
+        runner_started.set()
+        return JobExecutionResult(summary="unexpected")
+
+    assert manager.bind_dispatch(job_id, runner).code == "dispatch_bound"
+    state_path.unlink()
+    state_path.parent.rmdir()
+    state_path.parent.write_text("not a directory", encoding="utf-8")
+    barrier = threading.Barrier(3)
+    results: list[QuiescedResumeResult] = []
+
+    def prepare() -> None:
+        barrier.wait(timeout=5.0)
+        results.append(manager.prepare_quiesced_resume())
+
+    first = threading.Thread(target=prepare)
+    second = threading.Thread(target=prepare)
+    first.start()
+    second.start()
+    barrier.wait(timeout=5.0)
+    first.join(timeout=5.0)
+    second.join(timeout=5.0)
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert len(results) == 2
+    assert all(
+        result.status is QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED
+        for result in results
+    )
+    assert all(
+        result.persistence is QuiescedResumePersistence.UNPUBLISHED
+        for result in results
+    )
+    retained = manager.get(job_id)
+    assert retained is not None
+    assert retained.state is JobState.PAUSED
+    assert not runner_started.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "desired_state", [DesiredJobState.PAUSED, DesiredJobState.CANCELLED]
+)
+async def test_prepared_dispatch_rechecks_operator_intent(
+    desired_state: DesiredJobState,
+) -> None:
+    """A pause or cancellation race prevents a prepared ID from dispatching."""
+    controller = _warming_controller()
+    manager, job_id = _create_quiesced_job(controller, None)
+    runner_started = threading.Event()
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        del context
+        runner_started.set()
+        return JobExecutionResult(summary="unexpected")
+
+    assert manager.bind_dispatch(job_id, runner).code == "dispatch_bound"
+    prepared = manager.prepare_quiesced_resume()
+    assert prepared.status is QuiescedResumeStatus.PREPARED
+    assert (
+        manager.set_desired_state(job_id, desired_state).status
+        is not JobOutcomeStatus.ERROR
+    )
+    assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+    assert manager.dispatch_prepared_quiesced_resume(prepared) == ()
+    assert manager.recover_running_quiesced_resume() == ()
+    assert not runner_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_recovery_dispatches_claim_one_same_id_attempt() -> None:
+    """Two real resume callers schedule one durable attempt, never two."""
+    controller = ServiceQuiesceController()
+    manager = JobManager(
+        max_nonterminal=1,
+        state_path=None,
+        quiesce_controller=controller,
+    )
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            _TEST_PROJECT_ROOT,
+            JobMode.REBUILD,
+        ),
+        JobInitiator("test", "recovery-dispatch-coalescing", _TEST_PROJECT_ROOT),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    first_attempt_started = threading.Event()
+    release_first_attempt = threading.Event()
+    attempts: list[int] = []
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        attempts.append(context.attempt)
+        if context.attempt == 1:
+            first_attempt_started.set()
+            assert release_first_attempt.wait(timeout=5.0)
+            context.control.checkpoint()
+        return JobExecutionResult(summary=f"attempt {context.attempt} complete")
+
+    assert manager.bind_dispatch(job_id, runner).code == "dispatch_bound"
+    assert (await manager.dispatch_async(job_id)).code == "attempt_started"
+    assert await asyncio.to_thread(first_attempt_started.wait, 5.0)
+    assert controller.begin_pause().snapshot.state is QuiesceState.PAUSING
+    assert manager.request_quiesce_attempts() == (job_id,)
+    release_first_attempt.set()
+    await _await_state(manager, job_id, JobState.PAUSED)
+    assert controller.wait_for_drain(timeout=0).achieved
+    assert controller.acknowledge_vram_released().achieved
+    assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
+    prepared = manager.prepare_quiesced_resume()
+    assert prepared.status is QuiescedResumeStatus.PREPARED
+    assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+
+    launch = threading.Barrier(3)
+    scheduled: list[tuple[str, ...]] = []
+
+    def dispatch_recovery() -> None:
+        launch.wait(timeout=5.0)
+        scheduled.append(manager.dispatch_prepared_quiesced_resume(prepared))
+
+    first = threading.Thread(target=dispatch_recovery, name="recovery-dispatch-1")
+    second = threading.Thread(target=dispatch_recovery, name="recovery-dispatch-2")
+    first.start()
+    second.start()
+    launch.wait(timeout=5.0)
+    first.join(timeout=5.0)
+    second.join(timeout=5.0)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert sorted(scheduled, key=len) == [(), (job_id,)]
+    await _await_state(manager, job_id, JobState.SUCCEEDED)
+    assert attempts == [1, 2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shutdown",
+    [False, True],
+    ids=("cancellation", "shutdown"),
+)
+async def test_blocked_loop_control_invalidates_recovery_claim(
+    shutdown: bool,
+) -> None:
+    """A queued loop callback cannot outlive cancellation or shutdown."""
+    controller = ServiceQuiesceController()
+    manager = JobManager(
+        max_nonterminal=1,
+        state_path=None,
+        quiesce_controller=controller,
+    )
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            _TEST_PROJECT_ROOT,
+            JobMode.REBUILD,
+        ),
+        JobInitiator("test", "recovery-claim-control", _TEST_PROJECT_ROOT),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    first_attempt_started = threading.Event()
+    release_first_attempt = threading.Event()
+    attempts: list[int] = []
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        attempts.append(context.attempt)
+        if context.attempt == 1:
+            first_attempt_started.set()
+            assert release_first_attempt.wait(timeout=5.0)
+            context.control.checkpoint()
+        return JobExecutionResult(summary=f"attempt {context.attempt} complete")
+
+    assert manager.bind_dispatch(job_id, runner).code == "dispatch_bound"
+    assert (await manager.dispatch_async(job_id)).code == "attempt_started"
+    assert await asyncio.to_thread(first_attempt_started.wait, 5.0)
+    assert controller.begin_pause().snapshot.state is QuiesceState.PAUSING
+    assert manager.request_quiesce_attempts() == (job_id,)
+    release_first_attempt.set()
+    await _await_state(manager, job_id, JobState.PAUSED)
+    assert controller.wait_for_drain(timeout=0).achieved
+    assert controller.acknowledge_vram_released().achieved
+    assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
+    prepared = manager.prepare_quiesced_resume()
+    assert prepared.status is QuiescedResumeStatus.PREPARED
+    assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+
+    scheduled: list[tuple[str, ...]] = []
+
+    def schedule_on_owner_loop() -> None:
+        scheduled.append(manager.dispatch_prepared_quiesced_resume(prepared))
+
+    scheduler = threading.Thread(
+        target=schedule_on_owner_loop,
+        name="blocked-loop-recovery-scheduler",
+    )
+    scheduler.start()
+    scheduler.join(timeout=5.0)
+
+    assert not scheduler.is_alive()
+    assert scheduled == [(job_id,)]
+    if shutdown:
+        assert manager.begin_shutdown() == ()
+    else:
+        cancelled = manager.set_desired_state(job_id, DesiredJobState.CANCELLED)
+        assert cancelled.code == "job_cancelled"
+    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
+
+    final = manager.get(job_id)
+    assert final is not None
+    assert final.state is (JobState.QUEUED if shutdown else JobState.CANCELLED)
+    assert attempts == [1]
+    assert manager.recover_running_quiesced_resume() == ()
+
+
+def test_no_loop_recovery_claim_is_released_for_a_later_owner_loop() -> None:
+    """A missing owner loop drops its claim so later recovery can dispatch."""
+    controller = _warming_controller()
+    manager, job_id = _create_quiesced_job(controller, None)
+    attempts: list[int] = []
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        attempts.append(context.attempt)
+        return JobExecutionResult(summary="recovered after loop ownership")
+
+    assert manager.bind_dispatch(job_id, runner).code == "dispatch_bound"
+    prepared = manager.prepare_quiesced_resume()
+    assert prepared.status is QuiescedResumeStatus.PREPARED
+    assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+    assert manager.dispatch_prepared_quiesced_resume(prepared) == ()
+
+    async def recover_on_owner_loop() -> None:
+        assert manager.recover_running_quiesced_resume() == (job_id,)
+        await _await_state(manager, job_id, JobState.SUCCEEDED)
+
+    asyncio.run(recover_on_owner_loop())
+    assert attempts == [2]
+
+
+def test_stopped_owner_loop_recovery_claim_moves_to_later_owner_loop() -> None:
+    """A durable retry can bind its callback to a new live owner loop."""
+    controller = ServiceQuiesceController()
+    manager = JobManager(
+        max_nonterminal=1,
+        state_path=None,
+        quiesce_controller=controller,
+    )
+    created = manager.create(
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            _TEST_PROJECT_ROOT,
+            JobMode.REBUILD,
+        ),
+        JobInitiator("test", "stopped-owner-loop-recovery", _TEST_PROJECT_ROOT),
+    )
+    assert created.job is not None
+    job_id = created.job.id
+    first_attempt_started = threading.Event()
+    release_first_attempt = threading.Event()
+    attempts: list[int] = []
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        attempts.append(context.attempt)
+        if context.attempt == 1:
+            first_attempt_started.set()
+            assert release_first_attempt.wait(timeout=5.0)
+            context.control.checkpoint()
+        return JobExecutionResult(summary=f"attempt {context.attempt} complete")
+
+    assert manager.bind_dispatch(job_id, runner).code == "dispatch_bound"
+
+    async def prepare_on_original_owner_loop() -> QuiescedResumeResult:
+        assert (await manager.dispatch_async(job_id)).code == "attempt_started"
+        assert await asyncio.to_thread(first_attempt_started.wait, 5.0)
+        assert controller.begin_pause().snapshot.state is QuiesceState.PAUSING
+        assert manager.request_quiesce_attempts() == (job_id,)
+        release_first_attempt.set()
+        await _await_state(manager, job_id, JobState.PAUSED)
+        assert controller.wait_for_drain(timeout=0).achieved
+        assert controller.acknowledge_vram_released().achieved
+        assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
+        prepared = manager.prepare_quiesced_resume()
+        assert prepared.status is QuiescedResumeStatus.PREPARED
+        assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
+        return prepared
+
+    prepared = asyncio.run(prepare_on_original_owner_loop())
+    assert manager.dispatch_prepared_quiesced_resume(prepared) == ()
+
+    async def recover_on_later_owner_loop() -> None:
+        assert manager.recover_running_quiesced_resume() == (job_id,)
+        await _await_state(manager, job_id, JobState.SUCCEEDED)
+
+    asyncio.run(recover_on_later_owner_loop())
+    assert attempts == [1, 2]

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..job_models import JobSnapshot
-from .models import JobAttemptContext, JobExecutionResult
+from .models import JobAttemptContext, JobExecutionResult, QuiescedDispatchClaim
 
 if TYPE_CHECKING:
     import asyncio
@@ -31,6 +31,11 @@ if TYPE_CHECKING:
 
     class JobManagerState(Protocol):
         """Static contract for concrete owners operating on one coordinator."""
+
+        _next_dispatch_binding_nonce: int
+        _next_quiesced_dispatch_generation: int
+        _pending_quiesced_dispatches: dict[str, QuiescedDispatchClaim]
+        _service_loop: asyncio.AbstractEventLoop | None
 
         def __getattr__(self, name: str) -> Any: ...
 
@@ -56,6 +61,7 @@ type JobAttemptFinishedCallback = Callable[
 @dataclass(frozen=True, slots=True)
 class JobDispatchBinding:
     runner: JobAttemptRunner
+    nonce: int
     on_started: JobAttemptStartedCallback | None = None
     on_finished: JobAttemptFinishedCallback | None = None
     loop: asyncio.AbstractEventLoop | None = None
