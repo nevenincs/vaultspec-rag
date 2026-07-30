@@ -26,23 +26,23 @@ from importlib.resources import files
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.commands import (
     install_run as core_install_run,
 )
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
-from vaultspec_core.core.exceptions import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.exceptions import (
     VaultSpecError,
 )
-from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.manifest import (
     read_manifest,
     write_manifest,
 )
-from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.mcps import (
     render_mcp_definition_for_mode,
 )
-from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.workspace_mode import (
     PackageDeclaration,
     dependency_leak_advisory,
     read_package_declaration,

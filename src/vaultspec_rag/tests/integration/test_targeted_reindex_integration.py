@@ -14,10 +14,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config import (
     reset_config,
 )
-from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.vaultcore import (
     scan_vault,
 )
 

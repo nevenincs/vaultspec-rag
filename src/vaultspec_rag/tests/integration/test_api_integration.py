@@ -137,7 +137,7 @@ class TestRAGAPI:
         root = rag_components["root"]
         store = rag_components["store"]
 
-        from vaultspec_core.metrics import (  # pyright: ignore[reportMissingTypeStubs]  # no stubs for vaultspec_core
+        from vaultspec_core.metrics import (
             get_vault_metrics,
         )
 

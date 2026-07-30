@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import tomlkit
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
 
