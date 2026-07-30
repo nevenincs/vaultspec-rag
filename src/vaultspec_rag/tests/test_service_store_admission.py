@@ -10,6 +10,7 @@ of them at a time, and a refusal must not name a holder it never established.
 from __future__ import annotations
 
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,6 +20,7 @@ from ..service import ServiceRegistry
 from ..store_runtime import VaultStore
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from ..service import ProjectSlot
@@ -38,11 +40,72 @@ def _finished(thread: threading.Thread, timeout: float) -> bool:
     return not thread.is_alive()
 
 
+def _join_started(thread: threading.Thread) -> None:
+    """Join *thread* if it was ever started, so cleanup survives an early failure."""
+    if thread.ident is not None:
+        thread.join(timeout=_RESUMED_SECONDS)
+
+
 def _project_root(tmp_path: Path, name: str) -> Path:
     """Return a resolved, existing workspace root the store can open."""
     root = (tmp_path / name).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+class _TeardownRendezvous:
+    """Pause the eviction teardown of one root inside the real teardown.
+
+    Wired through the registry's production ``_on_close_project`` hook - the
+    same callback the server uses to stop a watcher - so the pause lands
+    between the victim's slot leaving ``_projects`` and its store closing.
+    That is exactly the window in which the slot is invisible while its
+    storage lock is still held, and it cannot be reached from outside without
+    stopping the teardown thread inside it.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, root: Path) -> object:
+        """Pause the first teardown of the tracked root; pass everything else."""
+        if root == self._root and not self.entered.is_set():
+            self.entered.set()
+            if not self.release.wait(timeout=_RESUMED_SECONDS):  # pragma: no cover
+                msg = "teardown rendezvous was never released"
+                raise AssertionError(msg)
+        return None
+
+
+def _force_evict(registry: ServiceRegistry, victim: Path, _spare: Path) -> None:
+    """Evict *victim* through the explicit admin eviction path."""
+    assert registry.try_evict(victim) == (True, "forced")
+
+
+def _lru_evict(registry: ServiceRegistry, _victim: Path, spare: Path) -> None:
+    """Evict the only resident slot by admitting *spare* over a one-slot cap."""
+    registry._idle_ttl_seconds = 0
+    registry._max_projects = 1
+    with registry.lease(spare):
+        pass
+
+
+def _idle_evict(registry: ServiceRegistry, victim: Path, spare: Path) -> None:
+    """Evict *victim* by ageing it past the idle TTL, then leasing *spare*."""
+    registry._max_projects = 0
+    registry._idle_ttl_seconds = 0.01
+    registry._projects[victim].last_access = time.monotonic() - 60.0
+    with registry.lease(spare):
+        pass
+
+
+_EVICTION_TRIGGERS = [
+    pytest.param(_force_evict, id="forced"),
+    pytest.param(_lru_evict, id="lru"),
+    pytest.param(_idle_evict, id="idle"),
+]
 
 
 class TestSameRootStoreAdmission:
@@ -202,6 +265,166 @@ class TestSameRootStoreAdmission:
 
         assert errors == []
         assert sorted(overlapped) == sorted(roots)
+
+
+class TestEvictionHoldsAdmissionUntilTheStoreCloses:
+    """A root's guard outlives the store it admitted, eviction included."""
+
+    @pytest.mark.parametrize("trigger", _EVICTION_TRIGGERS)
+    def test_an_arrival_waits_for_an_evicted_store_to_finish_closing(
+        self,
+        tmp_path: Path,
+        trigger: Callable[[ServiceRegistry, Path, Path], None],
+    ) -> None:
+        """Every eviction path keeps the root shut to openers until close returns.
+
+        A store keeps its exclusive storage lock until ``close()`` completes,
+        so the interval between the slot leaving ``_projects`` and that return
+        is the one an arrival must not be admitted into: it opens a second
+        store and is refused by this daemon's own handle, blaming a process
+        that was never involved.
+        """
+        registry = ServiceRegistry()
+        victim = _project_root(tmp_path, "victim")
+        spare = _project_root(tmp_path, "spare")
+        registry.peek_project(victim)
+        rendezvous = _TeardownRendezvous(victim)
+        registry._on_close_project = rendezvous
+
+        evict_errors: list[BaseException] = []
+        arrival_errors: list[BaseException] = []
+        arrived: list[ProjectSlot] = []
+
+        def evict() -> None:
+            try:
+                trigger(registry, victim, spare)
+            except BaseException as exc:  # pragma: no cover - reported below
+                evict_errors.append(exc)
+
+        def arrive() -> None:
+            try:
+                arrived.append(registry.peek_project(victim))
+            except BaseException as exc:  # pragma: no cover - reported below
+                arrival_errors.append(exc)
+
+        evictor = threading.Thread(target=evict, name="evictor")
+        arrival = threading.Thread(target=arrive, name="arrival")
+        try:
+            evictor.start()
+            assert rendezvous.entered.wait(timeout=_RESUMED_SECONDS), (
+                "the eviction never reached its teardown"
+            )
+            assert victim not in registry._projects, (
+                "the teardown rendezvous ran before the slot was removed"
+            )
+            arrival.start()
+            assert not _finished(arrival, _BLOCKED_SECONDS), (
+                "an arrival was admitted while the evicted store was still closing"
+            )
+            rendezvous.release.set()
+            assert _finished(arrival, _RESUMED_SECONDS), (
+                "the arrival never resumed after the evicted store closed"
+            )
+        finally:
+            rendezvous.release.set()
+            registry._on_close_project = None
+            _join_started(evictor)
+            _join_started(arrival)
+            registry.close_all()
+
+        assert evict_errors == []
+        assert arrival_errors == []
+        assert [slot.store.root_dir for slot in arrived] == [victim]
+
+    @pytest.mark.parametrize("trigger", _EVICTION_TRIGGERS)
+    def test_eviction_keeps_the_evicted_root_s_guard_object(
+        self,
+        tmp_path: Path,
+        trigger: Callable[[ServiceRegistry, Path, Path], None],
+    ) -> None:
+        """The next opener of an evicted root contends for the same lock object.
+
+        Presence is not the property that matters: two threads serialize only
+        when they resolve to the *same* object, so an entry dropped on
+        eviction and re-minted by the next arrival serializes nothing at all -
+        which is why no eviction path removes one.
+        """
+        registry = ServiceRegistry()
+        victim = _project_root(tmp_path, "victim")
+        spare = _project_root(tmp_path, "spare")
+        registry.peek_project(victim)
+        guard = registry._root_locks[victim]
+        try:
+            trigger(registry, victim, spare)
+            assert victim not in registry._projects
+            assert registry._root_locks.get(victim) is guard, (
+                "eviction replaced or removed the evicted root's store guard"
+            )
+            registry.peek_project(victim)
+            assert registry._root_locks[victim] is guard, (
+                "reopening the root minted a guard its evictor never held"
+            )
+        finally:
+            registry.close_all()
+
+        # Shutdown is the one place entries are dropped, and it drops all of
+        # them: prepare_startup() reads a leftover as an incomplete shutdown.
+        assert registry._root_locks == {}
+
+    def test_evicting_one_root_never_blocks_an_arrival_on_another(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A paused teardown leaves every other root open for business.
+
+        The guard held across a close is per root. A store-wide one - a single
+        mutex shared by every root - would queue this unrelated arrival behind
+        a teardown it has nothing to do with, and the arrival never completes.
+        """
+        registry = ServiceRegistry()
+        victim = _project_root(tmp_path, "victim")
+        other = _project_root(tmp_path, "other")
+        registry.peek_project(victim)
+        rendezvous = _TeardownRendezvous(victim)
+        registry._on_close_project = rendezvous
+
+        evict_errors: list[BaseException] = []
+        arrival_errors: list[BaseException] = []
+        arrived: list[ProjectSlot] = []
+
+        def evict() -> None:
+            try:
+                assert registry.try_evict(victim) == (True, "forced")
+            except BaseException as exc:  # pragma: no cover - reported below
+                evict_errors.append(exc)
+
+        def arrive() -> None:
+            try:
+                arrived.append(registry.peek_project(other))
+            except BaseException as exc:  # pragma: no cover - reported below
+                arrival_errors.append(exc)
+
+        evictor = threading.Thread(target=evict, name="evictor")
+        arrival = threading.Thread(target=arrive, name="unrelated-arrival")
+        try:
+            evictor.start()
+            assert rendezvous.entered.wait(timeout=_RESUMED_SECONDS), (
+                "the eviction never reached its teardown"
+            )
+            arrival.start()
+            assert _finished(arrival, _RESUMED_SECONDS), (
+                "an unrelated root's arrival waited on another root's teardown"
+            )
+        finally:
+            rendezvous.release.set()
+            registry._on_close_project = None
+            _join_started(evictor)
+            _join_started(arrival)
+            registry.close_all()
+
+        assert evict_errors == []
+        assert arrival_errors == []
+        assert [slot.store.root_dir for slot in arrived] == [other]
 
 
 class TestLockRefusalNamesOnlyWhatItEstablished:
