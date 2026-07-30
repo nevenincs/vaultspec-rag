@@ -456,13 +456,13 @@ def test_vault_run_registers_a_forward_recorder_and_publishes_a_snapshot(
     indexer = _vault_indexer_for_telemetry(tmp_path)
     assert indexer.memory_budget_snapshot is None
 
-    with indexer._memory_telemetry():  # pyright: ignore[reportPrivateUsage]
+    with indexer._memory_telemetry():
         assert route_forward_peak_mib(4321.5) is True
 
     snapshot = indexer.memory_budget_snapshot
     assert snapshot is not None
     assert snapshot.label == "after vault dispatch"
-    budget = indexer._memory_budget  # pyright: ignore[reportPrivateUsage]
+    budget = indexer._memory_budget
     assert budget is not None
     assert budget.captured_cuda_peak_mib == 4321.5
     # RSS is genuinely measured here, so assert a real reading was taken
@@ -495,8 +495,8 @@ def test_vault_memory_telemetry_admits_no_ceiling_and_cannot_fail_a_run(
     """
     indexer = _vault_indexer_for_telemetry(tmp_path)
 
-    with indexer._memory_telemetry():  # pyright: ignore[reportPrivateUsage]
-        budget = indexer._memory_budget  # pyright: ignore[reportPrivateUsage]
+    with indexer._memory_telemetry():
+        budget = indexer._memory_budget
         assert budget is not None
         assert budget.rss_ceiling_mib is None
         assert budget.cuda_ceiling_mib is None
@@ -538,7 +538,7 @@ def test_vault_resilience_projects_observed_peaks_without_ceilings(
         rss_mib=2_048.0,
         cuda_mib=(12_000.0, 12_500.0),
     )
-    indexer._memory_budget = budget  # pyright: ignore[reportPrivateUsage]
+    indexer._memory_budget = budget
 
     resilience = _vault_resilience(indexer)
 
