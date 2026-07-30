@@ -158,6 +158,14 @@ def log_event(
     consume the same stream without depending on human-facing formatting.
     Values containing whitespace or shell-significant punctuation are
     JSON-quoted; common identifiers and paths remain bare for greppability.
+
+    ``severity``, ``exc_info`` and ``fields`` are reserved meta-keys plucked
+    out of ``extra_fields`` below rather than explicit keyword-only
+    parameters, so the function stays under the project's argument-count
+    gate; every call site in this codebase passes them by keyword with a
+    literal ``logging.*`` level, ``None``, or a ``dict`` built by the caller
+    (never a value read off an external payload), so the cast on each is
+    a documented internal-API contract, not a validated narrowing.
     """
     if not _EVENT_TOKEN_RE.fullmatch(namespace):
         msg = f"invalid log event namespace: {namespace!r}"
@@ -682,6 +690,11 @@ def _validated_managed_log_truncation(
     scanned = details.get("scanned_bytes")
     returned = details.get("returned_content_bytes")
     content_bytes = _managed_log_content_bytes(lines, marker=True)
+    # ``all(...)`` above already confirms every key in ``required_ints``
+    # (including "scanned_bytes" and "returned_content_bytes") reads as a
+    # non-negative int via ``_is_nonnegative_int``; the checker cannot
+    # correlate that generic per-key predicate with the two variables read
+    # from the same dict below, so the range comparisons cast explicitly.
     has_valid_details = (
         all(_is_nonnegative_int(details.get(key)) for key in required_ints)
         and details.get("record_limit_bytes") == MAX_MANAGED_LOG_RECORD_BYTES
@@ -695,6 +708,13 @@ def _validated_managed_log_truncation(
     )
     if not has_valid_details:
         return None
+    # The 9 keys just validated are exactly what production ever writes into
+    # this dict (see the two construction sites building the same shape), so
+    # asserting the whole mapping is ``dict[str, int | bool]`` does not reach
+    # beyond what was checked for a well-formed payload. A version-skewed
+    # daemon that added an unchecked extra key would still be safe: every
+    # downstream reader (``managed_log_group_metadata``) re-guards each field
+    # with its own ``isinstance`` before use rather than trusting this type.
     return cast("dict[str, int | bool]", details)
 
 

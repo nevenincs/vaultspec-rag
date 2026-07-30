@@ -41,6 +41,9 @@ def scan_documents(
     from .indexer import DocumentIndexer
 
     root = pathlib.Path(root_dir).resolve()
+    # ``DocumentIndexer.__init__`` only stores ``model``/``store``; both are
+    # read lazily inside a run, never during construction or
+    # ``preflight_content``, so ``None`` is safe here.
     indexer = DocumentIndexer(
         root,
         model=cast("Any", None),
