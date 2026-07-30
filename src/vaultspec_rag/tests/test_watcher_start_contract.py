@@ -69,7 +69,11 @@ async def watcher_client() -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(
             app=create_http_app(
-                ServerRouteRuntime(token=_TOKEN, registry=ServiceRegistry()),
+                ServerRouteRuntime(
+                    token=_TOKEN,
+                    registry=ServiceRegistry(),
+                    port=8765,
+                ),
                 lifespan=None,
             )
         ),

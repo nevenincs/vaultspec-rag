@@ -92,7 +92,7 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
         _seed_persistence_backpressure(manager, large_root)
 
         app_under_test = create_http_app(
-            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
             lifespan=None,
         )
         transport = httpx.ASGITransport(app=app_under_test)

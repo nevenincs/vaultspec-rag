@@ -163,7 +163,11 @@ def _canonical_resilience_server(
         server = uvicorn.Server(
             uvicorn.Config(
                 create_http_app(
-                    ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+                    ServerRouteRuntime(
+                        token=token,
+                        registry=ServiceRegistry(),
+                        port=port,
+                    ),
                     lifespan=None,
                 ),
                 host="127.0.0.1",

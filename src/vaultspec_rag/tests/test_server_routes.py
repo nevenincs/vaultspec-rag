@@ -116,6 +116,7 @@ class TestHealthSchemaVersion:
             ServerRouteRuntime(
                 token="health-schema-version-token",
                 registry=ServiceRegistry(),
+                port=8765,
             ),
             lifespan=None,
         )
@@ -167,6 +168,7 @@ class TestHealthJobsRollup:
             ServerRouteRuntime(
                 token="health-jobs-rollup-token",
                 registry=ServiceRegistry(),
+                port=8765,
             ),
             lifespan=None,
         )
@@ -296,6 +298,7 @@ class TestHealthFailureGenerationBound:
             ServerRouteRuntime(
                 token="health-stale-failure-token",
                 registry=ServiceRegistry(),
+                port=8765,
             ),
             lifespan=None,
         )

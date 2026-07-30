@@ -580,7 +580,6 @@ if sys.platform != "win32":
 
         with _service_env(tmp_path):
             first = start_supervised_from_config()
-            original_port = server_state._service_port
             lease, holder = acquire_machine_lock_lease()
             assert lease is not None
             assert holder == os.getpid()
@@ -588,13 +587,13 @@ if sys.platform != "win32":
                 ServerRouteRuntime(
                     token="attached-qdrant-test-token",
                     registry=ServiceRegistry(),
+                    port=free_loopback_port(),
                 ),
                 lease,
             )
             try:
                 attached = start_supervised_from_config()
                 assert attached.pid is None
-                server_state._service_port = free_loopback_port()
                 _stamp_qdrant_identity(attached, discovery)
                 status = read_service_status()
                 assert status is not None
@@ -615,7 +614,6 @@ if sys.platform != "win32":
                 discovery.quiesce()
                 discovery.cleanup()
                 release_machine_lock_lease(lease)
-                server_state._service_port = original_port
                 first.stop()
                 set_active_supervisor(None)
 

@@ -40,7 +40,7 @@ _ENVELOPE_KEYS = {
 def _projection_client(registry: ServiceRegistry) -> Generator[TestClient]:
     """Serve both production projections through a local in-process app."""
     app = create_http_app(
-        ServerRouteRuntime(token=_TOKEN, registry=registry),
+        ServerRouteRuntime(token=_TOKEN, registry=registry, port=8765),
         lifespan=None,
     )
     with TestClient(app) as client:
