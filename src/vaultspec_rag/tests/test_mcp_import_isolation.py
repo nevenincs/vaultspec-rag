@@ -85,8 +85,11 @@ def _relative_name_is_forbidden(node: ast.ImportFrom, file_pkg: str) -> bool:
     if node.level == 0 or node.module is None:
         return False
     pkg_parts = file_pkg.split(".")
-    # Walk up `level` segments (each dot climbs one package level).
-    climb = node.level
+    # One dot names the file's own package, so only the dots beyond the first
+    # climb. Treating every dot as a climb drops one segment too many, which
+    # resolved `from ..server import X` in `vaultspec_rag.mcp` to a bare
+    # `server` and let the most likely violation through unseen.
+    climb = node.level - 1
     if climb > len(pkg_parts):
         return False
     resolved_parts = pkg_parts[: len(pkg_parts) - climb]
