@@ -26,6 +26,7 @@ from .._job_errors import (
 )
 from ..job_models import JobSource
 from ..jobs import (
+    TERMINAL_PHASES,
     DegradationInputs,
     JobProgressReporter,
     degradation_evidence,
@@ -36,7 +37,12 @@ from ..jobs import (
     snapshot,
     telemetry_block,
 )
-from ..server._routes_jobs import _job_degradation, _job_summary, _job_with_liveness
+from ..server._routes_jobs import (
+    _LEGACY_TERMINAL_PHASES,
+    _job_degradation,
+    _job_summary,
+    _job_with_liveness,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -952,3 +958,15 @@ class TestBackendEvidence:
             assert backend_again["latency_seconds"] == latency
         finally:
             reset_config()
+
+
+def test_legacy_terminal_phase_table_covers_every_terminal_phase() -> None:
+    # ``jobs.TERMINAL_PHASES`` is derived from the ``Phase`` literal and is
+    # documented there as "the sole definition of that set" that deletion,
+    # retention, and the read surface all agree on. The read surface's own
+    # ``_LEGACY_TERMINAL_PHASES`` translation table restates the same phase
+    # spellings as a second, hand-maintained set of keys rather than deriving
+    # them - a phase added to ``Phase`` without a matching key here would
+    # read as "unknown" (not terminal) through ``job_state`` instead of
+    # through whatever alias it should carry.
+    assert set(_LEGACY_TERMINAL_PHASES) == TERMINAL_PHASES

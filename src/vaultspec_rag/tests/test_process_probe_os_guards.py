@@ -63,6 +63,27 @@ def test_no_module_redeclares_the_kernel32_process_calls() -> None:
     )
 
 
+def test_no_module_redeclares_the_kernel32_job_object_calls() -> None:
+    # ``CreateJobObjectW`` returns a HANDLE, the same pointer-sized truncation
+    # risk as ``OpenProcess`` above; a second declaration site is the same
+    # wrong-hex-digit risk _win32.py's own module docstring warns about.
+    found = find_offenders(
+        lambda n: (
+            isinstance(n.func, ast.Attribute)
+            and n.func.attr
+            in {
+                "CreateJobObjectW",
+                "SetInformationJobObject",
+                "AssignProcessToJobObject",
+            }
+        )
+    )
+    assert not found, (
+        f"direct kernel32 Job Object calls outside _win32 at {found}; "
+        "use create_kill_on_close_job / assign_process_to_job instead"
+    )
+
+
 def test_allowlist_names_only_modules_that_exist() -> None:
     # An allowlist entry for a deleted or renamed module silently widens the
     # guard: the name stops matching anything and a real offender could take

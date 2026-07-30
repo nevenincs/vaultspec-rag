@@ -136,8 +136,11 @@ Phase = Literal[
     "interrupted",
 ]
 #: Phases a record can no longer leave. Every phase except ``running`` is
-#: terminal, and this is the sole definition of that set: deletion, retention
-#: and the read surface all have to agree on which records are finished.
+#: terminal, and this derived set is what deletion and retention read.
+#: ``server._routes_jobs._LEGACY_TERMINAL_PHASES`` restates the same phase
+#: spellings by hand for its state-alias table; a guard test pins the two
+#: keysets together, so this is not the sole copy but is the one drift would
+#: be caught against.
 TERMINAL_PHASES: frozenset[str] = frozenset(
     phase for phase in get_args(Phase) if phase != "running"
 )
