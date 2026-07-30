@@ -8,13 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 import pytest
-from starlette.applications import Starlette
-from starlette.routing import Route
 from starlette.testclient import TestClient
 
-import vaultspec_rag.server as server
-
-from ..server._routes_search import search_route
+from ..server import ServerRouteRuntime, create_http_app
 from ..server._state import search_activity_ledger
 from ..service import ServiceRegistry
 from ..service_quiesce import (
@@ -78,30 +74,24 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
     (root / ".vault").mkdir(parents=True)
     registry = ServiceRegistry()
     assert registry.quiesce_resources(timeout_seconds=0).achieved
-    previous_registry = server._registry
-    previous_token = server._SERVICE_TOKEN
-    server._registry = registry
-    server._SERVICE_TOKEN = "closed-admission-token"
-    app = Starlette(routes=[Route("/search", search_route, methods=["POST"])])
+    app = create_http_app(
+        ServerRouteRuntime(token="closed-admission-token", registry=registry),
+        lifespan=None,
+    )
     marker = f"quiesce-admission-{time_ns()}"
-    try:
-        with TestClient(app, raise_server_exceptions=False) as client:
-            responses = {
-                source: client.post(
-                    "/search",
-                    headers={"Authorization": "Bearer closed-admission-token"},
-                    json={
-                        "query": f"{marker}-{source}",
-                        "type": source,
-                        "project_root": str(root),
-                    },
-                )
-                for source in ("vault", "code", "document", "combined")
-            }
-    finally:
-        server._registry = previous_registry
-        server._SERVICE_TOKEN = previous_token
-
+    with TestClient(app, raise_server_exceptions=False) as client:
+        responses = {
+            source: client.post(
+                "/search",
+                headers={"Authorization": "Bearer closed-admission-token"},
+                json={
+                    "query": f"{marker}-{source}",
+                    "type": source,
+                    "project_root": str(root),
+                },
+            )
+            for source in ("vault", "code", "document", "combined")
+        }
     snapshot = registry.quiesce_snapshot()
     for source, response in responses.items():
         assert response.status_code == 503, source

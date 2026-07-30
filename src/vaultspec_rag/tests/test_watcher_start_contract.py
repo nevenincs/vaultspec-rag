@@ -63,21 +63,20 @@ async def watcher_client() -> AsyncIterator[httpx.AsyncClient]:
     The routes must run on the loop the drain lives on, so the ASGI transport
     is used in-process rather than a thread-portal test client.
     """
-    from starlette.applications import Starlette
+    from ..server import ServerRouteRuntime, create_http_app
+    from ..service import ServiceRegistry
 
-    from ..server._routes import ROUTES
-
-    previous_token = server._SERVICE_TOKEN
-    server._SERVICE_TOKEN = _TOKEN
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=Starlette(routes=ROUTES)),
-            base_url="http://service",
-            headers={"Authorization": f"Bearer {_TOKEN}"},
-        ) as client:
-            yield client
-    finally:
-        server._SERVICE_TOKEN = previous_token
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(
+            app=create_http_app(
+                ServerRouteRuntime(token=_TOKEN, registry=ServiceRegistry()),
+                lifespan=None,
+            )
+        ),
+        base_url="http://service",
+        headers={"Authorization": f"Bearer {_TOKEN}"},
+    ) as client:
+        yield client
 
 
 @contextlib.asynccontextmanager
