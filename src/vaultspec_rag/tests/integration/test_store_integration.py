@@ -5,7 +5,7 @@ Tests updated for Qdrant-backed store (replacing LanceDB).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -115,6 +115,9 @@ class TestVaultStore:
         # Re-insert it so other tests aren't affected (session-scoped fixture)
         from ... import VaultDocument
 
+        # The retrieved payload is genuinely dynamic store content; narrow it
+        # here at the point it is unpacked into the reconstructed document.
+        doc = cast("dict[str, Any]", doc)
         reinsert = VaultDocument(
             id=doc["id"],
             path=doc["path"],

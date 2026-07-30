@@ -30,7 +30,7 @@ class _ContentScrollRequest:
     noun: str
     ensure: Callable[[], None]
     limit: int
-    offset: Any
+    offset: PointId | None
     source_paths: set[str] | None
     with_vectors: bool
 
@@ -143,7 +143,7 @@ class _VaultCatalogMixin:
             )
 
         ordinals: dict[str, set[int | None]] = {}
-        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        offset: PointId | None = None
         if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
             return {}
         page_limit = self._id_scan_page_limit(self.TABLE_NAME)
@@ -164,7 +164,9 @@ class _VaultCatalogMixin:
                 if doc_id is None:
                     continue
                 ordinal = payload.get("chunk_ordinal")
-                ordinals.setdefault(str(doc_id), set()).add(
+                # Qdrant payload values are genuinely arbitrary JSON; narrow
+                # to object at this extraction point before coercing to str.
+                ordinals.setdefault(str(cast("object", doc_id)), set()).add(
                     ordinal if isinstance(ordinal, int) else None
                 )
             if next_offset is None:
@@ -322,7 +324,7 @@ class _VaultCatalogMixin:
 
     def _scroll_content(
         self, request: _ContentScrollRequest
-    ) -> tuple[list[dict[str, Any]], Any]:
+    ) -> tuple[list[dict[str, Any]], PointId | None]:
         """Return one bounded page from *collection*.
 
         The code and document pages differed only by the collection, the
@@ -402,10 +404,10 @@ class _VaultCatalogMixin:
         self,
         *,
         limit: int = 100,
-        offset: Any = None,
+        offset: PointId | None = None,
         source_paths: set[str] | None = None,
         with_vectors: bool = False,
-    ) -> tuple[list[dict[str, Any]], Any]:
+    ) -> tuple[list[dict[str, Any]], PointId | None]:
         """Return one bounded page from the code collection."""
         return self._scroll_content(
             _ContentScrollRequest(
@@ -453,10 +455,10 @@ class _VaultCatalogMixin:
         self,
         *,
         limit: int = 100,
-        offset: Any = None,
+        offset: PointId | None = None,
         source_paths: set[str] | None = None,
         with_vectors: bool = False,
-    ) -> tuple[list[dict[str, Any]], Any]:
+    ) -> tuple[list[dict[str, Any]], PointId | None]:
         """Return one bounded page from the document collection."""
         return self._scroll_content(
             _ContentScrollRequest(
@@ -512,7 +514,7 @@ class _VaultCatalogMixin:
             Set of string IDs extracted from point payloads.
         """
         ids: set[str] = set()
-        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        offset: PointId | None = None
         page_limit = self._id_scan_page_limit(collection)
         while True:
             with self._point_lock(collection):
@@ -526,7 +528,7 @@ class _VaultCatalogMixin:
             point: Record
             for point in records:
                 if point.payload and id_field in point.payload:
-                    ids.add(str(point.payload[id_field]))
+                    ids.add(str(cast("object", point.payload[id_field])))
             if next_offset is None:
                 break
             offset = next_offset
@@ -565,7 +567,7 @@ class _VaultCatalogMixin:
         )
 
         ids: list[str] = []
-        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        offset: PointId | None = None
         page_limit = self._id_scan_page_limit(_target)
         while True:
             with self._point_lock(_target):
@@ -580,7 +582,7 @@ class _VaultCatalogMixin:
             point: Record
             for point in records:
                 if point.payload and "chunk_id" in point.payload:
-                    ids.append(str(point.payload["chunk_id"]))
+                    ids.append(str(cast("object", point.payload["chunk_id"])))
             if next_offset is None:
                 break
             offset = next_offset
@@ -666,7 +668,7 @@ class _VaultCatalogMixin:
         """
         return self._count_collection(self.DOCUMENT_TABLE_NAME)
 
-    def get_by_id(self, doc_id: str) -> dict[str, Any] | None:
+    def get_by_id(self, doc_id: str) -> dict[str, object] | None:
         """Retrieve a single document by ID, or ``None`` if not found.
 
         Args:
@@ -720,6 +722,9 @@ class _VaultCatalogMixin:
             when the collection does not exist. Creates nothing, for the same
             reason :meth:`count` does not.
         """
+        # A caller downstream casts this result to list[dict[str, object]];
+        # returning dict[str, Any] here keeps that cast meaningful instead
+        # of a no-op the type checker flags as redundant.
         from qdrant_client import models
 
         if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
@@ -749,7 +754,7 @@ class _VaultCatalogMixin:
         scroll_filter = models.Filter(must=conditions)
 
         docs: list[dict[str, object]] = []
-        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        offset: PointId | None = None
         while True:
             with self._point_lock(self.TABLE_NAME):
                 records, next_offset = self._scroll(
