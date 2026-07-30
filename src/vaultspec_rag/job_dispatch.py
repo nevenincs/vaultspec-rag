@@ -176,12 +176,13 @@ def _run_indexing_attempt(
     clean/incremental branch, the teardown ordering, and the whole result -
     was the same text twice.
 
-    Merging them matters beyond the repetition. ``load_model`` must be called
-    before ``lease``: the model load is the long, GPU-touching step, and doing
-    it while holding a project lease blocks every other root for its duration.
-    That ordering was guarded on the vault and code runners and NOT on the
-    document one, so a third of the paths could have reordered silently. One
-    runner means one ordering to guard.
+    Merging them matters beyond the repetition. Every attempt resolves its
+    runtime through a single ``compute_lease`` and does all of its work inside
+    that scope, so the resource bookkeeping is paired with the lease's
+    lifetime and the teardown order is fixed in one place. That pairing was
+    spelled twice and could have drifted on either copy - a lease released
+    while a resource still reads as held is invisible until an operator reads
+    the job. One runner means one scope to guard.
 
     The vault runner is deliberately not folded in. It takes no admission
     preflight, publishes no resilience, holds no pipeline resource, invalidates
