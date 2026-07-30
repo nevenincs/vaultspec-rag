@@ -107,16 +107,16 @@ Require a distinct machine-global borrower lease plus acknowledged service quies
 
 Create the distinct machine-global borrower lease and one crash-safe coordinator that acquires the lease before requesting pause, admits work only from a strict acknowledged-quiescence snapshot, resumes before release, and never starts another service.
 
-- [ ] `W04.P08.S29` - Implement a distinct machine-global GPU borrower lease with exact typed ownership, nonblocking refusal, and OS-backed crash release without touching the service identity lock; `src/vaultspec_rag/gpu_borrow_lease.py`.
-- [ ] `W04.P08.S30` - Orchestrate borrower lease acquisition, acknowledged pause, child GPU work, guaranteed resume, and lease release without starting another service; `src/vaultspec_rag/cli/_gpu_lease.py`.
-- [ ] `W04.P08.S31` - Make service preflight a torch-free diagnostic over a strict typed quiescence snapshot that reports capacity but never authorizes GPU work and fails closed on unreachable, missing, unknown, stale, or version-skewed evidence; `src/vaultspec_rag/cli/_service_preflight.py`.
+- [ ] `W04.P08.S29` - Implement a distinct machine-global GPU borrower lease with exact typed ownership, nonblocking refusal, OS-backed crash release, service-held borrower binding, and heartbeat lease-loss resume without touching the service identity lock; `src/vaultspec_rag/gpu_borrow_lease.py, src/vaultspec_rag/service.py, src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/tests/test_gpu_borrow_lease.py`.
+- [ ] `W04.P08.S30` - Route explicit --borrow-gpu indexing through borrower lease acquisition, acknowledged pause, strict safe snapshot, child GPU work, acknowledged resume, and lease release without starting another service; `src/vaultspec_rag/cli/_gpu_lease.py, src/vaultspec_rag/cli/_index.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/tests/test_gpu_borrow_cli.py`.
+- [ ] `W04.P08.S31` - Make service preflight a torch-free remote observation of strict typed quiescence and device capacity that never authorizes GPU work or falls back to a local probe; `src/vaultspec_rag/cli/_service_preflight.py, src/vaultspec_rag/tests/test_service_preflight_cli.py`.
 
 ### Phase `W04.P09` - Torch-free diagnostics and GPU entry-point enforcement
 
 Keep service diagnostics torch-free and strictly typed, fail closed on missing, unknown, stale, or version-skewed quiescence evidence, and require the same borrower lease plus acknowledged quiescence in pytest and self-hosted CI.
 
-- [ ] `W04.P09.S32` - Require selected GPU pytest lanes to hold the borrower lease and acknowledged quiescence for the session lifetime, with guaranteed resume and release and no capacity-only authorization; `conftest.py`.
-- [ ] `W04.P09.S33` - Wrap the self-hosted GPU tier in borrower orchestration that holds the lease and acknowledged quiescence throughout, fails closed on unsafe or skewed service state, and always resumes and releases; `.github/workflows/ci.yml`.
+- [ ] `W04.P09.S32` - Replace the separate GPU-test-session lock with the borrower lease coordinator for every selected GPU pytest lane, preserving resume-before-release and no capacity-only authorization; `conftest.py, src/vaultspec_rag/tests/_gpu_session.py, src/vaultspec_rag/tests/test_gpu_session_lock.py`.
+- [ ] `W04.P09.S33` - Route self-hosted GPU CI and Just GPU recipes through the borrower coordinator, fail closed on service or lease evidence, and always resume before release; `.github/workflows/ci.yml, Justfile`.
 
 ## Parallelization
 
