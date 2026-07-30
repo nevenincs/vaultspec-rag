@@ -58,6 +58,7 @@ from ._incremental_commit import (
     IncrementalReplacementRequest,
 )
 from ._index_lifecycle import (
+    IndexLifecycleRequest,
     incremental_mode,
     preprocess_completion_fields,
     run_index_lifecycle,
@@ -711,14 +712,16 @@ class CodebaseIndexer:
                     reporter=reporter,
                     run_control=run_control,
                 ),
-                event_logger=logger,
-                store=self.store,
-                source="code",
-                mode="full",
-                clean=clean,
-                root=self.root_dir,
-                run_control=run_control,
-                completion_fields=self._completed_event_fields,
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=self.store,
+                    source="code",
+                    mode="full",
+                    clean=clean,
+                    root=self.root_dir,
+                    run_control=run_control,
+                    completion_fields=self._completed_event_fields,
+                ),
             )
 
     def _completed_event_fields(self, result: IndexResult) -> dict[str, object]:
@@ -998,14 +1001,16 @@ class CodebaseIndexer:
                     ),
                     run_control=run_control,
                 ),
-                event_logger=logger,
-                store=self.store,
-                source="code",
-                mode=incremental_mode(scoped=changed_paths is not None),
-                clean=False,
-                root=self.root_dir,
-                run_control=run_control,
-                completion_fields=self._completed_event_fields,
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=self.store,
+                    source="code",
+                    mode=incremental_mode(scoped=changed_paths is not None),
+                    clean=False,
+                    root=self.root_dir,
+                    run_control=run_control,
+                    completion_fields=self._completed_event_fields,
+                ),
             )
 
     def _incremental_index_locked(
