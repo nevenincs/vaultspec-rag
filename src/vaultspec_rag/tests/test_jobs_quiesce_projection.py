@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from starlette.applications import Starlette
@@ -65,7 +65,7 @@ def _assert_current_projection(
     expected = registry.quiesce_snapshot().as_envelope()
 
     assert set(expected) == _ENVELOPE_KEYS
-    assert payload["quiesce"] == expected
+    assert cast("dict[str, object]", payload)["quiesce"] == expected
 
 
 def test_jobs_route_refreshes_the_exact_quiesce_envelope() -> None:
