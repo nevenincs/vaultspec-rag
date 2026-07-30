@@ -32,11 +32,9 @@ _RESUME_COMMAND = "service.resume"
 def _quiesce(*, pause: bool, command: str, port: int | None, json_mode: bool) -> None:
     """Drive one pause/resume transition and emit exactly one outcome.
 
-    Idempotent: an already-satisfied request is a success (exit 0 with an
-    ``already_*`` status). A request that leaves the state unachieved - a pause
-    that left the daemon running because a shutdown has latched the gate open,
-    or a resume that left it held - is a failure (exit 1 in both modes) so a
-    supervising broker never reads it as done.
+    Only a service-owned ``ok: true`` response is successful. Every failure
+    keeps the service's error, status, message, retryability, and full quiesce
+    envelope intact for operators and machine consumers.
     """
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
@@ -47,45 +45,47 @@ def _quiesce(*, pause: bool, command: str, port: int | None, json_mode: bool) ->
     if result is None:
         _fail_unreachable(command, json_mode, port=resolved_port)
         return
-    if not result.get("ok", False):
-        error = str(result.get("error", "http_call_failed"))
-        message = str(result.get("message", "The pause/resume request failed."))
+    if result.get("ok") is True:
         if json_mode:
-            _emit_json_error_and_exit(command, error, message, 1, data=result)
-        _plain(message)
-        raise typer.Exit(1)
+            _emit_json(True, command, data=result)
+            raise typer.Exit(0)
+        _plain(f"Service quiesce status: {result.get('status')}.")
+        raise typer.Exit(0)
 
-    status = str(result.get("status", ""))
-    paused = bool(result.get("paused", pause))
-    achieved = paused if pause else not paused
-    if not achieved:
-        error = "hold_not_achieved" if pause else "release_not_achieved"
-        message = (
-            "The service did not hold - a shutdown is in progress and the pause "
-            "gate is latched open."
-            if pause
-            else "The service did not release and remains held."
-        )
+    error = result.get("error")
+    status = result.get("status")
+    message = result.get("message")
+    retryable = result.get("retryable")
+    if (
+        isinstance(error, str)
+        and isinstance(status, str)
+        and isinstance(message, str)
+        and isinstance(retryable, bool)
+    ):
         if json_mode:
-            _emit_json_error_and_exit(command, error, message, 1, data=result)
-        _plain(message)
+            _emit_json_error_and_exit(
+                command,
+                error,
+                message,
+                1,
+                data=result,
+                status=status,
+                retryable=retryable,
+            )
+        _plain(f"{status}: {message}")
+        _plain(f"Retryable: {retryable}")
         raise typer.Exit(1)
 
     if json_mode:
-        _emit_json(True, command, data=result)
-        raise typer.Exit(0)
-    _plain(_human_line(status))
-    raise typer.Exit(0)
-
-
-def _human_line(status: str) -> str:
-    return {
-        "paused": "Service paused. Workers hold at their next safe checkpoint; "
-        "resume with `vaultspec-rag server resume`.",
-        "already_paused": "Service is already paused.",
-        "resumed": "Service resumed. Held workers are released.",
-        "already_running": "Service is already running.",
-    }.get(status, f"Service quiesce status: {status}.")
+        _emit_json_error_and_exit(
+            command,
+            "invalid_service_response",
+            "The service returned an invalid quiesce response.",
+            1,
+            data=result,
+        )
+    _plain("The service returned an invalid quiesce response.")
+    raise typer.Exit(1)
 
 
 def _fail_unreachable(command: str, json_mode: bool, *, port: int | None) -> None:

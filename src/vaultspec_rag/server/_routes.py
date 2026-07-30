@@ -591,6 +591,7 @@ async def jobs_route(request: Request) -> JSONResponse:
             "total": len(records),
             "returned": len(filtered_records),
             "summary": _job_summary(records, now=now),
+            "quiesce": _m._registry.quiesce_snapshot().as_envelope(),
             # Machine-wide GPU pressure beside the work list, so a header can
             # show the card's condition without a request of its own. Served
             # from a short-lived cache; every measurement is null where this
