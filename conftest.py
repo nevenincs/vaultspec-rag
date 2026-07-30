@@ -4,6 +4,8 @@ RAG test constants and fixtures live in
 src/vaultspec_rag/tests/conftest.py and src/vaultspec_rag/tests/constants.py.
 """
 
+from __future__ import annotations
+
 import atexit
 import os
 import shutil
@@ -11,6 +13,7 @@ import tempfile
 import time
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 # Identify pytest before importing project modules or collecting test modules.
 # Until pytest_configure pins the session root, guarded effects fail closed.
@@ -33,6 +36,11 @@ _SINGLETON_ENV_NAMES = (
 _singleton_prior_env: dict[str, str | None] | None = None
 _singleton_root: Path | None = None
 _singleton_root_owned = False
+
+if TYPE_CHECKING:
+    from vaultspec_rag.cli._gpu_lease import BorrowerServiceTarget
+
+_gpu_borrower_target: BorrowerServiceTarget | None = None
 
 # The tier vocabulary and its collection-time gate live in the package, at
 # vaultspec_rag.tests._tier_gate, so they can be exercised by ordinary tests.
@@ -66,13 +74,20 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
         MANIFEST_FILENAME,
         QDRANT_SERVER_VERSION,
     )
+    from vaultspec_rag.qdrant_runtime._provision import file_sha256
     from vaultspec_rag.qdrant_runtime._resolve import resolve_binary
 
     resolved = resolve_binary(QDRANT_SERVER_VERSION)
-    if resolved is None or resolved.source != "provisioned":
+    if (
+        resolved is None
+        or resolved.source != "provisioned"
+        or not resolved.sha256
+    ):
         return None
     manifest = resolved.path.parent / MANIFEST_FILENAME
     if not manifest.is_file():
+        return None
+    if file_sha256(resolved.path).lower() != resolved.sha256.lower():
         return None
     return resolved.path, manifest
 
@@ -93,10 +108,22 @@ def required_host_provisioned_qdrant_source(
     """Require the captured managed install for real daemon tests."""
     if host_provisioned_qdrant_source is None:
         pytest.fail(
-            "No provisioned qdrant binary on the host; run "
-            "'vaultspec-rag server qdrant install' before this lifecycle test."
+            "The runner image has no manifest-verified provisioned Qdrant binary. "
+            "Install the pinned binary in the runner image before this lifecycle test."
         )
     return host_provisioned_qdrant_source
+
+
+def _require_host_provisioned_qdrant_for_gpu_tier() -> None:
+    """Require the runner image's verified Qdrant prerequisite without provisioning."""
+    if _HOST_PROVISIONED_QDRANT is not None:
+        return
+    pytest.exit(
+        "The selected GPU pytest tier requires a manifest-verified provisioned "
+        "Qdrant binary in the runner image. Install the pinned binary in the "
+        "runner image before running this tier.",
+        returncode=1,
+    )
 
 
 def _reset_singleton_config_caches() -> None:
@@ -122,13 +149,24 @@ def pytest_configure(config: pytest.Config) -> None:
         pytest.UsageError: When this session would distribute GPU-bound tests
             across worker processes.
     """
-    from vaultspec_rag.tests._tier_gate import enforce_serial_gpu_lane
+    from vaultspec_rag.tests._tier_gate import (
+        enforce_serial_gpu_lane,
+        selectable_slow_tiers,
+    )
 
     enforce_serial_gpu_lane(config.option)
 
-    global _singleton_prior_env, _singleton_root, _singleton_root_owned
+    global _gpu_borrower_target, _singleton_prior_env
+    global _singleton_root, _singleton_root_owned
     if _singleton_root is not None:
         return
+
+    raw_markexpr = config.option.markexpr
+    markexpr = raw_markexpr if isinstance(raw_markexpr, str) else ""
+    if selectable_slow_tiers(markexpr):
+        from vaultspec_rag.cli._gpu_lease import capture_borrower_service_target
+
+        _gpu_borrower_target = capture_borrower_service_target()
 
     _singleton_prior_env = {name: os.environ.get(name) for name in _SINGLETON_ENV_NAMES}
     inherited_root = os.environ.get(_PYTEST_SINGLETON_ROOT_ENV)
@@ -174,11 +212,8 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Restore ambient configuration after the complete pytest session."""
     del config
-    from vaultspec_rag.tests._gpu_session import release_gpu_session_lock
 
-    release_gpu_session_lock()
-
-    global _singleton_prior_env, _singleton_root
+    global _gpu_borrower_target, _singleton_prior_env, _singleton_root
     prior = _singleton_prior_env
     root = _singleton_root
     if prior is not None:
@@ -203,6 +238,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
             )
     _singleton_prior_env = None
     _singleton_root = None
+    _gpu_borrower_target = None
 
 
 def _atexit_reclaim_singleton_root() -> None:
@@ -248,8 +284,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     enforce_tiers(items)
 
 
-def pytest_runtestloop(session: pytest.Session) -> None:
-    """Fail fast when the machine cannot satisfy the selected GPU tests.
+def pytest_runtestloop(session: pytest.Session) -> bool | None:
+    """Run every selected GPU tier inside one acknowledged borrower lease.
 
     Runs after deselection so only *selected* items are checked, which keeps a
     unit-only run free of every device precondition. A distributed session never
@@ -257,20 +293,21 @@ def pytest_runtestloop(session: pytest.Session) -> None:
     in each worker - which costs nothing, because a distributed GPU selection is
     already refused before collection.
     """
-    from vaultspec_rag._gpu_admission import (
-        device_contended_message,
-        evaluate_device_admission,
-    )
-    from vaultspec_rag.tests._gpu_session import (
-        gpu_session_lock_path,
-        gpu_session_refusal,
-    )
+    from vaultspec_rag.cli._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
     from vaultspec_rag.tests._tier_gate import (
         GPU_MARKERS,
         SLOW_TIERS,
         SUBPROCESS_GPU,
         selected_tiers,
     )
+
+    if session.testsfailed and not session.config.option.continue_on_collection_errors:
+        raise session.Interrupted(
+            f"{session.testsfailed} error{'s' if session.testsfailed != 1 else ''} "
+            "during collection"
+        )
+    if session.config.option.collectonly:
+        return True
 
     tiers = selected_tiers(session.items)
     if tiers & (GPU_MARKERS | {SUBPROCESS_GPU}) and not _has_hf_token():
@@ -283,9 +320,47 @@ def pytest_runtestloop(session: pytest.Session) -> None:
         )
     if not tiers & SLOW_TIERS:
         return
-    contention = gpu_session_refusal(gpu_session_lock_path())
-    if contention is not None:
-        pytest.exit(contention, returncode=1)
-    admission = evaluate_device_admission()
-    if not admission.admitted:
-        pytest.exit(device_contended_message(admission), returncode=1)
+    if any(
+        "required_host_provisioned_qdrant_source" in item.fixturenames
+        for item in cast("list[pytest.Function]", session.items)
+    ):
+        _require_host_provisioned_qdrant_for_gpu_tier()
+    target = _gpu_borrower_target
+    if target is None:
+        pytest.exit(
+            "No ready compatible machine-pointer service was captured before "
+            "pytest isolated its managed paths. Start the runner's resident "
+            "service before selecting a GPU tier.",
+            returncode=1,
+        )
+
+    def run_selected_items() -> None:
+        from vaultspec_rag._gpu_admission import (
+            device_contended_message,
+            evaluate_device_admission,
+        )
+
+        admission = evaluate_device_admission()
+        if not admission.admitted:
+            pytest.exit(device_contended_message(admission), returncode=1)
+        for index, item in enumerate(session.items):
+            nextitem = (
+                session.items[index + 1]
+                if index + 1 < len(session.items)
+                else None
+            )
+            item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+            if session.shouldfail:
+                raise session.Failed(session.shouldfail)
+            if session.shouldstop:
+                raise session.Interrupted(session.shouldstop)
+
+    try:
+        run_with_borrowed_gpu(
+            requested_port=None,
+            work=run_selected_items,
+            target=target,
+        )
+    except BorrowGPUError as exc:
+        pytest.exit(str(exc), returncode=1)
+    return True
