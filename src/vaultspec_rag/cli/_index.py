@@ -219,7 +219,6 @@ class _ServiceDelegationRequest:
     index_type: PublicSourceType
     rebuild: bool
     target: pathlib.Path
-    allow_fallback: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,15 +520,13 @@ def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
                 )
         return True
 
-    if not request.allow_fallback:
-        _display_port_unreachable_error(
-            request.port,
-            command="indexing",
-            json_mode=request.json_mode,
-        )
-        raise typer.Exit(code=1)
-
-    return False
+    _display_port_unreachable_error(
+        request.port,
+        command="indexing",
+        json_mode=request.json_mode,
+        local_fallback_available=False,
+    )
+    raise typer.Exit(code=1)
 
 
 def _print_service_domain_outcomes(raw_domains: object) -> bool:
@@ -648,6 +645,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
     json_mode: JsonMode = False,
 ) -> None:
     """Index vault documents and/or codebase chunks."""
+    del allow_fallback
     if not verbose:
         _suppress_hf_progress()
     state: CLIState = ctx.obj
@@ -679,9 +677,6 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             )
             raise typer.Exit(code=1)
         port = service.port
-        if port is not None:
-            # We detected a running service, so enable fallback automatically.
-            allow_fallback = True
 
     # A preprocess flag only shapes an in-process run. When a service will
     # handle this index (an explicit or auto-detected port), the daemon
@@ -698,7 +693,6 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             source,
             rebuild,
             target,
-            allow_fallback,
         )
     ):
         return
