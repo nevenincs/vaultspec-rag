@@ -311,6 +311,8 @@ def test_resume_persistence_failure_stays_closed_until_real_repair(
     assert not failed.achieved
     assert failed.snapshot.state is QuiesceState.WARMING
     assert not failed.snapshot.admissions_open
+    assert not failed.snapshot.vram_released
+    assert not failed.snapshot.safe_to_borrow_gpu
     assert failed.snapshot.failure_reason == "job_resume_persistence_unpublished"
     with pytest.raises(QuiesceAdmissionClosedError):
         registry.acquire_compute_ticket()

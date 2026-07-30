@@ -580,7 +580,7 @@ class ServiceRegistry:
             )
         except (GPUResidencyTransitionError, QuiesceInvariantError):
             return self._quiesce_controller.fail_transition(
-                owned_state=QuiesceState.PAUSING,
+                code=QuiesceTransitionCode.QUIESCE_FAILED,
                 reason="gpu_dependency_release_failed",
             )
         return self._quiesce_controller.acknowledge_vram_released()
@@ -613,7 +613,7 @@ class ServiceRegistry:
             )
         except (GPUResidencyTransitionError, QuiesceInvariantError):
             return self._quiesce_controller.fail_transition(
-                owned_state=QuiesceState.WARMING,
+                code=QuiesceTransitionCode.WARMUP_FAILED,
                 reason="gpu_dependency_rebuild_failed",
             )
         from .job_manager.models import QuiescedResumeStatus
@@ -625,15 +625,13 @@ class ServiceRegistry:
                 pass
             case QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED:
                 return self._quiesce_controller.fail_transition(
-                    owned_state=QuiesceState.WARMING,
+                    code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
                     reason="job_resume_persistence_unpublished",
-                    failed_code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
                 )
             case QuiescedResumeStatus.PERSISTENCE_PUBLISHED_NOT_DURABLE:
                 return self._quiesce_controller.fail_transition(
-                    owned_state=QuiesceState.WARMING,
+                    code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
                     reason="job_resume_persistence_published_not_durable",
-                    failed_code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
                 )
         completed = self._quiesce_controller.complete_warming()
         if completed.achieved and completed.snapshot.state is QuiesceState.RUNNING:
@@ -667,7 +665,7 @@ class ServiceRegistry:
             self._restore_paused_gpu_dependencies(admission_epoch=admission_epoch)
         except (GPUResidencyTransitionError, QuiesceInvariantError):
             return self._quiesce_controller.fail_transition(
-                owned_state=QuiesceState.PAUSING,
+                code=QuiesceTransitionCode.QUIESCE_FAILED,
                 reason="gpu_dependency_rebuild_failed",
             )
         aborted = self._quiesce_controller.abort_pause()

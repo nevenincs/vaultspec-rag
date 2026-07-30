@@ -65,19 +65,22 @@ class QuiesceTransitionCode(StrEnum):
     RESUME_RECOVERY_FAILED = "resume_recovery_failed"
 
 
-# The only two closed transitions a caller can own, each mapped to the code
-# for a request that arrived after the controller moved on and the code that
-# records the owned transition failing.
+# Every terminal failure code maps to the controller state it can truthfully
+# record and the result for a report that arrives after the controller moved on.
 _FAILURE_CODES: Final[
-    dict[QuiesceState, tuple[QuiesceTransitionCode, QuiesceTransitionCode]]
+    dict[QuiesceTransitionCode, tuple[QuiesceState, QuiesceTransitionCode]]
 ] = {
-    QuiesceState.PAUSING: (
+    QuiesceTransitionCode.QUIESCE_FAILED: (
+        QuiesceState.PAUSING,
         QuiesceTransitionCode.QUIESCE_UNAVAILABLE,
-        QuiesceTransitionCode.QUIESCE_FAILED,
     ),
-    QuiesceState.WARMING: (
+    QuiesceTransitionCode.WARMUP_FAILED: (
+        QuiesceState.WARMING,
         QuiesceTransitionCode.WARMUP_UNAVAILABLE,
-        QuiesceTransitionCode.WARMUP_FAILED,
+    ),
+    QuiesceTransitionCode.RESUME_RECOVERY_FAILED: (
+        QuiesceState.WARMING,
+        QuiesceTransitionCode.WARMUP_UNAVAILABLE,
     ),
 }
 
@@ -373,35 +376,28 @@ class ServiceQuiesceController:
     def fail_transition(
         self,
         *,
-        owned_state: Literal[QuiesceState.PAUSING, QuiesceState.WARMING],
+        code: Literal[
+            QuiesceTransitionCode.QUIESCE_FAILED,
+            QuiesceTransitionCode.WARMUP_FAILED,
+            QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
+        ],
         reason: str,
-        failed_code: QuiesceTransitionCode | None = None,
     ) -> QuiesceTransition:
         """Keep admission closed and unsafe when an owned transition fails.
 
-        ``owned_state`` names the closed transition the caller was driving, so
-        a report arriving after the controller has already moved on is
-        answered as unavailable for that transition rather than recorded
+        ``code`` identifies the terminal failure the caller observed. A report
+        arriving after the controller has already moved on is answered as
+        unavailable for that code's required transition rather than recorded
         against whichever one is now live.
-
-        ``failed_code`` narrows only the terminal answer, for a caller whose
-        failure is one distinguishable way of failing the owned transition;
-        omitting it records that transition's own failure code.  The
-        unavailable answer is deliberately not overridable, because a late
-        report is answered for the transition its caller owned and says
-        nothing about how that caller failed.
         """
         failure_reason = _require_reason(reason)
-        unavailable, failed = _FAILURE_CODES[owned_state]
+        required_state, unavailable = _FAILURE_CODES[code]
         with self._condition:
-            if self._state is not owned_state:
+            if self._state is not required_state:
                 return self._transition_locked(unavailable, achieved=False)
             self._vram_released = False
             self._failure_reason = failure_reason
-            return self._transition_locked(
-                failed if failed_code is None else failed_code,
-                achieved=False,
-            )
+            return self._transition_locked(code, achieved=False)
 
     def abort_pause(self) -> QuiesceTransition:
         """Reopen the admission epoch a pause closed but never quiesced.
