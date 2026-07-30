@@ -53,6 +53,7 @@ from ._incremental_commit import (
     IncrementalReplacementRequest,
 )
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
+from ._resolved_policy import preprocess_stale_note
 from ._run_ledger_models import RunLedgerCompatibilityError, RunOperation
 from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
@@ -390,25 +391,12 @@ class CodebaseIndexer:
             _preprocess_glue.prep_rule_count(self._prep_ctx),
         )
 
-    @staticmethod
-    def _disabled_transform(
-        policy: ResolvedIndexPolicy,
-        rel_path: str,
-    ) -> bool:
-        """Return whether routing is retained while its transform is disabled."""
-        return (
-            policy.execution_mode == "off"
-            and policy.match_preprocess(rel_path) is not None
-        )
-
     def _mark_preprocess_stale(self, rel_path: str) -> None:
         """Surface disabled transform work once without changing membership."""
         if rel_path in self._prep_stale_paths:
             return
         self._prep_stale_paths.add(rel_path)
-        self._prep_skips.append(
-            f"{rel_path}: preprocessing disabled; retained work as stale"
-        )
+        self._prep_skips.append(preprocess_stale_note(rel_path))
 
     def _partition_disabled_paths(
         self,
@@ -419,7 +407,7 @@ class CodebaseIndexer:
         executable: list[pathlib.Path] = []
         for path in paths:
             rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
-            if self._disabled_transform(policy, rel):
+            if policy.transform_disabled(rel):
                 self._mark_preprocess_stale(rel)
                 continue
             executable.append(path)
@@ -433,7 +421,7 @@ class CodebaseIndexer:
         """Return published transform rows that off mode must retain stale."""
         preserved: dict[str, str] = {}
         for rel, content_hash in previous_metadata.items():
-            if not self._disabled_transform(policy, rel):
+            if not policy.transform_disabled(rel):
                 continue
             if not (self.root_dir / pathlib.PurePosixPath(rel)).is_file():
                 continue
@@ -1088,7 +1076,7 @@ class CodebaseIndexer:
             run_control=run_control,
         )
         disabled_current = {
-            rel for rel in current_files if self._disabled_transform(policy, rel)
+            rel for rel in current_files if policy.transform_disabled(rel)
         }
         for rel in disabled_current:
             self._mark_preprocess_stale(rel)
@@ -1234,7 +1222,7 @@ class CodebaseIndexer:
         if path.is_file():
             classified = self._classify_file(path, rel, policy)
             disposition = classified.disposition
-            if self._disabled_transform(policy, rel):
+            if policy.transform_disabled(rel):
                 self._mark_preprocess_stale(rel)
                 return
             if disposition.admitted and disposition.kind is ContentKind.CODE:

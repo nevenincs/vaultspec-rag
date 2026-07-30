@@ -28,6 +28,7 @@ from ._document_meta import (
 )
 from ._file_state import FileStateKind
 from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
+from ._resolved_policy import preprocess_stale_note
 from ._route_migration import reconcile_generation_storage
 from ._run_ledger_models import (
     FinalizationPhase,
@@ -853,16 +854,11 @@ class DocumentIndexer:
         fresh_hashes: dict[str, str] = {}
         for path in paths:
             rel = path.relative_to(self.root_dir).as_posix()
-            if (
-                request.policy.execution_mode == "off"
-                and request.policy.match_preprocess(rel)
-            ):
+            if request.policy.transform_disabled(rel):
                 retained = previous_files.get(rel)
                 if retained is not None:
                     published.append(retained)
-                failures.append(
-                    f"{rel}: preprocessing disabled; retained work as stale"
-                )
+                failures.append(preprocess_stale_note(rel))
                 continue
             metadata, chunk_count, failure = self._publish_file(
                 path,
@@ -975,13 +971,8 @@ class DocumentIndexer:
                     request.checkpoint.record_confirmed_deletion(rel, old.point_ids)
                     counts.removed += len(old.point_ids)
                 continue
-            if (
-                request.policy.execution_mode == "off"
-                and request.policy.match_preprocess(rel)
-            ):
-                failures.append(
-                    f"{rel}: preprocessing disabled; retained work as stale"
-                )
+            if request.policy.transform_disabled(rel):
+                failures.append(preprocess_stale_note(rel))
                 continue
             old = current.get(rel)
             metadata, chunk_count, failure = self._publish_file(
@@ -1047,9 +1038,8 @@ class DocumentIndexer:
         self._resolve_reuse(policy)
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
-        preprocessing_disabled = policy.execution_mode == "off" and any(
-            policy.match_preprocess(path.relative_to(self.root_dir).as_posix())
-            is not None
+        preprocessing_disabled = any(
+            policy.transform_disabled(path.relative_to(self.root_dir).as_posix())
             for path in paths
         )
         effective_clean = clean and not preprocessing_disabled
