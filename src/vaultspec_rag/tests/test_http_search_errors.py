@@ -7,17 +7,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from starlette.applications import Starlette
-from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_locks import VaultStoreLockedError
 from ..mcp._tools import _search_envelope_or_raise
 from ..server import (
+    ServerRouteRuntime,
     _local_store_locked_error_dict,
     _registry,
     _registry_full_error_dict,
+    create_http_app,
 )
 from ..server._routes_search import (
     SearchAvailabilityRequestFacts,
@@ -142,7 +142,8 @@ class TestSearchResponseStatus:
 
     def test_registry_full_envelope_reports_service_unavailable(self) -> None:
         envelope: dict[str, object] = _registry_full_error_dict(
-            RegistryFullError(_registry.max_projects)
+            RegistryFullError(_registry.max_projects),
+            _registry,
         )
 
         assert envelope["ok"] is False
@@ -279,35 +280,26 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
         being the facts' own refusal escaping the route. Restored, the fan-out
         builds nothing and the quiesce envelope arrives intact.
         """
-        import vaultspec_rag.server as server
-
-        from ..server._routes_search import search_route
         from ..service import ServiceRegistry
 
         root = tmp_path / "vault"
         (root / ".vault").mkdir(parents=True)
         registry = ServiceRegistry()
         assert registry.quiesce_resources(timeout_seconds=0).achieved
-        previous_registry = server._registry
-        previous_token = server._SERVICE_TOKEN
-        server._registry = registry
-        server._SERVICE_TOKEN = "combined-carve-out-token"
-        app = Starlette(routes=[Route("/search", search_route, methods=["POST"])])
-        try:
-            with TestClient(app, raise_server_exceptions=False) as client:
-                response = client.post(
-                    "/search",
-                    headers={"Authorization": "Bearer combined-carve-out-token"},
-                    json={
-                        "query": "combined fan-out builds no availability facts",
-                        "type": PublicSourceType.COMBINED.value,
-                        "project_root": str(root),
-                    },
-                )
-        finally:
-            server._registry = previous_registry
-            server._SERVICE_TOKEN = previous_token
-
+        app = create_http_app(
+            ServerRouteRuntime(token="combined-carve-out-token", registry=registry),
+            lifespan=None,
+        )
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.post(
+                "/search",
+                headers={"Authorization": "Bearer combined-carve-out-token"},
+                json={
+                    "query": "combined fan-out builds no availability facts",
+                    "type": PublicSourceType.COMBINED.value,
+                    "project_root": str(root),
+                },
+            )
         # Asserted before the body is parsed: a 500 carries Starlette's plain
         # "Internal Server Error" text, so parsing first would fail on a JSON
         # decode error instead of on the status this test is about.

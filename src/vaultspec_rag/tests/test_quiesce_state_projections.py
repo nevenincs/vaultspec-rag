@@ -6,15 +6,9 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from starlette.applications import Starlette
-from starlette.routing import Route
 from starlette.testclient import TestClient
 
-import vaultspec_rag.server as server
-
-from ..registry import get_registry
-from ..server._lifespan import health_handler
-from ..server._routes import get_service_state_route
+from ..server import ServerRouteRuntime, create_http_app
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -43,21 +37,14 @@ _ENVELOPE_KEYS = {
 
 
 @contextmanager
-def _projection_client() -> Generator[TestClient]:
+def _projection_client(registry: ServiceRegistry) -> Generator[TestClient]:
     """Serve both production projections through a local in-process app."""
-    prior_token = server._SERVICE_TOKEN
-    server._SERVICE_TOKEN = _TOKEN
-    app = Starlette(
-        routes=[
-            Route("/health", health_handler),
-            Route("/service-state", get_service_state_route),
-        ],
+    app = create_http_app(
+        ServerRouteRuntime(token=_TOKEN, registry=registry),
+        lifespan=None,
     )
-    try:
-        with TestClient(app) as client:
-            yield client
-    finally:
-        server._SERVICE_TOKEN = prior_token
+    with TestClient(app) as client:
+        yield client
 
 
 def _assert_current_projection(
@@ -90,12 +77,13 @@ def test_health_and_service_state_refresh_the_exact_quiesce_envelope(
     The corresponding equality assertion fails; return a partial envelope and
     the exact twelve-key assertion fails.
     """
-    registry = get_registry()
-    assert server._registry is registry
+    from ..service import ServiceRegistry
+
+    registry = ServiceRegistry()
     assert registry.quiesce_snapshot().state.value == "running"
     (tmp_path / ".vault").mkdir()
 
-    with _projection_client() as client:
+    with _projection_client(registry) as client:
         _assert_current_projection(client, tmp_path, registry)
 
         paused = registry.quiesce_resources(timeout_seconds=0)

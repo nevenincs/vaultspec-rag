@@ -8,11 +8,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, NamedTuple, cast
 
 import pytest
-from starlette.applications import Starlette
-from starlette.routing import Route
 from starlette.testclient import TestClient
-
-import vaultspec_rag.server as server
 
 from ..job_manager.manager import JobManager
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
@@ -25,7 +21,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
-from ..server._routes import pause_service_route, resume_service_route
+from ..server import ServerRouteRuntime, create_http_app
 from ..service import ServiceRegistry
 from ..service_quiesce import QuiesceState, QuiesceTransition
 from ._job_roots import _TEST_PROJECT_ROOT
@@ -165,23 +161,13 @@ def quiesce_routes() -> Generator[QuiesceRoutes]:
     that lets one escape is precisely what these cases are asserting against.
     Re-raising here would hide that behind a test-only error.
     """
-    previous_registry = server._registry
-    previous_token = server._SERVICE_TOKEN
     registry = ServiceRegistry()
-    server._registry = registry
-    server._SERVICE_TOKEN = _TOKEN
-    app = Starlette(
-        routes=[
-            Route("/pause", pause_service_route, methods=["POST"]),
-            Route("/resume", resume_service_route, methods=["POST"]),
-        ],
+    app = create_http_app(
+        ServerRouteRuntime(token=_TOKEN, registry=registry),
+        lifespan=None,
     )
-    try:
-        with TestClient(app, raise_server_exceptions=False) as client:
-            yield QuiesceRoutes(client, registry)
-    finally:
-        server._registry = previous_registry
-        server._SERVICE_TOKEN = previous_token
+    with TestClient(app, raise_server_exceptions=False) as client:
+        yield QuiesceRoutes(client, registry)
 
 
 def test_pause_resume_routes_return_the_complete_controller_envelope(
