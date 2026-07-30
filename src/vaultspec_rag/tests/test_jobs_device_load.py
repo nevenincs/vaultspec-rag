@@ -10,7 +10,7 @@ Each guard names the mutation that would make it fail.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -184,7 +184,7 @@ class TestJobsRouteDeviceLoadExposure:
             response: httpx.Response = client.get(
                 "/jobs", headers={"Authorization": f"Bearer {token}"}
             )
-            payload = cast("dict[str, Any]", response.json())
+            payload = cast("dict[str, object]", response.json())
         finally:
             server_package._SERVICE_TOKEN = previous_token
         assert "device_load" in payload

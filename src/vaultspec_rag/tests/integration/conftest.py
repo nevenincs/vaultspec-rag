@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
 
     from ...embeddings import EmbeddingModel
-    from ..conftest import RagComponentsWithManifest
     from ._frozen_corpus_evidence import FrozenCorpusEvidence
 
 from ..._machine_lock import (
@@ -43,7 +42,7 @@ from .._model_setup import (
     model_setup_timeout_seconds,
     models_are_cached,
 )
-from ..conftest import _index_corpus, managed_env
+from ..conftest import RagComponentsWithManifest, _index_corpus, managed_env
 from ..corpus import build_synthetic_vault
 
 _MAX_STARTUP_CLEANUP_RESERVE_SECONDS = 15.0
@@ -328,13 +327,10 @@ def rag_components_with_code(
         preflight=code_indexer.preflight_content(),
     )
 
-    yield cast(
-        "RagComponentsWithManifest",
-        components.__class__(  # type: ignore[call-arg]
-            **components,
-            manifest=manifest,
-            reranker=shared_reranker,
-        ),
+    yield RagComponentsWithManifest(
+        **components,
+        manifest=manifest,
+        reranker=shared_reranker,
     )
 
     components["store"].close()

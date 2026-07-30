@@ -28,7 +28,7 @@ because nothing about it happens at import time.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -38,10 +38,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from pathlib import Path
 
+    #: A thunk building a fresh coroutine for one MCP tool/resource call.
+    _Thunk = Callable[[], Coroutine[object, object, object]]
+
 pytestmark = [pytest.mark.unit]
 
 
-def _tool_invocations() -> list[tuple[str, Callable[[], Coroutine[Any, Any, Any]]]]:
+def _tool_invocations() -> list[tuple[str, _Thunk]]:
     """Return ``(id, thunk)`` pairs covering every MCP tool and resource.
 
     Each thunk builds a fresh coroutine when called so it can be driven through
@@ -86,7 +89,7 @@ _HEAVY_ML_LIBS = (
     ids=[name for name, _ in _INVOCATIONS],
 )
 def test_tool_raises_service_not_running(
-    make_coro: Callable[[], Coroutine[Any, Any, Any]],
+    make_coro: _Thunk,
     isolated_singleton_dirs: Path,
 ) -> None:
     """With no service.json, every MCP tool/resource raises the service-down error.

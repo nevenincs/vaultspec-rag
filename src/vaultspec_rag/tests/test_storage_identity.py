@@ -12,7 +12,7 @@ catches is named in its own comment so a later reader does not loosen it.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 import pytest
 
@@ -41,9 +41,23 @@ def isolate_manifest_dir(isolated_status_dir: Path) -> None:
     del isolated_status_dir
 
 
-def _identity(**overrides: object) -> store_schema.CollectionIdentity:
+class _IdentityOverrides(TypedDict, total=False):
+    """The subset of a :class:`CollectionIdentity`'s fields a test may override."""
+
+    dense_model: str
+    sparse_model: str | None
+    dense_dim: int
+    distance: str
+    dense_vector_name: str
+    sparse_vector_name: str
+    storage_schema_version: int
+
+
+def _identity(
+    **overrides: Unpack[_IdentityOverrides],
+) -> store_schema.CollectionIdentity:
     """Build a complete identity, overriding named fields."""
-    base: dict[str, object] = {
+    base: _IdentityOverrides = {
         "dense_model": "acme/dense-v1",
         "sparse_model": "acme/sparse-v1",
         "dense_dim": 1024,
@@ -53,7 +67,7 @@ def _identity(**overrides: object) -> store_schema.CollectionIdentity:
         "storage_schema_version": store_schema.STORAGE_SCHEMA_VERSION,
     }
     base.update(overrides)
-    return store_schema.CollectionIdentity(**base)  # type: ignore[arg-type]
+    return store_schema.CollectionIdentity(**base)
 
 
 def test_record_root_preserves_a_stale_schema_version(tmp_path: Path) -> None:

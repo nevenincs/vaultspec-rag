@@ -26,7 +26,7 @@ import json
 import re
 import urllib.error
 import zipfile
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pytest
 import typer
@@ -80,19 +80,30 @@ class _Clock:
         return self.now
 
 
-def _byte_bar(bar_class: type[Any], *, desc: str) -> Any:
+class _ByteBar(Protocol):
+    """The members this module drives on a hub-constructed tqdm bar."""
+
+    total: int | float | None
+    disable: bool
+
+    def update(self, n: int) -> bool | None: ...
+
+
+def _byte_bar(bar_class: type[Any], *, desc: str) -> _ByteBar:
     """Build one byte bar exactly as ``snapshot_download`` builds its own.
 
     Through the hub's own factory rather than a hand-written call: that factory
     is what decides whether a custom bar class is handed ``disable`` and
     ``name``, and getting that wrong is how a bar class silently stops
-    counting.
+    counting. ``bar_class`` stays ``type[Any]`` because it is threaded straight
+    through from the hub's own ``tqdm_class`` property, which is typed exactly
+    that way against the hub's partially-unknown tqdm stubs.
     """
     from huggingface_hub.utils.tqdm import (
         _create_progress_bar,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
     )
 
-    create = cast("Callable[..., Any]", _create_progress_bar)
+    create = cast("Callable[..., _ByteBar]", _create_progress_bar)
     return create(
         cls=bar_class,
         log_level=20,
@@ -106,7 +117,7 @@ def _byte_bar(bar_class: type[Any], *, desc: str) -> Any:
     )
 
 
-def _seed_totals(bars: list[Any], totals: list[int]) -> None:
+def _seed_totals(bars: list[_ByteBar], totals: list[int]) -> None:
     """Grow each bar's total the way the hub's per-file adapter grows them."""
     for bar, total in zip(bars, totals, strict=True):
         bar.total = (bar.total or 0) + total

@@ -12,7 +12,7 @@ import typing
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -62,7 +62,7 @@ def test_missing_mcp_extra_guidance_respects_all_install_modes() -> None:
     assert "uv add vaultspec-rag[mcp]" not in message
 
 
-def _run[T](coro: Coroutine[Any, Any, T]) -> T:
+def _run[T](coro: Coroutine[object, object, T]) -> T:
     """Run an async coroutine synchronously."""
     return asyncio.run(coro)
 
@@ -818,17 +818,16 @@ class TestHealthHandler:
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         resp: httpx.Response = client.get("/health")
         assert resp.status_code == 200
-        data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+        data: dict[str, object] = cast("dict[str, object]", resp.json())
         assert "status" in data
         assert "cuda" in data
         assert "models_loaded" in data
         assert "project_count" in data
         assert "uptime_s" in data
-        assert data["backend_capabilities"]["concurrent_search_supported"] is True
-        assert (
-            data["backend_capabilities"]["same_project_search_strategy"] == "serialized"
-        )
-        profile = cast("dict[str, Any]", data["support_profile"])
+        capabilities = cast("dict[str, object]", data["backend_capabilities"])
+        assert capabilities["concurrent_search_supported"] is True
+        assert capabilities["same_project_search_strategy"] == "serialized"
+        profile = cast("dict[str, object]", data["support_profile"])
         domains = cast("dict[str, dict[str, int]]", profile["domains"])
         assert set(domains) == {"code", "document"}
         expected_limits = {
@@ -872,7 +871,7 @@ class TestHealthHandler:
             )
             client: httpx.Client = cast("httpx.Client", TestClient(app))
             resp: httpx.Response = client.get("/health")
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["status"] == "error"
             assert data["models_loaded"] is False
         finally:
@@ -894,7 +893,8 @@ class TestHealthInfoReduction:
             lifespan=_empty_lifespan,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
-        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
+        raw = client.get("/health").json()
+        data: dict[str, object] = cast("dict[str, object]", raw)
         assert "projects" not in data
         assert "project_count" in data
         assert isinstance(data["project_count"], int)
@@ -910,7 +910,8 @@ class TestHealthInfoReduction:
             lifespan=_empty_lifespan,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
-        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
+        raw = client.get("/health").json()
+        data: dict[str, object] = cast("dict[str, object]", raw)
         assert "gpu_name" not in data
 
     def test_index_status_no_gpu_name(self):
@@ -1114,7 +1115,7 @@ class TestDaemonLifecycleHelpers:
 
         server._heartbeat_tick_sync(discovery_publisher)
 
-        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, object] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["pid"] == os.getpid()
         assert data["parent_pid"] == os.getppid()
         assert data["port"] == 8766
@@ -1136,7 +1137,7 @@ class TestDaemonLifecycleHelpers:
         sf = server._status_file_path()
         server._heartbeat_tick_sync(discovery_publisher)
 
-        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, object] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["service_token"] == "test-owner-token"
 
     def test_heartbeat_tick_sync_replaces_stale_token(
@@ -1162,7 +1163,7 @@ class TestDaemonLifecycleHelpers:
 
         server._heartbeat_tick_sync(discovery_publisher)
 
-        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, object] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["service_token"] == "test-owner-token"
 
     def test_discovery_cleanup_missing_is_idempotent(
@@ -1313,10 +1314,10 @@ class TestRouteMissingProjectRoot:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
 
             activity = search_activity_ledger().snapshot(include_query=True)
             records = [
@@ -1375,7 +1376,7 @@ class TestRouteMissingProjectRoot:
                 )
 
                 assert response.status_code == 400, label
-                data: dict[str, Any] = cast("dict[str, Any]", response.json())
+                data: dict[str, object] = cast("dict[str, object]", response.json())
                 assert data["error"] == "bad_request", label
                 activity = search_activity_ledger().snapshot(include_query=True)
                 records = [
@@ -1426,7 +1427,7 @@ class TestRouteMissingProjectRoot:
             response: httpx.Response = client.get("/search-activity")
 
             assert response.status_code == 401
-            data: dict[str, Any] = cast("dict[str, Any]", response.json())
+            data: dict[str, object] = cast("dict[str, object]", response.json())
             assert data["error"] == "unauthorized"
             assert query not in response.text
         finally:
@@ -1550,15 +1551,15 @@ finally:
             for line in completed.stdout.splitlines()
             if line.startswith(prefix)
         )
-        result = cast("dict[str, Any]", json.loads(rendered))
+        result = cast("dict[str, object]", json.loads(rendered))
         assert result["pending_before_release"] is True
-        constrained = cast("dict[str, Any]", result["constrained"])
+        constrained = cast("dict[str, object]", result["constrained"])
         assert constrained["status_code"] == 400
         assert constrained["status_code"] != 429
         counts = cast("dict[str, int]", result["counts"])
         assert counts["active"] == result["remaining_active"]
         assert counts["active_overflow"] == 0
-        terminal = cast("list[dict[str, Any]]", result["terminal"])
+        terminal = cast("list[dict[str, object]]", result["terminal"])
         assert len(terminal) == 1
         assert terminal[0]["state"] == "terminal"
         assert terminal[0]["query"] == "wait for activity capacity before validation"
@@ -1585,10 +1586,10 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
             mod._SERVICE_TOKEN = orig_token
@@ -1613,10 +1614,10 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "invalid_job_spec"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
             mod._SERVICE_TOKEN = orig_token
@@ -1640,10 +1641,10 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
             mod._SERVICE_TOKEN = orig_token
@@ -1668,10 +1669,10 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
             mod._SERVICE_TOKEN = orig_token
@@ -1696,10 +1697,10 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
             mod._SERVICE_TOKEN = orig_token
@@ -1765,7 +1766,7 @@ finally:
 
     def _post_reindex(
         self, root: Path, *, preprocess_mode: str | None
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         env = os.environ.copy()
         env[EnvVar.STATUS_DIR.value] = str(root.parent / "status")
         env[EnvVar.QDRANT_STORAGE_DIR.value] = str(root.parent / "qdrant" / "storage")
@@ -1791,9 +1792,9 @@ finally:
             for line in completed.stdout.splitlines()
             if line.startswith(prefix)
         )
-        result = cast("dict[str, Any]", json.loads(rendered))
+        result = cast("dict[str, object]", json.loads(rendered))
         assert result["status_code"] == 200
-        return cast("dict[str, Any]", result["body"])
+        return cast("dict[str, object]", result["body"])
 
     def test_reindex_reports_hooks_will_run_under_default_mode(
         self, tmp_path: Path
@@ -1802,7 +1803,7 @@ finally:
         self._write_config(root)
         data = self._post_reindex(root, preprocess_mode=None)
         assert data["status"] == "queued"
-        pre = cast("dict[str, Any]", data["preprocess"])
+        pre = cast("dict[str, object]", data["preprocess"])
         assert pre["config_present"] is True
         assert pre["rule_count"] == 1
         assert pre["mode"] == "default"
@@ -1812,7 +1813,7 @@ finally:
         root = tmp_path / "proj"
         self._write_config(root)
         data = self._post_reindex(root, preprocess_mode="off")
-        pre = cast("dict[str, Any]", data["preprocess"])
+        pre = cast("dict[str, object]", data["preprocess"])
         # The count is still reported (the config's own), but the kill switch
         # means hooks will not run.
         assert pre["config_present"] is True
@@ -1824,7 +1825,7 @@ finally:
         root = tmp_path / "proj"
         (root / ".vault").mkdir(parents=True)
         data = self._post_reindex(root, preprocess_mode=None)
-        pre = cast("dict[str, Any]", data["preprocess"])
+        pre = cast("dict[str, object]", data["preprocess"])
         assert pre["config_present"] is False
         assert pre["rule_count"] == 0
         assert pre["hooks_will_run"] is False

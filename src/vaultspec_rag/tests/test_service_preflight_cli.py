@@ -14,7 +14,7 @@ import contextlib
 import http.server
 import json
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -35,7 +35,7 @@ runner = CliRunner()
 
 
 @contextlib.contextmanager
-def _health_service(health: dict[str, Any] | None) -> Generator[int | None]:
+def _health_service(health: dict[str, object] | None) -> Generator[int | None]:
     """Serve one ``/health`` body over real HTTP on a real port.
 
     The verb under test resolves a port, opens a socket, and parses a wire
@@ -80,8 +80,13 @@ def _invoke(port: int | None, *, json_mode: bool = True) -> Result:
     return runner.invoke(app, args)
 
 
-def _body(result: Result) -> dict[str, Any]:
-    return json.loads(result.output)
+def _body(result: Result) -> dict[str, object]:
+    return cast("dict[str, object]", json.loads(result.output))
+
+
+def _data(body: dict[str, object]) -> dict[str, object]:
+    """Return the ``data`` block a preflight envelope carries."""
+    return cast("dict[str, object]", body["data"])
 
 
 _ADMITTED_BLOCK = {
@@ -117,8 +122,8 @@ def test_daemon_admitted_reading_exits_zero() -> None:
     assert result.exit_code == 0, result.output
     body = _body(result)
     assert body["ok"] is True
-    assert body["data"]["source"] == "service"
-    assert body["data"]["admitted"] is True
+    assert _data(body)["source"] == "service"
+    assert _data(body)["admitted"] is True
 
 
 def test_daemon_refused_reading_exits_one() -> None:
@@ -134,7 +139,7 @@ def test_daemon_refused_reading_exits_one() -> None:
     body = _body(result)
     assert body["ok"] is False
     assert body["error"] == "below_floor"
-    assert "6400 MiB floor" in body["message"]
+    assert "6400 MiB floor" in cast("str", body["message"])
 
 
 def test_daemon_torch_absent_reading_exits_one() -> None:
@@ -150,7 +155,7 @@ def test_daemon_torch_absent_reading_exits_one() -> None:
     body = _body(result)
     assert body["ok"] is False
     assert body["error"] == "torch_absent"
-    assert body["data"]["free_mib"] is None
+    assert _data(body)["free_mib"] is None
 
 
 def test_daemon_missing_device_load_block_never_falls_back_locally(
@@ -233,8 +238,8 @@ def test_no_daemon_discovered_falls_back_to_the_local_probe(
     result = runner.invoke(app, ["server", "preflight", "--json"])
     assert result.exit_code == 0, result.output
     body = _body(result)
-    assert body["data"]["source"] == "local"
-    assert body["data"]["free_mib"] == 9000
+    assert _data(body)["source"] == "local"
+    assert _data(body)["free_mib"] == 9000
 
 
 def test_exactly_one_json_envelope_per_invocation() -> None:
