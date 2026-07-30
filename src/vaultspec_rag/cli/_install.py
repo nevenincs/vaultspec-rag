@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import click
 import typer
@@ -22,9 +22,51 @@ from ._render import _plain, _render_install_report, _render_uninstall_report
 if TYPE_CHECKING:
     from typer._click import Context as ClickContext
 
+    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
+    # and value types are only known once a command's options are parsed at
+    # runtime. Each TypedDict below is the producer-side cast target for one
+    # command's ``invoke``: the field types mirror the ``TyperOption``
+    # declarations the corresponding ``__init__`` registers, so a single
+    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
+    class _InstallParams(TypedDict):
+        target: Path | None
+        upgrade: bool
+        dry_run: bool
+        force: bool
+        skip: tuple[str, ...]
+        mode: str | None
+        torch_config: bool
+        torch_group: str | None
+        yes: bool
+        sync: bool
+        provision: bool
+        mcp: bool
+        local_only: bool
+        skip_torch: bool
+        skip_models: bool
+        skip_qdrant: bool
+        json: bool
+
+    class _UninstallParams(TypedDict):
+        target: Path | None
+        remove_data: bool
+        dry_run: bool
+        force: bool
+        skip: tuple[str, ...]
+        yes: bool
+        json: bool
+
+
 # Group name used when ``--torch-group`` is passed without an explicit
 # value. Surfaced both in the help text and as the Click ``flag_value``.
 _DEFAULT_TORCH_GROUP = "dev"
+
+# ``--skip``'s empty default, shared by both commands below. Bound to an
+# explicitly-typed name rather than passed as the inline literal ``()``:
+# ``TyperOption.__init__``'s ``default`` parameter is typed ``Any | None``
+# upstream, and pyright's bidirectional inference widens an inline literal
+# passed there to ``Any``; a pre-typed local keeps the tuple's real type.
+_NO_SKIP: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +105,12 @@ class _InstallCommand(TyperCommand):
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # ``*args``/``**kwargs`` forward whatever ``TyperCommand.__init__``
+        # (typer instantiates this class directly as its ``cls=``) is
+        # called with. A field-for-field mirror of that constructor was
+        # tried and reverted: it exceeds the project's 5-argument cap
+        # (PLR0913), which is enforced with no per-call suppression
+        # allowed. Genuinely dynamic; left as ``Any``.
         super().__init__(*args, **kwargs)
         self.params.extend(
             (
@@ -103,7 +151,7 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--skip"],
                     type=str,
                     multiple=True,
-                    default=(),
+                    default=_NO_SKIP,
                     help="Skip a component (repeatable).",
                 ),
                 TyperOption(
@@ -234,7 +282,7 @@ class _InstallCommand(TyperCommand):
 
     def invoke(self, ctx: "ClickContext") -> None:
         """Dispatch parsed Click parameters as one install request."""
-        params = ctx.params
+        params = cast("_InstallParams", ctx.params)
         mode = params["mode"]
         return _run_install(
             ctx,
@@ -408,6 +456,10 @@ class _UninstallCommand(TyperCommand):
     """Expose uninstall options without expanding the callback signature."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # See _InstallCommand.__init__: a field-for-field mirror of
+        # TyperCommand's constructor was tried and reverted (exceeds the
+        # project's 5-argument cap, PLR0913, with no suppression allowed).
+        # Genuinely dynamic; left as ``Any``.
         super().__init__(*args, **kwargs)
         self.params.extend(
             (
@@ -444,7 +496,7 @@ class _UninstallCommand(TyperCommand):
                     param_decls=["--skip"],
                     type=str,
                     multiple=True,
-                    default=(),
+                    default=_NO_SKIP,
                     help="Skip a component (repeatable).",
                 ),
                 TyperOption(
@@ -464,7 +516,7 @@ class _UninstallCommand(TyperCommand):
 
     def invoke(self, ctx: "ClickContext") -> None:
         """Dispatch parsed Click parameters as one uninstall request."""
-        params = ctx.params
+        params = cast("_UninstallParams", ctx.params)
         return _run_uninstall(
             ctx,
             _UninstallOptions(
