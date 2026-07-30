@@ -30,7 +30,10 @@ related:
   - '[[2026-07-24-service-quiesce-W03-P06-S22]]'
   - '[[2026-07-24-service-quiesce-W03-P06-summary]]'
   - '[[2026-07-24-service-quiesce-W03-P07-S23]]'
+  - '[[2026-07-24-service-quiesce-W03-P07-S24]]'
   - '[[2026-07-24-service-quiesce-W03-P07-S25]]'
+  - '[[2026-07-24-service-quiesce-W03-P07-S26]]'
+  - '[[2026-07-24-service-quiesce-W03-P07-S27]]'
   - '[[2026-07-24-service-quiesce-W03-P07-S28]]'
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-plan]]'
@@ -83,7 +86,10 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-24-service-quiesce-W03-P06-S22` - Prove through the authenticated production routes, real registry, real manager writer, and real filesystem that an unpublished resume write returns resume_recovery_failed in closed warming, then directory repair and a second resume return running with the same logical job ID and one recovered generation
 - `2026-07-24-service-quiesce-W03-P06-summary` - `service-quiesce` `W03.P06` summary
 - `2026-07-24-service-quiesce-W03-P07-S23` - Pass quiesce transition and service-state payloads through the single service-client transport unchanged, including retryable recovery failure, without local GPU behavior
+- `2026-07-24-service-quiesce-W03-P07-S24` - Render pause and resume as success only when ok is true and the canonical quiesce block carries the requested achieved state, preserving exact unsafe status, error, retryable, message, and quiesce evidence in human and JSON failures
 - `2026-07-24-service-quiesce-W03-P07-S25` - Hard-refuse in-process GPU indexing whenever delegation does not succeed and render truthful human and JSON remediation, because neither --allow-fallback nor a quiesced service block authorizes local compute until verified borrower-lease evidence exists
+- `2026-07-24-service-quiesce-W03-P07-S26` - Expose the service-owned quiesce block through existing MCP service-state delegation without adding public lifecycle mutation tools
+- `2026-07-24-service-quiesce-W03-P07-S27` - Render controller state, GPU release evidence and borrower safety in the jobs TUI header and status details
 - `2026-07-24-service-quiesce-W03-P07-S28` - Replace server globals with an immutable app-scoped runtime that owns token registry and port, and prove isolated CPU lifecycle behavior
 
 ### plan

@@ -43,20 +43,52 @@ model, Torch, CUDA, or GPU test was started.
 
 ## Findings
 
-### requested-state-validation | high | CLI accepts an unachieved successful lifecycle body
+### requested-state-validation | high | correct CLI logic has an invalid source-inspection guard
 
-`_quiesce` in `src/vaultspec_rag/cli/_service_quiesce.py` exits zero for every
-mapping whose `ok` value is true. It does not validate that pause carries
-`quiesce.state` equal to `quiesced`, or that resume carries
-`quiesce.state` equal to `running`. Commit `f7fd4bd5` therefore preserves
-service-owned failures correctly but does not satisfy S24's clarified rule that
-success requires both `ok: true` and the requested achieved canonical state. A
-malformed or skewed service can still make the CLI report success for an unsafe
-or opposite state.
+`0e7cce89` makes `_quiesce` accept pause only with `quiesce.state` equal to
+`quiesced` and resume only with `quiesce.state` equal to `running`, in addition
+to `ok: true`. It otherwise preserves a complete service failure when present
+and returns `invalid_service_response` for an invalid or unachieved success
+body. The checked-in real loopback route tests exercise achieved transitions,
+idempotent transitions, a real transition conflict, and unreachable discovery.
 
-No other acceptance-blocking defect was found in S19 through S23 or S25 by
-static inspection. Those Steps are accepted from the named commits and their
-checked-in proof, subject to the unrun validation boundary below.
+However, `7e6d4632` adds an in-memory source rewrite followed by AST inspection
+of `_quiesce`. It does not write the production file, but it is still a
+forbidden source-mutation analogue and is not real-behavior evidence. An
+`ok: true` wrong-state body is not producible by the current truthful route.
+Remove that inspection before accepting S24; retain the condition as static,
+unexercised defense-in-depth under the amended W03 boundary rather than
+manufacturing a skewed response.
+
+### adapter-and-tui-contracts | resolved | MCP and jobs TUI preserve the controller authority
+
+`866f399c` removes MCP lifecycle interpretation and returns the authenticated
+service-state mapping unchanged; its checked-in fresh-interpreter probe compares
+the route and MCP documents exactly. S27's real no-lifespan route-host test
+renders the complete jobs controller block after a real registry pause, and a
+real rejected jobs request renders `quiesce unavailable` without a safe borrower
+signal.
+
+The current successful jobs route always serializes the complete controller
+envelope. A successful partial block is therefore impossible without a response
+seam, test hook, proxy, handcrafted contract, or production-source mutation.
+Those mechanisms are prohibited. The exact-field TUI validator remains static,
+unexercised defense-in-depth rather than a red/green runtime claim.
+
+### collapse-ownership | high | TUI must consume the controller-owned field vocabulary
+
+The local collapse branch adds `QUIESCE_ENVELOPE_FIELDS`, derived from
+`QuiesceSnapshot`, and replaces the duplicated jobs-TUI and adapter-test field
+sets with that controller-owned vocabulary. It also changes the TUI observation
+composition. Its common ancestor is the earlier S28 acceptance commit, so this
+overlaps the local S26 and S27 work.
+
+The required integration is a normal merge before S27 closes. The collapse
+branch owns the field-vocabulary refactor and TUI composition: take the derived
+controller constant, delete local copies, retain the exact-set fail-closed
+comparison, preserve MCP's S26 pass-through, and preserve `0576e4f4`'s removal
+of the source-mutating test. This is a canonical-owner reconciliation, not a
+Terra implementation choice.
 
 ### strict-type-stubs-baseline | low | repository strict typing is not green outside S28
 
@@ -67,21 +99,18 @@ claim full W03 acceptance.
 
 ## Recommendations
 
-For `requested-state-validation`, keep S24 open. Validate the canonical quiesce
-mapping and exact requested state before any success exit, preserve the full
-service body in a structured invalid-or-unachieved failure, and add real
-loopback CLI guards for mismatched and malformed `ok: true` responses in both
-human and JSON modes. Prove each negative guard red then green under the
-project's no-mock test discipline.
-
-S28 is accepted for the immutable runtime seam: token, registry, and port are
+S26 and S28 are accepted for their individual W03 scopes. S24 remains open
+until its source-inspection mutation test is removed. S27 remains open until
+the controller-derived field vocabulary and TUI composition are merged under
+the stated ownership. S28 is accepted for the immutable runtime seam: token,
+registry, and port are
 one app authority; the daemon binds and publishes the same validated port;
 request-side registry reads and test hosts no longer rely on server-global
 assignment. Its CPU-only proof is complete. Live GPU/Qdrant integration remains
 delegated and unverified.
 
-W03.P07 remains in progress. Next, remediate the S24 high finding, then expose
-the already-authoritative block in S26 and render it in S27. Re-run the W03
-CPU acceptance suite after those three steps and resolve the Core-stub baseline
-before calling the full strict gate green. W04 remains out of scope and must
-not start.
+W03.P07 is not complete: S24 and S27 remain open. Even after their correction,
+W03 cannot be called fully accepted at the configured strict-gate boundary while
+the 98 Core-stub errors remain unresolved. The CPU-only evidence does not cover
+live GPU/Qdrant integration, which remains delegated and unverified. W04 is out
+of scope and must not start.
