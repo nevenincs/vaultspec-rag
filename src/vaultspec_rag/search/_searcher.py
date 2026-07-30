@@ -74,7 +74,7 @@ if TYPE_CHECKING:
 
     from sentence_transformers import CrossEncoder
     from sentence_transformers.base.modality_types import PairInput
-    from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    from vaultspec_core.graph import (
         VaultGraph,
     )
 
@@ -515,7 +515,7 @@ class VaultSearcher:
         if self._graph_provider is not None:
             return self._graph_provider()
 
-        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.graph import (
             VaultGraph as _VaultGraph,
         )
 

@@ -22,7 +22,7 @@ import logging
 from importlib import resources
 from pathlib import Path
 
-from vaultspec_core.core.helpers import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.core.helpers import (
     atomic_write,
 )
 

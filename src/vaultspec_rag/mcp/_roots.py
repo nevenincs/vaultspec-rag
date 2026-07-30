@@ -61,7 +61,7 @@ def _resolve_project_root(project_root: str | None) -> str:
         RuntimeError: When no vaultspec workspace resolves, carrying the
             resolver's own account of what was missing plus the remediation.
     """
-    from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    from vaultspec_core.config.workspace import (
         WorkspaceError,
         resolve_workspace,
     )

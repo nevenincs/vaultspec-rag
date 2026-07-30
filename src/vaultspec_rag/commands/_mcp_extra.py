@@ -9,7 +9,7 @@ import tomlkit
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from tomlkit import TOMLDocument
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.core.enums import (
     InstallMode,
 )
 
