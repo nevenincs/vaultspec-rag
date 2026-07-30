@@ -777,17 +777,26 @@ class TestPerRootLocks:
             registry.close_project(root_a)
             registry.close_project(root_b)
 
-    def test_close_project_clears_root_lock(
+    def test_close_project_keeps_the_root_store_guard(
         self,
         registry: ServiceRegistry,
         tmp_path: Path,
     ) -> None:
+        """Closing a project keeps its guard, and the next open reuses it.
+
+        A per-root mutex only serializes threads that resolve to the same
+        object, so an entry dropped on eviction lets the next arrival mint a
+        rival lock and open a store against storage the outgoing one has not
+        released. Identity - not mere presence - is what makes the guard work.
+        """
         root = _make_vault_dir(tmp_path)
         registry.peek_project(root)
         resolved = root.resolve()
-        assert resolved in registry._root_locks
+        guard = registry._root_locks[resolved]
         registry.close_project(root)
-        assert resolved not in registry._root_locks
+        assert registry._root_locks.get(resolved) is guard
+        registry.peek_project(root)
+        assert registry._root_locks[resolved] is guard
 
     def test_close_all_clears_root_locks(
         self,
