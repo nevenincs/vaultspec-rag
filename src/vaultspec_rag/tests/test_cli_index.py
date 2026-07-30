@@ -15,6 +15,7 @@ from ._cli_helpers import (
     runner,
 )
 from ._http_stubs import QuietHandler
+from ._production_service import production_service
 from ._scaffold import make_workspace
 
 if typing.TYPE_CHECKING:
@@ -1098,18 +1099,25 @@ def project_refused_by_the_disk_preflight(
     return project
 
 
-@pytest.mark.usefixtures("isolated_singleton_dirs")
 class TestDiskPreflightRefusal:
     """The in-process index path surfaces a disk-preflight refusal as one
     structured non-zero envelope - never the GPU-error diagnosis.
 
-    The in-process path is reached the way an operator reaches it: the
-    singleton dirs are isolated and empty, so real discovery finds no daemon
-    to delegate to. Nothing rehearses that verdict.
+    The in-process path is reached the way an operator reaches it, which now
+    means passing the borrower gate rather than falling through it: local GPU
+    indexing requires ``--borrow-gpu`` and a live compatible service to
+    quiesce, so each test stands up the real authenticated route host, lets
+    real discovery find it, and lets the production coordinator take its lease
+    and pause. Nothing rehearses the refusal that follows.
+
+    Both tests below therefore also fail if the borrower coordination stops
+    reaching local indexing at all - a refusal from the gate carries neither
+    the classification nor the wording they assert.
     """
 
     def test_json_mode_emits_disk_preflight_failed(
         self,
+        isolated_singleton_dirs: Path,
         project_refused_by_the_disk_preflight: Path,
     ) -> None:
         """A refused preflight is one classified envelope, exit 1.
@@ -1122,16 +1130,30 @@ class TestDiskPreflightRefusal:
 
         Proven able to fail: deleting the ``except InsufficientDiskSpaceError``
         branch in the in-process index path drops the refusal into the
-        ``(ImportError, RuntimeError)`` GPU handler, and the
-        ``disk_preflight_failed`` assertion fails on a GPU diagnosis;
-        restoring the branch passes.
+        ``(ImportError, RuntimeError)`` GPU handler. That handler takes no
+        JSON mode and always renders human prose, so the run emits no
+        envelope at all and the one-envelope assertion below is what fails -
+        not the ``disk_preflight_failed`` one, which is never reached.
+        Restoring the branch passes. The classification assertion still binds
+        the branch's verdict wherever an envelope is produced; both are kept
+        because the mutation is caught earlier only by accident of how the
+        GPU handler writes.
         """
 
         project = project_refused_by_the_disk_preflight
-        result = runner.invoke(
-            app,
-            ["--target", str(project), "index", "--type", "vault", "--json"],
-        )
+        with production_service(isolated_singleton_dirs):
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(project),
+                    "index",
+                    "--type",
+                    "vault",
+                    "--borrow-gpu",
+                    "--json",
+                ],
+            )
         assert result.exit_code == 1
         # No console redirect: a --json run reports no progress at all, so
         # stdout carries the envelope and nothing else. Before that, this had
@@ -1150,6 +1172,7 @@ class TestDiskPreflightRefusal:
 
     def test_human_mode_prints_the_refusal(
         self,
+        isolated_singleton_dirs: Path,
         project_refused_by_the_disk_preflight: Path,
     ) -> None:
         """Human mode prints the store's own wording, exit 1.
@@ -1166,9 +1189,17 @@ class TestDiskPreflightRefusal:
         this test binds only the wording that reaches the operator.
         """
         project = project_refused_by_the_disk_preflight
-        result = runner.invoke(
-            app,
-            ["--target", str(project), "index", "--type", "vault"],
-        )
+        with production_service(isolated_singleton_dirs):
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(project),
+                    "index",
+                    "--type",
+                    "vault",
+                    "--borrow-gpu",
+                ],
+            )
         assert result.exit_code == 1
         assert "not enough free disk space" in " ".join(_plain_lines(result.output))
