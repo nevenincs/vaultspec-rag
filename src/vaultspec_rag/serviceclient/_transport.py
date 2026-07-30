@@ -401,11 +401,16 @@ def _try_http_health(
 ) -> dict[str, Any] | None:
     """Probe the ungated ``/health`` route, distinguishing down from unhealthy.
 
-    This is the single owner of the health call. It deliberately does not share
-    the general entry point's contract: callers here branch on a sentinel rather
-    than catch an exception, because several of them sit inside lifecycle verbs
-    that must emit exactly one structured outcome on every exit path, and an
-    escaping exception would become a second one.
+    This is the readiness probe every CLI and status surface reads through -
+    not the only code in this module that calls ``/health``.
+    :func:`_fetch_health_token` calls it separately to read the token alone,
+    because that caller must propagate a timeout to its own retry budget
+    rather than swallow it into the sentinel contract below; merging the two
+    would either lose that propagation or leak an exception into every caller
+    here. Callers here branch on a sentinel rather than catch an exception,
+    because several of them sit inside lifecycle verbs that must emit exactly
+    one structured outcome on every exit path, and an escaping exception would
+    become a second one.
 
     ``/health`` is ungated, so no credential is sent and no token-recovery retry
     is needed; the request goes through the same redirect-refusing opener as
