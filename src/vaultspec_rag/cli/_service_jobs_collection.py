@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from typer.core import TyperCommand, TyperOption
 
@@ -151,18 +151,18 @@ class _ServiceJobsCommand(TyperCommand):
         params = ctx.params
         return run_service_jobs(
             ServiceJobsOptions(
-                limit=cast("int", params["limit"]),
-                state=cast("str | None", params["state"]),
-                index=cast("str | None", params["index"]),
-                started_by=cast("str | None", params["started_by"]),
-                query=cast("str | None", params["query"]),
-                failed=cast("bool", params["failed"]),
-                job_id=cast("str | None", params["job_id"]),
-                since=cast("float | None", params["since"]),
-                port=cast("int | None", params["port"]),
-                json_mode=cast("bool", params["json"]),
-                watch=cast("bool", params["watch"]),
-                interval=cast("float", params["interval"]),
+                limit=params["limit"],
+                state=params["state"],
+                index=params["index"],
+                started_by=params["started_by"],
+                query=params["query"],
+                failed=params["failed"],
+                job_id=params["job_id"],
+                since=params["since"],
+                port=params["port"],
+                json_mode=params["json"],
+                watch=params["watch"],
+                interval=params["interval"],
             )
         )
 
