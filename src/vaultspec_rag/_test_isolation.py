@@ -15,11 +15,12 @@ import os
 import shutil
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Generator, Iterable
     from os import PathLike
 
 __all__ = [
@@ -30,8 +31,10 @@ __all__ = [
     "anchor_spawned_process_to_pytest",
     "enforce_pytest_managed_singleton_containment",
     "enforce_pytest_singleton_containment",
+    "pytest_singleton_bootstrap_window",
     "pytest_singleton_containment_active",
     "register_pytest_singleton_root",
+    "require_pytest_singleton_root_registration",
     "sweep_orphaned_singleton_roots",
 ]
 
@@ -119,6 +122,30 @@ def pytest_singleton_containment_active() -> bool:
         or os.environ.get(PYTEST_MANAGED_SINGLETON_BOOTSTRAP_ENV)
         == _PYTEST_MANAGED_SINGLETON_ACTIVE_VALUE
     )
+
+
+@contextmanager
+def pytest_singleton_bootstrap_window(*, operation: str) -> Generator[None]:
+    """Hold the pre-registration boundary while one authority is recorded."""
+    with _registration_lock:
+        if not pytest_singleton_containment_active():
+            raise ManagedSingletonIsolationError(
+                f"refusing to {operation}: pytest singleton containment is inactive"
+            )
+        if _registered_root is not None:
+            raise ManagedSingletonIsolationError(
+                f"refusing to {operation}: pytest singleton root is already registered"
+            )
+        yield
+
+
+def require_pytest_singleton_root_registration(*, operation: str) -> None:
+    """Require that pytest has pinned its containment root before acquisition."""
+    with _registration_lock:
+        if not pytest_singleton_containment_active() or _registered_root is None:
+            raise ManagedSingletonIsolationError(
+                f"refusing to {operation}: pytest singleton root is not registered"
+            )
 
 
 def register_pytest_singleton_root(root: str | PathLike[str]) -> Path:
