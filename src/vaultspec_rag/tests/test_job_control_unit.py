@@ -249,8 +249,6 @@ def test_null_control_is_runtime_compatible_and_never_interrupts() -> None:
     assert events == ["outer", "inner"]
 
 
-
-
 def test_job_control_config_defaults_are_bounded_and_typed() -> None:
     assert _run_config_probe("job_max_nonterminal") == "VALUE|int|64"
     assert _run_config_probe("job_shutdown_timeout_seconds") == ("VALUE|float|300.0")
