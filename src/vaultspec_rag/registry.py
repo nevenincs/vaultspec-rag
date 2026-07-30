@@ -12,7 +12,7 @@ import threading
 
 from .service import ServiceRegistry
 
-__all__ = ["get_registry", "reset_registry"]
+__all__ = ["discard_job_manager", "get_registry", "reset_registry"]
 
 _registry: ServiceRegistry | None = None
 _REGISTRY_LOCK = threading.Lock()
@@ -55,6 +55,18 @@ def get_registry() -> ServiceRegistry:
             _registry = ServiceRegistry()
             _rebind_server_alias(_registry)
         return _registry
+
+
+def discard_job_manager() -> None:
+    """Drop the singleton's cached job manager, if a singleton exists.
+
+    Deliberately does not build a registry to clear one: no registry means no
+    cached manager, and constructing one here would resurrect a singleton a
+    caller had just torn down.
+    """
+    with _REGISTRY_LOCK:
+        if _registry is not None:
+            _registry.discard_job_manager()
 
 
 def reset_registry() -> None:

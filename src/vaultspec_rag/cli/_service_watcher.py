@@ -32,6 +32,7 @@ from ._render import (
     _plain,
     address_line,
 )
+from ._service_lifecycle import _print_lifecycle_next_actions
 
 
 def _format_delay_milliseconds(raw: object) -> str:
@@ -155,9 +156,10 @@ def _watcher_admin_error(
     _plain(f"Automatic index updates: {message}")
     if root is not None:
         _print_update_project(root)
-    _plain("Next actions:")
-    _plain(f"  vaultspec-rag server status --port {port}")
-    _plain(f"  vaultspec-rag server logs --limit 200 --port {port}")
+    _print_lifecycle_next_actions(
+        server_status_command(port),
+        f"vaultspec-rag server logs --limit 200 --port {port}",
+    )
     raise typer.Exit(1)
 
 
@@ -232,9 +234,7 @@ def _updates_state_not_achieved(failure: _UpdateStateFailure) -> None:
         )
     _print_update_result(failure.port, failure.verb_phrase, failure.project)
     _plain(f"Reason: {reason}.")
-    _plain("Next actions:")
-    for action in _updates_next_actions(status, failure.port):
-        _plain(f"  {action}")
+    _print_lifecycle_next_actions(*_updates_next_actions(status, failure.port))
     raise typer.Exit(1)
 
 

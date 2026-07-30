@@ -12,16 +12,20 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
-from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.commands import (
     sync_provider,
 )
-from vaultspec_core.core.enums import Tool  # pyright: ignore[reportMissingTypeStubs]
-from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
+    Tool,
+)
+from vaultspec_core.core.manifest import (
     add_providers,
     read_manifest_data,
 )
-from vaultspec_core.core.mcps import mcp_sync  # pyright: ignore[reportMissingTypeStubs]
-from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.mcps import (
+    mcp_sync,
+)
+from vaultspec_core.core.workspace_mode import (
     dependency_leak_advisory,
     newly_establishes_dependency,
     read_package_declaration,
@@ -68,7 +72,7 @@ from ._workspace import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+    from vaultspec_core.core.enums import (
         InstallMode,
     )
 

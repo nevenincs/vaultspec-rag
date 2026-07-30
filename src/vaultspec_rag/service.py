@@ -109,7 +109,7 @@ class ServiceHealth(TypedDict):
 
 
 class RegistryFullError(Exception):
-    """Raised by :meth:`ServiceRegistry._collect_lru_victim` when no slot is evictable.
+    """Raised by :meth:`ServiceRegistry._lru_victim_root` when no slot is evictable.
 
     Attributes:
         max_projects: The registry's configured ``max_projects`` cap.
@@ -339,6 +339,16 @@ class ServiceRegistry:
         # releasing the lock first eliminates a TOCTOU window where a
         # concurrent lease() could resurrect the victim.
         self._lock = threading.RLock()
+        # One store guard per resolved root, minted on first use and then kept
+        # for the registry's life. Entries are deliberately NOT removed when a
+        # root's slot is evicted, and removing one is a race, not a cleanup: a
+        # per-root mutex only serializes threads that resolve to the *same*
+        # object, so dropping the entry while the outgoing store is still
+        # closing guarantees the next arrival mints a different lock, takes it
+        # uninhibited, and opens a second store against storage this process
+        # has not released yet - the exact refusal the guard exists to
+        # prevent. Growth is bounded by the number of distinct roots the
+        # process ever served, one bare lock each, and close_all() clears it.
         self._root_locks: dict[Path, threading.Lock] = {}
         self._gpu_lock = threading.Lock()
         self._quiesce_controller = ServiceQuiesceController()
@@ -933,6 +943,85 @@ class ServiceRegistry:
 
     # -- per-project slots -------------------------------------------------
 
+    @contextlib.contextmanager
+    def _root_store_guard(self, resolved: Path) -> Generator[None]:
+        """Own one resolved root's open store, and only that root's.
+
+        A local-file store takes an exclusive OS lock on its own storage
+        directory and keeps it for as long as it is open.  That lock is per
+        open handle, so a second store opened on a root this process already
+        has open is refused exactly as a foreign holder's would be.  Every
+        path that opens one - slot creation, a cold store lease - and every
+        path that closes one - idle sweep, LRU admission, forced eviction -
+        runs under this guard, and holds it for as long as that store is open
+        rather than merely across construction, which would leave the two
+        overlapping in lifetime and racing again.
+
+        Eviction therefore takes the guard *before* the slot leaves
+        ``_projects``, never after: the window between the removal and the
+        close is precisely when the slot is invisible and its storage lock is
+        still held, and an arrival admitted into it is refused by this
+        process' own handle.
+
+        The guard is per root, so unrelated roots still open and close in
+        parallel and no store-wide mutex is introduced.  It is registry-level
+        and always acquired before ``self._lock``, therefore above every
+        store's own lifecycle and collection locks and never beneath one.
+        Acquiring it while ``self._lock`` is held would invert that order and
+        deadlock, which is why victim selection and victim removal are two
+        steps rather than one.
+        """
+        with self._lock:
+            root_lock = self._root_locks.get(resolved)
+            if root_lock is None and not self._shutting_down:
+                root_lock = threading.Lock()
+                self._root_locks[resolved] = root_lock
+        if root_lock is None:
+            # Only close_all() ever removes an entry, and only after the
+            # shutdown flag is set - from which point admission refuses every
+            # open, so nothing can be racing this root. Minting one here would
+            # leave owned state behind that prepare_startup() reads as an
+            # incomplete shutdown, and a late teardown must never be skipped.
+            yield
+            return
+        with root_lock:
+            yield
+
+    @contextlib.contextmanager
+    def _root_store_admission(self, resolved: Path) -> Generator[None]:
+        """Admit one opener of *resolved*'s store, refusing a shutting-down registry.
+
+        The guard held is :meth:`_root_store_guard`; opening additionally
+        refuses outright once shutdown has begun, so a late arrival never
+        starts building storage the drain has already accounted for.
+
+        Raises:
+            RuntimeError: If the registry is shutting down.
+        """
+        with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+        with self._root_store_guard(resolved):
+            yield
+
+    def _pin_warm_slot(self, resolved: Path) -> ProjectSlot | None:
+        """Bump and return *resolved*'s warm slot, or ``None`` when it has none.
+
+        Raises:
+            RuntimeError: If the registry is shutting down.
+        """
+        with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+            slot = self._projects.get(resolved)
+            if slot is None:
+                return None
+            slot.last_access = time.monotonic()
+            slot.ref_count += 1
+            return slot
+
     def peek_project(self, root: Path) -> ProjectSlot:
         """Return (or lazily create) the slot for *root* without bumping refcount.
 
@@ -940,9 +1029,11 @@ class ServiceRegistry:
         preload, tests).  Request-path callers MUST use :meth:`lease`
         instead so eviction refcount accounting is honored.
 
-        Thread-safe: uses a three-level lock dance so that concurrent
-        callers for *different* roots proceed in parallel, while
-        concurrent callers for the *same* root are serialized.
+        Thread-safe: an already-published slot is returned without any
+        locking, and creation runs under :meth:`_root_store_admission`, so
+        concurrent callers for *different* roots proceed in parallel while
+        concurrent callers for the *same* root are serialized - against each
+        other and against a cold store lease alike.
 
         Args:
             root: Workspace root directory (resolved internally).
@@ -958,18 +1049,7 @@ class ServiceRegistry:
         slot = self._projects.get(root)
         if slot is not None:
             return slot
-        with self._lock:
-            if self._shutting_down:
-                msg = "ServiceRegistry is shutting down"
-                raise RuntimeError(msg)
-            slot = self._projects.get(root)
-            if slot is not None:
-                return slot
-            root_lock = self._root_locks.get(root)
-            if root_lock is None:
-                root_lock = threading.Lock()
-                self._root_locks[root] = root_lock
-        with root_lock:
+        with self._root_store_admission(root):
             slot = self._projects.get(root)
             if slot is not None:
                 return slot
@@ -1022,6 +1102,12 @@ class ServiceRegistry:
         store that is always closed on exit and is never added to the project
         registry, preserving model-free empty-index probes and status reads.
 
+        A cold lease holds the root's store admission for its whole life, so a
+        concurrent slot creation for the same root waits for it rather than
+        opening a second store against storage this process has already locked.
+        A warm lease takes no such guard: the slot's store is shared, and
+        serializing on it would queue every reader of that root behind another.
+
         Args:
             root: Workspace root directory.
 
@@ -1032,65 +1118,68 @@ class ServiceRegistry:
             RuntimeError: If the registry is shutting down.
         """
         resolved = root.resolve()
-        with self._lock:
-            if self._shutting_down:
-                msg = "ServiceRegistry is shutting down"
-                raise RuntimeError(msg)
-            slot = self._projects.get(resolved)
+        with contextlib.ExitStack() as stack:
+            slot = self._pin_warm_slot(resolved)
+            if slot is None:
+                stack.enter_context(self._root_store_admission(resolved))
+                # A slot may have been published while this waited for
+                # admission; adopt it rather than opening a second store.
+                slot = self._pin_warm_slot(resolved)
             if slot is not None:
-                slot.last_access = time.monotonic()
-                slot.ref_count += 1
-            else:
+                stack.callback(self._release, slot)
+                yield slot.store
+                return
+
+            with self._lock:
+                if self._shutting_down:
+                    msg = "ServiceRegistry is shutting down"
+                    raise RuntimeError(msg)
                 # Register ownership before VaultStore performs any filesystem
                 # or Qdrant effect. close_all() observes this pending admission
                 # even if shutdown begins while construction is outside _lock.
                 self._transient_store_constructions += 1
 
-        if slot is not None:
+            from .store_runtime import VaultStore
+
             try:
-                yield slot.store
-            finally:
-                self._release(slot)
-            return
-
-        from .store_runtime import VaultStore
-
-        try:
-            store = VaultStore(resolved)
-        except BaseException:
-            with self._lock:
-                self._transient_store_constructions -= 1
-            raise
-
-        with self._lock:
-            shutdown_won = self._shutting_down
-            if not shutdown_won:
-                self._transient_stores.add(store)
-                self._transient_store_constructions -= 1
-
-        if shutdown_won:
-            # Keep the pending-construction count live until close completes,
-            # so close_all() cannot observe a false zero and return while this
-            # late store still owns a client or local storage lock.
-            try:
-                store.close()
-            finally:
+                store = VaultStore(resolved)
+            except BaseException:
                 with self._lock:
                     self._transient_store_constructions -= 1
-            msg = "ServiceRegistry shut down during store construction"
-            raise RuntimeError(msg)
+                raise
 
-        try:
-            yield store
-        finally:
+            with self._lock:
+                shutdown_won = self._shutting_down
+                if not shutdown_won:
+                    self._transient_stores.add(store)
+                    self._transient_store_constructions -= 1
+
+            if shutdown_won:
+                # Keep the pending-construction count live until close
+                # completes, so close_all() cannot observe a false zero and
+                # return while this late store still owns a client or local
+                # storage lock.
+                try:
+                    store.close()
+                finally:
+                    with self._lock:
+                        self._transient_store_constructions -= 1
+                msg = "ServiceRegistry shut down during store construction"
+                raise RuntimeError(msg)
+
             try:
-                store.close()
+                yield store
             finally:
-                # Keep the lease visible to close_all() until resource release
-                # completes; removing it first would let shutdown return while
-                # the Qdrant client or local storage lock was still closing.
-                with self._lock:
-                    self._transient_stores.discard(store)
+                try:
+                    store.close()
+                finally:
+                    # Keep the lease visible to close_all() until resource
+                    # release completes; removing it first would let shutdown
+                    # return while the Qdrant client or local storage lock was
+                    # still closing. The root's store admission is released
+                    # only after that, as the outer stack unwinds.
+                    with self._lock:
+                        self._transient_stores.discard(store)
 
     # -- lease API ---------------------------------------------------------
 
@@ -1101,10 +1190,10 @@ class ServiceRegistry:
         Use as ``with registry.lease(root) as slot: ...``.  On enter,
         the slot is created if necessary (honoring the LRU cap and
         triggering an idle sweep), its ``last_access`` is updated, and
-        its ``ref_count`` is incremented.  Any victim slots that the
-        admission/sweep selected are popped from the registry while
-        the lock is held and then torn down *after* the lock has been
-        fully released, never via manual ``release()`` on an ``RLock``.
+        its ``ref_count`` is incremented.  Any victim the admission or the
+        sweep selects is fully evicted before this yields, so the caller
+        never observes more than ``max_projects`` slots and never begins
+        work while an evicted slot still owns its files and sockets.
         On exit, the refcount is decremented.  Eviction never touches a
         slot with ``ref_count > 0``.
 
@@ -1120,13 +1209,7 @@ class ServiceRegistry:
             RuntimeError: If ``load_model()`` has not been called or
                 the registry is shutting down.
         """
-        slot, victims = self._acquire(root)
-        # Run teardown OUTSIDE the lock and BEFORE yielding so the
-        # caller never observes more than ``max_projects`` slots and
-        # so the file/socket resources held by victims are released
-        # before any caller-side work begins.
-        for v_root, v_slot, reason in victims:
-            self._teardown_slot(v_root, v_slot, reason=reason)
+        slot = self._acquire(root)
         try:
             yield slot
         finally:
@@ -1167,32 +1250,36 @@ class ServiceRegistry:
                 self._job_manager = manager
             return manager
 
+    def discard_job_manager(self) -> None:
+        """Drop the cached manager so the next build reads config afresh.
+
+        The manager caches its non-terminal ceiling at construction and owns
+        every active and terminal record, so a caller that clears job state
+        without dropping it keeps both the old ceiling and the old records.
+        """
+        with self._lock:
+            self._job_manager = None
+
     def quiesce_snapshot(self) -> QuiesceSnapshot:
         """Return the registry-owned controller's read-only lifecycle truth."""
         return self._quiesce_controller.snapshot()
 
-    def _acquire(
-        self,
-        root: Path,
-    ) -> tuple[ProjectSlot, list[tuple[Path, ProjectSlot, str]]]:
+    def _acquire(self, root: Path) -> ProjectSlot:
         """Admit or fetch *root*'s slot and increment its ``ref_count``.
 
-        Must NOT be called outside :meth:`lease`.  Holds ``_lock`` for
-        the slot lookup / admission / refcount mutation / opportunistic
-        idle sweep.  Slot creation itself runs outside ``_lock`` via
-        :meth:`peek_project` to preserve the parallel cold-start
-        guarantee.  Returns the acquired slot
-        plus a (possibly empty) list of victims that the caller MUST
-        tear down after the lock is fully released.
+        Must NOT be called outside :meth:`lease`.  Holds ``_lock`` for the
+        slot lookup, the refcount mutation and victim *selection* only.  Slot
+        creation runs outside ``_lock`` via :meth:`peek_project` to preserve
+        the parallel cold-start guarantee, and every eviction runs outside it
+        under the victim's own store guard, which the registry's lock order
+        forbids taking beneath ``_lock``.  Both complete before this returns.
 
         Args:
             root: Workspace root directory.
 
         Returns:
-            ``(slot, victims)`` - *slot* is the acquired
-            ``ProjectSlot`` (already bumped); *victims* is a list of
-            ``(root, slot, reason)`` triples that were popped from the
-            registry under the lock and need teardown.
+            The acquired ``ProjectSlot``, with its ``ref_count`` already
+            incremented.
 
         Raises:
             RegistryFullError: When admission would exceed the LRU cap
@@ -1200,7 +1287,6 @@ class ServiceRegistry:
             RuntimeError: When the registry is shutting down.
         """
         resolved = root.resolve()
-        victims: list[tuple[Path, ProjectSlot, str]] = []
         # Track the slot whose ref_count we have already incremented
         # so we can roll the increment back on the failure path.
         # Without this, an exception raised AFTER ``ref_count += 1`` but
@@ -1218,16 +1304,22 @@ class ServiceRegistry:
                     msg = "ServiceRegistry is shutting down"
                     raise RuntimeError(msg)
                 slot = self._projects.get(resolved)
-                if slot is not None:
+                if slot is None:
+                    idle_roots: list[Path] = []
+                else:
                     slot.last_access = time.monotonic()
                     slot.ref_count += 1
                     acquired_slot = slot
-                    victims.extend(self._collect_idle_victims())
-                    return slot, victims
-                # LRU admission may collect a victim under the lock.
-                victims.extend(self._collect_lru_victim())
+                    idle_roots = self._idle_victim_roots()
+            if acquired_slot is not None:
+                self._evict_idle_roots(idle_roots)
+                return acquired_slot
 
-            # Create (outside _lock so GPU parallel init is preserved).
+            # Both of these run outside _lock: LRU eviction needs the
+            # victim's store guard, and creation preserves parallel cold
+            # start. Room is made before the new slot is created so the
+            # caller never observes more than max_projects slots.
+            self._make_room_for_admission()
             slot = self.peek_project(resolved)
             with self._lock:
                 if self._shutting_down:
@@ -1236,31 +1328,23 @@ class ServiceRegistry:
                 slot.last_access = time.monotonic()
                 slot.ref_count += 1
                 acquired_slot = slot
-                victims.extend(self._collect_idle_victims())
-            return slot, victims
+                idle_roots = self._idle_victim_roots()
+            self._evict_idle_roots(idle_roots)
+            return slot
         except BaseException:
-            # Rollback BEFORE re-raising:
-            # 1. Decrement ref_count on the target slot if we already
-            #    bumped it - otherwise the slot is stuck busy forever
-            #    and the caller never sees it via lease().
-            # 2. Tear down popped victims so their Qdrant handles and
-            #    watchers do not leak.
-            # Both rollback steps swallow their own errors so a cleanup
-            # failure cannot mask the original exception.
+            # Rollback BEFORE re-raising: decrement ref_count on the target
+            # slot if we already bumped it - otherwise the slot is stuck busy
+            # forever and the caller never sees it via lease(). Victims need
+            # no rollback: each is removed and torn down as one guarded step,
+            # so a failure leaves it either fully evicted or still registered,
+            # never popped and leaking. The rollback swallows its own errors
+            # so a cleanup failure cannot mask the original exception.
             if acquired_slot is not None:
                 try:
                     self._release(acquired_slot)
                 except Exception:
                     logger.exception(
                         "Failed to roll back ref_count during _acquire rollback",
-                    )
-            for v_root, v_slot, v_reason in victims:
-                try:
-                    self._teardown_slot(v_root, v_slot, reason=v_reason)
-                except Exception:
-                    logger.exception(
-                        "Failed to tear down victim %s during _acquire rollback",
-                        v_root,
                     )
             raise
 
@@ -1272,45 +1356,62 @@ class ServiceRegistry:
 
     # -- eviction ---------------------------------------------------------
 
-    def _collect_idle_victims(self) -> list[tuple[Path, ProjectSlot, str]]:
-        """Pop and return slots whose ``last_access`` is older than the idle TTL.
+    def _is_idle(self, slot: ProjectSlot, now: float) -> bool:
+        """Return whether *slot* is unleased and older than the idle TTL."""
+        return (
+            slot.ref_count == 0 and (now - slot.last_access) >= self._idle_ttl_seconds
+        )
 
-        Caller MUST hold ``self._lock``.  Returns with the lock still
-        held.  Victims are popped from ``_projects`` while the lock is
-        held so a concurrent :meth:`lease` cannot observe them and
-        resurrect them once teardown begins.  Teardown itself (watcher
-        stop → graph invalidate → store close) is the *caller's*
-        responsibility once the lock has been fully released - the
-        manual ``RLock.release()/acquire()`` dance is fragile because
-        a single ``release()`` on a recursively-held ``RLock`` only
-        decrements the recursion counter and does not actually let
-        other threads in.
+    def _idle_victim_roots(self) -> list[Path]:
+        """Return the roots whose slot is idle-evictable right now.
+
+        Caller MUST hold ``self._lock``.  Returns with the lock still held.
+        Selection only: nothing is removed here, because removal has to
+        happen under the victim's own store guard and that guard cannot be
+        taken beneath ``self._lock`` without inverting the registry's lock
+        order.  :meth:`_evict_idle_roots` re-tests this predicate under the
+        guard, so a root leased in between is left alone.
         """
         if self._idle_ttl_seconds <= 0:
             return []
         now = time.monotonic()
-        victims: list[tuple[Path, ProjectSlot, str]] = []
-        for r, s in list(self._projects.items()):
-            if s.ref_count == 0 and (now - s.last_access) >= self._idle_ttl_seconds:
-                self._projects.pop(r, None)
-                self._root_locks.pop(r, None)
-                victims.append((r, s, "idle"))
-        return victims
+        return [r for r, s in self._projects.items() if self._is_idle(s, now)]
 
-    def _collect_lru_victim(self) -> list[tuple[Path, ProjectSlot, str]]:
-        """Pop and return the LRU victim if the registry is at capacity.
+    def _evict_idle_roots(self, roots: list[Path]) -> None:
+        """Evict each root of *roots* that is still idle, under its own guard.
 
-        Caller MUST hold ``self._lock``.  Returns with the lock still
-        held.  If the registry is below ``max_projects`` returns an
-        empty list.  Otherwise selects the slot with the smallest
-        ``last_access`` among ``ref_count == 0`` candidates, pops it
-        from ``_projects``, and returns it as a single-element list.
-        Raises :class:`RegistryFullError` when every slot is busy.
+        Caller MUST NOT hold ``self._lock``.  A root's store guard is taken
+        before its slot leaves ``_projects`` and released only once that
+        slot's store has closed, so no arrival for that root is ever admitted
+        into the window where the slot is invisible but its storage lock is
+        still held.
+        """
+        for root in roots:
+            with self._root_store_guard(root):
+                with self._lock:
+                    slot = self._projects.get(root)
+                    if slot is None or not self._is_idle(slot, time.monotonic()):
+                        continue
+                    del self._projects[root]
+                self._teardown_slot(root, slot, reason="idle")
+
+    def _lru_victim_root(self) -> Path | None:
+        """Return the root to evict to make room for one more slot.
+
+        Caller MUST hold ``self._lock``.  Returns with the lock still held.
+        Selection only, exactly as :meth:`_idle_victim_roots`.  ``None``
+        means the registry is below ``max_projects`` and nothing needs
+        evicting; otherwise it is the slot with the smallest ``last_access``
+        among the ``ref_count == 0`` candidates.
+
+        Raises:
+            RegistryFullError: When the registry is at capacity and every
+                slot is leased.
         """
         if self._max_projects <= 0:
-            return []
+            return None
         if len(self._projects) < self._max_projects:
-            return []
+            return None
         candidates = [
             (slot.last_access, r)
             for r, slot in self._projects.items()
@@ -1319,12 +1420,32 @@ class ServiceRegistry:
         if not candidates:
             raise RegistryFullError(self._max_projects)
         candidates.sort()
-        victim_root = candidates[0][1]
-        victim_slot = self._projects.pop(victim_root, None)
-        self._root_locks.pop(victim_root, None)
-        if victim_slot is None:
-            return []
-        return [(victim_root, victim_slot, "lru")]
+        return candidates[0][1]
+
+    def _make_room_for_admission(self) -> None:
+        """Free a seat under the LRU cap before a new slot is created.
+
+        Caller MUST NOT hold ``self._lock``.  Evicts under the victim's own
+        store guard (see :meth:`_evict_idle_roots`) and re-selects when the
+        chosen victim was leased between selection and the guard being taken.
+
+        Raises:
+            RegistryFullError: When the registry is at capacity and every
+                slot is leased.
+        """
+        while True:
+            with self._lock:
+                victim_root = self._lru_victim_root()
+            if victim_root is None:
+                return
+            with self._root_store_guard(victim_root):
+                with self._lock:
+                    slot = self._projects.get(victim_root)
+                    if slot is None or slot.ref_count > 0:
+                        continue
+                    del self._projects[victim_root]
+                self._teardown_slot(victim_root, slot, reason="lru")
+                return
 
     def _teardown_slot(
         self,
@@ -1336,9 +1457,14 @@ class ServiceRegistry:
         """Run the watcher-stop + store-close teardown for an evicted slot.
 
         Caller MUST have already removed *slot* from ``self._projects``.
-        Caller MUST NOT hold ``self._lock``.  Mirrors the teardown order
-        used by :meth:`close_project` (watcher first, then store) so that
-        ``incremental_index()`` cannot fire against a closed store.
+        Caller MUST NOT hold ``self._lock``, and MUST hold *root*'s
+        :meth:`_root_store_guard` from before that removal until after this
+        returns: the store keeps its exclusive storage lock until ``close()``
+        completes, so a guard released any earlier readmits an opener into a
+        window where the refusal blames a foreign process.  Mirrors the
+        teardown order used by :meth:`close_project` (watcher first, then
+        store) so that ``incremental_index()`` cannot fire against a closed
+        store.
         """
         if self._on_close_project is not None:
             self._on_close_project(root)
@@ -1350,11 +1476,13 @@ class ServiceRegistry:
         """Manually evict *root* atomically.
 
         Used by the ``evict_project`` MCP admin tool and the
-        ``vaultspec-rag server projects evict`` CLI command.  All
-        decisions (existence + busy check + pop) happen under
-        ``self._lock`` so a concurrent :meth:`lease` cannot race the
-        evict.  Teardown runs outside the lock per the same protocol
-        as :meth:`_collect_idle_victims` and :meth:`_collect_lru_victim`.
+        ``vaultspec-rag server projects evict`` CLI command.  The existence
+        and busy checks and the removal all happen under ``self._lock`` so a
+        concurrent :meth:`lease` cannot race the evict, and the whole
+        sequence runs under *root*'s store guard so a concurrent opener
+        cannot race the close either.  Teardown runs outside ``self._lock``
+        per the same protocol as :meth:`_evict_idle_roots` and
+        :meth:`_make_room_for_admission`.
 
         Returns:
             ``(True, "forced")`` when the slot was evicted,
@@ -1362,15 +1490,15 @@ class ServiceRegistry:
             ``(False, "not_found")`` when no slot exists for *root*.
         """
         target = root.resolve()
-        with self._lock:
-            slot = self._projects.get(target)
-            if slot is None:
-                return (False, "not_found")
-            if slot.ref_count > 0:
-                return (False, "busy")
-            self._projects.pop(target, None)
-            self._root_locks.pop(target, None)
-        self._teardown_slot(target, slot, reason="forced")
+        with self._root_store_guard(target):
+            with self._lock:
+                slot = self._projects.get(target)
+                if slot is None:
+                    return (False, "not_found")
+                if slot.ref_count > 0:
+                    return (False, "busy")
+                del self._projects[target]
+            self._teardown_slot(target, slot, reason="forced")
         return (True, "forced")
 
     def busy_roots(self) -> list[Path]:

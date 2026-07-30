@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from qdrant_client.http.models.models import (
         Condition,
         Filter,
+        RecommendQuery,
         ScoredPoint,
     )
 
@@ -73,7 +74,6 @@ class _VaultSearchMixin:
         TABLE_NAME: str
         CODE_TABLE_NAME: str
         DOCUMENT_TABLE_NAME: str
-        _ensured: dict[str, bool]
 
         @property
         def client(self) -> QdrantClient: ...
@@ -84,40 +84,14 @@ class _VaultSearchMixin:
 
         def ensure_document_table(self) -> None: ...
 
-        def _collection_exists(self, name: str) -> bool: ...
+        def _reconcile_for_read(
+            self, collection: str, ensure: Callable[[], None]
+        ) -> bool: ...
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
         @staticmethod
         def _stable_id(string_id: str) -> int: ...
-
-    def _searchable(self, collection: str, ensure: Callable[[], None]) -> bool:
-        """Return whether *collection* can be queried, creating nothing.
-
-        A query never creates the collection it failed to find. An absent
-        collection has no results to give, and materialising one as a side
-        effect of a read would put a second owner on it: a store opened for
-        searching is a different instance from the one an index run writes
-        through, with its own lifecycle lock and its own ensure latch, so
-        neither serialises against the other and both would issue the create.
-        Creation belongs to the index path, the only caller that must have the
-        collection before it can proceed. It also keeps the answer honest -
-        a fabricated empty collection reads downstream as an index that exists
-        and holds nothing, rather than as no index at all.
-
-        A collection that IS there still goes through *ensure*, which is what
-        applies a newly declared payload index to data indexed before the
-        declaration - a search-only store over an already-indexed root is
-        otherwise the one caller that would never apply it. The ensure latch
-        gates the existence probe, so the extra round trip is paid once per
-        store open per collection rather than once per query.
-        """
-        if not self._ensured.get(collection) and not self._collection_exists(
-            collection
-        ):
-            return False
-        ensure()
-        return True
 
     def hybrid_search(
         self,
@@ -237,7 +211,7 @@ class _VaultSearchMixin:
         head_id = self._stable_id(f"{doc_id}#c0")
         bare_id = self._stable_id(doc_id)
         try:
-            if not self._searchable(self.TABLE_NAME, self.ensure_table):
+            if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
                 return head_id
             with self._point_lock(self.TABLE_NAME):
                 # Interactive search reads deliberately stay single-shot
@@ -267,7 +241,7 @@ class _VaultSearchMixin:
         like_ids: list[str | int] | None,
         unlike_ids: list[str | int] | None,
         id_resolver: Callable[[str], int] | None = None,
-    ) -> Any:
+    ) -> list[float] | RecommendQuery:
         if not like_ids and not unlike_ids:
             return dense_vec
 
@@ -339,7 +313,7 @@ class _VaultSearchMixin:
             ensure = self.ensure_document_table
         else:
             ensure = self.ensure_table
-        if not self._searchable(collection_name, ensure):
+        if not self._reconcile_for_read(collection_name, ensure):
             return []
 
         with self._point_lock(collection_name):

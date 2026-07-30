@@ -981,7 +981,7 @@ def chunk_file_with_status(
     # ``prep is not None`` (a rule only matches when prep exists), so that path
     # always enters the block above that binds ``raw``; the ``rule is None`` path
     # binds it in the else. basedpyright cannot track that rule/prep coupling.
-    content = _decode_source(raw, path, execution_policy)  # pyright: ignore[reportPossiblyUnboundVariable]
+    content = _decode_source(raw, path, execution_policy)  # pyright: ignore[reportPossiblyUnboundVariable]  # rule-not-None implies prep-not-None, so raw is always bound here
     if content is None:
         return ScopedChunkResult([])
     chunks = _chunk_decoded(content, path, root_dir, execution_policy.html_strip)
@@ -1093,7 +1093,7 @@ def chunk_and_hash_file(
             root_dir=root_dir,
             rel_path=rel_path,
             content_hash=content_hash,
-            raw=raw,  # pyright: ignore[reportPossiblyUnboundVariable]
+            raw=raw,  # pyright: ignore[reportPossiblyUnboundVariable]  # rule-not-None implies prep-not-None, so raw is always bound here
             execution_policy=execution_policy,
         )
     )

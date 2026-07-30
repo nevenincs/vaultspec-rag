@@ -921,7 +921,6 @@ def run_benchmark(
 
     benchmark: dict[str, object] | None = None
     with registry.search_lease(root) as lease:
-
         # Warmup
         lease.searcher.search_vault("warmup", top_k=1)
 

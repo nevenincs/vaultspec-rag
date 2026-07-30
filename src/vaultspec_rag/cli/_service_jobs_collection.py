@@ -147,7 +147,7 @@ class _ServiceJobsCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: ClickContext) -> Any:
+    def invoke(self, ctx: ClickContext) -> None:
         params = ctx.params
         return run_service_jobs(
             ServiceJobsOptions(

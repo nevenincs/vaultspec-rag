@@ -17,6 +17,8 @@ from starlette.applications import Starlette
 from typer.testing import CliRunner
 
 from ... import jobs, server
+from ..._index_breadth import index_meta_path
+from ..._source_types import PublicSourceType
 from ...cli import app
 from ...concurrency import limiter_stats, reset_limiters
 from ...config._settings import get_config, reset_config
@@ -688,7 +690,7 @@ async def _cancel_large_job(
     """Cancel a writer-blocked job and assert its published state is absorbing."""
     _write_vault_corpus(root, start=384, count=192)
     before_ids = slot.store.get_all_ids()
-    metadata_path = root / get_config().data_dir / get_config().index_metadata_file
+    metadata_path = index_meta_path(root, PublicSourceType.VAULT)
     before_metadata = metadata_path.read_bytes()
     cancelled_id: str | None = None
     with registry.compute_lease(root) as lease:

@@ -890,7 +890,13 @@ def _render_port_only_status(
         if not port_listening
         else "unreachable"
     )
-    exit_code = 0 if state == "running" else 3 if state == "stopped" else 4
+    exit_code = (
+        EXIT_RUNNING
+        if state == "running"
+        else EXIT_STOPPED
+        if state == "stopped"
+        else EXIT_FAULT
+    )
     operational = _status_operational_summary(
         state,
         port,

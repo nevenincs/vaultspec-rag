@@ -10,7 +10,7 @@ from tomlkit.exceptions import ParseError
 from typer._types import TyperChoice
 from typer.core import TyperCommand, TyperOption
 from typer.models import TyperPath
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
 
@@ -232,7 +232,7 @@ class _InstallCommand(TyperCommand):
                 # the default group rather than demanding an argument.
                 param._flag_needs_value = True  # pyright: ignore[reportPrivateUsage]  # Click optional-value mechanism
 
-    def invoke(self, ctx: "ClickContext") -> Any:
+    def invoke(self, ctx: "ClickContext") -> None:
         """Dispatch parsed Click parameters as one install request."""
         params = ctx.params
         mode = cast("str | None", params["mode"])
@@ -462,7 +462,7 @@ class _UninstallCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: "ClickContext") -> Any:
+    def invoke(self, ctx: "ClickContext") -> None:
         """Dispatch parsed Click parameters as one uninstall request."""
         params = ctx.params
         return _run_uninstall(

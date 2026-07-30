@@ -46,6 +46,7 @@ from .._store_locks import VaultStoreLockedError
 from ..job_models import JobOutcome
 from ..logging_config import (
     InvalidManagedLogSourceError,
+    ManagedLogsResult,
     log_event,
     managed_log_filters,
     query_managed_logs,
@@ -853,13 +854,12 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     result = await _managed_logs_for_request(request)
     if isinstance(result, JSONResponse):
         return result
-    groups = cast("list[Any]", result["groups"])
-    return PlainTextResponse(render_managed_log_groups(groups))
+    return PlainTextResponse(render_managed_log_groups(result["groups"]))
 
 
 async def _managed_logs_for_request(
     request: Request,
-) -> dict[str, object] | JSONResponse:
+) -> ManagedLogsResult | JSONResponse:
     """Read, filter, and shape one bounded managed-log request."""
     lines = request.query_params.get("lines")
     source = request.query_params.get("source", "all")

@@ -1024,6 +1024,11 @@ def _resilience_job_health(
     """Project the bounded latest-resilience health shape."""
     if record is None:
         return None
+    # "spec" is always a nested object: every job snapshot builds it as a
+    # literal dict, never omitted or null. "resilience" is only ever a dict
+    # here because the sole caller below filters candidates to
+    # ``isinstance(record.get("resilience"), dict)`` before this record can
+    # become the latest one passed in.
     return {
         "job_id": record.get("id"),
         "source": cast("dict[str, object]", record["spec"]).get("source"),
