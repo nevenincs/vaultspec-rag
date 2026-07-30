@@ -975,13 +975,14 @@ class ServerWatchApp(App[None]):
         # dividing zero width would leave every column at its label size.
         self.call_after_refresh(self._relayout)
         # Every beat below reads or paints the screen, so the screen owns
-        # them. Shutting down removes the screen and empties the stack behind
-        # it before it stops the timers the application itself holds, so a
-        # beat owned by the application fires once more with no screen left to
-        # read - and an exception raised on a timer callback takes the whole
-        # interface down, which reads to an operator as the service having
-        # died. Removing a screen stops its timers and waits for them, so
-        # ownership here is what makes the beat end with what it paints.
+        # them - all of them, including the two later lanes. Shutting down
+        # removes the screen and empties the stack behind it before it stops
+        # the timers the application itself holds, so a beat owned by the
+        # application fires once more with no screen left to read - and an
+        # exception raised on a timer callback takes the whole interface down,
+        # which reads to an operator as the service having died. Removing a
+        # screen stops its timers and waits for them, so ownership here is
+        # what makes the beat end with what it paints.
         screen = self.screen
         screen.set_class(self._watch_mode == "jobs", "-jobsfocused")
         screen.set_interval(_SPINNER_INTERVAL, self._tick)
