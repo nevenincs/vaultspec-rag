@@ -248,15 +248,13 @@ jobs:
     # single-test runs; trigger a full tier run on demand with
     # `gh workflow run CI` / the Actions "Run workflow" button.
     #
-    # Contention is now guarded, not just deferred: the "Verify GPU admission"
-    # step below reads the device's admission state, which subsumes the plain
-    # CUDA-visibility check it replaces (an unadmitted device is never a
-    # visible one), and refuses (non-zero exit, job fails fast) when the card
-    # is contended, absent, or torch-free, instead of proceeding to load
-    # models onto a card another process already holds. This does not make
-    # the shared card free - a refusal still means re-run once the other
-    # tenant releases it - it only stops this job from piling on top of
-    # existing load.
+    # Contention is guarded by S32's one pytest coordinator: it borrows through
+    # the acknowledged service lease, fails closed on unavailable service,
+    # lease, or device evidence, and resumes before release. The self-hosted
+    # runner image also supplies the pinned, manifest-verified Qdrant binary
+    # used only by test-owned isolated children; S32 verifies it read-only and
+    # refuses the tier if it is absent. This prevents the job from piling onto
+    # existing load without provisioning a binary or starting a service.
     #
     # SECURITY (public repo, self-hosted runner on a real workstation): running
     # arbitrary code here is RCE on the host. workflow_dispatch requires write
@@ -303,13 +301,10 @@ jobs:
       - name: Install dependencies
         run: just deps sync
 
-      - name: Verify GPU admission
-        run: uv run --no-sync vaultspec-rag server preflight
-
-      - name: Provision Qdrant server binary
-        run: uv run --no-sync vaultspec-rag server qdrant install
-
-      - name: Run GPU test tier
+      # Prerequisite: the self-hosted GPU runner image contains the pinned,
+      # manifest-verified Qdrant binary. The S32 pytest coordinator verifies it
+      # read-only and refuses this tier if it is absent; CI never installs it.
+      - name: Run GPU test tier through guarded coordinator
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: just test gpu
