@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-27'
+modified: '2026-07-30'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-research]]'
   - '[[2026-04-02-service-graph-adr]]'
@@ -385,6 +385,17 @@ select the slot with the smallest `last_access` where
 slot is evictable (all busy), raise a new `RegistryFullError`.
 The MCP tool layer translates this to a structured JSON error
 so the user sees a clear "registry full, all slots busy" message.
+
+A cold construction reserves one project seat before its slot is published. The
+reservation counts toward `max_projects`, preventing simultaneous constructors from
+exceeding the cap or exposing a half-built slot. Same-root callers join that exact
+reservation. A different-root caller may wait on the registry condition only while an
+in-flight construction or guarded LRU replacement owns the otherwise available seat;
+the wait releases the registry lock, wakes on publication, failure, or shutdown, and
+re-evaluates admission from the start. This transient construction join is distinct
+from busy-slot capacity exhaustion: when all published slots are leased and no
+construction owns the seat, admission still fails immediately with
+`RegistryFullError`.
 
 ```
 def _admit_with_lru(self, root: Path) -> None:
@@ -824,9 +835,11 @@ simpler option in every fork the research raised.
 - **Signal-file IPC (`evict.trigger` on disk watched by the
   service).** Rejected: fragile on Windows, platform-divergent,
   no structured response.
-- **Blocking LRU admission with a timeout** instead of raising
+- **Blocking on published busy-slot exhaustion** instead of raising
   `RegistryFullError`. Rejected for deadlock surface and
-  no-benefit-at-alpha-scale; rejection is cleaner operator UX.
+  no-benefit-at-alpha-scale; rejection is cleaner operator UX. This does not apply to
+  joining a transient construction reservation, which owns a counted seat and wakes on
+  publication, failure, or shutdown.
 - **`rotator` callback on `BaseRotatingHandler` rather than
   subclassing.** Workable but splits the re-`dup2` logic from
   the handler's own `self.stream` swap; subclassing keeps both
@@ -875,9 +888,11 @@ are recorded here so the plan phase does not re-open them.
   its removal in execution Phase 1 and routes every `api.py`
   facade function through `ServiceRegistry.lease`. Details in D5.
 
-- **Admission backpressure vs rejection.** Rejection with a
-  clear `RegistryFullError` surfaced as a structured MCP error.
-  Blocking-with-timeout was rejected for deadlock surface.
+- **Admission backpressure vs rejection.** Published busy-slot exhaustion is rejected
+  with a clear `RegistryFullError` surfaced as a structured MCP error. A transient
+  construction reservation instead owns a counted seat; same-root joiners and
+  different-root callers waiting for that seat re-evaluate on publication, failure, or
+  shutdown. No caller waits for an indefinitely busy published lease.
 
 - **Windows stray-bytes window during rollover.** Accepted as
   documented. A lock-and-flush dance across `dup2` would add

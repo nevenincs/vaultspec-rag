@@ -29,6 +29,7 @@ related:
   - '[[2026-07-24-service-quiesce-research]]'
   - '[[2026-07-29-service-quiesce-w02-audit]]'
   - '[[2026-07-29-service-quiesce-w02-remediation-audit]]'
+  - '[[2026-07-30-service-quiesce-w02-resume-recovery-audit]]'
 ---
 
 # `service-quiesce` feature index
@@ -45,6 +46,7 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 
 - `2026-07-29-service-quiesce-w02-audit` - `service-quiesce` audit: `W02 resource-quiesce implementation review`
 - `2026-07-29-service-quiesce-w02-remediation-audit` - `service-quiesce` audit: `w02 remediation`
+- `2026-07-30-service-quiesce-w02-resume-recovery-audit` - `service-quiesce` audit: `w02 resume recovery`
 
 ### exec
 
