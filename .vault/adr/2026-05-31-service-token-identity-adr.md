@@ -3,9 +3,10 @@ tags:
   - '#adr'
   - '#service-token-identity'
 date: '2026-05-31'
-modified: '2026-07-27'
+modified: '2026-07-30'
 related:
   - '[[2026-05-31-service-token-identity-research]]'
+  - '[[2026-07-24-service-quiesce-adr]]'
 ---
 
 # `service-token-identity` adr: `uuid4 service_token written to service.json + returned from /health` | (**status:** `accepted`)
@@ -31,6 +32,15 @@ Both close with one mechanism: a per-process token written to
 compares them. Mismatch → the responding process is not the
 one named in `service.json`.
 
+The original implementation stored that token in a reassignable
+module global. Authenticated in-process route proof then had only two
+choices: start the full service lifespan, which initializes Qdrant and
+GPU models, or assign the production global from test code. Neither is
+an acceptable route-test boundary. Route authentication and registry
+ownership therefore need one production app-scoped initialization
+seam that remains available when the resource-owning lifespan is
+deliberately absent.
+
 ## Considerations
 
 - The daemon already writes `service.json` via the heartbeat
@@ -43,7 +53,11 @@ one named in `service.json`.
   backwards-compatible.
 - Token generation runs exactly once per daemon process at
   startup, before the first heartbeat tick. `uuid.uuid4().hex`
-  in `service_lifespan` startup is the right anchor.
+  remains the token source.
+- `2026-07-24-service-quiesce-adr` requires CPU-only authenticated
+  production-route proof without service, Qdrant, model, or GPU
+  startup. The route host still needs the real token gate and the real
+  `ServiceRegistry`.
 - Pre-upgrade `service.json` files have no `service_token`.
   The CLI must tolerate token-absent and fall back to the
   existing executable-name check rather than declare "crashed".
@@ -62,24 +76,60 @@ one named in `service.json`.
   explicitly; token-absent emits a `logger.debug` line and
   falls back. Both observable per
   `[[feedback_no_adhoc_no_swallow]]`.
+- The route runtime is immutable after app construction. It requires
+  a non-empty token and a real `ServiceRegistry`; missing or invalid
+  app state fails closed.
+- The standalone daemon remains loopback-only. App-scoped injection
+  does not create a command-line, environment, network, or test-mode
+  override for token or registry ownership.
+- Tests may omit the resource-owning lifespan only when they construct
+  the same production route app with an explicit runtime. They must
+  not assign server globals, start the service, or initialize Qdrant,
+  models, Torch, or CUDA.
 
 ## Implementation
 
-### Daemon side (`src/vaultspec_rag/mcp_server.py`)
+### Daemon side
 
-- Add module global `_SERVICE_TOKEN: str = ""` near the other
-  startup-state globals.
-- In `service_lifespan` startup, declare it in the `global`
-  line and assign `_SERVICE_TOKEN = uuid.uuid4().hex` early —
-  before the first heartbeat tick fires.
+- Add an immutable, slotted `ServerRouteRuntime` with
+  `service_token: str` and `registry: ServiceRegistry`. Validate the
+  non-empty token when constructing it.
+- Add one typed request resolver for the runtime stored on the
+  Starlette app. The resolver rejects absent or invalid state rather
+  than consulting a fallback global.
+- Add one production HTTP app factory that installs the runtime and
+  builds the exact health and route table. The standalone daemon calls
+  it with `uuid.uuid4().hex`, the canonical `get_registry()` result,
+  and `service_lifespan`.
+- `service_lifespan`, heartbeat publication, health, authentication,
+  and lifecycle writers consume the installed runtime or its explicit
+  token. Every route-side registry read consumes the same runtime
+  registry. Non-route service components may continue to use the
+  canonical registry singleton because production installs that exact
+  object in the runtime.
+- Remove `_SERVICE_TOKEN` from server state and package exports. Do
+  not retain a compatibility alias, setter, or forwarding shim.
 - In `_heartbeat_tick_sync`, after the existing
   `last_heartbeat` merge, add
-  `data["service_token"] = _SERVICE_TOKEN` when the token is
+  `data["service_token"] = runtime.service_token` when the token is
   non-empty (guard against the initial empty state).
 - Extend `HealthResponse` with
   `service_token: str = Field(default="", description="...")`.
 - In `health_handler`, include
-  `"service_token": _SERVICE_TOKEN` in the response dict.
+  `"service_token": runtime.service_token` in the response dict.
+
+### In-process route hosts
+
+- Call the same HTTP app factory with an explicit
+  `ServerRouteRuntime` and no lifespan. This hosts the exact
+  authenticated production routes without starting resource
+  initialization.
+- Use a known non-empty token and a real isolated `ServiceRegistry`.
+  The request runtime, not test-owned global assignment, selects the
+  authenticated identity and registry.
+- Real loopback Uvicorn remains available when a transport or CLI
+  consumer requires HTTP. Direct route proof may use the same app
+  in-process.
 
 ### CLI side (`src/vaultspec_rag/cli.py`)
 
@@ -123,6 +173,13 @@ because the daemon's content is identical across restarts but
 the token regenerates every process — exactly what reuse
 detection needs.
 
+App-scoped immutable ownership keeps that identity authoritative
+without coupling route construction to GPU and storage startup. One
+runtime supplies authentication and registry access for the whole
+request, so concurrent route hosts cannot overwrite each other's
+process globals. The same production app factory prevents a
+test-specific wrapper from becoming a second route contract.
+
 CLI-side fallback to exe-name on token-absent (over "declare
 crashed") preserves upgrade safety. Operators running
 `pip install -U vaultspec-rag` against a running daemon should
@@ -137,6 +194,14 @@ not see the new CLI report the daemon as crashed.
   (anyone with read on `~/.vaultspec-rag/` can see it). Not a
   credential — knowing the token grants nothing, only confirms
   identity. Acceptable trade-off.
+- Authenticated route tests can use real production routes and a real
+  isolated registry without mutating module state or launching the
+  resource-owning lifespan.
+- Route handlers gain an explicit runtime dependency. Adding a route
+  that reads token or registry state now requires the typed request
+  resolver rather than a package global.
+- The module-global `_SERVICE_TOKEN` interface is removed directly.
+  Callers that assigned it must migrate to the HTTP app factory.
 - Pre-upgrade compatibility: old daemons + new CLI work via
   exe-name fallback. Old CLI + new daemon ignores the new
   fields. No coordinated upgrade required.
@@ -145,5 +210,16 @@ not see the new CLI report the daemon as crashed.
 
 ## Considered options
 
-- **Selected:** the implementation recorded above because it satisfies the stated rationale and constraints.
+- **Selected:** immutable app-scoped route runtime installed by one
+  production HTTP app factory. It preserves process identity while
+  separating route hosting from resource startup.
+- **Not selected:** a production setter or context manager around
+  `_SERVICE_TOKEN` and `_registry`. It still mutates process-wide
+  authority, permits concurrent hosts to interfere, and converts
+  prohibited test assignment into a differently named assignment.
+- **Not selected:** a test-only app wrapper, environment switch, or
+  authentication bypass. Each creates a second route contract or
+  weakens the production gate.
+- **Not selected:** running `service_lifespan` in route tests. It
+  starts resource owners that the CPU-only test boundary excludes.
 - **Not selected:** approaches that conflict with those recorded constraints.
