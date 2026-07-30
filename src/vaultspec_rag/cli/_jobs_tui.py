@@ -116,6 +116,24 @@ _CONTROL_GROUP = "jobs-control"
 # when an exclusive worker in it starts, so anything sharing a group with the
 # controls can destroy a control request before it is ever sent.
 _STATUS_GROUP = "jobs-service-status"
+
+_CANONICAL_QUIESCE_FIELDS = frozenset(
+    {
+        "state",
+        "admission_epoch",
+        "admissions_open",
+        "active_compute_tickets",
+        "drain_complete",
+        "vram_released",
+        "safe_to_borrow_gpu",
+        "pause_requested_at",
+        "drain_acknowledged_at",
+        "quiesced_at",
+        "warming_started_at",
+        "failure_reason",
+    }
+)
+
 _REQUEST_GROUPS = frozenset(
     {
         _REFRESH_GROUP,
@@ -129,6 +147,20 @@ _REQUEST_GROUPS = frozenset(
 # multiple of the job interval rather than on every refresh.
 _STATUS_REFRESH_MULTIPLE = 5
 _ACTIVE_WORKER_STATES = frozenset({WorkerState.PENDING, WorkerState.RUNNING})
+
+
+def _canonical_quiesce_block(raw: object) -> object | None:
+    """Accept only the complete controller-owned quiesce vocabulary.
+
+    The TUI is an observer: it neither repairs an incomplete block nor derives
+    a lifecycle state from one of its fields. A daemon that omits or changes
+    the canonical shape is therefore shown as unavailable rather than safe.
+    """
+    block = mapping(raw)
+    if frozenset(block) != _CANONICAL_QUIESCE_FIELDS:
+        return None
+    return block
+
 
 # Columns are laid out by relative weight, never by a fixed size: the table
 # divides whatever width the terminal reports among these shares, so the same
@@ -884,6 +916,11 @@ class ServerWatchApp(App[None]):
         # predates the tier sends no key, and must not be rendered as if it
         # had computed one.
         self._pressure: dict[str, object] | None = None
+        # The complete controller snapshot from the jobs response. It is kept
+        # as received for status detail rendering; this client never derives
+        # lifecycle or borrower authority from it.
+        self._quiesce: object | None = None
+        self._quiesce_reported = False
         # The release the connected daemon reports, never the local
         # package's own: the two differ exactly when the difference matters.
         # ``checked`` separates "no daemon has answered yet" from "the
@@ -1416,6 +1453,8 @@ class ServerWatchApp(App[None]):
             if isinstance(raw_pressure, dict)
             else None
         )
+        self._quiesce_reported = "quiesce" in payload
+        self._quiesce = _canonical_quiesce_block(payload.get("quiesce"))
         self._reconcile_pending(generation, previous)
         self._layout_columns()
         self._render_rows()
@@ -1980,6 +2019,36 @@ class ServerWatchApp(App[None]):
             return None
         return f"pressure {tier}", "bad" if tier == "critical" else "attention"
 
+    def _quiesce_cell(self) -> tuple[str, str]:
+        """Render only service-reported controller evidence, never authority."""
+        if not self._quiesce_reported:
+            return "quiesce unavailable", "muted"
+        match self._quiesce:
+            case {
+                "state": str(state),
+                "vram_released": bool(vram_released),
+                "safe_to_borrow_gpu": bool(safe_to_borrow_gpu),
+            }:
+                vram = "released" if vram_released else "held"
+                safety = "safe" if safe_to_borrow_gpu else "unsafe"
+                tone = "good" if safe_to_borrow_gpu else "attention"
+                return f"quiesce {state} · vram {vram} · borrower safety {safety}", tone
+            case _:
+                return "quiesce unavailable", "bad"
+
+    def _append_quiesce_detail(self, line: Text, tones: dict[str, str]) -> None:
+        """Show the full controller block a received jobs snapshot carried."""
+        if self._quiesce is not None:
+            line.append("\nquiesce details: ", style="dim")
+            line.append(str(self._quiesce), style="dim")
+        elif self._quiesce_reported:
+            line.append(
+                "\nquiesce details unavailable: invalid service response",
+                style=tone_style(tones, "bad", bold=True),
+            )
+        else:
+            line.append("\nquiesce details unavailable", style="dim")
+
     def _compose_header_line(
         self,
         tones: dict[str, str],
@@ -1991,10 +2060,11 @@ class ServerWatchApp(App[None]):
     ) -> Text:
         """Build the header row: grouped pills, condition, GPU, page count.
 
-        The groups - state pills, health tallies, service condition, GPU,
-        and the page count - are divided by dim separators so the row reads
-        as cells rather than one cramped run. Labels are a width decision
-        made by the caller; the condition and GPU cells are never dropped.
+        The groups - state pills, health tallies, service condition, quiesce,
+        GPU, and the page count - are divided by dim separators so the row
+        reads as cells rather than one cramped run. Labels are a width
+        decision made by the caller; the condition, quiesce, and GPU cells are
+        never dropped.
         ``split_before_service`` is the last width fallback: the row breaks
         deliberately at the service-group boundary instead of wherever the
         wrapper would land - never through the middle of a pill.
@@ -2037,6 +2107,14 @@ class ServerWatchApp(App[None]):
             line,
             f"{'●' if unicode_ok else '*'} svc {verdict}",
             fills[condition_tone],
+            unicode_ok=unicode_ok,
+        )
+        self._append_separator(line, unicode_ok=unicode_ok)
+        quiesce_text, quiesce_tone = self._quiesce_cell()
+        _append_pill(
+            line,
+            quiesce_text,
+            fills[quiesce_tone],
             unicode_ok=unicode_ok,
         )
         self._append_separator(line, unicode_ok=unicode_ok)
@@ -2138,6 +2216,7 @@ class ServerWatchApp(App[None]):
             text, token = self._last_outcome
             line.append(f"\n{text}", style=tone_style(tones, token, bold=True))
         self._append_selected_degradation(line, tones)
+        self._append_quiesce_detail(line, tones)
         summary = self.query("#summary")
         if summary:
             summary.only_one(Static).update(line)
