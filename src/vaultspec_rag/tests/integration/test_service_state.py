@@ -83,6 +83,22 @@ def _assert_watcher_state(watcher: object) -> None:
     assert isinstance(state["watching"], list)
 
 
+def _assert_quiesce_state(quiesce: object) -> None:
+    """Assert the consolidated state carries the live quiesce observation.
+
+    An idle service is running and admitting, and the flags a borrower reads
+    before touching the card have to be present and boolean: a missing
+    ``safe_to_borrow_gpu`` reads as falsy and would silently deny every
+    borrow, which is the failure this shape exists to make visible.
+    """
+    assert isinstance(quiesce, dict)
+    state = cast("dict[str, object]", quiesce)
+    assert state["state"] == "running"
+    assert state["admissions_open"] is True
+    assert isinstance(state["safe_to_borrow_gpu"], bool)
+    assert isinstance(state["admission_epoch"], int)
+
+
 # --------------------------------------------------------------------------- #
 # Integration (GPU): the real tool returns the consolidated shape             #
 # --------------------------------------------------------------------------- #
@@ -104,12 +120,14 @@ async def test_get_service_state_consolidated_shape(
         "qdrant",
         "schema_version",
         "watcher",
+        "quiesce",
     }
     assert state["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
     _assert_managed_qdrant_state(state["qdrant"])
     _assert_index_state(state["index"], root)
     _assert_projects_state(state["projects"])
     _assert_watcher_state(state["watcher"])
+    _assert_quiesce_state(state["quiesce"])
 
 
 @pytest.mark.unit

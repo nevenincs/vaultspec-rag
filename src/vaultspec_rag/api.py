@@ -1151,11 +1151,7 @@ def get_service_state(
                 "ref_count": int(entry["ref_count"]),
             },
         )
-    projects_data = {
-        "projects": projects,
-        "max_projects": registry.max_projects,
-        "idle_ttl_seconds": registry.idle_ttl_seconds,
-    }
+    projects_data = registry.projects_envelope(projects)
 
     cfg = get_config()
     watching = watching_roots or []

@@ -82,7 +82,7 @@ from ._routes_reindex import clean_route, reindex_route
 from ._routes_search import search_route
 from ._routes_storage import storage_survey_route
 from ._runtime import get_request_runtime
-from ._search_activity import SearchActivityFilters
+from ._search_activity import DEFAULT_SEARCH_ACTIVITY_ROWS, SearchActivityFilters
 from ._state import search_activity_ledger
 from ._utils import (
     _BAD_REQUEST_MISSING_ROOT,
@@ -653,7 +653,10 @@ async def search_activity_route(request: Request) -> JSONResponse:
                 root=root or None,
                 request_id=request_id or None,
                 since=since,
-                limit=_clamp_limit(request.query_params.get("limit")),
+                # Bounded by default: an absent limit means the caller
+                # named none, not that they want every retained record.
+                limit=_clamp_limit(request.query_params.get("limit"))
+                or DEFAULT_SEARCH_ACTIVITY_ROWS,
             ),
         )
     )

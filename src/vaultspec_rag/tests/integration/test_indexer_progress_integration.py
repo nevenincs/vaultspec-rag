@@ -119,6 +119,11 @@ class TestVaultIndexerProgress:
                 "parse documents",
                 "prepare collection",
                 "embed + upsert documents",
+                # Two distinct purges, and the order between them is the
+                # behaviour: points left behind by a superseded layout go
+                # before the stale-document sweep, so a rebuild never drops
+                # what it is still serving.
+                "purge superseded-layout points",
                 "purge stale documents",
                 "write metadata",
             ]

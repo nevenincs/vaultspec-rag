@@ -16,7 +16,7 @@ the production indexer or store, raising from one overridden method.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import pytest
 
@@ -28,6 +28,13 @@ from ..conftest import managed_env
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..._store_models import CodeChunk
+    from ..._store_writes import StoreWritePolicy
+    from ...indexer import DocumentIndexer
+    from ...indexer._document_indexer import _DocumentPublishRequest
+    from ...indexer._document_meta import DocumentFileMetadata, DocumentIndexMetadata
+    from ...indexer._generation_lifecycle import CodeGenerationLifecycle
+    from ...indexer._run_checkpoint import CodeRunCheckpoint
     from ...store_runtime import VaultStore
 
 pytestmark = [pytest.mark.integration]
@@ -123,7 +130,7 @@ class TestVaultCleanRebuildSurvivesInterruption:
         class CrashAfterPreparation(VaultIndexer):
             """Real indexer whose reuse resolution dies like a torn run."""
 
-            def _resolve_reuse(self) -> Any:
+            def _resolve_reuse(self) -> NoReturn:
                 raise OSError("injected crash after collection preparation")
 
         store = VaultStore(tmp_path)
@@ -165,8 +172,13 @@ class TestDocumentCleanRebuildSurvivesInterruption:
         class CrashDuringPublication(DocumentIndexer):
             """Real indexer whose publication step dies like a torn run."""
 
-            def _publish_full_paths(self, *args: Any, **kwargs: Any) -> Any:
-                del args, kwargs
+            def _publish_full_paths(
+                self,
+                paths: tuple[Path, ...],
+                previous_files: dict[str, DocumentFileMetadata],
+                request: _DocumentPublishRequest,
+            ) -> NoReturn:
+                del paths, previous_files, request
                 raise OSError("injected crash while republishing")
 
         with managed_env(VAULTSPEC_RAG_SPARSE_ENABLED="0"):
@@ -236,11 +248,23 @@ class TestCodeGenerationRebuildSurvivesInterruption:
 
             upserts_before_failure = 1
 
-            def upsert_code_chunks(self, *args: Any, **kwargs: Any) -> None:
+            def upsert_code_chunks(
+                self,
+                chunks: list[CodeChunk],
+                *,
+                write_policy: StoreWritePolicy | None,
+                wait: bool = True,
+                collection: str | None = None,
+            ) -> None:
                 if self.upserts_before_failure <= 0:
                     raise OSError("injected storage failure mid-rebuild")
                 self.upserts_before_failure -= 1
-                super().upsert_code_chunks(*args, **kwargs)
+                super().upsert_code_chunks(
+                    chunks,
+                    write_policy=write_policy,
+                    wait=wait,
+                    collection=collection,
+                )
 
         from ..._store_models import CodeChunk
 
@@ -325,7 +349,7 @@ class TestCodeGenerationRebuildSurvivesInterruption:
 class TestDocumentEvidenceEscalation:
     """A manifest the store no longer backs escalates instead of being trusted."""
 
-    def _indexer(self, root: Path, store: VaultStore) -> Any:
+    def _indexer(self, root: Path, store: VaultStore) -> DocumentIndexer:
         from ...indexer import DocumentIndexer
 
         return DocumentIndexer(root, model=cast("Any", None), store=store)
@@ -381,7 +405,9 @@ class TestDocumentEvidenceEscalation:
             store.close()
 
 
-def _with_files(previous: Any, point_ids: tuple[str, ...]) -> Any:
+def _with_files(
+    previous: DocumentIndexMetadata, point_ids: tuple[str, ...]
+) -> DocumentIndexMetadata:
     """Return a manifest identical to *previous* but claiming *point_ids*."""
     import dataclasses
 
@@ -399,7 +425,7 @@ def _embedding_dimension() -> int:
     return int(get_config().embedding_dimension)
 
 
-def _code_chunks(ids: tuple[str, ...], *, prefix: str) -> list[Any]:
+def _code_chunks(ids: tuple[str, ...], *, prefix: str) -> list[CodeChunk]:
     """Return one real zero-vector code chunk per id, one file per chunk."""
     from ..._store_models import CodeChunk
 
@@ -418,7 +444,7 @@ def _code_chunks(ids: tuple[str, ...], *, prefix: str) -> list[Any]:
     ]
 
 
-def _open_clean_code_generation(root: Path) -> Any:
+def _open_clean_code_generation(root: Path) -> CodeRunCheckpoint:
     """Open a real clean code generation against *root*'s run ledger."""
     from ...indexer._content_policy import RootContentPolicy, SourceProfileVersion
     from ...indexer._resolved_policy import (
@@ -465,7 +491,7 @@ def _open_clean_code_generation(root: Path) -> Any:
     )
 
 
-def _lifecycle(root: Path, store: VaultStore) -> Any:
+def _lifecycle(root: Path, store: VaultStore) -> CodeGenerationLifecycle:
     """Bind a real generation lifecycle to *root*'s sidecar and store."""
     from ..._index_breadth import index_meta_path
     from ...indexer._code_meta import load_meta, read_meta_raw
@@ -494,7 +520,9 @@ def _content_digest(value: str) -> str:
     return hashlib.blake2b(value.encode("utf-8")).hexdigest()
 
 
-def _name_indexed_files(checkpoint: Any, rel_paths: tuple[str, ...]) -> None:
+def _name_indexed_files(
+    checkpoint: CodeRunCheckpoint, rel_paths: tuple[str, ...]
+) -> None:
     """Record real converged indexed evidence so a publication names files.
 
     Routed through the production segment checkpoint rather than a direct file
@@ -520,7 +548,7 @@ def _name_indexed_files(checkpoint: Any, rel_paths: tuple[str, ...]) -> None:
         )
 
 
-def _reach_ingestion_complete(checkpoint: Any) -> None:
+def _reach_ingestion_complete(checkpoint: CodeRunCheckpoint) -> None:
     """Advance the durable phase to where a crashed run leaves finalization."""
     from ...indexer._run_ledger_models import FinalizationPhase
 

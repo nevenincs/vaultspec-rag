@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     import anyio
 
     from .manager import JobManager
+    from .state import JobLifecycleState
 
 from .._job_errors import classify_error_text
 from ..concurrency import get_encode_limiter, get_index_limiter
@@ -83,6 +84,18 @@ class JobManagerExecution(JobManagerState):
     #: would define the unadopted case out of existence and silently retire
     #: the rejection a loopless dispatch depends on.
     _service_loop: asyncio.AbstractEventLoop | None
+
+    #: Owned and initialized by the composed ``JobManager`` (``manager.py``).
+    #: The shared ``JobManagerState`` protocol exposes every attribute it does
+    #: not enumerate through one catch-all ``Any`` fallback; redeclaring the
+    #: concrete types this owner actually reads keeps that fallback from
+    #: leaking into every lock, map and flag access below.
+    _lock: threading.RLock
+    _active: dict[str, ManagedJob]
+    _dispatchers: dict[str, JobDispatchBinding]
+    _retiring_tasks: set[asyncio.Task[Any]]
+    _accepting_dispatch: bool
+    _lifecycle_state: JobLifecycleState
 
     def bind_dispatch(
         self,

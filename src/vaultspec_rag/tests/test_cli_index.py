@@ -9,6 +9,7 @@ import pytest
 
 from ._cli_helpers import (
     _hold_local_index_lock,
+    _parsed_json_object,
     _plain_lines,
     app,
     runner,
@@ -86,10 +87,12 @@ class TestCleanCommand:
 
         root = make_workspace(tmp_path)
         cfg = get_config()
-        data_dir = root / cfg.data_dir
+        data_dir = root / str(cfg.data_dir)
         data_dir.mkdir(parents=True)
-        (data_dir / cfg.index_metadata_file).write_text('{"x": "y"}', encoding="utf-8")
-        (data_dir / cfg.code_index_metadata_file).write_text(
+        index_metadata_file = data_dir / str(cfg.index_metadata_file)
+        index_metadata_file.write_text('{"x": "y"}', encoding="utf-8")
+        code_index_metadata_file = data_dir / str(cfg.code_index_metadata_file)
+        code_index_metadata_file.write_text(
             '{"src/app.py": "hash"}',
             encoding="utf-8",
         )
@@ -117,8 +120,8 @@ class TestCleanCommand:
             assert store.count_code() == 0
         finally:
             store.close()
-        assert not (data_dir / cfg.index_metadata_file).exists()
-        assert not (data_dir / cfg.code_index_metadata_file).exists()
+        assert not index_metadata_file.exists()
+        assert not code_index_metadata_file.exists()
 
     @pytest.mark.parametrize(
         ("selection", "removed_attr", "kept_attr"),
@@ -144,7 +147,7 @@ class TestCleanCommand:
 
         root = make_workspace(tmp_path)
         cfg = get_config()
-        data_dir = root / cfg.data_dir
+        data_dir = root / str(cfg.data_dir)
         data_dir.mkdir(parents=True)
         removed = data_dir / str(getattr(cfg, removed_attr))
         kept = data_dir / str(getattr(cfg, kept_attr))
@@ -168,11 +171,11 @@ class TestCleanCommand:
 
         root = make_workspace(tmp_path)
         cfg = get_config()
-        data_dir = root / cfg.data_dir
+        data_dir = root / str(cfg.data_dir)
         data_dir.mkdir(parents=True)
         survivors = [
-            data_dir / cfg.index_metadata_file,
-            data_dir / cfg.code_index_metadata_file,
+            data_dir / str(cfg.index_metadata_file),
+            data_dir / str(cfg.code_index_metadata_file),
         ]
         for survivor in survivors:
             survivor.write_text('{"kept": "kept"}', encoding="utf-8")
@@ -275,7 +278,7 @@ class TestIndexRebuild:
         )
 
         assert result.exit_code == 2
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is False
         assert envelope["command"] == "index"
         assert envelope["error"] == "dry_run_requires_supported_type"
@@ -341,9 +344,14 @@ class TestIndexRebuild:
         )
 
         assert result.exit_code == 0, result.output
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is True
-        files = set(envelope["data"]["files"])
+        data_raw = envelope["data"]
+        assert isinstance(data_raw, dict)
+        data = typing.cast("dict[str, object]", data_raw)
+        raw_files = data["files"]
+        assert isinstance(raw_files, list)
+        files = set(typing.cast("list[str]", raw_files))
         assert files == {"alpha.py", "beta.py", "gamma.py"}
 
     def test_index_dry_run_rejects_negative_limit(self, tmp_path: Path) -> None:
@@ -401,12 +409,14 @@ class TestIndexRebuild:
             ["--target", str(tmp_path), "index", "--rebuild", "--json"],
         )
         assert result.exit_code == 2
-        env = json.loads(result.output.strip())
+        env = typing.cast("dict[str, object]", json.loads(result.output.strip()))
         assert env["ok"] is False
         assert env["command"] == "index"
         assert env["error"] == "rebuild_requires_explicit_type"
         # Remediation lists the three valid forms.
-        rem = env["remediation"]
+        raw_rem = env["remediation"]
+        assert isinstance(raw_rem, list)
+        rem = typing.cast("list[str]", raw_rem)
         assert any("--type vault" in r for r in rem)
         assert any("--type code" in r for r in rem)
         assert any("--type all" in r for r in rem)
@@ -465,7 +475,7 @@ class TestIndexSummaryCLI:
         class _IndexServiceHandler(QuietHandler):
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                body = _parsed_json_object(self.rfile.read(length))
                 requests.append(body)
 
                 response = {
@@ -535,7 +545,7 @@ class TestIndexSummaryCLI:
         class SparseIndexServiceHandler(QuietHandler):
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                body = _parsed_json_object(self.rfile.read(length))
                 requests.append(body)
 
                 response: dict[str, object] = {

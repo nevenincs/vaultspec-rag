@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Unpack, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -13,7 +13,10 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from qdrant_client import QdrantClient
+    from qdrant_client.conversions.common_types import PointId, PointsSelector
     from qdrant_client.http.models.models import Condition, Filter, Record
+
+    from .store_runtime import ScrollOptions
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +67,28 @@ class _VaultCatalogMixin:
 
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
-        def _scroll(self, **kwargs: Any) -> tuple[list[Record], Any]: ...
+        def _scroll(
+            self,
+            *,
+            collection_name: str,
+            **options: Unpack[ScrollOptions],
+        ) -> tuple[list[Record], PointId | None]: ...
 
-        def _retrieve(self, **kwargs: Any) -> list[Record]: ...
+        def _retrieve(
+            self,
+            *,
+            collection_name: str,
+            ids: Sequence[PointId],
+            with_payload: bool | Sequence[str] = ...,
+            with_vectors: bool | Sequence[str] = ...,
+        ) -> list[Record]: ...
 
-        def _delete_points(self, **kwargs: Any) -> None: ...
+        def _delete_points(
+            self,
+            *,
+            collection_name: str,
+            points_selector: PointsSelector,
+        ) -> None: ...
 
         def _id_scan_page_limit(self, collection: str) -> int: ...
 
