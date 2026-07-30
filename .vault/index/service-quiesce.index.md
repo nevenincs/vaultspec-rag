@@ -31,6 +31,7 @@ related:
   - '[[2026-07-24-service-quiesce-W03-P06-summary]]'
   - '[[2026-07-24-service-quiesce-W03-P07-S23]]'
   - '[[2026-07-24-service-quiesce-W03-P07-S25]]'
+  - '[[2026-07-24-service-quiesce-W03-P07-S28]]'
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-plan]]'
   - '[[2026-07-24-service-quiesce-research]]'
@@ -83,6 +84,7 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 - `2026-07-24-service-quiesce-W03-P06-summary` - `service-quiesce` `W03.P06` summary
 - `2026-07-24-service-quiesce-W03-P07-S23` - Pass quiesce transition and service-state payloads through the single service-client transport unchanged, including retryable recovery failure, without local GPU behavior
 - `2026-07-24-service-quiesce-W03-P07-S25` - Hard-refuse in-process GPU indexing whenever delegation does not succeed and render truthful human and JSON remediation, because neither --allow-fallback nor a quiesced service block authorizes local compute until verified borrower-lease evidence exists
+- `2026-07-24-service-quiesce-W03-P07-S28` - Replace server globals with an immutable app-scoped runtime that owns token registry and port, and prove isolated CPU lifecycle behavior
 
 ### plan
 
