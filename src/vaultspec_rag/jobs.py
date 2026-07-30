@@ -38,7 +38,7 @@ from .job_models import (
     JobState,
 )
 from .logging_config import log_event
-from .registry import get_registry
+from .registry import discard_job_manager, get_registry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1847,6 +1847,11 @@ def reset() -> None:
     Deliberately leaves the persisted active-jobs snapshot alone so tests
     can simulate a daemon death (records gone, snapshot intact) and then
     exercise :func:`restore_interrupted`.
+
+    Clearing this module's handle is not enough on its own: the manager is
+    built and cached by the registry, so :func:`get_job_manager` would hand
+    back the very instance holding the records and the non-terminal ceiling
+    this call is meant to drop.
     """
     global _job_manager
     with _lock:
@@ -1855,6 +1860,7 @@ def reset() -> None:
         _backend_probe_cache.clear()
     with _manager_lock:
         _job_manager = None
+    discard_job_manager()
 
 
 class JobProgressReporter:

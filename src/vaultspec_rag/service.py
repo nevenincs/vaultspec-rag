@@ -1218,6 +1218,16 @@ class ServiceRegistry:
                 self._job_manager = manager
             return manager
 
+    def discard_job_manager(self) -> None:
+        """Drop the cached manager so the next build reads config afresh.
+
+        The manager caches its non-terminal ceiling at construction and owns
+        every active and terminal record, so a caller that clears job state
+        without dropping it keeps both the old ceiling and the old records.
+        """
+        with self._lock:
+            self._job_manager = None
+
     def quiesce_snapshot(self) -> QuiesceSnapshot:
         """Return the registry-owned controller's read-only lifecycle truth."""
         return self._quiesce_controller.snapshot()
