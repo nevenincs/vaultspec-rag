@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from .._store_models import VaultChunk, VaultDocument
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
+    from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot
     from ..progress import ProgressReporter
     from ..store_runtime import VaultStore
     from ._reuse import DonorReuseContext, ReuseStats
@@ -278,6 +279,57 @@ class VaultIndexer:
                 root_dir=root_dir,
             ),
         )
+        self._memory_budget: MemoryBudget | None = None
+
+    @property
+    def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
+        """Return the latest immutable observed-memory reading."""
+        budget = self._memory_budget
+        return budget.snapshot if budget is not None else None
+
+    @contextlib.contextmanager
+    def _memory_telemetry(self) -> Generator[None]:
+        """Observe one run's memory high-water without admitting a ceiling.
+
+        The budget is constructed with no ceilings at all. No observation can
+        then classify a failure, so nothing here can terminate a run that
+        would otherwise have completed: this is measurement, not admission.
+        That is deliberate rather than incidental. The vault domain has no
+        support-profile limits to be held to, and inventing one here would
+        add a new way for vault indexing to die in exchange for a number an
+        operator can already act on. What the peak is for is watching the
+        distance to a ceiling, which is not served by imposing one.
+
+        Every vault forward is already bracketed by the shared capture in
+        the encoding path; those readings are discarded today only because
+        no recorder is registered on the thread. Registering one is what
+        turns them into a published peak, and it leaves the encode path,
+        its batching, and its allocation untouched.
+        """
+        from ..memory_probe import MemoryBudget, record_forward_peaks
+
+        budget = MemoryBudget()
+        self._memory_budget = budget
+        with record_forward_peaks(budget.record_forward_peak_mib):
+            self._sample_memory("before vault dispatch")
+            try:
+                yield
+            finally:
+                self._sample_memory("after vault dispatch")
+
+    def _sample_memory(self, label: str) -> None:
+        """Record one process and device reading against this run's budget."""
+        from ..memory_probe import current_cuda_mib, current_rss_mib
+
+        budget = self._memory_budget
+        if budget is None:
+            return
+        on_cuda = getattr(self.model, "device", None) == "cuda"
+        budget.sample_readings(
+            label=label,
+            rss_mib=current_rss_mib(),
+            cuda_mib=current_cuda_mib() if on_cuda else None,
+        )
 
     def _resolve_reuse(
         self,
@@ -312,7 +364,7 @@ class VaultIndexer:
         legacy callers retain their existing behavior.
         """
         run_control.checkpoint()
-        with self._writer_lock:
+        with self._writer_lock, self._memory_telemetry():
             return run_index_lifecycle(
                 lambda: self._full_index_locked(
                     clean=clean,
@@ -553,7 +605,7 @@ class VaultIndexer:
                 batches, and storage mutations.
         """
         run_control.checkpoint()
-        with self._writer_lock:
+        with self._writer_lock, self._memory_telemetry():
             return run_index_lifecycle(
                 lambda: self._incremental_index_locked(
                     reporter=reporter,
