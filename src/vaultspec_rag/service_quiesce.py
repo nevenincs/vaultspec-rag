@@ -375,6 +375,7 @@ class ServiceQuiesceController:
         *,
         owned_state: Literal[QuiesceState.PAUSING, QuiesceState.WARMING],
         reason: str,
+        failed_code: QuiesceTransitionCode | None = None,
     ) -> QuiesceTransition:
         """Keep admission closed and unsafe when an owned transition fails.
 
@@ -382,6 +383,13 @@ class ServiceQuiesceController:
         a report arriving after the controller has already moved on is
         answered as unavailable for that transition rather than recorded
         against whichever one is now live.
+
+        ``failed_code`` narrows only the terminal answer, for a caller whose
+        failure is one distinguishable way of failing the owned transition;
+        omitting it records that transition's own failure code.  The
+        unavailable answer is deliberately not overridable, because a late
+        report is answered for the transition its caller owned and says
+        nothing about how that caller failed.
         """
         failure_reason = _require_reason(reason)
         unavailable, failed = _FAILURE_CODES[owned_state]
@@ -390,7 +398,10 @@ class ServiceQuiesceController:
                 return self._transition_locked(unavailable, achieved=False)
             self._vram_released = False
             self._failure_reason = failure_reason
-            return self._transition_locked(failed, achieved=False)
+            return self._transition_locked(
+                failed if failed_code is None else failed_code,
+                achieved=False,
+            )
 
     def abort_pause(self) -> QuiesceTransition:
         """Reopen the admission epoch a pause closed but never quiesced.
@@ -469,22 +480,6 @@ class ServiceQuiesceController:
             self._failure_reason = None
             self._condition.notify_all()
             return self._transition_locked(QuiesceTransitionCode.RUNNING, achieved=True)
-
-    def fail_resume_recovery(self, reason: str) -> QuiesceTransition:
-        """Keep admission closed when durable same-ID recovery preparation fails."""
-        failure_reason = _require_reason(reason)
-        with self._condition:
-            if self._state is not QuiesceState.WARMING:
-                return self._transition_locked(
-                    QuiesceTransitionCode.WARMUP_UNAVAILABLE,
-                    achieved=False,
-                )
-            self._vram_released = False
-            self._failure_reason = failure_reason
-            return self._transition_locked(
-                QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
-                achieved=False,
-            )
 
     def _snapshot_locked(self) -> QuiesceSnapshot:
         active_tickets = len(self._active_ticket_epochs)
