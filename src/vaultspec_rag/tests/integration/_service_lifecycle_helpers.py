@@ -623,7 +623,7 @@ finally:
             # The real serving pid equals the Popen pid normally, or a descendant
             # when the interpreter relaunches through a stub; the token match
             # already proved this is the child either way.
-            serving_pid = int(health["pid"])
+            serving_pid = int(str(health["pid"]))
             try:
                 yield serving_pid, port, token
             finally:

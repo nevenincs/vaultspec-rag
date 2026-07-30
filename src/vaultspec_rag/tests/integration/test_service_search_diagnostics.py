@@ -33,6 +33,7 @@ from ..corpus import build_synthetic_vault
 from .conftest import _live_service_context
 
 if TYPE_CHECKING:
+    from http.client import HTTPResponse
     from pathlib import Path
 
 type RawSearchResponse = tuple[int, dict[str, str], dict[str, object]]
@@ -216,7 +217,9 @@ def _raw_search(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with cast(
+            "HTTPResponse", urllib.request.urlopen(request, timeout=timeout)
+        ) as response:
             status = int(response.status)
             headers = {
                 name.lower(): value.strip() for name, value in response.headers.items()
@@ -226,7 +229,7 @@ def _raw_search(
         status = int(exc.code)
         headers = {name.lower(): value.strip() for name, value in exc.headers.items()}
         raw = exc.read()
-    parsed: object = json.loads(raw.decode("utf-8"))
+    parsed = cast("object", json.loads(raw.decode("utf-8")))
     if not isinstance(parsed, dict):
         msg = f"search response body is not an object: {parsed!r}"
         raise TypeError(msg)
@@ -264,7 +267,9 @@ def _bounded_failure_evidence(
         method="GET",
     )
     try:
-        with urllib.request.urlopen(metrics_request, timeout=5) as response:
+        with cast(
+            "HTTPResponse", urllib.request.urlopen(metrics_request, timeout=5)
+        ) as response:
             metrics: object = {
                 "status": int(response.status),
                 "body": response.read(8192).decode("utf-8", errors="replace"),
@@ -954,7 +959,7 @@ def _assert_mcp_unavailable_response(
     )
     assert "index_unavailable" in text, evidence
     assert "vaultspec-rag server jobs" in text, evidence
-    structured = response.structured_content
+    structured = cast("dict[str, object] | None", response.structured_content)
     assert structured is None or "results" not in structured, evidence
 
 
