@@ -569,22 +569,28 @@ def _finish_search_activity(
 
 def _dispatch_public_search(
     request: SearchRequest,
+    registry: ServiceRegistry,
     notes: dict[str, object],
 ) -> tuple[list[Any], dict[str, float], Any | None]:
     """Dispatch one canonical source without adapter fallback."""
-    import vaultspec_rag
-
     from .._public_search import (
         CodeCombinedSearchFilters,
         CombinedSearchRequest,
         DocumentCombinedSearchFilters,
         DocumentSearchRequest,
         VaultCombinedSearchFilters,
+        search_combined_timed,
+        search_documents_timed,
     )
-    from ..api import CodebaseSearchRequest, VaultSearchRequest
+    from ..api import (
+        CodebaseSearchRequest,
+        VaultSearchRequest,
+        search_codebase_timed,
+        search_vault_timed,
+    )
 
     if request.search_type is PublicSourceType.VAULT:
-        results, timings = vaultspec_rag.search_vault_timed(
+        results, timings = search_vault_timed(
             VaultSearchRequest(
                 root_dir=request.root,
                 query=request.query,
@@ -596,11 +602,12 @@ def _dispatch_public_search(
                 intent=request.payload.get("intent"),
                 like_ids=request.payload.get("like_ids"),
                 unlike_ids=request.payload.get("unlike_ids"),
-            )
+            ),
+            registry=registry,
         )
         return results, timings, None
     if request.search_type is PublicSourceType.CODE:
-        results, timings = vaultspec_rag.search_codebase_timed(
+        results, timings = search_codebase_timed(
             CodebaseSearchRequest(
                 root_dir=request.root,
                 query=request.query,
@@ -620,11 +627,12 @@ def _dispatch_public_search(
                 like_ids=request.payload.get("like_ids"),
                 unlike_ids=request.payload.get("unlike_ids"),
                 notes=notes,
-            )
+            ),
+            registry=registry,
         )
         return results, timings, None
     if request.search_type is PublicSourceType.DOCUMENT:
-        results, timings = vaultspec_rag.search_documents_timed(
+        results, timings = search_documents_timed(
             DocumentSearchRequest(
                 root_dir=request.root,
                 query=request.query,
@@ -633,10 +641,11 @@ def _dispatch_public_search(
                 extractor_id=request.payload.get("extractor_id"),
                 extractor_version=request.payload.get("extractor_version"),
                 locator_kind=request.payload.get("locator_kind"),
-            )
+            ),
+            registry=registry,
         )
         return results, timings, None
-    combined, timings = vaultspec_rag.search_combined_timed(
+    combined, timings = search_combined_timed(
         CombinedSearchRequest(
             root_dir=request.root,
             query=request.query,
@@ -668,7 +677,8 @@ def _dispatch_public_search(
                 extractor_version=request.payload.get("extractor_version"),
                 locator_kind=request.payload.get("locator_kind"),
             ),
-        )
+        ),
+        registry=registry,
     )
     return combined.results, timings, combined
 
@@ -681,7 +691,11 @@ def _execute_search_request(
     try:
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
-        results, phase_timing, combined = _dispatch_public_search(request, notes)
+        results, phase_timing, combined = _dispatch_public_search(
+            request,
+            registry,
+            notes,
+        )
         search_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
         indexed_count = (

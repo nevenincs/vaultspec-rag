@@ -11,7 +11,9 @@ from starlette.testclient import TestClient
 
 from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_locks import VaultStoreLockedError
+from ..config._settings import get_config, reset_config
 from ..mcp._tools import _search_envelope_or_raise
+from ..registry import get_registry, reset_registry
 from ..server import (
     ServerRouteRuntime,
     _local_store_locked_error_dict,
@@ -25,7 +27,7 @@ from ..server._routes_search import (
     _classify_completed_search,
     _search_response_status,
 )
-from ..service import RegistryFullError
+from ..service import RegistryFullError, ServiceRegistry
 from ..serviceclient._transport import _search_response_envelope, _try_http_search
 
 if TYPE_CHECKING:
@@ -135,6 +137,48 @@ def _status_contract_facts(root: Path) -> SearchAvailabilityRequestFacts:
         request_id="response-status-contract",
         port=None,
     )
+
+
+def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
+    tmp_path: Path,
+) -> None:
+    """An empty runtime-owned vault still answers when the global registry closed.
+
+    The real, model-free count reaches the runtime registry. Reverting the
+    route to a public facade that resolves ``get_registry()`` makes this a 500
+    because the deliberately closed singleton rejects the count lease.
+    """
+    root = tmp_path / "vault"
+    (root / ".vault").mkdir(parents=True)
+    get_config({"watch_enabled": False})
+    reset_registry()
+    global_registry = get_registry()
+    global_registry.close_all()
+    runtime_registry = ServiceRegistry()
+    app = create_http_app(
+        ServerRouteRuntime(
+            token="runtime-registry-search-token",
+            registry=runtime_registry,
+        ),
+        lifespan=None,
+    )
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.post(
+                "/search",
+                headers={"Authorization": "Bearer runtime-registry-search-token"},
+                json={
+                    "query": "runtime registry remains authoritative",
+                    "project_root": str(root),
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["results"] == []
+    finally:
+        runtime_registry.close_all()
+        reset_registry()
+        reset_config()
 
 
 class TestSearchResponseStatus:
