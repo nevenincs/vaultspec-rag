@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from ._file_state import FileStateKind, validate_rel_path
 from ._run_ledger_models import (
@@ -15,6 +15,8 @@ from ._run_ledger_models import (
     RunLedgerCorruptionError,
     RunLedgerIndexedPathCollisionError,
     RunLedgerStateError,
+    fetch_all,
+    fetch_one,
 )
 
 if TYPE_CHECKING:
@@ -22,18 +24,77 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from contextlib import AbstractContextManager
 
-    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_models import GenerationRow, RunGeneration
 
 
 class _CommitUnitRow(TypedDict):
-    """The ``commit_units`` row columns :func:`_commit_unit_from_row` reads."""
+    """The ``commit_units`` row columns :func:`_commit_unit_from_row` reads.
 
+    Also the shape of a full ``SELECT *`` against ``commit_units`` generally,
+    so it is reused wherever this module reads an existing unit's row rather
+    than through the ``point_ids``-decoding conversion function.
+    """
+
+    unit_id: str
     rel_path: str
     unit_kind: str
     source_digest: str | None
     segment_ordinal: int
     is_file_end: int
     point_ids_json: str
+
+
+class _ContentHashRow(TypedDict):
+    """One ``file_states.content_hash`` projection row."""
+
+    content_hash: str | None
+
+
+class _SiblingAggregateRow(TypedDict):
+    """The sibling aggregate :func:`_assert_segment_follows_siblings` reads."""
+
+    source_digest: str | None
+    last_ordinal: int | None
+    has_file_end: int | None
+    unit_count: int
+
+
+class _CompletionAggregateRow(TypedDict):
+    """The per-``(unit_kind, source_digest)`` completion aggregate row."""
+
+    unit_kind: str
+    source_digest: str | None
+    unit_count: int
+    first_ordinal: int
+    last_ordinal: int
+    ordinal_sum: int
+    end_count: int
+    end_ordinal: int | None
+
+
+class _PointIdJoinRow(TypedDict):
+    """One ``commit_point_ids`` x ``commit_units`` join row, ordered for paging."""
+
+    point_id: str
+    point_ordinal: int
+    rel_path: str
+    unit_kind: str
+    segment_ordinal: int
+
+
+class _RetainedPointRow(TypedDict):
+    """One retained-point row from :func:`retained_point_ids_sql`."""
+
+    point_id: str
+    point_ordinal: int
+    rel_path: str
+    segment_ordinal: int
+
+
+class _UnitCountRow(TypedDict):
+    """A bare ``COUNT(*)`` projection over ``commit_units``."""
+
+    unit_count: int
 
 
 class RunLedgerCommitMethods:
@@ -46,10 +107,10 @@ class RunLedgerCommitMethods:
         @staticmethod
         def _require_mutable_generation(
             connection: sqlite3.Connection, generation_id: str
-        ) -> sqlite3.Row: ...
+        ) -> GenerationRow: ...
 
         @staticmethod
-        def _generation_from_row(row: sqlite3.Row) -> RunGeneration: ...
+        def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
 
     def record_storage_confirmed_unit(
         self,
@@ -113,26 +174,29 @@ class RunLedgerCommitMethods:
         now: float,
     ) -> int:
         point_ids_json = json.dumps(unit.point_ids, separators=(",", ":"))
-        existing = connection.execute(
+        existing: _CommitUnitRow | None = fetch_one(
+            connection,
             """
             SELECT * FROM commit_units
             WHERE generation_id = ? AND unit_id = ?
             """,
             (generation_id, unit.identity),
-        ).fetchone()
+        )
         if existing is not None:
             self._assert_existing_unit_matches(existing, unit, point_ids_json)
             return 0
-        indexed = connection.execute(
+        indexed: _ContentHashRow | None = fetch_one(
+            connection,
             """
             SELECT content_hash FROM file_states
             WHERE generation_id = ? AND rel_path = ? AND state = ?
               AND evidence_generation_id = generation_id
             """,
             (generation_id, unit.rel_path, FileStateKind.INDEXED.value),
-        ).fetchone()
+        )
         self._assert_unit_path_not_indexed(indexed, generation_id, unit)
-        sibling = connection.execute(
+        sibling: _SiblingAggregateRow | None = fetch_one(
+            connection,
             """
             SELECT source_digest, MAX(segment_ordinal) AS last_ordinal,
                    MAX(is_file_end) AS has_file_end, COUNT(*) AS unit_count
@@ -140,7 +204,7 @@ class RunLedgerCommitMethods:
             WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
             """,
             (generation_id, unit.rel_path, unit.kind.value),
-        ).fetchone()
+        )
         assert sibling is not None
         self._assert_segment_follows_siblings(sibling, unit)
         self._assert_point_ids_are_unowned(connection, generation_id, unit)
@@ -179,7 +243,7 @@ class RunLedgerCommitMethods:
 
     @staticmethod
     def _assert_existing_unit_matches(
-        existing: sqlite3.Row,
+        existing: _CommitUnitRow,
         unit: CommitUnit,
         point_ids_json: str,
     ) -> None:
@@ -196,7 +260,7 @@ class RunLedgerCommitMethods:
 
     @staticmethod
     def _assert_unit_path_not_indexed(
-        indexed: sqlite3.Row | None,
+        indexed: _ContentHashRow | None,
         generation_id: str,
         unit: CommitUnit,
     ) -> None:
@@ -215,10 +279,10 @@ class RunLedgerCommitMethods:
 
     @staticmethod
     def _assert_segment_follows_siblings(
-        sibling: sqlite3.Row,
+        sibling: _SiblingAggregateRow,
         unit: CommitUnit,
     ) -> None:
-        sibling_count = int(sibling["unit_count"])
+        sibling_count = sibling["unit_count"]
         if sibling_count and sibling["source_digest"] != unit.source_digest:
             raise RunLedgerStateError(
                 "segments for one path must share one source digest"
@@ -237,13 +301,14 @@ class RunLedgerCommitMethods:
         unit: CommitUnit,
     ) -> None:
         for point_id in unit.point_ids:
-            owner = connection.execute(
+            owner: object | None = fetch_one(
+                connection,
                 """
                 SELECT unit_id FROM commit_point_ids
                 WHERE generation_id = ? AND point_id = ?
                 """,
                 (generation_id, point_id),
-            ).fetchone()
+            )
             if owner is not None:
                 raise RunLedgerStateError(
                     f"point identity {point_id!r} belongs to another commit unit"
@@ -252,27 +317,29 @@ class RunLedgerCommitMethods:
     def unit_committed(self, generation_id: str, unit: CommitUnit) -> bool:
         """Return whether an exact storage-confirmed unit is durable."""
         with self._connect() as connection:
-            row = connection.execute(
+            row: object | None = fetch_one(
+                connection,
                 """
                 SELECT 1 FROM commit_units
                 WHERE generation_id = ? AND unit_id = ?
                 """,
                 (generation_id, unit.identity),
-            ).fetchone()
+            )
         return row is not None
 
     def committed_unit_count(self, generation_id: str) -> int:
         """Return the committed-unit count without materializing ledger rows."""
         with self._connect() as connection:
-            row = connection.execute(
+            row: _UnitCountRow | None = fetch_one(
+                connection,
                 """
                 SELECT COUNT(*) AS unit_count FROM commit_units
                 WHERE generation_id = ?
                 """,
                 (generation_id,),
-            ).fetchone()
+            )
         assert row is not None
-        return int(row["unit_count"])
+        return row["unit_count"]
 
     def file_complete(self, generation_id: str, rel_path: str) -> bool:
         """Return whether every segment (or the deletion unit) is committed."""
@@ -291,7 +358,8 @@ class RunLedgerCommitMethods:
         generation_id: str,
         rel_path: str,
     ) -> tuple[bool, str | None]:
-        rows = connection.execute(
+        rows: list[_CompletionAggregateRow] = fetch_all(
+            connection,
             """
             SELECT unit_kind, source_digest,
                    COUNT(*) AS unit_count,
@@ -306,28 +374,28 @@ class RunLedgerCommitMethods:
             GROUP BY unit_kind, source_digest
             """,
             (generation_id, rel_path),
-        ).fetchall()
+        )
         if not rows:
             return False, None
-        by_kind: dict[str, sqlite3.Row] = {}
+        by_kind: dict[str, _CompletionAggregateRow] = {}
         for row in rows:
-            kind = str(row["unit_kind"])
+            kind = row["unit_kind"]
             if kind in by_kind:
                 return False, None
             by_kind[kind] = row
-            count = int(row["unit_count"])
+            count = row["unit_count"]
             expected_sum = count * (count - 1) // 2
             if (
                 count <= 0
-                or int(row["first_ordinal"]) != 0
-                or int(row["last_ordinal"]) != count - 1
-                or int(row["ordinal_sum"]) != expected_sum
-                or int(row["end_count"]) != 1
-                or int(row["end_ordinal"]) != count - 1
+                or row["first_ordinal"] != 0
+                or row["last_ordinal"] != count - 1
+                or row["ordinal_sum"] != expected_sum
+                or row["end_count"] != 1
+                or row["end_ordinal"] != count - 1
             ):
                 return False, None
         upserts = by_kind.get(CommitUnitKind.UPSERT.value)
-        digest = str(upserts["source_digest"]) if upserts else None
+        digest = upserts["source_digest"] if upserts else None
         return True, digest
 
     def iter_units(
@@ -342,8 +410,10 @@ class RunLedgerCommitMethods:
         last_key: tuple[str, str, int, str] | None = None
         while True:
             with self._connect() as connection:
+                rows: list[_CommitUnitRow]
                 if last_key is None:
-                    rows = connection.execute(
+                    rows = fetch_all(
+                        connection,
                         """
                         SELECT * FROM commit_units
                         WHERE generation_id = ?
@@ -351,9 +421,10 @@ class RunLedgerCommitMethods:
                         LIMIT ?
                         """,
                         (generation_id, batch_size),
-                    ).fetchall()
+                    )
                 else:
-                    rows = connection.execute(
+                    rows = fetch_all(
+                        connection,
                         """
                         SELECT * FROM commit_units
                         WHERE generation_id = ?
@@ -363,17 +434,17 @@ class RunLedgerCommitMethods:
                         LIMIT ?
                         """,
                         (generation_id, *last_key, batch_size),
-                    ).fetchall()
+                    )
             if not rows:
                 return
             for row in rows:
                 yield _commit_unit_from_row(row)
             last = rows[-1]
             last_key = (
-                str(last["rel_path"]),
-                str(last["unit_kind"]),
-                int(last["segment_ordinal"]),
-                str(last["unit_id"]),
+                last["rel_path"],
+                last["unit_kind"],
+                last["segment_ordinal"],
+                last["unit_id"],
             )
 
     def iter_point_ids(
@@ -397,7 +468,8 @@ class RunLedgerCommitMethods:
                 """
                 parameters = (generation_id, *last_key)
             with self._connect() as connection:
-                rows = connection.execute(
+                rows: list[_PointIdJoinRow] = fetch_all(
+                    connection,
                     f"""
                     SELECT points.point_id, points.point_ordinal,
                            units.rel_path, units.unit_kind,
@@ -414,18 +486,18 @@ class RunLedgerCommitMethods:
                     LIMIT ?
                     """,
                     (*parameters, batch_size),
-                ).fetchall()
+                )
             if not rows:
                 return
             for row in rows:
-                yield str(row["point_id"])
+                yield row["point_id"]
             last = rows[-1]
             last_key = (
-                str(last["rel_path"]),
-                str(last["unit_kind"]),
-                int(last["segment_ordinal"]),
-                int(last["point_ordinal"]),
-                str(last["point_id"]),
+                last["rel_path"],
+                last["unit_kind"],
+                last["segment_ordinal"],
+                last["point_ordinal"],
+                last["point_id"],
             )
 
     def iter_retained_point_ids(
@@ -456,23 +528,24 @@ class RunLedgerCommitMethods:
             if last_key is not None:
                 parameters = (*parameters, *last_key)
             with self._connect() as connection:
-                rows = connection.execute(
+                rows: list[_RetainedPointRow] = fetch_all(
+                    connection,
                     retained_point_ids_sql(
                         scoped_to_path=rel_path is not None,
                         keyset=last_key is not None,
                     ),
                     (*parameters, batch_size),
-                ).fetchall()
+                )
             if not rows:
                 return
             for row in rows:
-                yield str(row["point_id"])
+                yield row["point_id"]
             last = rows[-1]
             last_key = (
-                str(last["rel_path"]),
-                int(last["segment_ordinal"]),
-                int(last["point_ordinal"]),
-                str(last["point_id"]),
+                last["rel_path"],
+                last["segment_ordinal"],
+                last["point_ordinal"],
+                last["point_id"],
             )
 
 
@@ -529,14 +602,17 @@ def retained_point_ids_sql(*, scoped_to_path: bool, keyset: bool) -> str:
 
 def _commit_unit_from_row(row: _CommitUnitRow) -> CommitUnit:
     try:
-        decoded = json.loads(row["point_ids_json"])
+        decoded: object = json.loads(row["point_ids_json"])
         if not isinstance(decoded, list):
             raise TypeError("point_ids_json must contain a list")
         # Entry types are checked, not asserted: a stored list of integers
         # satisfies every downstream invariant CommitUnit enforces (truthy,
         # unique, ordered) and would otherwise reach the store as point
-        # identities of the wrong type.
-        stored_ids = cast("list[Any]", decoded)
+        # identities of the wrong type. `object`, not `Any`: the isinstance
+        # check just below is what actually narrows each element, so the
+        # cast only needs to name the list's element type as unknown-but-safe
+        # rather than assert it away.
+        stored_ids = cast("list[object]", decoded)
         point_ids = tuple(
             point_id for point_id in stored_ids if isinstance(point_id, str)
         )
