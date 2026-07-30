@@ -9,6 +9,7 @@ the GPU: a borrower must still hold the distinct borrower lease.
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Sized
 from math import isfinite
 from typing import Final, NoReturn
@@ -17,7 +18,7 @@ import typer
 
 from .._timestamps import age_seconds
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS, QuiesceState
-from ..serviceclient._compat import classify_service_version
+from ..serviceclient._compat import SERVICE_VERSION_FIELD, classify_service_version
 from ..serviceclient._discovery import MachineResolution, resolve_machine_service
 from ..serviceclient._transport import _try_http_admin, _try_http_health
 from ._app import JsonMode, PortOption, server_app
@@ -92,6 +93,14 @@ def _strict_quiesce(value: object) -> dict[str, object] | None:
                 or any(
                     timestamp is not None and not _finite_number(timestamp)
                     for timestamp in timestamps
+                )
+                or (
+                    safe_to_borrow_gpu
+                    and (
+                        pause_requested_at is None
+                        or drain_acknowledged_at is None
+                        or quiesced_at is None
+                    )
                 )
             ):
                 return None
@@ -237,6 +246,40 @@ def _quiesce_is_safe(quiesce: dict[str, object]) -> bool:
     )
 
 
+def _health_matches_discovery(
+    health: dict[str, object],
+    *,
+    pid: int | None,
+    port: int,
+    service_token: str | None,
+    package_version: str | None,
+) -> bool:
+    """Require health to confirm every identity fact published by discovery."""
+    health_pid = health.get("pid")
+    health_port = health.get("port")
+    health_token = health.get("service_token")
+    health_version = health.get(SERVICE_VERSION_FIELD)
+    return (
+        isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and pid > 0
+        and isinstance(service_token, str)
+        and bool(service_token)
+        and isinstance(package_version, str)
+        and isinstance(health_pid, int)
+        and not isinstance(health_pid, bool)
+        and health_pid > 0
+        and health_pid == pid
+        and isinstance(health_port, int)
+        and not isinstance(health_port, bool)
+        and health_port == port
+        and isinstance(health_token, str)
+        and hmac.compare_digest(health_token, service_token)
+        and isinstance(health_version, str)
+        and health_version == package_version
+    )
+
+
 @server_app.command(
     "preflight",
     help="Observe service quiescence and device capacity without authorizing GPU work.",
@@ -272,15 +315,7 @@ def service_preflight(port: PortOption = None, json_mode: JsonMode = False) -> N
             data=_observation_data(port=None),
         )
 
-    health = _try_http_health(resolved_port)
-    if health is None:
-        _fail(
-            json_mode=json_mode,
-            error="service_unreachable",
-            message=f"The discovered service on port {resolved_port} is unreachable.",
-            data=_observation_data(port=resolved_port),
-        )
-    version = classify_service_version(health)
+    version = classify_service_version(resolution.payload)
     version_data = version.to_dict()
     if not version.is_compatible:
         _fail(
@@ -289,9 +324,22 @@ def service_preflight(port: PortOption = None, json_mode: JsonMode = False) -> N
             message=f"The discovered service is not compatible: {version.reason()}.",
             data=_observation_data(port=resolved_port, version=version_data),
         )
-    if (
-        resolution.service_token is None
-        or health.get("service_token") != resolution.service_token
+
+    health = _try_http_health(resolved_port)
+    if health is None:
+        _fail(
+            json_mode=json_mode,
+            error="service_unreachable",
+            message=f"The discovered service on port {resolved_port} is unreachable.",
+            data=_observation_data(port=resolved_port),
+        )
+    service_token = resolution.service_token
+    if not _health_matches_discovery(
+        health,
+        pid=resolution.pointer_pid,
+        port=resolved_port,
+        service_token=service_token,
+        package_version=version.service_version,
     ):
         _fail(
             json_mode=json_mode,
@@ -301,6 +349,8 @@ def service_preflight(port: PortOption = None, json_mode: JsonMode = False) -> N
             ),
             data=_observation_data(port=resolved_port, version=version_data),
         )
+    if service_token is None:
+        raise AssertionError("matching discovery identity did not provide a token")
 
     capacity = _strict_capacity(health.get("device_load"))
     if capacity is None:
@@ -313,8 +363,13 @@ def service_preflight(port: PortOption = None, json_mode: JsonMode = False) -> N
             ),
             data=_observation_data(port=resolved_port, version=version_data),
         )
-    service_state = _try_http_admin("get_service_state", {}, resolved_port)
-    if service_state is None or service_state.get("ok") is False:
+    service_state = _try_http_admin(
+        "get_service_state",
+        {},
+        resolved_port,
+        initial_bearer_token=service_token,
+    )
+    if service_state is None or not service_state or service_state.get("ok") is False:
         _fail(
             json_mode=json_mode,
             error="service_state_unavailable",
