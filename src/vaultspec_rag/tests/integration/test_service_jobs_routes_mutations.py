@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
     from pathlib import Path
 
+    from ...job_manager.manager import JobManager
+
 
 def _make_vault_roots(tmp_path: Path) -> tuple[Path, Path]:
     """Create the large-registry and target workspace roots under *tmp_path*."""
@@ -28,7 +30,7 @@ def _make_vault_roots(tmp_path: Path) -> tuple[Path, Path]:
     return large_root, target_root
 
 
-def _seed_persistence_backpressure(manager: Any, root: Path) -> None:
+def _seed_persistence_backpressure(manager: JobManager, root: Path) -> None:
     """Create one real large terminal record before the ASGI overlap probe."""
     from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 
@@ -116,7 +118,7 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
                 ),
             )
             assert created.status_code == 202, created.text
-            job = cast("dict[str, Any]", created.json()["job"])
+            job = cast("dict[str, object]", created.json()["job"])
             job_id = str(job["id"])
 
             cancelled = await _assert_mutation_overlaps_auth_probe(
