@@ -13,20 +13,20 @@ related:
 
 ## Status
 
-Unresolved. The earlier completion claim is withdrawn.
+Satisfied by the landed search-route mapping and reconciled source inspection. No runtime or test command was executed during this acceptance review.
 
 ## Description
 
-Search admission currently closes before project or compute ownership and raises the controller admission error. That internal refusal is not yet translated at the service search boundary into the canonical retryable structured HTTP 503 response required by the accepted decision.
+Search admission closes before project or compute ownership and raises the controller admission error. The service search boundary catches only that typed refusal and returns the canonical retryable structured HTTP 503 response.
 
 ## Outcome
 
-Pending: translate only controller-closed search admission into the canonical retryable HTTP 503 envelope before project, model, reranker, or CUDA ownership. Preserve unrelated search errors and existing availability classifications.
+All four public search source types preserve one envelope with `ok: false`, error `quiesce_admission_closed`, `retryable: true`, request identity, and the controller state, admission epoch, and GPU-safety snapshot. The response status is 503, while unrelated search errors and availability classification retain their existing paths.
 
 ## Evidence
 
-No evidence currently proves the reopened Step's service-level HTTP 503 contract.
+The landed route catches `QuiesceAdmissionClosedError` around search execution, renders the typed quiesce snapshot, records the unavailable outcome, and returns status 503 directly. The checked-in route test exercises `vault`, `code`, `document`, and `combined` through the production Starlette route and asserts the exact response and activity-ledger truth. The final ownership assertion was strengthened in `18977d3c`.
 
 ## Notes
 
-This record tracks unimplemented remedial work. No service, RAG endpoint, CUDA allocation, or GPU test was run during reconciliation.
+S18 owns the retained-resource proof. No service process, RAG endpoint, CUDA allocation, GPU test, or CPU test was run during this reconciliation.

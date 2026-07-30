@@ -61,40 +61,40 @@ Replace the shared hold gate with a registry-owned controller that drains cooper
 Establish the one stateful quiesce authority, its admission epochs and drain evidence, and reversible GPU-stack release and rebuild without closing stores.
 
 - [x] `W02.P04.S10` - Create the serialized resource-quiesce controller with state transitions, epoch-scoped compute tickets, bounded drain acknowledgement and truthful safety snapshots; `src/vaultspec_rag/service_quiesce.py`.
-- [ ] `W02.P04.S11` - Keep warming admission closed through durable same-ID recovery preparation, then open the new epoch and publish typed recovery failure truth; `src/vaultspec_rag/service.py`.
-- [ ] `W02.P04.S12` - Prove persistence-before-admission ordering, coalesced retry, and fail-closed recovery races with real threads and CPU-only registry dependencies; `src/vaultspec_rag/tests/test_service_registry_quiesce_transitions.py`.
+- [x] `W02.P04.S11` - Keep warming admission closed through durable same-ID recovery preparation, open the new epoch only for prepared or no-work, and preserve exhaustive durable, unpublished, and published-not-durable typed evidence; `src/vaultspec_rag/service.py`.
+- [x] `W02.P04.S12` - Prove with real threads, real manager persistence, and a bound runner that recovery is durable before admission and execution, repaired concurrent retries coalesce, failure stays closed, and one dispatch claim starts one attempt; `src/vaultspec_rag/tests/test_service_registry_recovery.py`.
 
 ### Phase `W02.P05` - Cooperative job and search drain
 
 Make global quiesce unwind managed attempts and drain search work without letting token-local cancellation or protected mutations corrupt controller state.
 
 - [x] `W02.P05.S13` - Separate token-local cancellation and shutdown from global resource-quiesce signalling while preserving protected checkpoint semantics; `src/vaultspec_rag/job_control.py`.
-- [ ] `W02.P05.S14` - Prepare durable same-ID recovery by scanning paused and queued desired-running jobs, preserving operator intent, and returning typed persistence outcomes; `src/vaultspec_rag/job_manager`.
+- [x] `W02.P05.S14` - Prepare durable same-ID recovery across paused and queued desired-running jobs, preserve operator intent, and return exhaustive typed durable, unpublished, or published-not-durable persistence evidence; `src/vaultspec_rag/job_manager`.
 - [x] `W02.P05.S15` - Guard index streaming safe boundaries so quiesce observations remain outside GPU locks and indivisible storage mutations; `src/vaultspec_rag/indexer/_streaming.py`.
-- [ ] `W02.P05.S16` - Translate controller-closed search admission into the canonical retryable HTTP 503 response before project or GPU ownership; `src/vaultspec_rag/server/_routes_search.py`.
-- [ ] `W02.P05.S17` - Prove real unpublished-write retry and published queued-state restart recovery without duplicate attempts or dispatch; `src/vaultspec_rag/tests/test_job_manager_quiesce.py`.
-- [ ] `W02.P05.S18` - Prove closed search admission returns the canonical structured HTTP 503 while retaining no project, model, reranker, or CUDA state; `src/vaultspec_rag/tests/test_search_quiesce_admission.py`.
+- [x] `W02.P05.S16` - Translate controller-closed search admission into the canonical retryable HTTP 503 response before project or GPU ownership; `src/vaultspec_rag/server/_routes_search.py`.
+- [x] `W02.P05.S17` - Prove real unpublished-write retry, durable queued restart recovery, and atomic exact-attempt dispatch-token coalescing across concurrent and loopless callbacks without duplicate attempts or dispatch; `src/vaultspec_rag/tests/test_job_manager_quiesce.py`.
+- [x] `W02.P05.S18` - Prove closed search admission returns the canonical structured HTTP 503 while retaining no project, model, reranker, or CUDA state; `src/vaultspec_rag/tests/test_search_quiesce_admission.py`.
 
 ## Wave `W03` - Publish truthful lifecycle status
 
-Expose the controller achieved states through routes and adapters while refusing unsafe local fallback or partial acknowledgement. W04 relies on these routes for lease orchestration.
+Expose controller-achieved states through routes and adapters while refusing unsafe local fallback or partial acknowledgement. W04 relies on these routes for lease orchestration but W03 neither implements nor assumes borrower authority. W03 acceptance is CPU-only and explicit: the authenticated real-filesystem failure and repaired-retry route module, service-state and jobs projection tests, transport and CLI rendering tests, fallback-refusal tests, MCP and TUI adapter tests, fresh-interpreter assertions that service paths leave torch absent, ruff check src tools, ty check, and the configured strict basedpyright gate. Every negative guard is proven red then green without mocks, fakes, stubs, patches, monkeypatches, skip, or xfail. No service process, RAG endpoint, CUDA allocation, GPU test, or W04 implementation belongs to this wave.
 
 ### Phase `W03.P06` - Authoritative routes and service state
 
-Make the service route await achieved quiesce or running, emit one truthful envelope, and publish the identical controller block through health and service state.
+Make authenticated pause and resume return HTTP 200 whenever the service answers, with one body shape: ok, status, and quiesce. Every unachieved service-owned lifecycle result also carries error equal to status, a message, and retryable set to true; achieved results omit error, message, and retryable. For resume recovery failure the exact status and error are resume_recovery_failed, retryable is true, and quiesce remains warming with admissions_open and safe_to_borrow_gpu false plus its typed failure_reason. Every health, jobs, and service-state projection must reuse QuiesceSnapshot.as_envelope without recomputation and carry exactly state, admission_epoch, admissions_open, active_compute_tickets, drain_complete, vram_released, safe_to_borrow_gpu, pause_requested_at, drain_acknowledged_at, quiesced_at, warming_started_at, and failure_reason.
 
-- [ ] `W03.P06.S19` - Map typed resume recovery failure to one retryable lifecycle envelope while warming admission remains closed; `src/vaultspec_rag/server/_routes.py`.
-- [ ] `W03.P06.S20` - Publish controller health and lifecycle cadence without a free-running poller or GPU import; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `W03.P06.S21` - Add the canonical quiesce block to read-only service-state output without duplicating lifecycle computation; `src/vaultspec_rag/api.py`.
-- [ ] `W03.P06.S22` - Prove resume recovery failure and repaired idempotent retry through one CPU-only authenticated route envelope; `src/vaultspec_rag/tests/test_service_quiesce_routes.py`.
+- [ ] `W03.P06.S19` - Map typed resume recovery failure to the canonical authenticated retryable lifecycle envelope while warming admission remains closed, and return a repaired retry as running without changing the logical job identity; `src/vaultspec_rag/server/_routes.py`.
+- [ ] `W03.P06.S20` - Publish the canonical quiesce block through existing health, jobs, and lifecycle heartbeat cadence without adding a poller, duplicating controller computation, or importing GPU dependencies; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/server/_routes.py`.
+- [ ] `W03.P06.S21` - Add the exact canonical quiesce block to read-only service-state output by projecting the registry controller snapshot once; `src/vaultspec_rag/api.py`.
+- [ ] `W03.P06.S22` - Prove through the authenticated production routes, real registry, real manager writer, and real filesystem that an unpublished resume write returns resume_recovery_failed in closed warming, then directory repair and a second resume return running with the same logical job ID and one recovered generation; `src/vaultspec_rag/tests/test_service_quiesce_routes.py`.
 
 ### Phase `W03.P07` - Adapter visibility and fallback refusal
 
-Have every adapter render service-owned quiesce truth, while preserving the MCP read-only lifecycle boundary and preventing automatic local compute escalation.
+Treat the service-owned lifecycle and service-state payloads as authoritative data. Transports pass them through unchanged; CLI, MCP, and TUI render the same canonical quiesce block and never infer borrower permission. Only ok true with the requested achieved state is success. W03 has no borrower-lease verifier, so an unreachable, incompatible, uncertain, pausing, warming, failed, or otherwise unverified service is a hard refusal for local GPU indexing; --allow-fallback is not authorization and cannot start local compute before W04.
 
-- [ ] `W03.P07.S23` - Pass quiesce transition and service-state payloads through the one service-client transport without local GPU behavior; `src/vaultspec_rag/serviceclient/_transport.py`.
-- [ ] `W03.P07.S24` - Render only acknowledged pause and resume success and explain unsafe transition outcomes in human and JSON modes; `src/vaultspec_rag/cli/_service_quiesce.py`.
-- [ ] `W03.P07.S25` - Remove automatic local fallback after service discovery and require verified borrower safety before explicit local indexing; `src/vaultspec_rag/cli/_index.py`.
+- [ ] `W03.P07.S23` - Pass quiesce transition and service-state payloads through the single service-client transport unchanged, including retryable recovery failure, without local GPU behavior; `src/vaultspec_rag/serviceclient/_transport.py`.
+- [ ] `W03.P07.S24` - Render pause and resume as success only when ok is true and the canonical quiesce block carries the requested achieved state, preserving exact unsafe status, error, retryable, message, and quiesce evidence in human and JSON failures; `src/vaultspec_rag/cli/_service_quiesce.py`.
+- [ ] `W03.P07.S25` - Remove automatic local fallback and hard-refuse in-process GPU indexing whenever delegation does not succeed, because neither --allow-fallback nor a quiesced service block authorizes local compute until W04 supplies verified borrower-lease evidence; `src/vaultspec_rag/cli/_index.py`.
 - [ ] `W03.P07.S26` - Expose the service-owned quiesce block through existing MCP service-state delegation without adding public lifecycle mutation tools; `src/vaultspec_rag/mcp/_tools.py`.
 - [ ] `W03.P07.S27` - Render controller state, GPU release evidence and borrower safety in the jobs TUI header and status details; `src/vaultspec_rag/cli/_jobs_tui.py`.
 - [ ] `W03.P07.S28` - Prove CLI, MCP and TUI adapters preserve one controller vocabulary and never initialize torch on service paths; `src/vaultspec_rag/tests/test_service_quiesce_adapters.py`.
