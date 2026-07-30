@@ -439,27 +439,49 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
         try:
-            _poll_health(port)
+            token = _poll_health(port)["service_token"]
             projects = [
                 _make_vault_project(tmp_path / f"p{i}", label=f"p{i}") for i in range(8)
             ]
+            outcomes: list[str] = []
+            outcomes_lock = threading.Lock()
 
             def _hammer(proj: Path) -> None:
-                with contextlib.suppress(Exception):
-                    _run(
-                        asyncio.wait_for(
-                            _call_tool(
-                                port,
-                                "search_vault",
-                                {
-                                    "query": "drain test",
-                                    "top_k": 3,
-                                    "project_root": str(proj),
-                                },
-                            ),
-                            timeout=8.0,
-                        ),
+                """Issue one real search and record what the service answered.
+
+                Deliberately does not route through ``_call_tool``: that helper
+                opens with a synchronous readiness poll carrying its own 90s
+                budget, and no timeout wrapped around a blocking call can cut
+                one short - the bound has to be the request's own, which is why
+                the request is issued directly here. Readiness is established
+                once before these threads start, so re-establishing it per
+                request would buy nothing and reintroduce that unbounded wait.
+
+                Every thread records an outcome rather than discarding it, so a
+                run in which no request ever reached the service fails the
+                assertion below instead of passing on eight threads that died
+                on the doorstep.
+                """
+                import httpx
+
+                try:
+                    resp = httpx.post(
+                        f"http://127.0.0.1:{port}/search",
+                        headers={"Authorization": f"Bearer {token}"},
+                        json={
+                            "type": "vault",
+                            "query": "drain test",
+                            "top_k": 3,
+                            "project_root": str(proj),
+                        },
+                        timeout=8.0,
                     )
+                except Exception as exc:
+                    outcome = type(exc).__name__
+                else:
+                    outcome = f"status={resp.status_code}"
+                with outcomes_lock:
+                    outcomes.append(outcome)
 
             threads = [
                 threading.Thread(
@@ -481,6 +503,15 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
                 t.join(timeout=10)
             alive = [t.name for t in threads if t.is_alive()]
             assert not alive, f"client load threads did not exit: {alive}"
+            # The drain is only under test if load actually reached the service.
+            # Without this the invariant is carried by the test's name alone:
+            # eight threads that never connected exit just as promptly as eight
+            # the daemon had to drain, and every assertion above still holds.
+            assert len(outcomes) == len(threads), (
+                f"client threads did not all record an outcome: {outcomes}"
+            )
+            served = [outcome for outcome in outcomes if outcome.startswith("status=")]
+            assert served, f"no client search reached the service: {outcomes}"
             # The daemon deletes its own discovery views from the lifespan
             # teardown, and only a delivered termination signal reaches that
             # teardown. Windows spawns the daemon console-detached, so a console
