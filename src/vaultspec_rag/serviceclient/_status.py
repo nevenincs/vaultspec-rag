@@ -315,7 +315,7 @@ class ReconcileRequest:
 
     resolve: Callable[[], MachineResolution]
     probe_liveness: Callable[[MachineResolution], LivenessSignals]
-    probe_health: Callable[[int], dict[str, Any] | None]
+    probe_health: Callable[[int], dict[str, object] | None]
     timeout_s: float = RECONCILE_TIMEOUT_SECONDS
     interval_s: float = RECONCILE_INTERVAL_SECONDS
     sleep: Callable[[float], None] | None = None

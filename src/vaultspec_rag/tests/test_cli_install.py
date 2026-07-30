@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,6 +12,9 @@ from ._cli_helpers import (
     app,
     runner,
 )
+
+if TYPE_CHECKING:
+    from ..commands._models import InstallReport, UninstallReport
 
 pytestmark = [pytest.mark.unit]
 
@@ -136,7 +140,7 @@ class TestRenderInstallReport:
     """
 
     @staticmethod
-    def _render(report: object) -> str:
+    def _render(report: InstallReport) -> str:
         import io
 
         from rich.console import Console
@@ -338,7 +342,7 @@ class TestRenderUninstallReport:
     """Symmetric guard rail for the uninstall renderer."""
 
     @staticmethod
-    def _render(report: object) -> str:
+    def _render(report: UninstallReport) -> str:
         import io
 
         from rich.console import Console

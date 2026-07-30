@@ -27,6 +27,7 @@ from ..service_quiesce import ServiceQuiesceController
 from ._job_manager_transition_helpers import (
     assert_delivered_pause_requeues_resume,
     create_paused_vault_job,
+    pending_attempt,
     resume_paused_job,
 )
 from ._job_roots import _TEST_PROJECT_ROOT
@@ -54,7 +55,7 @@ class TestManagedJobTransitions:
             JobInitiator("service", "shutdown-race", _TEST_PROJECT_ROOT),
         )
         assert created.job is not None
-        task = asyncio.create_task(asyncio.Event().wait())
+        task = asyncio.create_task(pending_attempt())
         try:
             assert manager.begin_shutdown() == ()
             outcome = manager.start_attempt(
@@ -82,7 +83,7 @@ class TestManagedJobTransitions:
         job_id = create_paused_vault_job(manager)
         resume_paused_job(manager, job_id)
 
-        task = asyncio.create_task(asyncio.Event().wait())
+        task = asyncio.create_task(pending_attempt())
         control = RunControlToken()
         try:
             assert_delivered_pause_requeues_resume(manager, job_id, task, control)
@@ -109,8 +110,8 @@ class TestManagedJobTransitions:
             JobInitiator("watcher", "watcher_code_index", _TEST_PROJECT_ROOT),
         )
         assert created.job is not None
-        owner_task = asyncio.create_task(asyncio.Event().wait())
-        stale_task = asyncio.create_task(asyncio.Event().wait())
+        owner_task = asyncio.create_task(pending_attempt())
+        stale_task = asyncio.create_task(pending_attempt())
         try:
             assert (
                 manager.start_attempt(
@@ -216,7 +217,7 @@ class TestManagedJobTransitions:
         )
         running = running_manager.create(spec, initiator)
         assert running.job is not None
-        task = asyncio.create_task(asyncio.Event().wait())
+        task = asyncio.create_task(pending_attempt())
         control = RunControlToken()
         try:
             running_manager.start_attempt(running.job.id, task=task, control=control)
@@ -302,7 +303,7 @@ class TestManagedJobTransitions:
         created = manager.create(spec, initiator)
         assert created.job is not None
         job_id = created.job.id
-        task = asyncio.create_task(asyncio.Event().wait())
+        task = asyncio.create_task(pending_attempt())
         control = RunControlToken()
         try:
             assert manager.start_attempt(job_id, task=task, control=control).code == (

@@ -70,6 +70,8 @@ _daemon_logging_install_lock = threading.RLock()
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from types import TracebackType
+    from typing import TextIO
 
 _EVENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _FIELD_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -914,7 +916,7 @@ class DaemonLogCapture:
         *,
         max_bytes: int,
         backup_count: int,
-        handler: logging.StreamHandler[Any],
+        handler: logging.StreamHandler[TextIO],
     ) -> None:
         self.log_path = log_path
         self.max_bytes = max_bytes
@@ -1233,7 +1235,7 @@ def _install_polled_access_filter() -> None:
 type EventExcInfo = (
     bool
     | BaseException
-    | tuple[type[BaseException], BaseException, Any]
+    | tuple[type[BaseException], BaseException, TracebackType | None]
     | tuple[None, None, None]
     | None
 )
