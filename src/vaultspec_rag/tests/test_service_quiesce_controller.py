@@ -153,6 +153,7 @@ def test_resume_recovery_failure_keeps_warming_closed_and_unsafe() -> None:
     with pytest.raises(QuiesceAdmissionClosedError):
         controller.acquire_ticket()
 
+
 def test_a_failed_transition_records_only_the_direction_its_caller_owns() -> None:
     """A failure report names its own transition and never the live one."""
     controller = ServiceQuiesceController()
