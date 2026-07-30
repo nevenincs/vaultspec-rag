@@ -730,6 +730,7 @@ def clean(
     | Literal[
         "vault", "code", "document", "combined", "all", "codebase", "docs"
     ] = "all",
+    registry: ServiceRegistry,
 ) -> list[str]:
     """Wipe the selected collections and their index metadata sidecars.
 
@@ -753,7 +754,7 @@ def clean(
     do_code = source_type is PublicSourceType.CODE or combined
     do_document = source_type is PublicSourceType.DOCUMENT or combined
 
-    with get_registry().lease_maintenance_store(root) as store:
+    with registry.lease_maintenance_store(root) as store:
         # Sidecars go before collections, and the ordering is load-bearing: a
         # sidecar is a breadth claim, and a crash between the two steps must
         # never leave a claim standing over data that is already gone - a
@@ -893,6 +894,7 @@ def run_benchmark(
     root_dir: pathlib.Path,
     *,
     n_queries: int = 20,
+    registry: ServiceRegistry,
 ) -> dict[str, Any]:
     """Run search latency benchmarks against the indexed vault.
 
@@ -908,7 +910,6 @@ def run_benchmark(
     import time
 
     root = _resolve(root_dir)
-    registry = get_registry()
     with registry.lease_store(root) as store:
         vault_count = store.count()
         if vault_count == 0:
@@ -992,6 +993,7 @@ def run_benchmark(
 def run_quality_probe(
     *,
     threshold: float = 0.75,
+    registry: ServiceRegistry,
 ) -> dict[str, Any]:
     """Run search quality probes against a synthetic test corpus.
 
@@ -1012,7 +1014,6 @@ def run_quality_probe(
     from .progress import NullProgressReporter
     from .synthetic import build_synthetic_vault
 
-    registry = get_registry()
     with tempfile.TemporaryDirectory(prefix="vaultspec-quality-") as tmp:
         root = Path(tmp)
         manifest = build_synthetic_vault(root, n_docs=24, seed=42)
