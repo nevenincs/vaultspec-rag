@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 
 
 def _root(ctx: typer.Context) -> Path:
+    # The root callback sets ctx.obj to a CLIState for every subcommand except
+    # server/install/uninstall (_app._configure_root_context), and preprocess
+    # is never one of those three.
     return cast("CLIState", ctx.obj).target
 
 

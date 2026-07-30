@@ -734,6 +734,9 @@ def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     breadth = request.envelope or {}
 
     if search_type is PublicSourceType.COMBINED:
+        # _run_in_process_search only returns a CombinedSearchOutcome when it
+        # dispatched on PublicSourceType.COMBINED, the same discriminant
+        # checked above, so `results` is that type here.
         outcome = cast("CombinedSearchOutcome", results)
         result_items = outcome.results
         domains = {

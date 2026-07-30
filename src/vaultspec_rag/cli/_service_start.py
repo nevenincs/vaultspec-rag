@@ -67,6 +67,7 @@ from ._render import address_line
 from ._service_lifecycle import (
     _fail_lifecycle,
     _lifecycle_success,
+    _LifecycleFailure,
     _print_lifecycle_lines,
     _process_line,
     _should_unlink_discovery_file,
@@ -240,17 +241,15 @@ class _ServiceStartCommand(TyperCommand):
         return _run_service_start(
             ctx,
             _ServiceStartOptions(
-                port=cast("int", params["port"]),
-                updates=cast("bool | None", params["updates"]),
-                update_delay_ms=cast("int | None", params["update_delay_ms"]),
-                repeat_update_delay_s=cast(
-                    "float | None", params["repeat_update_delay_s"]
-                ),
-                local_only=cast("bool", params["local_only"]),
-                qdrant=cast("bool | None", params["qdrant"]),
-                qdrant_auto_provision=cast("bool", params["qdrant_auto_provision"]),
-                no_preprocess=cast("bool", params["no_preprocess"]),
-                json_mode=cast("bool", params["json"]),
+                port=params["port"],
+                updates=params["updates"],
+                update_delay_ms=params["update_delay_ms"],
+                repeat_update_delay_s=params["repeat_update_delay_s"],
+                local_only=params["local_only"],
+                qdrant=params["qdrant"],
+                qdrant_auto_provision=params["qdrant_auto_provision"],
+                no_preprocess=params["no_preprocess"],
+                json_mode=params["json"],
             ),
         )
 
@@ -458,11 +457,13 @@ def _fail_start(
     """
     return _fail_lifecycle(
         json_mode,
-        command=_START_COMMAND,
-        error=error,
-        message=message,
-        human_lines=human_lines,
-        next_actions=next_actions,
+        _LifecycleFailure(
+            command=_START_COMMAND,
+            error=error,
+            message=message,
+            human_lines=human_lines,
+            next_actions=next_actions,
+        ),
         **data,
     )
 

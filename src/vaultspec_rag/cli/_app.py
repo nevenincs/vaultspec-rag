@@ -279,13 +279,13 @@ class _LiteralArgvGroup(TyperGroup):
         """Invoke the empty registration callback without root option kwargs."""
         params = ctx.params
         ctx.meta[_ROOT_OPTIONS_CONTEXT_KEY] = _RootOptions(
-            target=cast("Path | None", params["target"]),
-            verbose=cast("bool", params["verbose"]),
-            debug=cast("bool", params["debug"]),
-            data_dir=cast("str | None", params["data_dir"]),
-            storage_dir=cast("str | None", params["storage_dir"]),
-            status_dir=cast("str | None", params["status_dir"]),
-            log_file=cast("str | None", params["log_file"]),
+            target=params["target"],
+            verbose=params["verbose"],
+            debug=params["debug"],
+            data_dir=params["data_dir"],
+            storage_dir=params["storage_dir"],
+            status_dir=params["status_dir"],
+            log_file=params["log_file"],
         )
         ctx.params = {}
         try:

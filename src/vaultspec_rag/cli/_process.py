@@ -279,6 +279,9 @@ def _call_interruptibly[T](
         wait(_INTERRUPT_WAKE_SECONDS)
     if failure is not None:
         raise failure
+    # No exception means run() reached `outcome = work()` before done.set(),
+    # so outcome holds a real T even though the checker only sees the
+    # closure-assigned `T | None` declared above.
     return cast("T", outcome)
 
 
