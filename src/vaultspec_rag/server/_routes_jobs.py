@@ -325,6 +325,8 @@ def _job_telemetry(record: dict[str, object], name: str) -> dict[str, object] | 
     """
     raw = record.get(name)
     if isinstance(raw, dict):
+        # isinstance narrows only to dict[Unknown, Unknown]; every job record
+        # is str-keyed JSON.
         return cast("dict[str, object]", raw)
     identifier = record.get("id")
     if isinstance(identifier, str) and identifier:
