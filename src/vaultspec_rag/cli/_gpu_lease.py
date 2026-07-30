@@ -52,7 +52,7 @@ def run_with_borrowed_gpu(
     A failed pause may have reached the service even when its response did not
     return, so every pause attempt is paired with resume before a lease can be
     released.  An unacknowledged resume intentionally leaves the descriptor
-    open: S29's service heartbeat then observes OS lease loss when this process
+    open: the service's heartbeat then observes OS lease loss when this process
     exits and performs the only safe recovery.
     """
     lease = acquire_gpu_borrow_lease()
