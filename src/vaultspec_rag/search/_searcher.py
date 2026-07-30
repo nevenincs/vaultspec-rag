@@ -626,19 +626,16 @@ class VaultSearcher:
             max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
         )
         phase_started = time.perf_counter()
-        raw_results: list[dict[str, object]] = cast(
-            "list[dict[str, object]]",
-            self.store.hybrid_search(
-                HybridSearchRequest(
-                    query_vector=encoded.dense_vector,
-                    query_text=encoded.text,
-                    filters=store_filters or None,
-                    limit=fetch_limit,
-                    sparse_vector=encoded.sparse_vector,
-                    like_ids=options.like_ids,
-                    unlike_ids=options.unlike_ids,
-                )
-            ),
+        raw_results: list[dict[str, object]] = self.store.hybrid_search(
+            HybridSearchRequest(
+                query_vector=encoded.dense_vector,
+                query_text=encoded.text,
+                filters=store_filters or None,
+                limit=fetch_limit,
+                sparse_vector=encoded.sparse_vector,
+                like_ids=options.like_ids,
+                unlike_ids=options.unlike_ids,
+            )
         )
         _record_seconds(encoded.timings, PHASE_QDRANT, phase_started)
 
@@ -782,21 +779,18 @@ class VaultSearcher:
         kept: list[dict[str, object]] = []
         dropped: dict[str, int] = {}
         while True:
-            raw = cast(
-                "list[dict[str, object]]",
-                self.store.hybrid_search_codebase(
-                    HybridSearchRequest(
-                        query_vector=request.encoded.dense_vector,
-                        query_text=request.encoded.text,
-                        filters=request.store_filters or None,
-                        limit=limit,
-                        sparse_vector=request.encoded.sparse_vector,
-                        like_ids=request.options.like_ids,
-                        unlike_ids=request.options.unlike_ids,
-                        exclude_domains=pushdown_exclude,
-                        only_domains=pushdown_only,
-                    )
-                ),
+            raw = self.store.hybrid_search_codebase(
+                HybridSearchRequest(
+                    query_vector=request.encoded.dense_vector,
+                    query_text=request.encoded.text,
+                    filters=request.store_filters or None,
+                    limit=limit,
+                    sparse_vector=request.encoded.sparse_vector,
+                    like_ids=request.options.like_ids,
+                    unlike_ids=request.options.unlike_ids,
+                    exclude_domains=pushdown_exclude,
+                    only_domains=pushdown_only,
+                )
             )
             globbed = _filter_raw_codebase_results_impl(
                 raw, request.include_norm, request.exclude_norm
@@ -1147,17 +1141,14 @@ class VaultSearcher:
         fetch_limit = (
             max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
         )
-        raw_results = cast(
-            "list[dict[str, object]]",
-            self.store.hybrid_search_document(
-                HybridSearchRequest(
-                    query_vector=encoded.dense_vector,
-                    query_text=encoded.text,
-                    filters=filters or None,
-                    limit=fetch_limit,
-                    sparse_vector=encoded.sparse_vector,
-                )
-            ),
+        raw_results = self.store.hybrid_search_document(
+            HybridSearchRequest(
+                query_vector=encoded.dense_vector,
+                query_text=encoded.text,
+                filters=filters or None,
+                limit=fetch_limit,
+                sparse_vector=encoded.sparse_vector,
+            )
         )
         _record_seconds(encoded.timings, PHASE_QDRANT, phase_started)
 

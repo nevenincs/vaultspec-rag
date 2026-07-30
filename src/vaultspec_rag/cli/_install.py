@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import click
 import typer
@@ -235,27 +235,27 @@ class _InstallCommand(TyperCommand):
     def invoke(self, ctx: "ClickContext") -> None:
         """Dispatch parsed Click parameters as one install request."""
         params = ctx.params
-        mode = cast("str | None", params["mode"])
+        mode = params["mode"]
         return _run_install(
             ctx,
             _InstallOptions(
-                target=cast("Path | None", params["target"]),
-                upgrade=cast("bool", params["upgrade"]),
-                dry_run=cast("bool", params["dry_run"]),
-                force=cast("bool", params["force"]),
-                skip=cast("tuple[str, ...]", params["skip"]),
+                target=params["target"],
+                upgrade=params["upgrade"],
+                dry_run=params["dry_run"],
+                force=params["force"],
+                skip=params["skip"],
                 mode=InstallMode(mode) if mode is not None else None,
-                configure_torch=cast("bool", params["torch_config"]),
-                torch_group=cast("str | None", params["torch_group"]),
-                yes=cast("bool", params["yes"]),
-                sync_after=cast("bool", params["sync"]),
-                provision=cast("bool", params["provision"]),
-                install_mcp=cast("bool", params["mcp"]),
-                local_only=cast("bool", params["local_only"]),
-                skip_torch=cast("bool", params["skip_torch"]),
-                skip_models=cast("bool", params["skip_models"]),
-                skip_qdrant=cast("bool", params["skip_qdrant"]),
-                json_output=cast("bool", params["json"]),
+                configure_torch=params["torch_config"],
+                torch_group=params["torch_group"],
+                yes=params["yes"],
+                sync_after=params["sync"],
+                provision=params["provision"],
+                install_mcp=params["mcp"],
+                local_only=params["local_only"],
+                skip_torch=params["skip_torch"],
+                skip_models=params["skip_models"],
+                skip_qdrant=params["skip_qdrant"],
+                json_output=params["json"],
             ),
         )
 
@@ -468,13 +468,13 @@ class _UninstallCommand(TyperCommand):
         return _run_uninstall(
             ctx,
             _UninstallOptions(
-                target=cast("Path | None", params["target"]),
-                remove_data=cast("bool", params["remove_data"]),
-                dry_run=cast("bool", params["dry_run"]),
-                force=cast("bool", params["force"]),
-                skip=cast("tuple[str, ...]", params["skip"]),
-                yes=cast("bool", params["yes"]),
-                json_output=cast("bool", params["json"]),
+                target=params["target"],
+                remove_data=params["remove_data"],
+                dry_run=params["dry_run"],
+                force=params["force"],
+                skip=params["skip"],
+                yes=params["yes"],
+                json_output=params["json"],
             ),
         )
 
