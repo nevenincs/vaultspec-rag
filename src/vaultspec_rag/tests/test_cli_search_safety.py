@@ -28,6 +28,8 @@ from ._cli_helpers import (
 )
 
 if typing.TYPE_CHECKING:
+    import http.server
+    import threading
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -410,19 +412,23 @@ class TestSearchSafetyContract:
                 ],
             )
         assert result.exit_code != 0
-        data = json.loads(result.output.strip())
+        data = typing.cast("dict[str, object]", json.loads(result.output.strip()))
         assert data["ok"] is False
         assert data["error"] == "local_store_locked"
-        assert "local search index" in data["message"]
-        assert "background service" in data["message"]
-        assert "automatic index update" in data["message"]
-        remediation = data["remediation"]
+        message = data["message"]
+        assert isinstance(message, str)
+        assert "local search index" in message
+        assert "background service" in message
+        assert "automatic index update" in message
+        remediation_raw = data["remediation"]
+        assert isinstance(remediation_raw, list)
+        remediation = typing.cast("list[str]", remediation_raw)
         assert "vaultspec-rag server status" in remediation
         assert "vaultspec-rag server stop" in remediation
         assert not any("server mcp" in item.lower() for item in remediation)
-        assert "direct local-store search" not in data["message"]
-        assert "RAG service" not in data["message"]
-        assert "file watcher" not in data["message"]
+        assert "direct local-store search" not in message
+        assert "RAG service" not in message
+        assert "file watcher" not in message
 
     def test_search_mcp_timeout_diagnostics(self, tmp_path: Path):
         """A search that outlasts its bound reports http_search_timeout.
@@ -553,19 +559,31 @@ class TestSearchSafetyContract:
         result, _port = invoke_timed_out_search(tmp_path, "--json")
 
         assert result.exit_code == 1, result.output
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is False
         assert envelope["command"] == "search"
         assert envelope["error"] == "http_search_timeout"
-        assert envelope["backend_capabilities"]["same_project_search_strategy"] == (
-            "serialized"
+        backend_capabilities_raw = envelope["backend_capabilities"]
+        assert isinstance(backend_capabilities_raw, dict)
+        backend_capabilities = typing.cast(
+            "dict[str, object]", backend_capabilities_raw
         )
-        diagnostics = envelope["diagnostics"]
-        assert diagnostics["backpressure"]["same_project_search_strategy"] == (
-            "serialized"
-        )
-        assert diagnostics["health"]["status"] == "ready"
-        assert diagnostics["jobs"]["running_count"] == 0
+        assert backend_capabilities["same_project_search_strategy"] == "serialized"
+        diagnostics_raw = envelope["diagnostics"]
+        assert isinstance(diagnostics_raw, dict)
+        diagnostics = typing.cast("dict[str, object]", diagnostics_raw)
+        backpressure_raw = diagnostics["backpressure"]
+        assert isinstance(backpressure_raw, dict)
+        backpressure = typing.cast("dict[str, object]", backpressure_raw)
+        assert backpressure["same_project_search_strategy"] == "serialized"
+        health_raw = diagnostics["health"]
+        assert isinstance(health_raw, dict)
+        health = typing.cast("dict[str, object]", health_raw)
+        assert health["status"] == "ready"
+        jobs_raw = diagnostics["jobs"]
+        assert isinstance(jobs_raw, dict)
+        jobs = typing.cast("dict[str, object]", jobs_raw)
+        assert jobs["running_count"] == 0
 
 
 def _shortfall_contract_server(
@@ -573,7 +591,7 @@ def _shortfall_contract_server(
     shortfall: dict[str, object] | None,
     results: bool,
     file_shortfall: dict[str, object] | None = None,
-) -> tuple[typing.Any, typing.Any]:
+) -> tuple[http.server.HTTPServer, threading.Thread]:
     """Start a service returning one code search envelope.
 
     ``shortfall`` is placed on ``index_state`` exactly as the daemon places it,
@@ -747,8 +765,14 @@ class TestIncompleteIndexCannotAnswerSilently:
             thread.join(timeout=5)
 
         assert result.exit_code == 0, result.output
-        envelope = json.loads(result.output)
-        assert envelope["data"]["index_state"]["shortfall"] == self._SHORTFALL
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
+        data_raw = envelope["data"]
+        assert isinstance(data_raw, dict)
+        data = typing.cast("dict[str, object]", data_raw)
+        index_state_raw = data["index_state"]
+        assert isinstance(index_state_raw, dict)
+        index_state = typing.cast("dict[str, object]", index_state_raw)
+        assert index_state["shortfall"] == self._SHORTFALL
 
 
 class TestFileBreadthWarningContract:

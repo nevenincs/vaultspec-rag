@@ -251,7 +251,9 @@ class TestServerRoutingFlattened:
         try:
             _write_service_status(pid=os.getpid(), port=8766)
             sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
+            data = typing.cast(
+                "dict[str, object]", json.loads(sf.read_text(encoding="utf-8"))
+            )
             data.update(
                 {
                     "qdrant_pid": 43210,
@@ -368,7 +370,7 @@ class TestServiceLogsCli:
             reset_rag_config()
 
         assert result.exit_code == 0, result.output
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope == {
             "ok": True,
             "command": "server.logs",
@@ -704,14 +706,16 @@ class TestServiceProjectsCli:
 
         assert result.exit_code == 1, result.output
         assert requests == [{"root": r"C:\projects\example"}]
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is False
         assert envelope["command"] == "service.projects.unload"
         assert envelope["error"] == "unexpected_response"
-        assert r"C:\projects\example" in envelope["message"]
-        assert "vaultspec-rag server status" in envelope["message"]
-        assert "Eviction failed" not in envelope["message"]
-        assert "reason=" not in envelope["message"]
+        message = envelope["message"]
+        assert isinstance(message, str)
+        assert r"C:\projects\example" in message
+        assert "vaultspec-rag server status" in message
+        assert "Eviction failed" not in message
+        assert "reason=" not in message
 
 
 class TestLifecycleShutdownLog:
