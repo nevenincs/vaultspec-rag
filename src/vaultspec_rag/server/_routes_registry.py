@@ -100,7 +100,7 @@ async def start_watcher_route(request: Request) -> JSONResponse:
 
     cfg = get_config()
     target = Path(root).resolve()
-    outcome = _m._ensure_watcher(target)
+    outcome = _m._ensure_watcher(target, get_request_runtime(request).registry)
     return JSONResponse(
         {
             "root": str(target),
@@ -148,7 +148,12 @@ async def reconfigure_watcher_route(request: Request) -> JSONResponse:
     cfg = get_config()
     target = Path(root).resolve()
     _m._stop_watcher(target)
-    outcome = _m._ensure_watcher(target, debounce_ms=debounce_ms, cooldown_s=cooldown_s)
+    outcome = _m._ensure_watcher(
+        target,
+        get_request_runtime(request).registry,
+        debounce_ms=debounce_ms,
+        cooldown_s=cooldown_s,
+    )
 
     db_ms = int(debounce_ms) if debounce_ms is not None else int(cfg.watch_debounce_ms)
     db_cs = float(cooldown_s) if cooldown_s is not None else float(cfg.watch_cooldown_s)

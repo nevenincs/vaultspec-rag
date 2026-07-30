@@ -135,8 +135,10 @@ async def test_start_behind_a_draining_stop_is_not_reported_as_running(
     no watcher task exists for the root at the moment the answer is given.
     """
     root = tmp_path.resolve()
+    from ..service import ServiceRegistry
+
     async with _stop_still_draining(root):
-        outcome = server._ensure_watcher(root)
+        outcome = server._ensure_watcher(root, ServiceRegistry())
         watching = root in server._watcher_tasks
 
     assert watching is False
