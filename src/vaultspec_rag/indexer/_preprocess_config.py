@@ -411,6 +411,9 @@ def _build_rule(
         raise reject(f"'options' must contain canonical JSON values: {exc}") from exc
     if not isinstance(options_value, dict):
         raise reject("'options' must be a table")
+    # _normalize_json_option raises TypeError on any non-str mapping key
+    # (see its recursive dict branch below), so a dict survives it with
+    # str keys only.
     options = cast("dict[str, object]", options_value)
 
     return PreprocessRule(

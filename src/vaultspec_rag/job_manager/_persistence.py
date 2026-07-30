@@ -6,10 +6,11 @@ import logging
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, overload
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import EllipsisType
 
 from .. import job_persistence as _job_persistence
 from ..job_models import (
@@ -211,14 +212,25 @@ class JobManagerPersistence(JobManagerState):
         except (OSError, UnicodeError, KeyError, TypeError, ValueError) as exc:
             return self._persistence_error(command, str(exc), code="job_state_invalid")
 
+    @overload
+    def _replace_snapshot_locked(
+        self, managed: ManagedJob, transition: _SnapshotTransition, /
+    ) -> None: ...
+    @overload
+    def _replace_snapshot_locked(
+        self,
+        managed: ManagedJob,
+        transition: None = None,
+        **legacy: Unpack[_SnapshotTransitionKwargs],
+    ) -> None: ...
     def _replace_snapshot_locked(
         self,
         managed: ManagedJob,
         transition: _SnapshotTransition | None = None,
-        **legacy: object,
+        **legacy: Any,
     ) -> None:
         if transition is None:
-            transition = _SnapshotTransition(**cast("dict[str, Any]", legacy))
+            transition = _SnapshotTransition(**legacy)
         elif legacy:
             raise TypeError("use either _SnapshotTransition or named inputs")
         previous = managed.snapshot
@@ -236,7 +248,7 @@ class JobManagerPersistence(JobManagerState):
                 started_at=(
                     timestamps.started_at
                     if transition.started_at is ...
-                    else cast("float | None", transition.started_at)
+                    else transition.started_at
                 ),
                 # Admission is a per-attempt fact: any transition that
                 # rewrites the start clock (a fresh start, a requeued
@@ -249,34 +261,26 @@ class JobManagerPersistence(JobManagerState):
                 control_requested_at=(
                     timestamps.control_requested_at
                     if transition.control_requested_at is ...
-                    else cast("float | None", transition.control_requested_at)
+                    else transition.control_requested_at
                 ),
                 control_acknowledged_at=(
                     timestamps.control_acknowledged_at
                     if transition.control_acknowledged_at is ...
-                    else cast("float | None", transition.control_acknowledged_at)
+                    else transition.control_acknowledged_at
                 ),
                 finished_at=(
                     timestamps.finished_at
                     if transition.finished_at is ...
-                    else cast("float | None", transition.finished_at)
+                    else transition.finished_at
                 ),
             ),
-            result=(
-                previous.result
-                if transition.result is ...
-                else cast("str | None", transition.result)
-            ),
+            result=(previous.result if transition.result is ... else transition.result),
             error_kind=(
                 previous.error_kind
                 if transition.error_kind is ...
-                else cast("str | None", transition.error_kind)
+                else transition.error_kind
             ),
-            reuse=(
-                previous.reuse
-                if transition.reuse is ...
-                else cast("dict[str, object] | None", transition.reuse)
-            ),
+            reuse=(previous.reuse if transition.reuse is ... else transition.reuse),
         )
 
     def _get_terminal_locked(self, job_id: str) -> ManagedJob | None:
@@ -469,10 +473,31 @@ class _SnapshotTransition:
     desired_state: DesiredJobState
     now: float
     attempt: JobAttempt | None = None
-    started_at: float | object | None = ...
-    control_requested_at: float | object | None = ...
-    control_acknowledged_at: float | object | None = ...
-    finished_at: float | object | None = ...
-    result: str | object | None = ...
-    error_kind: str | object | None = ...
-    reuse: dict[str, object] | object | None = ...
+    started_at: float | EllipsisType | None = ...
+    control_requested_at: float | EllipsisType | None = ...
+    control_acknowledged_at: float | EllipsisType | None = ...
+    finished_at: float | EllipsisType | None = ...
+    result: str | EllipsisType | None = ...
+    error_kind: str | EllipsisType | None = ...
+    reuse: dict[str, object] | EllipsisType | None = ...
+
+
+class _SnapshotTransitionKwargs(TypedDict):
+    """Keyword shape accepted by ``_replace_snapshot_locked``'s legacy path.
+
+    Mirrors ``_SnapshotTransition`` field-for-field so ``Unpack`` type-checks
+    every call site against the dataclass's real field types instead of the
+    call site trusting an unchecked forward.
+    """
+
+    state: JobState
+    desired_state: DesiredJobState
+    now: float
+    attempt: NotRequired[JobAttempt | None]
+    started_at: NotRequired[float | EllipsisType | None]
+    control_requested_at: NotRequired[float | EllipsisType | None]
+    control_acknowledged_at: NotRequired[float | EllipsisType | None]
+    finished_at: NotRequired[float | EllipsisType | None]
+    result: NotRequired[str | EllipsisType | None]
+    error_kind: NotRequired[str | EllipsisType | None]
+    reuse: NotRequired[dict[str, object] | EllipsisType | None]

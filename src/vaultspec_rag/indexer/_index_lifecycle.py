@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, overload
 
 from ..logging_config import log_event
 
@@ -45,6 +45,23 @@ class IndexLifecycleRequest:
     completion_fields: Callable[[IndexResult], Mapping[str, object]] | None = None
 
 
+class _IndexLifecycleKwargs(TypedDict):
+    """Keyword shape accepted by ``run_index_lifecycle``'s legacy path.
+
+    Mirrors ``IndexLifecycleRequest`` field-for-field so ``Unpack`` type-checks
+    every call site against the request's real field types.
+    """
+
+    event_logger: logging.Logger
+    store: VaultStore
+    source: str
+    mode: str
+    clean: bool
+    root: pathlib.Path
+    run_control: RunControl
+    completion_fields: NotRequired[Callable[[IndexResult], Mapping[str, object]] | None]
+
+
 def preprocess_completion_fields(result: IndexResult) -> dict[str, object]:
     """Completion extras every domain that runs a preprocess pipeline reports.
 
@@ -59,10 +76,20 @@ def preprocess_completion_fields(result: IndexResult) -> dict[str, object]:
     }
 
 
+@overload
+def run_index_lifecycle(
+    body: Callable[[], IndexResult], request: IndexLifecycleRequest, /
+) -> IndexResult: ...
+@overload
+def run_index_lifecycle(
+    body: Callable[[], IndexResult],
+    request: None = None,
+    **legacy: Unpack[_IndexLifecycleKwargs],
+) -> IndexResult: ...
 def run_index_lifecycle(
     body: Callable[[], IndexResult],
     request: IndexLifecycleRequest | None = None,
-    **legacy: object,
+    **legacy: Any,
 ) -> IndexResult:
     """Run ``body`` as an observable, activity-stamped index run.
 
@@ -94,7 +121,7 @@ def run_index_lifecycle(
             ``failed`` event.
     """
     if request is None:
-        request = IndexLifecycleRequest(**cast("dict[str, Any]", legacy))
+        request = IndexLifecycleRequest(**legacy)
     elif legacy:
         raise TypeError("use either IndexLifecycleRequest or named inputs")
     run_fields: dict[str, object] = {
