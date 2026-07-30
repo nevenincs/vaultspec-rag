@@ -11,14 +11,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 import uvicorn
-from starlette.applications import Starlette
 from typer.testing import CliRunner
-
-import vaultspec_rag.server as server
 
 from ..cli import app
 from ..config._types import EnvVar
 from ..jobs import mapping
+from ..server import ServerRouteRuntime, create_http_app
 from ..service import ServiceRegistry
 from ..service_quiesce import QuiesceState
 from ..serviceclient._transport import _try_http_admin
@@ -66,18 +64,15 @@ def _publish_service_discovery(status_dir: Path, *, port: int) -> None:
 @contextlib.contextmanager
 def _quiesce_service(tmp_path: Path) -> Generator[tuple[int, ServiceRegistry]]:
     """Serve real authenticated quiesce routes without the daemon lifespan."""
-    from ..server._routes import ROUTES
-
     status_dir = tmp_path / "status"
-    prior_token = server._SERVICE_TOKEN
-    prior_registry = server._registry
     registry = ServiceRegistry()
     port = free_loopback_port()
-    server._SERVICE_TOKEN = _SERVICE_TOKEN
-    server._registry = registry
     route_server = uvicorn.Server(
         uvicorn.Config(
-            Starlette(routes=ROUTES),
+            create_http_app(
+                ServerRouteRuntime(token=_SERVICE_TOKEN, registry=registry),
+                lifespan=None,
+            ),
             host="127.0.0.1",
             port=port,
             log_config=None,
@@ -104,8 +99,6 @@ def _quiesce_service(tmp_path: Path) -> Generator[tuple[int, ServiceRegistry]]:
             _try_http_admin("resume_service", {}, port)
             route_server.should_exit = True
             thread.join(timeout=5)
-            server._registry = prior_registry
-            server._SERVICE_TOKEN = prior_token
             assert not thread.is_alive()
 
 
