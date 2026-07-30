@@ -21,16 +21,19 @@ from typing import TYPE_CHECKING, ClassVar, NamedTuple, cast
 from rich.cells import cell_len
 from rich.text import Text
 from textual import events, work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Static
 from textual.widgets.data_table import ColumnKey
 from textual.worker import WorkerState
 
+from .._typed_fields import str_or_empty
 from ..job_models import DesiredJobState, JobState
 from ..jobs import count, measurement
+from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_delete_job,
@@ -39,6 +42,7 @@ from ..serviceclient._transport import (
 )
 from ._cli_format import compact_duration
 from ._jobs_tui_log import JobsLogView
+from ._jobs_tui_managed_logs import ManagedLogTankView
 from ._jobs_tui_palette import (
     DARK_THEME_NAME,
     LIGHT_THEME_NAME,
@@ -67,7 +71,9 @@ from ._service_jobs_query import job_is_waiting, job_revision
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-__all__ = ["JobsTuiApp", "run_jobs_tui"]
+    from textual.screen import Screen
+
+__all__ = ["ServerWatchApp", "run_server_watch"]
 
 # Braille frames, advanced only while something is actually happening: a
 # request this view issued is outstanding, or a row's own work is moving. The
@@ -103,13 +109,23 @@ _GONE_CODES = frozenset({"job_not_found", "not_found"})
 # updates and no outcome is ever reported. That is precisely the shape of "the
 # action did nothing".
 _REFRESH_GROUP = "jobs-refresh"
+_SEARCH_ACTIVITY_GROUP = "search-activity-refresh"
 _LOG_GROUP = "jobs-log"
+_MANAGED_LOG_GROUP = "managed-log-refresh"
 _CONTROL_GROUP = "jobs-control"
 # The service header polls on its own group. Textual cancels a whole group
 # when an exclusive worker in it starts, so anything sharing a group with the
 # controls can destroy a control request before it is ever sent.
 _STATUS_GROUP = "jobs-service-status"
-_REQUEST_GROUPS = frozenset({_REFRESH_GROUP, _LOG_GROUP, _CONTROL_GROUP})
+_REQUEST_GROUPS = frozenset(
+    {
+        _REFRESH_GROUP,
+        _SEARCH_ACTIVITY_GROUP,
+        _LOG_GROUP,
+        _MANAGED_LOG_GROUP,
+        _CONTROL_GROUP,
+    }
+)
 # The service is far less volatile than the job list, so it is polled at a
 # multiple of the job interval rather than on every refresh.
 _STATUS_REFRESH_MULTIPLE = 5
@@ -136,6 +152,18 @@ _MIN_COLUMN_CELLS = 8
 # The width at or above which two panes side by side are both still readable.
 # Below it the layout shows one at a time instead of shrinking both.
 _SPLIT_MIN_CELLS = 110
+
+# The search ledger itself is bounded by the service. This is the bounded
+# operator page this screen asks it to project, independent from job and log
+# refresh limits.
+_SEARCH_ACTIVITY_LIMIT = 100
+
+_SEARCH_COLUMN_WEIGHTS: dict[str, float] = {
+    "state": 2.5,
+    "request": 3.0,
+    "query": 4.0,
+    "time": 2.5,
+}
 
 # Action name -> (capability flag the service publishes, desired state).
 # ``None`` marks an action that is not a desired-state transition.
@@ -314,13 +342,47 @@ _STATE_TONES: dict[str, tuple[str, bool]] = {
 }
 
 
+def _record_with_id(
+    records: list[dict[str, object]],
+    key: str,
+    wanted: str,
+) -> dict[str, object] | None:
+    """Return the record whose *key* equals *wanted*, or ``None``.
+
+    Both lanes resolve a selection the same way - the selected id is a value,
+    not an index, so a record that moved or vanished between refreshes simply
+    does not match. Which field carries the id is the only difference.
+    """
+    for record in records:
+        if str_or_empty(record.get(key)) == wanted:
+            return record
+    return None
+
+
 def _job_id(job: dict[str, object]) -> str:
-    identifier = job.get("id")
-    return identifier if isinstance(identifier, str) else ""
+    return str_or_empty(job.get("id"))
 
 
 def _short_id(job: dict[str, object]) -> str:
     return _job_id(job)[:8] or "unknown"
+
+
+def _search_id(search: dict[str, object]) -> str:
+    return str_or_empty(search.get("request_id"))
+
+
+def _search_text(value: object, *, fallback: str = "—") -> str:
+    """Return one printable line from an authenticated activity field."""
+    if not isinstance(value, str) or not value:
+        return fallback
+    return (
+        " ".join(
+            "".join(
+                character if character.isprintable() else " " for character in value
+            ).split()
+        )
+        or fallback
+    )
 
 
 def _capability(job: dict[str, object], flag: str) -> bool:
@@ -582,6 +644,60 @@ def _time_cell(
     return _two_line(compact_duration(job.get("runtime_seconds")), estimate, cells)
 
 
+def _search_state_cell(
+    search: dict[str, object], cells: int, tones: dict[str, str]
+) -> Text:
+    """Render lifecycle state and terminal outcome without result bodies."""
+    state = _search_text(search.get("state"), fallback="unknown")
+    outcome = _search_text(search.get("outcome"), fallback="serving")
+    tone = "good" if state == "active" else "muted"
+    if outcome in {"failed", "unavailable", "validation_rejected"}:
+        tone = "bad"
+    return _two_line(
+        state,
+        outcome,
+        cells,
+        top_style=tone_style(tones, tone, bold=state == "active"),
+    )
+
+
+def _search_request_cell(search: dict[str, object], cells: int) -> Text:
+    """Render stable request identity with type, root, and requested depth."""
+    request_id = _search_id(search) or "unknown"
+    source = _search_text(search.get("source"), fallback="source unavailable")
+    search_type = _search_text(search.get("type"), fallback="type unavailable")
+    root = _search_text(search.get("root"), fallback="root unavailable")
+    top_k = count(search.get("top_k"))
+    depth = "—" if top_k is None else str(top_k)
+    return _two_line(
+        f"{request_id[:12]} · {source}/{search_type}",
+        f"{_elide_left(root, cells)} · top {depth}",
+        cells,
+    )
+
+
+def _search_query_cell(search: dict[str, object], cells: int) -> Text:
+    """Render authenticated in-memory query text, never a result payload."""
+    query = _search_text(search.get("query"), fallback="query unavailable")
+    availability = _search_text(search.get("availability_cause"), fallback="")
+    error = _search_text(search.get("error_message"), fallback="")
+    return _two_line(query, availability or error, cells, top_style="bold")
+
+
+def _search_time_cell(search: dict[str, object], cells: int) -> Text:
+    """Render duration, status, and result count from the activity record."""
+    total = measurement(search.get("total_seconds"))
+    duration = "in progress" if total is None else compact_duration(total)
+    status = count(search.get("status_code"))
+    results = count(search.get("result_count"))
+    return _two_line(
+        duration,
+        f"HTTP {'—' if status is None else status} · "
+        f"{'—' if results is None else results} results",
+        cells,
+    )
+
+
 class _LogPane(Vertical):
     """The log pane's container, allowed to fill the screen on request.
 
@@ -593,8 +709,8 @@ class _LogPane(Vertical):
     ALLOW_MAXIMIZE: ClassVar[bool | None] = True
 
 
-class JobsTuiApp(App[None]):
-    """The live jobs interface."""
+class ServerWatchApp(App[None]):
+    """The canonical live server watch for indexing and served searches."""
 
     # Every size here is relative: fractional shares for the panes, content
     # height for the bars. Nothing is expressed as a fixed cell count, so the
@@ -613,21 +729,57 @@ class JobsTuiApp(App[None]):
     #summary { height: auto; padding: 0 1; color: $text; }
     #servicestatus { height: auto; padding: 0 1; color: $text-muted; }
     #body { height: 1fr; width: 1fr; padding: 0 1; }
+    #lanes { height: 1fr; width: 1fr; }
     #jobs { width: 1fr; height: 1fr; border: round $panel-lighten-2; }
     #jobs:focus { border: round $accent; }
+    #searchpane { width: 1fr; height: 1fr; border: round $panel-lighten-2; }
+    #searchpane:focus-within { border: round $accent; }
+    #searchtitle { height: auto; padding: 0 1; background: $panel-darken-1; }
+    #searches { height: 1fr; }
+    #searchdetail {
+        height: 6; padding: 0 1; color: $text-muted; overflow-y: auto;
+    }
     #logpane { display: none; border: round $panel-lighten-2; }
     #logpane:focus-within { border: round $accent; }
     #logtitle { height: auto; padding: 0 1; background: $panel-darken-1; }
     #joblog { height: 1fr; padding: 0 1; }
+    #managedlogpane { display: none; border: round $panel-lighten-2; }
+    #managedlogpane:focus-within { border: round $accent; }
+    #managedlogtitle { height: auto; padding: 0 1; background: $panel-darken-1; }
+    #managedlog { height: 1fr; padding: 0 1; }
 
     /* One state drives the log in both layouts, so the toggle always does
        something. Width only decides whether showing it splits the screen or
        takes it over. */
     Screen.-showlog #logpane { display: block; }
-    Screen.-wide.-showlog #jobs { width: 3fr; }
+    Screen.-wide.-showlog #lanes { width: 3fr; }
     Screen.-wide.-showlog #logpane { width: 2fr; margin-left: 1; }
-    Screen.-narrow.-showlog #jobs { display: none; }
+    Screen.-narrow.-showlog #lanes { display: none; }
     Screen.-narrow.-showlog #logpane { width: 1fr; }
+
+    /* A server watch is balanced when there is room. At narrow widths the
+       selected lane fills the body, while the header keeps both counts live. */
+    Screen.-wide #searchpane { display: block; width: 1fr; margin-left: 1; }
+    Screen.-narrow #searchpane { display: none; }
+    Screen.-narrow.-showsearch #jobs { display: none; }
+    Screen.-narrow.-showsearch #searchpane {
+        display: block; width: 1fr; margin-left: 0;
+    }
+
+    /* The jobs invocation starts focused on indexing, but its search lane is
+       still available through the same owner and preserves its own snapshot. */
+    Screen.-jobsfocused #searchpane { display: none; }
+    Screen.-jobsfocused.-showsearch #jobs { display: none; }
+    Screen.-jobsfocused.-showsearch #searchpane {
+        display: block; width: 1fr; margin-left: 0;
+    }
+
+    /* The global tank is a review mode, not a third compressed pane. Its
+       source groups need the whole body and must never be arranged into an
+       inferred cross-source event timeline. */
+    Screen.-showmanagedlogs #lanes,
+    Screen.-showmanagedlogs #logpane { display: none; }
+    Screen.-showmanagedlogs #managedlogpane { display: block; width: 1fr; }
     """
 
     # Unannotated on purpose: the base declares this class variable, and
@@ -646,6 +798,8 @@ class JobsTuiApp(App[None]):
         Binding("y", "job_retry", "Retry"),
         Binding("d", "job_delete", "Delete"),
         Binding("l", "toggle_log", "Log"),
+        Binding("s", "toggle_search", "Search"),
+        Binding("m", "toggle_managed_logs", "Managed logs"),
         Binding("z", "toggle_zoom", "Zoom"),
         Binding("ctrl+t", "toggle_theme", "Dark/light", show=False),
         Binding("x", "log_noise", "Noise"),
@@ -659,6 +813,7 @@ class JobsTuiApp(App[None]):
     # ``bindings=True`` re-evaluates ``check_action`` whenever the selection
     # moves, so the footer reflects the newly selected job's capabilities.
     selected_id: reactive[str] = reactive("", bindings=True)
+    selected_search_id: reactive[str] = reactive("", bindings=True)
 
     def __init__(
         self,
@@ -666,12 +821,18 @@ class JobsTuiApp(App[None]):
         fetch: Callable[[], dict[str, object] | None],
         port: int,
         interval: float,
+        watch_mode: str,
     ) -> None:
         super().__init__()
+        if watch_mode not in {"server", "jobs"}:
+            raise ValueError("watch_mode must be 'server' or 'jobs'")
         self._fetch = fetch
         self._port = port
         self._interval = interval
+        self._watch_mode = watch_mode
         self._jobs: list[dict[str, object]] = []
+        self._searches: list[dict[str, object]] = []
+        self._search_counts: dict[str, int] = {}
         self._pending: dict[str, _Pending] = {}
         # Rows the operator deleted, held briefly so the deletion is seen.
         self._tombstones: dict[str, _Tombstone] = {}
@@ -718,10 +879,23 @@ class JobsTuiApp(App[None]):
         # payload land after a post-mutation one and silently revert the view.
         self._generation = 0
         self._applied_generation = 0
+        self._search_activity_last_refresh: float | None = None
+        self._search_activity_error: str | None = None
+        self._search_activity_generation = 0
+        self._applied_search_activity_generation = 0
         # ``None`` until the operator chooses; the width decides until then.
         self._show_log: bool | None = None
+        self._managed_logs_last_refresh: float | None = None
+        self._managed_logs_error: str | None = None
+        # The managed-log worker is independent from jobs, but it has the
+        # same late-thread-answer hazard: a cancelled older HTTP call can
+        # still return after its replacement. Its snapshot must therefore be
+        # ordered by issue generation, not completion order.
+        self._managed_log_generation = 0
+        self._applied_managed_log_generation = 0
         self._bar_cells = 0
         self._column_cells: dict[str, int] = {}
+        self._search_column_cells: dict[str, int] = {}
         # The table width the current column shares were divided from.
         self._divided_width = 0
 
@@ -730,10 +904,20 @@ class JobsTuiApp(App[None]):
             yield Static(id="summary")
             yield ServiceStatusBar(id="servicestatus")
         with Horizontal(id="body"):
-            yield DataTable(id="jobs", cursor_type="row", zebra_stripes=True)
+            with Horizontal(id="lanes"):
+                yield DataTable(id="jobs", cursor_type="row", zebra_stripes=True)
+                with Vertical(id="searchpane"):
+                    yield Static(id="searchtitle")
+                    yield DataTable(
+                        id="searches", cursor_type="row", zebra_stripes=True
+                    )
+                    yield Static(id="searchdetail")
             with _LogPane(id="logpane"):
                 yield Static("Log", id="logtitle")
                 yield JobsLogView(id="joblog")
+            with _LogPane(id="managedlogpane"):
+                yield Static("Managed logs", id="managedlogtitle")
+                yield ManagedLogTankView(id="managedlog")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -743,7 +927,7 @@ class JobsTuiApp(App[None]):
             self.register_theme(theme)
         self.theme = DARK_THEME_NAME
         table = cast("DataTable[Text]", self.query_one("#jobs", DataTable))
-        table.border_title = "Jobs"
+        table.border_title = "Indexing jobs"
         for key, label in (
             ("state", "State"),
             ("job", "Job"),
@@ -752,6 +936,15 @@ class JobsTuiApp(App[None]):
             ("time", "Time"),
         ):
             table.add_column(label, key=key)
+        searches = cast("DataTable[Text]", self.query_one("#searches", DataTable))
+        searches.border_title = "Served searches"
+        for key, label in (
+            ("state", "State"),
+            ("request", "Request"),
+            ("query", "Query"),
+            ("time", "Time"),
+        ):
+            searches.add_column(label, key=key)
         # Status colours resolve from the active theme, so a scheme change
         # must repaint the surfaces that carry them.
         self.theme_changed_signal.subscribe(self, self._on_theme_changed)
@@ -759,16 +952,20 @@ class JobsTuiApp(App[None]):
         # dividing zero width would leave every column at its label size.
         self.call_after_refresh(self._relayout)
         # Every beat below reads or paints the screen, so the screen owns
-        # them. Shutting down removes the screen and empties the stack behind
-        # it before it stops the timers the application itself holds, so a
-        # beat owned by the application fires once more with no screen left to
-        # read - and an exception raised on a timer callback takes the whole
-        # interface down, which reads to an operator as the service having
-        # died. Removing a screen stops its timers and waits for them, so
-        # ownership here is what makes the beat end with what it paints.
+        # them - all of them, including the two later lanes. Shutting down
+        # removes the screen and empties the stack behind it before it stops
+        # the timers the application itself holds, so a beat owned by the
+        # application fires once more with no screen left to read - and an
+        # exception raised on a timer callback takes the whole interface down,
+        # which reads to an operator as the service having died. Removing a
+        # screen stops its timers and waits for them, so ownership here is
+        # what makes the beat end with what it paints.
         screen = self.screen
+        screen.set_class(self._watch_mode == "jobs", "-jobsfocused")
         screen.set_interval(_SPINNER_INTERVAL, self._tick)
         screen.set_interval(self._interval, self.refresh_jobs)
+        screen.set_interval(self._interval, self.refresh_search_activity)
+        screen.set_interval(self._interval, self.refresh_managed_logs)
         # The service itself changes far more slowly than its job list, so
         # its beat runs at a multiple of the jobs interval - but the first
         # read happens now, because the header's identity cell is empty
@@ -778,15 +975,33 @@ class JobsTuiApp(App[None]):
         )
         self.refresh_service_status()
         self.refresh_jobs()
+        self.refresh_search_activity()
+        self.refresh_managed_logs()
 
     def on_resize(self) -> None:
         """Re-divide the columns whenever the terminal changes size."""
         self._relayout()
 
     def _relayout(self) -> None:
+        if self._active_screen() is None:
+            return
         self._apply_default_log_visibility()
         if self._layout_columns() and self._jobs:
             self._render_rows()
+        if self._layout_search_columns() and self._searches:
+            self._render_searches()
+
+    def _active_screen(self) -> Screen[object] | None:
+        """Return the current screen, or ``None`` once teardown removed it.
+
+        Timers may have already queued a callback when Textual clears the
+        screen stack.  Those callbacks are presentation work only: they must
+        not turn a normal watch shutdown into an operator-visible exception.
+        """
+        try:
+            return self.screen
+        except ScreenStackError:
+            return None
 
     def _layout_columns(self) -> bool:
         """Divide the table's own reported width among the column weights.
@@ -848,20 +1063,62 @@ class JobsTuiApp(App[None]):
         """
         return bool(self.screen_stack)
 
-    def _table(self) -> DataTable[Text] | None:
-        """Return the table, or ``None`` when it is not mounted.
+    def _search_cells(self, column: str) -> int:
+        """Return the current width of a served-search column."""
+        return self._search_column_cells.get(column, 0)
 
-        Composition is not there for the whole of a request's life: one issued
-        a moment before the session ended is answered after the screen has
-        gone, and that answer arrives here. An unguarded lookup raises there,
-        and an exception on the callback delivering an answer takes the whole
-        interface down - which reads to an operator as the service having
-        died.
+    def _mounted[WidgetT: Widget](
+        self,
+        selector: str,
+        kind: type[WidgetT],
+    ) -> WidgetT | None:
+        """Return a composed widget, or ``None`` when it is not mounted.
+
+        Every pane and table on this screen is reached through here, because
+        every one of them needs the same guard, and it is needed at both ends
+        of composition. A timer can fire before the first mount completes; and
+        composition is not there for the whole of a request's life either - one
+        issued a moment before the session ended is answered after the screen
+        has gone, and that answer arrives here. An unguarded query raises in
+        both cases, and an exception on the callback takes the whole interface
+        down - which reads to an operator as the service having died.
+
         """
-        found = self.query("#jobs")
+        found = self.query(selector)
         if not found:
             return None
-        return cast("DataTable[Text]", found.only_one(DataTable))
+        return found.only_one(kind)
+
+    def _table(self) -> DataTable[Text] | None:
+        """Return the jobs table, or ``None`` when it is not mounted."""
+        return cast("DataTable[Text] | None", self._mounted("#jobs", DataTable))
+
+    def _search_table(self) -> DataTable[Text] | None:
+        """Return the served-search table, or ``None`` before composition."""
+        return cast("DataTable[Text] | None", self._mounted("#searches", DataTable))
+
+    def _layout_search_columns(self) -> bool:
+        """Divide the served-search table against its actual current width."""
+        table = self._search_table()
+        if table is None:
+            return False
+        padding = table.cell_padding * 2 * len(_SEARCH_COLUMN_WEIGHTS)
+        available = table.scrollable_content_region.width - padding
+        if available <= 0:
+            return False
+        total_weight = sum(_SEARCH_COLUMN_WEIGHTS.values())
+        changed = False
+        for key, weight in _SEARCH_COLUMN_WEIGHTS.items():
+            column = table.columns.get(ColumnKey(key))
+            if column is None:
+                continue
+            width = max(_MIN_COLUMN_CELLS, int(available * weight / total_weight))
+            if column.width != width:
+                changed = True
+            column.width = width
+            column.auto_width = False
+            self._search_column_cells[key] = width
+        return changed
 
     def _tick(self) -> None:
         """Advance whatever is genuinely moving, and nothing else.
@@ -871,6 +1128,8 @@ class JobsTuiApp(App[None]):
         ``_layout_columns`` for why the width cannot be taken from the event
         that changed it.
         """
+        if self._active_screen() is None:
+            return
         self._relayout()
         if self._expire_tombstones():
             self._render_rows()
@@ -950,6 +1209,101 @@ class JobsTuiApp(App[None]):
         """Fetch on a worker thread; the transport is blocking HTTP."""
         result = self._fetch()
         self.call_from_thread(self._apply_result, result, generation)
+
+    def refresh_search_activity(self) -> None:
+        """Issue an independent bounded served-search snapshot."""
+        self._search_activity_generation += 1
+        self._fetch_search_activity(self._search_activity_generation)
+
+    @work(thread=True, exclusive=True, group=_SEARCH_ACTIVITY_GROUP)
+    def _fetch_search_activity(self, generation: int) -> None:
+        """Read active and recent served searches through the admin boundary."""
+        result = _try_http_admin(
+            "get_search_activity",
+            {"limit": _SEARCH_ACTIVITY_LIMIT},
+            self._port,
+        )
+        self.call_from_thread(self._apply_search_activity, result, generation)
+
+    def _apply_search_activity(
+        self,
+        result: dict[str, object] | None,
+        generation: int,
+    ) -> None:
+        """Apply a newer authenticated search projection without touching jobs."""
+        if generation <= self._applied_search_activity_generation:
+            return
+        self._applied_search_activity_generation = generation
+        error = _search_activity_error(result)
+        if error is not None:
+            self._search_activity_error = error
+            self._render_search_title()
+            self._render_summary()
+            return
+        payload = cast("dict[str, object]", result)
+        active = _search_records(payload.get("active"), "active")
+        recent = _search_records(payload.get("recent"), "terminal")
+        self._searches = active + recent
+        counts = cast("dict[str, object]", payload["counts"])
+        self._search_counts = {
+            name: count(counts.get(name)) or 0 for name in ("active", "recent", "total")
+        }
+        self._search_activity_error = None
+        self._search_activity_last_refresh = time.time()
+        self._layout_search_columns()
+        self._render_searches()
+        self._render_search_title()
+        self._render_summary()
+
+    def refresh_managed_logs(self) -> None:
+        """Issue an ordered all-source log snapshot on its own worker group."""
+        self._managed_log_generation += 1
+        self._fetch_managed_logs(self._managed_log_generation)
+
+    @work(thread=True, exclusive=True, group=_MANAGED_LOG_GROUP)
+    def _fetch_managed_logs(self, generation: int) -> None:
+        """Fetch the bounded raw service and Qdrant log groups independently."""
+        result = _try_http_admin(
+            "get_logs",
+            {"lines": MAX_MANAGED_LOG_LINES, "source": "all"},
+            self._port,
+        )
+        self.call_from_thread(self._apply_managed_logs, result, generation)
+
+    def _apply_managed_logs(
+        self,
+        result: dict[str, object] | None,
+        generation: int,
+    ) -> None:
+        """Accept only the exact grouped managed-log transport contract."""
+        if generation <= self._applied_managed_log_generation:
+            return
+        self._applied_managed_log_generation = generation
+        if result is None or result.get("ok") is False:
+            self._managed_logs_error = "the service did not answer"
+            self._clear_managed_logs(
+                "Managed logs unavailable: the service did not answer."
+            )
+            return
+        groups = validate_managed_log_payload(
+            result,
+            source="all",
+            limit=MAX_MANAGED_LOG_LINES,
+            filters={},
+        )
+        if groups is None:
+            self._managed_logs_error = "the service returned an invalid response"
+            self._clear_managed_logs(
+                "Managed logs unavailable: the service returned an invalid response."
+            )
+            return
+        tank = self._managed_log_view()
+        if tank is None:
+            return
+        tank.show_groups(groups)
+        self._managed_logs_error = None
+        self._managed_logs_last_refresh = time.time()
+        self._refresh_managed_log_title()
 
     @work(thread=True, exclusive=True, group=_STATUS_GROUP)
     def refresh_service_status(self) -> None:
@@ -1228,6 +1582,161 @@ class JobsTuiApp(App[None]):
         for column, value in cells.items():
             table.update_cell(job_id, column, value)
 
+    def _render_searches(self) -> None:
+        """Render the active lane before the recent terminal lane."""
+        table = self._search_table()
+        if table is None:
+            return
+        wanted = [_search_id(search) for search in self._searches]
+        if [key.value for key in table.rows] != wanted:
+            previous = self.selected_search_id
+            cursor = table.cursor_row
+            table.clear()
+            for search in self._searches:
+                self._add_search_row(table, search)
+            if table.row_count:
+                row = (
+                    wanted.index(previous)
+                    if previous in wanted
+                    else min(max(0, cursor), table.row_count - 1)
+                )
+                table.move_cursor(row=row)
+        else:
+            for search in self._searches:
+                self._update_search_row(table, search)
+        self._sync_search_selection(table)
+
+    def _add_search_row(
+        self, table: DataTable[Text], search: dict[str, object]
+    ) -> None:
+        tones = semantic_tones(self.theme)
+        table.add_row(
+            _search_state_cell(search, self._search_cells("state"), tones),
+            _search_request_cell(search, self._search_cells("request")),
+            _search_query_cell(search, self._search_cells("query")),
+            _search_time_cell(search, self._search_cells("time")),
+            height=2,
+            key=_search_id(search),
+        )
+
+    def _update_search_row(
+        self, table: DataTable[Text], search: dict[str, object]
+    ) -> None:
+        tones = semantic_tones(self.theme)
+        cells = {
+            "state": _search_state_cell(search, self._search_cells("state"), tones),
+            "request": _search_request_cell(search, self._search_cells("request")),
+            "query": _search_query_cell(search, self._search_cells("query")),
+            "time": _search_time_cell(search, self._search_cells("time")),
+        }
+        for column, value in cells.items():
+            table.update_cell(_search_id(search), column, value)
+
+    def _sync_search_selection(self, table: DataTable[Text]) -> None:
+        if table.row_count == 0:
+            self.selected_search_id = ""
+            self._render_search_detail()
+            return
+        row = min(table.cursor_row, table.row_count - 1)
+        self.selected_search_id = list(table.rows.keys())[row].value or ""
+
+    def selected_search(self) -> dict[str, object] | None:
+        """Return the currently selected served-search activity record."""
+        return _record_with_id(self._searches, "request_id", self.selected_search_id)
+
+    def watch_selected_search_id(self, _request_id: str) -> None:
+        self._render_search_detail()
+
+    def _render_search_title(self) -> None:
+        found = self.query("#searchtitle")
+        if not found:
+            return
+        active = self._search_counts.get("active", 0)
+        recent = self._search_counts.get("recent", 0)
+        title = Text(f"Served searches · {active} active · {recent} recent")
+        if self._search_activity_last_refresh is not None:
+            stamp = time.strftime(
+                "%H:%M:%S", time.localtime(self._search_activity_last_refresh)
+            )
+            title.append(f" · refreshed {stamp}", style="dim")
+        if self._search_activity_error is not None:
+            title.append(
+                f" · {self._search_activity_error}",
+                style=semantic_tones(self.theme)["bad"],
+            )
+        title.append(" · r refreshes · s switches lane", style="dim")
+        found.only_one(Static).update(title)
+        self._render_search_detail()
+
+    def _render_search_detail(self) -> None:
+        found = self.query("#searchdetail")
+        if not found:
+            return
+        search = self.selected_search()
+        if search is None:
+            found.only_one(Static).update("No served search selected.")
+            return
+        query = _search_text(search.get("query"), fallback="query unavailable")
+        detail = Text(f"query: {query}")
+        source = _search_text(search.get("source"), fallback="source unavailable")
+        search_type = _search_text(search.get("type"), fallback="type unavailable")
+        root = _search_text(search.get("root"), fallback="root unavailable")
+        top_k = count(search.get("top_k"))
+        top_k_text = "—" if top_k is None else str(top_k)
+        detail.append(
+            f"\n{_search_id(search)} · source {source} · type {search_type}"
+            f" · root {root}"
+            f" · top_k {top_k_text}",
+            style="dim",
+        )
+        status = count(search.get("status_code"))
+        outcome = _search_text(search.get("outcome"), fallback="in progress")
+        result_count = count(search.get("result_count"))
+        status_text = "—" if status is None else str(status)
+        result_count_text = "—" if result_count is None else str(result_count)
+        total = measurement(search.get("total_seconds"))
+        total_text = "—" if total is None else compact_duration(total)
+        detail.append(
+            f"\nstate {search.get('state', '—')} · outcome {outcome}"
+            f" · status {status_text} · results {result_count_text}"
+            f" · total {total_text}",
+            style="dim",
+        )
+        started = measurement(search.get("started_at"))
+        finished = measurement(search.get("finished_at"))
+        started_text = "—" if started is None else str(started)
+        finished_text = "—" if finished is None else str(finished)
+        detail.append(
+            f"\nstarted {started_text} · finished {finished_text}",
+            style="dim",
+        )
+        timings = search.get("timings")
+        if isinstance(timings, dict) and timings:
+            measured = [
+                (str(name), measurement(value))
+                for name, value in sorted(
+                    cast("dict[object, object]", timings).items(),
+                    key=lambda item: str(item[0]),
+                )
+            ]
+            values = [
+                f"{name}={compact_duration(seconds)}"
+                for name, seconds in measured
+                if seconds is not None
+            ]
+            if values:
+                detail.append(f"\ntimings {' · '.join(values)}", style="dim")
+        availability = _search_text(search.get("availability_cause"), fallback="")
+        error_code = _search_text(search.get("error_code"), fallback="")
+        error_message = _search_text(search.get("error_message"), fallback="")
+        if availability or error_code or error_message:
+            detail.append(
+                f"\navailability {availability or '—'} · error {error_code or '—'}"
+                f" {error_message}".rstrip(),
+                style=tone_style(semantic_tones(self.theme), "bad"),
+            )
+        found.only_one(Static).update(detail)
+
     def _sync_selection(self, table: DataTable[Text]) -> None:
         if table.row_count == 0:
             self.selected_id = ""
@@ -1350,6 +1859,22 @@ class JobsTuiApp(App[None]):
                 fills[tone if tally else "muted"],
                 unicode_ok=unicode_ok,
             )
+
+    def _append_search_activity(self, line: Text, tones: dict[str, str]) -> None:
+        """Keep served-search lane counts visible even when narrow hides its table."""
+        self._append_separator(line, unicode_ok=self._unicode_glyphs())
+        if self._search_activity_error is not None:
+            line.append("search unavailable", style=tone_style(tones, "bad", bold=True))
+            return
+        if self._search_activity_last_refresh is None:
+            line.append("search loading", style="dim")
+            return
+        active = self._search_counts.get("active", 0)
+        recent = self._search_counts.get("recent", 0)
+        line.append(
+            f"search {active} active · {recent} recent",
+            style=tone_style(tones, "good", bold=active > 0),
+        )
 
     def _service_condition(self) -> str:
         """The service's condition verdict for the header pill.
@@ -1474,6 +1999,8 @@ class JobsTuiApp(App[None]):
             unicode_ok=unicode_ok,
             lead_separator=not split_before_health,
         )
+        if self._watch_mode == "server":
+            self._append_search_activity(line, tones)
         if split_before_service:
             line.append("\n")
         else:
@@ -1618,7 +2145,12 @@ class JobsTuiApp(App[None]):
         # and ``_sync_selection`` sets the id from the rows that survived. A
         # membership test here would be unreachable, and an id that did somehow
         # go stale is answered by the refusal every action already reports.
-        self.selected_id = str(event.row_key.value or "")
+        table = cast("DataTable[Text]", event.data_table)
+        if table.id == "searches":
+            self.selected_search_id = str(event.row_key.value or "")
+            return
+        if table.id == "jobs":
+            self.selected_id = str(event.row_key.value or "")
 
     def watch_selected_id(self, job_id: str) -> None:
         if not job_id:
@@ -1655,10 +2187,7 @@ class JobsTuiApp(App[None]):
 
     def _log_view(self) -> JobsLogView | None:
         """Return the log pane's body, or ``None`` when it is not mounted."""
-        found = self.query("#joblog")
-        if not found:
-            return None
-        return found.only_one(JobsLogView)
+        return self._mounted("#joblog", JobsLogView)
 
     def _refresh_log_title(self) -> None:
         """Repaint the pane's title: whose log, and what is being hidden.
@@ -1690,13 +2219,40 @@ class JobsTuiApp(App[None]):
         if log is not None:
             log.show_message(message)
 
+    def _managed_log_view(self) -> ManagedLogTankView | None:
+        """Return the global raw-log tank, or ``None`` before composition."""
+        return self._mounted("#managedlog", ManagedLogTankView)
+
+    def _refresh_managed_log_title(self) -> None:
+        """Name the raw, source-grouped view mode and its refresh contract."""
+        found = self.query("#managedlogtitle")
+        if not found:
+            return
+        title = Text("Managed log tank · raw service + qdrant")
+        if self._managed_logs_last_refresh is not None:
+            stamp = time.strftime(
+                "%H:%M:%S", time.localtime(self._managed_logs_last_refresh)
+            )
+            title.append(f" · refreshed {stamp}", style="dim")
+        if self._managed_logs_error is not None:
+            title.append(
+                f" · {self._managed_logs_error}",
+                style=semantic_tones(self.theme)["bad"],
+            )
+        title.append(" · r refreshes · m returns to watch", style="dim")
+        found.only_one(Static).update(title)
+
+    def _clear_managed_logs(self, message: str) -> None:
+        """Show a global-log fetch failure without disturbing the jobs pane."""
+        tank = self._managed_log_view()
+        if tank is not None:
+            tank.show_message(message)
+        self._refresh_managed_log_title()
+
     # -- actions ------------------------------------------------------------
 
     def selected_job(self) -> dict[str, object] | None:
-        for job in self._jobs:
-            if _job_id(job) == self.selected_id:
-                return job
-        return None
+        return _record_with_id(self._jobs, "id", self.selected_id)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Disable a row action the selected job does not permit.
@@ -1707,15 +2263,42 @@ class JobsTuiApp(App[None]):
         """
         # Named to match the override; these actions take no parameters.
         del parameters
+        if action == "toggle_search":
+            return True
         if action.startswith("log_"):
             return self._check_log_action(action)
         flag = _action_capability(action)
         if flag is None:
             return True
+        if not self._job_action_context_available():
+            return None
         job = self.selected_job()
         if job is None or not _capability(job, flag):
             return None
         return True
+
+    def _job_action_context_available(self) -> bool:
+        """Whether a job mutation still names the visible indexing lane.
+
+        A search-row selection intentionally leaves ``selected_id`` intact so
+        returning to indexing restores its row. That retained id must not turn
+        a served-search keypress into a control request for the now-hidden job.
+        The same applies to the full-height managed-log view: it preserves
+        selection for return, not for mutation while the jobs lane is absent.
+        """
+        if self._managed_log_visible():
+            return False
+        searches = self._search_table()
+        if self.focused is searches:
+            return False
+        # In jobs watch, opening search always replaces the indexing lane. In
+        # server watch it does so below the split breakpoint. Check the classes
+        # as well as ``display`` because an action may arrive in the layout turn
+        # immediately after the switch, before the widget recomputes display.
+        if self._search_visible() and (self._watch_mode == "jobs" or not self._wide()):
+            return False
+        table = self._table()
+        return table is not None and table.display
 
     def _check_log_action(self, action: str) -> bool | None:
         """Disable a log action the pane cannot take right now.
@@ -1757,6 +2340,11 @@ class JobsTuiApp(App[None]):
             return _ACTION_REASONS.get(
                 action, "The log cannot take that action right now."
             )
+        if (
+            _action_capability(action) is not None
+            and not self._job_action_context_available()
+        ):
+            return "Select an indexing job before sending a job action."
         if self.selected_job() is None:
             return "No job is selected."
         return _ACTION_REASONS.get(action, "This job cannot take that action.")
@@ -1771,9 +2359,14 @@ class JobsTuiApp(App[None]):
         """Repaint the tone-carrying surfaces under the new variant."""
         self._render_summary()
         self._render_rows()
+        self._render_searches()
+        self._render_search_title()
         log = self._log_view()
         if log is not None:
             log.repaint_theme()
+        tank = self._managed_log_view()
+        if tank is not None:
+            tank.repaint_theme()
 
     def action_toggle_zoom(self) -> None:
         """Fill the screen with the focused pane, or restore the split.
@@ -1798,6 +2391,47 @@ class JobsTuiApp(App[None]):
         self.screen.set_class(self._show_log, "-showlog")
         # The log keys gate on the pane being on screen, and the footer only
         # re-evaluates them when told to.
+        self.refresh_bindings()
+
+    def action_toggle_search(self) -> None:
+        """Select the served-search lane without replacing its snapshot."""
+        if self._managed_log_visible():
+            self.action_toggle_managed_logs()
+        if self._watch_mode == "jobs" and self._log_visible():
+            self._show_log = False
+            self.screen.set_class(False, "-showlog")
+        if self._wide() and self._watch_mode == "server":
+            table = self._search_table()
+            if table is not None:
+                table.focus()
+            self.refresh_bindings()
+            return
+        show_search = not self._search_visible()
+        self.screen.set_class(show_search, "-showsearch")
+        if show_search:
+            table = self._search_table()
+            if table is not None:
+                table.focus()
+        else:
+            table = self._table()
+            if table is not None:
+                table.focus()
+        self.refresh_bindings()
+
+    def action_toggle_managed_logs(self) -> None:
+        """Move between jobs and the full-height grouped raw-log view."""
+        show_tank = not self._managed_log_visible()
+        self.screen.set_class(show_tank, "-showmanagedlogs")
+        if show_tank:
+            self._refresh_managed_log_title()
+            tank = self._managed_log_view()
+            if tank is not None:
+                tank.focus()
+            self.refresh_managed_logs()
+        else:
+            table = self._table()
+            if table is not None:
+                table.focus()
         self.refresh_bindings()
 
     def action_log_noise(self) -> None:
@@ -1834,6 +2468,14 @@ class JobsTuiApp(App[None]):
     def _log_visible(self) -> bool:
         return self.screen.has_class("-showlog")
 
+    def _search_visible(self) -> bool:
+        if self._wide() and self._watch_mode == "server":
+            return True
+        return self.screen.has_class("-showsearch")
+
+    def _managed_log_visible(self) -> bool:
+        return self.screen.has_class("-showmanagedlogs")
+
     def _apply_default_log_visibility(self) -> None:
         """Show the log by default only where it can sit beside the table.
 
@@ -1842,14 +2484,17 @@ class JobsTuiApp(App[None]):
         operator asked for it would hide the thing they came to see. Once they
         have chosen, the choice survives every later resize.
         """
-        if self._show_log is None:
-            self.screen.set_class(self._wide(), "-showlog")
+        screen = self._active_screen()
+        if self._show_log is None and screen is not None:
+            screen.set_class(self._watch_mode == "jobs" and self._wide(), "-showlog")
 
     def _wide(self) -> bool:
         return self.screen.has_class("-wide")
 
     def action_refresh_now(self) -> None:
         self.refresh_jobs()
+        self.refresh_search_activity()
+        self.refresh_managed_logs()
 
     def action_job_pause(self) -> None:
         self._request_state("pause")
@@ -1934,8 +2579,11 @@ class JobsTuiApp(App[None]):
         a refused request that says nothing is indistinguishable from one that
         was sent and lost.
         """
-        job = self.selected_job()
         flag = _action_capability(f"job_{action}")
+        if not self._job_action_context_available():
+            self.notify(self._refusal(f"job_{action}"), severity="warning")
+            return None
+        job = self.selected_job()
         if job is None or flag is None or not _capability(job, flag):
             self.notify(self._refusal(f"job_{action}"), severity="warning")
             return None
@@ -2041,6 +2689,73 @@ def _fetch_error(result: dict[str, object] | None) -> str | None:
     return None
 
 
+def _search_activity_error(result: dict[str, object] | None) -> str | None:
+    """Return why an activity response cannot be rendered truthfully."""
+    if result is None:
+        return "served-search activity unavailable: service not reachable"
+    if result.get("ok") is False:
+        message = result.get("message")
+        return (
+            f"served-search activity unavailable: {message}"
+            if isinstance(message, str) and message
+            else "served-search activity unavailable: service reported an error"
+        )
+    return _search_activity_payload_error(result)
+
+
+def _search_activity_payload_error(result: dict[str, object]) -> str | None:
+    """Validate the bounded active/recent response envelope."""
+    active = result.get("active")
+    recent = result.get("recent")
+    counts = result.get("counts")
+    returned = result.get("returned")
+    filters = result.get("filters")
+    if not isinstance(active, list) or not isinstance(recent, list):
+        return "served-search activity unavailable: invalid record lists"
+    if not isinstance(counts, dict) or not isinstance(filters, dict):
+        return "served-search activity unavailable: invalid summary"
+    if count(returned) is None:
+        return "served-search activity unavailable: invalid returned count"
+    for name in ("active", "recent", "total"):
+        if count(cast("dict[str, object]", counts).get(name)) is None:
+            return "served-search activity unavailable: invalid counts"
+    return _search_activity_records_error(
+        cast("list[object]", active), cast("list[object]", recent)
+    )
+
+
+def _search_activity_records_error(
+    active: list[object], recent: list[object]
+) -> str | None:
+    """Validate record identity, lane, and query privacy invariants."""
+    seen: set[str] = set()
+    for records, state in ((active, "active"), (recent, "terminal")):
+        for record in records:
+            if not isinstance(record, dict):
+                return "served-search activity unavailable: invalid record"
+            entry = cast("dict[str, object]", record)
+            request_id = _search_id(entry)
+            if (
+                not request_id
+                or request_id in seen
+                or entry.get("state") != state
+                or not isinstance(entry.get("query"), str)
+            ):
+                return "served-search activity unavailable: invalid record"
+            seen.add(request_id)
+    return None
+
+
+def _search_records(raw: object, state: str) -> list[dict[str, object]]:
+    """Narrow a validated activity lane to production records."""
+    return [
+        cast("dict[str, object]", record)
+        for record in cast("list[object]", raw)
+        if isinstance(record, dict)
+        and cast("dict[str, object]", record).get("state") == state
+    ]
+
+
 def _is_gone(result: dict[str, object]) -> bool:
     """Report whether the service says the job the control named is absent."""
     return any(
@@ -2072,11 +2787,17 @@ def _log_lines(result: dict[str, object]) -> Iterable[str]:
     return lines or ["No log lines matched this job."]
 
 
-def run_jobs_tui(
+def run_server_watch(
     fetch: Callable[[], dict[str, object] | None],
     *,
     port: int,
     interval: float,
+    watch_mode: str,
 ) -> None:
-    """Run the interface until the operator leaves it."""
-    JobsTuiApp(fetch=fetch, port=port, interval=interval).run()
+    """Run the canonical server-watch application until the operator leaves it."""
+    ServerWatchApp(
+        fetch=fetch,
+        port=port,
+        interval=interval,
+        watch_mode=watch_mode,
+    ).run()

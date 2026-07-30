@@ -73,6 +73,7 @@ __all__ = [
     "_get_search_timeout",
     "_is_connection_refused",
     "_logs_route_path",
+    "_search_activity_route_path",
     "_timeout_diagnostics",
     "_try_http_admin",
     "_try_http_clean",
@@ -973,6 +974,21 @@ def _jobs_route_path(args: dict[str, Any]) -> str:
     return _bounded_route_path("/jobs", args, _JOBS_PARAMS)
 
 
+_SEARCH_ACTIVITY_PARAMS = {
+    "limit",
+    "state",
+    "type",
+    "root",
+    "request_id",
+    "since",
+}
+
+
+def _search_activity_route_path(args: dict[str, Any]) -> str:
+    """Build the bounded active/recent served-search activity route."""
+    return _bounded_route_path("/search-activity", args, _SEARCH_ACTIVITY_PARAMS)
+
+
 _STORAGE_SURVEY_PARAMS = {"status", "limit", "root", "fresh"}
 
 
@@ -988,6 +1004,7 @@ def _resolve_admin_call(
     filtered_routes = {
         "get_logs": _logs_route_path,
         "get_jobs": _jobs_route_path,
+        "get_search_activity": _search_activity_route_path,
         "get_storage_survey": _storage_survey_route_path,
     }
     filter_route = filtered_routes.get(tool_name)

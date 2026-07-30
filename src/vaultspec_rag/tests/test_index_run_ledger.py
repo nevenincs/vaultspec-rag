@@ -1268,3 +1268,148 @@ def test_carry_forward_stops_rather_than_falling_back_to_an_older_manifest(
     successor = ledger.start_generation(signature)
     assert successor.parent_generation_id is None
     assert ledger.file_states_for_paths(successor.generation_id, paths) == {}
+
+
+def test_compact_refuses_a_keep_older_than_the_newest_published_generation(
+    tmp_path: Path,
+) -> None:
+    """Compacting an older published generation must be refused.
+
+    An older keep restamps itself newest and deletes - or strands the
+    evidence of - the manifest storage actually reflects, after which the
+    next carry-forward reads stale history as current. The refusal must land
+    before any deletion, leaving the newest manifest and the scan order
+    untouched.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+
+    older = ledger.start_generation(signature)
+    digest = _digest("src/kept.py:v1")
+    ledger.record_storage_confirmed_unit(
+        older.generation_id,
+        _unit("src/kept.py", 0, 1, digest=digest),
+    )
+    ledger.record_file_state(
+        older.generation_id,
+        FileState("src/kept.py", FileStateKind.INDEXED, ContentKind.CODE, digest),
+    )
+    _publish_and_compact(ledger, older.generation_id)
+
+    # The newest generation carries the older manifest, so the older
+    # generation survives the in-order compaction as cited evidence and
+    # remains available as a stale keep.
+    newest = ledger.start_generation(signature)
+    _publish_and_compact(ledger, newest.generation_id)
+
+    with pytest.raises(RunLedgerStateError, match="newest published generation"):
+        ledger.compact(older.generation_id)
+
+    # Without the refusal this compaction deletes the uncited newest
+    # manifest and restamps the older one to the head of the carry scan, so
+    # pin that neither happened.
+    assert ledger.generation(newest.generation_id).terminal_state is (
+        RunTerminalState.SUCCEEDED
+    )
+    latest = ledger.latest_generation(
+        ContentKind.CODE, collection_identity=signature.collection_identity
+    )
+    assert latest is not None
+    assert latest.generation_id == newest.generation_id
+
+
+def test_compact_accepts_the_newest_keep_after_deferred_compaction(
+    tmp_path: Path,
+) -> None:
+    """A publication interrupted before compacting stays recoverable.
+
+    finish_generation stamps the keep, so a keep whose compaction never ran
+    is still the newest published generation: the retry is accepted, a
+    second compaction of the same keep stays legal, and a successor started
+    after the interruption carries the uncompacted manifest and compacts
+    around its own keep.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+
+    published = ledger.start_generation(signature)
+    digest = _digest("src/kept.py:v1")
+    ledger.record_storage_confirmed_unit(
+        published.generation_id,
+        _unit("src/kept.py", 0, 1, digest=digest),
+    )
+    ledger.record_file_state(
+        published.generation_id,
+        FileState("src/kept.py", FileStateKind.INDEXED, ContentKind.CODE, digest),
+    )
+    for phase in (
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        ledger.advance_finalization(published.generation_id, phase)
+    ledger.finish_generation(published.generation_id, RunTerminalState.SUCCEEDED)
+
+    reopened = RunLedger(ledger.path)
+    assert reopened.compact(published.generation_id) == 0
+    assert reopened.compact(published.generation_id) == 0
+    assert reopened.generation(published.generation_id).finalization_phase is (
+        FinalizationPhase.COMPACTED
+    )
+
+    successor = reopened.start_generation(signature)
+    assert successor.parent_generation_id == published.generation_id
+    _publish_and_compact(reopened, successor.generation_id)
+    assert reopened.generation(successor.generation_id).finalization_phase is (
+        FinalizationPhase.COMPACTED
+    )
+
+
+def test_compact_tolerates_an_updated_at_tie_with_another_publication(
+    tmp_path: Path,
+) -> None:
+    """A timestamp tie must not refuse the in-order publisher.
+
+    Two stamps taken from one coarse clock reading cannot be ordered, so the
+    guard refuses only a strictly newer publication. The tie is reachable
+    only through clock coarseness, which is why the stamp is written
+    directly rather than raced.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+
+    older = ledger.start_generation(signature)
+    digest = _digest("src/kept.py:v1")
+    ledger.record_storage_confirmed_unit(
+        older.generation_id,
+        _unit("src/kept.py", 0, 1, digest=digest),
+    )
+    ledger.record_file_state(
+        older.generation_id,
+        FileState("src/kept.py", FileStateKind.INDEXED, ContentKind.CODE, digest),
+    )
+    _publish_and_compact(ledger, older.generation_id)
+
+    newest = ledger.start_generation(signature)
+    for phase in (
+        FinalizationPhase.STALE_RECONCILED,
+        FinalizationPhase.METADATA_PUBLISHED,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    ):
+        ledger.advance_finalization(newest.generation_id, phase)
+    ledger.finish_generation(newest.generation_id, RunTerminalState.SUCCEEDED)
+
+    connection = sqlite3.connect(ledger.path)
+    connection.execute(
+        "UPDATE generations SET updated_at = "
+        "(SELECT updated_at FROM generations WHERE generation_id = ?) "
+        "WHERE generation_id = ?",
+        (older.generation_id, newest.generation_id),
+    )
+    connection.commit()
+    connection.close()
+
+    ledger.compact(newest.generation_id)
+    assert ledger.generation(newest.generation_id).finalization_phase is (
+        FinalizationPhase.COMPACTED
+    )

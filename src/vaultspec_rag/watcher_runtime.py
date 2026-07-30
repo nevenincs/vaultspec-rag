@@ -397,11 +397,11 @@ def _log_managed_transition(
             pending_paths=context.pending_count,
         )
     elif snapshot.state is JobState.SUPERSEDED:
-        # A newer job replaced this one, which is routine on a watcher that
-        # coalesces work: worth surfacing, because it tells an operator
-        # coalescing happened, but not a failure and not progress either -
-        # filing a terminal state under the progress event would be its own
-        # lie. It gets an outcome event of its own at ordinary severity.
+        # A superseded record is a resolution, not an outcome to alarm on: it
+        # is retryable-terminal history whose linked retry has since got
+        # through. Reporting it on the error channel would be backwards - the
+        # work succeeded - and it would put a routine resolution in the one
+        # place an operator greps for failures that still need them.
         log_event(
             logger,
             "service.watcher",
