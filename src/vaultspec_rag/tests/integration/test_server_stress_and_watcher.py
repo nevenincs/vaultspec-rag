@@ -183,6 +183,7 @@ async def _start_watcher(root: Path, *, cooldown: float) -> None:
     assert (
         server._ensure_watcher(
             resolved,
+            get_registry(),
             debounce_ms=50,
             cooldown_s=cooldown,
         )

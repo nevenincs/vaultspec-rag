@@ -52,7 +52,7 @@ from ..search._result_shaping import (
     PHASE_QDRANT,
     PHASE_RERANK,
 )
-from ..service import RegistryFullError
+from ..service import RegistryFullError, ServiceRegistry
 from ..service_quiesce import QuiesceAdmissionClosedError
 from ._auth import require_token
 from ._runtime import get_request_runtime
@@ -457,6 +457,7 @@ def _complete_classified_search(
     classification: SearchResponseClassification,
     *,
     facts: SearchAvailabilityRequestFacts,
+    registry: ServiceRegistry,
     total_seconds: float,
 ) -> tuple[dict[str, object], Literal[200, 503]]:
     """Complete watcher and log effects from one classification decision."""
@@ -464,7 +465,7 @@ def _complete_classified_search(
     response_status = classification.status_code
     root = facts.root
     source = facts.source
-    _m._ensure_watcher_soon(root)
+    _m._ensure_watcher_soon(root, registry)
     hits = result.get("results")
     hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
     unavailable = response_status == 503 and result.get("error") == "index_unavailable"
@@ -1034,6 +1035,7 @@ async def _execute_search_route(
             result, response_status = _complete_classified_search(
                 classification,
                 facts=availability_facts,
+                registry=registry,
                 total_seconds=total_seconds,
             )
     return SearchRouteResult(

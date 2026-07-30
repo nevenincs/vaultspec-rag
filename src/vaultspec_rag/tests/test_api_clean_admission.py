@@ -55,7 +55,7 @@ def test_clean_rejects_a_leased_warm_project_before_mutating_sidecars(
     with isolated_registry.lease(root) as leased_slot:
         assert leased_slot is warm_slot
         with pytest.raises(ProjectBusyError):
-            clean(root, clean_type="vault")
+            clean(root, clean_type="vault", registry=isolated_registry)
         assert sidecar.exists(), "busy cleanup must not erase a breadth claim"
 
     assert isolated_registry.peek_project(root) is warm_slot
@@ -74,7 +74,7 @@ def test_clean_waits_for_a_cold_store_lease_then_recreates_the_collection(
 
     def run_cleanup() -> None:
         try:
-            outcomes.append(clean(root, clean_type="vault"))
+            outcomes.append(clean(root, clean_type="vault", registry=isolated_registry))
         except BaseException as exc:
             failures.append(exc)
         finally:

@@ -1040,7 +1040,7 @@ class TestRegistryFullErrorShape:
         assert caps["local_storage_process_model"] == "exclusive"
         assert "resident vaultspec-rag service" in result["message"]
 
-    def test_ensure_watcher_uses_peek_project(self) -> None:
+    def test_ensure_watcher_uses_its_explicit_registry_for_peek_project(self) -> None:
         """_ensure_watcher must not bump ref_count on the slot.
 
         Reads the module source directly so the assertion is robust to
@@ -1048,11 +1048,12 @@ class TestRegistryFullErrorShape:
         """
         import inspect
 
-        from .. import server
+        from ..server import _watcher as watcher_lifecycle
 
-        source = inspect.getsource(server._ensure_watcher)
-        assert "_registry.peek_project" in source
-        assert "_registry.get_project" not in source
+        source = inspect.getsource(watcher_lifecycle._warm_and_publish_watcher)
+        assert "registry.peek_project" in source
+        assert "_m._registry" not in source
+        assert "registry.get_project" not in source
 
 
 class TestDaemonServesNativeRestOnly:

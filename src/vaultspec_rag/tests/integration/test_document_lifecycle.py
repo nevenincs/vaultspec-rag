@@ -20,6 +20,7 @@ from ...indexer._document_meta import (
 )
 from ...indexer._preprocess_cache import preprocess_cache_dir
 from ...progress import NullProgressReporter
+from ...registry import get_registry
 from ...store_runtime import VaultStore
 
 if TYPE_CHECKING:
@@ -131,7 +132,7 @@ def test_code_job_and_cleanup_preserve_document_state(
     finally:
         store.close()
 
-    assert clean(tmp_path, clean_type="code") == ["codebase"]
+    assert clean(tmp_path, clean_type="code", registry=get_registry()) == ["codebase"]
     reopened = VaultStore(tmp_path, embedding_dim=embedding_model.dimension)
     try:
         assert reopened.get_all_document_content_ids() == ids_before
