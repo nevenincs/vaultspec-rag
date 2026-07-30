@@ -294,7 +294,7 @@ def test_metrics_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = cast("httpx.Response", client.get("/metrics"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    response = cast("httpx.Response", client.get("/metrics"))
     assert response.status_code == 401
     payload = response.json()
     assert payload["ok"] is False
@@ -308,7 +308,7 @@ def test_metrics_route_401_with_wrong_token(
     client, _token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/metrics", headers={"Authorization": "Bearer wrong"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/metrics", headers={"Authorization": "Bearer wrong"}),
     )
     assert response.status_code == 401
 
@@ -320,7 +320,7 @@ def test_metrics_route_200_with_bearer_token(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/metrics", headers={"Authorization": f"Bearer {token}"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/metrics", headers={"Authorization": f"Bearer {token}"}),
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
@@ -335,6 +335,6 @@ def test_metrics_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = cast("httpx.Response", client.get("/metrics", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    response = cast("httpx.Response", client.get("/metrics", params={"token": token}))
     assert response.status_code == 200
     assert "vaultspec_rag_search_total 3" in response.text

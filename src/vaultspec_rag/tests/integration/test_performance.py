@@ -168,7 +168,7 @@ class TestPerformance:
         self, rag_components_full: RagComponentsWithManifest
     ):
         """Indexed count should match scannable docs with valid DocType."""
-        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.vaultcore import (
             get_doc_type,
             scan_vault,
         )
@@ -243,7 +243,7 @@ class TestPerformance:
         """
         import time
 
-        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.graph import (
             VaultGraph,
         )
 

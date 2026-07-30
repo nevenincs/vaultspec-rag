@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.manifest import (
     write_manifest,
 )
 

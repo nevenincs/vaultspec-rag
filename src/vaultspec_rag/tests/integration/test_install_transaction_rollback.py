@@ -7,13 +7,13 @@ import stat
 from pathlib import Path
 
 import pytest
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
-from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.manifest import (
     write_manifest,
 )
-from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.workspace_mode import (
     read_package_declaration,
 )
 
