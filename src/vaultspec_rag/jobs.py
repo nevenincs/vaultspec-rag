@@ -16,7 +16,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import median
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Literal, cast, get_args
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -46,7 +46,6 @@ if TYPE_CHECKING:
     import psutil
 
     from .index_profiles import SupportMeasurement
-    from .indexer import CodebaseIndexer
     from .indexer._codebase_indexer import (
         CodeIndexPreflight,
         CodeScopedPreflight,
@@ -1969,37 +1968,21 @@ def _admit_index_job(
     return manager, job_id, created
 
 
-def _code_policy_indexer(root: Path) -> CodebaseIndexer:
-    """Build a model-free indexer used only for policy preflight.
-
-    ``CodebaseIndexer.__init__`` only stores ``model``/``store`` on
-    collaborators (``CodeSupportBudget``, ``CodeConsumerPipeline``,
-    ``CodeGenerationLifecycle``) that read them lazily during an actual
-    index run; construction and the ``preflight_*`` methods this indexer is
-    ever called for never touch either. ``None`` is safe here for exactly
-    that reason.
-    """
-    from .indexer import CodebaseIndexer
-
-    resolved_root = root.resolve()
-    return CodebaseIndexer(
-        resolved_root,
-        model=cast("Any", None),
-        store=cast("Any", None),
-    )
-
-
 def validate_scoped_code_index_policy(
     root: Path,
     changed_paths: tuple[Path, ...] | frozenset[Path],
 ) -> CodeScopedPreflight:
     """Validate one exact scoped path set without a full-tree discovery."""
-    return _code_policy_indexer(root).preflight_changed_paths(changed_paths)
+    from .indexer._content_discovery import CodeContentDiscovery
+
+    return CodeContentDiscovery(root.resolve()).preflight_changed_paths(changed_paths)
 
 
 def validate_code_index_policy(root: Path) -> CodeIndexPreflight:
     """Resolve and discover code work before a job mutates durable state."""
-    return _code_policy_indexer(root).preflight_content()
+    from .indexer._content_discovery import CodeContentDiscovery
+
+    return CodeContentDiscovery(root.resolve()).preflight_content()
 
 
 def validate_code_support_profile(
@@ -2053,31 +2036,17 @@ def validate_code_job_admission(root: Path) -> CodeIndexPreflight:
     )
 
 
-def _document_policy_indexer(root: Path):
-    """Build a model-free document indexer used only for policy preflight.
-
-    ``DocumentIndexer.__init__`` only stores ``model``/``store``; every
-    attribute read against them happens lazily inside a run (``_resolve_reuse``,
-    the encode pipeline), never during construction or the ``preflight_*``
-    methods this indexer is ever called for. ``None`` is safe here for
-    exactly that reason.
-    """
-    from .indexer import DocumentIndexer
-
-    return DocumentIndexer(
-        root.resolve(),
-        model=cast("Any", None),
-        store=cast("Any", None),
-    )
-
-
 def validate_document_index_policy(
     root: Path,
     *,
     run_control: RunControl = NO_RUN_CONTROL,
 ) -> DocumentIndexPreflight:
     """Resolve and discover document work before durable mutation."""
-    return _document_policy_indexer(root).preflight_content(run_control=run_control)
+    from .indexer import DocumentIndexer
+
+    return DocumentIndexer.for_preflight(root.resolve()).preflight_content(
+        run_control=run_control
+    )
 
 
 def validate_scoped_document_index_policy(
@@ -2087,7 +2056,9 @@ def validate_scoped_document_index_policy(
     run_control: RunControl = NO_RUN_CONTROL,
 ) -> DocumentScopedPreflight:
     """Validate one exact document watcher scope without full discovery."""
-    return _document_policy_indexer(root).preflight_changed_paths(
+    from .indexer import DocumentIndexer
+
+    return DocumentIndexer.for_preflight(root.resolve()).preflight_changed_paths(
         changed_paths,
         run_control=run_control,
     )

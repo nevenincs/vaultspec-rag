@@ -8,7 +8,9 @@ lock that invariant:
 
 * importing the local-mode modules must not pull torch into ``sys.modules``
   (the import is function-local, deferred to ``load_torch``);
-* no compute module declares a module-scope ``import torch``; and
+* no compute module declares a module-scope ``import torch``;
+* the entry points that resolve index policy without a model must not load
+  torch when they run, not merely when they are imported; and
 * ``load_torch`` honours its contract on the real interpreter (returns torch
   when a CUDA device is present, raises hard otherwise) - asserted without
   mocks against whatever torch state the host actually has.
@@ -92,6 +94,84 @@ def test_compute_modules_have_no_module_scope_torch_import() -> None:
             ):
                 msg = f"{path.name}: module-scope from torch import"
                 raise AssertionError(msg)
+
+
+#: Source built inside a fresh interpreter by the preflight guard below. Every
+#: production entry point that resolves index policy without a model appears
+#: here; a new one must be added or it goes unguarded.
+_PREFLIGHT_DRIVER = """
+import pathlib, sys, tempfile
+
+from vaultspec_rag import api, jobs
+from vaultspec_rag._public_index import scan_documents
+from vaultspec_rag.indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp).resolve()
+    # The document domain admits only explicitly routed content, so without a
+    # routing rule the document preflights below would walk nothing and the
+    # guard would pass without having exercised them.
+    (root / PREPROCESS_CONFIG_FILENAME).write_text(
+        '\\nversion = 2\\n\\n[[rule]]\\npattern = "*.bin"\\n'
+        'command = "extract {path}"\\ntarget = "document"\\n'
+        'extractor_version = "1"\\n',
+        encoding="utf-8",
+    )
+    (root / "routed.bin").write_bytes(b"routed")
+    (root / "mod.py").write_text("def alpha():\\n    return 1\\n", encoding="utf-8")
+    changed = [root / "routed.bin"]
+
+    code = jobs.validate_code_index_policy(root)
+    jobs.validate_scoped_code_index_policy(root, (root / "mod.py",))
+    docs = jobs.validate_document_index_policy(root)
+    jobs.validate_scoped_document_index_policy(root, tuple(changed))
+    api._preflight_code_index(root)
+    api._preflight_document_index(root)
+    api._preflight_document_scope(root, changed)
+    scanned = scan_documents(root)
+
+    # A preflight that discovered nothing would prove nothing about the paths
+    # a real model would have been loaded on.
+    assert code.scan.files, "code preflight discovered no files"
+    assert docs.files, "document preflight discovered no files"
+    assert scanned.total_files, "document scan discovered no files"
+
+heavy = [m for m in __HEAVY_LIBS__ if m in sys.modules]
+assert not heavy, "preflight loaded " + repr(heavy)
+"""
+
+
+@pytest.mark.unit
+def test_preflight_paths_load_no_model() -> None:
+    """Resolving index policy must never load torch or a sentence transformer.
+
+    Every one of these entry points builds its discovery without a model and
+    without a store. That is the whole reason they are safe to call before a
+    job takes the GPU or the writer lock, and it is invisible to a type
+    checker: a site that started constructing a real model here would still
+    type-check, still pass its own tests, and only show up as a job that now
+    pays for a model load to answer a dry run.
+
+    Run in a fresh interpreter so a model another test already loaded into
+    this session's ``sys.modules`` cannot mask the regression.
+
+    Shown to fail by adding a function-local ``import torch`` to the model-free
+    construction path these entry points share: the driver then exits non-zero
+    on its ``preflight loaded ['torch']`` assertion. The three emptiness
+    assertions inside the driver are what stop a tree that discovered nothing
+    from passing this guard without having exercised a single preflight.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _PREFLIGHT_DRIVER.replace("__HEAVY_LIBS__", repr(_HEAVY_LIBS)),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
 
 
 @pytest.mark.unit
