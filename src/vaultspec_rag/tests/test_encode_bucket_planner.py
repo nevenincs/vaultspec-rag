@@ -117,7 +117,17 @@ class TestPlanEncodeBuckets:
         )
         # Descending input keeps every bucket's padded estimate equal to
         # its first item's estimate, so no bucket pays padding for a
-        # longer item introduced later.
+        # longer item introduced later. The exact partition is pinned
+        # rather than restated as an invariant over whatever came back: a
+        # planner that merged nothing would satisfy the per-bucket
+        # identity trivially, one bucket per item, and a planner that
+        # ignored the budget would still put the longest item first.
+        assert buckets == [
+            EncodeBucket(start=0, end=2, estimated_tokens=800),
+            EncodeBucket(start=2, end=4, estimated_tokens=726),
+            EncodeBucket(start=4, end=8, estimated_tokens=780),
+            EncodeBucket(start=8, end=10, estimated_tokens=20),
+        ]
         for bucket in buckets:
             first_estimate = max(1, -(-lengths[bucket.start] // 4))
             assert bucket.estimated_tokens == (

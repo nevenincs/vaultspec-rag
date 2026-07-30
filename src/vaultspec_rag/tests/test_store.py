@@ -119,6 +119,11 @@ class TestStoreHelpers:
         cond = result.must[0]
         assert isinstance(cond, models.FieldCondition)
         assert cond.key == "doc_type"
+        # The matched value, not just the condition's shape: a filter that
+        # carries the wrong value is still a well-formed FieldCondition on
+        # the right key, and silently returns the wrong documents.
+        assert isinstance(cond.match, models.MatchValue)
+        assert cond.match.value == "adr"
 
     def test_build_filter_multiple_conditions(self):
         """_build_filter with multiple keys should produce multiple conditions."""
@@ -157,7 +162,11 @@ class TestStoreHelpers:
         assert isinstance(result.must, list)
         cond = result.must[0]
         assert isinstance(cond, models.FieldCondition)
+        assert cond.key == "date"
         assert isinstance(cond.match, models.MatchValue)
+        # As above: the exact-match kind is only half the contract, and a
+        # wrong date reads as a correctly-shaped MatchValue.
+        assert cond.match.value == "2026-02-07"
 
     def test_build_filter_ignores_unknown_keys(self):
         """_build_filter should ignore keys not in (doc_type, feature, date)."""
@@ -498,31 +507,29 @@ class TestStoreLocalClientSerialization:
 class TestBuildCodeFilter:
     """Tests for _build_code_filter."""
 
-    def test_path_prefix_uses_match_value(self):
-        """Path ending with / should use MatchValue (KEYWORD index)."""
+    @pytest.mark.parametrize("path", ["src/", "src/main.py"])
+    def test_path_is_matched_verbatim_on_the_keyword_index(self, path: str):
+        """A path filter is an exact MatchValue whether or not it ends in ``/``.
+
+        The trailing slash is not special-cased into a prefix match: the
+        payload field is a KEYWORD index, so the value must reach Qdrant
+        unaltered. Asserting the value and not only the MatchValue kind is
+        what makes that real - a filter carrying the wrong path is a
+        perfectly well-formed MatchValue and silently returns the wrong
+        chunks.
+        """
         from qdrant_client import models
 
         from ..store_runtime import VaultStore
 
-        result = VaultStore._build_code_filter({"path": "src/"})
+        result = VaultStore._build_code_filter({"path": path})
         assert result is not None
         assert isinstance(result.must, list)
         cond = result.must[0]
         assert isinstance(cond, models.FieldCondition)
+        assert cond.key == "path"
         assert isinstance(cond.match, models.MatchValue)
-
-    def test_path_exact_uses_match_value(self):
-        """Exact path should use MatchValue."""
-        from qdrant_client import models
-
-        from ..store_runtime import VaultStore
-
-        result = VaultStore._build_code_filter({"path": "src/main.py"})
-        assert result is not None
-        assert isinstance(result.must, list)
-        cond = result.must[0]
-        assert isinstance(cond, models.FieldCondition)
-        assert isinstance(cond.match, models.MatchValue)
+        assert cond.match.value == path
 
 
 class TestQdrantServerMode:
