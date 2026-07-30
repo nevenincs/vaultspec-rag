@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from starlette.applications import Starlette
@@ -117,8 +117,8 @@ def _assert_route_creation_contract(
         include_initiator=True,
     )
     assert created.status_code == 202, created.text
-    created_payload: dict[str, Any] = created.json()
-    job = cast("dict[str, Any]", created_payload["job"])
+    created_payload: dict[str, object] = created.json()
+    job = cast("dict[str, object]", created_payload["job"])
     job_id = str(job["id"])
     assert created.headers["location"] == f"/jobs/{job_id}"
     assert job["state"] == "paused"

@@ -175,9 +175,9 @@ def test_degraded_search_vault_reports_service_down_through_the_wire(
         )
         response = _recv(shim, 3, timeout=90)
         assert "result" in response, response
-        content = cast("list[Any]", response["result"]["content"])
+        content = cast("list[object]", response["result"]["content"])
         text = " ".join(
-            str(cast("dict[str, Any]", block).get("text", ""))
+            str(cast("dict[str, object]", block).get("text", ""))
             for block in content
             if isinstance(block, dict)
         )

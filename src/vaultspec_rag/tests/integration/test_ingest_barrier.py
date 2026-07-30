@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pytest import TempPathFactory
+    from qdrant_client import QdrantClient
 
     from ..._store_models import CodeChunk, VaultChunk
     from ..._store_writes import StoreWritePolicy
@@ -224,7 +225,7 @@ class _VanishingChunkStore(VaultStore):
     the rebuild reaches its barrier.
     """
 
-    def __init__(self, root: Path, raw: Any) -> None:
+    def __init__(self, root: Path, raw: QdrantClient) -> None:
         super().__init__(root)
         self._raw_client = raw
 
@@ -258,7 +259,7 @@ class _PoisonedThroughWriterStore(VaultStore):
     idents prove the injection rode the writer, not the encoding caller.
     """
 
-    def __init__(self, root: Path, raw: Any) -> None:
+    def __init__(self, root: Path, raw: QdrantClient) -> None:
         super().__init__(root)
         self._raw_client = raw
         self.upsert_threads: list[int] = []
