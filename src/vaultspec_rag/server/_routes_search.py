@@ -940,7 +940,7 @@ async def _execute_search_route(
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
-    response_status = _search_response_status(search_request, result)
+    response_status = _search_response_status(result)
     classification = _classify_completed_search(
         result,
         search_request,
@@ -966,17 +966,15 @@ async def _execute_search_route(
     )
 
 
-def _search_response_status(
-    search_request: SearchRequest,
-    result: dict[str, object],
-) -> int:
-    """Apply the combined-search response status rule before classification."""
-    if (
-        search_request.search_type is PublicSourceType.COMBINED
-        and result.get("ok") is False
-    ):
-        return 503
-    return 200
+def _search_response_status(result: dict[str, object]) -> int:
+    """Fail the response status for any envelope that declares itself failed.
+
+    Retrieval envelopes carry no ``ok`` key, so only a failure declares one.
+    Keying the status on that declaration rather than on which failures the
+    route happens to enumerate means a newly added error envelope reports a
+    failure status the day it is written.
+    """
+    return 503 if result.get("ok") is False else 200
 
 
 def _quiesce_admission_closed_result(
@@ -1009,10 +1007,17 @@ def _classify_completed_search(
     classification: SearchResponseClassification | None,
     total_seconds: float,
 ) -> SearchResponseClassification | None:
-    """Classify an ordinary completed source search after adding route timing."""
+    """Classify an ordinary completed source search after adding route timing.
+
+    Availability classification refines a successful retrieval into an
+    index-unavailable verdict, so a failed envelope is skipped on its own
+    declaration.  Skipping on an absent ``results`` key instead would tie
+    "did this fail" to "does the payload carry hits", which silently held
+    every failure envelope at the success status.
+    """
     if (
         classification is not None
-        or "results" not in result
+        or result.get("ok") is False
         or search_request.search_type is PublicSourceType.COMBINED
     ):
         return classification
