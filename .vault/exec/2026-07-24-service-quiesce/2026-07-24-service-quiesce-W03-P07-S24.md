@@ -57,17 +57,17 @@ structured service failure verbatim in both human and JSON output.
 
 ## Outcome
 
-Not accepted yet. `0e7cce89` correctly makes pause and resume accept only
-`quiesced` and `running`, respectively, after decoding the route envelope. The
-checked-in real loopback route cases cover achieved transitions, idempotent
-transitions, a real transition conflict, and absence of discovery.
+Accepted for S24 after `de91373f` removes the in-memory source rewrite and AST
+inspection. `0e7cce89` makes pause and resume accept only `quiesced` and
+`running`, respectively, after decoding the route envelope. The reported
+CPU-only proof includes ten focused CLI and adapter tests, with the checked-in
+real loopback cases covering achieved and idempotent transitions, a real
+transition conflict, and absence of discovery.
 
 ## Notes
 
 The successful wrong-state envelope is not emitted by the current truthful
-route. The added in-memory source-rewrite and AST inspection is a forbidden
-source-mutation analogue and non-behavior proof, even though it does not write
-the source file. Remove it before accepting this Step. The exact-state condition
-then remains static, unexercised defense-in-depth under the amended W03 rule;
-do not manufacture a response to prove it. This reconciliation did not run
-tests or start a service.
+route. Its exact-state condition is static, unexercised defense-in-depth under
+the amended W03 rule; do not manufacture a response or inspect mutated source
+to prove it. The reported focused test run started no daemon lifespan, GPU, or
+Qdrant process.
