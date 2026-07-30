@@ -225,6 +225,14 @@ class TestProjectRootWireContract:
         The omitted call can return the environment workspace's content only if
         the adapter resolves and serializes that root; the explicit call can
         return the other content only if it takes precedence over the env var.
+
+        Mutation-proved in both halves against the adapter's root resolver.
+        Returning the caller's value verbatim - the empty-string fallback this
+        contract replaced - fails the omitted call with the route's own
+        ``bad_request``, which is the 400 a blank root earns. Ranking the env
+        var above the argument fails the explicit assertion below with the
+        environment workspace's content. Neither substitution is a wire
+        assertion, so do not reduce this to one call.
         """
         from ..config._types import EnvVar
         from ..mcp._tools import get_code_file
