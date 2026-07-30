@@ -20,6 +20,7 @@ from .._cli_helpers import app, runner
 
 if TYPE_CHECKING:
     from ...indexer._codebase_indexer import ContentScanResult
+    from ...indexer._content_discovery import AdmissionSample
 
 pytestmark = [pytest.mark.integration]
 
@@ -114,7 +115,7 @@ def _assert_disposition_parity(
     indexer: CodebaseIndexer,
     paths: dict[str, Path],
     full_scan: ContentScanResult,
-) -> dict[str, object]:
+) -> dict[str, AdmissionSample]:
     """Assert full-scan counts and samples match per-path classification."""
     resolved = indexer.resolve_policy_snapshot()
     dispositions = {item.path: item for item in full_scan.samples}
@@ -138,17 +139,17 @@ def _assert_disposition_parity(
         relative: (item.kind, item.admitted, item.reason)
         for relative, item in scoped_dispositions.items()
     }
-    return cast("dict[str, object]", dispositions)
+    return dispositions
 
 
-def _assert_expected_dispositions(dispositions: dict[str, object]) -> None:
+def _assert_expected_dispositions(dispositions: dict[str, AdmissionSample]) -> None:
     """Assert the representative profile and explicit-route decisions."""
-    alpha = cast("Any", dispositions["p0/alpha.py"])
-    beta = cast("Any", dispositions["p1/beta.ts"])
-    options = cast("Any", dispositions["p2/options.toml"])
-    notes = cast("Any", dispositions["p3/notes.md"])
-    schema = cast("Any", dispositions["p4/schema.xsd"])
-    workbook = cast("Any", dispositions["p5/table.xlsx"])
+    alpha = dispositions["p0/alpha.py"]
+    beta = dispositions["p1/beta.ts"]
+    options = dispositions["p2/options.toml"]
+    notes = dispositions["p3/notes.md"]
+    schema = dispositions["p4/schema.xsd"]
+    workbook = dispositions["p5/table.xlsx"]
     assert alpha.reason is AdmissionReason.SOURCE_PROFILE
     assert beta.reason is AdmissionReason.SOURCE_PROFILE
     assert options.reason is AdmissionReason.SOURCE_PROFILE_EXCLUDED
