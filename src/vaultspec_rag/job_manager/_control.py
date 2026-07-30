@@ -30,6 +30,7 @@ from ..job_models import (
 )
 from ..logging_config import log_event
 from ..service_quiesce import QuiesceState
+from ._persistence import SnapshotTransition
 from .models import (
     QuiescedDispatchClaim,
     QuiescedResumePersistence,
@@ -157,11 +158,13 @@ class JobManagerControl(JobManagerState):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.PAUSED,
-                desired_state=DesiredJobState.RUNNING,
-                now=now,
-                control_requested_at=now,
-                control_acknowledged_at=now,
+                SnapshotTransition(
+                    state=JobState.PAUSED,
+                    desired_state=DesiredJobState.RUNNING,
+                    now=now,
+                    control_requested_at=now,
+                    control_acknowledged_at=now,
+                ),
             )
             persistence_error = self._persist_locked()
             if persistence_error is not None:
@@ -199,10 +202,12 @@ class JobManagerControl(JobManagerState):
                 now = time.time()
                 self._replace_snapshot_locked(
                     managed,
-                    state=JobState.PAUSING,
-                    desired_state=DesiredJobState.RUNNING,
-                    now=now,
-                    control_requested_at=now,
+                    SnapshotTransition(
+                        state=JobState.PAUSING,
+                        desired_state=DesiredJobState.RUNNING,
+                        now=now,
+                        control_requested_at=now,
+                    ),
                 )
                 requested.append(job_id)
             if not requested:
@@ -866,10 +871,12 @@ class JobManagerControl(JobManagerState):
     ) -> JobOutcome:
         self._replace_snapshot_locked(
             managed,
-            state=JobState.PAUSED,
-            desired_state=DesiredJobState.RUNNING,
-            now=now,
-            control_acknowledged_at=now,
+            SnapshotTransition(
+                state=JobState.PAUSED,
+                desired_state=DesiredJobState.RUNNING,
+                now=now,
+                control_acknowledged_at=now,
+            ),
         )
         persistence_error = self._persist_locked()
         if persistence_error is not None:
@@ -898,15 +905,17 @@ class JobManagerControl(JobManagerState):
         )
         self._replace_snapshot_locked(
             managed,
-            state=acknowledged_state,
-            desired_state=(
-                DesiredJobState.PAUSED
-                if acknowledged_state is JobState.PAUSED
-                else DesiredJobState.CANCELLED
+            SnapshotTransition(
+                state=acknowledged_state,
+                desired_state=(
+                    DesiredJobState.PAUSED
+                    if acknowledged_state is JobState.PAUSED
+                    else DesiredJobState.CANCELLED
+                ),
+                now=now,
+                control_acknowledged_at=now,
+                finished_at=now if acknowledged_state.is_terminal else None,
             ),
-            now=now,
-            control_acknowledged_at=now,
-            finished_at=now if acknowledged_state.is_terminal else None,
         )
         if acknowledged_state.is_terminal:
             self._archive_terminal_locked(managed)
@@ -968,17 +977,19 @@ class JobManagerControl(JobManagerState):
             assign_runtime_owner(managed, UNOWNED_RUNTIME)
             self._replace_snapshot_locked(
                 managed,
-                state=terminal.state,
-                desired_state=(
-                    DesiredJobState.CANCELLED
-                    if terminal.state is JobState.CANCELLED
-                    else managed.snapshot.desired_state
+                SnapshotTransition(
+                    state=terminal.state,
+                    desired_state=(
+                        DesiredJobState.CANCELLED
+                        if terminal.state is JobState.CANCELLED
+                        else managed.snapshot.desired_state
+                    ),
+                    now=now,
+                    finished_at=now,
+                    result=terminal.result,
+                    error_kind=terminal.error_kind,
+                    reuse=terminal.reuse,
                 ),
-                now=now,
-                finished_at=now,
-                result=terminal.result,
-                error_kind=terminal.error_kind,
-                reuse=terminal.reuse,
             )
             self._archive_terminal_locked(managed)
             if terminal.state is JobState.SUCCEEDED:
@@ -1037,12 +1048,14 @@ class JobManagerControl(JobManagerState):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.FAILED,
-                desired_state=managed.snapshot.desired_state,
-                now=now,
-                finished_at=now,
-                result=result,
-                error_kind=classify_error_text(result),
+                SnapshotTransition(
+                    state=JobState.FAILED,
+                    desired_state=managed.snapshot.desired_state,
+                    now=now,
+                    finished_at=now,
+                    result=result,
+                    error_kind=classify_error_text(result),
+                ),
             )
             self._archive_terminal_locked(managed)
             persistence_error = self._persist_locked()
@@ -1223,10 +1236,12 @@ class JobManagerControl(JobManagerState):
             stamp = finished_at if finished_at is not None else time.time()
             self._replace_snapshot_locked(
                 parent,
-                state=JobState.SUPERSEDED,
-                desired_state=parent.snapshot.desired_state,
-                now=stamp,
-                finished_at=stamp,
+                SnapshotTransition(
+                    state=JobState.SUPERSEDED,
+                    desired_state=parent.snapshot.desired_state,
+                    now=stamp,
+                    finished_at=stamp,
+                ),
             )
             log_event(
                 logger,
@@ -1287,11 +1302,13 @@ class JobManagerControl(JobManagerState):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.PAUSED,
-                desired_state=DesiredJobState.PAUSED,
-                now=now,
-                control_requested_at=now,
-                control_acknowledged_at=now,
+                SnapshotTransition(
+                    state=JobState.PAUSED,
+                    desired_state=DesiredJobState.PAUSED,
+                    now=now,
+                    control_requested_at=now,
+                    control_acknowledged_at=now,
+                ),
             )
             code = "job_paused"
             status = JobOutcomeStatus.OK
@@ -1299,10 +1316,12 @@ class JobManagerControl(JobManagerState):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.PAUSING,
-                desired_state=DesiredJobState.PAUSED,
-                now=now,
-                control_requested_at=now,
+                SnapshotTransition(
+                    state=JobState.PAUSING,
+                    desired_state=DesiredJobState.PAUSED,
+                    now=now,
+                    control_requested_at=now,
+                ),
             )
             code = "pause_requested"
             status = JobOutcomeStatus.ACCEPTED
@@ -1342,11 +1361,13 @@ class JobManagerControl(JobManagerState):
                 # and the finished attempt queues reconciliation.
                 self._replace_snapshot_locked(
                     managed,
-                    state=JobState.RUNNING,
-                    desired_state=DesiredJobState.RUNNING,
-                    now=now,
-                    control_requested_at=None,
-                    control_acknowledged_at=None,
+                    SnapshotTransition(
+                        state=JobState.RUNNING,
+                        desired_state=DesiredJobState.RUNNING,
+                        now=now,
+                        control_requested_at=None,
+                        control_acknowledged_at=None,
+                    ),
                 )
                 code = "pause_withdrawal_pending"
             else:
@@ -1356,9 +1377,11 @@ class JobManagerControl(JobManagerState):
                 # transient paused state.
                 self._replace_snapshot_locked(
                     managed,
-                    state=JobState.PAUSING,
-                    desired_state=DesiredJobState.RUNNING,
-                    now=now,
+                    SnapshotTransition(
+                        state=JobState.PAUSING,
+                        desired_state=DesiredJobState.RUNNING,
+                        now=now,
+                    ),
                 )
         else:
             return self._error(
@@ -1381,9 +1404,11 @@ class JobManagerControl(JobManagerState):
     ) -> _job_persistence.PersistenceWriteError | None:
         self._replace_snapshot_locked(
             managed,
-            state=JobState.PAUSING,
-            desired_state=DesiredJobState.RUNNING,
-            now=time.time(),
+            SnapshotTransition(
+                state=JobState.PAUSING,
+                desired_state=DesiredJobState.RUNNING,
+                now=time.time(),
+            ),
         )
         return self._persist_locked()
 
@@ -1396,18 +1421,20 @@ class JobManagerControl(JobManagerState):
         previous_attempt = managed.snapshot.attempt.number
         self._replace_snapshot_locked(
             managed,
-            state=JobState.QUEUED,
-            desired_state=DesiredJobState.RUNNING,
-            now=now,
-            attempt=JobAttempt(
-                number=previous_attempt + 1,
-                parent_job_id=managed.snapshot.attempt.parent_job_id,
-                resumed_from_attempt=previous_attempt,
-                resume_strategy=ResumeStrategy.RECONCILE,
+            SnapshotTransition(
+                state=JobState.QUEUED,
+                desired_state=DesiredJobState.RUNNING,
+                now=now,
+                attempt=JobAttempt(
+                    number=previous_attempt + 1,
+                    parent_job_id=managed.snapshot.attempt.parent_job_id,
+                    resumed_from_attempt=previous_attempt,
+                    resume_strategy=ResumeStrategy.RECONCILE,
+                ),
+                started_at=None,
+                control_requested_at=None,
+                control_acknowledged_at=None,
             ),
-            started_at=None,
-            control_requested_at=None,
-            control_acknowledged_at=None,
         )
 
     def _request_cancel_locked(
@@ -1420,12 +1447,14 @@ class JobManagerControl(JobManagerState):
         if state.is_idle:
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.CANCELLED,
-                desired_state=DesiredJobState.CANCELLED,
-                now=now,
-                control_requested_at=now,
-                control_acknowledged_at=now,
-                finished_at=now,
+                SnapshotTransition(
+                    state=JobState.CANCELLED,
+                    desired_state=DesiredJobState.CANCELLED,
+                    now=now,
+                    control_requested_at=now,
+                    control_acknowledged_at=now,
+                    finished_at=now,
+                ),
             )
             self._archive_terminal_locked(managed)
             status = JobOutcomeStatus.OK
@@ -1433,10 +1462,12 @@ class JobManagerControl(JobManagerState):
         elif state in {JobState.RUNNING, JobState.PAUSING}:
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.CANCELLING,
-                desired_state=DesiredJobState.CANCELLED,
-                now=now,
-                control_requested_at=now,
+                SnapshotTransition(
+                    state=JobState.CANCELLING,
+                    desired_state=DesiredJobState.CANCELLED,
+                    now=now,
+                    control_requested_at=now,
+                ),
             )
             status = JobOutcomeStatus.ACCEPTED
             code = "cancellation_requested"

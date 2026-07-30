@@ -18,6 +18,7 @@ from ..job_models import (
     ProcessResourceSnapshot,
 )
 from ..service_quiesce import QuiesceAdmissionClosedError
+from ._persistence import SnapshotTransition
 from .state import (
     JobManagerState,
     JobRuntimeOwner,
@@ -93,10 +94,12 @@ class JobManagerProgress(JobManagerState):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.RUNNING,
-                desired_state=DesiredJobState.RUNNING,
-                now=now,
-                started_at=now,
+                SnapshotTransition(
+                    state=JobState.RUNNING,
+                    desired_state=DesiredJobState.RUNNING,
+                    now=now,
+                    started_at=now,
+                ),
             )
             persistence_error = self._persist_locked()
             if persistence_error is not None:

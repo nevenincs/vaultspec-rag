@@ -6,7 +6,7 @@ import logging
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, overload
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -88,12 +88,14 @@ class JobManagerPersistence(JobManagerState):
             self._active[snapshot.id] = managed
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.INTERRUPTED,
-                desired_state=snapshot.desired_state,
-                now=now,
-                finished_at=now,
-                result="The service stopped before the attempt acknowledged.",
-                error_kind="interrupted",
+                SnapshotTransition(
+                    state=JobState.INTERRUPTED,
+                    desired_state=snapshot.desired_state,
+                    now=now,
+                    finished_at=now,
+                    result="The service stopped before the attempt acknowledged.",
+                    error_kind="interrupted",
+                ),
             )
             self._archive_terminal_locked(managed)
             return
@@ -212,27 +214,18 @@ class JobManagerPersistence(JobManagerState):
         except (OSError, UnicodeError, KeyError, TypeError, ValueError) as exc:
             return self._persistence_error(command, str(exc), code="job_state_invalid")
 
-    @overload
     def _replace_snapshot_locked(
-        self, managed: ManagedJob, transition: _SnapshotTransition, /
-    ) -> None: ...
-    @overload
-    def _replace_snapshot_locked(
-        self,
-        managed: ManagedJob,
-        transition: None = None,
-        **legacy: Unpack[_SnapshotTransitionKwargs],
-    ) -> None: ...
-    def _replace_snapshot_locked(
-        self,
-        managed: ManagedJob,
-        transition: _SnapshotTransition | None = None,
-        **legacy: Any,
+        self, managed: ManagedJob, transition: SnapshotTransition, /
     ) -> None:
-        if transition is None:
-            transition = _SnapshotTransition(**legacy)
-        elif legacy:
-            raise TypeError("use either _SnapshotTransition or named inputs")
+        """Advance one job to its next revision under the manager lock.
+
+        Args:
+            managed: The job whose snapshot this revision replaces.
+            transition: The next state, its desired state, the stamp the
+                revision carries, and the optional attempt, clocks and
+                outcome fields. A clock left unset keeps its previous
+                value; passing ``None`` clears it.
+        """
         previous = managed.snapshot
         timestamps = previous.timestamps
         managed.snapshot = replace(
@@ -468,7 +461,15 @@ class _PendingProgressFlush:
 
 
 @dataclass(frozen=True, slots=True)
-class _SnapshotTransition:
+class SnapshotTransition:
+    """Everything one snapshot revision needs beyond the job it replaces.
+
+    One grouped shape rather than a spread of keywords, so a transition that
+    gains an input gains it here and every call site is re-checked against
+    the field's real type. The clock and outcome fields default to ellipsis
+    meaning "carry the previous value forward"; ``None`` clears instead.
+    """
+
     state: JobState
     desired_state: DesiredJobState
     now: float
@@ -480,24 +481,3 @@ class _SnapshotTransition:
     result: str | EllipsisType | None = ...
     error_kind: str | EllipsisType | None = ...
     reuse: dict[str, object] | EllipsisType | None = ...
-
-
-class _SnapshotTransitionKwargs(TypedDict):
-    """Keyword shape accepted by ``_replace_snapshot_locked``'s legacy path.
-
-    Mirrors ``_SnapshotTransition`` field-for-field so ``Unpack`` type-checks
-    every call site against the dataclass's real field types instead of the
-    call site trusting an unchecked forward.
-    """
-
-    state: JobState
-    desired_state: DesiredJobState
-    now: float
-    attempt: NotRequired[JobAttempt | None]
-    started_at: NotRequired[float | EllipsisType | None]
-    control_requested_at: NotRequired[float | EllipsisType | None]
-    control_acknowledged_at: NotRequired[float | EllipsisType | None]
-    finished_at: NotRequired[float | EllipsisType | None]
-    result: NotRequired[str | EllipsisType | None]
-    error_kind: NotRequired[str | EllipsisType | None]
-    reuse: NotRequired[dict[str, object] | EllipsisType | None]
