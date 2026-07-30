@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    import ctypes
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ _ERROR_ACCESS_DENIED = 5
 _STILL_ACTIVE = 259
 
 
-def win_kernel32() -> Any:
+def win_kernel32() -> ctypes.WinDLL:
     """Return ``kernel32`` with its process-handle signatures declared once.
 
     ``ctypes.windll.kernel32`` is a process-global cache shared by every module
@@ -437,7 +438,7 @@ def pid_listens_on_loopback_port(
     )
 
 
-class _ProcessInfo(Mapping[str, Any]):
+class _ProcessInfo(Mapping[str, object]):
     """One process's requested attributes, read ON DEMAND and cached per read.
 
     Attribute cost is wildly uneven on Windows, and the spread is what makes
@@ -463,16 +464,16 @@ class _ProcessInfo(Mapping[str, Any]):
     def __init__(self, process: Any, attrs: tuple[str, ...]) -> None:
         self._process = process
         self._attrs = attrs
-        self._values: dict[str, Any] = {}
+        self._values: dict[str, object] = {}
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> object:
         if key not in self._attrs:
             raise KeyError(key)
         if key not in self._values:
             self._values[key] = self._read(key)
         return self._values[key]
 
-    def _read(self, key: str) -> Any:
+    def _read(self, key: str) -> object:
         import psutil
 
         try:
@@ -490,7 +491,7 @@ class _ProcessInfo(Mapping[str, Any]):
         return len(self._attrs)
 
 
-def iter_process_info(attrs: list[str]) -> Iterator[Mapping[str, Any]]:
+def iter_process_info(attrs: list[str]) -> Iterator[Mapping[str, object]]:
     """Yield a lazy attribute view for every process this one can inspect.
 
     Each yielded mapping reads an attribute only when the caller asks for it

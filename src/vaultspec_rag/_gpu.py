@@ -21,7 +21,10 @@ raise, so they keep their own guarded function-local import and do not call
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 __all__ = [
     "CUDA_REQUIRED_MESSAGE",
@@ -52,7 +55,7 @@ def is_cuda_out_of_memory(exc: BaseException) -> bool:
     return isinstance(exc, torch.cuda.OutOfMemoryError)
 
 
-def load_torch() -> Any:
+def load_torch() -> ModuleType:
     """Import torch for a local-mode compute path, asserting CUDA, or fail hard.
 
     The single gate every local-mode torch *compute* load must pass through.
@@ -73,7 +76,7 @@ def load_torch() -> Any:
     return admit_gpu_load(_import_torch_for_compute)
 
 
-def _import_torch_for_compute() -> Any:
+def _import_torch_for_compute() -> ModuleType:
     """Import torch, require a CUDA device, and apply the process allocator cap.
 
     The load itself, separated from the admission that precedes it so the two
