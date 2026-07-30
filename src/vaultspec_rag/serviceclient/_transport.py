@@ -1431,7 +1431,7 @@ def _validate_search_request(
         return None, refusal
     try:
         validate_search_filters(
-            cast("Any", source.value),
+            source.value,
             SearchFilterOptions(
                 language=request.language,
                 path=request.path,
