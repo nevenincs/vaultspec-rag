@@ -32,6 +32,7 @@ from textual.worker import WorkerState
 from ..job_models import DesiredJobState, JobState
 from ..jobs import count, mapping, measurement, text
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
+from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_delete_job,
@@ -117,23 +118,6 @@ _CONTROL_GROUP = "jobs-control"
 # controls can destroy a control request before it is ever sent.
 _STATUS_GROUP = "jobs-service-status"
 
-_CANONICAL_QUIESCE_FIELDS = frozenset(
-    {
-        "state",
-        "admission_epoch",
-        "admissions_open",
-        "active_compute_tickets",
-        "drain_complete",
-        "vram_released",
-        "safe_to_borrow_gpu",
-        "pause_requested_at",
-        "drain_acknowledged_at",
-        "quiesced_at",
-        "warming_started_at",
-        "failure_reason",
-    }
-)
-
 _REQUEST_GROUPS = frozenset(
     {
         _REFRESH_GROUP,
@@ -157,7 +141,7 @@ def _canonical_quiesce_block(raw: object) -> object | None:
     the canonical shape is therefore shown as unavailable rather than safe.
     """
     block = mapping(raw)
-    if frozenset(block) != _CANONICAL_QUIESCE_FIELDS:
+    if frozenset(block) != QUIESCE_ENVELOPE_FIELDS:
         return None
     return block
 
