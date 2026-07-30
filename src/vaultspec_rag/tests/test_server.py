@@ -899,10 +899,22 @@ class TestHealthHandler:
             lifespan=None,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
-        resp: httpx.Response = client.get("/health")
-        data: dict[str, object] = cast("dict[str, object]", resp.json())
-        assert data["status"] == "error"
-        assert data["models_loaded"] is False
+        # A fresh registry is not enough: the not-started verdict reads a
+        # reassigned process global that lifespan startup stamps once and
+        # never clears, so any earlier test that ran a lifespan leaves this
+        # asserting the opposite of what it names. The isolation the
+        # docstring claims has to cover that global too.
+        from .. import server as _m
+
+        prior_start_time = _m._start_time
+        _m._start_time = 0.0
+        try:
+            resp: httpx.Response = client.get("/health")
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
+            assert data["status"] == "error"
+            assert data["models_loaded"] is False
+        finally:
+            _m._start_time = prior_start_time
 
 
 class TestHealthInfoReduction:
