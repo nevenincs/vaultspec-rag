@@ -341,6 +341,7 @@ def _assert_mcp_job_snapshot(
         "gpu",
         "pressure",
         "device_load",
+        "quiesce",
     }
     jobs: list[Any] = result["jobs"]
     assert isinstance(jobs, list)
@@ -369,6 +370,13 @@ def _assert_mcp_job_snapshot(
     assert isinstance(entry["runtime"]["pid"], int)
     assert isinstance(entry["runtime"]["user"], str)
     assert isinstance(entry["resources"]["started"]["rss_mib"], float)
+    # The key set above is exact, so a new key has to arrive with a reader or
+    # it is a contract nobody checks. Quiesce rides the listing for the same
+    # reason gpu/pressure/device_load do: a header shows whether the card is
+    # admitting work without spending a second request to find out.
+    quiesce: dict[str, Any] = result["quiesce"]
+    assert quiesce["state"] == "running"
+    assert quiesce["admissions_open"] is True
 
 
 async def _assert_cli_job_attribution(
