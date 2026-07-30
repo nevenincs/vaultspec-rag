@@ -3,11 +3,29 @@
 from __future__ import annotations
 
 import socket
+from typing import TYPE_CHECKING
 
 import pytest
 
+from .._source_types import PublicSourceType
+from .._store_locks import VaultStoreLockedError
 from ..mcp._tools import _search_envelope_or_raise
+from ..server import (
+    _local_store_locked_error_dict,
+    _registry,
+    _registry_full_error_dict,
+)
+from ..server._routes_search import (
+    SearchAvailabilityContext,
+    SearchRequest,
+    _classify_completed_search,
+    _search_response_status,
+)
+from ..service import RegistryFullError
 from ..serviceclient._transport import _search_response_envelope, _try_http_search
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -92,6 +110,94 @@ def test_refused_search_connection_remains_unreachable() -> None:
 def test_mcp_rejects_malformed_search_envelopes(result: object) -> None:
     with pytest.raises(RuntimeError, match=r"^invalid_service_response:"):
         _search_envelope_or_raise(result)
+
+
+def _status_contract_request(root: Path) -> SearchRequest:
+    return SearchRequest(
+        root=root,
+        query="response status contract",
+        top_k=3,
+        payload={},
+        search_type=PublicSourceType.VAULT,
+        request_id="response-status-contract",
+    )
+
+
+def _status_contract_context(root: Path) -> SearchAvailabilityContext:
+    return SearchAvailabilityContext(
+        job_snapshot_before=[],
+        root=root,
+        source="vault",
+        request_id="response-status-contract",
+        port=None,
+    )
+
+
+class TestSearchResponseStatus:
+    """Retryable admission failures must not reach the wire as success."""
+
+    def test_registry_full_envelope_reports_service_unavailable(self) -> None:
+        envelope: dict[str, object] = _registry_full_error_dict(
+            RegistryFullError(_registry.max_projects)
+        )
+
+        assert envelope["ok"] is False
+        assert _search_response_status(envelope) == 503
+
+    def test_local_store_locked_envelope_reports_service_unavailable(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        db_path = tmp_path / ".vault" / "data" / "search-data" / "qdrant"
+        envelope: dict[str, object] = _local_store_locked_error_dict(
+            VaultStoreLockedError(str(db_path))
+        )
+
+        assert envelope["ok"] is False
+        assert _search_response_status(envelope) == 503
+
+    def test_retrieval_envelope_keeps_the_success_status(self) -> None:
+        envelope: dict[str, object] = {"results": [], "summary": "no results"}
+
+        assert _search_response_status(envelope) == 200
+
+    def test_failure_status_does_not_depend_on_a_missing_results_key(self) -> None:
+        """Status follows the failure declaration, not the payload's shape."""
+        envelope: dict[str, object] = {
+            "ok": False,
+            "error": "registry_full",
+            "message": "every slot is busy",
+            "results": [],
+        }
+
+        assert _search_response_status(envelope) == 503
+
+
+class TestCompletedSearchClassificationSkip:
+    """Availability classification refines retrieval, never a failed envelope."""
+
+    def test_failed_envelope_carrying_results_is_not_classified(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A failure that carries hits is still a failure, not a 200 to refine."""
+        envelope: dict[str, object] = {
+            "ok": False,
+            "error": "local_store_locked",
+            "message": "the local index is already open",
+            "results": [{"id": "doc-1", "score": 0.75}],
+        }
+
+        classification = _classify_completed_search(
+            envelope,
+            _status_contract_request(tmp_path),
+            _status_contract_context(tmp_path),
+            None,
+            0.0,
+        )
+
+        assert classification is None
+        assert "request_id" not in envelope
 
 
 def test_mcp_preserves_structured_error_remediation() -> None:

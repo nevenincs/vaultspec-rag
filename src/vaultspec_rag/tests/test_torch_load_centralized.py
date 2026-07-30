@@ -39,6 +39,7 @@ _LOCAL_MODE_MODULES = (
     "vaultspec_rag.api",
     "vaultspec_rag.store_runtime",
     "vaultspec_rag._gpu",
+    "vaultspec_rag._gpu_admission",
 )
 
 # Compute modules whose torch import must never sit at module scope.
@@ -47,6 +48,7 @@ _COMPUTE_MODULE_FILES = (
     _PKG_ROOT / "service.py",
     _PKG_ROOT / "search" / "_searcher.py",
     _PKG_ROOT / "_gpu.py",
+    _PKG_ROOT / "_gpu_admission.py",
 )
 
 _HEAVY_LIBS = ("torch", "sentence_transformers")
@@ -100,6 +102,14 @@ def test_load_torch_contract_holds_for_the_real_interpreter() -> None:
     a CPU-only torch build raises ``RuntimeError``; absent torch raises
     ``ImportError``. Together across environments this covers both the success
     and the fail-hard branches of the single centralized gate.
+
+    A CUDA device present but too contended to hold a model stack is the fourth
+    real state, and the gate refuses it. Which of the two CUDA states this host
+    is in cannot be decided before the call - a sibling consumer can fill the
+    card in the interval, and refusing then is the gate working - so both are
+    accepted here while everything else stays a failure: another exception type,
+    a refusal that is not the contention one, or anything returned that is not
+    the torch module.
     """
     from .._gpu import load_torch
 
@@ -110,11 +120,17 @@ def test_load_torch_contract_holds_for_the_real_interpreter() -> None:
 
     import torch
 
-    if torch.cuda.is_available():
-        assert load_torch() is torch
-    else:
+    if not torch.cuda.is_available():
         with pytest.raises(RuntimeError):
             load_torch()
+        return
+
+    try:
+        loaded = load_torch()
+    except RuntimeError as exc:
+        assert "too contended" in str(exc), exc
+        return
+    assert loaded is torch
 
 
 @pytest.mark.cuda

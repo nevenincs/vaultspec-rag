@@ -42,8 +42,8 @@ def _evidence(
         "gpu": {
             "available": True,
             "utilization_percent": 100.0,
-            "memory_used_mb": 15486.0,
-            "memory_total_mb": 16376.0,
+            "memory_used_mib": 15486.0,
+            "memory_total_mib": 16376.0,
         },
         "backend": {
             "alive": backend_alive,
@@ -172,8 +172,8 @@ def _cpu_phase_evidence(
         "gpu": {
             "available": True,
             "utilization_percent": 2.0,
-            "memory_used_mb": 4915.0,
-            "memory_total_mb": 16376.0,
+            "memory_used_mib": 4915.0,
+            "memory_total_mib": 16376.0,
         },
         "backend": {"alive": True, "latency_seconds": 0.4, "detail": None},
     }

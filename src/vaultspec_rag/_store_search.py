@@ -83,6 +83,10 @@ class _VaultSearchMixin:
 
         def ensure_document_table(self) -> None: ...
 
+        def _reconcile_for_read(
+            self, collection: str, ensure: Callable[[], None]
+        ) -> bool: ...
+
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
         @staticmethod
@@ -198,12 +202,16 @@ class _VaultSearchMixin:
             doc_id: Document stem from a prior search result.
 
         Returns:
-            The integer point id to feed into the recommend query.
+            The integer point id to feed into the recommend query. Falls back
+            to the head chunk when the collection is not there to probe -
+            resolving an anchor must not be what brings it into being, and the
+            search this anchors returns nothing either way.
         """
         head_id = self._stable_id(f"{doc_id}#c0")
         bare_id = self._stable_id(doc_id)
         try:
-            self.ensure_table()
+            if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
+                return head_id
             with self._point_lock(self.TABLE_NAME):
                 # Interactive search reads deliberately stay single-shot
                 # rather than routing through the store's bounded retry:
@@ -299,11 +307,13 @@ class _VaultSearchMixin:
         )
 
         if source == "code":
-            self.ensure_code_table()
+            ensure: Callable[[], None] = self.ensure_code_table
         elif source == "document":
-            self.ensure_document_table()
+            ensure = self.ensure_document_table
         else:
-            self.ensure_table()
+            ensure = self.ensure_table
+        if not self._reconcile_for_read(collection_name, ensure):
+            return []
 
         with self._point_lock(collection_name):
             if len(query.prefetch) < 2:

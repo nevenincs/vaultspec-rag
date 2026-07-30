@@ -24,10 +24,11 @@ from ..job_models import (
     capabilities_for_state as _capabilities_for_state,
 )
 from .state import (
+    UNOWNED_RUNTIME,
     JobManagerState,
-    JobRuntimeOwner,
     ManagedJob,
     ManagerStateBackup,
+    assign_runtime_owner,
 )
 
 logger = logging.getLogger("vaultspec_rag.jobs")
@@ -55,7 +56,7 @@ PROGRESS_FLUSH_BUDGET_SECONDS = 0.2
 class JobManagerPersistence(JobManagerState):
     def _restore_snapshot_locked(self, snapshot: JobSnapshot, *, now: float) -> None:
         """Restore one validated snapshot with no live execution resources."""
-        resumable = snapshot.state in {JobState.QUEUED, JobState.PAUSED}
+        resumable = snapshot.state.is_idle
         restored_runtime = (
             self._process_runtime_snapshot()
             if resumable
@@ -77,7 +78,7 @@ class JobManagerPersistence(JobManagerState):
                     pipeline_active=False,
                 ),
             ),
-            runtime=JobRuntimeOwner(task=None, control=None),
+            runtime=UNOWNED_RUNTIME,
         )
         if resumable:
             self._active[snapshot.id] = managed
@@ -147,9 +148,7 @@ class JobManagerPersistence(JobManagerState):
 
         restored_jobs = persisted.jobs
         restored_bindings = persisted.bindings
-        active_count = sum(
-            job.state in {JobState.QUEUED, JobState.PAUSED} for job in restored_jobs
-        )
+        active_count = sum(job.state.is_idle for job in restored_jobs)
         if active_count > self._max_nonterminal:
             return self._persistence_error(
                 command,
@@ -302,6 +301,12 @@ class JobManagerPersistence(JobManagerState):
         )
 
     def _restore_state_locked(self, backup: ManagerStateBackup) -> None:
+        """Roll one failed generation back to its captured predecessor.
+
+        Rolling a job back to an owner that never held the current ticket puts
+        that ticket beyond reach, so restoration replaces owners through the
+        one assignment that releases what it drops.
+        """
         for managed in [*backup.active.values(), *backup.terminal]:
             job_id = managed.snapshot.id
             snapshot = backup.snapshots.get(job_id)
@@ -309,7 +314,7 @@ class JobManagerPersistence(JobManagerState):
             if snapshot is not None:
                 managed.snapshot = snapshot
             if runtime is not None:
-                managed.runtime = runtime
+                assign_runtime_owner(managed, runtime)
         self._active = backup.active
         self._terminal = backup.terminal
         self._idempotency = OrderedDict(backup.idempotency)

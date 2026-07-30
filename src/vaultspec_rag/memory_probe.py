@@ -32,20 +32,22 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CudaCeilingObservation",
+    "CudaDeviceMemory",
     "MemoryBudget",
     "MemoryBudgetSnapshot",
     "MemoryProbe",
     "MemorySample",
+    "cuda_device_memory",
     "cuda_forward_peak_capture",
     "cuda_pressure",
-    "current_cuda_mb",
-    "current_rss_mb",
+    "current_cuda_mib",
+    "current_rss_mib",
     "is_enabled",
     "rebase_resident_cuda_baseline",
     "record_forward_peaks",
     "reset_cuda_peak_memory_stats",
-    "resident_cuda_baseline_mb",
-    "route_forward_peak_mb",
+    "resident_cuda_baseline_mib",
+    "route_forward_peak_mib",
     "sample_resident_cuda_baseline",
     "snapshot_resource_bytes",
 ]
@@ -59,8 +61,8 @@ __all__ = [
 #: come from the shared table, which is stdlib-only and costs a worker nothing.
 ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
 
-# Module-level caches for hot-path samplers. ``current_rss_mb`` and
-# ``current_cuda_mb`` are called once per 250 ms by the background
+# Module-level caches for hot-path samplers. ``current_rss_mib`` and
+# ``current_cuda_mib`` are called once per 250 ms by the background
 # sampler - re-importing psutil/torch and re-instantiating
 # ``psutil.Process`` on every call is wasteful. Cache on first use.
 # ``Any`` is intentional: torch is an optional dependency on some
@@ -94,7 +96,7 @@ def is_enabled() -> bool:
     return enabled
 
 
-def _measure_rss_mb() -> float | None:
+def _measure_rss_mib() -> float | None:
     """Return current process RSS in MiB, or ``None`` when unavailable."""
     global _psutil_process
     try:
@@ -116,8 +118,8 @@ def _measure_rss_mb() -> float | None:
         return None
 
 
-def current_rss_mb() -> float:
-    """Return current process RSS in megabytes.
+def current_rss_mib() -> float:
+    """Return current process RSS in mebibytes.
 
     ``psutil`` is a hard dependency of the RAG package so this is
     always available; the import is deferred only to keep cold-path
@@ -130,11 +132,11 @@ def current_rss_mb() -> float:
     bad reading does not silently kill RSS tracking for the rest
     of the run.
     """
-    measured = _measure_rss_mb()
+    measured = _measure_rss_mib()
     return measured if measured is not None else 0.0
 
 
-def _measure_cuda_mb() -> tuple[float, float] | None:
+def _measure_cuda_mib() -> tuple[float, float] | None:
     """Return CUDA allocated/reserved MiB, or ``None`` when unavailable."""
     global _torch_module, _torch_probed, _torch_has_cuda
     if not _torch_probed:
@@ -167,16 +169,16 @@ def _measure_cuda_mb() -> tuple[float, float] | None:
     return (allocated, reserved)
 
 
-def cuda_device_total_mb() -> float | None:
+def cuda_device_total_mib() -> float | None:
     """Return the active CUDA device's total memory in MiB, or ``None``.
 
     A guarded probe, not a hard gate: it returns ``None`` on a torch-absent or
     CPU-only host rather than raising, so the ceiling derivation degrades to its
     profile fallback off the GPU compute path and never forces torch onto a
     service-client or worker path. Shares the cached module probe with
-    :func:`_measure_cuda_mb`.
+    :func:`_measure_cuda_mib`.
     """
-    _measure_cuda_mb()
+    _measure_cuda_mib()
     if _torch_module is None or not _torch_has_cuda:
         return None
     try:
@@ -188,22 +190,70 @@ def cuda_device_total_mb() -> float | None:
         return None
 
 
-def cuda_free_memory_mb() -> float | None:
+def cuda_free_memory_mib() -> float | None:
     """Return the active CUDA device's free memory in MiB, or ``None``.
 
     A guarded probe, not a hard gate: it returns ``None`` on a torch-absent or
     CPU-only host rather than raising, so the ceiling derivation degrades to
     its total-memory (or profile) fallback off the GPU compute path and never
     forces torch onto a service-client or worker path. Shares the cached
-    module probe with :func:`_measure_cuda_mb`.
+    module probe with :func:`_measure_cuda_mib`.
     """
-    _measure_cuda_mb()
+    _measure_cuda_mib()
     if _torch_module is None or not _torch_has_cuda:
         return None
     try:
         return bytes_to_mib(_torch_module.cuda.mem_get_info()[0])
     except (RuntimeError, AssertionError):
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class CudaDeviceMemory:
+    """One device-wide CUDA memory observation, and what made it possible.
+
+    The presence flags travel with the figures because absence has two distinct
+    causes a caller may have to tell apart - torch is not installed at all, or
+    it is installed without a usable device - and a pair of ``None`` readings
+    cannot say which. Both figures are ``None`` whenever ``cuda_present`` is
+    false, and either may be ``None`` on a device whose driver refused the
+    query.
+    """
+
+    torch_present: bool
+    cuda_present: bool
+    free_mib: float | None
+    total_mib: float | None
+
+
+def cuda_device_memory() -> CudaDeviceMemory:
+    """Return one guarded reading of device-wide free and total memory.
+
+    Composes the two guarded probes above rather than reading
+    ``mem_get_info`` a second time, so the device keeps exactly one reader,
+    and adds the presence distinction a caller needs when an absent torch and
+    a CPU-only build must produce different outcomes. Like its parts it never
+    raises: a torch-free host, a CPU-only build, and a driver that refuses the
+    query all report absence.
+    """
+    _measure_cuda_mib()
+    # A completed probe holding no module means the import itself failed, which
+    # is permanent. An incomplete probe means the import succeeded and only the
+    # availability query misfired, so torch IS present on this host.
+    torch_present = _torch_module is not None or not _torch_probed
+    if _torch_module is None or not _torch_has_cuda:
+        return CudaDeviceMemory(
+            torch_present=torch_present,
+            cuda_present=False,
+            free_mib=None,
+            total_mib=None,
+        )
+    return CudaDeviceMemory(
+        torch_present=True,
+        cuda_present=True,
+        free_mib=cuda_free_memory_mib(),
+        total_mib=cuda_device_total_mib(),
+    )
 
 
 def cuda_pressure() -> tuple[float | None, float | None, float | None]:
@@ -219,60 +269,60 @@ def cuda_pressure() -> tuple[float | None, float | None, float | None]:
     the memory figures that are still measurable.
     """
     utilization: float | None = None
-    used_mb: float | None = None
-    total_mb: float | None = None
-    _measure_cuda_mb()
+    used_mib: float | None = None
+    total_mib: float | None = None
+    _measure_cuda_mib()
     if _torch_module is None or not _torch_has_cuda:
-        return (utilization, used_mb, total_mb)
+        return (utilization, used_mib, total_mib)
     try:
         if _torch_module.cuda.is_initialized():
             free_bytes, total_bytes = _torch_module.cuda.mem_get_info()
-            total_mb = bytes_to_mib(int(total_bytes))
-            used_mb = bytes_to_mib(int(total_bytes) - int(free_bytes))
+            total_mib = bytes_to_mib(int(total_bytes))
+            used_mib = bytes_to_mib(int(total_bytes) - int(free_bytes))
     except (RuntimeError, AssertionError):
-        used_mb = None
-        total_mb = None
-    if total_mb is not None:
+        used_mib = None
+        total_mib = None
+    if total_mib is not None:
         try:
             utilization = float(_torch_module.cuda.utilization())
         except Exception:  # NVML may be absent entirely or refuse the query
             utilization = None
-    return (utilization, used_mb, total_mb)
+    return (utilization, used_mib, total_mib)
 
 
-def resolve_index_cuda_ceiling_mb(
+def resolve_index_cuda_ceiling_mib(
     *,
-    configured_mb: float,
-    headroom_mb: float,
-    profile_cuda_mb: float,
-    baseline_mb: float,
+    configured_mib: float,
+    headroom_mib: float,
+    profile_cuda_mib: float,
+    baseline_mib: float,
 ) -> float:
     """Resolve the effective indexing CUDA ceiling in MiB.
 
-    A positive ``configured_mb`` is an authoritative operator override that wins
+    A positive ``configured_mib`` is an authoritative operator override that wins
     in either direction - it may raise the ceiling above the profile figure as
     well as lower it below, replacing the former one-way ``min`` clamp. When it
     is unset (zero or negative), the ceiling is derived from the real device as
-    an ABSOLUTE figure: ``min(baseline_mb + free - headroom_mb,
-    total - headroom_mb)``. Free memory is sampled after the resident models
+    an ABSOLUTE figure: ``min(baseline_mib + free - headroom_mib,
+    total - headroom_mib)``. Free memory is sampled after the resident models
     loaded, so it already excludes them - and enforcement compares peak and
-    ceiling net of the resident baseline, so ``baseline_mb`` must be added back
+    ceiling net of the resident baseline, so ``baseline_mib`` must be added back
     here. A bare ``free - headroom`` ceiling would charge the resident models
     twice (once inside the free reading, once via the baseline-net comparison)
     and falsely reject legitimate forwards. When the free reading is
-    unavailable the derivation falls back to ``total - headroom_mb``; off the
+    unavailable the derivation falls back to ``total - headroom_mib``; off the
     GPU compute path the device total is also unavailable, so it falls back to
-    ``profile_cuda_mb`` - the profile figure becomes a default rather than a
+    ``profile_cuda_mib`` - the profile figure becomes a default rather than a
     hard cap.
     """
     return cuda_ceiling_from_observation(
         CudaCeilingObservation(
-            device_total_mb=cuda_device_total_mb(),
-            free_mb=cuda_free_memory_mb(),
-            configured_mb=configured_mb,
-            headroom_mb=headroom_mb,
-            profile_cuda_mb=profile_cuda_mb,
-            baseline_mb=baseline_mb,
+            device_total_mib=cuda_device_total_mib(),
+            free_mib=cuda_free_memory_mib(),
+            configured_mib=configured_mib,
+            headroom_mib=headroom_mib,
+            profile_cuda_mib=profile_cuda_mib,
+            baseline_mib=baseline_mib,
         )
     )
 
@@ -281,12 +331,12 @@ def resolve_index_cuda_ceiling_mb(
 class CudaCeilingObservation:
     """One fixed CUDA capacity observation used to derive an index ceiling."""
 
-    device_total_mb: float | None
-    free_mb: float | None
-    configured_mb: float
-    headroom_mb: float
-    profile_cuda_mb: float
-    baseline_mb: float
+    device_total_mib: float | None
+    free_mib: float | None
+    configured_mib: float
+    headroom_mib: float
+    profile_cuda_mib: float
+    baseline_mib: float
 
 
 def cuda_ceiling_from_observation(
@@ -302,31 +352,31 @@ def cuda_ceiling_from_observation(
 
     ``None`` means the corresponding probe had nothing to report.
     """
-    if observation.configured_mb and observation.configured_mb > 0:
-        return float(observation.configured_mb)
-    if observation.device_total_mb is None:
-        return float(observation.profile_cuda_mb)
-    total_capped = max(0.0, observation.device_total_mb - observation.headroom_mb)
-    if observation.free_mb is None:
+    if observation.configured_mib and observation.configured_mib > 0:
+        return float(observation.configured_mib)
+    if observation.device_total_mib is None:
+        return float(observation.profile_cuda_mib)
+    total_capped = max(0.0, observation.device_total_mib - observation.headroom_mib)
+    if observation.free_mib is None:
         return total_capped
     return max(
         0.0,
         min(
-            observation.baseline_mb + observation.free_mb - observation.headroom_mb,
+            observation.baseline_mib + observation.free_mib - observation.headroom_mib,
             total_capped,
         ),
     )
 
 
-def current_cuda_mb() -> tuple[float, float]:
-    """Return ``(allocated_mb, reserved_mb)`` for the active CUDA device.
+def current_cuda_mib() -> tuple[float, float]:
+    """Return ``(allocated_mib, reserved_mib)`` for the active CUDA device.
 
     Returns zeros when torch is not importable or CUDA is unavailable -
     the probe must never crash host code. The torch module reference
     and the CUDA availability flag are cached on first call so the
     background sampler does not pay repeated import / probe costs.
     """
-    measured = _measure_cuda_mb()
+    measured = _measure_cuda_mib()
     return measured if measured is not None else (0.0, 0.0)
 
 
@@ -340,7 +390,7 @@ def reset_cuda_peak_memory_stats() -> bool:
     retention history a long-lived process accumulates before a new run
     starts allocating.
     """
-    measured = _measure_cuda_mb()
+    measured = _measure_cuda_mib()
     if measured is None or _torch_module is None:
         return False
     try:
@@ -359,7 +409,7 @@ def _reset_cuda_peak_stats_bare() -> bool:
     encode sub-batch, so this reset deliberately omits ``empty_cache`` (the
     per-run admission reset keeps that job).
     """
-    measured = _measure_cuda_mb()
+    measured = _measure_cuda_mib()
     if measured is None or _torch_module is None:
         return False
     try:
@@ -369,7 +419,7 @@ def _reset_cuda_peak_stats_bare() -> bool:
     return True
 
 
-def _read_cuda_peak_allocated_mb() -> float | None:
+def _read_cuda_peak_allocated_mib() -> float | None:
     """Return the allocated high-water in MiB since the last rebase.
 
     This is the single sanctioned reader of the process-global peak counter,
@@ -377,7 +427,7 @@ def _read_cuda_peak_allocated_mb() -> float | None:
     just rebased it; enforcement paths consume the captured value, never
     this counter directly.
     """
-    measured = _measure_cuda_mb()
+    measured = _measure_cuda_mib()
     if measured is None or _torch_module is None:
         return None
     try:
@@ -387,7 +437,7 @@ def _read_cuda_peak_allocated_mb() -> float | None:
 
 
 _resident_baseline_lock = threading.Lock()
-_resident_baseline_mb: float = 0.0
+_resident_baseline_mib: float = 0.0
 
 
 def sample_resident_cuda_baseline() -> float:
@@ -404,15 +454,15 @@ def sample_resident_cuda_baseline() -> float:
     Returns:
         The updated baseline in MiB (``0.0`` off the GPU path).
     """
-    global _resident_baseline_mb
-    measured = _measure_cuda_mb()
+    global _resident_baseline_mib
+    measured = _measure_cuda_mib()
     if measured is None:
-        return resident_cuda_baseline_mb()
+        return resident_cuda_baseline_mib()
     allocated = measured[0]
     with _resident_baseline_lock:
-        if allocated > _resident_baseline_mb:
-            _resident_baseline_mb = allocated
-        return _resident_baseline_mb
+        if allocated > _resident_baseline_mib:
+            _resident_baseline_mib = allocated
+        return _resident_baseline_mib
 
 
 def rebase_resident_cuda_baseline() -> float:
@@ -437,19 +487,29 @@ def rebase_resident_cuda_baseline() -> float:
     Returns:
         The re-established baseline in MiB (unchanged off the GPU path).
     """
-    global _resident_baseline_mb
-    measured = _measure_cuda_mb()
+    global _resident_baseline_mib
+    # A release is also what retires the standing load-admission verdict: that
+    # verdict was taken against the device as it was before these models
+    # loaded, so it describes a state that no longer exists once they are gone,
+    # and the next load must be admitted against what the card actually holds.
+    # Cleared unconditionally, before the reading: an over-clear costs one
+    # extra reading, while an under-clear rides a stale verdict for the life of
+    # the process.
+    from ._gpu_admission import clear_gpu_admission_latch
+
+    clear_gpu_admission_latch()
+    measured = _measure_cuda_mib()
     if measured is None:
-        return resident_cuda_baseline_mb()
+        return resident_cuda_baseline_mib()
     with _resident_baseline_lock:
-        _resident_baseline_mb = measured[0]
-        return _resident_baseline_mb
+        _resident_baseline_mib = measured[0]
+        return _resident_baseline_mib
 
 
-def resident_cuda_baseline_mb() -> float:
+def resident_cuda_baseline_mib() -> float:
     """Return the recorded resident-model CUDA baseline in MiB."""
     with _resident_baseline_lock:
-        return _resident_baseline_mb
+        return _resident_baseline_mib
 
 
 _forward_peak_recorder = threading.local()
@@ -474,7 +534,7 @@ def record_forward_peaks(
         _forward_peak_recorder.value = previous
 
 
-def route_forward_peak_mb(peak_mb: float | None) -> bool:
+def route_forward_peak_mib(peak_mib: float | None) -> bool:
     """Credit one captured forward peak to this thread's recorder.
 
     The routing rule, stated over a reading rather than over the allocator:
@@ -486,17 +546,17 @@ def route_forward_peak_mb(peak_mb: float | None) -> bool:
     the bracket, which would surface as a failure of the forward itself.
 
     Args:
-        peak_mb: The captured high-water in MiB, or ``None`` when the
+        peak_mib: The captured high-water in MiB, or ``None`` when the
             allocator could not be read.
 
     Returns:
         True when the reading reached a recorder.
     """
     recorder = getattr(_forward_peak_recorder, "value", None)
-    if peak_mb is None or recorder is None:
+    if peak_mib is None or recorder is None:
         return False
     try:
-        recorder(peak_mb)
+        recorder(peak_mib)
     except Exception:
         logger.warning(
             "forward peak recorder failed; capture dropped",
@@ -516,7 +576,7 @@ def cuda_forward_peak_capture() -> Generator[None]:
     so the captured value is this forward's own demand (resident baseline
     included) and never a concurrent job's. The read also happens on an
     exceptional exit so an allocator OOM still records the demand that
-    triggered it. This bracket probes; :func:`route_forward_peak_mb` owns
+    triggered it. This bracket probes; :func:`route_forward_peak_mib` owns
     what the reading then means.
     """
     armed = _reset_cuda_peak_stats_bare()
@@ -524,7 +584,7 @@ def cuda_forward_peak_capture() -> Generator[None]:
         yield
     finally:
         if armed:
-            route_forward_peak_mb(_read_cuda_peak_allocated_mb())
+            route_forward_peak_mib(_read_cuda_peak_allocated_mib())
 
 
 @dataclass
@@ -534,16 +594,16 @@ class MemorySample:
     Attributes:
         label: Human-readable checkpoint name (e.g. ``"after dense
             encode batch 3"``).
-        rss_mb: Process resident-set size at the checkpoint.
-        cuda_allocated_mb: Live ``torch.cuda.memory_allocated`` value.
-        cuda_reserved_mb: Live ``torch.cuda.memory_reserved`` value.
+        rss_mib: Process resident-set size at the checkpoint.
+        cuda_allocated_mib: Live ``torch.cuda.memory_allocated`` value.
+        cuda_reserved_mib: Live ``torch.cuda.memory_reserved`` value.
         wall_s: Seconds since the probe was constructed.
     """
 
     label: str
-    rss_mb: float
-    cuda_allocated_mb: float
-    cuda_reserved_mb: float
+    rss_mib: float
+    cuda_allocated_mib: float
+    cuda_reserved_mib: float
     wall_s: float
 
 
@@ -551,23 +611,23 @@ class MemorySample:
 class MemoryBudgetSnapshot:
     """One immutable view of enforced process and CUDA memory state.
 
-    ``rss_ceiling_mb`` and ``cuda_ceiling_mb`` are absolute process readings
+    ``rss_ceiling_mib`` and ``cuda_ceiling_mib`` are absolute process readings
     frozen by admission.  A caller enforcing per-run headroom adds its admitted
     baseline before constructing :class:`MemoryBudget`.  A reading exactly at
     its ceiling is admitted; only a reading above the ceiling is a violation.
     """
 
     label: str
-    rss_mb: float
+    rss_mib: float
     rss_available: bool
-    peak_rss_mb: float
-    rss_ceiling_mb: float | None
-    cuda_allocated_mb: float
+    peak_rss_mib: float
+    rss_ceiling_mib: float | None
+    cuda_allocated_mib: float
     cuda_available: bool
-    peak_cuda_allocated_mb: float
-    cuda_reserved_mb: float
-    peak_cuda_reserved_mb: float
-    cuda_ceiling_mb: float | None
+    peak_cuda_allocated_mib: float
+    cuda_reserved_mib: float
+    peak_cuda_reserved_mib: float
+    cuda_ceiling_mib: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -575,12 +635,12 @@ class _MemoryBudgetReading:
     """One normalized memory observation retained by a budget."""
 
     label: str
-    rss_mb: float
+    rss_mib: float
     rss_available: bool
-    cuda_allocated_mb: float
-    cuda_reserved_mb: float
-    cuda_peak_allocated_mb: float
-    cuda_peak_reserved_mb: float
+    cuda_allocated_mib: float
+    cuda_reserved_mib: float
+    cuda_peak_allocated_mib: float
+    cuda_peak_reserved_mib: float
     cuda_available: bool
 
 
@@ -598,8 +658,8 @@ def snapshot_resource_bytes(snapshot: MemoryBudgetSnapshot) -> tuple[int, int]:
     choice is made once and cannot drift between them.
     """
     return (
-        mib_to_bytes(snapshot.peak_rss_mb),
-        mib_to_bytes(snapshot.peak_cuda_allocated_mb),
+        mib_to_bytes(snapshot.peak_rss_mib),
+        mib_to_bytes(snapshot.peak_cuda_allocated_mib),
     )
 
 
@@ -626,58 +686,58 @@ class MemoryBudget:
     """
 
     __slots__ = (
-        "_captured_cuda_peak_mb",
-        "_cuda_baseline_mb",
-        "_cuda_ceiling_mb",
+        "_captured_cuda_peak_mib",
+        "_cuda_baseline_mib",
+        "_cuda_ceiling_mib",
         "_failure",
         "_lock",
-        "_rss_ceiling_mb",
+        "_rss_ceiling_mib",
         "_snapshot",
     )
 
-    _captured_cuda_peak_mb: float
-    _cuda_baseline_mb: float | None
-    _cuda_ceiling_mb: float | None
+    _captured_cuda_peak_mib: float
+    _cuda_baseline_mib: float | None
+    _cuda_ceiling_mib: float | None
     _failure: tuple[JobErrorKind, str] | None
     _lock: threading.Lock
-    _rss_ceiling_mb: float | None
+    _rss_ceiling_mib: float | None
     _snapshot: MemoryBudgetSnapshot | None
 
     def __init__(
         self,
         *,
-        rss_ceiling_mb: float | None = None,
-        cuda_ceiling_mb: float | None = None,
-        cuda_baseline_mb: float | None = None,
+        rss_ceiling_mib: float | None = None,
+        cuda_ceiling_mib: float | None = None,
+        cuda_baseline_mib: float | None = None,
     ) -> None:
         object.__setattr__(
             self,
-            "_rss_ceiling_mb",
-            _valid_memory_mb(
-                "rss_ceiling_mb",
-                rss_ceiling_mb,
+            "_rss_ceiling_mib",
+            _valid_memory_mib(
+                "rss_ceiling_mib",
+                rss_ceiling_mib,
                 optional=True,
             ),
         )
         object.__setattr__(
             self,
-            "_cuda_ceiling_mb",
-            _valid_memory_mb(
-                "cuda_ceiling_mb",
-                cuda_ceiling_mb,
+            "_cuda_ceiling_mib",
+            _valid_memory_mib(
+                "cuda_ceiling_mib",
+                cuda_ceiling_mib,
                 optional=True,
             ),
         )
         object.__setattr__(
             self,
-            "_cuda_baseline_mb",
-            _valid_memory_mb(
-                "cuda_baseline_mb",
-                cuda_baseline_mb,
+            "_cuda_baseline_mib",
+            _valid_memory_mib(
+                "cuda_baseline_mib",
+                cuda_baseline_mib,
                 optional=True,
             ),
         )
-        object.__setattr__(self, "_captured_cuda_peak_mb", 0.0)
+        object.__setattr__(self, "_captured_cuda_peak_mib", 0.0)
         object.__setattr__(self, "_snapshot", None)
         object.__setattr__(self, "_failure", None)
         object.__setattr__(self, "_lock", threading.Lock())
@@ -694,27 +754,27 @@ class MemoryBudget:
         raise AttributeError(msg)
 
     @property
-    def rss_ceiling_mb(self) -> float | None:
+    def rss_ceiling_mib(self) -> float | None:
         """Return the immutable admitted process RSS ceiling."""
-        return self._rss_ceiling_mb
+        return self._rss_ceiling_mib
 
     @property
-    def cuda_ceiling_mb(self) -> float | None:
+    def cuda_ceiling_mib(self) -> float | None:
         """Return the immutable admitted CUDA allocated-high-water ceiling."""
-        return self._cuda_ceiling_mb
+        return self._cuda_ceiling_mib
 
     @property
-    def cuda_baseline_mb(self) -> float | None:
+    def cuda_baseline_mib(self) -> float | None:
         """Return the admitted resident-model baseline, if one was frozen."""
-        return self._cuda_baseline_mb
+        return self._cuda_baseline_mib
 
     @property
-    def captured_cuda_peak_mb(self) -> float:
+    def captured_cuda_peak_mib(self) -> float:
         """Return the maximum lock-bracketed forward peak recorded so far."""
         with self._lock:
-            return self._captured_cuda_peak_mb
+            return self._captured_cuda_peak_mib
 
-    def record_forward_peak_mb(self, peak_mb: float) -> None:
+    def record_forward_peak_mib(self, peak_mib: float) -> None:
         """Accumulate one lock-bracketed forward peak as this job's maximum.
 
         Fed by the GPU-lock-held capture bracket; the retained value is the
@@ -722,10 +782,10 @@ class MemoryBudget:
         against work this job genuinely did rather than a process-wide
         high-water shared with concurrent jobs.
         """
-        value = cast("float", _valid_memory_mb("peak_mb", peak_mb))
+        value = cast("float", _valid_memory_mib("peak_mib", peak_mib))
         with self._lock:
-            if value > self._captured_cuda_peak_mb:
-                object.__setattr__(self, "_captured_cuda_peak_mb", value)
+            if value > self._captured_cuda_peak_mib:
+                object.__setattr__(self, "_captured_cuda_peak_mib", value)
 
     @property
     def snapshot(self) -> MemoryBudgetSnapshot | None:
@@ -740,26 +800,28 @@ class MemoryBudget:
         architectural invariant that it runs before or after, never inside, a
         model forward critical section. The CUDA peak it enforces is the
         job's own captured forward maximum - fed from inside the lock via
-        :meth:`record_forward_peak_mb` - never the process-global allocator
+        :meth:`record_forward_peak_mib` - never the process-global allocator
         high-water, whose since-reset span covers every concurrent job. The
         live allocated/reserved readings taken here remain process-global
         diagnostics and do not decide outcome.
         """
         self._raise_if_latched()
-        measured_rss = _measure_rss_mb()
-        measured_cuda = _measure_cuda_mb() if self.cuda_ceiling_mb is not None else None
+        measured_rss = _measure_rss_mib()
+        measured_cuda = (
+            _measure_cuda_mib() if self.cuda_ceiling_mib is not None else None
+        )
         return self.sample_readings(
             label=label,
-            rss_mb=measured_rss,
-            cuda_mb=measured_cuda,
+            rss_mib=measured_rss,
+            cuda_mib=measured_cuda,
         )
 
     def sample_readings(
         self,
         *,
         label: str,
-        rss_mb: float | None,
-        cuda_mb: tuple[float, float] | None,
+        rss_mib: float | None,
+        cuda_mib: tuple[float, float] | None,
     ) -> MemoryBudgetSnapshot:
         """Enforce the budget over readings the caller already holds.
 
@@ -773,21 +835,23 @@ class MemoryBudget:
         ``None`` means the corresponding probe had nothing to report.
         """
         self._raise_if_latched()
-        measured_rss = rss_mb
-        measured_cuda = cuda_mb
+        measured_rss = rss_mib
+        measured_cuda = cuda_mib
         return self._record(
             _MemoryBudgetReading(
                 label=label,
-                rss_mb=measured_rss if measured_rss is not None else 0.0,
+                rss_mib=measured_rss if measured_rss is not None else 0.0,
                 rss_available=measured_rss is not None,
-                cuda_allocated_mb=measured_cuda[0]
+                cuda_allocated_mib=measured_cuda[0]
                 if measured_cuda is not None
                 else 0.0,
-                cuda_reserved_mb=measured_cuda[1] if measured_cuda is not None else 0.0,
-                cuda_peak_allocated_mb=(
-                    self.captured_cuda_peak_mb if measured_cuda is not None else 0.0
+                cuda_reserved_mib=measured_cuda[1]
+                if measured_cuda is not None
+                else 0.0,
+                cuda_peak_allocated_mib=(
+                    self.captured_cuda_peak_mib if measured_cuda is not None else 0.0
                 ),
-                cuda_peak_reserved_mb=(
+                cuda_peak_reserved_mib=(
                     measured_cuda[1] if measured_cuda is not None else 0.0
                 ),
                 cuda_available=measured_cuda is not None,
@@ -798,9 +862,9 @@ class MemoryBudget:
         self,
         *,
         label: str,
-        rss_mb: float,
-        cuda_allocated_mb: float,
-        cuda_reserved_mb: float,
+        rss_mib: float,
+        cuda_allocated_mib: float,
+        cuda_reserved_mib: float,
     ) -> MemoryBudgetSnapshot:
         """Record known measurements and raise on the first crossed ceiling.
 
@@ -809,24 +873,24 @@ class MemoryBudget:
         breach.  Peak values include the violating observation.
         """
         self._raise_if_latched()
-        rss = cast("float", _valid_memory_mb("rss_mb", rss_mb))
+        rss = cast("float", _valid_memory_mib("rss_mib", rss_mib))
         allocated = cast(
             "float",
-            _valid_memory_mb("cuda_allocated_mb", cuda_allocated_mb),
+            _valid_memory_mib("cuda_allocated_mib", cuda_allocated_mib),
         )
         reserved = cast(
             "float",
-            _valid_memory_mb("cuda_reserved_mb", cuda_reserved_mb),
+            _valid_memory_mib("cuda_reserved_mib", cuda_reserved_mib),
         )
         return self._record(
             _MemoryBudgetReading(
                 label=label,
-                rss_mb=rss,
+                rss_mib=rss,
                 rss_available=True,
-                cuda_allocated_mb=allocated,
-                cuda_reserved_mb=reserved,
-                cuda_peak_allocated_mb=allocated,
-                cuda_peak_reserved_mb=reserved,
+                cuda_allocated_mib=allocated,
+                cuda_reserved_mib=reserved,
+                cuda_peak_allocated_mib=allocated,
+                cuda_peak_reserved_mib=reserved,
                 cuda_available=True,
             )
         )
@@ -866,29 +930,29 @@ class MemoryBudget:
                 previous = self._snapshot
                 snapshot = MemoryBudgetSnapshot(
                     label=reading.label,
-                    rss_mb=reading.rss_mb,
+                    rss_mib=reading.rss_mib,
                     rss_available=reading.rss_available,
-                    peak_rss_mb=max(
-                        reading.rss_mb if reading.rss_available else 0.0,
-                        previous.peak_rss_mb if previous else 0.0,
+                    peak_rss_mib=max(
+                        reading.rss_mib if reading.rss_available else 0.0,
+                        previous.peak_rss_mib if previous else 0.0,
                     ),
-                    rss_ceiling_mb=self.rss_ceiling_mb,
-                    cuda_allocated_mb=reading.cuda_allocated_mb,
+                    rss_ceiling_mib=self.rss_ceiling_mib,
+                    cuda_allocated_mib=reading.cuda_allocated_mib,
                     cuda_available=reading.cuda_available,
-                    peak_cuda_allocated_mb=max(
-                        reading.cuda_peak_allocated_mb
+                    peak_cuda_allocated_mib=max(
+                        reading.cuda_peak_allocated_mib
                         if reading.cuda_available
                         else 0.0,
-                        previous.peak_cuda_allocated_mb if previous else 0.0,
+                        previous.peak_cuda_allocated_mib if previous else 0.0,
                     ),
-                    cuda_reserved_mb=reading.cuda_reserved_mb,
-                    peak_cuda_reserved_mb=max(
-                        reading.cuda_peak_reserved_mb
+                    cuda_reserved_mib=reading.cuda_reserved_mib,
+                    peak_cuda_reserved_mib=max(
+                        reading.cuda_peak_reserved_mib
                         if reading.cuda_available
                         else 0.0,
-                        previous.peak_cuda_reserved_mb if previous else 0.0,
+                        previous.peak_cuda_reserved_mib if previous else 0.0,
                     ),
-                    cuda_ceiling_mb=self.cuda_ceiling_mb,
+                    cuda_ceiling_mib=self.cuda_ceiling_mib,
                 )
                 failure = self._classify_failure(snapshot)
                 object.__setattr__(self, "_snapshot", snapshot)
@@ -907,34 +971,34 @@ class MemoryBudget:
         snapshot: MemoryBudgetSnapshot,
     ) -> tuple[JobErrorKind, str] | None:
         """Return the deterministic typed failure for one locked observation."""
-        if self.rss_ceiling_mb is not None:
+        if self.rss_ceiling_mib is not None:
             if not snapshot.rss_available:
                 return (
                     JobErrorKind.RSS_MEMORY_CEILING,
                     _measurement_unavailable_detail(
                         label=snapshot.label,
                         measure="RSS",
-                        ceiling_mb=self.rss_ceiling_mb,
+                        ceiling_mib=self.rss_ceiling_mib,
                     ),
                 )
-            if snapshot.rss_mb > self.rss_ceiling_mb:
+            if snapshot.rss_mib > self.rss_ceiling_mib:
                 return (
                     JobErrorKind.RSS_MEMORY_CEILING,
                     _ceiling_detail(
                         label=snapshot.label,
                         measure="RSS",
-                        current_mb=snapshot.rss_mb,
-                        ceiling_mb=self.rss_ceiling_mb,
+                        current_mib=snapshot.rss_mib,
+                        ceiling_mib=self.rss_ceiling_mib,
                     ),
                 )
-        if self.cuda_ceiling_mb is not None:
+        if self.cuda_ceiling_mib is not None:
             if not snapshot.cuda_available:
                 return (
                     JobErrorKind.CUDA_MEMORY_CEILING,
                     _measurement_unavailable_detail(
                         label=snapshot.label,
                         measure="CUDA",
-                        ceiling_mb=self.cuda_ceiling_mb,
+                        ceiling_mib=self.cuda_ceiling_mib,
                     ),
                 )
             # Baseline-consistent comparison: a captured peak is absolute
@@ -942,12 +1006,12 @@ class MemoryBudget:
             # baseline must come off the peak and the ceiling on the SAME
             # side. Subtracting it from only one side double-counts the
             # resident models and turns the ceiling into a covert tightening.
-            baseline = self._cuda_baseline_mb or 0.0
+            baseline = self._cuda_baseline_mib or 0.0
             peak_above_baseline = max(
                 0.0,
-                snapshot.peak_cuda_allocated_mb - baseline,
+                snapshot.peak_cuda_allocated_mib - baseline,
             )
-            ceiling_above_baseline = max(0.0, self.cuda_ceiling_mb - baseline)
+            ceiling_above_baseline = max(0.0, self.cuda_ceiling_mib - baseline)
             if peak_above_baseline > ceiling_above_baseline:
                 measure = "CUDA allocated high-water"
                 if baseline > 0.0:
@@ -960,14 +1024,14 @@ class MemoryBudget:
                     _ceiling_detail(
                         label=snapshot.label,
                         measure=measure,
-                        current_mb=peak_above_baseline,
-                        ceiling_mb=ceiling_above_baseline,
+                        current_mib=peak_above_baseline,
+                        ceiling_mib=ceiling_above_baseline,
                     ),
                 )
         return None
 
 
-def _valid_memory_mb(
+def _valid_memory_mib(
     name: str,
     value: float | None,
     *,
@@ -993,12 +1057,12 @@ def _ceiling_detail(
     *,
     label: str,
     measure: str,
-    current_mb: float,
-    ceiling_mb: float,
+    current_mib: float,
+    ceiling_mib: float,
 ) -> str:
     """Render stable diagnostic detail for a typed ceiling breach."""
     return (
-        f"{measure} {current_mb:.1f} MiB exceeded the {ceiling_mb:.1f} MiB "
+        f"{measure} {current_mib:.1f} MiB exceeded the {ceiling_mib:.1f} MiB "
         f"ceiling at {label}"
     )
 
@@ -1007,12 +1071,12 @@ def _measurement_unavailable_detail(
     *,
     label: str,
     measure: str,
-    ceiling_mb: float,
+    ceiling_mib: float,
 ) -> str:
     """Render stable diagnostic detail when an enforced reading is absent."""
     return (
         f"{measure} measurement was unavailable while enforcing the "
-        f"{ceiling_mb:.1f} MiB ceiling at {label}"
+        f"{ceiling_mib:.1f} MiB ceiling at {label}"
     )
 
 
@@ -1029,8 +1093,8 @@ class MemoryProbe:
 
     name: str = "indexer"
     samples: list[MemorySample] = field(default_factory=list)
-    start_rss_mb: float = 0.0
-    peak_rss_mb: float = 0.0
+    start_rss_mib: float = 0.0
+    peak_rss_mib: float = 0.0
     _t0: float = 0.0
     _enabled: bool = False
     _sampler_thread: threading.Thread | None = None
@@ -1046,19 +1110,19 @@ class MemoryProbe:
         if not self._enabled:
             return
         self._t0 = time.perf_counter()
-        self.start_rss_mb = current_rss_mb()
-        self.peak_rss_mb = self.start_rss_mb
+        self.start_rss_mib = current_rss_mib()
+        self.peak_rss_mib = self.start_rss_mib
         self._start_sampler()
 
     def _start_sampler(self) -> None:
         def _run() -> None:
             # The sampler must survive transient errors. A single
             # bad sample (psutil hiccup, signal interruption) is
-            # logged once and the loop continues so peak_rss_mb
+            # logged once and the loop continues so peak_rss_mib
             # keeps tracking.
             while not self._sampler_stop.wait(0.25):
                 try:
-                    rss = current_rss_mb()
+                    rss = current_rss_mib()
                 except Exception:  # defensive sampler - must not die
                     logger.warning(
                         "memory-probe %s sample failed; continuing",
@@ -1067,8 +1131,8 @@ class MemoryProbe:
                     )
                     continue
                 with self._lock:
-                    if rss > self.peak_rss_mb:
-                        self.peak_rss_mb = rss
+                    if rss > self.peak_rss_mib:
+                        self.peak_rss_mib = rss
 
         thread = threading.Thread(
             target=_run,
@@ -1085,27 +1149,27 @@ class MemoryProbe:
         """
         if not self._enabled:
             return None
-        rss = current_rss_mb()
-        allocated, reserved = current_cuda_mb()
+        rss = current_rss_mib()
+        allocated, reserved = current_cuda_mib()
         with self._lock:
-            if rss > self.peak_rss_mb:
-                self.peak_rss_mb = rss
+            if rss > self.peak_rss_mib:
+                self.peak_rss_mib = rss
         sample = MemorySample(
             label=label,
-            rss_mb=rss,
-            cuda_allocated_mb=allocated,
-            cuda_reserved_mb=reserved,
+            rss_mib=rss,
+            cuda_allocated_mib=allocated,
+            cuda_reserved_mib=reserved,
             wall_s=time.perf_counter() - self._t0,
         )
         self.samples.append(sample)
         logger.info(
-            "[memory-probe %s] %s rss=%.0fMB cuda_alloc=%.0fMB "
-            "cuda_reserved=%.0fMB t=%.2fs",
+            "[memory-probe %s] %s rss=%.0fMiB cuda_alloc=%.0fMiB "
+            "cuda_reserved=%.0fMiB t=%.2fs",
             self.name,
             label,
-            sample.rss_mb,
-            sample.cuda_allocated_mb,
-            sample.cuda_reserved_mb,
+            sample.rss_mib,
+            sample.cuda_allocated_mib,
+            sample.cuda_reserved_mib,
             sample.wall_s,
         )
         return sample
@@ -1154,17 +1218,17 @@ class MemoryProbe:
         if not self.samples:
             return f"[memory-probe {self.name}] disabled or no samples"
         lines = [
-            f"[memory-probe {self.name}] start_rss={self.start_rss_mb:.0f}MB "
-            f"peak_rss={self.peak_rss_mb:.0f}MB delta="
-            f"{self.peak_rss_mb - self.start_rss_mb:+.0f}MB",
+            f"[memory-probe {self.name}] start_rss={self.start_rss_mib:.0f}MiB "
+            f"peak_rss={self.peak_rss_mib:.0f}MiB delta="
+            f"{self.peak_rss_mib - self.start_rss_mib:+.0f}MiB",
         ]
-        prev_rss = self.start_rss_mb
+        prev_rss = self.start_rss_mib
         for s in self.samples:
-            delta = s.rss_mb - prev_rss
+            delta = s.rss_mib - prev_rss
             lines.append(
-                f"  {s.wall_s:6.2f}s  rss={s.rss_mb:7.0f}MB "
-                f"({delta:+6.0f})  cuda_alloc={s.cuda_allocated_mb:6.0f}MB  "
-                f"reserved={s.cuda_reserved_mb:6.0f}MB  {s.label}"
+                f"  {s.wall_s:6.2f}s  rss={s.rss_mib:7.0f}MiB "
+                f"({delta:+6.0f})  cuda_alloc={s.cuda_allocated_mib:6.0f}MiB  "
+                f"reserved={s.cuda_reserved_mib:6.0f}MiB  {s.label}"
             )
-            prev_rss = s.rss_mb
+            prev_rss = s.rss_mib
         return "\n".join(lines)

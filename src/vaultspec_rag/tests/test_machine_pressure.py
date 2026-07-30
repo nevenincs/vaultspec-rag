@@ -41,7 +41,7 @@ _ATTACK = 3
 _PRESSURE_KEYS = {"tier", "entered_at", "evidence"}
 _EVIDENCE_KEYS = {"forward", "gpu", "backend", "encode_waiters", "store_failures"}
 _FORWARD_KEYS = {"in_flight", "age_seconds", "slice_ordinal", "items", "thread_alive"}
-_GPU_KEYS = {"available", "utilization_percent", "memory_used_mb", "memory_total_mb"}
+_GPU_KEYS = {"available", "utilization_percent", "memory_used_mib", "memory_total_mib"}
 _BACKEND_KEYS = {"probed", "alive", "latency_seconds", "detail"}
 
 
@@ -70,8 +70,8 @@ def _drive(
 #: declared type - unpacking a ``dict[str, float]`` erases all of them.
 _SATURATED_GPU = MachinePressureSignals(
     gpu_utilization_percent=100.0,
-    gpu_memory_used_mb=15872.0,
-    gpu_memory_total_mb=16384.0,
+    gpu_memory_used_mib=15872.0,
+    gpu_memory_total_mib=16384.0,
 )
 
 
@@ -117,8 +117,8 @@ class TestClassification:
             pytest.param(
                 MachinePressureSignals(
                     gpu_utilization_percent=100.0,
-                    gpu_memory_used_mb=4000.0,
-                    gpu_memory_total_mb=16384.0,
+                    gpu_memory_used_mib=4000.0,
+                    gpu_memory_total_mib=16384.0,
                 ),
                 "nominal",
                 id="utilization_alone_is_a_busy_card",
@@ -126,8 +126,8 @@ class TestClassification:
             pytest.param(
                 MachinePressureSignals(
                     gpu_utilization_percent=20.0,
-                    gpu_memory_used_mb=16000.0,
-                    gpu_memory_total_mb=16384.0,
+                    gpu_memory_used_mib=16000.0,
+                    gpu_memory_total_mib=16384.0,
                 ),
                 "nominal",
                 id="memory_alone_is_a_resident_model",

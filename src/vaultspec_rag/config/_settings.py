@@ -340,19 +340,46 @@ class VaultSpecConfigWrapper:
         # Absolute admitted process ceilings. The per-run budget may freeze a
         # lower ceiling relative to its starting baseline. The allocator cap
         # preserves device headroom for concurrent search before model load.
-        "index_rss_ceiling_mb": 16384.0,
+        "index_rss_ceiling_mib": 16384.0,
         # CUDA ceiling override. ``0`` means auto-derive from the real device:
-        # total device memory minus ``index_cuda_headroom_mb``. A positive value
+        # total device memory minus ``index_cuda_headroom_mib``. A positive value
         # is an authoritative operator override that raises OR lowers the
         # effective ceiling, replacing the former one-way clamp against a fixed
         # 12 GiB profile constant that a 16 GiB card could never raise.
-        "index_cuda_ceiling_mb": 0.0,
+        "index_cuda_ceiling_mib": 0.0,
         # Memory reserved below the device total when the CUDA ceiling is
         # auto-derived: leaves room for the driver, concurrent search, and
         # allocator fragmentation. On a 16 GiB card this yields a ~14 GiB
         # indexing ceiling instead of the flat 12 GiB.
-        "index_cuda_headroom_mb": 2048.0,
+        "index_cuda_headroom_mib": 2048.0,
         "index_cuda_allocator_fraction": 0.8,
+        # Free device memory, in MiB, required before this process may load
+        # model stacks onto the GPU. Read once per process before the first
+        # load: below this figure the load is refused rather than allowed to
+        # starve the card and every other consumer on it. The ceilings above
+        # bound the work an already-resident process does; this one decides
+        # whether it becomes resident at all.
+        #
+        # The floor must cover the resident stack a load is about to create
+        # PLUS the largest legitimate demand that stack then places on top of
+        # its own residency. Sizing it to residency alone is the trap: on a card
+        # already holding one tenant, the free memory left over still clears
+        # such a floor, so a second stack is admitted - and two residencies plus
+        # one peak exceed the device, which is precisely the arrangement the
+        # gate exists to refuse.
+        #
+        # Zero, the default, means derive it from the CUDA demand the configured
+        # support profile declares - the same declaration the per-job ceiling is
+        # derived from. A shipped absolute would be a statement about one
+        # machine: sized to a large card it refuses every load on a smaller one,
+        # permanently, because free memory can never reach it; sized to a small
+        # one it under-protects a larger card, where two stacks still collide
+        # beneath the figure it names. The demand is a property of the models,
+        # so it is the workload that sets this and not the hardware.
+        #
+        # A positive value is an authoritative operator override in MiB, for a
+        # card whose owner knows it better than any derivation can.
+        "gpu_admission_floor_mib": 0,
         # Named profile definitions and corpus dimensions live in
         # ``index_profiles``; this selects the service default.
         "index_support_profile": "managed-service",

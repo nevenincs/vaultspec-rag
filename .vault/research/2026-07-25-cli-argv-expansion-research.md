@@ -50,8 +50,8 @@ alone. One match silently replaces a pattern with a single concrete file.
 Several turn the remainder into positionals. The two substitutions that precede
 the glob apply unconditionally, so they reach arguments that are not paths at
 all - measured, a query of `cost of %USERPROFILE% expansion` reaches the ranker
-as `cost of C:\Users\hello expansion`, and `~approximately equal` becomes
-`C:\Users\approximately equal`.
+as `cost of C:\Users\user expansion`, and `~approximately equal` is
+expanded into a home-directory path carrying `approximately` as its account segment.
 
 The mixed separator in the reported output - `src/vaultspec_rag/indexer\_ast_chunker.py`,
 forward slashes from the pattern and a backslash at the join - is `glob`

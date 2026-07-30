@@ -21,6 +21,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT, _TEST_PROJECT_ROOT_OTHER
 
 if TYPE_CHECKING:
@@ -84,7 +85,11 @@ class TestEncodeAdmissionGate:
     @pytest.mark.asyncio
     async def test_two_concurrent_encode_jobs_serialize_on_the_slot(self) -> None:
 
-        manager = JobManager(max_nonterminal=4, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=4,
+            state_path=None,
+        )
         initiator = JobInitiator("test", "encode-gate", None)
         first = manager.create(self._encode_spec(_TEST_PROJECT_ROOT), initiator)
         second = manager.create(self._encode_spec(_TEST_PROJECT_ROOT_OTHER), initiator)
@@ -175,7 +180,11 @@ class TestEncodeAdmissionGate:
 
     @pytest.mark.asyncio
     async def test_admission_stamp_is_recorded_for_a_solo_job(self) -> None:
-        manager = JobManager(max_nonterminal=2, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=None,
+        )
         initiator = JobInitiator("test", "encode-gate", None)
         created = manager.create(self._encode_spec(_TEST_PROJECT_ROOT), initiator)
         assert created.job is not None

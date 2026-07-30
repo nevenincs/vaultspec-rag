@@ -1645,3 +1645,145 @@ class TestPublishedFileBreadth:
         from .._index_breadth import code_file_breadth_shortfall
 
         assert code_file_breadth_shortfall(tmp_path) is None
+
+
+class TestCodeSidecarResolution:
+    """Where the constructor publishes, against where the readers look.
+
+    Every other test here rebinds the sidecar path onto the instance, so none
+    of them observes what the constructor resolved. A path resolved to the
+    other domain's filename still type-checks and still round-trips through
+    the writer that produced it; only an independent reader disagrees.
+    """
+
+    def test_the_indexer_publishes_where_the_code_breadth_reader_looks(
+        self, tmp_path: Path
+    ) -> None:
+        import json
+
+        from .._index_breadth import PUBLISHED_POINTS_KEY, read_reserved_count
+        from ..indexer import CodebaseIndexer
+
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer._meta_path.parent.mkdir(parents=True, exist_ok=True)
+        indexer._meta_path.write_text(
+            json.dumps({PUBLISHED_POINTS_KEY: "91"}), encoding="utf-8"
+        )
+
+        # Mutation this catches: resolving the constructor's sidecar under the
+        # vault filename, which leaves every code-breadth read consulting a
+        # file the code index never writes.
+        assert read_reserved_count(tmp_path, PUBLISHED_POINTS_KEY) == 91
+
+
+class TestDataRootResolution:
+    """One root names one bookkeeping directory, for every writer into it.
+
+    The sidecar tests above pin filenames; nothing pinned the directory those
+    filenames hang off. A root joined to the wrong configured name, or joined
+    without normalising where the caller normalises, still type-checks and
+    still round-trips through whichever writer produced it - the index simply
+    publishes its bookkeeping where nothing looks for it.
+
+    The expected directory is spelled here from config, independently of the
+    resolver, so the assertions fail if either side moves alone.
+    """
+
+    @staticmethod
+    def _configured() -> str:
+        from ..config._settings import get_config
+
+        return str(get_config().data_dir)
+
+    @classmethod
+    def _expected_data_root(cls, root: Path) -> Path:
+        return root / cls._configured()
+
+    def test_the_resolver_joins_the_configured_name_onto_the_root(
+        self, tmp_path: Path
+    ) -> None:
+        from .._store_writes import workspace_volume_path
+
+        # Mutation this catches: resolving the store's own qdrant directory,
+        # or any other descendant, as the bookkeeping root - both are real
+        # directories under the same tree, so no existence check sees it.
+        assert workspace_volume_path(tmp_path) == self._expected_data_root(tmp_path)
+
+    def test_the_resolver_takes_its_root_as_given(self, tmp_path: Path) -> None:
+        """Normalising is the caller's decision, so the resolver must not.
+
+        Two callers resolve their root before asking and two do not. A resolver
+        that normalised unconditionally would erase that distinction silently.
+        """
+        from .._store_writes import workspace_volume_path
+
+        (tmp_path / "root").mkdir()
+        unnormalised = tmp_path / "root" / ".." / "root"
+
+        assert workspace_volume_path(unnormalised) == unnormalised / self._configured()
+
+    def test_the_code_indexer_resolves_the_shared_bookkeeping_root(
+        self, tmp_path: Path
+    ) -> None:
+        from ..indexer import CodebaseIndexer
+
+        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+
+        # Observed, never rebound: the constructor's own resolution is the
+        # thing under test, and the generation lifecycle and preprocess
+        # context are handed this exact directory.
+        assert indexer._data_root == self._expected_data_root(tmp_path)
+
+    def test_the_document_indexer_resolves_the_shared_bookkeeping_root(
+        self, tmp_path: Path
+    ) -> None:
+        from ..indexer._document_indexer import DocumentIndexer
+
+        indexer = DocumentIndexer(tmp_path, cast("Any", None), cast("Any", None))
+
+        assert indexer._data_root == self._expected_data_root(tmp_path.resolve())
+
+    def test_both_indexers_agree_on_one_root(self, tmp_path: Path) -> None:
+        """Two indexers over one tree must not split its bookkeeping in two."""
+        from ..indexer import CodebaseIndexer
+        from ..indexer._document_indexer import DocumentIndexer
+
+        root = tmp_path.resolve()
+        code = CodebaseIndexer(root, cast("Any", None), cast("Any", None))
+        document = DocumentIndexer(root, cast("Any", None), cast("Any", None))
+
+        assert code._data_root == document._data_root
+
+    def test_every_domain_publishes_into_the_one_directory(
+        self, tmp_path: Path
+    ) -> None:
+        """All three sidecars and the run ledger share a parent, and only that.
+
+        Each domain resolves its own path through its own entry point. Pinning
+        the shared parent is what catches a single domain being transposed onto
+        a directory of its own, which every same-domain round trip still
+        passes.
+        """
+        from .._index_breadth import index_meta_path
+        from .._source_types import PublicSourceType
+        from ..indexer._document_meta import document_metadata_path
+        from ..indexer._route_migration import prior_stored_owners
+        from ..indexer._run_ledger_models import index_run_ledger_path
+
+        root = tmp_path.resolve()
+        expected = self._expected_data_root(root)
+        paths = {
+            index_meta_path(root, PublicSourceType.CODE),
+            index_meta_path(root, PublicSourceType.VAULT),
+            document_metadata_path(root),
+            index_run_ledger_path(expected),
+        }
+
+        assert {path.parent for path in paths} == {expected}
+        # Four distinct tenants, so a domain collapsed onto a neighbour's
+        # filename shows up as a shortfall here rather than as silent
+        # overwriting of the neighbour's record.
+        assert len(paths) == 4
+        # The ledger reader reaches the same directory: a root with no ledger
+        # in it must report no prior owners rather than raise.
+        assert prior_stored_owners(root, "src/mod.py") == frozenset()

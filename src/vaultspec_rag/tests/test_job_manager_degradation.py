@@ -17,6 +17,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,7 +52,11 @@ class TestInterruptedJobDegradationSplit:
         and finds an attempt no live worker owns. No state is hand-written.
         """
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=2, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
         created = manager.create(
             JobSpec(
                 JobOperation.INDEX,
@@ -72,7 +77,11 @@ class TestInterruptedJobDegradationSplit:
             assert started.job is not None
             assert started.job.state is JobState.RUNNING
 
-            restarted = JobManager(max_nonterminal=2, state_path=state_path)
+            restarted = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
+                max_nonterminal=2,
+                state_path=state_path,
+            )
             assert restarted.restore_persisted().code == "job_state_restored"
         finally:
             task.cancel()

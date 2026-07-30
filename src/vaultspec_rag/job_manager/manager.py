@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     import os
 
     from .. import job_persistence as _job_persistence
-    from ..job_control import QuiesceGate
+    from ..service_quiesce import ServiceQuiesceController
 
 from ..config._settings import get_config, managed_status_dir
 from ._control import JobManagerControl
@@ -20,7 +20,7 @@ from ._execution import JobManagerExecution
 from ._persistence import JobManagerPersistence
 from ._progress import JobManagerProgress
 from ._records import JobManagerRecords
-from .models import MAX_RECORDS
+from .models import MAX_RECORDS, QuiescedDispatchClaim
 from .state import (
     CONFIGURED_STATE_PATH,
     MANAGED_STATE_FILENAME,
@@ -50,7 +50,7 @@ class JobManager(
         state_path: (
             str | os.PathLike[str] | ConfiguredStatePath | None
         ) = CONFIGURED_STATE_PATH,
-        quiesce_gate: QuiesceGate | None = None,
+        quiesce_controller: ServiceQuiesceController,
     ) -> None:
         resolved_max = (
             get_config().job_max_nonterminal
@@ -72,10 +72,7 @@ class JobManager(
             self._state_path = (
                 Path(resolved_path) if resolved_path is not None else None
             )
-        # One shared hold gate injected into every attempt's control token
-        # so a single process-global pause quiesces all in-flight jobs.
-        # ``None`` keeps tokens gateless (no hold behavior).
-        self._quiesce_gate = quiesce_gate
+        self._quiesce_controller = quiesce_controller
         self._lock = threading.RLock()
         # Serializes every state-file write. Synchronous transition persists
         # write while holding both locks; deferred progress flushes serialize
@@ -98,6 +95,16 @@ class JobManager(
         )
         self._job_idempotency_keys: dict[str, set[str]] = {}
         self._dispatchers: dict[str, JobDispatchBinding] = {}
+        self._next_dispatch_binding_nonce = 0
+        self._next_quiesced_dispatch_generation = 0
+        self._pending_quiesced_dispatches: dict[str, QuiescedDispatchClaim] = {}
+        # The loop that owns managed execution for this service life, adopted
+        # at startup. Admission preflights run on ordinary worker threads, so
+        # the thread that decides to dispatch routinely has no loop of its
+        # own; without this the handoff has nowhere to go. ``None`` in a
+        # process that never adopted one (the local CLI), where a loopless
+        # dispatch is a genuine caller error rather than a thread boundary.
+        self._service_loop: asyncio.AbstractEventLoop | None = None
         self._retiring_tasks: set[asyncio.Task[Any]] = set()
         self._persistence_dirty = False
         self._accepting_dispatch = True

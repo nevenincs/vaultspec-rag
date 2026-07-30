@@ -18,6 +18,7 @@ the assertions read what they returned and printed.
 from __future__ import annotations
 
 import ast
+import textwrap
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,9 +27,10 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import TypeGuard
 
 from .. import jobs as _jobs_module
-from ..cli._cli_format import _format_mb, _format_seconds, compact_duration
+from ..cli._cli_format import _format_mib, _format_seconds, compact_duration
 from ..cli._jobs_tui import _capability, _fetch_error
 from ..cli._service_jobs_presentation import _nested_section, render_jobs_result
 from ..cli._service_watcher import _format_delay_milliseconds, _format_delay_seconds
@@ -228,7 +230,7 @@ class TestTheMappingReaderNarrowsAContainer:
 #: module of every member.
 _FORMATTERS: tuple[tuple[str, Callable[[object], str], str], ...] = (
     ("_cli_format._format_seconds", _format_seconds, "not reported"),
-    ("_cli_format._format_mb", _format_mb, "not reported"),
+    ("_cli_format._format_mib", _format_mib, "not reported"),
     ("_cli_format.compact_duration", compact_duration, "—"),
     (
         "_service_watcher._format_delay_milliseconds",
@@ -280,7 +282,7 @@ class TestTheFormattersRefuseABool:
         # The bool guard must not have cost the accepting path, and ``1``
         # is the value a leaked ``True`` would have arrived as.
         assert _format_seconds(1) == "1 second"
-        assert _format_mb(1) != "not reported"
+        assert _format_mib(1) != "not reported"
         assert compact_duration(1) == "1s"
         assert _format_delay_seconds(1) == "1 second"
         assert _format_delay_milliseconds(1) == "1 millisecond"
@@ -368,13 +370,23 @@ _NARROWING_SURFACES: tuple[str, ...] = (
     "server/_routes_jobs.py",
 )
 
+#: Whole trees held to the same rule, every module in them.
+#:
+#: The integration fixtures and helpers wait on the SAME published status the
+#: renderers above display - a daemon pid, a supervised child's pid and port,
+#: a start time - and they re-derived the narrowing by hand at five sites
+#: while the file-by-file list above looked only at production. A tree entry
+#: rather than a file list is the point: a helper added tomorrow is covered
+#: the day it lands, without anyone remembering to enrol it.
+_NARROWING_SURFACE_TREES: tuple[str, ...] = ("tests/integration",)
+
 #: The ONLY functions on those surfaces allowed to narrow a number with their
 #: own ``isinstance``, each named with the reason it cannot route through a
 #: reader. The list is asserted exhaustive in both directions - an unnamed
 #: offender fails, and a name that no longer needs exempting also fails - so
 #: it can neither grow silently nor rot into a blanket suppression.
 #:
-#: Every entry is a terminal renderer taking an untrusted ``object``. They sit
+#: Most entries are terminal renderers taking an untrusted ``object``. They sit
 #: BEHIND the readers as the last line of defence, so they are reached both by
 #: values a reader already narrowed and by raw payload fields, and they cannot
 #: delegate their guard to a caller that may not exist.
@@ -387,44 +399,188 @@ _NARROWING_EXEMPT: dict[str, str] = {
     # Same, converting from milliseconds before delegating.
     "_format_milliseconds": "terminal renderer of an untrusted object",
     # Same, for a mebibyte measure.
-    "_format_mb": "terminal renderer of an untrusted object",
+    "_format_mib": "terminal renderer of an untrusted object",
     # Renders a CONFIGURED delay, whose vocabulary differs from an elapsed
     # duration's; reads the watcher payload with no reader in front of it.
     "_format_delay_milliseconds": "terminal renderer of an untrusted object",
     # Same, at second granularity.
     "_format_delay_seconds": "terminal renderer of an untrusted object",
+    # Not a published value at all: it sorts a heterogeneous ``Future``
+    # result, where the shape IS the discriminator between the search futures
+    # and the reindex future. Routing that through a published-value reader
+    # would misdescribe what is being asked.
+    "test_concurrent_searches_and_reindex_across_two_repos_hold": (
+        "discriminates a future result, not a published field"
+    ),
 }
 
 _NUMERIC_SHAPES = frozenset({"int", "float"})
 
 
+def _narrowing_surface_paths() -> dict[Path, str]:
+    """Every enrolled source file, mapped to the label offenders report it by."""
+    package_root = Path(_jobs_module.__file__).parent
+    surfaces = {package_root / relative: relative for relative in _NARROWING_SURFACES}
+    for tree_relative in _NARROWING_SURFACE_TREES:
+        for path in sorted((package_root / tree_relative).rglob("*.py")):
+            surfaces[path] = path.relative_to(package_root).as_posix()
+    return surfaces
+
+
+def _isinstance_claim(node: ast.AST) -> TypeGuard[ast.Call]:
+    """A two-argument ``isinstance(value, shape)`` call, the unit every walk shares."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "isinstance"
+        and len(node.args) == 2
+    )
+
+
+def _shape_names(claim: ast.Call) -> frozenset[str]:
+    """Every name in the claim's shape operand, so ``int | float`` reads as both."""
+    return frozenset(
+        inner.id for inner in ast.walk(claim.args[1]) if isinstance(inner, ast.Name)
+    )
+
+
+def _asserted_value_names(value: ast.expr) -> frozenset[str]:
+    """The names a later read reaches the asserted value by: itself, or a walrus."""
+    names: set[str] = set()
+    if isinstance(value, ast.Name):
+        names.add(value.id)
+    names.update(
+        inner.target.id for inner in ast.walk(value) if isinstance(inner, ast.NamedExpr)
+    )
+    return frozenset(names)
+
+
+def _claim_leaks_a_used_bool(
+    claim: ast.Call,
+    statement: ast.Assert,
+    scope: ast.AST,
+) -> bool:
+    """True when this asserted claim would pass a ``bool`` on to a later read.
+
+    ``isinstance(True, int)`` is ``True``, so an int-shaped claim stops
+    nothing for a bool; it only earns the assert carve-out while the asserted
+    value is never read again. A claim that also tests the value against
+    ``bool`` inside the same assert genuinely refuses one and keeps the
+    exemption whatever reads it afterwards.
+    """
+    if "int" not in _shape_names(claim):
+        return False
+    value = claim.args[0]
+    names = _asserted_value_names(value)
+    spelling = None if isinstance(value, ast.Name) else ast.unparse(value)
+    for other in ast.walk(statement.test):
+        if (
+            _isinstance_claim(other)
+            and other is not claim
+            and "bool" in _shape_names(other)
+            and (
+                (isinstance(other.args[0], ast.Name) and other.args[0].id in names)
+                or (spelling is not None and ast.unparse(other.args[0]) == spelling)
+            )
+        ):
+            return False
+    end = (statement.end_lineno or statement.lineno, statement.end_col_offset or 0)
+    for later in ast.walk(scope):
+        if not isinstance(later, ast.expr) or (later.lineno, later.col_offset) <= end:
+            continue
+        if isinstance(later, ast.Name):
+            if isinstance(later.ctx, ast.Load) and later.id in names:
+                return True
+        elif spelling is not None and ast.unparse(later) == spelling:
+            return True
+    return False
+
+
+def _asserted_nodes(tree: ast.Module) -> frozenset[int]:
+    """Identify every node inside the CLAIM an ``assert`` makes.
+
+    An ``assert isinstance(...)`` is not this rule's target, and the reason is
+    the defect being guarded against rather than a convenience. The twins
+    caused harm by ACCEPTING a malformed value and rendering it - ``True`` as
+    a 1970 clock time, a completion of "1 of 1". An assert does the opposite:
+    it stops the run and names the field. So a test pinning that the service
+    published a ``float`` is stating the contract, which is its job, while a
+    narrowing that lets execution continue with whatever it decided is the
+    reader written a second time. Without this the rule would forbid the
+    integration suite from asserting the published shape at all.
+
+    Only the asserted expression is exempt, never the failure message beside
+    it. A narrowing in the message operand is not a claim being made about
+    the value - it is a decision the code took, wearing an assert's clothes.
+
+    The boundary, stated so a later reader does not widen it by accident.
+    What this CANNOT hide: any narrowing whose outcome selects between values
+    or steers control flow. An ``if``, a ``while``, a ternary, a comprehension
+    condition, a lambda predicate and a boolean operand feeding a return are
+    all still reported, which is every shape the re-forks actually took.
+
+    An int-shaped claim is weaker than it reads: ``isinstance(True, int)`` is
+    ``True``, so ``assert isinstance(value, int)`` stops nothing for a bool,
+    where the ``float`` form refuses one outright. Such a claim is therefore
+    exempt only while the asserted value is never read again. One whose value
+    IS read later in its scope - by the asserted name, through a walrus
+    binding, or through the same spelling of a subscript or attribute - is
+    reported like any other narrowing, because a bool would satisfy the claim
+    and flow on into whatever that read feeds. A claim that also tests the
+    value against ``bool`` inside the same assert genuinely refuses one and
+    keeps the exemption.
+
+    The residual that remains, named so the next reader does not assume it
+    away: a later read under a different spelling - an alias bound before the
+    assert, a ``.get`` where the claim subscripted - and a read sitting
+    lexically before the assert that a loop re-runs after it. Pin a value
+    that is going to be used through the canonical reader and assert on what
+    the reader returned; do not lean on a bare numeric assert to narrow it.
+    """
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+    exempt: set[int] = set()
+    for statement in ast.walk(tree):
+        if not isinstance(statement, ast.Assert):
+            continue
+        scope: ast.AST = parents[id(statement)]
+        while not isinstance(
+            scope, ast.FunctionDef | ast.AsyncFunctionDef | ast.Module
+        ):
+            scope = parents[id(scope)]
+        for node in ast.walk(statement.test):
+            if _isinstance_claim(node) and _claim_leaks_a_used_bool(
+                node, statement, scope
+            ):
+                continue
+            exempt.add(id(node))
+    return frozenset(exempt)
+
+
+def _module_offenders(tree: ast.Module, label: str) -> dict[str, list[str]]:
+    """Map each function in one parsed module that narrows a number itself."""
+    offenders: dict[str, list[str]] = {}
+    asserted = _asserted_nodes(tree)
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for node in ast.walk(function):
+            if not _isinstance_claim(node) or id(node) in asserted:
+                continue
+            if _shape_names(node) & _NUMERIC_SHAPES:
+                offenders.setdefault(function.name, []).append(f"{label}:{node.lineno}")
+    return offenders
+
+
 def _numeric_isinstance_offenders() -> dict[str, list[str]]:
     """Map each function that narrows a number itself to where it does so."""
-    package_root = Path(_jobs_module.__file__).parent
     offenders: dict[str, list[str]] = {}
-    for relative in _NARROWING_SURFACES:
-        path = package_root / relative
+    for path, label in _narrowing_surface_paths().items():
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        for function in ast.walk(tree):
-            if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
-                continue
-            for node in ast.walk(function):
-                if (
-                    not isinstance(node, ast.Call)
-                    or not isinstance(node.func, ast.Name)
-                    or node.func.id != "isinstance"
-                    or len(node.args) != 2
-                ):
-                    continue
-                named = {
-                    inner.id
-                    for inner in ast.walk(node.args[1])
-                    if isinstance(inner, ast.Name)
-                }
-                if named & _NUMERIC_SHAPES:
-                    offenders.setdefault(function.name, []).append(
-                        f"{relative}:{node.lineno}"
-                    )
+        for name, sites in _module_offenders(tree, label).items():
+            offenders.setdefault(name, []).extend(sites)
     return offenders
 
 
@@ -443,6 +599,21 @@ class TestNoSurfaceNarrowsANumberTwice:
     ``test_no_unexempted_function_narrows_a_number`` on ``assert unexempted ==
     {}``, reporting ``{'_gpu_cell': ['cli/_jobs_tui.py:1374']} == {}``;
     restoring the reader call returns every test here to green.
+
+    Proved able to fail on the integration tree the same way: replacing
+    ``count(info.get("pid"))`` in ``_service_processes_on_port`` with an
+    inline ``isinstance(pid, int) and not isinstance(pid, bool)`` test fails
+    the same assertion, reporting ``{'_service_processes_on_port':
+    ['tests/integration/_service_lifecycle_helpers.py:210']} == {}``;
+    restoring the reader call returns every test here to green. That is the
+    site the file-by-file surface list could not see.
+
+    Proved able to fail on the assert carve-out's boundary: adding an
+    integration helper that runs ``assert isinstance(pid, int)`` and then
+    returns ``pid`` fails ``test_no_unexempted_function_narrows_a_number`` on
+    ``assert unexempted == {}``, reporting the helper's name and site;
+    deleting the helper removes the entry. A bool satisfies that assert and
+    flows on, which is why the carve-out does not cover it.
     """
 
     def test_no_unexempted_function_narrows_a_number(self) -> None:
@@ -469,6 +640,104 @@ class TestNoSurfaceNarrowsANumberTwice:
         assert count.__module__ == _jobs_module.__name__
         assert mapping.__module__ == _jobs_module.__name__
         assert flag.__module__ == _jobs_module.__name__
+
+
+class TestTheAssertCarveOutRefusesALeakyIntClaim:
+    """The carve-out's boundary, pinned cell by cell on synthetic modules.
+
+    The surface test above can only show today's surfaces are clean. These
+    cells pin the analyser's answer for each shape the boundary names, so
+    the carve-out cannot be widened back - re-exempting an int-shaped claim
+    whose value flows on - without a test failing on the exact shape that
+    reopened.
+
+    Proved able to fail: short-circuiting the leak analysis to ``return
+    False`` - the blanket carve-out restored - fails the four flow-leak
+    cells on their ``assert self._offenders(source) == {"leaks": [...]}``
+    assertions, each reporting ``{} == {'leaks': [...]}``, while the exempt
+    shapes and the message-operand cell stay green; restoring the analysis
+    returns all 8 cells to green.
+    """
+
+    @staticmethod
+    def _offenders(source: str) -> dict[str, list[str]]:
+        return _module_offenders(ast.parse(textwrap.dedent(source)), "probe.py")
+
+    def test_an_int_claim_whose_value_is_read_again_is_reported(self) -> None:
+        # The leak itself: isinstance(True, int) is True, so a bool passes
+        # this claim and reaches the return.
+        source = """\
+        def leaks(payload):
+            pid = payload.get("pid")
+            assert isinstance(pid, int)
+            return pid
+        """
+        assert self._offenders(source) == {"leaks": ["probe.py:3"]}
+
+    def test_an_int_claim_consumed_only_by_a_later_assert_is_reported(self) -> None:
+        # A follow-up assert is still a read that a bool satisfies:
+        # True > 0 holds, so the pair green-lights a malformed field.
+        source = """\
+        def leaks(payload):
+            limit = payload.get("limit")
+            assert isinstance(limit, int)
+            assert limit > 0
+        """
+        assert self._offenders(source) == {"leaks": ["probe.py:3"]}
+
+    def test_a_walrus_bound_int_claim_read_again_is_reported(self) -> None:
+        source = """\
+        def leaks(payload):
+            assert isinstance((pid := payload.get("pid")), int)
+            return pid
+        """
+        assert self._offenders(source) == {"leaks": ["probe.py:2"]}
+
+    def test_a_subscript_read_again_by_the_same_spelling_is_reported(self) -> None:
+        source = """\
+        def leaks(state):
+            assert isinstance(state["pid"], int)
+            return state["pid"]
+        """
+        assert self._offenders(source) == {"leaks": ["probe.py:2"]}
+
+    def test_a_narrowing_in_the_message_operand_is_still_reported(self) -> None:
+        # The message operand is a decision the code took, not a claim; the
+        # earlier tightening that excluded it from the carve-out stays pinned.
+        source = """\
+        def leaks(payload):
+            assert payload, isinstance(payload.get("pid"), int)
+        """
+        assert self._offenders(source) == {"leaks": ["probe.py:2"]}
+
+    def test_an_int_claim_nothing_reads_again_stays_exempt(self) -> None:
+        # A pure contract pin: the run stops or nothing downstream sees the
+        # value, so there is no path for an accepted bool to flow on.
+        source = """\
+        def pins(payload):
+            assert isinstance(payload.get("pid"), int)
+        """
+        assert self._offenders(source) == {}
+
+    def test_a_float_claim_refuses_a_bool_and_stays_exempt(self) -> None:
+        # isinstance(True, float) is False, so the float form genuinely
+        # rejects a bool; reading the value afterwards is safe.
+        source = """\
+        def pins(payload):
+            started = payload.get("started_at")
+            assert isinstance(started, float)
+            return started
+        """
+        assert self._offenders(source) == {}
+
+    def test_a_bool_clause_in_the_same_assert_keeps_the_exemption(self) -> None:
+        source = """\
+        def pins(payload):
+            pid = payload.get("pid")
+            assert isinstance(pid, int) and not isinstance(pid, bool)
+            return pid
+        """
+        assert self._offenders(source) == {}
 
 
 class TestTheLookalikesThatMustNotBeMerged:
@@ -498,10 +767,11 @@ class TestTheLookalikesThatMustNotBeMerged:
         # The canonical mapping reader cannot express that difference, which
         # is why this one is not routed through it.
         assert _nested_section({}, "resources", "current") is None
-        assert mapping({}.get("resources")) == {}
+        empty_record: dict[str, object] = {}
+        assert mapping(empty_record.get("resources")) == {}
 
-        present: dict[str, object] = {"resources": {"current": {"rss_mb": 12.0}}}
-        assert _nested_section(present, "resources", "current") == {"rss_mb": 12.0}
+        present: dict[str, object] = {"resources": {"current": {"rss_mib": 12.0}}}
+        assert _nested_section(present, "resources", "current") == {"rss_mib": 12.0}
 
     def test_the_two_envelope_readers_answer_opposite_questions(self) -> None:
         # Same input shape, opposite outputs: one returns the payload worth

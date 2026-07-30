@@ -24,6 +24,7 @@ from ..server._search_availability import (
     classify_qdrant_collection_disappearance,
     classify_search_response,
 )
+from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -42,7 +43,11 @@ def _canonical_snapshot(
     mode: JobMode = JobMode.INCREMENTAL,
     state: JobState = JobState.RUNNING,
 ) -> JobSnapshot:
-    manager = JobManager(max_nonterminal=1, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=None,
+    )
     outcome = manager.create(
         JobSpec(JobOperation.INDEX, source, str(root), mode),
         JobInitiator("test", "search availability", str(root)),
@@ -196,7 +201,11 @@ def test_nonempty_result_remains_available_during_matching_rebuild(
     tmp_path: Path,
 ) -> None:
     root = (tmp_path / "project").resolve()
-    manager = JobManager(max_nonterminal=1, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=None,
+    )
     created = manager.create(
         JobSpec(
             JobOperation.INDEX,
@@ -350,7 +359,11 @@ def test_qdrant_collection_disappearance_uses_matching_canonical_job_evidence(
     tmp_path: Path,
 ) -> None:
     root = (tmp_path / "project").resolve()
-    manager = JobManager(max_nonterminal=1, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=None,
+    )
     created = manager.create(
         JobSpec(
             JobOperation.INDEX,

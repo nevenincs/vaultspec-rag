@@ -217,7 +217,8 @@ class TestChunkedVaultLifecycle:
     def test_old_point_layout_triggers_rebuild(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
-        from ...config._settings import get_config
+        from ..._index_breadth import index_meta_path
+        from ..._source_types import PublicSourceType
 
         store, indexer, _ = _build_indexed_root(tmp_path, embedding_model)
         try:
@@ -225,8 +226,7 @@ class TestChunkedVaultLifecycle:
             # Rewrite the metadata sidecar without the layout marker,
             # reproducing the on-disk state of an install that indexed
             # before chunking existed.
-            cfg = get_config()
-            meta_path = tmp_path / cfg.data_dir / cfg.index_metadata_file
+            meta_path = index_meta_path(tmp_path, PublicSourceType.VAULT)
             meta: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
             meta.pop(VAULT_POINT_SCHEMA_KEY)
             meta_path.write_text(json.dumps(meta), encoding="utf-8")

@@ -52,6 +52,10 @@ from ..logging_config import (
     render_managed_log_groups,
 )
 from ..service import RegistryFullError
+from ..service_quiesce import (
+    ServiceQuiesceTransitionConflictError,
+    ServiceQuiesceTransitionWaitTimeoutError,
+)
 from ._auth import require_token
 from ._routes_jobs import (
     JobFilter,
@@ -90,8 +94,8 @@ if TYPE_CHECKING:
 
     from ..indexer._codebase_indexer import CodeIndexPreflight
     from ..indexer._document_indexer import DocumentIndexPreflight
-    from ..job_control import QuiesceGate
     from ..job_models import JobInitiator, JobSpec
+    from ..service_quiesce import QuiesceSnapshot
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -411,6 +415,7 @@ def job_outcome_status(code: str) -> int:
     if code.startswith("invalid_") and code != "invalid_transition":
         return 400
     if code.startswith("persistence_") or code in {
+        "dispatch_loop_unresponsive",
         "dispatch_stopped",
         "event_loop_required",
     }:
@@ -596,6 +601,14 @@ async def jobs_route(request: Request) -> JSONResponse:
             # the key's absence marks a daemon that predates the tier - and
             # purely informational: nothing acts on it.
             "pressure": _machine_pressure(records, now=now),
+            # A different thing from both blocks above: whether the device
+            # will actually admit a new model load right now, against the
+            # configured floor. Synchronous and fail-fast, not a display
+            # reading and not folded through hysteresis - an operator watching
+            # this listing can see the one fact that decides whether the next
+            # load or test run is refused. Null when this host's reading could
+            # not be taken; the key's absence marks a daemon that predates it.
+            "device_load": _jobs.device_load_snapshot(now=now),
             "filters": {
                 "phase": phase,
                 "state": state,
@@ -1075,40 +1088,93 @@ async def vault_document_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
-def _quiesce_transition(gate: QuiesceGate, *, pause: bool) -> str:
-    """Apply one pause/resume transition and name the outcome.
+def _quiesce_envelope(
+    *,
+    achieved: bool,
+    status: str,
+    snapshot: QuiesceSnapshot,
+    message: str | None = None,
+) -> JSONResponse:
+    """Emit the one quiesce envelope, on the achieved and failed exits alike.
 
-    The prior gate state is read BEFORE the mutation so an
-    already-satisfied request is reported as ``already_*`` rather than
-    as a fresh state change. This is the single service-domain owner of
-    the pause/resume status vocabulary; adapters (CLI, MCP) render it
-    without recomputing state.
+    Every exit carries the same ``ok``/``status``/``quiesce`` shape so an
+    adapter branches on ``ok`` alone.  A failure adds ``error`` and
+    ``message``: the operator asked for a state change and did not get it,
+    and the reason is the whole content of that answer.  The daemon answered
+    in every one of these cases, so the transport status stays 200 and the
+    achieved/failed distinction lives in the body - a broker pausing
+    speculatively must be able to tell a refused lifecycle request from a
+    gateway that never reached the service.
     """
-    was_paused = gate.is_paused()
-    if pause:
-        gate.pause()
-        return "already_paused" if was_paused else "paused"
-    gate.resume()
-    return "resumed" if was_paused else "already_running"
+    log_event(
+        logger,
+        "service.quiesce",
+        status,
+        fields={
+            "state": snapshot.state.value,
+            "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
+        },
+    )
+    payload: dict[str, Any] = {
+        "ok": achieved,
+        "status": status,
+        "quiesce": snapshot.as_envelope(),
+    }
+    if not achieved:
+        payload["error"] = status
+        payload["message"] = (
+            message
+            if message is not None
+            else _quiesce_reason(
+                status,
+                snapshot,
+            )
+        )
+    return JSONResponse(payload)
+
+
+def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
+    """Describe an unachieved transition from the controller's own evidence."""
+    failure_reason = snapshot.failure_reason
+    held = f"the service is {snapshot.state.value!r}"
+    if failure_reason is not None:
+        return f"Quiesce transition {status!r} left {held}: {failure_reason}."
+    return f"Quiesce transition {status!r} left {held}."
 
 
 async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    gate = _m._registry.quiesce_gate
-    status = _quiesce_transition(gate, pause=pause)
-    # Re-read after the transition: a gate latched open by a pending
-    # shutdown ignores pause(), and the honest post-state lets the
-    # caller detect the unachieved hold instead of trusting the verb.
-    paused = gate.is_paused()
-    log_event(
-        logger,
-        "service.quiesce",
-        status,
-        fields={"paused": paused},
+    try:
+        if pause:
+            transition = await _run_in_thread(
+                partial(_m._registry.quiesce_resources, timeout_seconds=5.0),
+            )
+        else:
+            transition = await _run_in_thread(_m._registry.resume_resources)
+    except (
+        ServiceQuiesceTransitionConflictError,
+        ServiceQuiesceTransitionWaitTimeoutError,
+    ) as exc:
+        return _quiesce_envelope(
+            achieved=False,
+            status=exc.code,
+            snapshot=exc.snapshot,
+            message=str(exc),
+        )
+    except Exception as exc:
+        return _quiesce_envelope(
+            achieved=False,
+            status="quiesce_transition_failed",
+            snapshot=_m._registry.quiesce_snapshot(),
+            message=f"{exc.__class__.__name__}: {exc}",
+        )
+    return _quiesce_envelope(
+        achieved=transition.achieved,
+        status=transition.code.value,
+        snapshot=transition.snapshot,
     )
-    return JSONResponse({"ok": True, "status": status, "paused": paused})
 
 
 async def pause_service_route(request: Request) -> JSONResponse:

@@ -17,9 +17,11 @@ from ..job_models import (
     JobState,
     ProcessResourceSnapshot,
 )
+from ..service_quiesce import QuiesceAdmissionClosedError
 from .state import (
     JobManagerState,
     JobRuntimeOwner,
+    assign_runtime_owner,
 )
 
 if TYPE_CHECKING:
@@ -47,21 +49,23 @@ class JobManagerProgress(JobManagerState):
             managed = self._active.get(job_id)
             if managed is None:
                 return self._error(command, "job_not_found", "The job was not found.")
-            if not self._accepting_dispatch:
-                return self._error(
-                    command,
-                    "dispatch_stopped",
-                    "Managed dispatch is stopped for service shutdown.",
-                    managed,
-                )
             if (
-                managed.snapshot.state is not JobState.QUEUED
+                not self._accepting_dispatch
+                or managed.snapshot.state is not JobState.QUEUED
                 or managed.snapshot.desired_state is not DesiredJobState.RUNNING
             ):
                 return self._error(
                     command,
-                    "invalid_transition",
-                    "Only queued work with running desired state can start.",
+                    (
+                        "dispatch_stopped"
+                        if not self._accepting_dispatch
+                        else "invalid_transition"
+                    ),
+                    (
+                        "Managed dispatch is stopped for service shutdown."
+                        if not self._accepting_dispatch
+                        else "Only queued work with running desired state can start."
+                    ),
                     managed,
                 )
             if managed.runtime.task is not None:
@@ -72,7 +76,19 @@ class JobManagerProgress(JobManagerState):
                     managed,
                 )
 
-            managed.runtime = JobRuntimeOwner(task=task, control=control)
+            try:
+                ticket = self._quiesce_controller.acquire_ticket()
+            except QuiesceAdmissionClosedError:
+                return self._error(
+                    command,
+                    "quiesce_admission_closed",
+                    "Service quiesce has closed compute admission.",
+                    managed,
+                )
+            assign_runtime_owner(
+                managed,
+                JobRuntimeOwner(task=task, control=control, compute_ticket=ticket),
+            )
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
@@ -223,10 +239,13 @@ class JobManagerProgress(JobManagerState):
             managed = self._active.get(job_id)
             if managed is None or managed.runtime.task is not task:
                 return False
-            managed.runtime = replace(
-                managed.runtime,
-                worker_active=active,
-                worker_thread=worker_thread if active else None,
+            assign_runtime_owner(
+                managed,
+                replace(
+                    managed.runtime,
+                    worker_active=active,
+                    worker_thread=worker_thread if active else None,
+                ),
             )
             persistence_error = self._persist_locked()
             if persistence_error is not None:
@@ -369,10 +388,14 @@ class JobManagerProgress(JobManagerState):
             managed = self._active.get(job_id)
             if managed is None or managed.runtime.task is not task:
                 return False
-            managed.runtime = replace(
-                managed.runtime,
-                worker_active=False,
-                worker_thread=None,
+            assign_runtime_owner(
+                managed,
+                replace(
+                    managed.runtime,
+                    worker_active=False,
+                    worker_thread=None,
+                    compute_ticket=None,
+                ),
             )
             managed.snapshot = replace(
                 managed.snapshot,

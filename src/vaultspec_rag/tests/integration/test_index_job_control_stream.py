@@ -128,7 +128,8 @@ def test_clean_rebuild_defers_pause_until_complete_publication(
             encoding="utf-8",
         )
 
-        pause_clean_vault_rebuild(indexer, store, token, gpu_lock)
+        served_count = store.count()
+        pause_clean_vault_rebuild(indexer, store, token, gpu_lock, served_count)
         assert_revised_vault_publication(
             indexer,
             store,

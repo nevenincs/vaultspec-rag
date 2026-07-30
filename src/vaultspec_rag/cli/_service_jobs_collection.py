@@ -10,10 +10,10 @@ from typer.core import TyperCommand, TyperOption
 
 from ..serviceclient._discovery import _default_service_port
 from ._app import (
+    JOBS_WATCH_OPTION_HELP,
     JSON_OPTION_HELP,
     PORT_OPTION_HELP,
     WATCH_INTERVAL_OPTION_HELP,
-    WATCH_OPTION_HELP,
     server_app,
 )
 from ._render import _emit_json
@@ -136,7 +136,7 @@ class _ServiceJobsCommand(TyperCommand):
                     param_decls=["--watch"],
                     default=False,
                     is_flag=True,
-                    help=WATCH_OPTION_HELP,
+                    help=JOBS_WATCH_OPTION_HELP,
                 ),
                 TyperOption(
                     param_decls=["--interval"],

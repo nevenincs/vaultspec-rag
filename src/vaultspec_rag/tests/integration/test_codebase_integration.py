@@ -440,7 +440,8 @@ class TestCodeEmbedFormatRebuild:
     ) -> None:
         import json
 
-        from ...config._settings import get_config
+        from ..._index_breadth import index_meta_path
+        from ..._source_types import PublicSourceType
 
         indexer = code_project["code_indexer"]
         store = code_project["store"]
@@ -451,8 +452,7 @@ class TestCodeEmbedFormatRebuild:
         chunk_total = store.count_code()
         assert chunk_total > 0
 
-        cfg = get_config()
-        meta_path = code_project["root"] / cfg.data_dir / cfg.code_index_metadata_file
+        meta_path = index_meta_path(code_project["root"], PublicSourceType.CODE)
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         meta.pop("__code_embed_schema__")
         meta_path.write_text(json.dumps(meta), encoding="utf-8")

@@ -163,7 +163,7 @@ def test_every_documented_variable_is_a_declared_setting() -> None:
 def test_every_declared_variable_is_documented() -> None:
     """Every declared variable must appear in the reference.
 
-    Mutation: deleted the ``VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`` row - the
+    Mutation: deleted the ``VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`` row - the
     omission shape the page shipped for eight variables at once. Observed this
     assertion fail naming that variable.
     """
@@ -178,7 +178,7 @@ def test_documented_defaults_match_the_shipped_defaults() -> None:
     """Every restated default must equal the value the settings ship.
 
     Mutation: restored the stale ``12288`` as the documented
-    ``VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`` default - the exact defect this
+    ``VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`` default - the exact defect this
     page shipped. Observed this assertion fail naming that variable, its
     documented value and its real one.
     """
