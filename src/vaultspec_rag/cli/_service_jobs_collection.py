@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from typer.core import TyperCommand, TyperOption
 
@@ -36,6 +36,26 @@ from ._service_jobs_watch import (
 
 if TYPE_CHECKING:
     from typer._click import Context as ClickContext
+
+    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
+    # and value types are only known once a command's options are parsed at
+    # runtime. This TypedDict is the producer-side cast target for
+    # ``_ServiceJobsCommand.invoke``: the field types mirror the
+    # ``TyperOption`` declarations registered in ``__init__``, so a single
+    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
+    class _JobsParams(TypedDict):
+        limit: int
+        state: str | None
+        index: str | None
+        started_by: str | None
+        query: str | None
+        failed: bool
+        job_id: str | None
+        since: float | None
+        port: int | None
+        json: bool
+        watch: bool
+        interval: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +168,7 @@ class _ServiceJobsCommand(TyperCommand):
         )
 
     def invoke(self, ctx: ClickContext) -> None:
-        params = ctx.params
+        params = cast("_JobsParams", ctx.params)
         return run_service_jobs(
             ServiceJobsOptions(
                 limit=params["limit"],
