@@ -3,7 +3,7 @@ tags:
   - '#audit'
   - '#service-quiesce'
 date: '2026-07-30'
-modified: '2026-07-30'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - "[[2026-07-24-service-quiesce-adr]]"
@@ -35,9 +35,13 @@ The captured transport invokes its refresh callback after a 401 but retries only
 ### unrecoverable-machine-holder | high | Production machine lock leaves a stale owner PID
 
 A real nested route host acquired the production machine lock with PID 7172, but a separate contender observed its lock record still naming PID 43480 and therefore reported holder PID zero. The owner-record write is best-effort today, yet capture requires lock-holder, pointer, and health PID agreement. Do not synthesize a test PID or weaken that correlation: make the production machine-lock record update durable and fail acquisition when it cannot be established, then require a separate real contender to observe the exact positive owner PID before the CPU host signals ready.
+### pre-root-original-path-observation | high | Guarded configured-path discovery discards valid host evidence during capture
+
+The durable owner witness repair lets a real pre-ready contender recover the exact host PID, but the S30 child intentionally has pytest containment active with no registered root while it captures the original service. The ordinary configured-path holder reader correctly refuses that state; resolution reports `probe_failed` and loses the otherwise valid machine-pointer evidence. Do not weaken that reader or treat `BOOTSTRAP` as a general containment bypass. Capture needs one private original-path observation that requires existing absolute identity and discovery paths, opens without creation, makes only a momentary nonblocking lock attempt, shares ordinary pointer validation, and never retains a lease or writes the lock, discovery, capability, or authority. Any absence, unreadability, free lock, or PID disagreement must continue to refuse capture.
 
 ## Recommendations
 
 - Do not accept or commit S29, S30, or S32 until the recorded durable machine-owner record, opaque-authority, and same-token retry repairs are implemented and focused CPU tests prove real cross-process owner visibility, mint timing, one-shot/forged/stale refusal, exact release, first-request authentication, same-token 401 retry, token-rotation refusal, and the redirected-path pause-work-resume topology.
 - Retain root pytest singleton-path isolation. The opaque authority registry is the sole narrow exception and must not be implemented by restoring global environment or by accepting arbitrary caller paths.
 - Keep the captured target non-secret. Revalidation may hold the raw service token only in its local call stack and pass it directly to typed transport parameters without serialization or logging.
+- Keep the normal configured-path machine-lock reader fully contained. Only S30's private, existing-original-path observation may run before root registration; it must neither create nor retain a lock and must share the strict pointer/PID validation that preserves holder_pid == pointer_pid == health_pid.
