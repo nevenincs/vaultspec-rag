@@ -67,9 +67,11 @@ def load_torch() -> ModuleType:
 
     The device is checked once per process, before the first successful load,
     and the verdict is latched: a later call is exactly as cheap as it was
-    before the check existed, and - the load-bearing half - it takes no second
-    reading, so this process's own residency can never be read back as foreign
-    pressure. A release of the resident stack retires the latch.
+    before the check existed, and - the load-bearing half - the admitted
+    workload's remaining components come up without re-interrogation. A release
+    of resident models retires the latch; the fresh verdict a reload then takes
+    credits whatever this process still holds, so its own residency is never
+    read back as foreign pressure.
     """
     from ._gpu_admission import admit_gpu_load
 
