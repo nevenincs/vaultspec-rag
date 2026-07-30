@@ -14,7 +14,7 @@ import contextlib
 import http.server
 import json
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -84,7 +84,7 @@ _RETRYABLE_FAILURE: dict[str, object] = {
 
 
 @contextlib.contextmanager
-def _quiesce_service(envelope: dict[str, Any] | None) -> Generator[int | None]:
+def _quiesce_service(envelope: dict[str, object] | None) -> Generator[int | None]:
     """Serve one pause/resume envelope over real HTTP on a real port.
 
     The command under test resolves a port, opens a socket and parses a wire
@@ -140,8 +140,8 @@ def _invoke(verb: str, port: int | None) -> Result:
     return runner.invoke(app, args)
 
 
-def _json(result: Result) -> dict[str, Any]:
-    return json.loads(result.output)
+def _json(result: Result) -> dict[str, object]:
+    return cast("dict[str, object]", json.loads(result.output))
 
 
 def test_pause_change_is_success_exit_zero() -> None:
@@ -171,7 +171,9 @@ def test_pause_already_paused_is_idempotent_success() -> None:
     ) as port:
         result = _invoke("pause", port)
     assert result.exit_code == 0, result.output
-    assert _json(result)["data"]["status"] == "already_quiesced"
+    assert (
+        cast("dict[str, object]", _json(result)["data"])["status"] == "already_quiesced"
+    )
 
 
 def test_resume_already_running_is_idempotent_success() -> None:
@@ -180,7 +182,7 @@ def test_resume_already_running_is_idempotent_success() -> None:
     ) as port:
         result = _invoke("resume", port)
     assert result.exit_code == 0, result.output
-    assert _json(result)["data"]["status"] == "running"
+    assert cast("dict[str, object]", _json(result)["data"])["status"] == "running"
 
 
 def test_retryable_pause_failure_preserves_the_service_owned_envelope() -> None:

@@ -15,7 +15,7 @@ import os
 import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import pytest
 
@@ -86,9 +86,21 @@ def _survey(
     )
 
 
-def _identity(**overrides: object) -> CollectionIdentity:
+class _IdentityOverrides(TypedDict, total=False):
+    """The subset of a :class:`CollectionIdentity`'s fields a test may override."""
+
+    dense_model: str
+    sparse_model: str | None
+    dense_dim: int
+    distance: str
+    dense_vector_name: str
+    sparse_vector_name: str
+    storage_schema_version: int
+
+
+def _identity(**overrides: Unpack[_IdentityOverrides]) -> CollectionIdentity:
     """Build a complete identity, overriding named fields."""
-    base: dict[str, object] = {
+    base: _IdentityOverrides = {
         "dense_model": "acme/dense-v1",
         "sparse_model": "acme/sparse-v1",
         "dense_dim": 1024,
@@ -98,7 +110,7 @@ def _identity(**overrides: object) -> CollectionIdentity:
         "storage_schema_version": STORAGE_SCHEMA_VERSION,
     }
     base.update(overrides)
-    return CollectionIdentity(**base)  # type: ignore[arg-type]
+    return CollectionIdentity(**base)
 
 
 class TestOrphanStamps:
