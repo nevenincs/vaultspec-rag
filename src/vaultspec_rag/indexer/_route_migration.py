@@ -471,9 +471,9 @@ def reconcile_checkpoint_routes(
 
 def prior_stored_owners(root_dir: Path, rel_path: str) -> frozenset[ContentKind]:
     """Return prior per-kind ownership for a path that may no longer exist."""
-    from ..config._settings import get_config
+    from .._store_writes import workspace_volume_path
 
-    ledger_path = index_run_ledger_path(root_dir.resolve() / get_config().data_dir)
+    ledger_path = index_run_ledger_path(workspace_volume_path(root_dir.resolve()))
     if not ledger_path.is_file():
         return frozenset()
     ledger = RunLedger(ledger_path)

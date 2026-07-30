@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 from ._operator_commands import IndexCommandOptions, index_command
 from ._source_types import PublicSourceType
+from ._store_writes import workspace_volume_path
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +287,10 @@ def index_meta_path(
     source vocabulary includes selections with no sidecar of this shape, and
     accepting them would buy a runtime rejection where the type already says
     the call cannot be written.
+
+    Only the filename is decided here. Which directory a root's own index
+    bookkeeping lives in is one question with one answer, so it is asked of the
+    volume resolver every other writer into that directory asks.
     """
     from .config._settings import get_config
 
@@ -295,7 +300,7 @@ def index_meta_path(
         if source is PublicSourceType.CODE
         else cfg.index_metadata_file
     )
-    return root / cfg.data_dir / filename
+    return workspace_volume_path(root) / filename
 
 
 def _read_sidecar(path: pathlib.Path) -> dict[str, object] | None:

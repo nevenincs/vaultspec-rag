@@ -310,9 +310,9 @@ class DocumentIndexer:
             SourceProfileVersion.CONVENTIONAL_V1
         )
         self._writer_lock = threading.RLock()
-        from ..config._settings import get_config
+        from .._store_writes import workspace_volume_path
 
-        self._data_root = self.root_dir / get_config().data_dir
+        self._data_root = workspace_volume_path(self.root_dir)
         self._meta_path = document_metadata_path(self.root_dir)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
