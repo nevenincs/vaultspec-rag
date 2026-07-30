@@ -12,13 +12,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-import vaultspec_rag.server as _m
-
 from ...api import get_readiness
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -31,13 +29,19 @@ pytestmark = [pytest.mark.integration]
 @pytest.fixture
 def _routes_app() -> Iterator[tuple[TestClient, str]]:  # pyright: ignore[reportUnusedFunction]
     """A real ASGI TestClient over ROUTES with a known service token."""
-    prev_token = _m._SERVICE_TOKEN
-    _m._SERVICE_TOKEN = "test-token-readiness"
+    client = TestClient(
+        create_http_app(
+            ServerRouteRuntime(
+                token="test-token-readiness",
+                registry=ServiceRegistry(),
+            ),
+            lifespan=None,
+        )
+    )
     try:
-        client = TestClient(Starlette(routes=ROUTES))
         yield client, "test-token-readiness"
     finally:
-        _m._SERVICE_TOKEN = prev_token
+        client.close()
 
 
 def test_readiness_route_401_without_token(

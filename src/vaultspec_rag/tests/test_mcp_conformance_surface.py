@@ -21,7 +21,6 @@ import pytest
 import uvicorn
 from mcp import Client, UriTemplate
 from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError
-from starlette.applications import Starlette
 
 from ..mcp._mcp import mcp
 from ..serviceclient._compat import local_package_version
@@ -87,16 +86,20 @@ def _tools() -> list[Tool]:
 @pytest.fixture
 def service_routes() -> Iterator[int]:
     """Serve the production route table over a live loopback Uvicorn server."""
-    from .. import server as server_module
-    from ..server._routes import ROUTES
+    from ..server import ServerRouteRuntime, create_http_app
+    from ..service import ServiceRegistry
     from ._cli_helpers import _CONTRACT_SERVICE_TOKEN
 
     port = free_loopback_port()
-    prior_token = server_module._SERVICE_TOKEN
-    server_module._SERVICE_TOKEN = _CONTRACT_SERVICE_TOKEN
     server = uvicorn.Server(
         uvicorn.Config(
-            Starlette(routes=ROUTES),
+            create_http_app(
+                ServerRouteRuntime(
+                    token=_CONTRACT_SERVICE_TOKEN,
+                    registry=ServiceRegistry(),
+                ),
+                lifespan=None,
+            ),
             host="127.0.0.1",
             port=port,
             log_config=None,
@@ -115,7 +118,6 @@ def service_routes() -> Iterator[int]:
     finally:
         server.should_exit = True
         thread.join(timeout=5)
-        server_module._SERVICE_TOKEN = prior_token
         assert not thread.is_alive()
 
 

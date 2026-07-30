@@ -573,22 +573,28 @@ if sys.platform != "win32":
             set_active_supervisor,
             start_supervised_from_config,
         )
+        from ...server import ServerRouteRuntime
         from ...server._lifecycle import _DiscoveryPublisher
         from ...server._lifespan import _stamp_qdrant_identity
+        from ...service import ServiceRegistry
 
         with _service_env(tmp_path):
             first = start_supervised_from_config()
             original_port = server_state._service_port
-            original_token = server_state._SERVICE_TOKEN
             lease, holder = acquire_machine_lock_lease()
             assert lease is not None
             assert holder == os.getpid()
-            discovery = _DiscoveryPublisher(lease)
+            discovery = _DiscoveryPublisher(
+                ServerRouteRuntime(
+                    token="attached-qdrant-test-token",
+                    registry=ServiceRegistry(),
+                ),
+                lease,
+            )
             try:
                 attached = start_supervised_from_config()
                 assert attached.pid is None
                 server_state._service_port = free_loopback_port()
-                server_state._SERVICE_TOKEN = "attached-qdrant-test-token"
                 _stamp_qdrant_identity(attached, discovery)
                 status = read_service_status()
                 assert status is not None
@@ -610,7 +616,6 @@ if sys.platform != "win32":
                 discovery.cleanup()
                 release_machine_lock_lease(lease)
                 server_state._service_port = original_port
-                server_state._SERVICE_TOKEN = original_token
                 first.stop()
                 set_active_supervisor(None)
 

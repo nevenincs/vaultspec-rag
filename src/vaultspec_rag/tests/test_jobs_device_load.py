@@ -176,25 +176,21 @@ class TestJobsRouteDeviceLoadExposure:
     """GET /jobs carries the device-load block beside the GPU/pressure ones."""
 
     def test_the_listing_envelope_carries_the_device_load_block(self) -> None:
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from vaultspec_rag import server as server_package
-        from vaultspec_rag.server._routes import jobs_route
+        from vaultspec_rag.server import ServerRouteRuntime, create_http_app
+        from vaultspec_rag.service import ServiceRegistry
 
         token = "device-load-exposure-test-token"
-        previous_token = server_package._SERVICE_TOKEN
-        server_package._SERVICE_TOKEN = token
-        try:
-            app = Starlette(routes=[Route("/jobs", jobs_route)])
-            client: httpx.Client = cast("httpx.Client", TestClient(app))
-            response: httpx.Response = client.get(
-                "/jobs", headers={"Authorization": f"Bearer {token}"}
-            )
-            payload = cast("dict[str, object]", response.json())
-        finally:
-            server_package._SERVICE_TOKEN = previous_token
+        app = create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            lifespan=None,
+        )
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        response: httpx.Response = client.get(
+            "/jobs", headers={"Authorization": f"Bearer {token}"}
+        )
+        payload = cast("dict[str, object]", response.json())
         assert "device_load" in payload
         device_load = payload["device_load"]
         if device_load is not None:

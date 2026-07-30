@@ -28,20 +28,17 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
 import uvicorn
-from starlette.applications import Starlette
-from starlette.routing import Route
 from typer.testing import CliRunner
 
 import vaultspec_rag.mcp._admin_client as admin
-import vaultspec_rag.server as _m
 
 from ... import jobs as _jobs
 from ... import jobs as _managed_jobs
 from ...cli import app
 from ...config._settings import reset_config
 from ...config._types import EnvVar
-from ...server._lifespan import health_handler
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 from .._http_stubs import QuietHandler
 from .._ports import free_loopback_port
 
@@ -144,7 +141,6 @@ def _canonical_resilience_server(
     token = "canonical-resilience-token"
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)
-    prior_token = _m._SERVICE_TOKEN
     server: uvicorn.Server | None = None
     thread: threading.Thread | None = None
     stopped = True
@@ -154,7 +150,6 @@ def _canonical_resilience_server(
         reset_config()
         _managed_jobs.reset()
         _jobs.reset()
-        _m._SERVICE_TOKEN = token
         (status_dir / "service.json").write_text(
             json.dumps(
                 {
@@ -167,7 +162,10 @@ def _canonical_resilience_server(
         )
         server = uvicorn.Server(
             uvicorn.Config(
-                Starlette(routes=[Route("/health", health_handler), *ROUTES]),
+                create_http_app(
+                    ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+                    lifespan=None,
+                ),
                 host="127.0.0.1",
                 port=port,
                 log_config=None,
@@ -190,7 +188,6 @@ def _canonical_resilience_server(
             stopped = not thread.is_alive()
         _managed_jobs.reset()
         _jobs.reset()
-        _m._SERVICE_TOKEN = prior_token
         if prior_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:
