@@ -328,6 +328,14 @@ class ServiceRegistry:
         cfg = get_config()
         self._model: EmbeddingModel | None = None
         self._projects: dict[Path, ProjectSlot] = {}
+        # A reservation owns one bounded project seat while its root's store
+        # is being constructed.  It is deliberately separate from
+        # ``_projects``: putting a half-built slot in the public map lets a
+        # concurrent lease observe storage before its construction either
+        # completed or failed.  The condition shares ``_lock`` so same-root
+        # callers join the in-flight admission without reserving a second
+        # seat, while unrelated roots continue their own construction.
+        self._project_admissions: set[Path] = set()
         # Cold model-free store leases are not project slots, but they still
         # own Qdrant clients and filesystem locks. Track both construction and
         # active use so close_all() can drain or force-close every store the
@@ -339,6 +347,7 @@ class ServiceRegistry:
         # releasing the lock first eliminates a TOCTOU window where a
         # concurrent lease() could resurrect the victim.
         self._lock = threading.RLock()
+        self._project_admission_condition = threading.Condition(self._lock)
         # One store guard per resolved root, minted on first use and then kept
         # for the registry's life. Entries are deliberately NOT removed when a
         # root's slot is evicted, and removing one is a race, not a cleanup: a
@@ -404,6 +413,9 @@ class ServiceRegistry:
                 )
             if (
                 self._projects
+                or self._project_admissions
+                or self._transient_stores
+                or self._transient_store_constructions
                 or self._root_locks
                 or self._model is not None
                 or self._reranker is not None
@@ -998,11 +1010,11 @@ class ServiceRegistry:
         Raises:
             RuntimeError: If the registry is shutting down.
         """
-        with self._lock:
-            if self._shutting_down:
-                msg = "ServiceRegistry is shutting down"
-                raise RuntimeError(msg)
         with self._root_store_guard(resolved):
+            with self._lock:
+                if self._shutting_down:
+                    msg = "ServiceRegistry is shutting down"
+                    raise RuntimeError(msg)
             yield
 
     def _pin_warm_slot(self, resolved: Path) -> ProjectSlot | None:
@@ -1022,45 +1034,241 @@ class ServiceRegistry:
             slot.ref_count += 1
             return slot
 
-    def peek_project(self, root: Path) -> ProjectSlot:
-        """Return (or lazily create) the slot for *root* without bumping refcount.
+    def _has_project_admission_capacity_locked(self) -> bool:
+        """Return whether another cold project reservation fits the configured cap.
 
-        Reserved for non-request-path callers (watcher wiring, lifespan
-        preload, tests).  Request-path callers MUST use :meth:`lease`
-        instead so eviction refcount accounting is honored.
-
-        Thread-safe: an already-published slot is returned without any
-        locking, and creation runs under :meth:`_root_store_admission`, so
-        concurrent callers for *different* roots proceed in parallel while
-        concurrent callers for the *same* root are serialized - against each
-        other and against a cold store lease alike.
-
-        Args:
-            root: Workspace root directory (resolved internally).
-
-        Returns:
-            The ``ProjectSlot`` for *root*.
-
-        Raises:
-            RuntimeError: If ``load_model()`` has not been called or
-                the registry is shutting down.
+        Caller MUST hold ``_lock``.  A reservation occupies a project seat
+        before its store exists, which makes a concurrent multi-root cold
+        start obey the same cap as warm slots.
         """
-        root = root.resolve()
-        slot = self._projects.get(root)
-        if slot is not None:
-            return slot
-        with self._root_store_admission(root):
-            slot = self._projects.get(root)
+        return self._max_projects <= 0 or (
+            len(self._projects) + len(self._project_admissions) < self._max_projects
+        )
+
+    def _release_project_admission_locked(self, root: Path) -> None:
+        """Release *root*'s construction seat and wake same-root joiners.
+
+        Caller MUST hold ``_lock``.  The notify happens on successful
+        publication and on every failure path, so a waiter never inherits an
+        abandoned reservation.
+        """
+        if root in self._project_admissions:
+            self._project_admissions.remove(root)
+            self._project_admission_condition.notify_all()
+        self._complete_shutdown_if_drained_locked()
+
+    def _release_project_admission(self, root: Path) -> None:
+        """Release *root*'s construction seat outside an existing lock scope."""
+        with self._project_admission_condition:
+            self._release_project_admission_locked(root)
+
+    def _complete_shutdown_if_drained_locked(self) -> None:
+        """Finalize a shutdown only after every registry-owned store is gone.
+
+        Caller MUST hold ``_lock``.  A bounded close can return while a store
+        constructor is still unwinding; retaining the shutdown state and root
+        guard identities until that owner releases prevents a subsequent
+        startup from opening the same root through a freshly minted guard.
+        """
+        if (
+            self._shutting_down
+            and not self._projects
+            and not self._project_admissions
+            and not self._transient_stores
+            and self._transient_store_constructions == 0
+        ):
+            self._root_locks.clear()
+            self._shutdown_complete = True
+
+    def _pin_slot_locked(self, slot: ProjectSlot) -> None:
+        """Record one lease before returning a warm or newly published slot."""
+        slot.last_access = time.monotonic()
+        slot.ref_count += 1
+
+    def _warm_slot_locked(self, resolved: Path, *, pin: bool) -> ProjectSlot | None:
+        """Return the published slot, pinning it when a lease is acquiring it.
+
+        Caller MUST hold ``_lock``.
+        """
+        slot = self._projects.get(resolved)
+        if slot is not None and pin:
+            self._pin_slot_locked(slot)
+        return slot
+
+    def _reserve_after_root_guard(
+        self,
+        resolved: Path,
+        *,
+        pin: bool,
+    ) -> tuple[ProjectSlot | None, bool]:
+        """Resolve a capped no-victim gap beneath *resolved*'s root guard.
+
+        A just-removed LRU victim is invisible to ``_projects`` until its
+        guarded teardown finishes.  Joining that guard closes the gap without
+        allowing a second root guard or an unaccounted extra project seat.
+        """
+        with self._root_store_guard(resolved), self._project_admission_condition:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+            slot = self._warm_slot_locked(resolved, pin=pin)
             if slot is not None:
-                return slot
-            slot = self._create_slot(root)
-            with self._lock:
+                return (slot, False)
+            if resolved in self._project_admissions:
+                return (None, False)
+            if self._has_project_admission_capacity_locked():
+                self._project_admissions.add(resolved)
+                return (None, True)
+            if self._project_admissions:
+                self._project_admission_condition.wait()
+                return (None, False)
+            self._lru_victim_root()
+            return (None, False)
+
+    def _replace_lru_with_project_admission(
+        self,
+        resolved: Path,
+        victim_root: Path,
+        *,
+        pin: bool,
+    ) -> tuple[ProjectSlot | None, bool]:
+        """Atomically replace *victim_root* with *resolved*'s reservation.
+
+        The root guard is acquired before the registry lock.  Under that lock
+        the outgoing warm slot is removed and the incoming reservation is
+        recorded together, preserving the bounded-cap invariant throughout
+        the later, potentially slow teardown.
+        """
+        with self._root_store_guard(victim_root):
+            victim_slot: ProjectSlot | None = None
+            with self._project_admission_condition:
                 if self._shutting_down:
-                    slot.store.close()
                     msg = "ServiceRegistry is shutting down"
                     raise RuntimeError(msg)
-                self._projects[root] = slot
-        return slot
+                slot = self._warm_slot_locked(resolved, pin=pin)
+                if slot is not None:
+                    return (slot, False)
+                if resolved in self._project_admissions:
+                    return (None, False)
+                if self._has_project_admission_capacity_locked():
+                    self._project_admissions.add(resolved)
+                    return (None, True)
+                if self._lru_victim_root() != victim_root:
+                    return (None, False)
+                victim_slot = self._projects.get(victim_root)
+                if victim_slot is None or victim_slot.ref_count > 0:
+                    return (None, False)
+                del self._projects[victim_root]
+                self._project_admissions.add(resolved)
+            try:
+                self._teardown_slot(victim_root, victim_slot, reason="lru")
+            except BaseException:
+                self._release_project_admission(resolved)
+                raise
+        return (None, True)
+
+    def _reserve_project_admission(
+        self,
+        resolved: Path,
+        *,
+        pin: bool,
+    ) -> tuple[ProjectSlot | None, bool]:
+        """Return a warm slot or reserve the sole construction seat for *root*."""
+        while True:
+            with self._project_admission_condition:
+                if self._shutting_down:
+                    msg = "ServiceRegistry is shutting down"
+                    raise RuntimeError(msg)
+                slot = self._warm_slot_locked(resolved, pin=pin)
+                if slot is not None:
+                    return (slot, False)
+                if resolved in self._project_admissions:
+                    self._project_admission_condition.wait()
+                    continue
+                if self._has_project_admission_capacity_locked():
+                    self._project_admissions.add(resolved)
+                    return (None, True)
+                try:
+                    victim_root = self._lru_victim_root()
+                except RegistryFullError:
+                    victim_root = None
+
+            if victim_root is None:
+                slot, reserved = self._reserve_after_root_guard(resolved, pin=pin)
+            else:
+                slot, reserved = self._replace_lru_with_project_admission(
+                    resolved,
+                    victim_root,
+                    pin=pin,
+                )
+            if slot is not None or reserved:
+                return (slot, reserved)
+
+    def _construct_admitted_project_slot(
+        self,
+        resolved: Path,
+        *,
+        pin: bool,
+    ) -> ProjectSlot:
+        """Construct and publish a slot after its bounded seat was reserved."""
+        released = False
+        try:
+            with self._root_store_admission(resolved):
+                created_slot: ProjectSlot | None = None
+                published = False
+                store_closed = False
+                try:
+                    with self._project_admission_condition:
+                        if self._shutting_down:
+                            msg = "ServiceRegistry is shutting down"
+                            raise RuntimeError(msg)
+                    created_slot = self._create_slot(resolved)
+                    with self._project_admission_condition:
+                        if not self._shutting_down:
+                            if pin:
+                                self._pin_slot_locked(created_slot)
+                            self._projects[resolved] = created_slot
+                            self._release_project_admission_locked(resolved)
+                            released = True
+                            published = True
+                    if published:
+                        return created_slot
+                    created_slot.store.close()
+                    store_closed = True
+                    msg = "ServiceRegistry shut down during project construction"
+                    raise RuntimeError(msg)
+                finally:
+                    if not published:
+                        try:
+                            if created_slot is not None and not store_closed:
+                                created_slot.store.close()
+                        finally:
+                            self._release_project_admission(resolved)
+                            released = True
+        except BaseException:
+            if not released:
+                self._release_project_admission(resolved)
+            raise
+
+    def _admit_project_slot(self, resolved: Path, *, pin: bool) -> ProjectSlot:
+        """Return or build *resolved*'s slot under one bounded registry seat."""
+        slot, reserved = self._reserve_project_admission(resolved, pin=pin)
+        if slot is not None:
+            return slot
+        if not reserved:
+            msg = "Project admission did not return a slot or a reservation"
+            raise RuntimeError(msg)
+        return self._construct_admitted_project_slot(resolved, pin=pin)
+
+    def peek_project(self, root: Path) -> ProjectSlot:
+        """Return (or lazily create) *root*'s unpinned registry-owned slot.
+
+        Reserved for watcher wiring, lifespan preload, and tests.  Request
+        paths use :meth:`lease`, whose shared admission authority publishes a
+        new slot already pinned so it cannot be evicted between creation and
+        the caller receiving it.
+        """
+        return self._admit_project_slot(root.resolve(), pin=False)
 
     def _store_count(self, root: Path, *, domain: str) -> int:
         """Count points in one collection without loading the GPU model.
@@ -1091,6 +1299,67 @@ class ServiceRegistry:
     def document_chunk_count(self, root: Path) -> int:
         """Indexed document-chunk count for *root*, without loading a model."""
         return self._store_count(root, domain="document")
+
+    @contextlib.contextmanager
+    def _lease_registered_transient_store(
+        self,
+        resolved: Path,
+    ) -> Generator[VaultStore]:
+        """Construct and account for one registry-owned non-slot store.
+
+        The caller owns ``resolved``'s root guard for the full context.  Both
+        cold read leases and exclusive maintenance leases use this single
+        accounting path, so shutdown sees a store before construction begins
+        and keeps seeing it until its close completes.
+        """
+        with self._lock:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+            self._transient_store_constructions += 1
+
+        from .store_runtime import VaultStore
+
+        try:
+            store = VaultStore(resolved)
+        except BaseException:
+            with self._lock:
+                self._transient_store_constructions -= 1
+                self._complete_shutdown_if_drained_locked()
+            raise
+
+        with self._lock:
+            shutdown_won = self._shutting_down
+            if not shutdown_won:
+                self._transient_stores.add(store)
+                self._transient_store_constructions -= 1
+
+        if shutdown_won:
+            # Keep the pending-construction count live until close completes,
+            # so close_all() cannot observe a false zero while this late store
+            # still owns a client or the local storage lock.
+            try:
+                store.close()
+            finally:
+                with self._lock:
+                    self._transient_store_constructions -= 1
+                    self._complete_shutdown_if_drained_locked()
+            msg = "ServiceRegistry shut down during store construction"
+            raise RuntimeError(msg)
+
+        try:
+            yield store
+        finally:
+            try:
+                store.close()
+            finally:
+                # Keep the lease visible to close_all() until resource
+                # release completes; removing it first would let shutdown
+                # return while the Qdrant client or local storage lock was
+                # still closing.
+                with self._lock:
+                    self._transient_stores.discard(store)
+                    self._complete_shutdown_if_drained_locked()
 
     @contextlib.contextmanager
     def lease_store(self, root: Path) -> Generator[VaultStore]:
@@ -1129,57 +1398,36 @@ class ServiceRegistry:
                 stack.callback(self._release, slot)
                 yield slot.store
                 return
-
-            with self._lock:
-                if self._shutting_down:
-                    msg = "ServiceRegistry is shutting down"
-                    raise RuntimeError(msg)
-                # Register ownership before VaultStore performs any filesystem
-                # or Qdrant effect. close_all() observes this pending admission
-                # even if shutdown begins while construction is outside _lock.
-                self._transient_store_constructions += 1
-
-            from .store_runtime import VaultStore
-
-            try:
-                store = VaultStore(resolved)
-            except BaseException:
-                with self._lock:
-                    self._transient_store_constructions -= 1
-                raise
-
-            with self._lock:
-                shutdown_won = self._shutting_down
-                if not shutdown_won:
-                    self._transient_stores.add(store)
-                    self._transient_store_constructions -= 1
-
-            if shutdown_won:
-                # Keep the pending-construction count live until close
-                # completes, so close_all() cannot observe a false zero and
-                # return while this late store still owns a client or local
-                # storage lock.
-                try:
-                    store.close()
-                finally:
-                    with self._lock:
-                        self._transient_store_constructions -= 1
-                msg = "ServiceRegistry shut down during store construction"
-                raise RuntimeError(msg)
-
-            try:
+            with self._lease_registered_transient_store(resolved) as store:
                 yield store
-            finally:
-                try:
-                    store.close()
-                finally:
-                    # Keep the lease visible to close_all() until resource
-                    # release completes; removing it first would let shutdown
-                    # return while the Qdrant client or local storage lock was
-                    # still closing. The root's store admission is released
-                    # only after that, as the outer stack unwinds.
-                    with self._lock:
-                        self._transient_stores.discard(store)
+
+    @contextlib.contextmanager
+    def lease_maintenance_store(self, root: Path) -> Generator[VaultStore]:
+        """Lease one root exclusively for registry-owned store maintenance.
+
+        Maintenance can mutate or remove collection state, so it never shares
+        a warm slot.  It first takes the root guard, then rejects an active
+        slot before any watcher or registry mutation; an unleased warm slot is
+        removed and closed under that same guard.  The replacement store uses
+        the normal transient accounting path, letting shutdown drain or force
+        close maintenance exactly as it does a cold reader.
+
+        Raises:
+            ProjectBusyError: If an active lease pins the warm project slot.
+            RuntimeError: If the registry is shutting down.
+        """
+        resolved = root.resolve()
+        with self._root_store_admission(resolved):
+            with self._lock:
+                slot = self._projects.get(resolved)
+                if slot is not None and slot.ref_count > 0:
+                    raise ProjectBusyError(resolved)
+                if slot is not None:
+                    del self._projects[resolved]
+            if slot is not None:
+                self._teardown_slot(resolved, slot, reason="maintenance")
+            with self._lease_registered_transient_store(resolved) as store:
+                yield store
 
     # -- lease API ---------------------------------------------------------
 
@@ -1267,12 +1515,10 @@ class ServiceRegistry:
     def _acquire(self, root: Path) -> ProjectSlot:
         """Admit or fetch *root*'s slot and increment its ``ref_count``.
 
-        Must NOT be called outside :meth:`lease`.  Holds ``_lock`` for the
-        slot lookup, the refcount mutation and victim *selection* only.  Slot
-        creation runs outside ``_lock`` via :meth:`peek_project` to preserve
-        the parallel cold-start guarantee, and every eviction runs outside it
-        under the victim's own store guard, which the registry's lock order
-        forbids taking beneath ``_lock``.  Both complete before this returns.
+        Must NOT be called outside :meth:`lease`.  The shared project-admission
+        authority pins a newly published slot while it still holds the
+        registry lock, closing the old gap where :meth:`peek_project` exposed
+        an unpinned slot before this method could increment it.
 
         Args:
             root: Workspace root directory.
@@ -1286,66 +1532,17 @@ class ServiceRegistry:
                 and no slot is evictable.
             RuntimeError: When the registry is shutting down.
         """
-        resolved = root.resolve()
-        # Track the slot whose ref_count we have already incremented
-        # so we can roll the increment back on the failure path.
-        # Without this, an exception raised AFTER ``ref_count += 1`` but
-        # BEFORE the value is returned would leak the increment forever:
-        # ``lease`` never sees the slot, never calls ``_release``, and
-        # the slot becomes ineligible for eviction (ref_count > 0
-        # disqualifies it from both the idle sweep and LRU admission).
-        acquired_slot: ProjectSlot | None = None
-
+        acquired_slot = self._admit_project_slot(root.resolve(), pin=True)
         try:
-            # Fast path: slot already exists. Still take _lock to
-            # mutate ref_count and last_access atomically.
             with self._lock:
-                if self._shutting_down:
-                    msg = "ServiceRegistry is shutting down"
-                    raise RuntimeError(msg)
-                slot = self._projects.get(resolved)
-                if slot is None:
-                    idle_roots: list[Path] = []
-                else:
-                    slot.last_access = time.monotonic()
-                    slot.ref_count += 1
-                    acquired_slot = slot
-                    idle_roots = self._idle_victim_roots()
-            if acquired_slot is not None:
-                self._evict_idle_roots(idle_roots)
-                return acquired_slot
-
-            # Both of these run outside _lock: LRU eviction needs the
-            # victim's store guard, and creation preserves parallel cold
-            # start. Room is made before the new slot is created so the
-            # caller never observes more than max_projects slots.
-            self._make_room_for_admission()
-            slot = self.peek_project(resolved)
-            with self._lock:
-                if self._shutting_down:
-                    msg = "ServiceRegistry is shutting down"
-                    raise RuntimeError(msg)
-                slot.last_access = time.monotonic()
-                slot.ref_count += 1
-                acquired_slot = slot
                 idle_roots = self._idle_victim_roots()
             self._evict_idle_roots(idle_roots)
-            return slot
+            return acquired_slot
         except BaseException:
-            # Rollback BEFORE re-raising: decrement ref_count on the target
-            # slot if we already bumped it - otherwise the slot is stuck busy
-            # forever and the caller never sees it via lease(). Victims need
-            # no rollback: each is removed and torn down as one guarded step,
-            # so a failure leaves it either fully evicted or still registered,
-            # never popped and leaking. The rollback swallows its own errors
-            # so a cleanup failure cannot mask the original exception.
-            if acquired_slot is not None:
-                try:
-                    self._release(acquired_slot)
-                except Exception:
-                    logger.exception(
-                        "Failed to roll back ref_count during _acquire rollback",
-                    )
+            # _admit_project_slot pinned before returning.  If a later idle
+            # teardown fails, lease() never receives the slot to release it.
+            # Roll it back before preserving that original teardown failure.
+            self._release(acquired_slot)
             raise
 
     def _release(self, slot: ProjectSlot) -> None:
@@ -1395,23 +1592,17 @@ class ServiceRegistry:
                     del self._projects[root]
                 self._teardown_slot(root, slot, reason="idle")
 
-    def _lru_victim_root(self) -> Path | None:
+    def _lru_victim_root(self) -> Path:
         """Return the root to evict to make room for one more slot.
 
-        Caller MUST hold ``self._lock``.  Returns with the lock still held.
-        Selection only, exactly as :meth:`_idle_victim_roots`.  ``None``
-        means the registry is below ``max_projects`` and nothing needs
-        evicting; otherwise it is the slot with the smallest ``last_access``
-        among the ``ref_count == 0`` candidates.
+        Caller MUST hold ``self._lock`` and have already established that no
+        project-admission seat is free.  Selection only: the caller takes the
+        selected root's guard before rechecking and replacing it atomically.
 
         Raises:
             RegistryFullError: When the registry is at capacity and every
                 slot is leased.
         """
-        if self._max_projects <= 0:
-            return None
-        if len(self._projects) < self._max_projects:
-            return None
         candidates = [
             (slot.last_access, r)
             for r, slot in self._projects.items()
@@ -1421,31 +1612,6 @@ class ServiceRegistry:
             raise RegistryFullError(self._max_projects)
         candidates.sort()
         return candidates[0][1]
-
-    def _make_room_for_admission(self) -> None:
-        """Free a seat under the LRU cap before a new slot is created.
-
-        Caller MUST NOT hold ``self._lock``.  Evicts under the victim's own
-        store guard (see :meth:`_evict_idle_roots`) and re-selects when the
-        chosen victim was leased between selection and the guard being taken.
-
-        Raises:
-            RegistryFullError: When the registry is at capacity and every
-                slot is leased.
-        """
-        while True:
-            with self._lock:
-                victim_root = self._lru_victim_root()
-            if victim_root is None:
-                return
-            with self._root_store_guard(victim_root):
-                with self._lock:
-                    slot = self._projects.get(victim_root)
-                    if slot is None or slot.ref_count > 0:
-                        continue
-                    del self._projects[victim_root]
-                self._teardown_slot(victim_root, slot, reason="lru")
-                return
 
     def _teardown_slot(
         self,
@@ -1544,7 +1710,11 @@ class ServiceRegistry:
         cfg = get_config()
 
         store = VaultStore(root)
-        graph_cache = GraphCache(ttl_seconds=cfg.graph_ttl_seconds)
+        try:
+            graph_cache = GraphCache(ttl_seconds=cfg.graph_ttl_seconds)
+        except BaseException:
+            store.close()
+            raise
 
         logger.info("ProjectSlot created for %s", root)
         return ProjectSlot(
@@ -1695,6 +1865,9 @@ class ServiceRegistry:
         with self._lock:
             self._shutting_down = True
             self._shutdown_complete = False
+            # Wake same-root admission joiners so they observe shutdown rather
+            # than waiting for a constructor that is about to be drained.
+            self._project_admission_condition.notify_all()
 
         # Bounded drain: 5.0 seconds is intentionally hardcoded.
         deadline = time.monotonic() + 5.0
@@ -1704,6 +1877,7 @@ class ServiceRegistry:
                     any(s.ref_count > 0 for s in self._projects.values())
                     or bool(self._transient_stores)
                     or self._transient_store_constructions > 0
+                    or bool(self._project_admissions)
                 )
             if not busy:
                 break
@@ -1734,7 +1908,10 @@ class ServiceRegistry:
                     store.root_dir,
                 )
                 store.close(force_after_seconds=_STORE_FORCE_CLOSE_SECONDS)
-            self._transient_stores.clear()
+            # Active context managers retain their registration until their
+            # own finally block completes.  Clearing here would claim that a
+            # force-closed maintenance or cold lease had finished releasing
+            # its root guard when its owner is still unwinding.
             if self._transient_store_constructions:
                 logger.warning(
                     "ServiceRegistry shutdown deadline reached with %d store "
@@ -1743,10 +1920,9 @@ class ServiceRegistry:
                     self._transient_store_constructions,
                 )
             self._projects.clear()
-            self._root_locks.clear()
             self._model = None
             self._reranker = None
-            self._shutdown_complete = True
+            self._complete_shutdown_if_drained_locked()
 
         # Dropping the references is not enough: both stacks are reachable only
         # through reference cycles, so their device memory survives until a
