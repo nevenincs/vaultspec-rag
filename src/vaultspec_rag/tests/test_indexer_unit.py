@@ -1746,7 +1746,12 @@ class TestDataRootResolution:
     def _configured() -> str:
         from ..config._settings import get_config
 
-        return cast("str", get_config().data_dir)
+        # str() coerces where a cast only asserts. The setting resolves to a
+        # str on every path today, but this helper spells the expected
+        # directory independently of the resolver, so it must keep working if
+        # the setting ever becomes a Path. Narrow the dynamic read, then
+        # coerce: the diagnostic closes without the conversion being dropped.
+        return str(cast("object", get_config().data_dir))
 
     @classmethod
     def _expected_data_root(cls, root: Path) -> Path:
