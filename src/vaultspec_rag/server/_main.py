@@ -24,12 +24,37 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
+from typing import TYPE_CHECKING
 
 import vaultspec_rag.server as _m
 
 from ._lifespan import health_handler, service_lifespan
+from ._runtime import ServerRouteRuntime, install_route_runtime
+
+if TYPE_CHECKING:
+    from starlette.applications import Starlette
+    from starlette.types import Lifespan
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+
+def create_http_app(
+    runtime: ServerRouteRuntime,
+    lifespan: Lifespan[Starlette] | None,
+) -> Starlette:
+    """Build the one production HTTP route surface for *runtime*."""
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from ._routes import ROUTES
+
+    app = Starlette(
+        routes=[Route("/health", health_handler), *ROUTES],
+        lifespan=lifespan,
+    )
+    install_route_runtime(app, runtime)
+    return app
 
 
 def _missing_mcp_extra_message(exc: ImportError) -> str:
@@ -92,11 +117,10 @@ def _resolve_daemon_argv() -> tuple[int | None, int | None]:
 def _run_http_daemon(port: int) -> None:
     """Run the standalone HTTP daemon and enforce its shutdown contract."""
     import uvicorn
-    from starlette.applications import Starlette
-    from starlette.routing import Route
 
     from ..config._settings import get_config
     from ..logging_config import configure_logging, install_daemon_log_capture
+    from ..registry import get_registry
 
     # Install ordering (CRITICAL): argparse → configure_logging → capture → uvicorn.
     configure_logging(level="INFO")
@@ -106,20 +130,20 @@ def _run_http_daemon(port: int) -> None:
         max_bytes=int(cfg.managed_log_max_bytes),
         backup_count=int(cfg.managed_log_backup_count),
     )
+    runtime = ServerRouteRuntime(
+        token=uuid.uuid4().hex,
+        registry=get_registry(),
+    )
     daemon_exit_code = 0
     try:
         from ..jobs import register_on_job_complete
-        from ._routes import ROUTES as READ_ONLY_ROUTES
 
         def _on_reindex_complete(duration_s: float) -> None:
             _m.incr("reindex_total")
             _m.observe("reindex_last_duration_seconds", duration_s)
 
         register_on_job_complete(_on_reindex_complete)
-        app = Starlette(
-            routes=[Route("/health", health_handler), *READ_ONLY_ROUTES],
-            lifespan=service_lifespan,
-        )
+        app = create_http_app(runtime, service_lifespan)
         _m._daemon_process = True
         _m._daemon_log_capture = log_capture
         uvicorn.run(
@@ -142,7 +166,7 @@ def _run_http_daemon(port: int) -> None:
         raise
     finally:
         try:
-            _m._registry.close_all()
+            runtime.registry.close_all()
         finally:
             capture_closed = log_capture.close()
         if _m._daemon_process:

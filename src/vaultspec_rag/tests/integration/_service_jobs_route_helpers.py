@@ -5,14 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
-
-import vaultspec_rag.server as _m
 
 from ... import jobs as _jobs
 from ...job_models import JobSource
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 
 __all__ = [
     "_assert_route_control_conflicts",
@@ -55,16 +53,18 @@ def _routes_app(
     job_id = _jobs.record_start(JobSource.VAULT, "tool")
     _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
 
-    prev_token = _m._SERVICE_TOKEN
-    _m._SERVICE_TOKEN = "test-token-jobs"
-
-    app_under_test = Starlette(routes=ROUTES)
+    app_under_test = create_http_app(
+        ServerRouteRuntime(
+            token="test-token-jobs",
+            registry=ServiceRegistry(),
+        ),
+        lifespan=None,
+    )
     client = TestClient(app_under_test)
     try:
         yield client, "test-token-jobs"
     finally:
         _jobs.reset()
-        _m._SERVICE_TOKEN = prev_token
         if prior_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:

@@ -8,9 +8,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
-from starlette.applications import Starlette
-
-import vaultspec_rag.server as server_package
 
 from ..._job_errors import JobError, JobErrorKind
 from ..._store_models import CodeChunk
@@ -20,7 +17,8 @@ from ...index_profiles import SupportMeasurement, SupportProfileLimits
 from ...indexer import CodebaseIndexer
 from ...indexer._streaming import CodeFileSegment
 from ...jobs import get_job_manager, reset
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -140,7 +138,7 @@ def test_code_runtime_measurement_keeps_extractor_host_and_device_bounds_separat
 
 
 @contextmanager
-def _refusing_admission_service(tmp_path: Path, token: str) -> Generator[Path]:
+def _refusing_admission_service(tmp_path: Path) -> Generator[Path]:
     """Yield a project root whose code admission is refused by the profile.
 
     ``managed-service`` accepts only the server backend, so selecting the
@@ -159,19 +157,16 @@ def _refusing_admission_service(tmp_path: Path, token: str) -> Generator[Path]:
         EnvVar.QDRANT_SERVER,
     )
     prior_env = {variable: os.environ.get(variable.value) for variable in variables}
-    prior_token = server_package._SERVICE_TOKEN
     os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path / "status")
     os.environ[EnvVar.INDEX_SUPPORT_PROFILE.value] = "managed-service"
     os.environ[EnvVar.LOCAL_ONLY.value] = "1"
     os.environ[EnvVar.QDRANT_SERVER.value] = "1"
     reset_config()
     reset()
-    server_package._SERVICE_TOKEN = token
     try:
         yield root
     finally:
         reset()
-        server_package._SERVICE_TOKEN = prior_token
         for variable, value in prior_env.items():
             if value is None:
                 os.environ.pop(variable.value, None)
@@ -181,7 +176,12 @@ def _refusing_admission_service(tmp_path: Path, token: str) -> Generator[Path]:
 
 
 async def _post_index_job(token: str, root: Path, source: str) -> httpx.Response:
-    transport = httpx.ASGITransport(app=Starlette(routes=ROUTES))
+    transport = httpx.ASGITransport(
+        app=create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            lifespan=None,
+        )
+    )
     async with httpx.AsyncClient(
         transport=transport,
         base_url="http://testserver",
@@ -203,7 +203,7 @@ async def test_code_profile_refusal_is_structured_before_job_creation(
     tmp_path: Path,
 ) -> None:
     token = "test-code-support-admission"
-    with _refusing_admission_service(tmp_path, token) as root:
+    with _refusing_admission_service(tmp_path) as root:
         response = await _post_index_job(token, root, "code")
 
         payload = cast("dict[str, object]", response.json())
@@ -232,7 +232,7 @@ async def test_admission_refusal_states_its_kind_exactly_once(
     from ...server._routes_reindex import _reindex_failure
 
     token = "test-admission-message-shape"
-    with _refusing_admission_service(tmp_path, token) as root:
+    with _refusing_admission_service(tmp_path) as root:
         response = await _post_index_job(token, root, "code")
 
     payload = cast("dict[str, object]", response.json())

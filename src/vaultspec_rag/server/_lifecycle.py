@@ -1,9 +1,8 @@
 """Daemon lifecycle helpers: log paths, heartbeat, and shutdown hooks.
 
 Split out of the original ``server.py`` monolith. ``_heartbeat_tick_sync`` reads the
-rebindable ``_status_file_path`` and ``_SERVICE_TOKEN`` through the
-package alias, so a tick that fires after startup writes the identity the
-daemon actually runs on rather than the empty pre-startup value.
+rebindable ``_status_file_path`` through the package alias while the discovery
+publisher retains the route runtime that owns the daemon's identity.
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ if TYPE_CHECKING:
     from .._machine_lock import MachineLockLease
     from ..storage_reclamation import MaintenanceResult, ReclaimPolicy
     from ..storage_reconciliation import ReconcileBatch, ReconcileResult
+    from ._runtime import ServerRouteRuntime
 
 __all__ = [
     "_QDRANT_CLIENT_OP_TIMEOUT_SECONDS",
@@ -149,12 +149,12 @@ def _qdrant_discovery_fields() -> dict[str, object]:
 
 
 def _daemon_discovery_snapshot(
+    runtime: ServerRouteRuntime,
     *,
     phase: str,
     started_at: str,
     phase_detail: str = "",
-    phase_done: int | None = None,
-    phase_total: int | None = None,
+    phase_progress: tuple[int | None, int | None] = (None, None),
 ) -> dict[str, object]:
     """Build one complete discovery view from daemon-owned live state.
 
@@ -179,10 +179,6 @@ def _daemon_discovery_snapshot(
         raise ValueError(msg)
     if _m._service_port <= 0:
         raise RuntimeError("service port is unavailable for discovery publication")
-    if not _m._SERVICE_TOKEN:
-        raise RuntimeError(
-            "service identity token is unavailable for discovery publication"
-        )
     fields: dict[str, object] = {
         "schema": SERVICE_DISCOVERY_SCHEMA,
         "version": SERVICE_DISCOVERY_VERSION,
@@ -195,7 +191,7 @@ def _daemon_discovery_snapshot(
         "last_heartbeat": _discovery_timestamp(),
         "heartbeat_interval_s": _HEARTBEAT_INTERVAL_SECONDS,
         "stale_after_s": HEARTBEAT_STALENESS_SECONDS,
-        "service_token": _m._SERVICE_TOKEN,
+        "service_token": runtime.token,
         **interpreter_fields(),
         "python_version": sys.version.split()[0],
         # The package release, alongside the interpreter version that was
@@ -208,6 +204,7 @@ def _daemon_discovery_snapshot(
     # Optional count for a determinate startup signal (e.g. models loaded of the
     # configured set). Carried only when a total is known so a countless stage
     # publishes just the label; consumers absent the fields render a spinner.
+    phase_done, phase_total = phase_progress
     if phase_total is not None:
         fields["phase_total"] = phase_total
         fields["phase_done"] = phase_done or 0
@@ -232,6 +229,7 @@ class RunningClaimContendedError(RuntimeError):
 class _DiscoveryPublisher:
     """Serialize owner-authenticated heartbeat publication and shutdown."""
 
+    runtime: ServerRouteRuntime
     lease: MachineLockLease
     started_at: str = field(default_factory=_discovery_timestamp)
     phase: str = SERVICE_PHASE_WARMING
@@ -392,11 +390,11 @@ class _DiscoveryPublisher:
         from ..serviceclient._discovery import _replace_service_status
 
         snapshot = _daemon_discovery_snapshot(
+            self.runtime,
             phase=self.phase,
             started_at=self.started_at,
             phase_detail=self.phase_detail,
-            phase_done=self.phase_done,
-            phase_total=self.phase_total,
+            phase_progress=(self.phase_done, self.phase_total),
         )
         try:
             status_path = _m._status_file_path()

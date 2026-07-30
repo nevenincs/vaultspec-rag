@@ -55,6 +55,7 @@ from ..search._result_shaping import (
 from ..service import RegistryFullError
 from ..service_quiesce import QuiesceAdmissionClosedError
 from ._auth import require_token
+from ._runtime import get_request_runtime
 from ._search_activity import (
     SearchActivityCompletion,
     SearchActivityStart,
@@ -82,6 +83,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from .._index_integrity import IndexIntegrity
+    from ..service import ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -671,9 +673,11 @@ def _dispatch_public_search(
     return combined.results, timings, combined
 
 
-def _execute_search_request(request: SearchRequest) -> dict[str, object]:
+def _execute_search_request(
+    request: SearchRequest, registry: ServiceRegistry
+) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
-    ticket = _m._registry.acquire_compute_ticket()
+    ticket = registry.acquire_compute_ticket()
     try:
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
@@ -753,7 +757,7 @@ def _execute_search_request(request: SearchRequest) -> dict[str, object]:
                 )
         return response
     except RegistryFullError as exc:
-        return _m._registry_full_error_dict(exc)
+        return _m._registry_full_error_dict(exc, registry)
     except VaultStoreLockedError as exc:
         return _m._local_store_locked_error_dict(exc)
     finally:
@@ -939,6 +943,7 @@ def _record_validation_rejection(
 async def _execute_search_route(
     search_request: SearchRequest,
     port: int | None,
+    registry: ServiceRegistry,
 ) -> SearchRouteResult:
     """Run, classify, and record the public response for one valid search."""
     from ._routes import canonical_job_snapshot
@@ -959,7 +964,7 @@ async def _execute_search_route(
             port=port,
         )
     )
-    run = partial(_execute_search_request, search_request)
+    run = partial(_execute_search_request, search_request, registry)
     started = time.perf_counter()
     try:
         if availability_facts is None:
@@ -1123,7 +1128,11 @@ async def _search_route_response(request: Request) -> JSONResponse:
             _record_validation_rejection(finalization, search_request)
             return search_request.response
         _record_normalized_activity(activity_ticket, search_request)
-        completed = await _execute_search_route(search_request, request.url.port)
+        completed = await _execute_search_route(
+            search_request,
+            request.url.port,
+            get_request_runtime(request).registry,
+        )
         finalization.result = completed.result
         finalization.status_code = completed.status_code
         finalization.total_seconds = completed.total_seconds

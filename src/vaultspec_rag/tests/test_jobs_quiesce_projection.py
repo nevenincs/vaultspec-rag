@@ -6,14 +6,9 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from starlette.applications import Starlette
-from starlette.routing import Route
 from starlette.testclient import TestClient
 
-import vaultspec_rag.server as server
-
-from ..registry import get_registry
-from ..server._routes import jobs_route
+from ..server import ServerRouteRuntime, create_http_app
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -41,16 +36,14 @@ _ENVELOPE_KEYS = {
 
 
 @contextmanager
-def _jobs_client() -> Generator[TestClient]:
+def _jobs_client(registry: ServiceRegistry) -> Generator[TestClient]:
     """Serve the production jobs handler in-process with its real token gate."""
-    prior_token = server._SERVICE_TOKEN
-    server._SERVICE_TOKEN = _TOKEN
-    app = Starlette(routes=[Route("/jobs", jobs_route)])
-    try:
-        with TestClient(app) as client:
-            yield client
-    finally:
-        server._SERVICE_TOKEN = prior_token
+    app = create_http_app(
+        ServerRouteRuntime(token=_TOKEN, registry=registry),
+        lifespan=None,
+    )
+    with TestClient(app) as client:
+        yield client
 
 
 def _assert_current_projection(
@@ -74,11 +67,12 @@ def test_jobs_route_refreshes_the_exact_quiesce_envelope() -> None:
     Mutation: remove the ``quiesce_snapshot().as_envelope()`` response entry.
     The route assertion fails because the canonical lifecycle block is absent.
     """
-    registry = get_registry()
-    assert server._registry is registry
+    from ..service import ServiceRegistry
+
+    registry = ServiceRegistry()
     assert registry.quiesce_snapshot().state.value == "running"
 
-    with _jobs_client() as client:
+    with _jobs_client(registry) as client:
         _assert_current_projection(client, registry)
 
         paused = registry.quiesce_resources(timeout_seconds=0)

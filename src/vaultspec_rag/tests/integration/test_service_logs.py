@@ -19,8 +19,6 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
-import vaultspec_rag.server as _m
-
 from ...cli import app
 from ...config._settings import reset_config
 from ...config._types import EnvVar
@@ -28,7 +26,8 @@ from ...logging_config import (
     MANAGED_LOG_TRUNCATION_MARKER,
     MAX_MANAGED_LOG_SOURCE_BYTES,
 )
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 from ...serviceclient._transport import (
     MAX_SERVICE_RESPONSE_BYTES,
     _logs_route_path,
@@ -66,17 +65,22 @@ def managed_log_app(
 ) -> Iterator[tuple[HTTPTestClient, str, Path]]:
     """Serve the production routes against an isolated real log directory."""
     token = "managed-log-test-token"
-    previous_token = _m._SERVICE_TOKEN
     previous_status_dir = os.environ.get(EnvVar.STATUS_DIR.value)
-    _m._SERVICE_TOKEN = token
     os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
     reset_config()
-    client = cast("HTTPTestClient", TestClient(Starlette(routes=ROUTES)))
+    client = cast(
+        "HTTPTestClient",
+        TestClient(
+            create_http_app(
+                ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+                lifespan=None,
+            )
+        ),
+    )
     try:
         yield client, token, tmp_path
     finally:
         client.close()
-        _m._SERVICE_TOKEN = previous_token
         if previous_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR.value, None)
         else:
@@ -392,7 +396,10 @@ def test_admin_transport_preserves_live_structured_log_error(
     )
     server = uvicorn.Server(
         uvicorn.Config(
-            Starlette(routes=ROUTES),
+            create_http_app(
+                ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+                lifespan=None,
+            ),
             host="127.0.0.1",
             port=port,
             log_config=None,

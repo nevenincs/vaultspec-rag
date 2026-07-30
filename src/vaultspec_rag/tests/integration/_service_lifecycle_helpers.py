@@ -563,17 +563,16 @@ def _identity_health_process(
 import os
 
 import uvicorn
-from starlette.applications import Starlette
-from starlette.routing import Route
-
-import vaultspec_rag.server as server
 from vaultspec_rag._machine_lock import (  # absolute-import-ok
     acquire_machine_lock_lease,
     release_machine_lock_lease,
 )
-from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok
+from vaultspec_rag.server import (  # absolute-import-ok
+    ServerRouteRuntime,
+    create_http_app,
+)
+from vaultspec_rag.service import ServiceRegistry  # absolute-import-ok
 
-server._SERVICE_TOKEN = os.environ["VAULTSPEC_TEST_HEALTH_TOKEN"]
 lease = None
 if os.environ["VAULTSPEC_TEST_HOLD_MACHINE_LOCK"] == "1":
     lease, holder = acquire_machine_lock_lease()
@@ -581,7 +580,13 @@ if os.environ["VAULTSPEC_TEST_HOLD_MACHINE_LOCK"] == "1":
         raise RuntimeError(f"machine lock held by {holder}")
 try:
     uvicorn.run(
-        Starlette(routes=[Route("/health", health_handler)]),
+        create_http_app(
+            ServerRouteRuntime(
+                token=os.environ["VAULTSPEC_TEST_HEALTH_TOKEN"],
+                registry=ServiceRegistry(),
+            ),
+            lifespan=None,
+        ),
         host="127.0.0.1",
         port=int(os.environ["VAULTSPEC_TEST_HEALTH_PORT"]),
         lifespan="off",

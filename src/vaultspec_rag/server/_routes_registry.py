@@ -1,7 +1,7 @@
 """Project-registry and per-root watcher administration routes.
 
-Both concerns act directly on the resident multi-tenant registry's process
-globals - ``_m._registry`` for project listing/eviction, ``_m._watcher_*``
+Both concerns act directly on the resident multi-tenant registry and watcher
+state - the request runtime owns project listing/eviction, while ``_m._watcher_*``
 and ``_m._ensure_watcher``/``_m._stop_watcher`` for the automatic-update
 watcher - so they are grouped here rather than split across two
 single-purpose modules.
@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse
 import vaultspec_rag.server as _m
 
 from ._auth import require_token
+from ._runtime import get_request_runtime
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -34,14 +35,15 @@ async def list_projects_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    projects = _m._registry.snapshot()
+    registry = get_request_runtime(request).registry
+    projects = registry.snapshot()
     for p in projects:
         p["root"] = str(p["root"])
     return JSONResponse(
         {
             "projects": projects,
-            "max_projects": _m._registry.max_projects,
-            "idle_ttl_seconds": _m._registry.idle_ttl_seconds,
+            "max_projects": registry.max_projects,
+            "idle_ttl_seconds": registry.idle_ttl_seconds,
         }
     )
 
@@ -55,7 +57,7 @@ async def evict_project_route(request: Request) -> JSONResponse:
     from pathlib import Path
 
     target = Path(root).resolve()
-    evicted, reason = _m._registry.try_evict(target)
+    evicted, reason = get_request_runtime(request).registry.try_evict(target)
     return JSONResponse({"root": str(target), "evicted": evicted, "reason": reason})
 
 

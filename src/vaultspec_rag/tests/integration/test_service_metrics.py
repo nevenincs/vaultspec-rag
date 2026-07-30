@@ -21,14 +21,13 @@ from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 import vaultspec_rag.mcp._tools as tools
-import vaultspec_rag.server as _m
 
 from ... import server
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 from ._helpers import _make_root
 from .conftest import _attach_live_service, _live_service_context
 
@@ -268,25 +267,26 @@ async def test_reindex_vault_increments_counter(
 def _routes_app(  # pyright: ignore[reportUnusedFunction]
     _clean_metrics: None,
 ) -> Iterator[tuple[TestClient, str]]:
-    """Build a real Starlette app from the read-only ROUTES.
+    """Build a real production app with an isolated route runtime.
 
-    Sets a known ``_SERVICE_TOKEN`` on the package namespace (the route's
-    ``require_token`` reads it through the alias) and seeds a couple of
-    counter increments so the rendered body carries non-zero values.
-    Restores the token on teardown so the suite stays isolated.
+    The runtime carries the known token, and the seeded counters make the
+    rendered body carry non-zero values.
     """
     server.incr("search_total", 3)
     server.incr("reindex_total")
 
-    prev_token = _m._SERVICE_TOKEN
-    _m._SERVICE_TOKEN = "test-token-metrics"
-
-    app_under_test = Starlette(routes=ROUTES)
+    app_under_test = create_http_app(
+        ServerRouteRuntime(
+            token="test-token-metrics",
+            registry=ServiceRegistry(),
+        ),
+        lifespan=None,
+    )
     client = TestClient(app_under_test)
     try:
         yield client, "test-token-metrics"
     finally:
-        _m._SERVICE_TOKEN = prev_token
+        client.close()
 
 
 @pytest.mark.unit

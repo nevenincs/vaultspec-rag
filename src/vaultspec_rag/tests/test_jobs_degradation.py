@@ -691,25 +691,21 @@ class TestJobsRouteGpuExposure:
     """GET /jobs carries the GPU block beside the work list."""
 
     def test_the_listing_envelope_carries_the_gpu_block(self) -> None:
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from .. import server as server_package
-        from ..server._routes import jobs_route
+        from ..server import ServerRouteRuntime, create_http_app
+        from ..service import ServiceRegistry
 
         token = "gpu-exposure-test-token"
-        previous_token = server_package._SERVICE_TOKEN
-        server_package._SERVICE_TOKEN = token
-        try:
-            app = Starlette(routes=[Route("/jobs", jobs_route)])
-            client: httpx.Client = cast("httpx.Client", TestClient(app))
-            response: httpx.Response = client.get(
-                "/jobs", headers={"Authorization": f"Bearer {token}"}
-            )
-            payload = _as_map(cast("object", response.json()))
-        finally:
-            server_package._SERVICE_TOKEN = previous_token
+        app = create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry()),
+            lifespan=None,
+        )
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        response: httpx.Response = client.get(
+            "/jobs", headers={"Authorization": f"Bearer {token}"}
+        )
+        payload = _as_map(cast("object", response.json()))
         gpu = _as_map(payload["gpu"])
         assert set(gpu) == _GPU_KEYS, (
             "the polled listing is where the header reads GPU pressure from"
