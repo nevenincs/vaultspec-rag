@@ -57,12 +57,14 @@ controller evidence as unavailable rather than inferring safety.
 
 ## Outcome
 
-Not accepted yet. `54284415` and `9b1f0410` provide the current rendering
-behavior, and `0576e4f4` removes the rejected source-mutating probe. Checked-in
-real no-lifespan route hosting pauses a real registry, fetches jobs through the
-authenticated transport, and renders the complete canonical block in Textual.
-A real rejected jobs request renders `quiesce unavailable` and does not render
-borrower safety as safe.
+Accepted for S27 after merge commit `5dc05814` adopts the controller-derived
+`QUIESCE_ENVELOPE_FIELDS` vocabulary and deletes the duplicated local field
+sets. `54284415` and `9b1f0410` provide the rendering behavior, and `0576e4f4`
+removes the rejected source-mutating probe. The reported CPU-only proof includes
+the checked-in real no-lifespan route host: it pauses a real registry, fetches
+jobs through authenticated transport, and renders the canonical block in
+Textual. A real rejected jobs request renders `quiesce unavailable` and does
+not render borrower safety as safe.
 
 ## Notes
 
@@ -71,8 +73,7 @@ controller envelope, so it cannot produce a successful partial quiesce block.
 The TUI's exact-field rejection for that hypothetical malformed success is
 static, unexercised defense-in-depth. No response seam, test hook, proxy,
 handcrafted contract, or production-source mutation is permitted to manufacture
-it. This reconciliation did not run tests or start a service.
-
-Before this Step can close, merge the collapse branch's controller-derived
-`QUIESCE_ENVELOPE_FIELDS` vocabulary and delete the local field copy. Preserve
-exact-set fail-closed behavior and the removal of the source-mutating probe.
+it. Exact-set fail-closed behavior now consumes the controller-owned vocabulary;
+no response seam, test hook, proxy, handcrafted contract, production-source
+mutation, or source-inspection mutation test is used. The reported focused run
+started no daemon lifespan, GPU, or Qdrant process.
