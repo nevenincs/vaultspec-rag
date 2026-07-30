@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse
@@ -102,7 +102,18 @@ def _reindex_sources(source_type: PublicSourceType) -> tuple[PublicSourceType, .
     )
 
 
-def _reindex_failure(*, error_kind: str, detail: str) -> dict[str, object]:
+class _DomainResponse(TypedDict):
+    """One index domain's outcome within a ``/reindex`` adapter response."""
+
+    ok: bool
+    job_id: str | None
+    error_kind: str | None
+    detail: str
+    outcome: dict[str, object]
+    admission: NotRequired[dict[str, object]]
+
+
+def _reindex_failure(*, error_kind: str, detail: str) -> _DomainResponse:
     """Return one stable failed-domain response."""
     return {
         "ok": False,
@@ -123,12 +134,12 @@ async def _validate_reindex_domains(
     source_type: PublicSourceType,
     *,
     clean: bool,
-) -> tuple[list[tuple[PublicSourceType, Any]], dict[str, dict[str, object]]]:
+) -> tuple[list[tuple[PublicSourceType, Any]], dict[str, _DomainResponse]]:
     """Validate every requested domain without collapsing combined admission."""
     from ._routes import InvalidJobRequestError, validated_index_request
 
     validated: list[tuple[PublicSourceType, Any]] = []
-    failures: dict[str, dict[str, object]] = {}
+    failures: dict[str, _DomainResponse] = {}
     for source in _reindex_sources(source_type):
         canonical_payload = {
             **payload,
@@ -160,7 +171,7 @@ async def _validate_reindex_domains(
 async def _create_reindex_domains(
     validated: list[tuple[PublicSourceType, Any]],
     source_type: PublicSourceType,
-    domain_responses: dict[str, dict[str, object]],
+    domain_responses: dict[str, _DomainResponse],
 ) -> tuple[Path | None, CodeIndexPreflight | None]:
     """Create independently validated jobs and retain per-domain failures."""
     from ..job_models import JobOutcomeStatus
@@ -193,7 +204,7 @@ async def _create_reindex_domains(
             )
             continue
         ok = outcome.status is not JobOutcomeStatus.ERROR
-        domain: dict[str, object] = {
+        domain: _DomainResponse = {
             "ok": ok,
             "job_id": outcome.job.id if outcome.job is not None else None,
             "error_kind": None if ok else outcome.code,
@@ -210,6 +221,9 @@ async def _create_reindex_domains(
             and source is PublicSourceType.CODE
             and admission is not None
         ):
+            # validated_index_request only ever returns a DocumentIndexPreflight
+            # for a document-sourced request; the CODE check above is what
+            # makes this admission a CodeIndexPreflight.
             first_admission = cast("CodeIndexPreflight", admission)
     return first_root, first_admission
 
@@ -283,7 +297,7 @@ async def reindex_route(request: Request) -> JSONResponse:
 
     domain = domain_responses[source_type.value]
     if not domain["ok"]:
-        outcome_payload = cast("dict[str, object]", domain["outcome"])
+        outcome_payload = domain["outcome"]
         return JSONResponse(
             {**outcome_payload, "ok": False, "error": domain["error_kind"]},
             status_code=job_outcome_status(str(domain["error_kind"])),
