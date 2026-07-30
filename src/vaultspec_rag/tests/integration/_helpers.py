@@ -13,7 +13,7 @@ import shutil
 import socket
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from vaultspec_core.config import (
     reset_config,
@@ -333,7 +333,7 @@ def _get_ephemeral_qdrant_port() -> int:
     return free_loopback_port()
 
 
-def _poll_health(port: int, timeout: float = 90.0) -> dict[str, Any]:
+def _poll_health(port: int, timeout: float = 90.0) -> dict[str, object]:
     """Poll health without allowing a probe or sleep to overrun the deadline.
 
     The backoff cap stays low: readiness lands mid-sleep, so the cap is the
@@ -365,7 +365,7 @@ def _poll_own_health(
     *,
     token: str,
     timeout: float = 20.0,
-) -> dict[str, Any] | None:
+) -> dict[str, object] | None:
     """Poll /health until the spawned child answers with its own identity token.
 
     Returns the health body once a response carries ``service_token == token`` -

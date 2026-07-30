@@ -41,6 +41,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from qdrant_client import QdrantClient
+
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
@@ -498,7 +500,7 @@ class TestQdrantProvisionProgress:
             )
 
         assert result.exit_code == 0, result.output
-        payload = json.loads(result.output)
+        payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == "server.qdrant.install"
         assert "Installing the managed Qdrant server" not in result.output
 
@@ -671,7 +673,7 @@ class TestStartPathProvisionProgress:
         assert calls == ["provision"], "the interception was never reached"
         assert exit_info.value.exit_code == 1
         captured = capsys.readouterr()
-        payload = json.loads(captured.out)
+        payload = cast("dict[str, object]", json.loads(captured.out))
         assert payload["ok"] is False
         assert payload["error"] == "qdrant_provision_failed"
         assert "Downloading the Qdrant server" not in captured.out
@@ -746,7 +748,7 @@ class TestReconcileProgress:
         del isolated_singleton_dirs
         result = runner.invoke(app, ["server", "reconcile", "--json", "--timeout", "0"])
 
-        payload = json.loads(result.output)
+        payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == "service.reconcile"
         assert "Waiting for service discovery" not in result.output
 
@@ -755,7 +757,7 @@ class TestStorageProgress:
     """``server storage``: the walks that used to run silent."""
 
     @staticmethod
-    def _client_with(collections: tuple[str, ...]) -> Any:
+    def _client_with(collections: tuple[str, ...]) -> QdrantClient:
         from qdrant_client import QdrantClient, models
 
         client = QdrantClient(":memory:")
@@ -863,7 +865,7 @@ class TestStorageProgress:
         del isolated_singleton_dirs
         result = runner.invoke(app, ["server", "storage", "survey", "--json"])
 
-        payload = json.loads(result.output)
+        payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == "server.storage.survey"
         assert "Surveying stored index namespaces" not in result.output
         assert "Counting points" not in result.output
@@ -903,6 +905,6 @@ class TestStorageProgress:
             result = runner.invoke(app, argv)
 
         assert result.exit_code == 2, result.output
-        payload = json.loads(result.output)
+        payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == command
         assert payload["ok"] is False

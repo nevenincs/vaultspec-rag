@@ -15,7 +15,7 @@ import stat
 import subprocess
 import sys
 from threading import Thread
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import tomlkit
@@ -180,8 +180,11 @@ class TestInstallTorchConfig:
             encoding="utf-8",
             env=env,
         )
-        payload = json.loads(completed.stdout.strip().splitlines()[-1])
-        assert any("HuggingFace token not found" in w for w in payload["warnings"])
+        payload = cast(
+            "dict[str, object]", json.loads(completed.stdout.strip().splitlines()[-1])
+        )
+        warnings = cast("list[object]", payload["warnings"])
+        assert any("HuggingFace token not found" in str(w) for w in warnings)
 
     def test_install_force_implies_assume_yes_for_torch_config(
         self, consumer_workspace: Path
@@ -1149,12 +1152,12 @@ class TestInstallTorchGroupPlacement:
         parsed = tomlkit.parse(pyproject.read_text(encoding="utf-8"))
 
         # torch is in the group...
-        group_deps = parsed["dependency-groups"]["rag"]
+        group_deps = cast("list[object]", parsed["dependency-groups"]["rag"])
         assert any("torch" in str(entry) for entry in group_deps)
 
         # ...and NOT in project.dependencies (which only carries the
         # original vaultspec-rag entry).
-        project_deps = parsed["project"]["dependencies"]
+        project_deps = cast("list[object]", parsed["project"]["dependencies"])
         assert not any("torch" in str(entry) for entry in project_deps)
 
         # The cu130 index + sources block still landed.
@@ -1183,7 +1186,7 @@ class TestInstallTorchGroupPlacement:
         parsed = tomlkit.parse(
             (consumer_workspace / "pyproject.toml").read_text(encoding="utf-8")
         )
-        dev_deps = parsed["dependency-groups"]["dev"]
+        dev_deps = cast("list[object]", parsed["dependency-groups"]["dev"])
         assert any("torch" in str(entry) for entry in dev_deps)
 
     def test_marker_records_group_location_and_uninstall_removes_group(
@@ -1205,7 +1208,7 @@ class TestInstallTorchGroupPlacement:
         assert "managed-torch-direct-dependency" not in after
         # The original project dep survived untouched.
         parsed = tomlkit.parse(after)
-        project_deps = parsed["project"]["dependencies"]
+        project_deps = cast("list[object]", parsed["project"]["dependencies"])
         assert any("vaultspec-rag" in str(entry) for entry in project_deps)
 
     def test_legacy_boolean_marker_still_removes_from_project_deps(
@@ -1313,7 +1316,7 @@ class TestInstallTorchGroupPlacement:
         assert unreport.torch_direct_dep_action != "removed"
         after = (ws / "pyproject.toml").read_text(encoding="utf-8")
         parsed = tomlkit.parse(after)
-        dev_deps = parsed["dependency-groups"]["dev"]
+        dev_deps = cast("list[object]", parsed["dependency-groups"]["dev"])
         assert any("torch" in str(entry) for entry in dev_deps)
 
     def test_rerun_with_different_target_warns_and_does_not_migrate(
@@ -1358,7 +1361,7 @@ class TestInstallTorchGroupPlacement:
         )
         # No empty-named group table was created, and torch was placed nowhere.
         assert "dependency-groups" not in parsed
-        project_deps = parsed["project"]["dependencies"]
+        project_deps = cast("list[object]", parsed["project"]["dependencies"])
         assert not any("torch" in str(e) for e in project_deps)
 
     def test_rerun_torch_already_in_requested_group_warns_inert_pin(

@@ -159,7 +159,7 @@ def _index_project(port: int, root: Path, timeout: float = 180.0) -> None:
     to zero before returning, otherwise a follow-on admission would (correctly)
     refuse to evict the still-busy slot.
     """
-    token = _poll_health(port)["service_token"]
+    token = str(_poll_health(port)["service_token"])
     job_id = _run(_reindex_vault(port, root, token))
     deadline = time.monotonic() + timeout
     phase: str | None = None
@@ -439,7 +439,7 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
         try:
-            token = _poll_health(port)["service_token"]
+            token = str(_poll_health(port)["service_token"])
             projects = [
                 _make_vault_project(tmp_path / f"p{i}", label=f"p{i}") for i in range(8)
             ]

@@ -155,7 +155,7 @@ def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         health = _poll_health(port)
-        serving_pid = int(health["pid"])
+        serving_pid = int(str(health["pid"]))
         _write_service_status(pid, port)
 
         status_path = _status_file()
@@ -228,7 +228,7 @@ def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         health = _poll_health(port)
-        serving_pid = int(health["pid"])
+        serving_pid = int(str(health["pid"]))
         _write_service_status(pid, port)
 
         status_path = _status_file()
@@ -279,7 +279,7 @@ def test_reconcile_recovers_discovery_without_touching_the_daemon(
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         health = _poll_health(port)
-        serving_pid = int(health["pid"])
+        serving_pid = int(str(health["pid"]))
         _write_service_status(pid, port)
 
         pointer_path = machine_discovery_path()
@@ -334,7 +334,7 @@ def test_reconcile_recovers_discovery_without_touching_the_daemon(
                 f"daemon died during the {label} reconcile round"
             )
             live = _poll_health(port)
-            assert int(live["pid"]) == serving_pid, (
+            assert int(str(live["pid"])) == serving_pid, (
                 f"daemon was restarted during the {label} reconcile round"
             )
 

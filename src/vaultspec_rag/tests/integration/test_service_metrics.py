@@ -214,7 +214,7 @@ async def test_search_vault_increments_counter(
     from ._helpers import _poll_health
 
     health = _poll_health(port)
-    token = health["service_token"]
+    token = str(health["service_token"])
 
     baseline = await _fetch_daemon_metrics(port, token)
     reindexes = _counter_value(baseline, "reindex_total")
@@ -247,7 +247,7 @@ async def test_reindex_vault_increments_counter(
     from ._helpers import _poll_health
 
     health = _poll_health(port)
-    token = health["service_token"]
+    token = str(health["service_token"])
 
     before = await _fetch_daemon_metrics(port, token)
     reindexes = _counter_value(before, "reindex_total")
