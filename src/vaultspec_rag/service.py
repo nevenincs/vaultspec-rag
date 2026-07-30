@@ -574,7 +574,13 @@ class ServiceRegistry:
         return self._quiesce_controller.acknowledge_vram_released()
 
     def resume_resources(self, *, timeout_seconds: float = 5.0) -> QuiesceTransition:
-        """Rebuild shared GPU residency before reopening compute admission."""
+        """Rebuild shared GPU residency before reopening compute admission.
+
+        Resume is the single operator-facing way back to ``running``, from a
+        completed quiesce and from a pause that failed alike.  An operator
+        whose pause was stranded has no way to know which of the two they are
+        looking at, so the verb - not the operator - picks the recovery.
+        """
         return self._run_resource_transition(
             direction="resume",
             timeout_seconds=timeout_seconds,
@@ -583,6 +589,9 @@ class ServiceRegistry:
 
     def _resume_resources_once(self) -> QuiesceTransition:
         """Perform the one resume owner's residency rebuild and job release."""
+        observed = self._quiesce_controller.snapshot()
+        if observed.state is QuiesceState.PAUSING:
+            return self._abort_pause_once(observed.admission_epoch)
         warming = self._quiesce_controller.begin_warming()
         if warming.snapshot.state is not QuiesceState.WARMING:
             return warming
@@ -601,6 +610,31 @@ class ServiceRegistry:
 
             get_job_manager().resume_quiesced_attempts()
         return completed
+
+    def _abort_pause_once(self, admission_epoch: int) -> QuiesceTransition:
+        """Return a failed pause to running, rebuilding what it already released.
+
+        A resume aimed at ``pausing`` is aimed at a pause that stopped without
+        quiescing, so there is no ``warming`` to enter and no quiesced
+        evidence to rebuild against.  Restoring residency first is what makes
+        the reopening honest: the residency-release failure path detaches the
+        shared model and reranker before it reports, so flipping admission
+        open without rebuilding them would readmit compute against a stack
+        that is no longer there.
+        """
+        try:
+            self._restore_paused_gpu_dependencies(admission_epoch=admission_epoch)
+        except (GPUResidencyTransitionError, QuiesceInvariantError):
+            return self._quiesce_controller.fail_transition(
+                owned_state=QuiesceState.PAUSING,
+                reason="gpu_dependency_rebuild_failed",
+            )
+        aborted = self._quiesce_controller.abort_pause()
+        if aborted.achieved and aborted.snapshot.state is QuiesceState.RUNNING:
+            from .jobs import get_job_manager
+
+            get_job_manager().resume_quiesced_attempts()
+        return aborted
 
     def _run_resource_transition(
         self,
@@ -763,6 +797,50 @@ class ServiceRegistry:
             expected_state=QuiesceState.WARMING,
             operation="rebuild",
         )
+        return self._restore_gpu_residency(admission_epoch=admission_epoch)
+
+    def _restore_paused_gpu_dependencies(self, *, admission_epoch: int) -> None:
+        """Rebuild the residency a failed pause released, before it reopens.
+
+        A pause that never got past its drain released nothing, so this must
+        not reach for the GPU lock the unfinished slice is still holding -
+        doing so would make the way out of a stranded pause wait on exactly
+        the work that stranded it.  Only a pause that already detached
+        residency has anything to rebuild, and detaching is reachable only
+        from a drained closed epoch, so every restore that actually allocates
+        is still guarded by the full drained-epoch invariant.
+        """
+        snapshot = self._quiesce_controller.snapshot()
+        if (
+            snapshot.state is not QuiesceState.PAUSING
+            or snapshot.admission_epoch != admission_epoch
+            or snapshot.admissions_open
+        ):
+            raise QuiesceInvariantError(
+                "GPU restore requires the closed epoch its failed pause left behind"
+            )
+        if not self._gpu_residency_detached():
+            return
+        self._require_drained_closed_epoch(
+            snapshot,
+            admission_epoch,
+            expected_state=QuiesceState.PAUSING,
+            operation="restore",
+        )
+        self._restore_gpu_residency(admission_epoch=admission_epoch)
+
+    def _gpu_residency_detached(self) -> bool:
+        """Report whether the recipe names residency the registry no longer holds."""
+        with self._lock:
+            recipe = self._gpu_residency_recipe
+            if recipe is None:
+                return False
+            return (recipe.restore_model and self._model is None) or (
+                recipe.restore_reranker and self._reranker is None
+            )
+
+    def _restore_gpu_residency(self, *, admission_epoch: int) -> GPURebuildEvidence:
+        """Reconstruct the recipe's shared GPU stack, failing closed on any error."""
         recipe = self._gpu_residency_recipe
         try:
             with self._gpu_lock:

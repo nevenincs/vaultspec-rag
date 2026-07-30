@@ -56,6 +56,8 @@ class QuiesceTransitionCode(StrEnum):
     WARMING_STARTED = "warming_started"
     ALREADY_WARMING = "already_warming"
     WARMING_UNAVAILABLE = "warming_unavailable"
+    PAUSE_ABORTED = "pause_aborted"
+    PAUSE_ABORT_UNAVAILABLE = "pause_abort_unavailable"
     RUNNING = "running"
     WARMUP_UNAVAILABLE = "warmup_unavailable"
     QUIESCE_FAILED = "quiesce_failed"
@@ -214,6 +216,13 @@ class ServiceQuiesceController:
     GPU-owning registry can subsequently acknowledge released residency with
     :meth:`acknowledge_vram_released`.  Resume is similarly closed until the
     registry reports a successful rebuild through :meth:`complete_warming`.
+
+    A pause that fails - a drain that outran its budget, a residency release
+    that raised - stops in ``pausing`` with admission closed.  That state has
+    no route through ``warming``, because ``warming`` presupposes the
+    quiesced evidence the pause never produced, so :meth:`abort_pause` is the
+    one way back to ``running`` and keeps a failed pause from holding the
+    whole daemon shut until it is restarted.
     """
 
     def __init__(self) -> None:
@@ -381,6 +390,43 @@ class ServiceQuiesceController:
             self._vram_released = False
             self._failure_reason = failure_reason
             return self._transition_locked(failed, achieved=False)
+
+    def abort_pause(self) -> QuiesceTransition:
+        """Reopen the admission epoch a pause closed but never quiesced.
+
+        ``pausing`` is the one state a pause can fail into, and it closes
+        admission without ever reaching the evidence that lets ``warming``
+        start.  Aborting is therefore the only way back for a drain that
+        timed out or a residency release that failed, and the registry must
+        have restored whatever residency it already detached before calling
+        it.  The admission epoch is deliberately not advanced: an aborted
+        pause never finished closing its generation of admitted work, so the
+        tickets it failed to drain stay releasable against the epoch that
+        issued them.
+        """
+        with self._condition:
+            if self._state is QuiesceState.RUNNING:
+                return self._transition_locked(
+                    QuiesceTransitionCode.RUNNING,
+                    achieved=True,
+                )
+            if self._state is not QuiesceState.PAUSING:
+                return self._transition_locked(
+                    QuiesceTransitionCode.PAUSE_ABORT_UNAVAILABLE,
+                    achieved=False,
+                )
+            self._state = QuiesceState.RUNNING
+            self._pause_requested_at = None
+            self._drain_acknowledged_at = None
+            self._quiesced_at = None
+            self._warming_started_at = None
+            self._vram_released = False
+            self._failure_reason = None
+            self._condition.notify_all()
+            return self._transition_locked(
+                QuiesceTransitionCode.PAUSE_ABORTED,
+                achieved=True,
+            )
 
     def begin_warming(self) -> QuiesceTransition:
         """Enter closed ``warming`` before the registry rebuilds GPU residency."""
