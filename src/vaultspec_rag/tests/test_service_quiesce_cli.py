@@ -14,7 +14,7 @@ import contextlib
 import http.server
 import json
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -33,7 +33,7 @@ runner = CliRunner()
 
 
 @contextlib.contextmanager
-def _quiesce_service(envelope: dict[str, Any] | None) -> Generator[int | None]:
+def _quiesce_service(envelope: dict[str, object] | None) -> Generator[int | None]:
     """Serve one pause/resume envelope over real HTTP on a real port.
 
     The command under test resolves a port, opens a socket and parses a wire
@@ -89,8 +89,13 @@ def _invoke(verb: str, port: int | None) -> Result:
     return runner.invoke(app, args)
 
 
-def _json(result: Result) -> dict[str, Any]:
-    return json.loads(result.output)
+def _json(result: Result) -> dict[str, object]:
+    return cast("dict[str, object]", json.loads(result.output))
+
+
+def _data_status(body: dict[str, object]) -> object:
+    """Return the ``data.status`` field a quiesce envelope carries."""
+    return cast("dict[str, object]", body["data"])["status"]
 
 
 def test_pause_change_is_success_exit_zero() -> None:
@@ -99,7 +104,7 @@ def test_pause_change_is_success_exit_zero() -> None:
     assert result.exit_code == 0, result.output
     body = _json(result)
     assert body["ok"] is True
-    assert body["data"]["status"] == "paused"
+    assert _data_status(body) == "paused"
 
 
 def test_pause_already_paused_is_idempotent_success() -> None:
@@ -110,7 +115,7 @@ def test_pause_already_paused_is_idempotent_success() -> None:
     ) as port:
         result = _invoke("pause", port)
     assert result.exit_code == 0, result.output
-    assert _json(result)["data"]["status"] == "already_paused"
+    assert _data_status(_json(result)) == "already_paused"
 
 
 def test_resume_already_running_is_idempotent_success() -> None:
@@ -119,7 +124,7 @@ def test_resume_already_running_is_idempotent_success() -> None:
     ) as port:
         result = _invoke("resume", port)
     assert result.exit_code == 0, result.output
-    assert _json(result)["data"]["status"] == "already_running"
+    assert _data_status(_json(result)) == "already_running"
 
 
 def test_pause_that_did_not_hold_is_failure_exit_one() -> None:

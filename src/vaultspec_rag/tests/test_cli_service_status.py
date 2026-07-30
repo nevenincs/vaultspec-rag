@@ -7,7 +7,7 @@ import http.server
 import json
 import threading
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -34,6 +34,8 @@ from ._http_stubs import QuietHandler
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
+
+    from typer.testing import Result
 
 pytestmark = [pytest.mark.unit]
 
@@ -115,7 +117,7 @@ def _health_payload(
 @contextlib.contextmanager
 def _live_status_service(
     status_dir: Path,
-    contract_server: tuple[Any, Any],
+    contract_server: tuple[http.server.HTTPServer, threading.Thread],
     *,
     drop: tuple[str, ...] = (),
 ) -> Generator[int]:
@@ -140,7 +142,7 @@ def _status_against(
     health: dict[str, object],
     *args: str,
     jobs: dict[str, object] | None = None,
-) -> Any:
+) -> Result:
     """Run ``server status`` against a service reporting the given health."""
     with _live_status_service(
         tmp_path,

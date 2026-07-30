@@ -4,7 +4,7 @@ import hashlib
 import tracemalloc
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from vaultspec_core.config import (
@@ -23,6 +23,10 @@ from ..indexer._chunking import (
 )
 from ..indexer._vault_prep import _extract_feature, _extract_title
 from .corpus import CorpusManifest
+
+if TYPE_CHECKING:
+    from ..indexer import CodebaseIndexer
+    from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
 
@@ -1397,7 +1401,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
     """
 
     @staticmethod
-    def _indexer(tmp_path: Path, store: Any) -> Any:
+    def _indexer(tmp_path: Path, store: "VaultStore") -> "CodebaseIndexer":
         from ..indexer import CodebaseIndexer
 
         indexer = CodebaseIndexer(tmp_path, cast("Any", None), store)
@@ -1406,7 +1410,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
 
     @staticmethod
     def _write_sidecar(
-        indexer: Any,
+        indexer: "CodebaseIndexer",
         *,
         files: dict[str, str],
         published_points: int | None,
@@ -1423,7 +1427,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
         indexer._meta_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
 
     @staticmethod
-    def _store_chunks(store: Any, count: int) -> None:
+    def _store_chunks(store: "VaultStore", count: int) -> None:
         """Upsert ``count`` real code points so the live count is non-zero."""
         from .._store_models import CodeChunk
         from ..store_schema import effective_dense_dim

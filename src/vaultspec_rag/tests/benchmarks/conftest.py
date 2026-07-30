@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -17,9 +17,8 @@ if TYPE_CHECKING:
     from ...indexer import VaultIndexer
     from ...search import VaultSearcher
     from ...store_runtime import VaultStore
-    from ..conftest import RagComponentsWithManifest
 
-from ..conftest import _index_corpus
+from ..conftest import RagComponentsWithManifest, _index_corpus
 from ..corpus import build_synthetic_vault
 
 
@@ -33,13 +32,10 @@ def _bench_components(  # pyright: ignore[reportUnusedFunction]
     root: Path = tmp_path_factory.mktemp("bench-vault")
     manifest = build_synthetic_vault(root, n_docs=48, seed=300)
     components = _index_corpus(root, embedding_model)
-    yield cast(
-        "RagComponentsWithManifest",
-        components.__class__(  # type: ignore[call-arg]
-            **components,
-            manifest=manifest,
-            reranker=shared_reranker,
-        ),
+    yield RagComponentsWithManifest(
+        **components,
+        manifest=manifest,
+        reranker=shared_reranker,
     )
     components["store"].close()
 

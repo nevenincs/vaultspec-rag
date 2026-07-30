@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
@@ -23,13 +23,15 @@ def test_document_filter_targets_only_declared_indexed_fields() -> None:
     assert query_filter.must is not None
     raw_must = query_filter.model_dump(exclude_none=True)["must"]
     assert isinstance(raw_must, list)
-    encoded = cast("list[dict[str, Any]]", raw_must)
+    encoded = cast("list[dict[str, object]]", raw_must)
     assert [condition["key"] for condition in encoded] == [
         "source_path",
         "extractor_id",
         "locator_kind",
     ]
-    assert [condition["match"]["value"] for condition in encoded] == [
+    assert [
+        cast("dict[str, object]", condition["match"])["value"] for condition in encoded
+    ] == [
         "manuals/guide.bin",
         "extractor",
         "page",

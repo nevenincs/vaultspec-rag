@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from ..generation_survey import GenerationReclaim
@@ -344,23 +345,28 @@ class TestGenerationReclaimGates:
     _NOW = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)
     _LONG_AGO = "2026-07-01T00:00:00+00:00"
 
-    def _decide(self, **overrides: object) -> GenerationReclaim:
+    def _decide(
+        self,
+        *,
+        stamps: Mapping[str, str] | None = None,
+        grace_hours: float = 24.0,
+        reader_present: bool = False,
+        pointer_verifiable: bool = True,
+    ) -> GenerationReclaim:
         from ..generation_survey import (
             GenerationReclaimContext,
             decide_generation_reclaim,
         )
 
-        kwargs: dict[str, object] = {
-            "stamps": {"c_gold": self._LONG_AGO},
-            "now": self._NOW,
-            "grace_hours": 24.0,
-            "reader_present": False,
-            "pointer_verifiable": True,
-        }
-        kwargs.update(overrides)
         return decide_generation_reclaim(
             "c_gold",
-            GenerationReclaimContext(**kwargs),  # type: ignore[arg-type]
+            GenerationReclaimContext(
+                stamps=stamps if stamps is not None else {"c_gold": self._LONG_AGO},
+                now=self._NOW,
+                grace_hours=grace_hours,
+                reader_present=reader_present,
+                pointer_verifiable=pointer_verifiable,
+            ),
         )
 
     def test_an_elapsed_window_with_nothing_contrary_is_droppable(self) -> None:

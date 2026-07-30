@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
-
 import pytest
 
 from .metrics import ndcg_at_k, precision_at_k, reciprocal_rank
 
 pytestmark = [pytest.mark.unit]
 
-# pytest.approx's `expected` parameter is untyped in the stub; cast once so
-# every call-site resolves cleanly without per-line suppression comments.
-_approx = cast("type[Any]", pytest.approx)
+_approx = pytest.approx
 
 
 class TestPrecisionAtK:
