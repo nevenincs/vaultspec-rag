@@ -61,25 +61,12 @@ def _configure_cpu_code_index(
 def cpu_code_embedding_model(clean_config: None) -> EmbeddingModel:
     """Build the production embedding API around a real CPU BoW encoder."""
     del clean_config
-    from sentence_transformers.sentence_transformer import SentenceTransformer
-    from sentence_transformers.sentence_transformer.modules import BoW
+    from ._helpers import cpu_backed_embedding_model
 
-    from ...embeddings import EmbeddingModel, QueryEmbeddingCache
-
-    backend = SentenceTransformer(
-        modules=[BoW(["alpha", "beta", "gamma", "index", "memory"])],
-        device="cpu",
+    return cpu_backed_embedding_model(
+        ["alpha", "beta", "gamma", "index", "memory"],
+        _configure_cpu_code_index,
     )
-    dimension = backend.get_embedding_dimension()
-    assert dimension is not None
-    _configure_cpu_code_index(dimension)
-
-    model = EmbeddingModel.__new__(EmbeddingModel)
-    model._dense_model = backend
-    model._device = "cpu"
-    model.dimension = dimension
-    model.query_cache = QueryEmbeddingCache()
-    return model
 
 
 def _write_code_memory_corpus(root: Path, count: int = 4) -> None:

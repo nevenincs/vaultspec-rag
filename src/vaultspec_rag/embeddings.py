@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer, SparseEncoder
     from torch import Tensor
 
+    from .config._settings import VaultSpecConfigWrapper
+
 logger = logging.getLogger(__name__)
 
 # transformers materialises model weights through a background thread pool by
@@ -710,20 +712,7 @@ class EmbeddingModel:
         else:
             self._load_sparse_model(sparse_name, local_files_only=local_files_only)
 
-        self.dimension: int = (
-            cfg.embedding_dimension
-            if hasattr(cfg, "embedding_dimension")
-            else self.DEFAULT_DIMENSION
-        )
-        self._device = "cuda"
-        self.query_cache = QueryEmbeddingCache()
-        self._dense_batch_ceiling = EncodeBatchCeiling()
-        self._sparse_batch_ceiling = EncodeBatchCeiling()
-        # Bucket-planning knobs: the per-call token budget the learned
-        # ceilings clamp, and the chars-to-tokens estimate divisor. The
-        # learned ceiling - not the estimate - stays the safety authority.
-        self._encode_token_budget: int = int(cfg.embedding_encode_token_budget)
-        self._encode_chars_per_token: int = int(cfg.embedding_encode_chars_per_token)
+        self._init_encode_state(cfg, device="cuda")
 
         gpu_name = torch.cuda.get_device_name(0)
         logger.info(
@@ -735,6 +724,37 @@ class EmbeddingModel:
             self.dimension,
             self.sparse_dimension,
         )
+
+    def _init_encode_state(
+        self,
+        cfg: VaultSpecConfigWrapper,
+        *,
+        device: str,
+    ) -> None:
+        """Set the encode state that does not depend on which weights loaded.
+
+        Everything here is derived from configuration rather than from a
+        loaded model, so it is the whole of what an instance needs before
+        an encode call is legal. Keeping it in one method is what lets a
+        caller holding an already-constructed backend reach the same state
+        without a second copy of these assignments drifting away from this
+        one: a missing knob surfaces as an attribute error several frames
+        inside a bucket plan, far from the assignment that was never made.
+        """
+        self.dimension: int = (
+            cfg.embedding_dimension
+            if hasattr(cfg, "embedding_dimension")
+            else self.DEFAULT_DIMENSION
+        )
+        self._device = device
+        self.query_cache = QueryEmbeddingCache()
+        self._dense_batch_ceiling = EncodeBatchCeiling()
+        self._sparse_batch_ceiling = EncodeBatchCeiling()
+        # Bucket-planning knobs: the per-call token budget the learned
+        # ceilings clamp, and the chars-to-tokens estimate divisor. The
+        # learned ceiling - not the estimate - stays the safety authority.
+        self._encode_token_budget: int = int(cfg.embedding_encode_token_budget)
+        self._encode_chars_per_token: int = int(cfg.embedding_encode_chars_per_token)
 
     def _require_sparse_model(self) -> SparseEncoder:
         """Return the loaded SPLADE model, or say plainly why there is none.
