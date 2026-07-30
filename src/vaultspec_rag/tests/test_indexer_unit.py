@@ -4,7 +4,7 @@ import hashlib
 import tracemalloc
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from vaultspec_core.config import (
@@ -25,6 +25,7 @@ from ..indexer._vault_prep import _extract_feature, _extract_title
 from .corpus import CorpusManifest
 
 if TYPE_CHECKING:
+    from ..embeddings import EmbeddingModel
     from ..indexer import CodebaseIndexer
     from ..store_runtime import VaultStore
 
@@ -522,7 +523,9 @@ class TestIncrementalIndexMetadata:
         src.write_text("x = 1\n", encoding="utf-8")
 
         # Construct an indexer just enough to test _write_meta / _load_meta.
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         with open(src, "rb") as f:
@@ -533,7 +536,10 @@ class TestIncrementalIndexMetadata:
         # Reload and verify types. The reserved embed-format marker is
         # stamped on disk but stripped from the loaded mapping, so every
         # loaded value is a hash.
-        raw = json.loads(indexer._meta_path.read_text(encoding="utf-8"))
+        raw = cast(
+            "dict[str, object]",
+            json.loads(indexer._meta_path.read_text(encoding="utf-8")),
+        )
         assert raw.get("__code_embed_schema__")
         loaded = indexer._load_meta()
         assert "__code_embed_schema__" not in loaded
@@ -547,7 +553,10 @@ class TestIncrementalIndexMetadata:
             int(val, 16)  # raises ValueError if not valid hex
 
         # Also verify via raw JSON - no floats.
-        raw = json.loads(indexer._meta_path.read_text(encoding="utf-8"))
+        raw = cast(
+            "dict[str, object]",
+            json.loads(indexer._meta_path.read_text(encoding="utf-8")),
+        )
         for val in raw.values():
             assert not isinstance(val, float), (
                 f"Metadata value is float, expected hex string: {val}"
@@ -562,7 +571,9 @@ class TestIncrementalIndexUnhashedFiles:
         files that failed read_bytes, preventing KeyError on save."""
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         # Simulate: two files scanned, but one failed hashing.
@@ -751,7 +762,9 @@ class TestGitignoreNegationPatterns:
         (sub / "debug.log").write_text("ignore me", encoding="utf-8")
         (sub / "code.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
         # code.py should always be found
@@ -816,7 +829,9 @@ class TestGitignoreNegationPatterns:
         source.parent.mkdir()
         source.write_text("kept = True\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         scanned = indexer._scan_codebase()
 
         assert source in scanned
@@ -831,7 +846,9 @@ class TestHashingPermissionError:
 
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
 
         # Create a readable file and write meta with its hash
@@ -852,7 +869,9 @@ class TestHashingPermissionError:
         """_write_meta and _load_meta correctly round-trip blake2b hashes."""
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         indexer._meta_path = tmp_path / "sub" / "code_index_meta.json"
 
         hashes = {
@@ -959,7 +978,9 @@ class TestCodebaseMetaRoundTrip:
         from ..indexer._content_policy import ContentKind
 
         meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         indexer._meta_path = meta_path
 
         hashes = {"src/foo.py": "abc123", "src/bar.py": "def456"}
@@ -967,7 +988,9 @@ class TestCodebaseMetaRoundTrip:
         indexer._write_meta(hashes, policy=policy)
 
         assert meta_path.exists()
-        on_disk = json.loads(meta_path.read_text(encoding="utf-8"))
+        on_disk = cast(
+            "dict[str, object]", json.loads(meta_path.read_text(encoding="utf-8"))
+        )
         assert on_disk.pop("__code_embed_schema__") == "2"
         fingerprints = policy.fingerprints_for(ContentKind.CODE)
         assert on_disk.pop(MEMBERSHIP_EPOCH_KEY) == fingerprints.membership
@@ -979,7 +1002,9 @@ class TestCodebaseMetaRoundTrip:
         from ..indexer import CodebaseIndexer
 
         meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         indexer._meta_path = meta_path
 
         hashes = {"src/foo.py": "aaa", "lib/baz.rs": "bbb"}
@@ -991,7 +1016,9 @@ class TestCodebaseMetaRoundTrip:
         from ..indexer import CodebaseIndexer
 
         meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         indexer._meta_path = meta_path
 
         assert indexer._load_meta() == {}
@@ -1123,7 +1150,9 @@ class TestAnchoredGitignorePatterns:
         # Create a file that should NOT be ignored
         (sub / "main.py").write_text("y = 2\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(root, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            root, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(root)).replace("\\", "/") for p in paths}
@@ -1150,7 +1179,9 @@ class TestCodebaseInternalDirectoryExclusions:
             encoding="utf-8",
         )
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
@@ -1167,7 +1198,9 @@ class TestCodebaseInternalDirectoryExclusions:
         clone.mkdir(parents=True)
         (clone / "app.py").write_text("REAL = True\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         paths = indexer._scan_codebase()
         rel_paths = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in paths}
@@ -1235,7 +1268,9 @@ class TestVaultragignore:
         (tmp_path / "generated.py").write_text("y = 2\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("generated.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1249,7 +1284,9 @@ class TestVaultragignore:
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1265,8 +1302,8 @@ class TestVaultragignore:
 
         indexer = CodebaseIndexer(
             tmp_path,
-            cast("Any", None),
-            cast("Any", None),
+            cast("EmbeddingModel", None),
+            cast("VaultStore", None),
             options=CodebaseIndexer.Options(extra_excludes=["temp.py"]),
         )
 
@@ -1286,7 +1323,9 @@ class TestVaultragignore:
         # Attempt to un-ignore secret.py from .vaultragignore - must fail
         (tmp_path / ".vaultragignore").write_text("!secret.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1310,7 +1349,9 @@ class TestVaultragignore:
             "*.test.py\n!important.test.py\n", encoding="utf-8"
         )
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1329,7 +1370,9 @@ class TestVaultragignore:
         (tmp_path / ".gitignore").write_text("build_output.py\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("vendor_lib.py\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1344,7 +1387,9 @@ class TestVaultragignore:
 
         (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         assert indexer.scan_files() == indexer._scan_codebase()
 
@@ -1359,7 +1404,9 @@ class TestVaultragignore:
         (vendor / "lib.py").write_text("y = 2\n", encoding="utf-8")
         (tmp_path / ".vaultragignore").write_text("vendor/\n", encoding="utf-8")
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         files = indexer.scan_files()
         rel = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in files}
@@ -1404,7 +1451,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
     def _indexer(tmp_path: Path, store: "VaultStore") -> "CodebaseIndexer":
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), store)
+        indexer = CodebaseIndexer(tmp_path, cast("EmbeddingModel", None), store)
         indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
         return indexer
 
@@ -1668,7 +1715,9 @@ class TestCodeSidecarResolution:
         from .._index_breadth import PUBLISHED_POINTS_KEY, read_reserved_count
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
         indexer._meta_path.parent.mkdir(parents=True, exist_ok=True)
         indexer._meta_path.write_text(
             json.dumps({PUBLISHED_POINTS_KEY: "91"}), encoding="utf-8"
@@ -1697,7 +1746,7 @@ class TestDataRootResolution:
     def _configured() -> str:
         from ..config._settings import get_config
 
-        return str(get_config().data_dir)
+        return cast("str", get_config().data_dir)
 
     @classmethod
     def _expected_data_root(cls, root: Path) -> Path:
@@ -1731,7 +1780,9 @@ class TestDataRootResolution:
     ) -> None:
         from ..indexer import CodebaseIndexer
 
-        indexer = CodebaseIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = CodebaseIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         # Observed, never rebound: the constructor's own resolution is the
         # thing under test, and the generation lifecycle and preprocess
@@ -1743,7 +1794,9 @@ class TestDataRootResolution:
     ) -> None:
         from ..indexer._document_indexer import DocumentIndexer
 
-        indexer = DocumentIndexer(tmp_path, cast("Any", None), cast("Any", None))
+        indexer = DocumentIndexer(
+            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         assert indexer._data_root == self._expected_data_root(tmp_path.resolve())
 
@@ -1753,8 +1806,12 @@ class TestDataRootResolution:
         from ..indexer._document_indexer import DocumentIndexer
 
         root = tmp_path.resolve()
-        code = CodebaseIndexer(root, cast("Any", None), cast("Any", None))
-        document = DocumentIndexer(root, cast("Any", None), cast("Any", None))
+        code = CodebaseIndexer(
+            root, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
+        document = DocumentIndexer(
+            root, cast("EmbeddingModel", None), cast("VaultStore", None)
+        )
 
         assert code._data_root == document._data_root
 
