@@ -1,180 +1,367 @@
-"""``server preflight``: read the device-load admission verdict, nothing more.
+"""``server preflight``: observe a quiesced service; never authorize a borrower.
 
-This never loads a model. It answers one question - does the GPU currently
-have room for a load - by reading the same predicate the loader itself
-consults before bringing a model stack up.
-
-Service-first: a running daemon is already a torch-bearing process, so it is
-asked to report its own reading over its torch-free HTTP surface, and this
-verb only reads that reading. A local guarded probe is attempted ONLY when no
-daemon is running at all - at that point this CLI invocation is the process
-that would load the model, so it is the one asking the question locally
-instead of relaying someone else's answer. A daemon that is running but does
-not answer, or answers without a reading, is reported as unavailable; it is
-never papered over with a second, local probe run alongside a live one.
+The service owns GPU residency and the controller's quiescence truth.  This
+command only reads the discovered service's authenticated service-state and
+health documents; it never starts a service and never makes a local CUDA or
+Torch probe.  A successful observation is deliberately not permission to use
+the GPU: a borrower must still hold the distinct borrower lease.
 """
 
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Sized
+from math import isfinite
+from typing import Final, NoReturn
 
 import typer
 
-from .._gpu_admission import (
-    DeviceAdmission,
-    device_contended_message,
-    device_load_wire,
-)
-from ..serviceclient._discovery import _default_service_port
-from ..serviceclient._transport import _try_http_health
+from .._timestamps import age_seconds
+from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS, QuiesceState
+from ..serviceclient._compat import classify_service_version
+from ..serviceclient._discovery import MachineResolution, resolve_machine_service
+from ..serviceclient._transport import _try_http_admin, _try_http_health
 from ._app import JsonMode, PortOption, server_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain, address_line
 
-_PREFLIGHT_COMMAND = "server.preflight"
+_PREFLIGHT_COMMAND: Final = "server.preflight"
+_LEASE_REQUIRED: Final = "A borrower lease is required before GPU work may begin."
 
 
-def _local_admission() -> DeviceAdmission:
-    """Take the local, guarded reading - this process's own GPU question.
-
-    Function-local import: ``evaluate_device_admission`` is the torch-tolerant
-    predicate, but the caller reaching this branch has already resolved that no
-    daemon is running, so this CLI invocation IS the would-be GPU consumer.
-    """
-    from .._gpu_admission import evaluate_device_admission
-
-    return evaluate_device_admission()
+def _finite_number(value: object) -> bool:
+    """Whether a JSON value is a finite numeric observation, excluding bool."""
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and isfinite(float(value))
+    )
 
 
-def _optional_int(value: object) -> int | None:
-    """Coerce a JSON-decoded numeric field to ``int``, or ``None`` if unusable."""
-    if isinstance(value, bool) or value is None:
+def _positive_finite_number(value: object) -> float | None:
+    """Return a positive finite JSON number, excluding bool, or ``None``."""
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not isfinite(float(value))
+    ):
         return None
-    if isinstance(value, int | float):
-        return int(value)
+    number = float(value)
+    return number if number > 0 else None
+
+
+def _has_expected_mapping_size(value: object, expected: int) -> bool:
+    """Whether an untyped JSON value is a mapping with exactly *expected* fields."""
+    return isinstance(value, Sized) and len(value) == expected
+
+
+def _strict_quiesce(value: object) -> dict[str, object] | None:
+    """Accept exactly the controller's published quiesce vocabulary.
+
+    Current production routes always generate this block from
+    ``QuiesceSnapshot.as_envelope``.  The checks therefore remain static
+    defense-in-depth for a proxy, an older service, or future wire drift; this
+    module intentionally has no fabricated malformed-success test seam.
+    """
+    match value:
+        case {
+            "state": str() as state,
+            "admission_epoch": int() as epoch,
+            "admissions_open": bool() as admissions_open,
+            "active_compute_tickets": int() as tickets,
+            "drain_complete": bool() as drain_complete,
+            "vram_released": bool() as vram_released,
+            "safe_to_borrow_gpu": bool() as safe_to_borrow_gpu,
+            "pause_requested_at": (int() | float() | None) as pause_requested_at,
+            "drain_acknowledged_at": (int() | float() | None) as drain_acknowledged_at,
+            "quiesced_at": (int() | float() | None) as quiesced_at,
+            "warming_started_at": (int() | float() | None) as warming_started_at,
+            "failure_reason": (str() | None) as failure_reason,
+        } if _has_expected_mapping_size(value, len(QUIESCE_ENVELOPE_FIELDS)):
+            timestamps = (
+                pause_requested_at,
+                drain_acknowledged_at,
+                quiesced_at,
+                warming_started_at,
+            )
+            if (
+                state not in {item.value for item in QuiesceState}
+                or isinstance(epoch, bool)
+                or epoch < 0
+                or isinstance(tickets, bool)
+                or tickets < 0
+                or any(isinstance(timestamp, bool) for timestamp in timestamps)
+                or any(
+                    timestamp is not None and not _finite_number(timestamp)
+                    for timestamp in timestamps
+                )
+            ):
+                return None
+            return {
+                "state": state,
+                "admission_epoch": epoch,
+                "admissions_open": admissions_open,
+                "active_compute_tickets": tickets,
+                "drain_complete": drain_complete,
+                "vram_released": vram_released,
+                "safe_to_borrow_gpu": safe_to_borrow_gpu,
+                "pause_requested_at": pause_requested_at,
+                "drain_acknowledged_at": drain_acknowledged_at,
+                "quiesced_at": quiesced_at,
+                "warming_started_at": warming_started_at,
+                "failure_reason": failure_reason,
+            }
+        case _:
+            return None
+
+
+def _strict_capacity(value: object) -> dict[str, object] | None:
+    """Accept the service's device-capacity observation without granting it power."""
+    match value:
+        case {
+            "free_mib": (int() | None) as free_mib,
+            "total_mib": (int() | None) as total_mib,
+            "own_mib": (int() | None) as own_mib,
+            "floor_mib": int() as floor_mib,
+            "admitted": bool() as admitted,
+            "reason": str() as reason,
+        } if _has_expected_mapping_size(value, 6):
+            readings = (free_mib, total_mib, own_mib, floor_mib)
+            if any(
+                isinstance(reading, bool) or (reading is not None and reading < 0)
+                for reading in readings
+            ):
+                return None
+            return {
+                "free_mib": free_mib,
+                "total_mib": total_mib,
+                "own_mib": own_mib,
+                "floor_mib": floor_mib,
+                "admitted": admitted,
+                "reason": reason,
+            }
+        case _:
+            return None
+
+
+def _discovery_failure(resolution: MachineResolution) -> tuple[str, str] | None:
+    """Return the reason a discovered service cannot be trusted for observation."""
+    if not resolution.is_ready or resolution.port is None:
+        evidence = resolution.evidence()
+        return (
+            "service_discovery_unavailable",
+            f"No usable service discovery is available: {evidence}.",
+        )
+    payload = resolution.payload
+    heartbeat_age = age_seconds(payload, "last_heartbeat") if payload else None
+    stale_after = _positive_finite_number(
+        payload.get("stale_after_s") if payload else None
+    )
+    if heartbeat_age is None or stale_after is None:
+        return (
+            "service_discovery_incomplete",
+            "The discovered service did not publish a usable heartbeat window.",
+        )
+    if heartbeat_age < 0:
+        return (
+            "service_discovery_unknown",
+            "The discovered service heartbeat is in the future, so freshness is "
+            "unknown.",
+        )
+    if heartbeat_age > stale_after:
+        return (
+            "service_discovery_stale",
+            "The discovered service heartbeat is stale; no GPU work is authorized.",
+        )
     return None
 
 
-def _admission_from_block(block: dict[str, object]) -> DeviceAdmission:
-    """Rebuild the verdict a daemon's health payload carried.
-
-    A figure the health block should never actually take (missing or
-    non-numeric) degrades to the same "unreadable" reading
-    ``evaluate_device_admission`` itself reports for an unmeasurable device,
-    rather than being raised.
-    """
-    floor = _optional_int(block.get("floor_mib"))
-    return DeviceAdmission(
-        admitted=bool(block.get("admitted")),
-        free_mib=_optional_int(block.get("free_mib")),
-        total_mib=_optional_int(block.get("total_mib")),
-        own_mib=_optional_int(block.get("own_mib")),
-        floor_mib=floor if floor is not None else 0,
-        reason=str(block.get("reason") or ""),
-    )
-
-
-def _daemon_admission(port: int) -> DeviceAdmission | None:
-    """Read the device-load reading from a running daemon's health, torch-free.
-
-    ``None`` when the daemon does not answer, or answers without a
-    ``device_load`` block (an older release, or its own probe was
-    unreadable) - the caller must not fall back to a local probe in either
-    case, because a live daemon already owns this question.
-
-    That holds even though a local probe is right there and would answer the
-    same question: an unverifiable observation - a daemon that answers but
-    cannot confirm the card's condition - must never be treated as "safe to
-    check again ourselves", or a version-skewed daemon quietly shortens the
-    protection this verb exists to give. The cost is that a stale daemon
-    blocks this diagnostic until it is upgraded or restarted; that is the
-    safe direction to fail, not a defect to route around with a silent local
-    fallback.
-    """
-    health = _try_http_health(port)
-    if not isinstance(health, dict):
-        return None
-    block = health.get("device_load")
-    if not isinstance(block, dict):
-        return None
-    return _admission_from_block(cast("dict[str, object]", block))
+def _observation_data(
+    *,
+    port: int | None,
+    quiesce: dict[str, object] | None = None,
+    capacity: dict[str, object] | None = None,
+    version: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Build the uniform observation data with authorization explicitly denied."""
+    data: dict[str, object] = {
+        "source": "service",
+        "authorized": False,
+        "lease_required": True,
+        "authorization": _LEASE_REQUIRED,
+    }
+    if port is not None:
+        data["port"] = port
+    if version is not None:
+        data["version"] = version
+    if quiesce is not None:
+        data["quiesce"] = quiesce
+    if capacity is not None:
+        data["capacity"] = capacity
+    return data
 
 
-def _fail_unavailable(json_mode: bool, port: int) -> None:
-    """Report a running daemon that could not answer the device-load question."""
-    message = (
-        f"The service on port {port} did not report a device-load reading. It "
-        "may be unreachable, or running a release that predates this "
-        "diagnostic. No local probe was attempted: a running daemon already "
-        "owns this question, this CLI invocation does not."
-    )
+def _fail(
+    *,
+    json_mode: bool,
+    error: str,
+    message: str,
+    data: dict[str, object],
+) -> NoReturn:
+    """Report one fail-closed preflight outcome."""
     if json_mode:
         _emit_json_error_and_exit(
             _PREFLIGHT_COMMAND,
-            "device_load_unavailable",
+            error,
             message,
             1,
-            data={"source": "service", "port": port},
+            data=data,
         )
-        return
-    _plain(address_line(port))
+        raise AssertionError("the JSON preflight failure did not exit")
+    port = data.get("port")
+    if isinstance(port, int) and not isinstance(port, bool):
+        _plain(address_line(port))
     _plain(message)
+    _plain(f"GPU authorization: denied. {_LEASE_REQUIRED}")
     raise typer.Exit(1)
 
 
-def _render_human(admission: DeviceAdmission, source: str) -> None:
-    """Print the reading legibly enough to show WHY a refusal happened."""
-    _plain(f"Device-load reading ({source}):")
-    free = "unreadable" if admission.free_mib is None else f"{admission.free_mib} MiB"
-    total = (
-        "" if admission.total_mib is None else f" of {admission.total_mib} MiB total"
+def _quiesce_is_safe(quiesce: dict[str, object]) -> bool:
+    """Whether the observed controller snapshot meets the exact safe handoff."""
+    return (
+        quiesce["state"] == QuiesceState.QUIESCED.value
+        and quiesce["admissions_open"] is False
+        and quiesce["active_compute_tickets"] == 0
+        and quiesce["drain_complete"] is True
+        and quiesce["vram_released"] is True
+        and quiesce["safe_to_borrow_gpu"] is True
+        and quiesce["failure_reason"] is None
     )
-    _plain(f"  free: {free}{total}")
-    if admission.own_mib is not None:
-        _plain(f"  held by the reporting process: {admission.own_mib} MiB")
-    _plain(f"  floor: {admission.floor_mib} MiB")
-    _plain(f"  verdict: {'admitted' if admission.admitted else 'refused'}")
-    if not admission.admitted:
-        _plain(device_contended_message(admission))
-
-
-def _report(admission: DeviceAdmission, source: str, json_mode: bool) -> None:
-    """Emit exactly one outcome for *admission* and exit 0/1 on its verdict."""
-    if json_mode:
-        if admission.admitted:
-            _emit_json(
-                True,
-                _PREFLIGHT_COMMAND,
-                data={"source": source, **device_load_wire(admission)},
-            )
-            raise typer.Exit(0)
-        _emit_json_error_and_exit(
-            _PREFLIGHT_COMMAND,
-            admission.reason or "not_admitted",
-            device_contended_message(admission),
-            1,
-            data={"source": source, **device_load_wire(admission)},
-        )
-        return
-    _render_human(admission, source)
-    raise typer.Exit(0 if admission.admitted else 1)
 
 
 @server_app.command(
     "preflight",
-    help="Report whether the GPU device currently has room for a model load.",
+    help="Observe service quiescence and device capacity without authorizing GPU work.",
 )
 def service_preflight(port: PortOption = None, json_mode: JsonMode = False) -> None:
-    """Read the device-load admission verdict without loading anything.
+    """Read strict remote service evidence; a borrower lease remains mandatory."""
+    resolution = resolve_machine_service()
+    discovery_failure = _discovery_failure(resolution)
+    if discovery_failure is not None:
+        error, message = discovery_failure
+        _fail(
+            json_mode=json_mode,
+            error=error,
+            message=message,
+            data=_observation_data(port=resolution.port),
+        )
+    resolved_port = resolution.port
+    if port is not None and port != resolved_port:
+        _fail(
+            json_mode=json_mode,
+            error="service_port_mismatch",
+            message=(
+                f"The requested port {port} is not the discovered service port "
+                f"{resolved_port}."
+            ),
+            data=_observation_data(port=resolved_port),
+        )
+    if resolved_port is None:
+        _fail(
+            json_mode=json_mode,
+            error="service_discovery_unavailable",
+            message="No usable service discovery is available.",
+            data=_observation_data(port=None),
+        )
 
-    Exit 0 when the device admits a load right now, exit 1 when it does not -
-    a torch-free or CUDA-less host is a refusal here, not a crash.
-    """
-    resolved_port = port if port is not None else _default_service_port()
-    if resolved_port is not None:
-        admission = _daemon_admission(resolved_port)
-        if admission is None:
-            _fail_unavailable(json_mode, resolved_port)
-            return
-        _report(admission, "service", json_mode)
-        return
-    _report(_local_admission(), "local", json_mode)
+    health = _try_http_health(resolved_port)
+    if health is None:
+        _fail(
+            json_mode=json_mode,
+            error="service_unreachable",
+            message=f"The discovered service on port {resolved_port} is unreachable.",
+            data=_observation_data(port=resolved_port),
+        )
+    version = classify_service_version(health)
+    version_data = version.to_dict()
+    if not version.is_compatible:
+        _fail(
+            json_mode=json_mode,
+            error=version.error_code() or "service_version_unreported",
+            message=f"The discovered service is not compatible: {version.reason()}.",
+            data=_observation_data(port=resolved_port, version=version_data),
+        )
+    if (
+        resolution.service_token is None
+        or health.get("service_token") != resolution.service_token
+    ):
+        _fail(
+            json_mode=json_mode,
+            error="service_identity_mismatch",
+            message=(
+                "The health response does not confirm the discovered service identity."
+            ),
+            data=_observation_data(port=resolved_port, version=version_data),
+        )
+
+    capacity = _strict_capacity(health.get("device_load"))
+    if capacity is None:
+        _fail(
+            json_mode=json_mode,
+            error="device_capacity_unavailable",
+            message=(
+                "The discovered service did not provide a complete device-capacity "
+                "observation."
+            ),
+            data=_observation_data(port=resolved_port, version=version_data),
+        )
+    service_state = _try_http_admin("get_service_state", {}, resolved_port)
+    if service_state is None or service_state.get("ok") is False:
+        _fail(
+            json_mode=json_mode,
+            error="service_state_unavailable",
+            message=(
+                "The discovered service did not provide authenticated service-state "
+                "evidence."
+            ),
+            data=_observation_data(
+                port=resolved_port,
+                capacity=capacity,
+                version=version_data,
+            ),
+        )
+    quiesce = _strict_quiesce(service_state.get("quiesce"))
+    if quiesce is None:
+        _fail(
+            json_mode=json_mode,
+            error="service_state_incomplete",
+            message=(
+                "The discovered service did not provide the complete quiesce "
+                "vocabulary."
+            ),
+            data=_observation_data(
+                port=resolved_port,
+                capacity=capacity,
+                version=version_data,
+            ),
+        )
+    data = _observation_data(
+        port=resolved_port,
+        quiesce=quiesce,
+        capacity=capacity,
+        version=version_data,
+    )
+    if not _quiesce_is_safe(quiesce):
+        _fail(
+            json_mode=json_mode,
+            error="service_not_safe_to_borrow_gpu",
+            message=(
+                "The discovered service is not in an acknowledged safe-to-borrow state."
+            ),
+            data=data,
+        )
+    if json_mode:
+        _emit_json(True, _PREFLIGHT_COMMAND, data=data)
+        raise typer.Exit(0)
+    _plain(address_line(resolved_port))
+    _plain("Service quiesce observation: acknowledged safe handoff.")
+    _plain("GPU authorization: denied. " + _LEASE_REQUIRED)
+    raise typer.Exit(0)
