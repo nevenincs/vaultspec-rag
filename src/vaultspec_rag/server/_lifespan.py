@@ -534,7 +534,10 @@ async def _start_components(
             interrupted,
         )
 
-    heartbeat_task = asyncio.create_task(_m._heartbeat_loop(discovery))
+    tasks = [
+        asyncio.create_task(_m._heartbeat_loop(discovery)),
+        asyncio.create_task(_borrower_lease_recovery_loop(registry)),
+    ]
     # First heartbeat right away so a freshly started service is
     # immediately distinguishable from a stale CLI-only write.
     try:
@@ -553,7 +556,6 @@ async def _start_components(
     # honoured without a restart either way). The loop itself delays one
     # full interval before the first cycle - a fresh daemon serves before
     # it sweeps.
-    tasks = [heartbeat_task]
     if get_config().effective_server_mode() and bool(get_config().storage_autoprune):
         tasks.append(asyncio.create_task(_m._maintenance_loop()))
     # Survey snapshot warmer: server-mode only, but deliberately NOT gated on
@@ -564,6 +566,31 @@ async def _start_components(
         tasks.append(asyncio.create_task(_m._survey_warmup_task()))
 
     return tasks
+
+
+async def _borrower_lease_recovery_loop(registry: ServiceRegistry) -> None:
+    """Use the service heartbeat cadence to recover a dead borrower binding."""
+    recovery_interval_seconds = 15
+
+    while True:
+        try:
+            await asyncio.sleep(recovery_interval_seconds)
+            await _borrower_lease_recovery_tick(registry)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log_event(
+                logger,
+                "service.lifecycle",
+                "borrower_lease_recovery_failed",
+                severity=logging.WARNING,
+                exc_info=True,
+            )
+
+
+async def _borrower_lease_recovery_tick(registry: ServiceRegistry) -> None:
+    """Run one torch-free borrower-loss check on the heartbeat worker path."""
+    await _run_in_thread(registry.resume_lost_borrower_lease)
 
 
 async def _start_job_manager(manager: JobManager, registry: ServiceRegistry) -> None:

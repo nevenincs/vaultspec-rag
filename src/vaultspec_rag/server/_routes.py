@@ -29,11 +29,12 @@ for the canonical job-admission pipeline they build on.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -43,6 +44,7 @@ import vaultspec_rag.server as _m
 
 from .. import jobs as _jobs
 from .._store_locks import VaultStoreLockedError
+from ..gpu_borrow_lease import is_borrower_capability
 from ..job_models import JobOutcome
 from ..logging_config import (
     InvalidManagedLogSourceError,
@@ -54,6 +56,7 @@ from ..logging_config import (
 )
 from ..service import RegistryFullError
 from ..service_quiesce import (
+    QuiesceState,
     ServiceQuiesceTransitionConflictError,
     ServiceQuiesceTransitionWaitTimeoutError,
 )
@@ -97,7 +100,8 @@ if TYPE_CHECKING:
     from ..indexer._codebase_indexer import CodeIndexPreflight
     from ..indexer._document_indexer import DocumentIndexPreflight
     from ..job_models import JobInitiator, JobSpec
-    from ..service_quiesce import QuiesceSnapshot
+    from ..service import ServiceRegistry
+    from ..service_quiesce import QuiesceSnapshot, QuiesceTransition
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -1164,11 +1168,107 @@ def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
     return f"Quiesce transition {status!r} left {held}."
 
 
+async def _borrower_capability_from_request(
+    request: Request,
+) -> tuple[str | None, str | None]:
+    """Read the optional single borrower capability without logging it."""
+    body = await request.body()
+    if not body:
+        return (None, None)
+    try:
+        parsed: object = json.loads(body)
+    except (UnicodeDecodeError, ValueError):
+        return (None, "invalid_borrower_capability")
+    if not _is_json_object(parsed):
+        return (None, "invalid_borrower_capability")
+    if not parsed:
+        return (None, None)
+    capability = _single_borrower_capability(parsed)
+    if capability is not None:
+        return (capability, None)
+    return (None, "invalid_borrower_capability")
+
+
+def _single_borrower_capability(payload: dict[str, object]) -> str | None:
+    """Return the one structurally valid borrower capability from a body."""
+    match payload:
+        case {"borrower_capability": str() as capability} if len(payload) == 1:
+            return capability if is_borrower_capability(capability) else None
+        case _:
+            return None
+
+
+def _is_json_object(value: object) -> TypeGuard[dict[str, object]]:
+    """Narrow a decoded JSON value to the object surface this route reads."""
+    return isinstance(value, dict)
+
+
+async def _borrower_lifecycle_authorization(
+    request: Request,
+    registry: ServiceRegistry,
+    *,
+    pause: bool,
+) -> tuple[str | None, JSONResponse | None]:
+    """Return the parsed capability and any unchanged-state borrower refusal."""
+    capability, capability_error = await _borrower_capability_from_request(request)
+    if capability_error is not None:
+        return (
+            None,
+            _quiesce_envelope(
+                achieved=False,
+                status=capability_error,
+                snapshot=registry.quiesce_snapshot(),
+                message=capability_error,
+            ),
+        )
+    lease_error = registry.validate_borrower_lifecycle_request(
+        capability,
+        pause=pause,
+    )
+    if lease_error is not None:
+        return (
+            None,
+            _quiesce_envelope(
+                achieved=False,
+                status=lease_error,
+                snapshot=registry.quiesce_snapshot(),
+                message=lease_error,
+            ),
+        )
+    return (capability, None)
+
+
+def _post_pause_binding_error(
+    registry: ServiceRegistry,
+    capability: str | None,
+    transition: QuiesceTransition,
+) -> str | None:
+    """Bind a still-live borrower after safe quiescence, or name its refusal."""
+    if capability is None or not transition.achieved:
+        return None
+    lease_error = registry.validate_borrower_lifecycle_request(capability, pause=True)
+    if lease_error is not None:
+        return lease_error
+    if (
+        transition.snapshot.state is not QuiesceState.QUIESCED
+        or not registry.bind_borrower_capability(capability)
+    ):
+        return "borrower_lease_mismatch"
+    return None
+
+
 async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
     registry = get_request_runtime(request).registry
+    capability, borrower_denied = await _borrower_lifecycle_authorization(
+        request,
+        registry,
+        pause=pause,
+    )
+    if borrower_denied is not None:
+        return borrower_denied
     try:
         if pause:
             transition = await _run_in_thread(
@@ -1193,6 +1293,20 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
             snapshot=registry.quiesce_snapshot(),
             message=f"{exc.__class__.__name__}: {exc}",
         )
+    binding_error = _post_pause_binding_error(
+        registry,
+        capability if pause else None,
+        transition,
+    )
+    if binding_error is not None:
+        return _quiesce_envelope(
+            achieved=False,
+            status=binding_error,
+            snapshot=transition.snapshot,
+            message=binding_error,
+        )
+    if not pause and capability is not None and transition.achieved:
+        registry.clear_borrower_capability_after_resume(capability)
     return _quiesce_envelope(
         achieved=transition.achieved,
         status=transition.code.value,
