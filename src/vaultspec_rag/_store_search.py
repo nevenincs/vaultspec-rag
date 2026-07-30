@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from qdrant_client.http.models.models import (
         Condition,
         Filter,
+        RecommendQuery,
         ScoredPoint,
     )
 
@@ -240,7 +241,7 @@ class _VaultSearchMixin:
         like_ids: list[str | int] | None,
         unlike_ids: list[str | int] | None,
         id_resolver: Callable[[str], int] | None = None,
-    ) -> Any:
+    ) -> list[float] | RecommendQuery:
         if not like_ids and not unlike_ids:
             return dense_vec
 

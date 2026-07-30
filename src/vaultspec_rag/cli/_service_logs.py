@@ -94,7 +94,7 @@ class _ServiceLogsCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: ClickContext) -> Any:
+    def invoke(self, ctx: ClickContext) -> None:
         params = ctx.params
         return _run_service_logs(
             _ServiceLogsOptions(

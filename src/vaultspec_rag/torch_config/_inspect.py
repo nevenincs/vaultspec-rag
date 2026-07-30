@@ -7,7 +7,7 @@ canonical cu130 block. Never writes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import tomlkit
 from tomlkit import TOMLDocument
@@ -114,7 +114,7 @@ def get_indices_aot(doc: TOMLDocument) -> AoT | None:
     return idx
 
 
-def _torch_sources(doc: TOMLDocument) -> Any:
+def _torch_sources(doc: TOMLDocument) -> object:
     """Return the ``torch`` entry under ``[tool.uv.sources]``, or None.
 
     Returns whatever tomlkit has at that key so the caller can
@@ -133,8 +133,7 @@ def _torch_sources(doc: TOMLDocument) -> Any:
     sources = tget(uv, "sources")
     if not isinstance(sources, _TABLE_LIKE_TYPES):
         return None
-    result: Any = tget(sources, "torch")
-    return result
+    return tget(sources, "torch")
 
 
 def match_index_entry(entry: TableLike) -> str:
