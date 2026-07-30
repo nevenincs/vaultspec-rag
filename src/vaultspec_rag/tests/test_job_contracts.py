@@ -107,19 +107,23 @@ class TestIndexDispatchIsExtracted:
     that pair the two calls rather than the two that had a test.
     """
 
+    @staticmethod
+    def _defined_names(tree: ast.Module) -> set[str]:
+        """Return every function name the module defines, sync or async.
+
+        ``ast`` gives the two no common base, so both are named. Filtering
+        ``FunctionDef`` alone let an ``async def`` back into the facade
+        unseen, and ``jobs`` already defines one.
+        """
+        return {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        }
+
     def test_dispatch_implementations_are_extracted_from_jobs_facade(self) -> None:
-        jobs_tree = _parse_jobs_module()
-        jobs_functions = {
-            node.name
-            for node in ast.walk(jobs_tree)
-            if isinstance(node, ast.FunctionDef)
-        }
-        dispatch_tree = _parse_job_dispatch_module()
-        dispatch_functions = {
-            node.name
-            for node in ast.walk(dispatch_tree)
-            if isinstance(node, ast.FunctionDef)
-        }
+        jobs_functions = self._defined_names(_parse_jobs_module())
+        dispatch_functions = self._defined_names(_parse_job_dispatch_module())
         assert "_bg_run" not in jobs_functions
         assert {"_run_vault_attempt", "_run_indexing_attempt"} <= dispatch_functions
 
