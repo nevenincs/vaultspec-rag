@@ -21,6 +21,8 @@ from ._run_ledger_runtime import RunLedger
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from qdrant_client.conversions.common_types import PointId
+
     from ..store_runtime import VaultStore
     from ._file_state import FileState
     from ._resolved_policy import ResolvedIndexPolicy
@@ -124,10 +126,16 @@ class RouteMigrationJournal:
             point_ids,
         )
         with self._connect() as connection:
-            existing = connection.execute(
-                "SELECT * FROM route_migrations WHERE migration_id = ?",
-                (migration_id,),
-            ).fetchone()
+            # sqlite3's cursor typing cannot see the row_factory set in
+            # _connect(), so every fetch is genuinely Any at the stub
+            # boundary; cast to the row_factory's real runtime type here.
+            existing = cast(
+                "sqlite3.Row | None",
+                connection.execute(
+                    "SELECT * FROM route_migrations WHERE migration_id = ?",
+                    (migration_id,),
+                ).fetchone(),
+            )
             if existing is None:
                 if not point_ids:
                     raise ValueError("a new route migration requires origin point IDs")
@@ -152,10 +160,13 @@ class RouteMigrationJournal:
                         now,
                     ),
                 )
-                existing = connection.execute(
-                    "SELECT * FROM route_migrations WHERE migration_id = ?",
-                    (migration_id,),
-                ).fetchone()
+                existing = cast(
+                    "sqlite3.Row | None",
+                    connection.execute(
+                        "SELECT * FROM route_migrations WHERE migration_id = ?",
+                        (migration_id,),
+                    ).fetchone(),
+                )
             assert existing is not None
             return _migration_from_row(existing)
 
@@ -174,10 +185,13 @@ class RouteMigrationJournal:
                     migration_id,
                 ),
             )
-            row = connection.execute(
-                "SELECT * FROM route_migrations WHERE migration_id = ?",
-                (migration_id,),
-            ).fetchone()
+            row = cast(
+                "sqlite3.Row | None",
+                connection.execute(
+                    "SELECT * FROM route_migrations WHERE migration_id = ?",
+                    (migration_id,),
+                ).fetchone(),
+            )
         if row is None:
             raise KeyError(migration_id)
         return _migration_from_row(row)
@@ -188,36 +202,47 @@ class RouteMigrationJournal:
         while True:
             with self._connect() as connection:
                 if last_key is None:
-                    rows = connection.execute(
-                        """
-                        SELECT * FROM route_migrations
-                        WHERE phase = ? ORDER BY updated_at, migration_id
-                        LIMIT ?
-                        """,
-                        (
-                            RouteMigrationPhase.DESTINATION_CONFIRMED.value,
-                            _DEFAULT_PAGE_SIZE,
-                        ),
-                    ).fetchall()
+                    rows = cast(
+                        "list[sqlite3.Row]",
+                        connection.execute(
+                            """
+                            SELECT * FROM route_migrations
+                            WHERE phase = ? ORDER BY updated_at, migration_id
+                            LIMIT ?
+                            """,
+                            (
+                                RouteMigrationPhase.DESTINATION_CONFIRMED.value,
+                                _DEFAULT_PAGE_SIZE,
+                            ),
+                        ).fetchall(),
+                    )
                 else:
-                    rows = connection.execute(
-                        """
-                        SELECT * FROM route_migrations
-                        WHERE phase = ? AND (updated_at, migration_id) > (?, ?)
-                        ORDER BY updated_at, migration_id LIMIT ?
-                        """,
-                        (
-                            RouteMigrationPhase.DESTINATION_CONFIRMED.value,
-                            *last_key,
-                            _DEFAULT_PAGE_SIZE,
-                        ),
-                    ).fetchall()
+                    rows = cast(
+                        "list[sqlite3.Row]",
+                        connection.execute(
+                            """
+                            SELECT * FROM route_migrations
+                            WHERE phase = ? AND (updated_at, migration_id) > (?, ?)
+                            ORDER BY updated_at, migration_id LIMIT ?
+                            """,
+                            (
+                                RouteMigrationPhase.DESTINATION_CONFIRMED.value,
+                                *last_key,
+                                _DEFAULT_PAGE_SIZE,
+                            ),
+                        ).fetchall(),
+                    )
             if not rows:
                 return
             for row in rows:
                 yield _migration_from_row(row)
             last = rows[-1]
-            last_key = (float(last["updated_at"]), str(last["migration_id"]))
+            # updated_at is declared REAL in the schema above, so sqlite3
+            # always returns a Python float for it at runtime.
+            last_key = (
+                cast("float", last["updated_at"]),
+                str(cast("object", last["migration_id"])),
+            )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0)
@@ -242,8 +267,8 @@ def _scroll_stored_route_page(
     stored_kind: ContentKind,
     *,
     page_size: int,
-    offset: object | None,
-) -> tuple[list[dict[str, Any]], object | None, str, str]:
+    offset: PointId | None,
+) -> tuple[list[dict[str, Any]], PointId | None, str, str]:
     """Read one bounded collection page with its payload field names."""
     if stored_kind is ContentKind.CODE:
         rows, next_offset = store.scroll_code_content(
@@ -300,7 +325,7 @@ def iter_stored_route_pages(
     """Yield freshly classified store rows without trusting a sidecar."""
     if isinstance(page_size, bool) or page_size <= 0 or page_size > 1000:
         raise ValueError("route migration page size must be between 1 and 1000")
-    offset: object | None = None
+    offset: PointId | None = None
     while True:
         if run_policy is not None:
             run_policy.checkpoint(f"{stored_kind.value} route page before scroll")
@@ -336,6 +361,10 @@ def origin_point_ids(
     """Read at most one bounded page of identities for an origin path."""
     if isinstance(page_size, bool) or page_size <= 0 or page_size > 1000:
         raise ValueError("route migration page size must be between 1 and 1000")
+    # Reassign through a dict[str, object] rows type: the store's own
+    # payload content is genuinely dynamic, but the rows collection
+    # itself is not, so narrow it once here instead of at every access.
+    rows: list[dict[str, object]]
     if origin_kind is ContentKind.CODE:
         rows, _next_offset = store.scroll_code_content(
             limit=page_size,
@@ -347,7 +376,16 @@ def origin_point_ids(
             source_paths={rel_path},
         )
     id_key = "chunk_id" if origin_kind is ContentKind.CODE else "document_id"
-    return tuple(sorted(str(row["payload"].get(id_key) or row["id"]) for row in rows))
+    ids: list[str] = []
+    for row in rows:
+        payload = row["payload"]
+        if isinstance(payload, dict):
+            payload = cast("dict[str, object]", payload)
+            value = payload.get(id_key)
+        else:
+            value = None
+        ids.append(str(value or row["id"]))
+    return tuple(sorted(ids))
 
 
 def reconcile_origin_after_destination(
@@ -792,18 +830,20 @@ def _migration_id(
 
 
 def _migration_from_row(row: sqlite3.Row) -> RouteMigration:
-    raw_ids = json.loads(str(row["point_ids_json"]))
+    # sqlite3.Row.__getitem__ is genuinely Any (column type is dynamic);
+    # cast each extraction to object at this boundary before coercing.
+    raw_ids = json.loads(str(cast("object", row["point_ids_json"])))
     if not isinstance(raw_ids, list):
         raise ValueError("route migration point IDs are invalid")
     point_ids = cast("list[object]", raw_ids)
     if not all(isinstance(point_id, str) and point_id for point_id in point_ids):
         raise ValueError("route migration point IDs are invalid")
     return RouteMigration(
-        migration_id=str(row["migration_id"]),
-        rel_path=str(row["rel_path"]),
-        origin_kind=ContentKind(str(row["origin_kind"])),
-        destination_kind=ContentKind(str(row["destination_kind"])),
-        destination_generation_id=str(row["destination_generation_id"]),
+        migration_id=str(cast("object", row["migration_id"])),
+        rel_path=str(cast("object", row["rel_path"])),
+        origin_kind=ContentKind(str(cast("object", row["origin_kind"]))),
+        destination_kind=ContentKind(str(cast("object", row["destination_kind"]))),
+        destination_generation_id=str(cast("object", row["destination_generation_id"])),
         point_ids=tuple(cast("str", point_id) for point_id in point_ids),
-        phase=RouteMigrationPhase(str(row["phase"])),
+        phase=RouteMigrationPhase(str(cast("object", row["phase"]))),
     )

@@ -30,6 +30,8 @@ from ..logging_config import configure_logging
 from ._render import _plain
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import click
     from typer._click import Context as ClickContext
 
@@ -206,11 +208,32 @@ class _LiteralArgvGroup(TyperGroup):
     name real filesystem paths are expanded explicitly where they resolve.
     """
 
-    def main(self, *args: Any, **kwargs: Any) -> Any:
-        kwargs["windows_expand_args"] = False
-        return super().main(*args, **kwargs)
+    def main(
+        self,
+        args: Sequence[str] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **extra: Any,
+    ) -> Any:
+        # Always disabled regardless of what the caller passes - see the
+        # class docstring.
+        _ = windows_expand_args
+        return super().main(
+            args=args,
+            prog_name=prog_name,
+            complete_var=complete_var,
+            standalone_mode=standalone_mode,
+            windows_expand_args=False,
+            **extra,
+        )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # TyperGroup.__init__ takes nine-plus keyword-only parameters;
+        # spelling them out here to escape Any trips the too-many-arguments
+        # gate for a pure forwarding wrapper, so this stays a genuinely
+        # dynamic passthrough instead.
         super().__init__(*args, **kwargs)
         self.params.extend(
             (
@@ -277,15 +300,18 @@ class _LiteralArgvGroup(TyperGroup):
 
     def invoke(self, ctx: ClickContext) -> Any:
         """Invoke the empty registration callback without root option kwargs."""
+        # ctx.params is click's untyped dict[str, Any] of parsed option
+        # values; each cast below narrows one entry to the type its own
+        # option declaration guarantees at runtime.
         params = ctx.params
         ctx.meta[_ROOT_OPTIONS_CONTEXT_KEY] = _RootOptions(
-            target=params["target"],
-            verbose=params["verbose"],
-            debug=params["debug"],
-            data_dir=params["data_dir"],
-            storage_dir=params["storage_dir"],
-            status_dir=params["status_dir"],
-            log_file=params["log_file"],
+            target=cast("Path | None", params["target"]),
+            verbose=cast("bool", params["verbose"]),
+            debug=cast("bool", params["debug"]),
+            data_dir=cast("str | None", params["data_dir"]),
+            storage_dir=cast("str | None", params["storage_dir"]),
+            status_dir=cast("str | None", params["status_dir"]),
+            log_file=cast("str | None", params["log_file"]),
         )
         ctx.params = {}
         try:
@@ -553,7 +579,9 @@ def _global_target(ctx: ClickContext) -> Path | None:
     other subcommands receive a ``CLIState`` instance instead, which
     we ignore.
     """
-    obj = ctx.obj
+    # ctx.obj is genuinely dynamic: click types it Any because it is
+    # arbitrary application state stashed by the root callback.
+    obj = cast("object", ctx.obj)
     if isinstance(obj, dict):
         obj_dict = cast("dict[str, object]", obj)
         value = obj_dict.get("target")

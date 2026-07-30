@@ -720,7 +720,7 @@ def assert_revised_vault_publication(
     )
     stored_document = store.get_by_id(publication.document_id)
     assert stored_document is not None
-    assert publication.marker in stored_document["content"]
+    assert publication.marker in str(stored_document["content"])
     final = token.snapshot()
     assert final.delivered is ControlRequest.PAUSE
     assert final.protected_depth == 0
