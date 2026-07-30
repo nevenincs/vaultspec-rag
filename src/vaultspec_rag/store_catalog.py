@@ -74,9 +74,12 @@ class _VaultCatalogMixin:
         """Return the set of all document ``id`` values in the store.
 
         Returns:
-            Set of document stem IDs from the vault_docs collection.
+            Set of document stem IDs from the vault_docs collection, empty
+            when it does not exist. Creates nothing, for the same reason
+            :meth:`count` does not.
         """
-        self.ensure_table()
+        if not self._collection_exists(self.TABLE_NAME):
+            return set()
         with self._point_lock(self.TABLE_NAME):
             return self._scroll_all_ids(self.TABLE_NAME, "doc_id")
 
@@ -621,10 +624,13 @@ class _VaultCatalogMixin:
             doc_id: Document stem to look up.
 
         Returns:
-            Document payload dict (vectors stripped), or ``None``
-            if no matching point exists.
+            Document payload dict (vectors stripped), or ``None`` if no
+            matching point exists - including when the collection holding
+            them does not. Creates nothing, for the same reason :meth:`count`
+            does not.
         """
-        self.ensure_table()
+        if not self._collection_exists(self.TABLE_NAME):
+            return None
         with self._point_lock(self.TABLE_NAME):
             # The head chunk (ordinal 0) carries the full body as
             # ``doc_content``; fall back to the pre-chunking point id

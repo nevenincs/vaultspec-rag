@@ -789,6 +789,139 @@ class TestCountsCreateNothing:
             store.close()
 
 
+class TestReadsCreateNothing:
+    """Reading an absent collection answers empty and leaves it absent.
+
+    The contract counting already holds, extended to the reads that share its
+    shape. A read runs on whatever handle its caller holds, which need not be
+    the handle the index run writes through, and two handles each carry their
+    own lifecycle lock and their own ensure latch - so a read that created the
+    name it failed to find would give the collection a second owner, and both
+    owners would find it absent and both would issue the create.
+    """
+
+    _DIM = 8
+
+    def test_reading_an_unindexed_root_creates_no_collection(
+        self, tmp_path: Path
+    ) -> None:
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            assert not store.client.collection_exists(store.TABLE_NAME)
+
+            assert store.get_all_ids() == set()
+            assert not store.client.collection_exists(store.TABLE_NAME), (
+                f"get_all_ids() created {store.TABLE_NAME}; a read must not create"
+            )
+
+            assert store.get_by_id("adr/nothing-was-ever-indexed") is None
+            assert not store.client.collection_exists(store.TABLE_NAME), (
+                f"get_by_id() created {store.TABLE_NAME}; a read must not create"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        ("search_attr", "collection_attr"),
+        [
+            ("hybrid_search", "TABLE_NAME"),
+            ("hybrid_search_codebase", "CODE_TABLE_NAME"),
+            ("hybrid_search_document", "DOCUMENT_TABLE_NAME"),
+        ],
+        ids=["vault", "code", "document"],
+    )
+    def test_searching_an_unindexed_root_creates_no_collection(
+        self,
+        tmp_path: Path,
+        search_attr: str,
+        collection_attr: str,
+    ) -> None:
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path, embedding_dim=self._DIM)
+        try:
+            collection = getattr(store, collection_attr)
+            assert not store.client.collection_exists(collection)
+
+            rows = getattr(store, search_attr)(
+                HybridSearchRequest(
+                    query_vector=[0.1] * self._DIM,
+                    query_text="a query against a root nobody indexed",
+                )
+            )
+
+            assert rows == []
+            assert not store.client.collection_exists(collection), (
+                f"{search_attr}() created {collection}; a search must not create"
+            )
+        finally:
+            store.close()
+
+    def test_feedback_anchor_on_an_unindexed_root_creates_no_collection(
+        self, tmp_path: Path
+    ) -> None:
+        """A like/unlike search resolves its anchor without creating anything.
+
+        The anchor probe is the first thing a feedback search touches, so it
+        is the site that would create the collection. Asserted against the
+        resolver rather than through ``hybrid_search``: were the probe to
+        create, the query behind it would then reach a real empty collection
+        and raise on the missing recommend point, so the creation would land
+        as an unrelated error instead of on the assertion naming it.
+        """
+        from ..store_runtime import VaultStore
+
+        doc_id = "adr/nothing-was-ever-indexed"
+        store = VaultStore(tmp_path, embedding_dim=self._DIM)
+        try:
+            assert not store.client.collection_exists(store.TABLE_NAME)
+
+            anchor = store._resolve_vault_feedback_id(doc_id)
+
+            assert anchor == store._stable_id(f"{doc_id}#c0")
+            assert not store.client.collection_exists(store.TABLE_NAME), (
+                f"resolving a feedback anchor created {store.TABLE_NAME}; "
+                "a search must not create"
+            )
+        finally:
+            store.close()
+
+    def test_searching_an_existing_collection_still_reconciles_its_schema(
+        self, tmp_path: Path
+    ) -> None:
+        """A collection that IS there still goes through the ensure.
+
+        The ensure is what applies a newly declared payload index to data
+        indexed before the declaration, and a search-only store over an
+        already-indexed root is the one caller that would otherwise never
+        apply it. The guard must skip creation, not the reconcile.
+        """
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path, embedding_dim=self._DIM)
+        try:
+            store._ensure_collection(store.CODE_TABLE_NAME)
+            assert store.client.collection_exists(store.CODE_TABLE_NAME)
+            assert not store._ensured.get(store.CODE_TABLE_NAME)
+
+            rows = store.hybrid_search_codebase(
+                HybridSearchRequest(
+                    query_vector=[0.1] * self._DIM,
+                    query_text="a query against a collection that exists",
+                )
+            )
+
+            assert rows == []
+            assert store._ensured.get(store.CODE_TABLE_NAME), (
+                f"searching {store.CODE_TABLE_NAME} skipped the ensure; a newly "
+                "declared payload index would never reach an existing collection"
+            )
+        finally:
+            store.close()
+
+
 class TestServerModeNamespacing:
     """Per-root collection namespacing in server mode.
 

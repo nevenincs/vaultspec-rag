@@ -52,6 +52,10 @@ from ..logging_config import (
     render_managed_log_groups,
 )
 from ..service import RegistryFullError
+from ..service_quiesce import (
+    ServiceQuiesceTransitionConflictError,
+    ServiceQuiesceTransitionWaitTimeoutError,
+)
 from ._auth import require_token
 from ._routes_jobs import (
     JobFilter,
@@ -91,6 +95,7 @@ if TYPE_CHECKING:
     from ..indexer._codebase_indexer import CodeIndexPreflight
     from ..indexer._document_indexer import DocumentIndexPreflight
     from ..job_models import JobInitiator, JobSpec
+    from ..service_quiesce import QuiesceSnapshot
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -410,6 +415,7 @@ def job_outcome_status(code: str) -> int:
     if code.startswith("invalid_") and code != "invalid_transition":
         return 400
     if code.startswith("persistence_") or code in {
+        "dispatch_loop_unresponsive",
         "dispatch_stopped",
         "event_loop_required",
     }:
@@ -1082,18 +1088,24 @@ async def vault_document_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
-async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
-    denied = require_token(request)
-    if denied is not None:
-        return denied
-    if pause:
-        transition = await _run_in_thread(
-            partial(_m._registry.quiesce_resources, timeout_seconds=5.0),
-        )
-    else:
-        transition = await _run_in_thread(_m._registry.resume_resources)
-    status = transition.code.value
-    snapshot = transition.snapshot
+def _quiesce_envelope(
+    *,
+    achieved: bool,
+    status: str,
+    snapshot: QuiesceSnapshot,
+    message: str | None = None,
+) -> JSONResponse:
+    """Emit the one quiesce envelope, on the achieved and failed exits alike.
+
+    Every exit carries the same ``ok``/``status``/``quiesce`` shape so an
+    adapter branches on ``ok`` alone.  A failure adds ``error`` and
+    ``message``: the operator asked for a state change and did not get it,
+    and the reason is the whole content of that answer.  The daemon answered
+    in every one of these cases, so the transport status stays 200 and the
+    achieved/failed distinction lives in the body - a broker pausing
+    speculatively must be able to tell a refused lifecycle request from a
+    gateway that never reached the service.
+    """
     log_event(
         logger,
         "service.quiesce",
@@ -1103,18 +1115,65 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
             "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
         },
     )
-    return JSONResponse(
-        {
-            "ok": transition.achieved,
-            "status": status,
-            "quiesce": {
-                "state": snapshot.state.value,
-                "admission_epoch": snapshot.admission_epoch,
-                "drain_complete": snapshot.drain_complete,
-                "vram_released": snapshot.vram_released,
-                "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
-            },
-        },
+    payload: dict[str, Any] = {
+        "ok": achieved,
+        "status": status,
+        "quiesce": snapshot.as_envelope(),
+    }
+    if not achieved:
+        payload["error"] = status
+        payload["message"] = (
+            message
+            if message is not None
+            else _quiesce_reason(
+                status,
+                snapshot,
+            )
+        )
+    return JSONResponse(payload)
+
+
+def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
+    """Describe an unachieved transition from the controller's own evidence."""
+    failure_reason = snapshot.failure_reason
+    held = f"the service is {snapshot.state.value!r}"
+    if failure_reason is not None:
+        return f"Quiesce transition {status!r} left {held}: {failure_reason}."
+    return f"Quiesce transition {status!r} left {held}."
+
+
+async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    try:
+        if pause:
+            transition = await _run_in_thread(
+                partial(_m._registry.quiesce_resources, timeout_seconds=5.0),
+            )
+        else:
+            transition = await _run_in_thread(_m._registry.resume_resources)
+    except (
+        ServiceQuiesceTransitionConflictError,
+        ServiceQuiesceTransitionWaitTimeoutError,
+    ) as exc:
+        return _quiesce_envelope(
+            achieved=False,
+            status=exc.code,
+            snapshot=exc.snapshot,
+            message=str(exc),
+        )
+    except Exception as exc:
+        return _quiesce_envelope(
+            achieved=False,
+            status="quiesce_transition_failed",
+            snapshot=_m._registry.quiesce_snapshot(),
+            message=f"{exc.__class__.__name__}: {exc}",
+        )
+    return _quiesce_envelope(
+        achieved=transition.achieved,
+        status=transition.code.value,
+        snapshot=transition.snapshot,
     )
 
 

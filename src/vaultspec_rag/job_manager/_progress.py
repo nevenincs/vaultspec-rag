@@ -21,6 +21,7 @@ from ..service_quiesce import QuiesceAdmissionClosedError
 from .state import (
     JobManagerState,
     JobRuntimeOwner,
+    assign_runtime_owner,
 )
 
 if TYPE_CHECKING:
@@ -84,10 +85,9 @@ class JobManagerProgress(JobManagerState):
                     "Service quiesce has closed compute admission.",
                     managed,
                 )
-            managed.runtime = JobRuntimeOwner(
-                task=task,
-                control=control,
-                compute_ticket=ticket,
+            assign_runtime_owner(
+                managed,
+                JobRuntimeOwner(task=task, control=control, compute_ticket=ticket),
             )
             now = time.time()
             self._replace_snapshot_locked(
@@ -101,7 +101,6 @@ class JobManagerProgress(JobManagerState):
             if persistence_error is not None:
                 if not persistence_error.published:
                     self._restore_state_locked(backup)
-                    ticket.release()
                 return self._persistence_error(
                     command,
                     persistence_error,
@@ -240,10 +239,13 @@ class JobManagerProgress(JobManagerState):
             managed = self._active.get(job_id)
             if managed is None or managed.runtime.task is not task:
                 return False
-            managed.runtime = replace(
-                managed.runtime,
-                worker_active=active,
-                worker_thread=worker_thread if active else None,
+            assign_runtime_owner(
+                managed,
+                replace(
+                    managed.runtime,
+                    worker_active=active,
+                    worker_thread=worker_thread if active else None,
+                ),
             )
             persistence_error = self._persist_locked()
             if persistence_error is not None:
@@ -386,14 +388,14 @@ class JobManagerProgress(JobManagerState):
             managed = self._active.get(job_id)
             if managed is None or managed.runtime.task is not task:
                 return False
-            ticket = managed.runtime.compute_ticket
-            if ticket is not None:
-                ticket.release()
-            managed.runtime = replace(
-                managed.runtime,
-                worker_active=False,
-                worker_thread=None,
-                compute_ticket=None,
+            assign_runtime_owner(
+                managed,
+                replace(
+                    managed.runtime,
+                    worker_active=False,
+                    worker_thread=None,
+                    compute_ticket=None,
+                ),
             )
             managed.snapshot = replace(
                 managed.snapshot,

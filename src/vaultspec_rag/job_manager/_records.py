@@ -33,10 +33,11 @@ from ..job_models import (
     job_spec_error as _job_spec_error,
 )
 from .state import (
+    UNOWNED_RUNTIME,
     JobManagerState,
-    JobRuntimeOwner,
     ManagedJob,
     ManagerStateBackup,
+    assign_runtime_owner,
 )
 
 logger = logging.getLogger("vaultspec_rag.jobs")
@@ -236,7 +237,7 @@ class JobManagerRecords(JobManagerState):
         )
         self._active[resolved_id] = ManagedJob(
             snapshot=created,
-            runtime=JobRuntimeOwner(task=None, control=None),
+            runtime=UNOWNED_RUNTIME,
         )
         if request.idempotency_key is not None:
             self._bind_idempotency_locked(
@@ -313,7 +314,7 @@ class JobManagerRecords(JobManagerState):
         if not managed.snapshot.state.is_terminal:
             raise ValueError("only terminal jobs may enter terminal history")
         self._active.pop(managed.snapshot.id, None)
-        managed.runtime = JobRuntimeOwner(task=None, control=None)
+        assign_runtime_owner(managed, UNOWNED_RUNTIME)
         self._dispatchers.pop(managed.snapshot.id, None)
         self._terminal.append(managed)
         while len(self._terminal) > self._max_terminal_history:
