@@ -86,7 +86,7 @@ def test_jobs_route_enforces_nonterminal_capacity(
     try:
         first = cast(
             "httpx.Response",
-            client.post(  # pyright: ignore[reportUnknownMemberType]
+            client.post(
                 "/jobs",
                 headers=headers,
                 json={
@@ -101,7 +101,7 @@ def test_jobs_route_enforces_nonterminal_capacity(
         assert first.status_code == 202
         second = cast(
             "httpx.Response",
-            client.post(  # pyright: ignore[reportUnknownMemberType]
+            client.post(
                 "/jobs",
                 headers=headers,
                 json={
@@ -135,7 +135,7 @@ def test_reindex_route_rejects_unknown_type(
     for invalid_type in invalid_types:
         response = cast(
             "httpx.Response",
-            client.post(  # pyright: ignore[reportUnknownMemberType]
+            client.post(
                 "/reindex",
                 headers={"Authorization": f"Bearer {token}"},
                 json={"type": invalid_type, "project_root": str(tmp_path)},

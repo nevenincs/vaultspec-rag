@@ -64,7 +64,7 @@ def test_http_routes_reject_compatibility_source_aliases(
     client, token = canonical_routes
     response = cast(
         "httpx.Response",
-        client.post(  # pyright: ignore[reportUnknownMemberType] - starlette TestClient stub gap
+        client.post(
             path,
             headers={"Authorization": f"Bearer {token}"},
             json={

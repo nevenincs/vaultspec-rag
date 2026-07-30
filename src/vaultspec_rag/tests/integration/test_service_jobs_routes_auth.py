@@ -23,7 +23,7 @@ def test_jobs_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = cast("httpx.Response", client.get("/jobs"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    response = cast("httpx.Response", client.get("/jobs"))
     assert response.status_code == 401
     payload: dict[str, Any] = response.json()
     assert payload["ok"] is False
@@ -37,7 +37,7 @@ def test_jobs_route_401_with_wrong_token(
     client, _token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", headers={"Authorization": "Bearer wrong"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", headers={"Authorization": "Bearer wrong"}),
     )
     assert response.status_code == 401
 
@@ -49,7 +49,7 @@ def test_jobs_route_200_with_bearer_token(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", headers={"Authorization": f"Bearer {token}"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", headers={"Authorization": f"Bearer {token}"}),
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
@@ -81,6 +81,6 @@ def test_jobs_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = cast("httpx.Response", client.get("/jobs", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]
+    response = cast("httpx.Response", client.get("/jobs", params={"token": token}))
     assert response.status_code == 200
     assert len(response.json()["jobs"]) == 1

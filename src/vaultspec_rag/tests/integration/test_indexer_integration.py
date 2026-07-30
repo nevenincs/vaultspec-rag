@@ -852,7 +852,7 @@ class TestIndexEdgeCases:
         self, rag_components: RagComponentsWithManifest
     ) -> None:
         """All synthetic vault docs should have valid frontmatter (tags + date)."""
-        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.vaultcore import (
             parse_vault_metadata,
             scan_vault,
         )

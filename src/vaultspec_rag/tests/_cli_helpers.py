@@ -11,7 +11,7 @@ import typing
 from dataclasses import dataclass
 
 from typer.testing import CliRunner
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config import (
     reset_config as reset_base_config,
 )
 
