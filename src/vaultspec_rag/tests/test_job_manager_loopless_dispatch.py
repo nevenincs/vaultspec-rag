@@ -33,6 +33,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
 
 if TYPE_CHECKING:
@@ -96,7 +97,11 @@ class TestDispatchFromALooplessThread:
         outcome assertion fails on ``event_loop_required`` and the attempt
         never reaches the runner at all.
         """
-        manager = JobManager(max_nonterminal=1, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         job_id = _queued_code_job(manager)
         ran, finished = _bind_recording_runner(manager, job_id)
         manager.adopt_service_loop(asyncio.get_running_loop())
@@ -117,7 +122,11 @@ class TestDispatchFromALooplessThread:
         process that adopted no loop has nothing to marshal onto, and
         reporting success there would strand the attempt unrun.
         """
-        manager = JobManager(max_nonterminal=1, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         job_id = _queued_code_job(manager)
         ran, _finished = _bind_recording_runner(manager, job_id)
 
@@ -128,7 +137,11 @@ class TestDispatchFromALooplessThread:
 
     async def test_dispatch_on_the_loop_itself_is_unchanged(self) -> None:
         """The ordinary on-loop caller keeps its direct, unmarshalled path."""
-        manager = JobManager(max_nonterminal=1, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         job_id = _queued_code_job(manager)
         ran, finished = _bind_recording_runner(manager, job_id)
 
@@ -152,7 +165,11 @@ class TestTheServiceWiresItsOwnLoop:
         """
         from ..server._lifespan import _start_job_manager
 
-        manager = JobManager(max_nonterminal=1, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         await _start_job_manager(manager)
 
         job_id = _queued_code_job(manager)
