@@ -35,6 +35,15 @@ if TYPE_CHECKING:
     from ._control import AttemptTerminal, RequestAttribution
     from ._persistence import PendingProgressFlush, SnapshotTransition
 
+    type JobLifecycleState = Literal["new", "running", "stopping", "stopped"]
+    """The manager's own lifecycle, named once for the contract and its owner.
+
+    Written as a literal in both this contract and the concrete initialiser,
+    the two copies drift the moment a state is added: the annotation that
+    keeps the old set still type-checks against the value it already holds,
+    so nothing reports the disagreement.
+    """
+
 MANAGED_STATE_FILENAME = "jobs-state.json"
 
 
@@ -60,7 +69,7 @@ if TYPE_CHECKING:
         _idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding]
         _job_idempotency_keys: dict[str, set[str]]
         _last_flush_monotonic: float
-        _lifecycle_state: Literal["new", "running", "stopping", "stopped"]
+        _lifecycle_state: JobLifecycleState
         _lock: threading.RLock
         _max_idempotency: int
         _max_nonterminal: int
