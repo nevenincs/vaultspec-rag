@@ -23,7 +23,12 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .indexer import CodebaseIndexer, DocumentIndexer, IndexResult
+    from .indexer import (
+        CodebaseIndexer,
+        DocumentIndexer,
+        IndexResult,
+        VaultIndexer,
+    )
     from .indexer._codebase_indexer import CodeIndexPreflight
     from .indexer._document_indexer import DocumentIndexPreflight
     from .job_manager.manager import JobManager
@@ -133,16 +138,22 @@ def _run_vault_attempt(
                     snapshot is not None
                     and snapshot.attempt.resumed_from_attempt is not None
                 )
-                if dispatch.clean:
-                    result = runtime.vault_indexer.full_index(
-                        clean=not resumed,
-                        reporter=reporter,
-                        run_control=context.control,
-                    )
-                else:
-                    result = runtime.vault_indexer.incremental_index(
-                        reporter=reporter,
-                        run_control=context.control,
+                try:
+                    if dispatch.clean:
+                        result = runtime.vault_indexer.full_index(
+                            clean=not resumed,
+                            reporter=reporter,
+                            run_control=context.control,
+                        )
+                    else:
+                        result = runtime.vault_indexer.incremental_index(
+                            reporter=reporter,
+                            run_control=context.control,
+                        )
+                finally:
+                    _publish_resilience(
+                        context,
+                        lambda: _vault_resilience(runtime.vault_indexer),
                     )
             finally:
                 context.set_resources(ResourceUpdate(writer_lock_held=False))
@@ -185,9 +196,11 @@ def _run_indexing_attempt(
     the job. One runner means one scope to guard.
 
     The vault runner is deliberately not folded in. It takes no admission
-    preflight, publishes no resilience, holds no pipeline resource, invalidates
-    the graph cache, and returns a result without preprocess fields - it is a
-    different job, not this one with different nouns.
+    preflight, holds no pipeline resource, invalidates the graph cache, and
+    returns a result without preprocess fields - it is a different job, not
+    this one with different nouns. It does publish resilience, but a different
+    shape of it: observed memory peaks with no admitted ceiling and no
+    checkpoint projection, because the vault domain has neither.
     """
     from .jobs import (
         JobProgressReporter,
@@ -379,6 +392,28 @@ def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
             if budget is not None
             else bytes_to_mib(measurement.cuda_bytes)
         ),
+    )
+
+
+def _vault_resilience(indexer: VaultIndexer) -> IndexResilienceSnapshot:
+    """Project one vault run's observed memory high-water.
+
+    Deliberately not routed through ``_admitted_resilience`` or
+    ``_checkpoint_resilience``, and neither is an oversight. The vault domain
+    has no entry in the support profiles, so there are no admitted ceilings to
+    report and reporting another domain's would be worse than reporting none.
+    The vault run has no ledger and no checkpoint either, so the checkpoint
+    projector would discard the peaks it was handed. What is left is the
+    measurement itself, which is the thing an operator watching headroom
+    actually needs.
+    """
+    budget = indexer.memory_budget_snapshot
+    if budget is None:
+        return IndexResilienceSnapshot()
+    return IndexResilienceSnapshot(
+        peak_rss_mib=budget.peak_rss_mib,
+        peak_cuda_allocated_mib=budget.peak_cuda_allocated_mib,
+        peak_cuda_reserved_mib=budget.peak_cuda_reserved_mib,
     )
 
 

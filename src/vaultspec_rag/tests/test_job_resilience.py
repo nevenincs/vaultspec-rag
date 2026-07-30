@@ -31,6 +31,10 @@ pytestmark = [pytest.mark.unit]
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..embeddings import EmbeddingModel
+    from ..indexer import VaultIndexer
+    from ..store_runtime import VaultStore
+
 
 @pytest.mark.asyncio
 async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
@@ -413,3 +417,147 @@ def test_unreadable_forward_peak_is_dropped_quietly(
 
     assert caplog.records == []
     assert budget.captured_cuda_peak_mib == 444.0
+
+
+def _vault_indexer_for_telemetry(root: Path) -> VaultIndexer:
+    """Build a real indexer; the telemetry seam reads neither model nor store."""
+    from ..indexer import VaultIndexer
+
+    return VaultIndexer(
+        root,
+        cast("EmbeddingModel", None),
+        cast("VaultStore", None),
+    )
+
+
+def test_vault_run_registers_a_forward_recorder_and_publishes_a_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A vault run must publish the same snapshot attribute its siblings do.
+
+    Before this wiring the vault indexer carried no budget at all, so a
+    vault job's peak was unobservable in the field. The two assertions are
+    separate on purpose: registering the recorder is what makes the encode
+    path's already-existing capture bracket credit its peaks to this run,
+    and publishing the snapshot is what lets the dispatcher read them.
+
+    ``route_forward_peak_mib`` is the exact call the production capture
+    bracket makes on exit, so driving it here exercises the real routing
+    rather than a stand-in for it.
+
+    Proven able to fail: dropping the ``record_forward_peaks`` wrapper from
+    ``_memory_telemetry`` leaves no recorder on the thread, the routing call
+    returns False, and this fails on the ``is True`` assertion. Dropping the
+    ``_sample_memory`` calls leaves the snapshot ``None`` and it fails on
+    ``snapshot is not None``.
+    """
+    from ..memory_probe import route_forward_peak_mib
+
+    indexer = _vault_indexer_for_telemetry(tmp_path)
+    assert indexer.memory_budget_snapshot is None
+
+    with indexer._memory_telemetry():  # pyright: ignore[reportPrivateUsage]
+        assert route_forward_peak_mib(4321.5) is True
+
+    snapshot = indexer.memory_budget_snapshot
+    assert snapshot is not None
+    assert snapshot.label == "after vault dispatch"
+    budget = indexer._memory_budget  # pyright: ignore[reportPrivateUsage]
+    assert budget is not None
+    assert budget.captured_cuda_peak_mib == 4321.5
+    # RSS is genuinely measured here, so assert a real reading was taken
+    # rather than a specific number.
+    assert snapshot.rss_available is True
+    assert snapshot.peak_rss_mib > 0.0
+
+    # The recorder must not outlive the run, or a later unrelated forward
+    # would be credited to a finished vault job.
+    assert route_forward_peak_mib(999.0) is False
+
+
+def test_vault_memory_telemetry_admits_no_ceiling_and_cannot_fail_a_run(
+    tmp_path: Path,
+) -> None:
+    """Observe-only guard: vault telemetry must never terminate a run.
+
+    The vault run has no support-profile limits and, before this telemetry,
+    no way to be killed for memory. Publishing a peak must not change that.
+    A budget carrying a ceiling would classify a large reading as a typed
+    failure and latch it, so a run that previously completed would die - and
+    it would die precisely on the large-corpus runs the peak exists to
+    watch. The assertion is that neither admitted ceiling is present and
+    that an absurd reading is still admitted.
+
+    Proven able to fail: constructing the budget in ``_memory_telemetry``
+    with any ``rss_ceiling_mib`` or ``cuda_ceiling_mib`` makes the reading
+    below cross it, ``sample_readings`` raises ``JobError``, and this fails
+    on that raise before reaching its assertions.
+    """
+    indexer = _vault_indexer_for_telemetry(tmp_path)
+
+    with indexer._memory_telemetry():  # pyright: ignore[reportPrivateUsage]
+        budget = indexer._memory_budget  # pyright: ignore[reportPrivateUsage]
+        assert budget is not None
+        assert budget.rss_ceiling_mib is None
+        assert budget.cuda_ceiling_mib is None
+        # Far above any plausible host or device ceiling; must be admitted.
+        snapshot = budget.sample_readings(
+            label="vault absurd reading",
+            rss_mib=4_000_000.0,
+            cuda_mib=(3_000_000.0, 3_500_000.0),
+        )
+
+    assert snapshot.rss_ceiling_mib is None
+    assert snapshot.cuda_ceiling_mib is None
+    assert snapshot.peak_rss_mib == 4_000_000.0
+
+
+def test_vault_resilience_projects_observed_peaks_without_ceilings(
+    tmp_path: Path,
+) -> None:
+    """The dispatcher projection carries peaks and claims no ceiling.
+
+    The vault domain has no support-profile entry, so reporting a ceiling
+    here could only mean borrowing another domain's, and the vault run has
+    no checkpoint, so claiming one would be equally false. The projection
+    must carry the three measured peaks and leave both groups absent.
+
+    Proven able to fail: routing ``_vault_resilience`` through
+    ``_admitted_resilience(JobSource.VAULT)`` populates ``cuda_ceiling_mib``
+    and ``support_profile`` with the document domain's values, failing the
+    ``is None`` assertions that name them.
+    """
+    from ..job_dispatch import _vault_resilience
+    from ..memory_probe import MemoryBudget
+
+    indexer = _vault_indexer_for_telemetry(tmp_path)
+    budget = MemoryBudget()
+    budget.record_forward_peak_mib(13_074.0)
+    budget.sample_readings(
+        label="after vault dispatch",
+        rss_mib=2_048.0,
+        cuda_mib=(12_000.0, 12_500.0),
+    )
+    indexer._memory_budget = budget  # pyright: ignore[reportPrivateUsage]
+
+    resilience = _vault_resilience(indexer)
+
+    assert resilience.peak_rss_mib == 2_048.0
+    assert resilience.peak_cuda_allocated_mib == 13_074.0
+    assert resilience.peak_cuda_reserved_mib == 12_500.0
+    # No admitted ceiling is claimed for a domain that has no limits.
+    assert resilience.rss_ceiling_mib is None
+    assert resilience.cuda_ceiling_mib is None
+    assert resilience.support_profile is None
+    # No checkpoint exists for a vault run, so none is claimed.
+    assert resilience.generation_id is None
+    assert resilience.checkpoint_compatible is None
+
+
+def test_vault_resilience_is_empty_before_any_observation(tmp_path: Path) -> None:
+    """A vault run that observed nothing must project an empty snapshot."""
+    from ..job_dispatch import _vault_resilience
+
+    indexer = _vault_indexer_for_telemetry(tmp_path)
+
+    assert _vault_resilience(indexer) == IndexResilienceSnapshot()
