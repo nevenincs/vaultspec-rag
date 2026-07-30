@@ -11,6 +11,7 @@ from ._result_shaping import select_combined_results
 __all__ = [
     "COMBINED_SEARCH_FAILED",
     "COMBINED_SEARCH_FAILED_MESSAGE",
+    "FAILED_ACTIVITY_OUTCOMES",
     "CombinedSearchOutcome",
     "SearchDomainOutcome",
 ]
@@ -25,6 +26,25 @@ COMBINED_SEARCH_FAILED = "combined_search_failed"
 
 #: The one sentence describing that condition on every surface.
 COMBINED_SEARCH_FAILED_MESSAGE = "Every combined-search domain failed."
+
+#: Every activity outcome that means the search did not serve its caller.
+#:
+#: Named here for the same reason as the error kind above: a console marks
+#: these rows as failures and the route classifies them, so a set restated on
+#: the display side drifts silently the moment a condition is added. It drifted
+#: exactly that way once - a client copy omitted the two admission-side
+#: outcomes, so a registry refusing every search on the box rendered in the
+#: same tone as a completed one, and only the outcome word said otherwise.
+FAILED_ACTIVITY_OUTCOMES = frozenset(
+    {
+        "admission_failed",
+        "cancelled",
+        "combined_failed",
+        "failed",
+        "unavailable",
+        "validation_rejected",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
