@@ -13,6 +13,7 @@ from ..search._models import DocumentSearchResult, SearchResult
 from ..search._outcomes import (
     COMBINED_SEARCH_FAILED,
     COMBINED_SEARCH_FAILED_MESSAGE,
+    FAILED_ACTIVITY_OUTCOMES,
     CombinedSearchOutcome,
     SearchDomainOutcome,
 )
@@ -143,4 +144,66 @@ class TestCombinedFailureVocabularyHasOneHome:
         assert sites == [], (
             f"{COMBINED_SEARCH_FAILED!r} is restated at {sites}; import "
             "COMBINED_SEARCH_FAILED from the search domain instead"
+        )
+
+
+_SERVED_ACTIVITY_OUTCOMES = frozenset({"partial_success", "success"})
+
+
+def _classifier_outcomes() -> set[str]:
+    """Return every outcome the route's activity classifier can return.
+
+    Parsed rather than imported: the route module pulls the whole service
+    stack, and this only needs the literals the classifier returns.
+    """
+    route_source = Path(_outcomes.__file__).parents[1] / "server" / "_routes_search.py"
+    tree = ast.parse(route_source.read_text(encoding="utf-8"))
+    classifier = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        if node.name == "_activity_outcome"
+    )
+    # Only the returned expression itself. Walking the whole Return sweeps up
+    # nested lookups too, and one branch reads a ``result["partial"]`` flag on
+    # its way to deciding between two outcomes.
+    returned: list[ast.expr] = []
+    for node in ast.walk(classifier):
+        if not isinstance(node, ast.Return) or node.value is None:
+            continue
+        if isinstance(node.value, ast.IfExp):
+            returned.extend((node.value.body, node.value.orelse))
+        else:
+            returned.append(node.value)
+    return {
+        expression.value
+        for expression in returned
+        if isinstance(expression, ast.Constant)
+        if isinstance(expression.value, str)
+    }
+
+
+class TestActivityOutcomeVocabularyIsAccountedFor:
+    """Every outcome the route can classify is either served or failed.
+
+    A console marks the failed ones. While that set was restated on the
+    display side it silently fell behind: the two admission-side outcomes
+    were missing, so a registry refusing every search on the box rendered in
+    the same tone as a completed one. An outcome that reaches an operator
+    unclassified is worse than an ugly one, because nothing reports it.
+
+    Mutation check: dropping ``admission_failed`` or ``combined_failed`` from
+    ``FAILED_ACTIVITY_OUTCOMES`` fails the test below naming that outcome;
+    adding a new ``return "throttled"`` branch to the classifier fails it too,
+    which is the drift this exists to catch.
+    """
+
+    def test_the_classifier_returns_nothing_the_vocabulary_omits(self) -> None:
+        unaccounted = _classifier_outcomes() - (
+            FAILED_ACTIVITY_OUTCOMES | _SERVED_ACTIVITY_OUTCOMES
+        )
+        assert unaccounted == set(), (
+            f"the activity classifier returns {sorted(unaccounted)}, which no "
+            "surface can classify; add each to FAILED_ACTIVITY_OUTCOMES or to "
+            "the served set beside it"
         )

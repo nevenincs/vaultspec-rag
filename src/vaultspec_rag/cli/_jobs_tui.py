@@ -32,6 +32,7 @@ from textual.worker import WorkerState
 from ..job_models import DesiredJobState, JobState
 from ..jobs import count, mapping, measurement, text
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
+from ..search._outcomes import FAILED_ACTIVITY_OUTCOMES
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS, QuiesceState
 from ..serviceclient._transport import (
     _try_http_admin,
@@ -669,7 +670,7 @@ def _search_state_cell(
     state = _search_text(search.get("state"), fallback="unknown")
     outcome = _search_text(search.get("outcome"), fallback="serving")
     tone = "good" if state == "active" else "muted"
-    if outcome in {"failed", "unavailable", "validation_rejected"}:
+    if outcome in FAILED_ACTIVITY_OUTCOMES:
         tone = "bad"
     return _two_line(
         state,
