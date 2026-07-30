@@ -12,8 +12,8 @@ Gating model (ADR Constraints). The HTTP service binds to loopback only
 (``127.0.0.1``), which is the real boundary; on top of that these
 monitoring routes accept the per-process ``service_token`` as an
 optional bearer - via ``Authorization: Bearer <token>`` or a ``?token=``
-query parameter - compared in constant time against
-``_state._SERVICE_TOKEN``. This is a pragmatic monitoring gate, not an
+query parameter - compared in constant time against the app-scoped route
+runtime token. This is a pragmatic monitoring gate, not an
 auth boundary. ``/health`` stays ungated and is registered in
 :mod:`._main`, not here.
 
@@ -81,6 +81,7 @@ from ._routes_registry import (
 from ._routes_reindex import clean_route, reindex_route
 from ._routes_search import search_route
 from ._routes_storage import storage_survey_route
+from ._runtime import get_request_runtime
 from ._search_activity import SearchActivityFilters
 from ._state import search_activity_ledger
 from ._utils import (
@@ -541,6 +542,7 @@ async def jobs_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
+    registry = get_request_runtime(request).registry
     records = _service_job_snapshot()
     phase = _normalise_filter_value(request.query_params.get("phase"))
     state = _normalise_filter_value(request.query_params.get("state"))
@@ -591,7 +593,7 @@ async def jobs_route(request: Request) -> JSONResponse:
             "total": len(records),
             "returned": len(filtered_records),
             "summary": _job_summary(records, now=now),
-            "quiesce": _m._registry.quiesce_snapshot().as_envelope(),
+            "quiesce": registry.quiesce_snapshot().as_envelope(),
             # Machine-wide GPU pressure beside the work list, so a header can
             # show the card's condition without a request of its own. Served
             # from a short-lived cache; every measurement is null where this
@@ -1073,15 +1075,17 @@ async def vault_document_route(request: Request) -> JSONResponse:
     except ProjectRootRequiredError:
         return _BAD_REQUEST_MISSING_ROOT
 
+    registry = get_request_runtime(request).registry
+
     def _run() -> dict[str, Any]:
         try:
-            with _m._registry.lease(root) as slot:
+            with registry.lease(root) as slot:
                 doc = slot.store.get_by_id(doc_id)
                 if not doc:
                     return {"ok": False, "error": "not_found"}
                 return {"content": doc.get("content", "")}
         except RegistryFullError as exc:
-            return _m._registry_full_error_dict(exc)
+            return _m._registry_full_error_dict(exc, registry)
         except VaultStoreLockedError as exc:
             return _m._local_store_locked_error_dict(exc)
 
@@ -1148,13 +1152,14 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
+    registry = get_request_runtime(request).registry
     try:
         if pause:
             transition = await _run_in_thread(
-                partial(_m._registry.quiesce_resources, timeout_seconds=5.0),
+                partial(registry.quiesce_resources, timeout_seconds=5.0),
             )
         else:
-            transition = await _run_in_thread(_m._registry.resume_resources)
+            transition = await _run_in_thread(registry.resume_resources)
     except (
         ServiceQuiesceTransitionConflictError,
         ServiceQuiesceTransitionWaitTimeoutError,
@@ -1169,7 +1174,7 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
         return _quiesce_envelope(
             achieved=False,
             status="quiesce_transition_failed",
-            snapshot=_m._registry.quiesce_snapshot(),
+            snapshot=registry.quiesce_snapshot(),
             message=f"{exc.__class__.__name__}: {exc}",
         )
     return _quiesce_envelope(
