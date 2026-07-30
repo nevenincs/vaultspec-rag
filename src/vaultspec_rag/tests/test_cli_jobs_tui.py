@@ -1550,7 +1550,7 @@ class TestDurableRequestState:
             # when the control lands - which is the ordinary case at a
             # two-second interval against a thirty-second timeout.
             control_service.fetch_delay = 1.2
-            stale_generation = app._generation + 1
+            stale_generation = app._job_stamps.issued + 1
             app.refresh_jobs()
 
             await pilot.press("y")
@@ -1599,7 +1599,7 @@ class TestServiceHealthIsVisible:
                     "error": "admin_timeout",
                     "message": "The service did not answer within 30s.",
                 },
-                app._generation + 1,
+                app._job_stamps.issued + 1,
             )
             await pilot.pause()
             painted = _screen_text(app)
@@ -1623,7 +1623,9 @@ class TestServiceHealthIsVisible:
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
-            app._apply_result({"detail": "Not authenticated"}, app._generation + 1)
+            app._apply_result(
+                {"detail": "Not authenticated"}, app._job_stamps.issued + 1
+            )
             await pilot.pause()
             painted = _screen_text(app)
 
@@ -1654,7 +1656,7 @@ class TestServiceHealthIsVisible:
             # rather than derived later: how many generations the refresh below
             # consumes is not this test's business, and counting backwards from
             # the end makes the assertion depend on it.
-            stale_generation = app._generation
+            stale_generation = app._job_stamps.issued
             stale = _try_http_admin("get_jobs", {"limit": 20}, control_service.port)
 
             control_service.set_jobs(jobs[1:])
@@ -2827,7 +2829,7 @@ class TestClosingTheSession:
             answer = _try_http_admin("get_jobs", {"limit": 20}, control_service.port)
             await app._close_all()
             failure = _screen_failure(
-                lambda: app._apply_result(answer, app._generation + 1)
+                lambda: app._apply_result(answer, app._job_stamps.issued + 1)
             )
             held = [str(job.get("id")) for job in app._jobs]
 

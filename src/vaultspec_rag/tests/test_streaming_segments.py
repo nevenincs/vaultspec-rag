@@ -392,9 +392,7 @@ def test_producer_queue_wait_expires_with_the_no_progress_authority(
     try:
         # Termination is itself the guarded behaviour: without the authority
         # the wait polls forever behind the live consumer.
-        assert finished.wait(5.0), (
-            "producer queue wait outlived its no-progress budget"
-        )
+        assert finished.wait(5.0), "producer queue wait outlived its no-progress budget"
         assert len(failures) == 1
         failure = failures[0]
         assert isinstance(failure, JobError)
