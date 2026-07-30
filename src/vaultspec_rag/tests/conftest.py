@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from ..indexer import IndexResult
     from ..store_runtime import VaultStore
 
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config import (
     reset_config,
 )
 

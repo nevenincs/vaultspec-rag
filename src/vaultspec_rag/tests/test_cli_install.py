@@ -262,7 +262,7 @@ class TestRenderInstallReport:
             assert forbidden not in out
 
     def test_preserves_provider_outcomes_in_json_and_human_output(self) -> None:
-        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.core.types import (
             SyncResult,
         )
 
@@ -312,7 +312,7 @@ class TestRenderInstallReport:
         assert "error: native target malformed" in out
 
     def test_preserves_unattributed_mcp_errors_in_json_and_human_output(self) -> None:
-        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.core.types import (
             SyncResult,
         )
 
@@ -435,7 +435,7 @@ class TestRenderUninstallReport:
         assert "MCP optional dependency: removed ([project].dependencies)" in out
 
     def test_preserves_provider_prunes_in_json_and_human_output(self) -> None:
-        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.core.types import (
             SyncResult,
         )
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Event, Thread
 
 import pytest
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
 

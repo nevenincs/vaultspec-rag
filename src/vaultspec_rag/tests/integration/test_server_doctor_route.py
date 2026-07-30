@@ -44,7 +44,7 @@ def test_readiness_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _ = _routes_app
-    response = cast("httpx.Response", client.get("/readiness"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    response = cast("httpx.Response", client.get("/readiness"))
     assert response.status_code == 401
 
 
@@ -54,7 +54,7 @@ def test_readiness_route_200_with_bearer_token(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/readiness", headers={"Authorization": f"Bearer {token}"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/readiness", headers={"Authorization": f"Bearer {token}"}),
     )
     assert response.status_code == 200
     # Route and CLI verb read the same reporter, so the snapshot is identical.

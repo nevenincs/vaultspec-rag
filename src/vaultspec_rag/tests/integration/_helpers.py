@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config import (
     reset_config,
 )
 
