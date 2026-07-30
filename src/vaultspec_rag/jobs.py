@@ -249,7 +249,7 @@ def get_job_manager() -> JobManager:
     return get_registry().create_job_manager()
 
 
-def _active_snapshot_path() -> object:
+def _active_snapshot_path() -> Path:
     """Resolve the active-jobs snapshot path from the managed status dir."""
 
     return managed_status_dir() / _ACTIVE_SNAPSHOT_FILENAME
@@ -292,7 +292,7 @@ def _persist_active_snapshot() -> None:
         ]
     try:
         write_json_atomically(
-            cast("Path", _active_snapshot_path()),
+            _active_snapshot_path(),
             {"active": active},
             JsonWriteOptions(durable=True),
         )
@@ -325,7 +325,7 @@ def restore_interrupted() -> int:
     """
     import json as _json
 
-    path = cast("Path", _active_snapshot_path())
+    path = _active_snapshot_path()
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -1970,7 +1970,15 @@ def _admit_index_job(
 
 
 def _code_policy_indexer(root: Path) -> CodebaseIndexer:
-    """Build a model-free indexer used only for policy preflight."""
+    """Build a model-free indexer used only for policy preflight.
+
+    ``CodebaseIndexer.__init__`` only stores ``model``/``store`` on
+    collaborators (``CodeSupportBudget``, ``CodeConsumerPipeline``,
+    ``CodeGenerationLifecycle``) that read them lazily during an actual
+    index run; construction and the ``preflight_*`` methods this indexer is
+    ever called for never touch either. ``None`` is safe here for exactly
+    that reason.
+    """
     from .indexer import CodebaseIndexer
 
     resolved_root = root.resolve()
@@ -2046,7 +2054,14 @@ def validate_code_job_admission(root: Path) -> CodeIndexPreflight:
 
 
 def _document_policy_indexer(root: Path):
-    """Build a model-free document indexer used only for policy preflight."""
+    """Build a model-free document indexer used only for policy preflight.
+
+    ``DocumentIndexer.__init__`` only stores ``model``/``store``; every
+    attribute read against them happens lazily inside a run (``_resolve_reuse``,
+    the encode pipeline), never during construction or the ``preflight_*``
+    methods this indexer is ever called for. ``None`` is safe here for
+    exactly that reason.
+    """
     from .indexer import DocumentIndexer
 
     return DocumentIndexer(

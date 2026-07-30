@@ -19,7 +19,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from ._env_values import BOOL_SHAPE, parse_bool, rejection
 from ._job_errors import JobError, JobErrorKind
@@ -782,7 +782,7 @@ class MemoryBudget:
         against work this job genuinely did rather than a process-wide
         high-water shared with concurrent jobs.
         """
-        value = cast("float", _valid_memory_mib("peak_mib", peak_mib))
+        value = _valid_memory_mib("peak_mib", peak_mib)
         with self._lock:
             if value > self._captured_cuda_peak_mib:
                 object.__setattr__(self, "_captured_cuda_peak_mib", value)
@@ -873,15 +873,9 @@ class MemoryBudget:
         breach.  Peak values include the violating observation.
         """
         self._raise_if_latched()
-        rss = cast("float", _valid_memory_mib("rss_mib", rss_mib))
-        allocated = cast(
-            "float",
-            _valid_memory_mib("cuda_allocated_mib", cuda_allocated_mib),
-        )
-        reserved = cast(
-            "float",
-            _valid_memory_mib("cuda_reserved_mib", cuda_reserved_mib),
-        )
+        rss = _valid_memory_mib("rss_mib", rss_mib)
+        allocated = _valid_memory_mib("cuda_allocated_mib", cuda_allocated_mib)
+        reserved = _valid_memory_mib("cuda_reserved_mib", cuda_reserved_mib)
         return self._record(
             _MemoryBudgetReading(
                 label=label,
@@ -1031,6 +1025,14 @@ class MemoryBudget:
         return None
 
 
+@overload
+def _valid_memory_mib(
+    name: str, value: float | None, *, optional: Literal[False] = False
+) -> float: ...
+@overload
+def _valid_memory_mib(
+    name: str, value: float | None, *, optional: Literal[True]
+) -> float | None: ...
 def _valid_memory_mib(
     name: str,
     value: float | None,
