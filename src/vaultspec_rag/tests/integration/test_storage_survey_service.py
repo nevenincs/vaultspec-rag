@@ -238,7 +238,12 @@ def test_storage_survey_serves_cache_after_warmup(
     again = _do_http_call(port, "/storage/survey", None)
     assert again is not None
     assert again.get("source") == "cache"
-    assert again.get("computed_at") == result.get("computed_at")
+    # Read the stamp before comparing: two absent stamps are equal, so a
+    # response that dropped the field entirely would satisfy a bare
+    # comparison while proving nothing about the snapshot being reused.
+    warmed_at = result.get("computed_at")
+    assert warmed_at is not None, f"warmed response carried no stamp: {result}"
+    assert again.get("computed_at") == warmed_at
 
 
 @pytest.mark.usefixtures("live_service")
@@ -253,4 +258,8 @@ def test_storage_survey_fresh_recomputes_and_reseeds_cache(
     cached = _do_http_call(port, "/storage/survey", None)
     assert cached is not None
     assert cached.get("source") == "cache"
-    assert cached.get("computed_at") == fresh.get("computed_at")
+    # As above: the stamp must exist before equality means anything, or a
+    # recompute that published no stamp would read as a successful reseed.
+    fresh_at = fresh.get("computed_at")
+    assert fresh_at is not None, f"fresh response carried no stamp: {fresh}"
+    assert cached.get("computed_at") == fresh_at
