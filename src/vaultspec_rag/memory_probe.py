@@ -644,6 +644,16 @@ class _MemoryBudgetReading:
     cuda_available: bool
 
 
+def held_budget_snapshot(budget: MemoryBudget | None) -> MemoryBudgetSnapshot | None:
+    """Return a held budget's latest reading, or ``None`` when none is held.
+
+    A run holds a budget only while it is indexing, so every reader has to
+    answer the not-yet-started case as well as the reading. Stating that once
+    keeps the two runs that publish a snapshot from answering it differently.
+    """
+    return budget.snapshot if budget is not None else None
+
+
 def snapshot_resource_bytes(snapshot: MemoryBudgetSnapshot) -> tuple[int, int]:
     """Project a snapshot's high-water readings into corpus-limit bytes.
 
