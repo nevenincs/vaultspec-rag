@@ -21,6 +21,7 @@ from ..job_models import (
     JobState,
 )
 from ..server._search_availability import (
+    SearchAvailabilityContext,
     classify_qdrant_collection_disappearance,
     classify_search_response,
 )
@@ -71,19 +72,21 @@ def _availability_response(
     }
     classification = classify_search_response(
         result,
-        before_snapshot=before,
-        after_snapshot=after,
-        requested_root=resolved_root,
-        source=source,
-        request_id="request-1",
-        index_state={
-            "source": source,
-            "indexed_count": 7,
-            "indexed_target_root": str(resolved_root),
-            "requested_target_root": str(resolved_root),
-            "target_matches": True,
-        },
-        port=8766,
+        SearchAvailabilityContext(
+            before_snapshot=before,
+            after_snapshot=after,
+            requested_root=resolved_root,
+            source=source,
+            request_id="request-1",
+            index_state={
+                "source": source,
+                "indexed_count": 7,
+                "indexed_target_root": str(resolved_root),
+                "requested_target_root": str(resolved_root),
+                "target_matches": True,
+            },
+            port=8766,
+        ),
     )
     return classification.response if classification.status_code == 503 else None
 
@@ -242,13 +245,15 @@ def test_nonempty_result_remains_available_during_matching_rebuild(
 
     classification = classify_search_response(
         result,
-        before_snapshot=before_snapshot,
-        after_snapshot=after_snapshot,
-        requested_root=root,
-        source="vault",
-        request_id="request-nonempty",
-        index_state=index_state,
-        port=8766,
+        SearchAvailabilityContext(
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            requested_root=root,
+            source="vault",
+            request_id="request-nonempty",
+            index_state=index_state,
+            port=8766,
+        ),
     )
 
     assert classification.response is result
@@ -316,13 +321,15 @@ def test_classification_evidence_is_after_first_bounded_and_shared_with_response
 
     classification = classify_search_response(
         {"request_id": "request-merged", "results": []},
-        before_snapshot=before,
-        after_snapshot=after,
-        requested_root=root,
-        source="vault",
-        request_id="request-merged",
-        index_state=index_state,
-        port=8766,
+        SearchAvailabilityContext(
+            before_snapshot=before,
+            after_snapshot=after,
+            requested_root=root,
+            source="vault",
+            request_id="request-merged",
+            index_state=index_state,
+            port=8766,
+        ),
     )
 
     expected_ids = ["after-0", "after-1", *[f"before-{index}" for index in range(6)]]
@@ -388,13 +395,15 @@ def test_qdrant_collection_disappearance_uses_matching_canonical_job_evidence(
 
     classification = classify_qdrant_collection_disappearance(
         _qdrant_collection_response(404),
-        before_snapshot=before_snapshot,
-        after_snapshot=(),
-        requested_root=root,
-        source="vault",
-        request_id="collection-request",
-        index_state=index_state,
-        port=8766,
+        SearchAvailabilityContext(
+            before_snapshot=before_snapshot,
+            after_snapshot=(),
+            requested_root=root,
+            source="vault",
+            request_id="collection-request",
+            index_state=index_state,
+            port=8766,
+        ),
     )
 
     assert classification is not None
@@ -427,23 +436,27 @@ def test_qdrant_collection_disappearance_declines_unrelated_failures(
 
     wrong_status = classify_qdrant_collection_disappearance(
         _qdrant_collection_response(500),
-        before_snapshot=[matching],
-        after_snapshot=(),
-        requested_root=root,
-        source="vault",
-        request_id="wrong-status-request",
-        index_state=index_state,
-        port=8766,
+        SearchAvailabilityContext(
+            before_snapshot=[matching],
+            after_snapshot=(),
+            requested_root=root,
+            source="vault",
+            request_id="wrong-status-request",
+            index_state=index_state,
+            port=8766,
+        ),
     )
     no_matching_job = classify_qdrant_collection_disappearance(
         _qdrant_collection_response(404),
-        before_snapshot=(),
-        after_snapshot=(),
-        requested_root=root,
-        source="vault",
-        request_id="no-matching-job-request",
-        index_state=index_state,
-        port=8766,
+        SearchAvailabilityContext(
+            before_snapshot=(),
+            after_snapshot=(),
+            requested_root=root,
+            source="vault",
+            request_id="no-matching-job-request",
+            index_state=index_state,
+            port=8766,
+        ),
     )
 
     assert wrong_status is None
