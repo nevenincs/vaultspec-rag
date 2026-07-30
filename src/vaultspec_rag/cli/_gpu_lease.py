@@ -59,7 +59,7 @@ class BorrowerServiceTarget:
     """One immutable pre-isolation identity for a borrower lifecycle call.
 
     This value deliberately retains only original public identity witnesses,
-    a token digest, and S29's redacted in-process authority. The service token
+    a token digest, and the redacted in-process authority. The service token
     is represented by its SHA-256 digest; each pause or resume re-reads its
     short-lived raw bearer after the target has been revalidated.
     """
