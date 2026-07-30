@@ -13,7 +13,7 @@ import time
 import warnings
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Final, Literal, TypedDict, Unpack
 
 from . import store_schema
 from ._store_locks import (
@@ -40,10 +40,17 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from qdrant_client import QdrantClient
+    from qdrant_client.conversions.common_types import (
+        Filter,
+        PointId,
+        PointsSelector,
+    )
     from qdrant_client.http.models.models import (
         PayloadSchemaType,
         Record,
     )
+
+    from .config._settings import VaultSpecConfigWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +65,41 @@ _WRITE_LOCK_POLL_SECONDS = 0.1
 # Donor reads page ids in bounded batches: large enough to amortize the
 # round-trip, small enough that one response stays cheap to parse and hold.
 DONOR_RETRIEVE_BATCH_SIZE = 256
+
+
+class ScrollOptions(TypedDict, total=False):
+    """Optional ``scroll`` query controls, defaulted the same as the client's own."""
+
+    scroll_filter: Filter | None
+    limit: int
+    offset: PointId | None
+    with_payload: bool | Sequence[str]
+    with_vectors: bool | Sequence[str]
+
+
+def _typed_setting[T](value: object, expected_type: type[T], name: str) -> T:
+    """Narrow one dynamic config attribute read off ``VaultSpecConfigWrapper``.
+
+    The wrapper resolves RAG-specific keys through ``__getattr__`` and is
+    typed ``Any`` there because it is a genuine dynamic proxy - the RAG keys
+    are resolved by name at runtime, not declared as typed attributes. Every
+    read is coerced and range-checked by the wrapper's own validation policy,
+    so this should never fail in practice; it exists to catch the case where
+    that policy did not run for this key rather than let a wrongly-typed
+    value reach the Qdrant client or filesystem unchecked.
+    """
+    if not isinstance(value, expected_type):
+        raise TypeError(f"{name} setting must be a {expected_type.__name__}")
+    return value
+
+
+def _typed_optional_setting[T](
+    value: object, expected_type: type[T], name: str
+) -> T | None:
+    """Narrow one dynamic, possibly-``None`` config attribute."""
+    if value is None:
+        return None
+    return _typed_setting(value, expected_type, name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,14 +292,13 @@ class VaultStore(
         _check_rag_deps()
         import pathlib as _pathlib
 
-        from qdrant_client import QdrantClient as _QdrantClient
-
         from .config._settings import get_config
 
         cfg = get_config()
+        qdrant_url = _typed_optional_setting(cfg.qdrant_url, str, "qdrant_url")
 
         self.root_dir = _pathlib.Path(root_dir)
-        self._server_mode = bool(cfg.qdrant_url)
+        self._server_mode = bool(qdrant_url)
         # One shared qdrant server hosts every root's data, so server
         # mode namespaces this root's collections with a stable
         # per-root prefix; the bare names stay the suffix. Local mode
@@ -294,56 +335,11 @@ class VaultStore(
         }
         self._client: QdrantClient | None = None
 
-        if cfg.qdrant_url:
-            self.db_path = cfg.qdrant_url
-            self._lock_helper = None
-            # The managed server's storage volume, for write headroom
-            # checks; a remote server's dir won't exist locally and the
-            # probe then skips itself.
-            self._storage_probe_path = _pathlib.Path(
-                cfg.qdrant_storage_dir
-            ).expanduser()
-            try:
-                # An explicit request timeout: without one, a server
-                # stalling on a full-disk WAL blocks the upsert socket
-                # forever, freezing the job at completed=0 with no error
-                # ever raised while the GPU keeps burning upstream.
-                self._client = _QdrantClient(
-                    url=cfg.qdrant_url,
-                    api_key=cfg.qdrant_api_key,
-                    timeout=math.ceil(cfg.store_operation_timeout_seconds),
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to connect to Qdrant server at %s: %s", cfg.qdrant_url, exc
-                )
-                raise
+        self.db_path: str | _pathlib.Path
+        if qdrant_url:
+            self._open_server_client(qdrant_url, cfg)
         else:
-            local_db_path = self.root_dir / cfg.data_dir / cfg.qdrant_dir
-            local_db_path.mkdir(parents=True, exist_ok=True)
-            self.db_path = local_db_path
-            self._storage_probe_path = local_db_path
-            self._lock_helper = FileLock(local_db_path / "exclusive.lock")
-            if not self._lock_helper.acquire():
-                raise VaultStoreLockedError(
-                    str(self.db_path),
-                    held_in_process=self._lock_helper.held_elsewhere_in_this_process(),
-                )
-            try:
-                with suppress_local_qdrant_warnings():
-                    self._client = _QdrantClient(
-                        path=str(self.db_path),
-                    )
-            except RuntimeError as exc:
-                self._lock_helper.release()
-                if "already accessed by another instance" in str(exc):
-                    raise VaultStoreLockedError(
-                        str(self.db_path),
-                        held_in_process=(
-                            self._lock_helper.held_elsewhere_in_this_process()
-                        ),
-                    ) from exc
-                raise
+            self._open_local_client(cfg)
 
         # Default the collection's dense dimension from the same source the wire
         # descriptor advertises, so the advertised dimension always equals what
@@ -359,6 +355,77 @@ class VaultStore(
         # Best-effort storage-manifest attribution is recorded at most once per
         # store instance (server mode only) so it never re-enters the hot path.
         self._manifest_recorded = False
+
+    def _open_server_client(self, qdrant_url: str, cfg: VaultSpecConfigWrapper) -> None:
+        """Open the managed Qdrant server client and set the server-mode fields."""
+        import pathlib as _pathlib
+
+        from qdrant_client import QdrantClient as _QdrantClient
+
+        self.db_path = qdrant_url
+        self._lock_helper = None
+        # The managed server's storage volume, for write headroom
+        # checks; a remote server's dir won't exist locally and the
+        # probe then skips itself.
+        qdrant_storage_dir = _typed_setting(
+            cfg.qdrant_storage_dir, str, "qdrant_storage_dir"
+        )
+        self._storage_probe_path = _pathlib.Path(qdrant_storage_dir).expanduser()
+        try:
+            qdrant_api_key = _typed_optional_setting(
+                cfg.qdrant_api_key, str, "qdrant_api_key"
+            )
+            store_operation_timeout_seconds = _typed_setting(
+                cfg.store_operation_timeout_seconds,
+                float,
+                "store_operation_timeout_seconds",
+            )
+            # An explicit request timeout: without one, a server
+            # stalling on a full-disk WAL blocks the upsert socket
+            # forever, freezing the job at completed=0 with no error
+            # ever raised while the GPU keeps burning upstream.
+            self._client = _QdrantClient(
+                url=qdrant_url,
+                api_key=qdrant_api_key,
+                timeout=math.ceil(store_operation_timeout_seconds),
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to connect to Qdrant server at %s: %s", qdrant_url, exc
+            )
+            raise
+
+    def _open_local_client(self, cfg: VaultSpecConfigWrapper) -> None:
+        """Create (or open) the embedded local Qdrant store and set its fields."""
+        from qdrant_client import QdrantClient as _QdrantClient
+
+        data_dir = _typed_setting(cfg.data_dir, str, "data_dir")
+        qdrant_dir = _typed_setting(cfg.qdrant_dir, str, "qdrant_dir")
+        local_db_path = self.root_dir / data_dir / qdrant_dir
+        local_db_path.mkdir(parents=True, exist_ok=True)
+        self.db_path = local_db_path
+        self._storage_probe_path = local_db_path
+        self._lock_helper = FileLock(local_db_path / "exclusive.lock")
+        if not self._lock_helper.acquire():
+            raise VaultStoreLockedError(
+                str(self.db_path),
+                held_in_process=self._lock_helper.held_elsewhere_in_this_process(),
+            )
+        try:
+            with suppress_local_qdrant_warnings():
+                self._client = _QdrantClient(
+                    path=str(self.db_path),
+                )
+        except RuntimeError as exc:
+            self._lock_helper.release()
+            if "already accessed by another instance" in str(exc):
+                raise VaultStoreLockedError(
+                    str(self.db_path),
+                    held_in_process=(
+                        self._lock_helper.held_elsewhere_in_this_process()
+                    ),
+                ) from exc
+            raise
 
     @property
     def client(self) -> QdrantClient:
@@ -390,7 +457,11 @@ class VaultStore(
         """
         from .config._settings import get_config
 
-        operation_timeout = get_config().store_operation_timeout_seconds
+        operation_timeout = _typed_setting(
+            get_config().store_operation_timeout_seconds,
+            float,
+            "store_operation_timeout_seconds",
+        )
         if not self._server_mode:
             return op(math.ceil(operation_timeout))
         # One operation may not outlast the single-attempt timeout however
@@ -447,25 +518,66 @@ class VaultStore(
             attempt,
         )
 
-    def _scroll(self, **kwargs: Any) -> tuple[list[Record], Any]:
+    def _scroll(
+        self,
+        *,
+        collection_name: str,
+        **options: Unpack[ScrollOptions],
+    ) -> tuple[list[Record], PointId | None]:
         """Page a collection under the bounded retry.
 
         A scroll is a pure query, so replaying an attempt that never
-        reached the backend is safe.
+        reached the backend is safe. Typed against the client's own
+        ``scroll`` parameters (minus the ones no caller here uses) rather
+        than a forwarding ``**kwargs: Any``, so a caller passing the wrong
+        shape is a type error instead of a value that reaches the client
+        unchecked; bundled into :class:`ScrollOptions` to keep the optional
+        controls under the argument-count limit.
         """
+        scroll_filter = options.get("scroll_filter")
+        limit = options.get("limit", 10)
+        offset = options.get("offset")
+        with_payload = options.get("with_payload", True)
+        with_vectors = options.get("with_vectors", False)
         return self._retried(
-            f"scroll {kwargs.get('collection_name')}",
-            lambda timeout: self.client.scroll(timeout=timeout, **kwargs),
+            f"scroll {collection_name}",
+            lambda timeout: self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=scroll_filter,
+                limit=limit,
+                offset=offset,
+                with_payload=with_payload,
+                with_vectors=with_vectors,
+                timeout=timeout,
+            ),
         )
 
-    def _retrieve(self, **kwargs: Any) -> list[Record]:
+    def _retrieve(
+        self,
+        *,
+        collection_name: str,
+        ids: Sequence[PointId],
+        with_payload: bool | Sequence[str] = True,
+        with_vectors: bool | Sequence[str] = False,
+    ) -> list[Record]:
         """Fetch points by id under the bounded retry (a query, replay-safe)."""
         return self._retried(
-            f"retrieve {kwargs.get('collection_name')}",
-            lambda timeout: self.client.retrieve(timeout=timeout, **kwargs),
+            f"retrieve {collection_name}",
+            lambda timeout: self.client.retrieve(
+                collection_name=collection_name,
+                ids=ids,
+                with_payload=with_payload,
+                with_vectors=with_vectors,
+                timeout=timeout,
+            ),
         )
 
-    def _delete_points(self, **kwargs: Any) -> None:
+    def _delete_points(
+        self,
+        *,
+        collection_name: str,
+        points_selector: PointsSelector,
+    ) -> None:
         """Remove points under the bounded retry.
 
         Deletion by id list or by payload filter is idempotent - replaying
@@ -475,8 +587,12 @@ class VaultStore(
         rather than replay-safe.
         """
         self._retried(
-            f"delete points {kwargs.get('collection_name')}",
-            lambda timeout: self.client.delete(timeout=timeout, **kwargs),
+            f"delete points {collection_name}",
+            lambda timeout: self.client.delete(
+                collection_name=collection_name,
+                points_selector=points_selector,
+                timeout=timeout,
+            ),
         )
 
     def _id_scan_page_limit(self, collection: str) -> int:

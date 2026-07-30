@@ -156,8 +156,21 @@ def service_projects_list(
     projects: list[object] = (
         cast("list[object]", raw_projects) if isinstance(raw_projects, list) else []
     )
-    max_projects = result.get("max_projects", 0)
-    idle_ttl = result.get("idle_ttl_seconds", 0)
+    raw_max_projects = result.get("max_projects", 0)
+    # Narrowed rather than passed through `int(...)`: the value comes off the
+    # wire, and a bare `int()` conversion would silently accept a string or
+    # float instead of surfacing the malformed response.
+    max_projects = (
+        raw_max_projects
+        if isinstance(raw_max_projects, int) and not isinstance(raw_max_projects, bool)
+        else 0
+    )
+    raw_idle_ttl = result.get("idle_ttl_seconds", 0)
+    idle_ttl = (
+        raw_idle_ttl
+        if isinstance(raw_idle_ttl, int) and not isinstance(raw_idle_ttl, bool)
+        else 0
+    )
 
     if json_mode:
         _emit_json(
@@ -173,8 +186,8 @@ def service_projects_list(
 
     _print_projects_summary(
         projects,
-        int(max_projects),
-        int(idle_ttl),
+        max_projects,
+        idle_ttl,
         port=resolved_port,
     )
 

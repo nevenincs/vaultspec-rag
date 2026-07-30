@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     import sqlite3
     from contextlib import AbstractContextManager
 
-    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_models import GenerationRow, RunGeneration
 
 
 class RunLedgerFinalizationMethods:
@@ -31,10 +31,10 @@ class RunLedgerFinalizationMethods:
         @staticmethod
         def _require_mutable_generation(
             connection: sqlite3.Connection, generation_id: str
-        ) -> sqlite3.Row: ...
+        ) -> GenerationRow: ...
 
         @staticmethod
-        def _generation_from_row(row: sqlite3.Row) -> RunGeneration: ...
+        def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
 
     def advance_finalization(
         self,
