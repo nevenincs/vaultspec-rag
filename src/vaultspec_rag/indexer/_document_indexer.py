@@ -27,7 +27,11 @@ from ._document_meta import (
     read_document_meta,
 )
 from ._file_state import FileStateKind
-from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
+from ._index_lifecycle import (
+    incremental_mode,
+    preprocess_completion_fields,
+    run_index_lifecycle,
+)
 from ._resolved_policy import preprocess_stale_note
 from ._route_migration import reconcile_generation_storage
 from ._run_ledger_models import (
@@ -1321,9 +1325,7 @@ class DocumentIndexer:
                 event_logger=logger,
                 store=self.store,
                 source="document",
-                mode=(
-                    "scoped_incremental" if changed_paths is not None else "incremental"
-                ),
+                mode=incremental_mode(scoped=changed_paths is not None),
                 clean=False,
                 root=self.root_dir,
                 run_control=run_control,
