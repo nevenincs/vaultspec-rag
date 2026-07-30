@@ -27,6 +27,7 @@ from ...indexer._content_policy import (
 from ...indexer._document_checkpoint import (
     DocumentRunCheckpoint,
     DocumentRunConfiguration,
+    DocumentRunOpenRequest,
 )
 from ...indexer._document_identity import document_point_id
 from ...indexer._resolved_policy import (
@@ -112,23 +113,25 @@ def _document_checkpoint(
 ):
     policy = _resolved_policy(root)
     checkpoint = DocumentRunCheckpoint.open(
-        data_root=root / get_config().data_dir,
-        root_dir=root,
-        policy=policy,
-        run_policy=run_policy or RunPolicy(no_progress_timeout_seconds=60.0),
-        operation=RunOperation.FULL,
-        clean=False,
-        model_identity="route-migration-test",
-        dense_dimensions=4,
-        configuration=DocumentRunConfiguration(
-            slice_max_chunks=1,
-            source_bytes=1,
-            generated_chunks=1,
-            weighted_bytes=1,
-            sparse_enabled=False,
-            sparse_dimension=1,
-            encode_batch_size=1,
-        ),
+        DocumentRunOpenRequest(
+            data_root=root / get_config().data_dir,
+            root_dir=root,
+            policy=policy,
+            run_policy=run_policy or RunPolicy(no_progress_timeout_seconds=60.0),
+            operation=RunOperation.FULL,
+            clean=False,
+            model_identity="route-migration-test",
+            dense_dimensions=4,
+            configuration=DocumentRunConfiguration(
+                slice_max_chunks=1,
+                source_bytes=1,
+                generated_chunks=1,
+                weighted_bytes=1,
+                sparse_enabled=False,
+                sparse_dimension=1,
+                encode_batch_size=1,
+            ),
+        )
     )
     source_digest = hashlib.blake2b(rel_path.encode("utf-8")).hexdigest()
     unit = checkpoint.unit_for(
@@ -463,23 +466,25 @@ def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
         ),
     )
     checkpoint = DocumentRunCheckpoint.open(
-        data_root=tmp_path / get_config().data_dir,
-        root_dir=tmp_path,
-        policy=policy,
-        run_policy=RunPolicy(no_progress_timeout_seconds=60.0),
-        operation=RunOperation.FULL,
-        clean=False,
-        model_identity="route-migration-page-test",
-        dense_dimensions=4,
-        configuration=DocumentRunConfiguration(
-            slice_max_chunks=1,
-            source_bytes=2,
-            generated_chunks=2,
-            weighted_bytes=2,
-            sparse_enabled=False,
-            sparse_dimension=1,
-            encode_batch_size=1,
-        ),
+        DocumentRunOpenRequest(
+            data_root=tmp_path / get_config().data_dir,
+            root_dir=tmp_path,
+            policy=policy,
+            run_policy=RunPolicy(no_progress_timeout_seconds=60.0),
+            operation=RunOperation.FULL,
+            clean=False,
+            model_identity="route-migration-page-test",
+            dense_dimensions=4,
+            configuration=DocumentRunConfiguration(
+                slice_max_chunks=1,
+                source_bytes=2,
+                generated_chunks=2,
+                weighted_bytes=2,
+                sparse_enabled=False,
+                sparse_dimension=1,
+                encode_batch_size=1,
+            ),
+        )
     )
     for destination in destinations:
         rel_path = destination.payload.source_path

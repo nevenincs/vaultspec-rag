@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, Unpack, overload
+from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
@@ -70,24 +70,11 @@ class CodeRunConfiguration:
 
 @dataclass(frozen=True, slots=True)
 class CodeRunOpenRequest:
-    """All compatibility inputs for opening one code generation."""
+    """All compatibility inputs for opening one code generation.
 
-    data_root: Path
-    root_dir: Path
-    policy: ResolvedIndexPolicy
-    run_policy: RunPolicy
-    operation: RunOperation
-    clean: bool
-    model_identity: str
-    dense_dimensions: int
-    configuration: CodeRunConfiguration
-
-
-class _CodeRunOpenKwargs(TypedDict):
-    """Keyword shape accepted by ``CodeRunCheckpoint.open``'s legacy path.
-
-    Mirrors ``CodeRunOpenRequest`` field-for-field so ``Unpack`` type-checks
-    every call site against the request's real field types.
+    One grouped shape rather than a spread of keywords, so a field added
+    here is declared once and every call site is re-checked against its
+    real type.
     """
 
     data_root: Path
@@ -109,26 +96,8 @@ class CodeRunCheckpoint(RunCheckpointBase):
     _kind_label: ClassVar[str] = "code"
 
     @classmethod
-    @overload
-    def open(cls, request: CodeRunOpenRequest, /) -> CodeRunCheckpoint: ...
-    @classmethod
-    @overload
-    def open(
-        cls,
-        request: None = None,
-        **legacy: Unpack[_CodeRunOpenKwargs],
-    ) -> CodeRunCheckpoint: ...
-    @classmethod
-    def open(
-        cls,
-        request: CodeRunOpenRequest | None = None,
-        **legacy: Any,
-    ) -> CodeRunCheckpoint:
+    def open(cls, request: CodeRunOpenRequest, /) -> CodeRunCheckpoint:
         """Open or resume the compatible code generation for one attempt."""
-        if request is None:
-            request = CodeRunOpenRequest(**legacy)
-        elif legacy:
-            raise TypeError("use either a CodeRunOpenRequest or named inputs")
         kind_fingerprints = request.policy.fingerprints_for(ContentKind.CODE)
         signature = RunSignature(
             root_identity=str(request.root_dir.resolve()),

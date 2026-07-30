@@ -224,6 +224,7 @@ class TestIncrementalPublicationRecovery:
         code_project: _CodeProject,
     ) -> None:
         """Control before finalization leaves checkpointed storage intact."""
+        from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
         from ...indexer._run_ledger_models import RunOperation
         from ...indexer._streaming import CodeFileSegment
         from ...job_control import CancelRequested, RunControlToken
@@ -242,13 +243,15 @@ class TestIncrementalPublicationRecovery:
         policy = indexer.resolve_policy_snapshot()
         limits = indexer._consumer_pipeline.resolve_limits()
         checkpoint = indexer._lifecycle.open_checkpoint(
-            policy=policy,
-            operation=RunOperation.INCREMENTAL,
-            clean=False,
-            configuration=limits.run_configuration,
-            dense_dimensions=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            run_control=RunControlToken(),
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.INCREMENTAL,
+                clean=False,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                run_control=RunControlToken(),
+            )
         )
         digest = hashlib.blake2b(chunk.content.encode("utf-8")).hexdigest()
         segment = CodeFileSegment(
@@ -295,6 +298,7 @@ class TestIncrementalPublicationRecovery:
         """A rebuild-incomplete generation resumes its confirmed collection."""
         from ..._store_models import generation_code_collection
         from ...indexer import _chunk_worker
+        from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
         from ...indexer._run_ledger_models import RunOperation, RunTerminalState
         from ...indexer._streaming import (
             CodeFileSegment,
@@ -311,13 +315,15 @@ class TestIncrementalPublicationRecovery:
         policy = preflight.policy
         limits = indexer._consumer_pipeline.resolve_limits()
         checkpoint = indexer._lifecycle.open_checkpoint(
-            policy=policy,
-            operation=RunOperation.FULL,
-            clean=True,
-            configuration=limits.run_configuration,
-            dense_dimensions=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            run_control=RunControlToken(),
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=True,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                run_control=RunControlToken(),
+            )
         )
 
         # A clean rebuild writes into the collection named for its generation
