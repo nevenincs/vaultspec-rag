@@ -235,7 +235,10 @@ def _write_vault_document(path: Path, marker: str) -> str:
 
 
 def _load_watcher_state(path: Path) -> dict[str, object]:
-    parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    # json.loads returns Any regardless of the `object` annotation above it;
+    # cast at the extraction point instead so the isinstance narrowing below
+    # stays real.
+    parsed = cast("object", json.loads(path.read_text(encoding="utf-8")))
     assert isinstance(parsed, dict)
     return cast("dict[str, object]", parsed)
 
@@ -326,7 +329,8 @@ async def _wait_for_code_payload(
             with_vectors=False,
         )
         if any(
-            expected_content in str((record.payload or {}).get("content", ""))
+            expected_content
+            in str(cast("object", (record.payload or {}).get("content", "")))
             for record in records
         ):
             return
@@ -601,7 +605,7 @@ class TestLargeIndexSearchHeadroom:
         from concurrent.futures import ThreadPoolExecutor
 
         from ... import CodebaseIndexer, VaultSearcher
-        from ..._gpu import load_torch
+        from ...memory_probe import cuda_device_total_mib
 
         root = tmp_path / "large-index-search-headroom"
         spec = CorpusSpec(files=256, chunks_per_file=3)
@@ -664,10 +668,8 @@ class TestLargeIndexSearchHeadroom:
                 "no search completed while bounded indexing was still progressing"
             )
 
-            torch = load_torch()
-            total_cuda_mib = float(
-                torch.cuda.get_device_properties(0).total_memory / 1024**2
-            )
+            total_cuda_mib = cuda_device_total_mib()
+            assert total_cuda_mib is not None, "no CUDA device reported total memory"
             configured_fraction = float(get_config().index_cuda_allocator_fraction)
             required_headroom_mib = total_cuda_mib * (1.0 - configured_fraction)
             observed_headroom_mib = (
@@ -745,7 +747,13 @@ async def test_watcher_detects_and_indexes_file(
 
     try:
         # Confirm we cannot find the new document yet
-        q_vec = embedding_model.encode_query("concurrency adversarial stress").tolist()
+        # numpy's `ndarray.tolist()` stub returns Any; `encode_query` is
+        # documented to return a dense 1D embedding, so the extracted list
+        # is genuinely `list[float]`.
+        q_vec = cast(
+            "list[float]",
+            embedding_model.encode_query("concurrency adversarial stress").tolist(),
+        )
         results = store.hybrid_search(
             HybridSearchRequest(
                 query_vector=q_vec,

@@ -10,7 +10,7 @@ import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -79,9 +79,15 @@ class TestInterpreterIsSupported:
         if not pyproject.is_file():  # installed without the source tree
             pytest.skip("pyproject.toml is not present in this layout")
 
-        spec = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
-            "requires-python"
-        ]
+        # tomllib.loads returns dict[str, Any] since a TOML document holds
+        # heterogeneous value types; `requires-python` is always a string
+        # per the schema this project's pyproject.toml follows.
+        spec = cast(
+            "str",
+            tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
+                "requires-python"
+            ],
+        )
         floor = re.search(r">=\s*(\d+)\.(\d+)", spec)
         ceiling = re.search(r"<\s*(\d+)\.(\d+)", spec)
         assert floor is not None, f"no lower bound in requires-python: {spec!r}"
@@ -276,7 +282,10 @@ class TestStoreLocalClientSerialization:
         store = VaultStore(tmp_path)
         acquired = False
         released = False
-        collection = getattr(store, collection_attr)
+        # `collection_attr` is a dynamic string, so its resolved attribute is
+        # genuinely unknown to the type checker; every caller passes one of
+        # VaultStore's `str`-typed *_TABLE_NAME attributes.
+        collection = cast("str", getattr(store, collection_attr))
         lock = store._collection_locks[collection]
         try:
             store.ensure_table()
@@ -776,10 +785,14 @@ class TestCountsCreateNothing:
 
         store = VaultStore(tmp_path)
         try:
-            collection = getattr(store, collection_attr)
+            # `collection_attr` is a dynamic string naming one of VaultStore's
+            # `str`-typed *_TABLE_NAME attributes.
+            collection = cast("str", getattr(store, collection_attr))
             assert not store.client.collection_exists(collection)
 
-            counted: object = getattr(store, count_attr)()
+            # `count_attr` is a dynamic string, so its resolved bound method
+            # and call result are genuinely unknown to the type checker.
+            counted = cast("object", getattr(store, count_attr)())
 
             assert counted == 0
             assert not store.client.collection_exists(collection), (
@@ -877,7 +890,9 @@ class TestReadsCreateNothing:
 
         store = VaultStore(tmp_path)
         try:
-            collection = getattr(store, collection_attr)
+            # `collection_attr` is a dynamic string naming one of VaultStore's
+            # `str`-typed *_TABLE_NAME attributes.
+            collection = cast("str", getattr(store, collection_attr))
             assert not store.client.collection_exists(collection)
 
             assert read(store) == empty
@@ -912,7 +927,9 @@ class TestReadsCreateNothing:
 
         store = VaultStore(tmp_path)
         try:
-            collection = getattr(store, collection_attr)
+            # `collection_attr` is a dynamic string naming one of VaultStore's
+            # `str`-typed *_TABLE_NAME attributes.
+            collection = cast("str", getattr(store, collection_attr))
             store._ensure_collection(collection)
             assert store.client.collection_exists(collection)
             assert not store._ensured.get(collection)
@@ -945,14 +962,23 @@ class TestReadsCreateNothing:
 
         store = VaultStore(tmp_path, embedding_dim=self._DIM)
         try:
-            collection = getattr(store, collection_attr)
+            # `collection_attr` is a dynamic string naming one of VaultStore's
+            # `str`-typed *_TABLE_NAME attributes.
+            collection = cast("str", getattr(store, collection_attr))
             assert not store.client.collection_exists(collection)
 
-            rows = getattr(store, search_attr)(
-                HybridSearchRequest(
-                    query_vector=[0.1] * self._DIM,
-                    query_text="a query against a root nobody indexed",
-                )
+            # `search_attr` is a dynamic string naming one of the three
+            # hybrid_search* methods; only emptiness is asserted below, so
+            # `object` is the honest shape without restating their union
+            # `list[dict[str, Any]]` return type here.
+            rows = cast(
+                "object",
+                getattr(store, search_attr)(
+                    HybridSearchRequest(
+                        query_vector=[0.1] * self._DIM,
+                        query_text="a query against a root nobody indexed",
+                    )
+                ),
             )
 
             assert rows == []
@@ -1274,7 +1300,9 @@ class TestEnsureTableBackfill:
         them and not the third, and nothing reported the gap.
         """
         store, indexed = self._recording_store(tmp_path)
-        name = getattr(store, collection)
+        # `collection` is a dynamic string naming one of VaultStore's
+        # `str`-typed *_TABLE_NAME attributes.
+        name = cast("str", getattr(store, collection))
         try:
             getattr(store, ensure)()
             assert indexed == [name], "creation must apply the index set"
