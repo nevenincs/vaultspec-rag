@@ -25,11 +25,62 @@ if TYPE_CHECKING:
     from typer.testing import Result
 
 from ..cli import app
+from ..serviceclient._transport import _try_http_admin
 from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()
+
+_QUIESCED_SNAPSHOT: dict[str, object] = {
+    "state": "quiesced",
+    "admission_epoch": 4,
+    "admissions_open": False,
+    "active_compute_tickets": 0,
+    "drain_complete": True,
+    "vram_released": True,
+    "safe_to_borrow_gpu": True,
+    "pause_requested_at": 100.0,
+    "drain_acknowledged_at": 101.0,
+    "quiesced_at": 102.0,
+    "warming_started_at": None,
+    "failure_reason": None,
+}
+_RUNNING_SNAPSHOT: dict[str, object] = {
+    "state": "running",
+    "admission_epoch": 5,
+    "admissions_open": True,
+    "active_compute_tickets": 0,
+    "drain_complete": False,
+    "vram_released": False,
+    "safe_to_borrow_gpu": False,
+    "pause_requested_at": None,
+    "drain_acknowledged_at": None,
+    "quiesced_at": None,
+    "warming_started_at": None,
+    "failure_reason": None,
+}
+_RETRYABLE_FAILURE: dict[str, object] = {
+    "ok": False,
+    "status": "quiesce_transition_conflict",
+    "error": "quiesce_transition_conflict",
+    "message": "service-owned transition conflict",
+    "retryable": True,
+    "quiesce": {
+        "state": "pausing",
+        "admission_epoch": 4,
+        "admissions_open": False,
+        "active_compute_tickets": 1,
+        "drain_complete": False,
+        "vram_released": False,
+        "safe_to_borrow_gpu": False,
+        "pause_requested_at": 100.0,
+        "drain_acknowledged_at": None,
+        "quiesced_at": None,
+        "warming_started_at": None,
+        "failure_reason": None,
+    },
+}
 
 
 @contextlib.contextmanager
@@ -94,51 +145,71 @@ def _json(result: Result) -> dict[str, Any]:
 
 
 def test_pause_change_is_success_exit_zero() -> None:
-    with _quiesce_service({"ok": True, "status": "paused", "paused": True}) as port:
+    with _quiesce_service(
+        {"ok": True, "status": "quiesced", "quiesce": _QUIESCED_SNAPSHOT}
+    ) as port:
         result = _invoke("pause", port)
     assert result.exit_code == 0, result.output
     body = _json(result)
     assert body["ok"] is True
-    assert body["data"]["status"] == "paused"
+    assert body["data"] == {
+        "ok": True,
+        "status": "quiesced",
+        "quiesce": _QUIESCED_SNAPSHOT,
+    }
 
 
 def test_pause_already_paused_is_idempotent_success() -> None:
-    # Idempotent success: re-pausing a held service exits 0 with already_paused,
-    # never a non-zero fault. Flip this to exit 1 and the guard fails.
+    # Idempotent success is decided by the service-owned ``ok`` field, not a
+    # client inference from a legacy ``paused`` flag.
     with _quiesce_service(
-        {"ok": True, "status": "already_paused", "paused": True}
+        {
+            "ok": True,
+            "status": "already_quiesced",
+            "quiesce": _QUIESCED_SNAPSHOT,
+        }
     ) as port:
         result = _invoke("pause", port)
     assert result.exit_code == 0, result.output
-    assert _json(result)["data"]["status"] == "already_paused"
+    assert _json(result)["data"]["status"] == "already_quiesced"
 
 
 def test_resume_already_running_is_idempotent_success() -> None:
     with _quiesce_service(
-        {"ok": True, "status": "already_running", "paused": False}
+        {"ok": True, "status": "running", "quiesce": _RUNNING_SNAPSHOT}
     ) as port:
         result = _invoke("resume", port)
     assert result.exit_code == 0, result.output
-    assert _json(result)["data"]["status"] == "already_running"
+    assert _json(result)["data"]["status"] == "running"
 
 
-def test_pause_that_did_not_hold_is_failure_exit_one() -> None:
-    # Load-bearing guard: the route reports ok=True but paused=False because a
-    # shutdown latched the gate open, so the hold was NOT achieved. This MUST
-    # exit non-zero, or a broker reads a still-running service as paused.
-    with _quiesce_service({"ok": True, "status": "paused", "paused": False}) as port:
+def test_retryable_pause_failure_preserves_the_service_owned_envelope() -> None:
+    """An unachieved retryable transition keeps every service-owned field."""
+    with _quiesce_service(_RETRYABLE_FAILURE) as port:
         result = _invoke("pause", port)
     assert result.exit_code == 1, result.output
     body = _json(result)
     assert body["ok"] is False
-    assert body["error"] == "hold_not_achieved"
+    assert body["error"] == _RETRYABLE_FAILURE["error"]
+    assert body["status"] == _RETRYABLE_FAILURE["status"]
+    assert body["message"] == _RETRYABLE_FAILURE["message"]
+    assert body["retryable"] is True
+    assert body["data"] == _RETRYABLE_FAILURE
 
 
-def test_resume_that_did_not_release_is_failure_exit_one() -> None:
-    with _quiesce_service({"ok": True, "status": "resumed", "paused": True}) as port:
+def test_transport_preserves_the_retryable_service_envelope() -> None:
+    """The real transport returns the daemon's full payload without reshaping."""
+    with _quiesce_service(_RETRYABLE_FAILURE) as port:
+        assert port is not None
+        result = _try_http_admin("resume_service", {}, port)
+    assert result == _RETRYABLE_FAILURE
+
+
+def test_retryable_resume_failure_is_failure_exit_one() -> None:
+    with _quiesce_service(_RETRYABLE_FAILURE) as port:
         result = _invoke("resume", port)
     assert result.exit_code == 1, result.output
-    assert _json(result)["error"] == "release_not_achieved"
+    assert _json(result)["error"] == _RETRYABLE_FAILURE["error"]
 
 
 def test_unreachable_service_is_failure_exit_one() -> None:
@@ -161,7 +232,9 @@ def test_exactly_one_json_envelope_per_invocation() -> None:
     # nothing extra. Counting every stdout line - rather than only the ones that
     # parse as JSON - is what makes this catch stray prose on the result
     # channel, so do not relax it to a "lines starting with {" filter.
-    with _quiesce_service({"ok": True, "status": "paused", "paused": True}) as port:
+    with _quiesce_service(
+        {"ok": True, "status": "quiesced", "quiesce": _QUIESCED_SNAPSHOT}
+    ) as port:
         result = _invoke("pause", port)
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     assert len(lines) == 1, result.stdout
