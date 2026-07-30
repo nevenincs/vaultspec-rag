@@ -29,7 +29,24 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Protocol, cast
+
+if TYPE_CHECKING:
+    from http.client import HTTPResponse
+
+    # ``argparse.Namespace`` attribute access is unavoidably ``Any`` (the
+    # parser has no static view of what ``add_argument`` calls produced).
+    # This mirrors main()'s declared arguments so a single cast replaces
+    # every per-attribute ``Any`` read below it.
+    class _ParsedArgs(Protocol):
+        root: list[str]
+        requests: int
+        concurrency: int
+        top_k: int
+        timeout: float
+        with_reindex: bool
+        json: Path | None
+
 
 __all__ = [
     "RequestOutcome",
@@ -81,14 +98,21 @@ class ServiceTarget:
         from ...config._settings import get_config
 
         cfg = get_config()
-        path = Path(str(cfg.status_dir)).expanduser() / "service.json"
+        path = Path(str(cast("object", cfg.status_dir))).expanduser() / "service.json"
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = cast(
+                "dict[str, object]",
+                json.loads(path.read_text(encoding="utf-8")),
+            )
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(
                 f"Cannot read {path}: is the service running? ({exc})",
             ) from exc
-        port = int(data.get("port", 0))
+        # ``int()``/``str()`` already coerce (and raise on a genuinely bad
+        # value) at runtime; the cast only asserts the JSON-decoded shape
+        # service.json is documented to carry, same as the pre-existing
+        # runtime behaviour.
+        port = int(cast("int | float | str", data.get("port", 0)))
         token = str(data.get("service_token", data.get("token", "")))
         if not port:
             raise RuntimeError(f"service.json at {path} carries no port")
@@ -111,7 +135,11 @@ class ServiceTarget:
             headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # urlopen()'s return is typed Any upstream (it dispatches across
+        # FTP/HTTP/file handlers); this request is always http://, so the
+        # concrete response type is genuinely HTTPResponse.
+        opened = cast("HTTPResponse", urllib.request.urlopen(req, timeout=timeout))
+        with opened as resp:
             # The service's response shape is only a contract at the JSON
             # boundary; decode it once here and let every caller narrow the
             # specific keys it reads instead of carrying `Any` outward.
@@ -397,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Write the full machine-readable report to this path.",
     )
-    args = parser.parse_args(argv)
+    args = cast("_ParsedArgs", parser.parse_args(argv))
 
     target = ServiceTarget.discover()
     roots: list[str] = [str(Path(r).resolve()) for r in args.root]
