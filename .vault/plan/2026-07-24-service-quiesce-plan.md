@@ -108,7 +108,7 @@ Require a distinct machine-global borrower lease plus acknowledged service quies
 Create the distinct machine-global borrower lease and one crash-safe coordinator that acquires the lease before requesting pause, admits work only from a strict acknowledged-quiescence snapshot, resumes before release, and never starts another service.
 
 - [ ] `W04.P08.S29` - Repair the borrower lease by providing the narrow captured-service-anchor acquisition path that preserves one fresh opaque capability and the unchanged service-side sibling-anchor verifier; `src/vaultspec_rag/gpu_borrow_lease.py, src/vaultspec_rag/tests/test_gpu_borrow_lease.py`.
-- [ ] `W04.P08.S30` - Repair captured pre-isolation service targeting by pinning the borrower lease to the target's original sibling anchor before revalidation and token-safe pause and resume; `src/vaultspec_rag/cli/_gpu_lease.py, src/vaultspec_rag/tests/test_gpu_borrow_cli.py`.
+- [ ] `W04.P08.S30` - Repair captured pre-isolation service targeting by pinning the borrower lease to the target's original sibling anchor before revalidation and by using the minimal typed initial-bearer transport for token-safe pause and resume; `src/vaultspec_rag/cli/_gpu_lease.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/tests/test_gpu_borrow_cli.py, src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`.
 - [ ] `W04.P08.S31` - Make service preflight a torch-free remote observation of strict typed quiescence and device capacity that never authorizes GPU work or falls back to a local probe; `src/vaultspec_rag/cli/_service_preflight.py, src/vaultspec_rag/tests/test_service_preflight_cli.py`.
 
 ### Phase `W04.P09` - Torch-free diagnostics and GPU entry-point enforcement
