@@ -175,7 +175,13 @@ def _preflight_code_index(
     extra_excludes: list[str] | None = None,
     sample_limit: int = 100,
 ) -> CodeIndexPreflight:
-    """Resolve policy and discovery without opening storage or loading models."""
+    """Resolve policy and discovery without opening storage or loading models.
+
+    ``CodebaseIndexer.__init__`` only stores ``model``/``store`` on
+    collaborators that read them lazily during an actual index run;
+    construction and ``preflight_content`` never touch either, so ``None``
+    is safe here.
+    """
     from .indexer import CodebaseIndexer
 
     indexer = CodebaseIndexer(
@@ -193,7 +199,12 @@ def _preflight_document_index(
     extra_excludes: list[str] | None = None,
     content_policy: RootContentPolicy | None = None,
 ) -> DocumentIndexPreflight:
-    """Resolve document policy and discovery before storage or model loading."""
+    """Resolve document policy and discovery before storage or model loading.
+
+    ``DocumentIndexer.__init__`` only stores ``model``/``store``; both are
+    read lazily inside a run, never during construction or
+    ``preflight_content``, so ``None`` is safe here.
+    """
     from .indexer import DocumentIndexer
 
     indexer = DocumentIndexer(
@@ -213,7 +224,12 @@ def _preflight_document_scope(
     extra_excludes: list[str] | None = None,
     content_policy: RootContentPolicy | None = None,
 ) -> DocumentScopedPreflight:
-    """Resolve document policy against only the caller-selected paths."""
+    """Resolve document policy against only the caller-selected paths.
+
+    ``DocumentIndexer.__init__`` only stores ``model``/``store``; both are
+    read lazily inside a run, never during construction or
+    ``preflight_changed_paths``, so ``None`` is safe here.
+    """
     from .indexer import DocumentIndexer
 
     indexer = DocumentIndexer(
@@ -344,6 +360,10 @@ def index_documents(
     with registry.compute_lease(root, model_name=options.model_name) as lease:
         runtime = lease.runtime
         if options.full or options.clean:
+            # The scoped-indexing guard above already raises when
+            # ``options.full or options.clean`` and ``changed_paths`` is set,
+            # so reaching here means ``preflight`` came from
+            # ``_preflight_document_index``, never ``_preflight_document_scope``.
             result = runtime.document_indexer.full_index(
                 clean=options.clean,
                 reporter=rep,
