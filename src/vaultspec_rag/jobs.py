@@ -233,8 +233,6 @@ _cpu_snapshot_lock = threading.Lock()
 _cpu_snapshot_cache: tuple[float, dict[str, object]] | None = None
 _cpu_probe_process: psutil.Process | None = None
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
-_manager_lock = threading.Lock()
-_job_manager: JobManager | None = None
 
 
 # Persisted active-jobs snapshot, under the managed status dir. Written on
@@ -244,16 +242,8 @@ _ACTIVE_SNAPSHOT_FILENAME = "jobs-active.json"
 
 
 def get_job_manager() -> JobManager:
-    """Return the lazily configured process-wide canonical job manager."""
-    global _job_manager
-    manager = _job_manager
-    if manager is None:
-        with _manager_lock:
-            manager = _job_manager
-            if manager is None:
-                manager = get_registry().create_job_manager()
-                _job_manager = manager
-    return manager
+    """Return the live registry's canonical controller-bound job manager."""
+    return get_registry().create_job_manager()
 
 
 def _active_snapshot_path() -> object:
@@ -1848,18 +1838,14 @@ def reset() -> None:
     can simulate a daemon death (records gone, snapshot intact) and then
     exercise :func:`restore_interrupted`.
 
-    Clearing this module's handle is not enough on its own: the manager is
-    built and cached by the registry, so :func:`get_job_manager` would hand
-    back the very instance holding the records and the non-terminal ceiling
-    this call is meant to drop.
+    The live registry owns the manager and its controller. Dropping that
+    registry-owned manager clears its records and cached non-terminal ceiling
+    without leaving a second lifecycle authority in this module.
     """
-    global _job_manager
     with _lock:
         _records.clear()
     with _backend_probe_lock:
         _backend_probe_cache.clear()
-    with _manager_lock:
-        _job_manager = None
     discard_job_manager()
 
 
