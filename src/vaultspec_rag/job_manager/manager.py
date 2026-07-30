@@ -95,6 +95,13 @@ class JobManager(
         )
         self._job_idempotency_keys: dict[str, set[str]] = {}
         self._dispatchers: dict[str, JobDispatchBinding] = {}
+        # The loop that owns managed execution for this service life, adopted
+        # at startup. Admission preflights run on ordinary worker threads, so
+        # the thread that decides to dispatch routinely has no loop of its
+        # own; without this the handoff has nowhere to go. ``None`` in a
+        # process that never adopted one (the local CLI), where a loopless
+        # dispatch is a genuine caller error rather than a thread boundary.
+        self._service_loop: asyncio.AbstractEventLoop | None = None
         self._retiring_tasks: set[asyncio.Task[Any]] = set()
         self._persistence_dirty = False
         self._accepting_dispatch = True
