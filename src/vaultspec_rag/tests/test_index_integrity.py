@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .._index_breadth import index_meta_path
+from .._index_breadth import index_meta_path, shortfall_warnings
 from .._index_integrity import (
     REASON_COUNT_UNAVAILABLE,
     REASON_FILE_COVERAGE_SHORTFALL,
@@ -433,3 +433,87 @@ class TestEnvelopeBlock:
         # Absent means "this surface predates the check" - an old daemon's
         # envelope shape must be reproducible exactly.
         assert "index_integrity" not in state
+
+
+from .._search_state import (  # noqa: E402
+    COLLAPSE_MINIMUM_RESULTS,
+    BreadthFindings,
+    result_collapse,
+    search_index_state,
+)
+
+
+class TestACollapsedResultPageIsReported:
+    """The signal for the collapse no count can see.
+
+    An interrupted rebuild that got as far as writing metadata republishes the
+    fragment's own figures, so the collection is self-consistent: live points
+    equal published points, named files equal covered files, and every
+    comparison the service can make agrees. The only thing left that disagrees
+    is the answer, where a broad query resolves every rank to one surviving
+    file and reads as a genuine "this does not exist here".
+
+    Proved able to fail. Removing the ``len(distinct) != 1`` test fails 2 of
+    the 9 cells on their ``is None`` assertions -
+    ``test_a_diverse_page_is_not_reported`` and
+    ``test_a_healthy_page_raises_no_warning`` - because a diverse page then
+    reports a collapse naming whichever path the set happened to yield.
+    Removing the ``COLLAPSE_MINIMUM_RESULTS`` test instead fails 4, the
+    ``test_a_page_too_small_to_judge_stays_silent`` cells for 1 through 4
+    results; the zero-result cell still passes, because an empty page has no
+    single distinct path either. Restoring each returns all 9 to green.
+    """
+
+    def test_a_collapsed_page_reports_its_figures(self) -> None:
+        collapse = result_collapse(("a.py",) * 10)
+        assert collapse == {
+            "result_count": 10,
+            "distinct_paths": 1,
+            "path": "a.py",
+        }
+
+    def test_a_diverse_page_is_not_reported(self) -> None:
+        assert result_collapse(("a.py", "b.py", "c.py", "d.py", "e.py")) is None
+        # One dissenting row is enough: the failure this names is total.
+        assert result_collapse(("a.py", "a.py", "a.py", "a.py", "b.py")) is None
+
+    @pytest.mark.parametrize("count", range(COLLAPSE_MINIMUM_RESULTS))
+    def test_a_page_too_small_to_judge_stays_silent(self, count: int) -> None:
+        # A narrow query legitimately answers from one file. Absence of the
+        # signal is "no evidence", never "diverse".
+        assert result_collapse(("a.py",) * count) is None
+
+    def test_the_block_carries_the_figures_to_both_surfaces(self) -> None:
+        state = search_index_state(
+            indexed_count=784,
+            requested_root="/root",
+            search_type=PublicSourceType.CODE,
+            findings=BreadthFindings(
+                collapse=result_collapse(("_run_ledger.py",) * 10)
+            ),
+        )
+        assert state["result_collapse"] == {
+            "result_count": 10,
+            "distinct_paths": 1,
+            "path": "_run_ledger.py",
+        }
+        # The count is healthy and no breadth deficit exists, so this is the
+        # only warning the walker can raise - which is the whole point.
+        assert "shortfall" not in state
+        assert "file_shortfall" not in state
+        warnings = shortfall_warnings(state)
+        assert len(warnings) == 1
+        assert "all 10 results resolve to a single file" in warnings[0].deficit
+        assert "_run_ledger.py" in warnings[0].deficit
+
+    def test_a_healthy_page_raises_no_warning(self) -> None:
+        state = search_index_state(
+            indexed_count=784,
+            requested_root="/root",
+            search_type=PublicSourceType.CODE,
+            findings=BreadthFindings(
+                collapse=result_collapse(("a.py", "b.py", "c.py", "d.py", "e.py"))
+            ),
+        )
+        assert "result_collapse" not in state
+        assert shortfall_warnings(state) == []

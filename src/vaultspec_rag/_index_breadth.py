@@ -234,6 +234,25 @@ def shortfall_warnings(index_state: Mapping[str, object]) -> list[ShortfallWarni
                 why="A file absent from the index cannot be found by any query",
             )
         )
+    # Third kind, and the only one derived from the answer rather than from a
+    # claim. It fires exactly where the other two cannot: a fragment that
+    # republished its own figures is self-consistent, so every count agrees
+    # and nothing above this line has anything to compare.
+    collapse = _shortfall_figures(index_state, "result_collapse")
+    if collapse is not None:
+        warnings.append(
+            ShortfallWarning(
+                deficit=(
+                    f"all {collapse.get('result_count')} results resolve to a "
+                    f"single file, {collapse.get('path')}"
+                ),
+                missing="no other file matched",
+                why=(
+                    "An index serving one file answers every query from it, "
+                    "and the answer looks like a real absence"
+                ),
+            )
+        )
     return warnings
 
 
