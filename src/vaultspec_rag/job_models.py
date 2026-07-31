@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import cast
 
 from . import _typed_fields
 
@@ -245,15 +246,80 @@ def _require_bool(name: str, value: object, *, optional: bool = False) -> None:
     )
 
 
-def _require_string_keyed_mapping(name: str, value: object) -> None:
+#: What a telemetry value may be, quoted by the refusal so a producer reading
+#: the traceback learns the whole rule rather than only which value broke it.
+_JSON_VALUE_REQUIREMENT = (
+    "a JSON value: null, a boolean, a number, a string, an array, "
+    "or an object with string keys"
+)
+
+_OBJECT_REQUIREMENT = "an object with string keys"
+
+
+def _require_json_telemetry_block(name: str, value: object) -> None:
+    """Refuse a telemetry block a write and read back would not return intact.
+
+    These blocks are free-form by intent - a run publishes whatever it measured
+    - but they are persisted as JSON, and JSON has a value space. Outside it
+    the round trip does not fail, it substitutes: a tuple returns a list, a
+    non-string key returns a string, and a non-finite number cannot be encoded
+    at all, so one decorative value makes a whole generation unwritable.
+    Either way the damage is found a process removed from whatever produced it.
+    Constraining the value space at construction puts the refusal in the
+    producing traceback instead, naming the exact path that broke it.
+
+    This cannot cost a start. The set admitted here is every value ``json.loads``
+    can return from a file this writer produced: the single JSON writer refuses
+    non-finite numbers, so a persisted block holds only null, booleans, numbers,
+    strings, arrays and string-keyed objects - which is the whole of what passes
+    below. The check therefore fires only on a value still in memory, never on
+    one read back off disk, and every file already written still loads.
+
+    Walked iteratively, so nesting deep enough to exhaust the encoder is still
+    reported by the encoder as an unwritable payload rather than here as an
+    unconstructable one. Containers already visited are not re-entered, which
+    bounds the walk over a shared or self-referential structure; a genuinely
+    circular one is refused by the encoder, since no walk can make it JSON.
+    """
     if value is None:
         return
-    _typed_fields.required_mapping(
+    block = _typed_fields.required_mapping(
         value,
-        on_invalid=lambda: _rejection(
-            name, "a mapping with string keys", optional=True
-        ),
+        on_invalid=lambda: _rejection(name, _OBJECT_REQUIREMENT, optional=True),
     )
+    pending: list[tuple[str, object]] = [
+        (f"{name}[{key!r}]", item) for key, item in block.items()
+    ]
+    seen: set[int] = {id(block)}
+    while pending:
+        path, current = pending.pop()
+        if current is None or isinstance(current, bool | int | str):
+            continue
+        if isinstance(current, float):
+            # Reuses the number contract every other persisted float is held
+            # to, so "finite" means one thing across the whole record.
+            _require_number(path, current)
+            continue
+        if isinstance(current, dict):
+            nested = cast("dict[object, object]", current)
+            if id(nested) in seen:
+                continue
+            seen.add(id(nested))
+            for key, item in nested.items():
+                if not isinstance(key, str):
+                    raise _rejection(path, _OBJECT_REQUIREMENT, optional=False)
+                pending.append((f"{path}[{key!r}]", item))
+            continue
+        if isinstance(current, list):
+            items = cast("list[object]", current)
+            if id(items) in seen:
+                continue
+            seen.add(id(items))
+            pending.extend(
+                (f"{path}[{index}]", item) for index, item in enumerate(items)
+            )
+            continue
+        raise _rejection(path, _JSON_VALUE_REQUIREMENT, optional=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -529,14 +595,16 @@ class JobSnapshot:
     #: result, or ``None`` when reuse was disabled or the attempt never
     #: reached the encode pipeline. Carried on the canonical resource so
     #: the served job view reports it; the legacy activity record is
-    #: shadowed by this snapshot for every manager-owned job.
+    #: shadowed by this snapshot for every manager-owned job. Which counters a
+    #: run reports is open; what they may hold is not - see
+    #: :func:`_require_json_telemetry_block`.
     reuse: dict[str, object] | None = None
     #: Source-drift telemetry from the finished attempt: how many paths moved
     #: while the run was recording them and had to be superseded, and any left
     #: stale for the next generation. Carried here because a run that
     #: remediates drift succeeds, so the circuit breaker - which counts faults
     #: only - is deliberately blind to it, and this is where drift volume
-    #: becomes visible instead.
+    #: becomes visible instead. Holds the same value space as :attr:`reuse`.
     drift: dict[str, object] | None = None
     #: Seconds the finished (or in-flight, at last publication) attempt
     #: spent waiting to acquire the process GPU lock, accumulated across
@@ -556,8 +624,8 @@ class JobSnapshot:
             minimum=0.0,
             optional=True,
         )
-        _require_string_keyed_mapping("reuse", self.reuse)
-        _require_string_keyed_mapping("drift", self.drift)
+        _require_json_telemetry_block("reuse", self.reuse)
+        _require_json_telemetry_block("drift", self.drift)
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable JSON-ready resource representation."""
