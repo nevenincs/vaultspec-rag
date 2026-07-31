@@ -677,6 +677,38 @@ def _raise_deadline_exhausted(
     ) from exc
 
 
+def _retry_token_after_401(
+    request_options: _HTTPCallRequest,
+    port: int,
+    remaining: Callable[[str], float],
+    fail: Callable[[Exception, str], NoReturn],
+) -> str | None:
+    """Obtain the credential to retry a 401 with, or ``None`` to accept it.
+
+    A caller that pinned the service identity itself renews only through its
+    own witness, so when it supplies no ``refresh_bearer_token`` the exchange
+    ends on the refusal already in hand. The ordinary path spends one
+    ``/health`` token refresh instead. Both charge their wait to the whole-call
+    deadline, and a refresh that fails is reported against its own stage.
+    """
+    if request_options.initial_bearer_token is not None:
+        refresh_bearer_token = request_options.refresh_bearer_token
+        if refresh_bearer_token is None:
+            return None
+        try:
+            fresh = refresh_bearer_token()
+        except Exception as exc:
+            fail(exc, "verified-token refresh")
+        remaining("verified-token refresh")
+        return fresh
+    try:
+        fresh = _fetch_health_token(port, remaining("health-token request"))
+    except Exception as exc:
+        fail(exc, "health-token request")
+    remaining("health-token response")
+    return fresh
+
+
 def _do_http_call(
     port: int,
     path: str,
@@ -734,6 +766,15 @@ def _do_http_call(
             )
         return value
 
+    def fail(exc: Exception, stage: str) -> NoReturn:
+        _raise_deadline_exhausted(
+            exc,
+            stage=stage,
+            timeout=resolved_timeout,
+            started=started,
+            deadline=deadline,
+        )
+
     def send(stage: str, token: str) -> tuple[int, dict[str, object]]:
         try:
             return _send_call(
@@ -750,13 +791,7 @@ def _do_http_call(
                 remaining(stage),
             )
         except Exception as exc:
-            _raise_deadline_exhausted(
-                exc,
-                stage=stage,
-                timeout=resolved_timeout,
-                started=started,
-                deadline=deadline,
-            )
+            fail(exc, stage)
 
     initial_bearer_token = request_options.initial_bearer_token
     token = (
@@ -768,33 +803,9 @@ def _do_http_call(
     remaining("initial response")
 
     if status_code == 401:
-        if initial_bearer_token is not None:
-            refresh_bearer_token = request_options.refresh_bearer_token
-            if refresh_bearer_token is None:
-                return result
-            try:
-                fresh = refresh_bearer_token()
-            except Exception as exc:
-                _raise_deadline_exhausted(
-                    exc,
-                    stage="verified-token refresh",
-                    timeout=resolved_timeout,
-                    started=started,
-                    deadline=deadline,
-                )
-            remaining("verified-token refresh")
-        else:
-            try:
-                fresh = _fetch_health_token(port, remaining("health-token request"))
-            except Exception as exc:
-                _raise_deadline_exhausted(
-                    exc,
-                    stage="health-token request",
-                    timeout=resolved_timeout,
-                    started=started,
-                    deadline=deadline,
-                )
-            remaining("health-token response")
+        fresh = _retry_token_after_401(request_options, port, remaining, fail)
+        if fresh is None:
+            return result
         # A captured caller has just revalidated one pinned identity.  A 401 can
         # be a transient authentication race even when that identity retains
         # the same bearer, so it receives exactly one authenticated retry.  The

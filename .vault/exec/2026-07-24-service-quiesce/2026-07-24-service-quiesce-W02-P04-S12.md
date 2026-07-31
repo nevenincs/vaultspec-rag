@@ -9,6 +9,7 @@ step_id: 'S12'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # CPU transition-coordinator proof remediation
 
 ## Status
