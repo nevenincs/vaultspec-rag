@@ -25,7 +25,7 @@ of being shown two versions that differ.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -137,7 +137,7 @@ class ServiceVersionVerdict:
         }
 
 
-def _reported_version(payload: Mapping[str, Any] | None) -> str | None:
+def _reported_version(payload: Mapping[str, object] | None) -> str | None:
     """Return the service version a payload reports, or ``None``."""
     if payload is None:
         return None
@@ -148,7 +148,7 @@ def _reported_version(payload: Mapping[str, Any] | None) -> str | None:
 
 
 def classify_service_version(
-    payload: Mapping[str, Any] | None,
+    payload: Mapping[str, object] | None,
 ) -> ServiceVersionVerdict:
     """Classify a service payload's reported version against this client's.
 

@@ -11,6 +11,14 @@ import pytest
 
 from vaultspec_rag import store_schema as ss
 
+from .._store_models import (
+    CodeChunk,
+    VaultChunk,
+    VaultDocument,
+    _code_chunk_payload,
+    _vault_chunk_payload,
+    _vault_doc_payload,
+)
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 pytestmark = [pytest.mark.unit]
@@ -19,11 +27,22 @@ pytestmark = [pytest.mark.unit]
 class TestDescriptor:
     """describe_storage_schema builds the bounded wire descriptor."""
 
-    def test_descriptor_carries_version_and_collections(self) -> None:
+    def test_descriptor_carries_the_pinned_version_and_collection_names(self) -> None:
+        """The version and collection names are pinned to explicit literals.
+
+        Comparing the descriptor against ``STORAGE_SCHEMA_VERSION`` and the
+        ``*_COLLECTION`` constants only restates the values the descriptor is
+        built from, so it passes for any value either takes. Both are wire
+        facts an out-of-process consumer matches on - the version gates whether
+        it reads at all, the collection suffix is what it opens - and both
+        change only as a declared breaking change, so the literals here are the
+        independent statement a change has to be mirrored into deliberately.
+        """
         desc = ss.describe_storage_schema()
-        assert desc["version"] == ss.STORAGE_SCHEMA_VERSION
-        assert desc["vault"]["collection"] == ss.VAULT_COLLECTION
-        assert desc["code"]["collection"] == ss.CODE_COLLECTION
+        assert desc["version"] == 2
+        assert desc["vault"]["collection"] == "vault_docs"
+        assert desc["code"]["collection"] == "codebase_docs"
+        assert desc["document"]["collection"] == "document_docs"
 
     def test_descriptor_dense_vector_is_effective(self) -> None:
         desc = ss.describe_storage_schema()
@@ -35,24 +54,110 @@ class TestDescriptor:
         # vault and code share the same dense vector.
         assert desc["code"]["vectors"]["dense"] == dense
 
-    def test_descriptor_payload_fields_match_typeddicts(self) -> None:
+    def test_descriptor_payload_fields_match_the_persisted_payloads(self) -> None:
+        """The advertised field list equals what the writer actually persists.
+
+        Compared against the payloads the production builders produce, not
+        against the TypedDicts: ``payload_fields`` is itself derived from those
+        same ``__annotations__``, so a TypedDict-vs-descriptor comparison
+        restates one source against itself and passes for any field added to
+        it. The builders are an independent statement of the same contract -
+        they are what a reader actually finds on a point - so a field declared
+        but never written, or written but never advertised, fails here.
+
+        Sorted rather than positional: field ORDER is not part of the wire
+        contract (a consumer reads by key), so pinning it would fail on a
+        cosmetic reorder while proving nothing extra.
+        """
         desc = ss.describe_storage_schema()
-        assert desc["vault"]["payload_fields"]["document"] == list(
-            ss.VaultDocPayload.__annotations__
+        doc = VaultDocument(
+            id="adr/overview",
+            path="adr/overview.md",
+            doc_type="adr",
+            feature="demo",
+            date="2026-06-27",
+            tags=["#adr"],
+            related=["[[x]]"],
+            title="Overview",
+            content="body",
+            status="accepted",
         )
-        assert desc["vault"]["payload_fields"]["chunk"] == list(
-            ss.VaultChunkPayload.__annotations__
+        # Ordinal 0 carrying a doc_content is the only chunk shape that writes
+        # the NotRequired ``doc_content``, so it is the one shape that
+        # exercises the whole advertised chunk field set.
+        chunk = VaultChunk(
+            doc_id=doc.id,
+            ordinal=0,
+            chunk_count=1,
+            text="chunk text",
+            path=doc.path,
+            doc_type=doc.doc_type,
+            feature=doc.feature,
+            date=doc.date,
+            tags=doc.tags,
+            related=doc.related,
+            title=doc.title,
+            status=doc.status,
+            doc_content=doc.content,
         )
-        assert desc["code"]["payload_fields"]["chunk"] == list(
-            ss.CodeChunkPayload.__annotations__
+        code = CodeChunk(
+            id="src/main.py:1-2",
+            path="src/main.py",
+            language="python",
+            content="x = 1",
+            line_start=1,
+            line_end=2,
+        )
+        assert sorted(desc["vault"]["payload_fields"]["document"]) == sorted(
+            _vault_doc_payload(doc)
+        )
+        assert sorted(desc["vault"]["payload_fields"]["chunk"]) == sorted(
+            _vault_chunk_payload(chunk)
+        )
+        assert sorted(desc["code"]["payload_fields"]["chunk"]) == sorted(
+            _code_chunk_payload(code)
         )
 
-    def test_descriptor_indexes_match_tuples(self) -> None:
+    def test_descriptor_advertises_the_pinned_index_sets(self) -> None:
+        """The advertised index sets are pinned to explicit literals.
+
+        The module tuples are what the descriptor is built from, so comparing
+        the two restates one source against itself and admits any field added
+        to either. The index set is a wire contract a consumer plans its
+        queries against, and a change to it that alters query semantics is a
+        declared breaking change, so it is mirrored here deliberately rather
+        than absorbed silently.
+        """
         desc = ss.describe_storage_schema()
-        assert desc["vault"]["indexes"]["keyword"] == list(ss.VAULT_KEYWORD_INDEXES)
-        assert desc["vault"]["indexes"]["integer"] == list(ss.VAULT_INTEGER_INDEXES)
-        assert desc["code"]["indexes"]["keyword"] == list(ss.CODE_KEYWORD_INDEXES)
-        assert desc["code"]["indexes"]["integer"] == list(ss.CODE_INTEGER_INDEXES)
+        assert desc["vault"]["indexes"] == {
+            "keyword": ["doc_type", "feature", "date", "tags", "doc_id"],
+            "integer": ["chunk_ordinal"],
+        }
+        assert desc["code"]["indexes"] == {
+            "keyword": [
+                "path",
+                "language",
+                "function_name",
+                "class_name",
+                "node_type",
+                "preprocessor_id",
+                "locator_kind",
+                "locator_value_str",
+                "domain",
+            ],
+            "integer": ["line_start", "locator_value_int"],
+        }
+        assert desc["document"]["indexes"] == {
+            "keyword": [
+                "source_path",
+                "content_fingerprint",
+                "extractor_id",
+                "extractor_version",
+                "locator_kind",
+                "locator_value_str",
+            ],
+            "integer": ["unit_ordinal", "locator_value_int"],
+        }
 
     def test_descriptor_is_json_serialisable(self) -> None:
         import json
@@ -106,13 +211,24 @@ class TestAssertCompatible:
         assert "dimension" in verdict["reason"]
 
     def test_missing_dense_vector_refuses(self) -> None:
+        """The refusal comes from the dense-NAME branch, not its neighbour.
+
+        A descriptor with no dense vector at all reaches the dimension check
+        too if the name check is skipped, and BOTH messages contain the word
+        "dense" - so matching a bare "dense" passes whichever branch fires and
+        a deleted name check falls through unnoticed. The name fragment below
+        is emitted only by the name branch, and the negative pins that control
+        never reached the dimension branch. Do not loosen either: matching only
+        "dense" is what made this test vacuous.
+        """
         verdict = ss.assert_compatible(
             {"version": 1, "vault": {"vectors": {}}},
             known_version=1,
             expected_dense_dim=1024,
         )
         assert verdict["compatible"] is False
-        assert "dense" in verdict["reason"]
+        assert "no dense vector named 'dense'" in verdict["reason"]
+        assert "dimension" not in verdict["reason"]
 
     def test_non_integer_version_refuses(self) -> None:
         verdict = ss.assert_compatible(

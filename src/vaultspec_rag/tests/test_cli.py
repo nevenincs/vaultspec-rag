@@ -106,7 +106,12 @@ class TestHelpCleanup:
         normalized = " ".join(result.output.split())
         assert "Build or update" in result.output
         assert "Uses the running service" in normalized
-        assert "selected service is not reachable" in normalized
+        # The index verb no longer falls back to local work when the
+        # service is unreachable - it refuses and names the explicit
+        # borrow instead. Help still offering a fallback would describe a
+        # path the command removed, so the escape hatch is what belongs
+        # here. Search keeps the original clause and still asserts it.
+        assert "--borrow-gpu for explicit local GPU work" in normalized
         assert "--dry-run-limit" in result.output
         assert "selected service is unavailable" not in normalized
         for forbidden in ("Qdrant", "tqdm", "agent / CI", "fast path"):

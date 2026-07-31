@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import inspect
 import json
 import os
 import subprocess
@@ -50,13 +49,33 @@ class TestServerCommands:
         assert "watcher" not in result.output.lower()
         assert "mcp" not in result.output.lower()
 
-    def test_server_watch_selects_the_balanced_server_mode(self):
-        """The root watch enters the canonical app in balanced server mode."""
-        from ..cli._app import server_main
+    def test_server_watch_selects_the_balanced_server_mode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``server --watch`` enters the canonical app in balanced server mode.
 
-        source = inspect.getsource(server_main)
+        Mutation this catches: dispatching any other ``watch_mode``. The
+        earlier version scanned ``server_main``'s source for the literal
+        ``watch_mode="server"``, which still matches a dispatch of
+        ``watch_mode="server" if <never> else "jobs"`` - it passed while the
+        verb really entered jobs mode.
+        """
+        from ..cli import _service_jobs_collection
 
-        assert 'watch_mode="server"' in source
+        seen: list[_service_jobs_collection.ServiceJobsOptions] = []
+
+        def _capture(options: _service_jobs_collection.ServiceJobsOptions) -> None:
+            seen.append(options)
+
+        monkeypatch.setattr(_service_jobs_collection, "run_service_jobs", _capture)
+
+        result = runner.invoke(app, ["server", "--watch"])
+
+        assert result.exit_code == 0, result.output
+        assert len(seen) == 1, seen
+        assert seen[0].watch_mode == "server"
+        assert seen[0].watch is True
 
     def test_server_without_watch_still_shows_help(self):
         """The bare group keeps printing help; --watch is the only new path."""
@@ -251,7 +270,9 @@ class TestServerRoutingFlattened:
         try:
             _write_service_status(pid=os.getpid(), port=8766)
             sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
+            data = typing.cast(
+                "dict[str, object]", json.loads(sf.read_text(encoding="utf-8"))
+            )
             data.update(
                 {
                     "qdrant_pid": 43210,
@@ -368,7 +389,7 @@ class TestServiceLogsCli:
             reset_rag_config()
 
         assert result.exit_code == 0, result.output
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope == {
             "ok": True,
             "command": "server.logs",
@@ -704,14 +725,16 @@ class TestServiceProjectsCli:
 
         assert result.exit_code == 1, result.output
         assert requests == [{"root": r"C:\projects\example"}]
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is False
         assert envelope["command"] == "service.projects.unload"
         assert envelope["error"] == "unexpected_response"
-        assert r"C:\projects\example" in envelope["message"]
-        assert "vaultspec-rag server status" in envelope["message"]
-        assert "Eviction failed" not in envelope["message"]
-        assert "reason=" not in envelope["message"]
+        message = envelope["message"]
+        assert isinstance(message, str)
+        assert r"C:\projects\example" in message
+        assert "vaultspec-rag server status" in message
+        assert "Eviction failed" not in message
+        assert "reason=" not in message
 
 
 class TestLifecycleShutdownLog:

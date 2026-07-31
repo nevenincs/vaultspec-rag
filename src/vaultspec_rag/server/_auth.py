@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from starlette.responses import JSONResponse
 
-import vaultspec_rag.server as _m
+from ._runtime import get_request_runtime
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -42,9 +42,8 @@ def _extract_token(request: Request) -> str | None:
 def require_token(request: Request) -> JSONResponse | None:
     """Token-gate a request; return a 401 response when it fails.
 
-    The live ``_state._SERVICE_TOKEN`` is read through the package alias
-    so the value the lifespan generated at startup is observed. The
-    presented token is compared in constant time
+    The token comes from the immutable runtime installed on the current
+    HTTP application. The presented token is compared in constant time
     (:func:`hmac.compare_digest`).
 
     Args:
@@ -55,7 +54,7 @@ def require_token(request: Request) -> JSONResponse | None:
         ``JSONResponse`` with HTTP 401 when the token is missing or
         wrong (caller must return it).
     """
-    expected = _m._SERVICE_TOKEN
+    expected = get_request_runtime(request).token
     presented = _extract_token(request)
     if expected and presented is not None and hmac.compare_digest(presented, expected):
         return None

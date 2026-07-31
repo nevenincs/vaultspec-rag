@@ -595,30 +595,69 @@ class TestMcpFailureIsRecordedOneWay:
             "removing describe one condition the same way"
         )
 
-    def test_no_verb_records_the_two_channels_by_hand(self) -> None:
-        """Both lists are reached through one function, or one gets forgotten."""
+    #: The two lists ``record_mcp_failure`` writes, and this forbids writing
+    #: together anywhere else.
+    _CHANNELS: ClassVar[frozenset[str]] = frozenset({"mcp_errors", "warnings"})
+
+    #: The verbs only. ``_mcp_topology`` holds ``record_mcp_failure``, whose
+    #: body is the two appends this forbids everywhere else; leaving it out of
+    #: the scanned set is what exempts it.
+    _SCANNED_VERBS: ClassVar[tuple[str, ...]] = ("_install.py", "_uninstall.py")
+
+    @classmethod
+    def _channel_append(cls, node: ast.AST) -> tuple[str, str, int] | None:
+        """Return ``(channel, argument, line)`` for ``x.<channel>.append(y)``."""
+        if not isinstance(node, ast.Call) or len(node.args) != 1 or node.keywords:
+            return None
+        method = node.func
+        if not isinstance(method, ast.Attribute) or method.attr != "append":
+            return None
+        channel = method.value
+        if not isinstance(channel, ast.Attribute) or channel.attr not in cls._CHANNELS:
+            return None
+        return channel.attr, ast.dump(node.args[0]), node.lineno
+
+    @classmethod
+    def _hand_written_pairs(cls, path: Path) -> list[str]:
+        """Return every function writing one expression to both channels."""
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         find_offenders: list[str] = []
-        # The verbs only. ``_mcp_topology`` holds ``record_mcp_failure``, whose
-        # body is the two appends this forbids everywhere else.
-        for name in ("_install.py", "_uninstall.py"):
-            path = _PACKAGE_ROOT / "commands" / name
-            lines = path.read_text(encoding="utf-8").splitlines()
-            for number, line in enumerate(lines, start=1):
-                nxt = lines[number] if number < len(lines) else ""
-                first, second = line.strip(), nxt.strip()
+        for scope in ast.walk(tree):
+            if not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            # Keyed by the argument, so the name it is bound to is irrelevant:
+            # a ``rollback_message`` pair reads the same as a ``message`` one,
+            # and an inline expression appended twice reads the same again.
+            written: dict[str, dict[str, int]] = {}
+            for node in ast.walk(scope):
+                found = cls._channel_append(node)
+                if found is None:
+                    continue
+                channel, argument, line = found
                 # Both orders count: the two copies had settled on opposite
                 # ones, so matching only errors-then-warnings would have seen
                 # half the sites.
-                channels = {
-                    suffix
-                    for suffix in (
-                        "mcp_errors.append(message)",
-                        "warnings.append(message)",
-                    )
-                    if first.endswith(suffix) or second.endswith(suffix)
-                }
-                if len(channels) == 2:
-                    find_offenders.append(f"{name}:{number}")
+                written.setdefault(argument, {}).setdefault(channel, line)
+            find_offenders.extend(
+                f"{path.name}:{min(seen.values())} in {scope.name}"
+                for seen in written.values()
+                if len(seen) == len(cls._CHANNELS)
+            )
+        return find_offenders
+
+    def test_no_verb_records_the_two_channels_by_hand(self) -> None:
+        """Both lists are reached through one function, or one gets forgotten.
+
+        Proven able to fail: restoring either hand-written rollback pair in
+        ``_commit_mcp_placement_and_mode`` fails this naming ``_install.py``.
+        The literal-text matcher this replaced did not, because it keyed on the
+        spelling ``message`` and the pair was named ``rollback_message``.
+        """
+        find_offenders = [
+            offender
+            for name in self._SCANNED_VERBS
+            for offender in self._hand_written_pairs(_PACKAGE_ROOT / "commands" / name)
+        ]
         assert not find_offenders, (
             f"a failure is appended to both channels by hand at {find_offenders}; "
             "call record_mcp_failure, because the pair is what makes a refusal "

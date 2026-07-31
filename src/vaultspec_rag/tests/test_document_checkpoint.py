@@ -31,6 +31,7 @@ from ..indexer._content_policy import (
 from ..indexer._document_checkpoint import (
     DocumentRunCheckpoint,
     DocumentRunConfiguration,
+    DocumentRunOpenRequest,
 )
 from ..indexer._file_state import FileStateKind
 from ..indexer._resolved_policy import (
@@ -70,15 +71,17 @@ def _open(
         ),
     )
     return DocumentRunCheckpoint.open(
-        data_root=tmp_path / ".state",
-        root_dir=tmp_path,
-        policy=policy,
-        run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
-        operation=operation,
-        clean=False,
-        model_identity="model-v1",
-        dense_dimensions=8,
-        configuration=configuration or _configuration(),
+        DocumentRunOpenRequest(
+            data_root=tmp_path / ".state",
+            root_dir=tmp_path,
+            policy=policy,
+            run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
+            operation=operation,
+            clean=False,
+            model_identity="model-v1",
+            dense_dimensions=8,
+            configuration=configuration or _configuration(),
+        )
     )
 
 

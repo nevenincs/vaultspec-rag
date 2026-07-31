@@ -264,12 +264,17 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
     from ...indexer._document_checkpoint import (
         DocumentRunCheckpoint,
         DocumentRunConfiguration,
+        DocumentRunOpenRequest,
     )
     from ...indexer._resolved_policy import (
         IndexPolicyResolutionOptions,
         resolve_index_policy,
     )
-    from ...indexer._run_checkpoint import CodeRunCheckpoint, CodeRunConfiguration
+    from ...indexer._run_checkpoint import (
+        CodeRunCheckpoint,
+        CodeRunConfiguration,
+        CodeRunOpenRequest,
+    )
     from ...indexer._run_ledger_models import RunOperation, RunTerminalState
     from ...indexer._run_policy import RunPolicy
     from ...indexer._streaming import CodeFileSegment
@@ -304,28 +309,32 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
 
     def _open_code() -> CodeRunCheckpoint:
         return CodeRunCheckpoint.open(
-            data_root=data_root,
-            root_dir=tmp_path,
-            policy=policy,
-            run_policy=run_policy,
-            operation=RunOperation.FULL,
-            clean=False,
-            model_identity="restart-model-v1",
-            dense_dimensions=4,
-            configuration=code_configuration,
+            CodeRunOpenRequest(
+                data_root=data_root,
+                root_dir=tmp_path,
+                policy=policy,
+                run_policy=run_policy,
+                operation=RunOperation.FULL,
+                clean=False,
+                model_identity="restart-model-v1",
+                dense_dimensions=4,
+                configuration=code_configuration,
+            )
         )
 
     def _open_document() -> DocumentRunCheckpoint:
         return DocumentRunCheckpoint.open(
-            data_root=data_root,
-            root_dir=tmp_path,
-            policy=policy,
-            run_policy=run_policy,
-            operation=RunOperation.FULL,
-            clean=False,
-            model_identity="restart-model-v1",
-            dense_dimensions=4,
-            configuration=document_configuration,
+            DocumentRunOpenRequest(
+                data_root=data_root,
+                root_dir=tmp_path,
+                policy=policy,
+                run_policy=run_policy,
+                operation=RunOperation.FULL,
+                clean=False,
+                model_identity="restart-model-v1",
+                dense_dimensions=4,
+                configuration=document_configuration,
+            )
         )
 
     code_digest = hashlib.blake2b(b"code restart input").hexdigest()

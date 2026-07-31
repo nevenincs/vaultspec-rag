@@ -377,7 +377,7 @@ class TestServerModeWatcherEviction:
         embedding_model: EmbeddingModel,
         tmp_path: Path,
     ) -> None:
-        from ... import CodebaseIndexer, VaultIndexer
+        from ... import VaultIndexer
         from ...graph_cache import GraphCache
         from ...store_runtime import VaultStore
         from ...watcher_intake import watch_and_reindex
@@ -401,7 +401,6 @@ class TestServerModeWatcherEviction:
 
         store = VaultStore(tmp_path)
         vault_indexer = VaultIndexer(tmp_path, embedding_model, store)
-        code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
         graph_cache = GraphCache()
         vault_indexer.full_index(reporter=NullProgressReporter())
 
@@ -427,8 +426,6 @@ class TestServerModeWatcherEviction:
                 WatcherConfiguration(
                     root_dir=tmp_path,
                     vault_dir=vault_dir,
-                    vault_indexer=vault_indexer,
-                    code_indexer=code_indexer,
                     stop_event=stop_event,
                     graph_cache=graph_cache,
                     debounce=50,
@@ -476,7 +473,7 @@ class TestServerModeWatcherEviction:
     ) -> None:
         """The user's exact scenario: a deleted code file must drop out of
         code search after the watcher's scoped reindex, in server mode."""
-        from ... import CodebaseIndexer, VaultIndexer
+        from ... import CodebaseIndexer
         from ...graph_cache import GraphCache
         from ...search import VaultSearcher
         from ...store_runtime import VaultStore
@@ -499,7 +496,6 @@ class TestServerModeWatcherEviction:
         )
 
         store = VaultStore(tmp_path)
-        vault_indexer = VaultIndexer(tmp_path, embedding_model, store)
         code_indexer = CodebaseIndexer(tmp_path, embedding_model, store)
         graph_cache = GraphCache()
         code_indexer.full_index(
@@ -526,8 +522,6 @@ class TestServerModeWatcherEviction:
                 WatcherConfiguration(
                     root_dir=tmp_path,
                     vault_dir=vault_dir,
-                    vault_indexer=vault_indexer,
-                    code_indexer=code_indexer,
                     stop_event=stop_event,
                     graph_cache=graph_cache,
                     debounce=50,

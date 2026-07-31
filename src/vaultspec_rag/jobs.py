@@ -16,7 +16,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import median
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Literal, cast, get_args
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -24,7 +24,6 @@ from ._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text
 from ._runtime_identity import process_identity_fields
 from .config._settings import managed_status_dir
 from .job_control import NO_RUN_CONTROL
-from .job_manager.manager import JobManager
 from .job_manager.models import MAX_RECORDS, JobAttemptContext, JobExecutionResult
 from .job_models import (
     DesiredJobState,
@@ -39,7 +38,7 @@ from .job_models import (
     JobState,
 )
 from .logging_config import log_event
-from .registry import get_registry
+from .registry import discard_job_manager, get_registry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,7 +46,6 @@ if TYPE_CHECKING:
     import psutil
 
     from .index_profiles import SupportMeasurement
-    from .indexer import CodebaseIndexer
     from .indexer._codebase_indexer import (
         CodeIndexPreflight,
         CodeScopedPreflight,
@@ -58,6 +56,7 @@ if TYPE_CHECKING:
         DocumentScopedPreflight,
     )
     from .job_control import RunControl
+    from .job_manager.manager import JobManager
     from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
@@ -98,6 +97,7 @@ __all__ = [
     "start_reindex_documents",
     "start_reindex_vault",
     "telemetry_block",
+    "text",
     "validate_code_index_policy",
     "validate_code_job_admission",
     "validate_code_support_profile",
@@ -135,8 +135,11 @@ Phase = Literal[
     "interrupted",
 ]
 #: Phases a record can no longer leave. Every phase except ``running`` is
-#: terminal, and this is the sole definition of that set: deletion, retention
-#: and the read surface all have to agree on which records are finished.
+#: terminal, and this derived set is what deletion and retention read.
+#: ``server._routes_jobs._LEGACY_TERMINAL_PHASES`` restates the same phase
+#: spellings by hand for its state-alias table; a guard test pins the two
+#: keysets together, so this is not the sole copy but is the one drift would
+#: be caught against.
 TERMINAL_PHASES: frozenset[str] = frozenset(
     phase for phase in get_args(Phase) if phase != "running"
 )
@@ -214,6 +217,14 @@ _backend_probe_cache: dict[tuple[str, str], tuple[float, dict[str, object]]] = {
 _GPU_SNAPSHOT_CACHE_SECONDS = 5.0
 _gpu_snapshot_lock = threading.Lock()
 _gpu_snapshot_cache: tuple[float, dict[str, object]] | None = None
+# The device-load admission reading served on the jobs listing, held the same
+# few seconds and by the same rationale: the same open operator views poll
+# this route at the same cadence as the GPU pressure block above, and a
+# per-poll device read is exactly the cost that block's own cache exists to
+# avoid.
+_DEVICE_LOAD_SNAPSHOT_CACHE_SECONDS = 5.0
+_device_load_snapshot_lock = threading.Lock()
+_device_load_snapshot_cache: tuple[float, dict[str, object] | None] | None = None
 # Service-process CPU utilisation for degradation evidence. ``cpu_percent``
 # measures the interval since its own previous call, so one persistent
 # process handle is kept and the reading is cached for a few seconds: polls
@@ -224,8 +235,6 @@ _cpu_snapshot_lock = threading.Lock()
 _cpu_snapshot_cache: tuple[float, dict[str, object]] | None = None
 _cpu_probe_process: psutil.Process | None = None
 _on_job_complete_callbacks: list[Callable[[float], None]] = []
-_manager_lock = threading.Lock()
-_job_manager: JobManager | None = None
 
 
 # Persisted active-jobs snapshot, under the managed status dir. Written on
@@ -235,19 +244,11 @@ _ACTIVE_SNAPSHOT_FILENAME = "jobs-active.json"
 
 
 def get_job_manager() -> JobManager:
-    """Return the lazily configured process-wide canonical job manager."""
-    global _job_manager
-    manager = _job_manager
-    if manager is None:
-        with _manager_lock:
-            manager = _job_manager
-            if manager is None:
-                manager = JobManager(quiesce_gate=get_registry().quiesce_gate)
-                _job_manager = manager
-    return manager
+    """Return the live registry's canonical controller-bound job manager."""
+    return get_registry().create_job_manager()
 
 
-def _active_snapshot_path() -> object:
+def _active_snapshot_path() -> Path:
     """Resolve the active-jobs snapshot path from the managed status dir."""
 
     return managed_status_dir() / _ACTIVE_SNAPSHOT_FILENAME
@@ -290,7 +291,7 @@ def _persist_active_snapshot() -> None:
         ]
     try:
         write_json_atomically(
-            cast("Path", _active_snapshot_path()),
+            _active_snapshot_path(),
             {"active": active},
             JsonWriteOptions(durable=True),
         )
@@ -323,7 +324,7 @@ def restore_interrupted() -> int:
     """
     import json as _json
 
-    path = cast("Path", _active_snapshot_path())
+    path = _active_snapshot_path()
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -410,13 +411,13 @@ def restore_interrupted() -> int:
 
 def resource_snapshot() -> dict[str, object]:
     """Return a best-effort current resource snapshot for the service process."""
-    from .memory_probe import current_cuda_mb, current_rss_mb
+    from .memory_probe import current_cuda_mib, current_rss_mib
 
-    cuda_allocated_mb, cuda_reserved_mb = current_cuda_mb()
+    cuda_allocated_mib, cuda_reserved_mib = current_cuda_mib()
     return {
-        "rss_mb": round(current_rss_mb(), 1),
-        "cuda_allocated_mb": round(cuda_allocated_mb, 1),
-        "cuda_reserved_mb": round(cuda_reserved_mb, 1),
+        "rss_mib": round(current_rss_mib(), 1),
+        "cuda_allocated_mib": round(cuda_allocated_mib, 1),
+        "cuda_reserved_mib": round(cuda_reserved_mib, 1),
     }
 
 
@@ -1249,8 +1250,8 @@ def gpu_pressure_snapshot(*, now: float | None = None) -> dict[str, object]:
             wall clock. Injectable so freshness is testable without sleeping.
 
     Returns:
-        ``{"available", "utilization_percent", "memory_used_mb",
-        "memory_total_mb"}``, every measurement ``None`` where this host
+        ``{"available", "utilization_percent", "memory_used_mib",
+        "memory_total_mib"}``, every measurement ``None`` where this host
         cannot measure it. Callers receive a copy; mutating it cannot
         poison the cache.
     """
@@ -1269,6 +1270,51 @@ def gpu_pressure_snapshot(*, now: float | None = None) -> dict[str, object]:
     return dict(snapshot)
 
 
+def device_load_snapshot(*, now: float | None = None) -> dict[str, object] | None:
+    """The device-load admission verdict, cached the same way as the GPU block.
+
+    A different fact from :func:`gpu_pressure_snapshot`: that block reports
+    utilization and memory *usage*, sampled purely for display and for the
+    hysteresis-folded ``pressure`` tier beside it - nothing acts on either.
+    This is the synchronous, fail-fast predicate a model load is actually
+    admitted or refused against right now, against the configured floor. The
+    two must stay visibly distinct so a later reader does not collapse a
+    display reading into the load-bearing gate, or vice versa.
+
+    Cached rather than read fresh per poll for the same reason
+    :func:`gpu_pressure_snapshot` is: the jobs listing is polled every couple
+    of seconds by every open operator view, and this route must not turn each
+    of those polls into its own device probe.
+
+    Args:
+        now: The moment cache freshness is judged against; defaults to the
+            wall clock. Injectable so freshness is testable without sleeping.
+
+    Returns:
+        The ``device_load`` wire shape (``free_mib``, ``total_mib``,
+        ``own_mib``, ``floor_mib``, ``admitted``, ``reason``), or ``None``
+        when this host's
+        reading could not be taken - absent, never raised, so an older reader
+        expecting no such key is unaffected. Callers receive a copy; mutating
+        it cannot poison the cache.
+    """
+    global _device_load_snapshot_cache
+    moment = time.time() if now is None else now
+    with _device_load_snapshot_lock:
+        cached = _device_load_snapshot_cache
+        if (
+            cached is not None
+            and 0.0 <= moment - cached[0] < _DEVICE_LOAD_SNAPSHOT_CACHE_SECONDS
+        ):
+            return dict(cached[1]) if cached[1] is not None else None
+    from ._gpu_admission import device_load_reading
+
+    reading = device_load_reading()
+    with _device_load_snapshot_lock:
+        _device_load_snapshot_cache = (moment, reading)
+    return dict(reading) if reading is not None else None
+
+
 def _gpu_evidence() -> dict[str, object]:
     """Sample machine-wide GPU pressure through the read-only probe.
 
@@ -1278,12 +1324,12 @@ def _gpu_evidence() -> dict[str, object]:
     """
     from .memory_probe import cuda_pressure
 
-    utilization, used_mb, total_mb = cuda_pressure()
+    utilization, used_mib, total_mib = cuda_pressure()
     return {
-        "available": total_mb is not None,
+        "available": total_mib is not None,
         "utilization_percent": utilization,
-        "memory_used_mb": round(used_mb, 1) if used_mb is not None else None,
-        "memory_total_mb": round(total_mb, 1) if total_mb is not None else None,
+        "memory_used_mib": round(used_mib, 1) if used_mib is not None else None,
+        "memory_total_mib": round(total_mib, 1) if total_mib is not None else None,
     }
 
 
@@ -1494,6 +1540,21 @@ def flag(value: object) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def text(value: object) -> str:
+    """Read one published value as a string, or as the empty string.
+
+    The two-state member of the family, and deliberately so: an identity, a
+    cause or a command that the service did not publish as a string cannot
+    be shown, addressed or compared, and every caller already treats the
+    empty string as that. Distinguishing "absent" from "published empty"
+    would need a caller's own reader; nothing here needs the difference.
+
+    Never reach for this to render a number. ``str(value)`` on a raw field
+    would print ``True`` as a value; the numeric readers exist to refuse it.
+    """
+    return value if isinstance(value, str) else ""
+
+
 #: The conditional evidence sections, each as the readers its members are
 #: narrowed through. Encode state is counted work and rate readings are
 #: measurements, which is the whole of the difference between them.
@@ -1666,8 +1727,8 @@ def machine_pressure(
         forward_age_seconds=measurement(forward_block["age_seconds"]),
         forward_thread_alive=flag(forward_block["thread_alive"]),
         gpu_utilization_percent=measurement(gpu.get("utilization_percent")),
-        gpu_memory_used_mb=measurement(gpu.get("memory_used_mb")),
-        gpu_memory_total_mb=measurement(gpu.get("memory_total_mb")),
+        gpu_memory_used_mib=measurement(gpu.get("memory_used_mib")),
+        gpu_memory_total_mib=measurement(gpu.get("memory_total_mib")),
         backend_probed=probed,
         backend_alive=flag(backend.get("alive")),
         backend_latency_seconds=measurement(backend.get("latency_seconds")),
@@ -1826,14 +1887,16 @@ def reset() -> None:
     Deliberately leaves the persisted active-jobs snapshot alone so tests
     can simulate a daemon death (records gone, snapshot intact) and then
     exercise :func:`restore_interrupted`.
+
+    The live registry owns the manager and its controller. Dropping that
+    registry-owned manager clears its records and cached non-terminal ceiling
+    without leaving a second lifecycle authority in this module.
     """
-    global _job_manager
     with _lock:
         _records.clear()
     with _backend_probe_lock:
         _backend_probe_cache.clear()
-    with _manager_lock:
-        _job_manager = None
+    discard_job_manager()
 
 
 class JobProgressReporter:
@@ -1953,29 +2016,21 @@ def _admit_index_job(
     return manager, job_id, created
 
 
-def _code_policy_indexer(root: Path) -> CodebaseIndexer:
-    """Build a model-free indexer used only for policy preflight."""
-    from .indexer import CodebaseIndexer
-
-    resolved_root = root.resolve()
-    return CodebaseIndexer(
-        resolved_root,
-        model=cast("Any", None),
-        store=cast("Any", None),
-    )
-
-
 def validate_scoped_code_index_policy(
     root: Path,
     changed_paths: tuple[Path, ...] | frozenset[Path],
 ) -> CodeScopedPreflight:
     """Validate one exact scoped path set without a full-tree discovery."""
-    return _code_policy_indexer(root).preflight_changed_paths(changed_paths)
+    from .indexer._content_discovery import CodeContentDiscovery
+
+    return CodeContentDiscovery(root.resolve()).preflight_changed_paths(changed_paths)
 
 
 def validate_code_index_policy(root: Path) -> CodeIndexPreflight:
     """Resolve and discover code work before a job mutates durable state."""
-    return _code_policy_indexer(root).preflight_content()
+    from .indexer._content_discovery import CodeContentDiscovery
+
+    return CodeContentDiscovery(root.resolve()).preflight_content()
 
 
 def validate_code_support_profile(
@@ -2029,24 +2084,17 @@ def validate_code_job_admission(root: Path) -> CodeIndexPreflight:
     )
 
 
-def _document_policy_indexer(root: Path):
-    """Build a model-free document indexer used only for policy preflight."""
-    from .indexer import DocumentIndexer
-
-    return DocumentIndexer(
-        root.resolve(),
-        model=cast("Any", None),
-        store=cast("Any", None),
-    )
-
-
 def validate_document_index_policy(
     root: Path,
     *,
     run_control: RunControl = NO_RUN_CONTROL,
 ) -> DocumentIndexPreflight:
     """Resolve and discover document work before durable mutation."""
-    return _document_policy_indexer(root).preflight_content(run_control=run_control)
+    from .indexer import DocumentIndexer
+
+    return DocumentIndexer.for_preflight(root.resolve()).preflight_content(
+        run_control=run_control
+    )
 
 
 def validate_scoped_document_index_policy(
@@ -2056,7 +2104,9 @@ def validate_scoped_document_index_policy(
     run_control: RunControl = NO_RUN_CONTROL,
 ) -> DocumentScopedPreflight:
     """Validate one exact document watcher scope without full discovery."""
-    return _document_policy_indexer(root).preflight_changed_paths(
+    from .indexer import DocumentIndexer
+
+    return DocumentIndexer.for_preflight(root.resolve()).preflight_changed_paths(
         changed_paths,
         run_control=run_control,
     )

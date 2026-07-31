@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -30,7 +30,9 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
+    from ... import EmbeddingModel
     from ..._store_models import CodeChunk
+    from ...store_runtime import VaultStore
 
 # A non-trivial module: multiple classes and functions with real nesting so
 # tree-sitter parsing + the recursive Python traversal cost is meaningful.
@@ -106,7 +108,9 @@ _REPEATS_PER_FILE = 6
 
 def _chunk_only_indexer(root: Path) -> CodebaseIndexer:
     """Build a valid chunk-stage indexer without loading model or store."""
-    indexer = CodebaseIndexer(root, cast("Any", None), cast("Any", None))
+    indexer = CodebaseIndexer(
+        root, cast("EmbeddingModel", None), cast("VaultStore", None)
+    )
     indexer._begin_preprocess_run(indexer.resolve_policy_snapshot())
     return indexer
 

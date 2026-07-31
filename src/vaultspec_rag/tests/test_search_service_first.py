@@ -138,12 +138,36 @@ class TestLocalSearchDeadline:
         assert fired.is_set()
 
     def test_timer_cancelled_on_fast_body(self) -> None:
+        """Exiting the body cancels the timer - observed, not raced against.
+
+        Sleeping a fraction of the deadline and asserting the callback has not
+        run proves only that the deadline had not arrived yet: the whole
+        ``finally: timer.cancel()`` can be deleted and that still passes. So
+        the deadline is set far beyond anything this test waits for, and the
+        cancellation is observed on the timer itself. ``threading.Timer.cancel``
+        sets the event the timer thread is waiting on, so a cancelled timer's
+        thread ends within milliseconds while an armed one stays alive until it
+        fires; joining with a bound far below the deadline is what makes a dead
+        thread mean "cancelled" and not "expired".
+
+        Do not shorten the deadline or lengthen the join bound toward each
+        other - the gap between them is the whole proof.
+        """
+        deadline = 30.0
+        join_bound = 2.0
         fired = threading.Event()
-        with _local_search_deadline(0.5, json_mode=False, on_timeout=fired.set):
-            pass
-        # The body returned immediately; the timer is cancelled on exit, well
-        # before its 0.5s deadline, so the callback must never run.
-        time.sleep(0.2)
+        pre_existing = set(threading.enumerate())
+        with _local_search_deadline(deadline, json_mode=False, on_timeout=fired.set):
+            armed = [
+                thread
+                for thread in threading.enumerate()
+                if isinstance(thread, threading.Timer) and thread not in pre_existing
+            ]
+            assert len(armed) == 1, armed
+            timer = armed[0]
+            assert timer.is_alive()
+        timer.join(join_bound)
+        assert not timer.is_alive(), "the deadline timer was not cancelled on exit"
         assert not fired.is_set()
 
     @pytest.mark.parametrize("seconds", [None, 0, -1.0])

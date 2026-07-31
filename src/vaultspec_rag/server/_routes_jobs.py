@@ -325,6 +325,8 @@ def _job_telemetry(record: dict[str, object], name: str) -> dict[str, object] | 
     """
     raw = record.get(name)
     if isinstance(raw, dict):
+        # isinstance narrows only to dict[Unknown, Unknown]; every job record
+        # is str-keyed JSON.
         return cast("dict[str, object]", raw)
     identifier = record.get("id")
     if isinstance(identifier, str) and identifier:
@@ -560,11 +562,11 @@ def _job_resilience(record: dict[str, object]) -> dict[str, object] | None:
         ),
         "circuit_state": data.get("circuit_state"),
         "next_retry_at": data.get("next_retry_at"),
-        "peak_rss_mb": _round_measure(data.get("peak_rss_mb")),
-        "rss_ceiling_mb": _round_measure(data.get("rss_ceiling_mb")),
-        "peak_cuda_allocated_mb": _round_measure(data.get("peak_cuda_allocated_mb")),
-        "peak_cuda_reserved_mb": _round_measure(data.get("peak_cuda_reserved_mb")),
-        "cuda_ceiling_mb": _round_measure(data.get("cuda_ceiling_mb")),
+        "peak_rss_mib": _round_measure(data.get("peak_rss_mib")),
+        "rss_ceiling_mib": _round_measure(data.get("rss_ceiling_mib")),
+        "peak_cuda_allocated_mib": _round_measure(data.get("peak_cuda_allocated_mib")),
+        "peak_cuda_reserved_mib": _round_measure(data.get("peak_cuda_reserved_mib")),
+        "cuda_ceiling_mib": _round_measure(data.get("cuda_ceiling_mib")),
         "support_profile": data.get("support_profile"),
         "terminal_outcome": terminal,
         "remediation": remediation(terminal) if isinstance(terminal, str) else None,

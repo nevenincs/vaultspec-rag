@@ -9,7 +9,7 @@ import tomlkit
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from tomlkit import TOMLDocument
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
 
@@ -213,8 +213,8 @@ def _clear_ownership(doc: TOMLDocument) -> None:
     if rag is None or "mcp-extra" not in rag:
         return
     del rag["mcp-extra"]
-    if not rag:
-        del cast("TableLike", tool)["vaultspec-rag"]
+    if not rag and tool is not None:
+        del tool["vaultspec-rag"]
     if tool is not None and not tool:
         del doc["tool"]
 

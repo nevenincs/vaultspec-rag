@@ -57,9 +57,9 @@ class CodeSupportBudget:
 
         ceilings = admit_index_ceilings(self._model, self._support_limits)
         self._memory_budget = MemoryBudget(
-            rss_ceiling_mb=ceilings.rss_ceiling_mb,
-            cuda_ceiling_mb=ceilings.enforced_cuda_ceiling_mb,
-            cuda_baseline_mb=ceilings.cuda_baseline_mb,
+            rss_ceiling_mib=ceilings.rss_ceiling_mib,
+            cuda_ceiling_mib=ceilings.enforced_cuda_ceiling_mib,
+            cuda_baseline_mib=ceilings.cuda_baseline_mib,
         )
         self.sample_memory_budget("before code dispatch")
 
@@ -72,7 +72,7 @@ class CodeSupportBudget:
         budget = self._memory_budget
         if budget is None:
             return contextlib.nullcontext()
-        return record_forward_peaks(budget.record_forward_peak_mb)
+        return record_forward_peaks(budget.record_forward_peak_mib)
 
     def sample_memory_budget(self, label: str) -> MemoryBudgetSnapshot:
         """Enforce the current budget and retain its resource high-water."""

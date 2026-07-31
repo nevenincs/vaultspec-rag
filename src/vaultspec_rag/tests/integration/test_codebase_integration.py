@@ -224,6 +224,7 @@ class TestIncrementalPublicationRecovery:
         code_project: _CodeProject,
     ) -> None:
         """Control before finalization leaves checkpointed storage intact."""
+        from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
         from ...indexer._run_ledger_models import RunOperation
         from ...indexer._streaming import CodeFileSegment
         from ...job_control import CancelRequested, RunControlToken
@@ -242,13 +243,15 @@ class TestIncrementalPublicationRecovery:
         policy = indexer.resolve_policy_snapshot()
         limits = indexer._consumer_pipeline.resolve_limits()
         checkpoint = indexer._lifecycle.open_checkpoint(
-            policy=policy,
-            operation=RunOperation.INCREMENTAL,
-            clean=False,
-            configuration=limits.run_configuration,
-            dense_dimensions=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            run_control=RunControlToken(),
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.INCREMENTAL,
+                clean=False,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                run_control=RunControlToken(),
+            )
         )
         digest = hashlib.blake2b(chunk.content.encode("utf-8")).hexdigest()
         segment = CodeFileSegment(
@@ -295,6 +298,7 @@ class TestIncrementalPublicationRecovery:
         """A rebuild-incomplete generation resumes its confirmed collection."""
         from ..._store_models import generation_code_collection
         from ...indexer import _chunk_worker
+        from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
         from ...indexer._run_ledger_models import RunOperation, RunTerminalState
         from ...indexer._streaming import (
             CodeFileSegment,
@@ -311,13 +315,15 @@ class TestIncrementalPublicationRecovery:
         policy = preflight.policy
         limits = indexer._consumer_pipeline.resolve_limits()
         checkpoint = indexer._lifecycle.open_checkpoint(
-            policy=policy,
-            operation=RunOperation.FULL,
-            clean=True,
-            configuration=limits.run_configuration,
-            dense_dimensions=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            run_control=RunControlToken(),
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=True,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                run_control=RunControlToken(),
+            )
         )
 
         # A clean rebuild writes into the collection named for its generation
@@ -440,7 +446,8 @@ class TestCodeEmbedFormatRebuild:
     ) -> None:
         import json
 
-        from ...config._settings import get_config
+        from ..._index_breadth import index_meta_path
+        from ..._source_types import PublicSourceType
 
         indexer = code_project["code_indexer"]
         store = code_project["store"]
@@ -451,8 +458,7 @@ class TestCodeEmbedFormatRebuild:
         chunk_total = store.count_code()
         assert chunk_total > 0
 
-        cfg = get_config()
-        meta_path = code_project["root"] / cfg.data_dir / cfg.code_index_metadata_file
+        meta_path = index_meta_path(code_project["root"], PublicSourceType.CODE)
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         meta.pop("__code_embed_schema__")
         meta_path.write_text(json.dumps(meta), encoding="utf-8")

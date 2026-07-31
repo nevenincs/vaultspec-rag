@@ -63,6 +63,27 @@ def test_no_module_redeclares_the_kernel32_process_calls() -> None:
     )
 
 
+def test_no_module_redeclares_the_kernel32_job_object_calls() -> None:
+    # ``CreateJobObjectW`` returns a HANDLE, the same pointer-sized truncation
+    # risk as ``OpenProcess`` above; a second declaration site is the same
+    # wrong-hex-digit risk _win32.py's own module docstring warns about.
+    found = find_offenders(
+        lambda n: (
+            isinstance(n.func, ast.Attribute)
+            and n.func.attr
+            in {
+                "CreateJobObjectW",
+                "SetInformationJobObject",
+                "AssignProcessToJobObject",
+            }
+        )
+    )
+    assert not found, (
+        f"direct kernel32 Job Object calls outside _win32 at {found}; "
+        "use create_kill_on_close_job / assign_process_to_job instead"
+    )
+
+
 def test_allowlist_names_only_modules_that_exist() -> None:
     # An allowlist entry for a deleted or renamed module silently widens the
     # guard: the name stops matching anything and a real offender could take
@@ -297,10 +318,11 @@ class TestDiskFullVocabularyHasOneHome:
 class TestFdLockHasOneImplementation:
     """The ``msvcrt``/``fcntl`` branch lives only in ``_fd_lock``.
 
-    Three modules carried it: the machine singleton lock, the status-write
-    lock, and the store's exclusive lock. Only the platform call was shared -
-    each caller's policy around it (which file, which byte, what contention
-    means) differs for real reasons and stayed where it was.
+    Only the platform call is shared there. Which file, which byte and what
+    contention means differ per caller for real reasons and stay with them;
+    the crash-safe claim sequence that several of them DO share - anchor,
+    non-blocking claim, recorded owner pid, release on close or on death -
+    has one owner a layer up rather than a copy each.
     """
 
     def test_no_module_calls_the_platform_lock_directly(self) -> None:

@@ -21,7 +21,6 @@ import pytest
 import uvicorn
 from mcp import Client, UriTemplate
 from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError
-from starlette.applications import Starlette
 
 from ..mcp._mcp import mcp
 from ..serviceclient._compat import local_package_version
@@ -87,16 +86,21 @@ def _tools() -> list[Tool]:
 @pytest.fixture
 def service_routes() -> Iterator[int]:
     """Serve the production route table over a live loopback Uvicorn server."""
-    from .. import server as server_module
-    from ..server._routes import ROUTES
+    from ..server import ServerRouteRuntime, create_http_app
+    from ..service import ServiceRegistry
     from ._cli_helpers import _CONTRACT_SERVICE_TOKEN
 
     port = free_loopback_port()
-    prior_token = server_module._SERVICE_TOKEN
-    server_module._SERVICE_TOKEN = _CONTRACT_SERVICE_TOKEN
     server = uvicorn.Server(
         uvicorn.Config(
-            Starlette(routes=ROUTES),
+            create_http_app(
+                ServerRouteRuntime(
+                    token=_CONTRACT_SERVICE_TOKEN,
+                    registry=ServiceRegistry(),
+                    port=port,
+                ),
+                lifespan=None,
+            ),
             host="127.0.0.1",
             port=port,
             log_config=None,
@@ -115,7 +119,6 @@ def service_routes() -> Iterator[int]:
     finally:
         server.should_exit = True
         thread.join(timeout=5)
-        server_module._SERVICE_TOKEN = prior_token
         assert not thread.is_alive()
 
 
@@ -225,6 +228,14 @@ class TestProjectRootWireContract:
         The omitted call can return the environment workspace's content only if
         the adapter resolves and serializes that root; the explicit call can
         return the other content only if it takes precedence over the env var.
+
+        Mutation-proved in both halves against the adapter's root resolver.
+        Returning the caller's value verbatim - the empty-string fallback this
+        contract replaced - fails the omitted call with the route's own
+        ``bad_request``, which is the 400 a blank root earns. Ranking the env
+        var above the argument fails the explicit assertion below with the
+        environment workspace's content. Neither substitution is a wire
+        assertion, so do not reduce this to one call.
         """
         from ..config._types import EnvVar
         from ..mcp._tools import get_code_file

@@ -14,13 +14,17 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ... import EmbeddingModel
+    from ...indexer import DocumentIndexer
     from ...indexer._content_policy import RootContentPolicy
     from ...indexer._vault_prep import IndexResult
+    from ...job_control import RunControlToken
+    from ...store_runtime import VaultStore
 
 _SCHEMA_VERSION: Final = 1
 _MARKER_NAME: Final = ".document-index-resilience-workload.json"
@@ -43,7 +47,11 @@ class DocumentWorkloadSpec:
             "units_per_extracted_file",
             "words_per_unit",
         ):
-            value = getattr(self, name)
+            # `name` is a dynamic string, so the attribute it resolves is
+            # genuinely unknown to the type checker; `object` keeps the
+            # isinstance narrowing below meaningful instead of masking it
+            # behind Any.
+            value = cast("object", getattr(self, name))
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
 
@@ -105,11 +113,11 @@ class _RuntimeSampler:
         self.cuda_bytes = 0
 
     def _observe(self) -> None:
-        from ...memory_probe import current_cuda_mb, current_rss_mb
+        from ...memory_probe import current_cuda_mib, current_rss_mib
 
-        _allocated_mb, reserved_mb = current_cuda_mb()
-        self.rss_bytes = max(self.rss_bytes, int(current_rss_mb() * 1024**2))
-        self.cuda_bytes = max(self.cuda_bytes, int(reserved_mb * 1024**2))
+        _allocated_mib, reserved_mib = current_cuda_mib()
+        self.rss_bytes = max(self.rss_bytes, int(current_rss_mib() * 1024**2))
+        self.cuda_bytes = max(self.cuda_bytes, int(reserved_mib * 1024**2))
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_seconds):
@@ -163,7 +171,10 @@ def _claim_root(root: Path, spec: DocumentWorkloadSpec) -> None:
     expected = _marker_payload(spec)
     marker = root / _MARKER_NAME
     if marker.is_file():
-        actual = json.loads(marker.read_text(encoding="utf-8"))
+        # json.loads returns dynamically-shaped data from an external file;
+        # `object` reflects that honestly without discarding the equality
+        # comparison against the known-shaped `expected` payload below.
+        actual = cast("object", json.loads(marker.read_text(encoding="utf-8")))
         if actual != expected:
             raise RuntimeError("document workload marker does not match the request")
         return
@@ -294,10 +305,14 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
     )
 
     resolved = root.resolve()
+    # Measurement only exercises preflight, support-limit, and preprocess-
+    # context resolution, none of which touch `self.model` or `self.store`;
+    # the constructor requires both, so cast the unused placeholders to
+    # their real types rather than loading a model or opening a store here.
     indexer = DocumentIndexer(
         resolved,
-        cast("Any", None),
-        cast("Any", None),
+        cast("EmbeddingModel", None),
+        cast("VaultStore", None),
         content_policy=_policy(),
     )
     preflight = indexer.preflight_content()
@@ -361,20 +376,35 @@ def _validate_measurement(
     )
 
     cfg = get_config()
+    # Construct from the typed dataclass's own fields rather than
+    # `asdict(measurement)`, whose signature widens every value to Any.
+    support_measurement = SupportMeasurement(
+        source_files=measurement.source_files,
+        source_bytes=measurement.source_bytes,
+        generated_chunks=measurement.generated_chunks,
+        weighted_bytes=measurement.weighted_bytes,
+        extracted_bytes=measurement.extracted_bytes,
+        queue_bytes=measurement.queue_bytes,
+        rss_bytes=measurement.rss_bytes,
+        cuda_bytes=measurement.cuda_bytes,
+    )
+    # psutil ships no type stubs, so `.total` resolves as Any; it is an int
+    # at runtime, and int() below still performs the real coercion.
+    memory_total_bytes = cast("int", psutil.virtual_memory().total)
     validate_profile_admission(
         cfg.index_support_profile,
         IndexDomain.DOCUMENT,
-        SupportMeasurement(**asdict(measurement)),
+        support_measurement,
         AdmissionEnvironment(
             backend="server" if cfg.qdrant_url else "local",
-            available_ram_bytes=int(psutil.virtual_memory().total),
+            available_ram_bytes=int(memory_total_bytes),
             store_volume=probe_store_volume(root),
         ),
     )
 
 
 def _run_interrupted_index(
-    indexer: Any,
+    indexer: DocumentIndexer,
     root: Path,
     *,
     interrupt_after_units: int,
@@ -420,8 +450,8 @@ def _run_interrupted_index(
 
 
 def _capture_interrupted_run(
-    indexer: Any,
-    token: Any,
+    indexer: DocumentIndexer,
+    token: RunControlToken,
     failures: list[BaseException],
 ) -> None:
     """Capture the terminal signal from one benchmark index thread."""
@@ -440,7 +470,7 @@ def _capture_interrupted_run(
 def _wait_for_interruption_boundary(
     ledger_path: Path,
     worker: threading.Thread,
-    token: Any,
+    token: RunControlToken,
     *,
     interrupt_after_units: int,
 ) -> tuple[str, int]:
@@ -571,9 +601,45 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+@dataclass(frozen=True, slots=True)
+class _ParsedArgs:
+    """Typed view of the CLI namespace, built once at the parse boundary."""
+
+    root: Path
+    raw_files: int
+    extracted_files: int
+    units: int
+    words: int
+    prepare_only: bool
+    accept: bool
+    local_files_only: bool
+    interrupt_after_units: int
+    json_path: Path | None
+
+
+def _parse_args(argv: Sequence[str] | None) -> _ParsedArgs:
+    # argparse.Namespace attribute access types as Any regardless of the
+    # `type=`/`action=` each argument was declared with; the parser already
+    # performs the real conversion at runtime, so cast once here rather than
+    # at every downstream use.
+    namespace = _parser().parse_args(argv)
+    return _ParsedArgs(
+        root=cast("Path", namespace.root),
+        raw_files=cast("int", namespace.raw_files),
+        extracted_files=cast("int", namespace.extracted_files),
+        units=cast("int", namespace.units),
+        words=cast("int", namespace.words),
+        prepare_only=cast("bool", namespace.prepare_only),
+        accept=cast("bool", namespace.accept),
+        local_files_only=cast("bool", namespace.local_files_only),
+        interrupt_after_units=cast("int", namespace.interrupt_after_units),
+        json_path=cast("Path | None", namespace.json),
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Prepare and measure the named document workload."""
-    args = _parser().parse_args(argv)
+    args = _parse_args(argv)
     spec = DocumentWorkloadSpec(
         args.raw_files,
         args.extracted_files,
@@ -598,8 +664,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     elif not args.prepare_only:
         payload["measurement"] = asdict(measure_document_workload(args.root))
-    if args.json is not None:
-        _write_json(args.json, payload)
+    if args.json_path is not None:
+        _write_json(args.json_path, payload)
     print(json.dumps(payload, indent=2))
     return 0
 

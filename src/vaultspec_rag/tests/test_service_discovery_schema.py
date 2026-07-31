@@ -27,10 +27,12 @@ from .._machine_lock import acquire_machine_lock_lease, release_machine_lock_lea
 from ..cli._service_status import _write_service_status
 from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ..server import ServerRouteRuntime
 from ..server._lifecycle import _DiscoveryPublisher
 from ..server._state import (
     _HEARTBEAT_INTERVAL_SECONDS,
 )
+from ..service import ServiceRegistry
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
     SERVICE_DISCOVERY_SCHEMA,
@@ -98,24 +100,25 @@ def status_dir(tmp_path: Path) -> Iterator[Path]:
 def owner_publisher(status_dir: Path) -> Iterator[_DiscoveryPublisher]:
     """Retain the real isolated machine owner for daemon publications."""
     assert status_dir == _status_file().parent
-    prior_port = _m._service_port
-    prior_token = _m._SERVICE_TOKEN
     prior_launch = _m._launch_token
-    _m._service_port = 8766
-    _m._SERVICE_TOKEN = "test-token"
     _m._launch_token = "test-launch-token"
     lease, holder = acquire_machine_lock_lease()
     assert lease is not None
     assert holder == os.getpid()
-    publisher = _DiscoveryPublisher(lease)
+    publisher = _DiscoveryPublisher(
+        ServerRouteRuntime(
+            token="test-token",
+            registry=ServiceRegistry(),
+            port=8766,
+        ),
+        lease,
+    )
     try:
         yield publisher
     finally:
         publisher.quiesce()
         publisher.cleanup()
         release_machine_lock_lease(lease)
-        _m._service_port = prior_port
-        _m._SERVICE_TOKEN = prior_token
         _m._launch_token = prior_launch
 
 

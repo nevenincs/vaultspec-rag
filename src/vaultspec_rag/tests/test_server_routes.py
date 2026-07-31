@@ -10,7 +10,7 @@ mocks; the descriptor is torch-free so these stay in the unit gate.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -20,7 +20,8 @@ from .._readiness import compute_readiness
 from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..job_models import JobSource
-from ..server import health_handler
+from ..server import ServerRouteRuntime, create_http_app
+from ..service import ServiceRegistry
 from ._job_records import activity_record
 
 if TYPE_CHECKING:
@@ -96,7 +97,7 @@ class TestReadinessDescriptor:
 
     def test_descriptor_version_matches_constant(self) -> None:
         report = compute_readiness().to_dict()
-        schema = cast("dict[str, Any]", report["schema"])
+        schema = cast("dict[str, object]", report["schema"])
         assert schema["version"] == store_schema.STORAGE_SCHEMA_VERSION
 
     def test_report_is_json_serialisable_with_schema(self) -> None:
@@ -109,14 +110,19 @@ class TestHealthSchemaVersion:
     """/health echoes the bare schema_version for a cheap pre-read gate."""
 
     def test_health_echoes_schema_version(self) -> None:
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        app = Starlette(routes=[Route("/health", health_handler)])
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-schema-version-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         resp: httpx.Response = client.get("/health")
-        data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+        data: dict[str, object] = cast("dict[str, object]", resp.json())
         assert data["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
 
 
@@ -128,8 +134,6 @@ class TestHealthJobsRollup:
         self,
         tmp_path: Path,
     ) -> None:
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
         from ..job_models import (
@@ -160,16 +164,24 @@ class TestHealthJobsRollup:
         )
         assert paused.job is not None
 
-        app = Starlette(routes=[Route("/health", health_handler)])
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-jobs-rollup-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
-        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
-        jobs = cast("dict[str, Any]", data["jobs"])
+        raw = client.get("/health").json()
+        data: dict[str, object] = cast("dict[str, object]", raw)
+        jobs = cast("dict[str, object]", data["jobs"])
         assert jobs["running"] == 1
         assert jobs["paused"] == 1
         assert jobs["active"] == 2
         assert jobs["transitional"] == 0
         assert jobs["stalled"] == 0
-        last_failed = cast("dict[str, Any]", jobs["last_failed"])
+        last_failed = cast("dict[str, object]", jobs["last_failed"])
         assert last_failed["id"] == failed_id
         assert last_failed["error_kind"] == "disk_full"
         del running_id
@@ -204,7 +216,7 @@ class TestHealthFailureGenerationBound:
         jobs_health, degraded_reasons = _jobs_health()
 
         assert degraded_reasons == []
-        last_failed = cast("dict[str, Any]", jobs_health["last_failed"])
+        last_failed = cast("dict[str, object]", jobs_health["last_failed"])
         assert last_failed["id"] == failed_id
         assert last_failed["error_kind"] == "disk_full"
         assert isinstance(last_failed["finished_at"], float)
@@ -221,7 +233,7 @@ class TestHealthFailureGenerationBound:
         jobs_health, degraded_reasons = _jobs_health()
 
         assert degraded_reasons == ["the latest indexing job failed: disk_full"]
-        assert cast("dict[str, Any]", jobs_health["last_failed"])["id"] == failed_id
+        assert cast("dict[str, object]", jobs_health["last_failed"])["id"] == failed_id
 
     def test_stalled_job_degrades_regardless_of_generation(self) -> None:
         """Stall is a live condition, so the generation bound must not reach it.
@@ -235,8 +247,9 @@ class TestHealthFailureGenerationBound:
         running_id = record_start(JobSource.CODE, "watcher")
         record_progress(running_id, "embed", 3, 20)
         with activity_record(running_id) as record:
-            progress = cast("dict[str, Any]", record["progress"])
-            progress["last_updated"] -= STALL_THRESHOLD_SECONDS + 60.0
+            progress = cast("dict[str, object]", record["progress"])
+            last_updated = cast("float", progress["last_updated"])
+            progress["last_updated"] = last_updated - (STALL_THRESHOLD_SECONDS + 60.0)
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
         _begin_generation()
 
@@ -267,9 +280,8 @@ class TestHealthFailureGenerationBound:
         jobs_health, degraded_reasons = _jobs_health()
 
         assert degraded_reasons == ["the latest indexing job failed: disk_full"]
-        assert (
-            cast("dict[str, Any]", jobs_health["last_failed"])["finished_at"] == stamp
-        )
+        last_failed = cast("dict[str, object]", jobs_health["last_failed"])
+        assert last_failed["finished_at"] == stamp
 
     def test_stale_failure_leaves_the_health_verdict_unchanged(self) -> None:
         """The served verdict with a stale failure on file matches having none.
@@ -278,28 +290,38 @@ class TestHealthFailureGenerationBound:
         without a loaded model: whatever the rest of the environment contributes
         cancels out, so any difference is the stale failure's doing.
         """
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
         from ..jobs import record_finish, record_start
 
-        app = Starlette(routes=[Route("/health", health_handler)])
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-stale-failure-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
+        )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         _begin_generation()
-        baseline: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
+        raw_baseline = client.get("/health").json()
+        baseline: dict[str, object] = cast("dict[str, object]", raw_baseline)
 
         failed_id = record_start(JobSource.CODE, "tool")
         record_finish(failed_id, error=_DISK_FULL)
         time.sleep(_CLOCK_TICK_GAP_SECONDS)
         _begin_generation()
 
-        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
+        raw_data = client.get("/health").json()
+        data: dict[str, object] = cast("dict[str, object]", raw_data)
 
         assert data["degraded_reasons"] == baseline["degraded_reasons"]
         assert data["status"] == baseline["status"]
-        assert cast("dict[str, Any]", baseline["jobs"])["last_failed"] is None
-        assert cast("dict[str, Any]", data["jobs"])["last_failed"]["id"] == failed_id
+        assert cast("dict[str, object]", baseline["jobs"])["last_failed"] is None
+        last_failed = cast(
+            "dict[str, object]", cast("dict[str, object]", data["jobs"])["last_failed"]
+        )
+        assert last_failed["id"] == failed_id
 
 
 class TestServiceStateSchemaVersion:
@@ -312,6 +334,8 @@ class TestServiceStateSchemaVersion:
 
         import vaultspec_rag as vr
 
+        from ..service import ServiceRegistry
+
         prior = {
             EnvVar.STATUS_DIR: os.environ.get(EnvVar.STATUS_DIR),
             EnvVar.QDRANT_STORAGE_DIR: os.environ.get(EnvVar.QDRANT_STORAGE_DIR),
@@ -322,7 +346,7 @@ class TestServiceStateSchemaVersion:
         )
         reset_config()
         try:
-            state = vr.get_service_state(tmp_path)
+            state = vr.get_service_state(tmp_path, registry=ServiceRegistry())
             assert state["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
         finally:
             for key, value in prior.items():

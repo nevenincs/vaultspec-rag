@@ -10,7 +10,7 @@ the old one-point-per-document layout triggers a one-time rebuild.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
+from typing import TYPE_CHECKING, ClassVar, TypedDict
 
 import pytest
 
@@ -159,7 +159,7 @@ class TestChunkedVaultLayout:
         raw = (root / ".vault" / f"{doc_id}.md").read_text(encoding="utf-8")
         body = raw.split("---", 2)[2].strip()
         assert payload["content"] == body
-        assert _TAIL_NEEDLE in payload["content"]
+        assert _TAIL_NEEDLE in str(payload["content"])
 
     def test_list_all_documents_one_row_per_document(
         self, chunked_corpus: _ChunkedCorpus
@@ -170,7 +170,7 @@ class TestChunkedVaultLayout:
         assert len(ids) == len(set(ids))
         assert set(ids) == store.get_all_ids()
         long_doc = next(d for d in docs if d["id"] == chunked_corpus["long_doc_id"])
-        assert _TAIL_NEEDLE in long_doc["content"]
+        assert _TAIL_NEEDLE in str(long_doc["content"])
 
 
 class TestChunkedVaultLifecycle:
@@ -210,14 +210,15 @@ class TestChunkedVaultLifecycle:
             assert counts_after[long_doc_id] == 1
             payload = store.get_by_id(long_doc_id)
             assert payload is not None
-            assert _TAIL_NEEDLE not in payload["content"]
+            assert _TAIL_NEEDLE not in str(payload["content"])
         finally:
             store.close()
 
     def test_old_point_layout_triggers_rebuild(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
-        from ...config._settings import get_config
+        from ..._index_breadth import index_meta_path
+        from ..._source_types import PublicSourceType
 
         store, indexer, _ = _build_indexed_root(tmp_path, embedding_model)
         try:
@@ -225,9 +226,8 @@ class TestChunkedVaultLifecycle:
             # Rewrite the metadata sidecar without the layout marker,
             # reproducing the on-disk state of an install that indexed
             # before chunking existed.
-            cfg = get_config()
-            meta_path = tmp_path / cfg.data_dir / cfg.index_metadata_file
-            meta: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta_path = index_meta_path(tmp_path, PublicSourceType.VAULT)
+            meta: dict[str, object] = json.loads(meta_path.read_text(encoding="utf-8"))
             meta.pop(VAULT_POINT_SCHEMA_KEY)
             meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
@@ -235,7 +235,9 @@ class TestChunkedVaultLifecycle:
             # A layout rebuild re-adds every document instead of
             # reporting a no-op incremental pass.
             assert result.added == doc_total
-            stamped: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
+            stamped: dict[str, object] = json.loads(
+                meta_path.read_text(encoding="utf-8")
+            )
             assert stamped[VAULT_POINT_SCHEMA_KEY] == VAULT_POINT_SCHEMA
         finally:
             store.close()

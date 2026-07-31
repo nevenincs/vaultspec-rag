@@ -48,7 +48,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from typing import NoReturn
 
-    from ..search import DocumentSearchResult, SearchResult
+    from ..search import (
+        DocumentSearchResult,
+        InvalidPreferValueError,
+        SearchResult,
+    )
     from ..search._outcomes import CombinedSearchOutcome
 
 __all__ = ["_suppress_hf_progress", "handle_search"]
@@ -275,6 +279,39 @@ def _render_empty_index_state(
 def _handle_vaultstore_locked_error(
     exc: VaultStoreLockedError, json_mode: bool
 ) -> NoReturn:
+    if exc.held_in_process:
+        # The lock table proves the blocker: a store this same process opened
+        # earlier in the run is still open, not a foreign holder to wait out.
+        if json_mode:
+            _emit_json_error_and_exit(
+                "search",
+                "local_store_locked",
+                (
+                    f"The local search index at {exc.db_path} is busy. "
+                    "This command already opened it earlier in this run, and "
+                    "a local store cannot be opened twice from the same "
+                    "process. Send the search through the running service "
+                    "instead, for example with --port 8766."
+                ),
+                1,
+                db_path=str(exc.db_path),
+                routing_mode="direct_local_search",
+                remediation=[
+                    "vaultspec-rag search ... --port 8766",
+                    "Rerun the command.",
+                ],
+            )
+        _plain(
+            f"Error: The local search index at {exc.db_path} is busy.\n\n"
+            "  This command already opened it earlier in this run, and a "
+            "local store cannot be opened twice from the same process.\n\n"
+            "  Next actions:\n"
+            "    1. Send this search through a running "
+            "service on a port, e.g.:\n"
+            "         vaultspec-rag search ... --port 8766\n"
+            "    2. Rerun the command."
+        )
+        raise typer.Exit(code=1) from exc
     if json_mode:
         _emit_json_error_and_exit(
             "search",
@@ -610,17 +647,7 @@ def _validate_and_handle_filters(request: _InProcessSearchRequest) -> None:
             ),
         )
     except InvalidPreferValueError as exc:
-        msg = str(exc)
-        if request.json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                "invalid_prefer_value",
-                msg,
-                2,
-                value=exc.prefer_value,
-            )
-        _plain(f"Error: {msg}")
-        raise typer.Exit(code=2) from None
+        _fail_invalid_prefer(exc, request.json_mode)
     except InvalidFilterForSearchTypeError as exc:
         msg = str(exc)
         if request.json_mode:
@@ -636,7 +663,29 @@ def _validate_and_handle_filters(request: _InProcessSearchRequest) -> None:
         raise typer.Exit(code=2) from None
 
 
+def _fail_invalid_prefer(exc: InvalidPreferValueError, json_mode: bool) -> NoReturn:
+    """Render one refusal for an unsupported ``--prefer`` value and exit 2.
+
+    Both refusal points - the long-name normaliser below and the search
+    validator's exception - converge here, so the operator sees one wording,
+    one error code and one exit status whichever of the two fired.
+    """
+    msg = str(exc)
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search",
+            "invalid_prefer_value",
+            msg,
+            2,
+            value=exc.prefer_value,
+        )
+    _plain(f"Error: {msg}")
+    raise typer.Exit(code=2) from None
+
+
 def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str | None:
+    from ..search import InvalidPreferValueError
+
     if prefer is None:
         return None
     values = {
@@ -647,19 +696,7 @@ def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str
     normalized = prefer.strip().lower()
     if normalized in values:
         return values[normalized]
-    msg = (
-        f"--prefer must be one of production, tests, or documentation; got {prefer!r}."
-    )
-    if json_mode:
-        _emit_json_error_and_exit(
-            "search",
-            "invalid_prefer_value",
-            msg,
-            2,
-            value=prefer,
-        )
-    _plain(f"Error: {msg}")
-    raise typer.Exit(code=2)
+    _fail_invalid_prefer(InvalidPreferValueError(prefer), json_mode)
 
 
 def _validate_search_type(search_type: str, *, json_mode: bool) -> PublicSourceType:
@@ -692,6 +729,11 @@ class _InProcessRenderRequest:
 def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     from dataclasses import asdict
 
+    from ..search._outcomes import (
+        COMBINED_SEARCH_FAILED,
+        COMBINED_SEARCH_FAILED_MESSAGE,
+    )
+
     results = request.results
     query = request.query
     search_type = request.search_type
@@ -701,34 +743,25 @@ def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     breadth = request.envelope or {}
 
     if search_type is PublicSourceType.COMBINED:
+        # _run_in_process_search only returns a CombinedSearchOutcome when it
+        # dispatched on PublicSourceType.COMBINED, the same discriminant
+        # checked above, so `results` is that type here.
         outcome = cast("CombinedSearchOutcome", results)
         result_items = outcome.results
-        domains = {
-            source.value: {
-                "ok": domain.ok,
-                "results_count": len(domain.results),
-                "error_kind": domain.error_kind,
-                "detail": domain.detail,
-            }
-            for source, domain in (
-                (PublicSourceType.VAULT, outcome.vault),
-                (PublicSourceType.CODE, outcome.code),
-                (PublicSourceType.DOCUMENT, outcome.document),
-            )
-        }
+        domains = outcome.domain_status_payload()
         if not outcome.ok:
             failure_payload: dict[str, object] = {
                 "ok": False,
-                "error": "combined_search_failed",
-                "message": "Every combined-search domain failed.",
+                "error": COMBINED_SEARCH_FAILED,
+                "message": COMBINED_SEARCH_FAILED_MESSAGE,
                 "partial": False,
                 "domains": domains,
             }
             if json_mode:
                 _emit_json_error_and_exit(
                     "search",
-                    "combined_search_failed",
-                    "Every combined-search domain failed.",
+                    COMBINED_SEARCH_FAILED,
+                    COMBINED_SEARCH_FAILED_MESSAGE,
                     1,
                     domains=domains,
                 )
@@ -851,8 +884,8 @@ def _display_service_down_error(*, json_mode: bool) -> NoReturn:
         "The CLI will not silently run the search locally because that would "
         "open the local search index directly and block other users.\n"
         "Next actions:\n"
-        "  1. Check status:  vaultspec-rag server status\n"
-        "  2. Start service: vaultspec-rag server start\n"
+        f"  1. Check status:  {server_status_command()}\n"
+        f"  2. Start service: {server_start_command()}\n"
         "  3. Or run locally anyway: re-run with "
         "--allow-fallback (one user only)."
     )

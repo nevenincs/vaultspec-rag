@@ -74,12 +74,11 @@ if TYPE_CHECKING:
 
     from sentence_transformers import CrossEncoder
     from sentence_transformers.base.modality_types import PairInput
-    from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    from vaultspec_core.graph import (
         VaultGraph,
     )
 
     from ..embeddings import EmbeddingModel, SparseResult
-    from ..job_control import QuiesceGate
     from ..store_runtime import VaultStore
     from ._noise import NoisePolicy
 
@@ -106,7 +105,6 @@ class VaultSearcherConfigurationArguments(TypedDict, total=False):
     gpu_lock: threading.Lock | None
     reranker: CrossEncoder | None
     local_files_only: bool
-    quiesce_gate: QuiesceGate | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,7 +116,6 @@ class VaultSearcherConfiguration:
     gpu_lock: threading.Lock | None = None
     reranker: CrossEncoder | None = None
     local_files_only: bool = False
-    quiesce_gate: QuiesceGate | None = None
 
 
 class VaultSearchOptionArguments(TypedDict, total=False):
@@ -338,10 +335,6 @@ class VaultSearcher:
             local_files_only: Load a lazy reranker from the local Hugging Face
                 cache without remote metadata requests. Normal product
                 construction remains online-capable by default.
-            quiesce_gate: Optional process-global hold gate consulted at
-                search admission, before the GPU lock is acquired. When
-                paused, new GPU sections park at zero CPU until resumed;
-                requests already inside a GPU section are never preempted.
         """
         from ..config._settings import get_config
 
@@ -361,7 +354,6 @@ class VaultSearcher:
         self._graph_built_at: float = 0.0
         self._graph_lock = threading.Lock()
         self._gpu_lock = settings.gpu_lock
-        self._quiesce_gate = settings.quiesce_gate
         self._reranker_enabled: bool = cfg.reranker_enabled
         self._reranker_model_name: str = cfg.reranker_model
         self._sparse_enabled: bool = cfg.sparse_enabled
@@ -377,11 +369,6 @@ class VaultSearcher:
 
     @contextmanager
     def _gpu_section(self, timings: dict[str, float] | None = None):
-        # Admission gating: the quiesce wait must complete before the GPU
-        # lock is acquired - parking while holding gpu_lock would serialize
-        # every tenant behind a paused daemon.
-        if self._quiesce_gate is not None:
-            self._quiesce_gate.wait()
         if self._gpu_lock is None:
             with nullcontext():
                 yield
@@ -528,7 +515,7 @@ class VaultSearcher:
         if self._graph_provider is not None:
             return self._graph_provider()
 
-        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.graph import (
             VaultGraph as _VaultGraph,
         )
 
@@ -639,19 +626,16 @@ class VaultSearcher:
             max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
         )
         phase_started = time.perf_counter()
-        raw_results: list[dict[str, object]] = cast(
-            "list[dict[str, object]]",
-            self.store.hybrid_search(
-                HybridSearchRequest(
-                    query_vector=encoded.dense_vector,
-                    query_text=encoded.text,
-                    filters=store_filters or None,
-                    limit=fetch_limit,
-                    sparse_vector=encoded.sparse_vector,
-                    like_ids=options.like_ids,
-                    unlike_ids=options.unlike_ids,
-                )
-            ),
+        raw_results: list[dict[str, object]] = self.store.hybrid_search(
+            HybridSearchRequest(
+                query_vector=encoded.dense_vector,
+                query_text=encoded.text,
+                filters=store_filters or None,
+                limit=fetch_limit,
+                sparse_vector=encoded.sparse_vector,
+                like_ids=options.like_ids,
+                unlike_ids=options.unlike_ids,
+            )
         )
         _record_seconds(encoded.timings, PHASE_QDRANT, phase_started)
 
@@ -795,21 +779,18 @@ class VaultSearcher:
         kept: list[dict[str, object]] = []
         dropped: dict[str, int] = {}
         while True:
-            raw = cast(
-                "list[dict[str, object]]",
-                self.store.hybrid_search_codebase(
-                    HybridSearchRequest(
-                        query_vector=request.encoded.dense_vector,
-                        query_text=request.encoded.text,
-                        filters=request.store_filters or None,
-                        limit=limit,
-                        sparse_vector=request.encoded.sparse_vector,
-                        like_ids=request.options.like_ids,
-                        unlike_ids=request.options.unlike_ids,
-                        exclude_domains=pushdown_exclude,
-                        only_domains=pushdown_only,
-                    )
-                ),
+            raw = self.store.hybrid_search_codebase(
+                HybridSearchRequest(
+                    query_vector=request.encoded.dense_vector,
+                    query_text=request.encoded.text,
+                    filters=request.store_filters or None,
+                    limit=limit,
+                    sparse_vector=request.encoded.sparse_vector,
+                    like_ids=request.options.like_ids,
+                    unlike_ids=request.options.unlike_ids,
+                    exclude_domains=pushdown_exclude,
+                    only_domains=pushdown_only,
+                )
             )
             globbed = _filter_raw_codebase_results_impl(
                 raw, request.include_norm, request.exclude_norm
@@ -1160,17 +1141,14 @@ class VaultSearcher:
         fetch_limit = (
             max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
         )
-        raw_results = cast(
-            "list[dict[str, object]]",
-            self.store.hybrid_search_document(
-                HybridSearchRequest(
-                    query_vector=encoded.dense_vector,
-                    query_text=encoded.text,
-                    filters=filters or None,
-                    limit=fetch_limit,
-                    sparse_vector=encoded.sparse_vector,
-                )
-            ),
+        raw_results = self.store.hybrid_search_document(
+            HybridSearchRequest(
+                query_vector=encoded.dense_vector,
+                query_text=encoded.text,
+                filters=filters or None,
+                limit=fetch_limit,
+                sparse_vector=encoded.sparse_vector,
+            )
         )
         _record_seconds(encoded.timings, PHASE_QDRANT, phase_started)
 

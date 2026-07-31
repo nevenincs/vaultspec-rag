@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = [
+    "_LifecycleFailure",
     "_fail_lifecycle",
     "_lifecycle_success",
     "_print_detail_line",
@@ -52,8 +53,20 @@ def _print_lifecycle_next_actions(*commands: str) -> None:
         _plain(f"  {command}")
 
 
+@dataclass(frozen=True, slots=True)
+class _LifecycleFailure:
+    """The fixed fields every failed lifecycle outcome carries."""
+
+    command: str
+    error: str
+    message: str
+    human_lines: tuple[str, ...]
+    next_actions: tuple[str, ...] = ()
+
+
 def _fail_lifecycle(
     json_mode: bool,
+    request: _LifecycleFailure,
     **data: object,
 ) -> typer.Exit:
     """Render a failed lifecycle outcome and RETURN the ``typer.Exit`` to raise.
@@ -70,28 +83,28 @@ def _fail_lifecycle(
     Returns the ``Exit`` rather than raising it so the call site keeps an
     explicit ``raise`` and its control flow stays legible.
     """
-    command = cast("str", data.pop("command"))
-    error = cast("str", data.pop("error"))
-    message = cast("str", data.pop("message"))
-    human_lines = cast("tuple[str, ...]", data.pop("human_lines"))
-    next_actions = cast("tuple[str, ...]", data.pop("next_actions", ()))
     if json_mode:
         _emit_json(
             False,
-            command,
-            error=error,
-            message=message,
+            request.command,
+            error=request.error,
+            message=request.message,
             data=dict(data) or None,
         )
     else:
-        _print_lifecycle_lines(message, *human_lines)
-        if next_actions:
-            _print_lifecycle_next_actions(*next_actions)
+        _print_lifecycle_lines(request.message, *request.human_lines)
+        if request.next_actions:
+            _print_lifecycle_next_actions(*request.next_actions)
     return typer.Exit(code=1)
 
 
 def _lifecycle_success(
     json_mode: bool,
+    *,
+    command: str,
+    status: str,
+    human_title: str,
+    human_lines: tuple[str, ...] = (),
     **data: object,
 ) -> None:
     """Emit a successful lifecycle outcome. The caller returns after this.
@@ -106,10 +119,6 @@ def _lifecycle_success(
     already-done ``status``, so a supervising broker reads the idempotent case
     as satisfied rather than as a fault.
     """
-    command = cast("str", data.pop("command"))
-    status = cast("str", data.pop("status"))
-    human_title = cast("str", data.pop("human_title"))
-    human_lines = cast("tuple[str, ...]", data.pop("human_lines", ()))
     if json_mode:
         _emit_json(True, command, data={"status": status, **data})
     else:

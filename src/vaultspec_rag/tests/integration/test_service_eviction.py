@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +56,18 @@ async def _call_tool(
     tool_name: str,
     args: dict[str, Any],
 ) -> dict[str, Any]:
+    """Call one service route and return the JSON envelope it answered with.
+
+    A 200 status is not proof that a search ran. The daemon answers an
+    admission failure - a registry with no evictable slot, a local store
+    whose exclusive lock another opener holds - with an ``ok: false``
+    envelope carrying a structured error and no ``results`` list, and its
+    consumers key on ``ok`` rather than on the status code. Returning the
+    envelope whole keeps that distinction with the caller: a test that
+    needs hits asserts for them and names the daemon's error when they are
+    absent, and a test driving traffic for its own sake does not have to
+    care which envelope came back.
+    """
     import httpx
 
     from ._helpers import _poll_health
@@ -69,7 +83,7 @@ async def _call_tool(
                 json={"type": "vault", **args},
                 timeout=30.0,
             )
-            return resp.json()["results"] if resp.status_code == 200 else {}
+            return resp.json() if resp.status_code == 200 else {}
         elif tool_name == "list_projects":
             resp = await client.get(
                 f"http://127.0.0.1:{port}/projects",
@@ -145,7 +159,7 @@ def _index_project(port: int, root: Path, timeout: float = 180.0) -> None:
     to zero before returning, otherwise a follow-on admission would (correctly)
     refuse to evict the still-busy slot.
     """
-    token = _poll_health(port)["service_token"]
+    token = str(_poll_health(port)["service_token"])
     job_id = _run(_reindex_vault(port, root, token))
     deadline = time.monotonic() + timeout
     phase: str | None = None
@@ -261,15 +275,20 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
             assert str(proj_c) in roots
 
             # A surviving project's warm slot still serves a real search.
-            results = _run(
+            envelope = _run(
                 _call_tool(
                     port,
                     "search_vault",
                     {"query": "gamma", "top_k": 1, "project_root": str(proj_c)},
                 ),
             )
-            assert isinstance(results, list)
-            assert len(results) >= 1
+            results = envelope.get("results")
+            assert isinstance(results, list), (
+                "search returned no results list: "
+                f"ok={envelope.get('ok')!r} error={envelope.get('error')!r} "
+                f"message={envelope.get('message')!r}"
+            )
+            assert results, "warm slot served the search but matched nothing"
         finally:
             _terminate_pid(pid)
             _wait_for_exit(pid)
@@ -293,7 +312,14 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
         try:
             _poll_health(port)
             proj = _make_vault_project(tmp_path / "logs", label="logs")
-            # Drive enough DEBUG traffic to force several rotations.
+            # Drive a bounded burst, then stop and let the sink settle before
+            # looking. The drain reads in chunks of min(64 KiB, max_bytes), so
+            # at this max_bytes every chunk fills a whole generation and the
+            # sink is mid-rollover almost continuously while traffic flows.
+            # The first backup does not exist between the backup shift and the
+            # active replace, so sampling it under sustained load reports its
+            # absence far more often than its presence. Quiescing first makes
+            # the settled state the thing observed.
             for i in range(50):
                 _run(
                     _call_tool(
@@ -306,17 +332,16 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
                         },
                     ),
                 )
-            # Poll up to 2s for the rotated files to settle.
-            deadline = time.monotonic() + 2.0
             rotated_1 = log_path.with_name(log_path.name + ".1")
             rotated_2 = log_path.with_name(log_path.name + ".2")
+            deadline = time.monotonic() + 15.0
             while time.monotonic() < deadline:
                 if rotated_1.exists() and rotated_2.exists():
                     break
                 time.sleep(0.1)
             assert log_path.exists()
-            assert rotated_1.exists()
-            assert rotated_2.exists()
+            assert rotated_1.exists(), "first backup absent once the sink settled"
+            assert rotated_2.exists(), "second backup absent once the sink settled"
             # backup_count=2 means .3 must not exist.
             assert not log_path.with_name(log_path.name + ".3").exists()
         finally:
@@ -341,11 +366,17 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
             _poll_health(port)
             proj = _make_vault_project(tmp_path / "postroll", label="postroll")
 
-            # 1-2: drive enough traffic to force rollover.
-            deadline = time.monotonic() + 10.0
+            # 1-2: drive a bounded burst to force rollover, then stop before
+            # looking. The drain reads in chunks of min(64 KiB, max_bytes), so
+            # at this max_bytes every chunk fills a whole generation and the
+            # sink is mid-rollover almost continuously while traffic flows. The
+            # first backup does not exist between the backup shift and the
+            # active replace, so polling it under sustained load samples its
+            # absence far more often than its presence - which is what made the
+            # old drive-until-observed loop report "never happened" after
+            # hundreds of successful rollovers. Quiesce, then observe.
             rotated_1 = log_path.with_name(log_path.name + ".1")
-            i = 0
-            while time.monotonic() < deadline and not rotated_1.exists():
+            for i in range(60):
                 _run(
                     _call_tool(
                         port,
@@ -357,22 +388,27 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
                         },
                     ),
                 )
-                i += 1
-                if i > 200:
-                    break
-                time.sleep(0.05)
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline and not rotated_1.exists():
+                time.sleep(0.1)
             assert rotated_1.exists(), "rollover never happened"
 
-            # 3-5: drive one lightweight access-log record carrying
-            # a unique marker.  If this record itself crosses the
-            # threshold, the handler must rotate first and still bind
-            # stdout/stderr to the newly active log.
+            # 3-5: drive one lightweight access-log record carrying a unique
+            # marker. A successful GET to a polled route is deliberately
+            # dropped from the access stream, and the drop is decided on the
+            # path with its query string removed, so a marker cannot ride one -
+            # it would never reach the log at all. An unrouted path is just as
+            # cheap and its 404 is retained, because the filter exists to quiet
+            # healthy poll traffic rather than to hide requests.
             marker = "POSTROLLOVER_MARKER_abc123xyz"
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/health?marker={marker}",
-                timeout=5,
-            ) as resp:
-                assert resp.status == 200
+            with (
+                contextlib.suppress(urllib.error.HTTPError),
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/{marker}",
+                    timeout=5,
+                ) as resp,
+            ):
+                resp.read()
 
             deadline = time.monotonic() + 2.0
             active_bytes = b""
@@ -403,27 +439,49 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
         log_path = tmp_path / "service.log"
         pid = _spawn_service(port, log_path)
         try:
-            _poll_health(port)
+            token = str(_poll_health(port)["service_token"])
             projects = [
                 _make_vault_project(tmp_path / f"p{i}", label=f"p{i}") for i in range(8)
             ]
+            outcomes: list[str] = []
+            outcomes_lock = threading.Lock()
 
             def _hammer(proj: Path) -> None:
-                with contextlib.suppress(Exception):
-                    _run(
-                        asyncio.wait_for(
-                            _call_tool(
-                                port,
-                                "search_vault",
-                                {
-                                    "query": "drain test",
-                                    "top_k": 3,
-                                    "project_root": str(proj),
-                                },
-                            ),
-                            timeout=8.0,
-                        ),
+                """Issue one real search and record what the service answered.
+
+                Deliberately does not route through ``_call_tool``: that helper
+                opens with a synchronous readiness poll carrying its own 90s
+                budget, and no timeout wrapped around a blocking call can cut
+                one short - the bound has to be the request's own, which is why
+                the request is issued directly here. Readiness is established
+                once before these threads start, so re-establishing it per
+                request would buy nothing and reintroduce that unbounded wait.
+
+                Every thread records an outcome rather than discarding it, so a
+                run in which no request ever reached the service fails the
+                assertion below instead of passing on eight threads that died
+                on the doorstep.
+                """
+                import httpx
+
+                try:
+                    resp = httpx.post(
+                        f"http://127.0.0.1:{port}/search",
+                        headers={"Authorization": f"Bearer {token}"},
+                        json={
+                            "type": "vault",
+                            "query": "drain test",
+                            "top_k": 3,
+                            "project_root": str(proj),
+                        },
+                        timeout=8.0,
                     )
+                except Exception as exc:
+                    outcome = type(exc).__name__
+                else:
+                    outcome = f"status={resp.status_code}"
+                with outcomes_lock:
+                    outcomes.append(outcome)
 
             threads = [
                 threading.Thread(
@@ -445,8 +503,24 @@ def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
                 t.join(timeout=10)
             alive = [t.name for t in threads if t.is_alive()]
             assert not alive, f"client load threads did not exit: {alive}"
-            # service.json must be cleaned up.
-            assert not (tmp_path / "service.json").exists()
+            # The drain is only under test if load actually reached the service.
+            # Without this the invariant is carried by the test's name alone:
+            # eight threads that never connected exit just as promptly as eight
+            # the daemon had to drain, and every assertion above still holds.
+            assert len(outcomes) == len(threads), (
+                f"client threads did not all record an outcome: {outcomes}"
+            )
+            served = [outcome for outcome in outcomes if outcome.startswith("status=")]
+            assert served, f"no client search reached the service: {outcomes}"
+            # The daemon deletes its own discovery views from the lifespan
+            # teardown, and only a delivered termination signal reaches that
+            # teardown. Windows spawns the daemon console-detached, so a console
+            # control event never arrives and termination always escalates to a
+            # forced kill; reaping the views it leaves is the stop verb's job,
+            # not this one's. Asserting self-cleanup here is therefore only
+            # meaningful where the signal is deliverable.
+            if sys.platform != "win32":
+                assert not (tmp_path / "service.json").exists()
         finally:
             if _wait_for_exit(pid, timeout=1) is False:
                 _terminate_pid(pid)

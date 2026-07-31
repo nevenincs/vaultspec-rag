@@ -8,9 +8,43 @@ from .._source_types import PublicSourceType
 from ._models import DocumentSearchResult, SearchResult
 from ._result_shaping import select_combined_results
 
-__all__ = ["CombinedSearchOutcome", "SearchDomainOutcome"]
+__all__ = [
+    "COMBINED_SEARCH_FAILED",
+    "COMBINED_SEARCH_FAILED_MESSAGE",
+    "FAILED_ACTIVITY_OUTCOMES",
+    "CombinedSearchOutcome",
+    "SearchDomainOutcome",
+]
 
 type AnySearchResult = SearchResult | DocumentSearchResult
+
+#: Wire error kind for a combined search in which no domain completed. Named
+#: here, beside the outcome that decides the condition, because the service
+#: route and the in-process CLI path both report it and an operator hitting the
+#: same failure through either must be told the same thing.
+COMBINED_SEARCH_FAILED = "combined_search_failed"
+
+#: The one sentence describing that condition on every surface.
+COMBINED_SEARCH_FAILED_MESSAGE = "Every combined-search domain failed."
+
+#: Every activity outcome that means the search did not serve its caller.
+#:
+#: Named here for the same reason as the error kind above: a console marks
+#: these rows as failures and the route classifies them, so a set restated on
+#: the display side drifts silently the moment a condition is added. It drifted
+#: exactly that way once - a client copy omitted the two admission-side
+#: outcomes, so a registry refusing every search on the box rendered in the
+#: same tone as a completed one, and only the outcome word said otherwise.
+FAILED_ACTIVITY_OUTCOMES = frozenset(
+    {
+        "admission_failed",
+        "cancelled",
+        "combined_failed",
+        "failed",
+        "unavailable",
+        "validation_rejected",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)

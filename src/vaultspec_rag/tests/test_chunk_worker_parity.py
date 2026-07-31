@@ -388,6 +388,9 @@ class TestChunkIdentityParity:
         _make_code_tree(tmp_path, 20)
         indexer = _chunk_only_indexer(tmp_path)
         paths = indexer.scan_files()
+        # An empty scan would make the count below compare 0 to 0 and assert
+        # nothing about the worker at all.
+        assert len(paths) >= 20
         # chunk_and_hash_file is the pipeline worker; its meta must cover every
         # readable file even when a file yields zero chunks.
         meta: dict[str, str] = {}
@@ -531,7 +534,11 @@ class TestHashParity:
     def test_content_hash_matches_file_digest(self, tmp_path: Path) -> None:
         _make_code_tree(tmp_path, 5)
         indexer = _chunk_only_indexer(tmp_path)
-        for p in indexer.scan_files():
+        scanned = indexer.scan_files()
+        # Without this the loop body is the whole test: a scan that returns
+        # nothing runs zero iterations and the parity below is never checked.
+        assert len(scanned) >= 5
+        for p in scanned:
             res = _chunk_worker.chunk_and_hash_file(p, tmp_path)
             assert res is not None
             with open(p, "rb") as f:
@@ -559,6 +566,10 @@ class TestNewlineParity:
         ref_content = crlf.read_text(encoding="utf-8")
         ref_chunks = _chunk_worker._chunk_decoded(ref_content, crlf, tmp_path)
 
+        # Both sides run through the same decoder, so a decoder that emits
+        # nothing satisfies every parity comparison below by comparing two
+        # empty lists. Match the twin test's guard and require real output.
+        assert new_chunks, "the CRLF module must produce chunks"
         assert [c.id for c in new_chunks] == [c.id for c in ref_chunks]
         assert [c.content for c in new_chunks] == [c.content for c in ref_chunks]
         # And no carriage returns survive translation.

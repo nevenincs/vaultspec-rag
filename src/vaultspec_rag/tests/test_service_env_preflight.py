@@ -15,13 +15,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
-
-    from packaging.tags import Tag
 
 from ..cli._gpu_errors import (
     RuntimeEnvKind,
+    _durable_install_command,
+    _wheel_platform_tag,
+    _wheel_torch_version,
     classify_interpreter_env,
     classify_runtime_env,
     durable_tool_install_command,
@@ -201,68 +201,6 @@ class TestRemediationCommands:
         # independent source from whatever the implementation consults.
         torch_version = Version(importlib.metadata.version("torch")).base_version
         assert f"torch-{torch_version}%2Bcu130-{tag.interpreter}-{tag.abi}-" in cmd
-
-    def test_durable_command_tracks_the_installed_torch_version(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The wheel version follows the env's torch, not a baked constant.
-
-        An env whose torch is older than the workspace pin must be offered
-        the same release it already resolved - the cu130 flavour of a version
-        the index may no longer pair with this interpreter otherwise. The
-        local ``+cpu`` suffix must be stripped: the index names ``+cu130``.
-        """
-        import importlib.metadata
-
-        def fake_version(name: str) -> str:
-            assert name == "torch"
-            return "2.99.1+cpu"
-
-        monkeypatch.setattr(importlib.metadata, "version", fake_version)
-
-        cmd = durable_tool_install_command()
-
-        assert "torch-2.99.1%2Bcu130-" in cmd, (
-            f"wheel version must track the installed torch; command was: {cmd}"
-        )
-
-    def test_durable_command_falls_back_when_torch_is_absent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """With no torch installed the pinned fallback version is offered."""
-        import importlib.metadata
-
-        from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
-
-        def missing_version(name: str) -> str:
-            raise importlib.metadata.PackageNotFoundError(name)
-
-        monkeypatch.setattr(importlib.metadata, "version", missing_version)
-
-        cmd = durable_tool_install_command()
-
-        assert f"torch-{TORCH_TOOL_PIN_VERSION}%2Bcu130-" in cmd
-
-    def test_durable_command_derives_the_linux_platform_tag(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """An aarch64 Linux host is offered the aarch64 wheel, not x86_64.
-
-        The platform half of the wheel name was a hardcoded x86_64 string;
-        PyTorch publishes ``manylinux_2_28`` wheels per machine architecture,
-        so the machine must be read from the host.
-        """
-        import platform
-        import sys
-
-        monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr(platform, "machine", lambda: "aarch64")
-
-        cmd = durable_tool_install_command()
-
-        assert "-manylinux_2_28_aarch64.whl" in cmd, (
-            f"platform tag must track the host machine; command was: {cmd}"
-        )
         # `uv tool install --force` rebuilds the env with uv's DEFAULT python
         # request, not the interpreter that printed the command, so the wheel
         # pin must travel with a matching --python request (uv records it in
@@ -270,9 +208,37 @@ class TestRemediationCommands:
         # source from the packaging tag the implementation parses.
         assert f"--python {sys.version_info[0]}.{sys.version_info[1]}" in cmd
 
-    def test_durable_command_names_the_free_threaded_abi(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_wheel_version_strips_the_local_suffix(self) -> None:
+        """The wheel version follows the env's torch, not a baked constant.
+
+        An env whose torch is older than the workspace pin must be offered
+        the same release it already resolved - the cu130 flavour of a version
+        the index may no longer pair with this interpreter otherwise. The
+        local ``+cpu`` suffix must be stripped: the index names ``+cu130``.
+        """
+        assert _wheel_torch_version("2.99.1+cpu") == "2.99.1"
+        assert _wheel_torch_version("2.9.0") == "2.9.0"
+
+    def test_wheel_version_falls_back_when_torch_is_absent(self) -> None:
+        """With no torch installed the pinned fallback version is offered."""
+        from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
+
+        assert _wheel_torch_version(None) == TORCH_TOOL_PIN_VERSION
+        assert _wheel_torch_version("not-a-version") == TORCH_TOOL_PIN_VERSION
+
+    def test_platform_tag_derives_the_linux_machine(self) -> None:
+        """An aarch64 Linux host is offered the aarch64 wheel, not x86_64.
+
+        The platform half of the wheel name was a hardcoded x86_64 string;
+        PyTorch publishes ``manylinux_2_28`` wheels per machine architecture,
+        so the machine must be read from the host.
+        """
+        assert _wheel_platform_tag("linux", "aarch64") == "manylinux_2_28_aarch64"
+        assert _wheel_platform_tag("linux", "x86_64") == "manylinux_2_28_x86_64"
+        # Windows publishes one architecture, so the machine is not consulted.
+        assert _wheel_platform_tag("win32", "AMD64") == "win_amd64"
+
+    def test_command_names_the_free_threaded_abi(self) -> None:
         """A free-threaded host must get the ``t`` wheel, not the GIL one.
 
         The interpreter and ABI tags differ only on a free-threaded build
@@ -280,20 +246,15 @@ class TestRemediationCommands:
         builds, so an implementation that derives one tag and uses it twice
         emits ``cp314-cp314`` here and uv refuses it on a tag mismatch. CI runs
         a GIL interpreter, where the two tags are equal and the bug is
-        invisible, so the free-threaded tags are supplied explicitly. Only the
-        tag source is substituted; the URL assembly under test runs for real.
+        invisible, so the free-threaded tag is passed explicitly.
         """
-        import packaging.tags
         from packaging.tags import Tag
 
-        # Takes no parameters on purpose: the call under test passes none, so a
-        # signature drift there fails loudly here instead of silently binding.
-        def free_threaded_tags() -> Iterator[Tag]:
-            yield Tag("cp314", "cp314t", "win_amd64")
-
-        monkeypatch.setattr(packaging.tags, "cpython_tags", free_threaded_tags)
-
-        cmd = durable_tool_install_command()
+        cmd = _durable_install_command(
+            torch_version="2.9.0",
+            tag=Tag("cp314", "cp314t", "win_amd64"),
+            platform_tag="win_amd64",
+        )
 
         assert "-cp314-cp314t-" in cmd, (
             f"free-threaded host must be offered the cp314t wheel; command was: {cmd}"
@@ -301,14 +262,32 @@ class TestRemediationCommands:
         assert "-cp314-cp314-" not in cmd, (
             "the GIL wheel was named for a free-threaded interpreter"
         )
-        # The --python request must come from the SAME tag as the wheel (the
-        # test interpreter is a GIL build with a different version, so an
-        # implementation reading sys.version_info emits that version without
-        # the t suffix and fails here) - otherwise install resolves on an
-        # interpreter the pinned wheel cannot satisfy.
+        # The --python request must come from the SAME tag as the wheel -
+        # otherwise install resolves on an interpreter the pinned wheel cannot
+        # satisfy. `uv tool install --force` rebuilds the env with uv's DEFAULT
+        # python request, not the interpreter that printed the command, so the
+        # pin only travels if the request travels with it.
         assert "--python 3.14t " in cmd, (
             f"--python request must name the free-threaded interpreter; was: {cmd}"
         )
+
+    def test_command_names_the_gil_interpreter_without_the_t_suffix(self) -> None:
+        """The ``t`` suffix is the free-threaded signal, not decoration.
+
+        Pairs with the free-threaded case: an implementation that always
+        appends ``t`` would pass that one and fail here.
+        """
+        from packaging.tags import Tag
+
+        cmd = _durable_install_command(
+            torch_version="2.9.0",
+            tag=Tag("cp313", "cp313", "win_amd64"),
+            platform_tag="manylinux_2_28_aarch64",
+        )
+
+        assert "--python 3.13 " in cmd
+        assert "-cp313-cp313-manylinux_2_28_aarch64.whl" in cmd
+        assert "3.13t" not in cmd
 
 
 class TestEphemeralEnvWarning:

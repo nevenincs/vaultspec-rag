@@ -12,16 +12,20 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
-from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.commands import (
     sync_provider,
 )
-from vaultspec_core.core.enums import Tool  # pyright: ignore[reportMissingTypeStubs]
-from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
+    Tool,
+)
+from vaultspec_core.core.manifest import (
     add_providers,
     read_manifest_data,
 )
-from vaultspec_core.core.mcps import mcp_sync  # pyright: ignore[reportMissingTypeStubs]
-from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.mcps import (
+    mcp_sync,
+)
+from vaultspec_core.core.workspace_mode import (
     dependency_leak_advisory,
     newly_establishes_dependency,
     read_package_declaration,
@@ -68,7 +72,7 @@ from ._workspace import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+    from vaultspec_core.core.enums import (
         InstallMode,
     )
 
@@ -390,11 +394,10 @@ def _commit_mcp_placement_and_mode(request: _McpPlacementCommitRequest) -> bool:
         ):
             rollback_errors = rollback_file_snapshots(snapshots)
             if rollback_errors:
-                rollback_message = "MCP transaction rollback failed: " + "; ".join(
-                    rollback_errors
+                record_mcp_failure(
+                    request.report,
+                    "MCP transaction rollback failed: " + "; ".join(rollback_errors),
                 )
-                request.report.mcp_errors.append(rollback_message)
-                request.report.warnings.append(rollback_message)
             return False
         if request.persist_mode:
             persist_rag_mode(request.target, request.mode)
@@ -418,11 +421,10 @@ def _commit_mcp_placement_and_mode(request: _McpPlacementCommitRequest) -> bool:
             request.report, exc, configure_torch=request.configure_torch
         )
         if rollback_errors:
-            rollback_message = "MCP transaction rollback failed: " + "; ".join(
-                rollback_errors
+            record_mcp_failure(
+                request.report,
+                "MCP transaction rollback failed: " + "; ".join(rollback_errors),
             )
-            request.report.mcp_errors.append(rollback_message)
-            request.report.warnings.append(rollback_message)
         return False
     return True
 

@@ -29,7 +29,24 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Protocol, cast
+
+if TYPE_CHECKING:
+    from http.client import HTTPResponse
+
+    # ``argparse.Namespace`` attribute access is unavoidably ``Any`` (the
+    # parser has no static view of what ``add_argument`` calls produced).
+    # This mirrors main()'s declared arguments so a single cast replaces
+    # every per-attribute ``Any`` read below it.
+    class _ParsedArgs(Protocol):
+        root: list[str]
+        requests: int
+        concurrency: int
+        top_k: int
+        timeout: float
+        with_reindex: bool
+        json: Path | None
+
 
 __all__ = [
     "RequestOutcome",
@@ -81,14 +98,21 @@ class ServiceTarget:
         from ...config._settings import get_config
 
         cfg = get_config()
-        path = Path(str(cfg.status_dir)).expanduser() / "service.json"
+        path = Path(str(cast("object", cfg.status_dir))).expanduser() / "service.json"
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = cast(
+                "dict[str, object]",
+                json.loads(path.read_text(encoding="utf-8")),
+            )
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(
                 f"Cannot read {path}: is the service running? ({exc})",
             ) from exc
-        port = int(data.get("port", 0))
+        # ``int()``/``str()`` already coerce (and raise on a genuinely bad
+        # value) at runtime; the cast only asserts the JSON-decoded shape
+        # service.json is documented to carry, same as the pre-existing
+        # runtime behaviour.
+        port = int(cast("int | float | str", data.get("port", 0)))
         token = str(data.get("service_token", data.get("token", "")))
         if not port:
             raise RuntimeError(f"service.json at {path} carries no port")
@@ -99,7 +123,7 @@ class ServiceTarget:
         path: str,
         payload: dict[str, object],
         timeout: float,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """POST JSON and decode the JSON response."""
         url = f"http://127.0.0.1:{self.port}{path}"
         headers = {"Content-Type": "application/json"}
@@ -111,8 +135,15 @@ class ServiceTarget:
             headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        # urlopen()'s return is typed Any upstream (it dispatches across
+        # FTP/HTTP/file handlers); this request is always http://, so the
+        # concrete response type is genuinely HTTPResponse.
+        opened = cast("HTTPResponse", urllib.request.urlopen(req, timeout=timeout))
+        with opened as resp:
+            # The service's response shape is only a contract at the JSON
+            # boundary; decode it once here and let every caller narrow the
+            # specific keys it reads instead of carrying `Any` outward.
+            return cast("dict[str, object]", json.loads(resp.read().decode("utf-8")))
 
 
 @dataclass
@@ -170,7 +201,7 @@ class ScenarioResult:
                 }
         return summary
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         """JSON-serializable report row."""
         return {
             "name": self.name,
@@ -353,16 +384,19 @@ def _start_reindex(target: ServiceTarget, root: str, timeout: float) -> str | No
 
 
 def _print_summary(results: list[ScenarioResult]) -> None:
+    # Read straight off the typed `ScenarioResult`, not the JSON-shaped
+    # `to_dict()` row: that dict exists for serialization, and subscripting
+    # it back out for display would re-widen every field to `object`.
     for result in results:
-        row = result.to_dict()
-        latency = row["latency"]
+        latency = result.latency_percentiles()
         print(
-            f"{row['name']:<24} c={row['concurrency']:<3} "
-            f"n={row['requests']:<4} ok={row['ok']:<4} err={row['errors']:<3} "
-            f"rps={row['throughput_rps']:<7} "
+            f"{result.name:<24} c={result.concurrency:<3} "
+            f"n={result.requests:<4} ok={result.ok_count:<4} "
+            f"err={result.error_count:<3} "
+            f"rps={round(result.throughput_rps, 3):<7} "
             f"p50={latency['p50']}s p95={latency['p95']}s max={latency['max']}s",
         )
-        for key, stats in row["phases"].items():
+        for key, stats in result.phase_summary().items():
             print(f"    {key:<28} mean={stats['mean']}s max={stats['max']}s")
 
 
@@ -391,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Write the full machine-readable report to this path.",
     )
-    args = parser.parse_args(argv)
+    args = cast("_ParsedArgs", parser.parse_args(argv))
 
     target = ServiceTarget.discover()
     roots: list[str] = [str(Path(r).resolve()) for r in args.root]

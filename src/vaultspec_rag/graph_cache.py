@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import pathlib
 
-    from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+    from vaultspec_core.graph import (
         VaultGraph,
     )
 
@@ -81,7 +81,7 @@ class GraphCache:
         with self._lock:
             if not self._is_stale(root_dir):
                 return self._graph
-            from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+            from vaultspec_core.graph import (
                 VaultGraph,
             )
 

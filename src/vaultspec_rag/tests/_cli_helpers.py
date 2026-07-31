@@ -10,8 +10,8 @@ import re
 import typing
 from dataclasses import dataclass
 
-from typer.testing import CliRunner
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+from typer.testing import CliRunner, Result
+from vaultspec_core.config import (
     reset_config as reset_base_config,
 )
 
@@ -44,7 +44,15 @@ class _StatusContractOptions:
 
 
 if typing.TYPE_CHECKING:
+    import threading
     from pathlib import Path
+
+    #: A contract server's ``(server, thread)`` pair. The stub servers below
+    #: are always a stdlib ``http.server.HTTPServer`` (or its threading
+    #: subclass) run on a daemon ``threading.Thread`` - concrete types, not the
+    #: ``Any`` the untyped tuple previously let every caller's unpacking
+    #: inherit.
+    type _ContractServer = tuple[http.server.HTTPServer, threading.Thread]
 
 runner = CliRunner()
 
@@ -88,7 +96,7 @@ def _with_service_token(health: dict[str, object]) -> dict[str, object]:
 
 
 @contextlib.contextmanager
-def _serving(contract_server: tuple[typing.Any, typing.Any]) -> typing.Generator[int]:
+def _serving(contract_server: _ContractServer) -> typing.Generator[int]:
     """Own the shutdown of a contract server and its thread, yielding the port."""
     server, thread = contract_server
     try:
@@ -124,7 +132,11 @@ def _running_service_record(
     with _isolated_status_dir(status_dir):
         _write_service_status(pid=os.getpid(), port=port)
         record_path = status_dir / "service.json"
-        record = json.loads(record_path.read_text(encoding="utf-8"))
+        raw_record = typing.cast(
+            "object", json.loads(record_path.read_text(encoding="utf-8"))
+        )
+        assert isinstance(raw_record, dict)
+        record = typing.cast("dict[str, object]", raw_record)
         record["last_heartbeat"] = datetime.now(UTC).isoformat(timespec="seconds")
         record["service_token"] = _CONTRACT_SERVICE_TOKEN
         for key in drop:
@@ -143,6 +155,20 @@ def _no_service() -> DataPlaneService:
     release that cannot be confirmed because there is nothing to ask.
     """
     return DataPlaneService(port=None, version=classify_service_version(None))
+
+
+def _parsed_json_object(raw: bytes) -> dict[str, object]:
+    """Decode a POST body as the JSON object every stub handler expects.
+
+    ``json.loads`` types its return as ``Any`` regardless of what the bytes
+    hold, so every handler below narrowed through its own cast; this is the
+    one place that narrowing happens, built once rather than repeated at each
+    handler's call site.
+    """
+    if not raw:
+        return {}
+    parsed = typing.cast("object", json.loads(raw))
+    return typing.cast("dict[str, object]", parsed) if isinstance(parsed, dict) else {}
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
@@ -301,7 +327,7 @@ def _invoke_search_contract(
     tmp_path: Path,
     port: int,
     *extra: str,
-) -> typing.Any:
+) -> Result:
     return runner.invoke(
         app,
         [
@@ -350,7 +376,7 @@ def _hold_local_index_lock(root: Path):
     from ..config._settings import get_config
 
     cfg = get_config()
-    index_dir = root / cfg.data_dir / cfg.qdrant_dir
+    index_dir = root / str(cfg.data_dir) / str(cfg.qdrant_dir)
     index_dir.mkdir(parents=True, exist_ok=True)
     lock = FileLock(index_dir / "exclusive.lock")
     assert lock.acquire()
@@ -360,7 +386,7 @@ def _hold_local_index_lock(root: Path):
 def _status_contract_server(
     options: _StatusContractOptions | None = None,
     **legacy: object,
-) -> tuple[typing.Any, typing.Any]:
+) -> _ContractServer:
     """Start a local HTTP service exposing /health and /jobs for status tests.
 
     The keyword flags shape the default payloads for tests that vary one job
@@ -502,7 +528,7 @@ def _slow_search_contract_server(
     health_payload: dict[str, object] | None = None,
     jobs_payload: dict[str, object] | None = None,
     jobs_status_code: int = 200,
-) -> tuple[typing.Any, typing.Any]:
+) -> _ContractServer:
     """Start a local service that lets /search time out while probes work."""
     import threading
     import time
@@ -566,7 +592,7 @@ def invoke_timed_out_search(
     health_payload: dict[str, object] | None = None,
     jobs_payload: dict[str, object] | None = None,
     jobs_status_code: int = 200,
-) -> tuple[typing.Any, int]:
+) -> tuple[Result, int]:
     """Run one CLI search whose service answers /search too slowly.
 
     Returns the CLI result and the port, which the diagnostic under test
@@ -606,7 +632,9 @@ def invoke_timed_out_search(
     return result, port
 
 
-def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
+def _search_output_contract_server() -> tuple[
+    http.server.HTTPServer, threading.Thread, list[object]
+]:
     """Start a local service returning deterministic search results."""
     import threading
 
@@ -619,7 +647,7 @@ def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[objec
                 self.end_headers()
                 return
             length = int(self.headers.get("Content-Length", "0"))
-            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            body = _parsed_json_object(self.rfile.read(length))
             requests.append(body)
             payload = {
                 "ok": True,
@@ -657,7 +685,7 @@ def _search_output_contract_server() -> tuple[typing.Any, typing.Any, list[objec
 
 
 def _sparse_search_output_contract_server() -> tuple[
-    typing.Any, typing.Any, list[object]
+    http.server.HTTPServer, threading.Thread, list[object]
 ]:
     """Start a local service returning a result without locator fields."""
     import threading
@@ -671,7 +699,7 @@ def _sparse_search_output_contract_server() -> tuple[
                 self.end_headers()
                 return
             length = int(self.headers.get("Content-Length", "0"))
-            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            body = _parsed_json_object(self.rfile.read(length))
             requests.append(body)
             payload = {
                 "ok": True,
@@ -693,7 +721,9 @@ def _sparse_search_output_contract_server() -> tuple[
     return server, thread, requests
 
 
-def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object]]:
+def _empty_search_contract_server() -> tuple[
+    http.server.HTTPServer, threading.Thread, list[object]
+]:
     """Start a local service returning empty-search diagnostics."""
     import threading
 
@@ -706,7 +736,7 @@ def _empty_search_contract_server() -> tuple[typing.Any, typing.Any, list[object
                 self.end_headers()
                 return
             length = int(self.headers.get("Content-Length", "0"))
-            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            body = _parsed_json_object(self.rfile.read(length))
             requests.append(body)
             payload: dict[str, object] = {
                 "ok": True,
@@ -752,7 +782,9 @@ def _find_free_port() -> int:
     return free_loopback_port()
 
 
-def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+def _projects_list_contract_server() -> tuple[
+    http.server.HTTPServer, threading.Thread, list[str]
+]:
     import threading
 
     requests: list[str] = []
@@ -792,7 +824,9 @@ def _projects_list_contract_server() -> tuple[typing.Any, typing.Any, list[str]]
     return server, thread, requests
 
 
-def _logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+def _logs_contract_server() -> tuple[
+    http.server.HTTPServer, threading.Thread, list[str]
+]:
     import threading
 
     requests: list[str] = []
@@ -823,7 +857,9 @@ def _logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
     return server, thread, requests
 
 
-def _empty_logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+def _empty_logs_contract_server() -> tuple[
+    http.server.HTTPServer, threading.Thread, list[str]
+]:
     import threading
 
     requests: list[str] = []
@@ -842,7 +878,9 @@ def _empty_logs_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
     return server, thread, requests
 
 
-def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+def _jobs_empty_contract_server() -> tuple[
+    http.server.HTTPServer, threading.Thread, list[str]
+]:
     import threading
     import urllib.parse
 
@@ -877,7 +915,9 @@ def _jobs_empty_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
     return server, thread, requests
 
 
-def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]]:
+def _jobs_populated_contract_server() -> tuple[
+    http.server.HTTPServer, threading.Thread, list[str]
+]:
     import threading
 
     requests: list[str] = []
@@ -934,7 +974,7 @@ def _jobs_populated_contract_server() -> tuple[typing.Any, typing.Any, list[str]
 
 def _projects_unload_contract_server(
     response: dict[str, object] | None = None,
-) -> tuple[typing.Any, typing.Any, list[dict[str, object]]]:
+) -> tuple[http.server.HTTPServer, threading.Thread, list[dict[str, object]]]:
     import threading
 
     requests: list[dict[str, object]] = []
@@ -943,7 +983,7 @@ def _projects_unload_contract_server(
     class _ProjectsEvictHandler(QuietHandler):
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", "0"))
-            requests.append(json.loads(self.rfile.read(length).decode("utf-8")))
+            requests.append(_parsed_json_object(self.rfile.read(length)))
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1020,6 +1060,7 @@ __all__ = [
     "_label_values",
     "_logs_contract_server",
     "_no_service",
+    "_parsed_json_object",
     "_plain_lines",
     "_projects_list_contract_server",
     "_projects_unload_contract_server",
@@ -1045,7 +1086,7 @@ __all__ = [
 
 
 def _reindex_contract_server() -> tuple[
-    typing.Any, typing.Any, list[dict[str, object]]
+    http.server.HTTPServer, threading.Thread, list[dict[str, object]]
 ]:
     """Serve the reindex route, recording each request body it was sent.
 
@@ -1126,7 +1167,12 @@ def process_the_identity_check_recognises() -> typing.Generator[int]:
     )
     try:
         assert process.stdout is not None
-        if process.stdout.readline().strip() != "up":
+        # typeshed types every Popen stream as IO[Any] regardless of `text=True`
+        # (subprocess.pyi declares stdin/stdout/stderr as IO[Any] | None
+        # unconditionally), so this is the one cast back to the str stream
+        # `text=True` actually produces, rather than one at every read.
+        stdout = typing.cast("typing.IO[str]", process.stdout)
+        if stdout.readline().strip() != "up":
             msg = "the stand-in daemon process never started"
             raise AssertionError(msg)
         yield process.pid
@@ -1162,7 +1208,12 @@ def store_locked_by_another_process(root: Path) -> typing.Generator[None]:
     )
     try:
         assert process.stdout is not None
-        if process.stdout.readline().strip() != "held":
+        # See process_the_identity_check_recognises: typeshed types every Popen
+        # stream as IO[Any] regardless of `text=True`, so this casts back to the
+        # str stream `text=True` actually produces, once, rather than at every
+        # read.
+        stdout = typing.cast("typing.IO[str]", process.stdout)
+        if stdout.readline().strip() != "held":
             msg = "the holder process never took the store lock"
             raise AssertionError(msg)
         yield

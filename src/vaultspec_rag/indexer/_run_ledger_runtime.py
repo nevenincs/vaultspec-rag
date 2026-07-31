@@ -8,12 +8,16 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ._content_policy import ContentKind
 from ._file_state import FileState, FileStateKind, validate_rel_path
 from ._run_ledger_commits import RunLedgerCommitMethods
-from ._run_ledger_files import RunLedgerFileMethods, file_state_from_row
+from ._run_ledger_files import (
+    FileStateRow,
+    RunLedgerFileMethods,
+    file_state_from_row,
+)
 from ._run_ledger_finalization import RunLedgerFinalizationMethods
 from ._run_ledger_models import (
     MAX_RESUME_FAILURES,
@@ -21,6 +25,7 @@ from ._run_ledger_models import (
     RESUMABLE_STATES,
     SCHEMA_VERSION,
     FinalizationPhase,
+    GenerationRow,
     RunGeneration,
     RunLedgerCompatibilityError,
     RunLedgerCorruptionError,
@@ -28,6 +33,8 @@ from ._run_ledger_models import (
     RunOperation,
     RunSignature,
     RunTerminalState,
+    fetch_all,
+    fetch_one,
 )
 
 if TYPE_CHECKING:
@@ -60,7 +67,8 @@ class RunLedger(
         """Resume one compatible active generation or invalidate and replace it."""
         now = time.time()
         with self._transaction() as connection:
-            active = connection.execute(
+            active: GenerationRow | None = fetch_one(
+                connection,
                 """
                 SELECT * FROM generations
                 WHERE source_type = ?
@@ -71,11 +79,11 @@ class RunLedger(
                     signature.source_type.value,
                     *(state.value for state in RESUMABLE_STATES),
                 ),
-            ).fetchone()
+            )
             if (
                 active is not None
                 and active["signature_fingerprint"] == signature.fingerprint
-                and int(active["consecutive_failures"]) >= MAX_RESUME_FAILURES
+                and active["consecutive_failures"] >= MAX_RESUME_FAILURES
             ):
                 # Retirement, not repair. A generation that has failed this
                 # many times in a row is failing for a reason resuming will
@@ -93,7 +101,7 @@ class RunLedger(
                     (
                         RunTerminalState.INVALIDATED.value,
                         "generation retired after "
-                        f"{int(active['consecutive_failures'])} consecutive "
+                        f"{active['consecutive_failures']} consecutive "
                         "failed attempts",
                         now,
                         active["generation_id"],
@@ -117,10 +125,11 @@ class RunLedger(
                             active["generation_id"],
                         ),
                     )
-                    active = connection.execute(
+                    active = fetch_one(
+                        connection,
                         "SELECT * FROM generations WHERE generation_id = ?",
                         (active["generation_id"],),
-                    ).fetchone()
+                    )
                     assert active is not None
                 return self._generation_from_row(active)
             if active is not None:
@@ -175,10 +184,11 @@ class RunLedger(
                         """,
                         (parent_generation_id, generation_id),
                     )
-            row = connection.execute(
+            row: GenerationRow | None = fetch_one(
+                connection,
                 "SELECT * FROM generations WHERE generation_id = ?",
                 (generation_id,),
-            ).fetchone()
+            )
             assert row is not None
             return self._generation_from_row(row)
 
@@ -188,7 +198,8 @@ class RunLedger(
         generation_id: str,
         signature: RunSignature,
     ) -> str | None:
-        candidates = connection.execute(
+        candidates: list[GenerationRow] = fetch_all(
+            connection,
             """
             SELECT * FROM generations
             WHERE generation_id != ?
@@ -203,7 +214,7 @@ class RunLedger(
                 signature.collection_identity,
                 RunTerminalState.SUCCEEDED.value,
             ),
-        ).fetchall()
+        )
         source_id: str | None = None
         for candidate in candidates:
             published = self._generation_from_row(candidate)
@@ -223,7 +234,8 @@ class RunLedger(
             # describes points a later publication already replaced or purged,
             # so carrying it would claim dead point ids and skip re-encoding
             # the files it names - a worse diff than the one just refused.
-            dangling = connection.execute(
+            dangling: object | None = fetch_one(
+                connection,
                 """
                 SELECT 1
                 FROM file_states AS states
@@ -234,7 +246,7 @@ class RunLedger(
                 LIMIT 1
                 """,
                 (published.generation_id,),
-            ).fetchone()
+            )
             if dangling is not None:
                 return None
             source_id = published.generation_id
@@ -259,10 +271,11 @@ class RunLedger(
     def generation(self, generation_id: str) -> RunGeneration:
         """Return one generation or raise for an unknown identifier."""
         with self._connect() as connection:
-            row = connection.execute(
+            row: GenerationRow | None = fetch_one(
+                connection,
                 "SELECT * FROM generations WHERE generation_id = ?",
                 (generation_id,),
-            ).fetchone()
+            )
         if row is None:
             raise KeyError(generation_id)
         return self._generation_from_row(row)
@@ -280,7 +293,8 @@ class RunLedger(
             collection_clause = " AND collection_identity = ?"
             parameters = (*parameters, collection_identity)
         with self._connect() as connection:
-            row = connection.execute(
+            row: GenerationRow | None = fetch_one(
+                connection,
                 f"""
                 SELECT * FROM generations
                 WHERE source_type = ?{collection_clause}
@@ -288,7 +302,7 @@ class RunLedger(
                 LIMIT 1
                 """,
                 parameters,
-            ).fetchone()
+            )
         return self._generation_from_row(row) if row is not None else None
 
     def latest_file_state(
@@ -307,7 +321,8 @@ class RunLedger(
         """
         validate_rel_path(rel_path)
         with self._connect() as connection:
-            row = connection.execute(
+            row: FileStateRow | None = fetch_one(
+                connection,
                 """
                 SELECT states.* FROM file_states AS states
                 JOIN generations AS generations
@@ -328,7 +343,7 @@ class RunLedger(
                     FileStateKind.INDEXED.value,
                     source_type.value,
                 ),
-            ).fetchone()
+            )
         return file_state_from_row(row) if row is not None else None
 
     @contextmanager
@@ -352,7 +367,9 @@ class RunLedger(
         return connection
 
     def _initialize(self, connection: sqlite3.Connection) -> None:
-        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        version_row: sqlite3.Row | None = fetch_one(connection, "PRAGMA user_version")
+        assert version_row is not None
+        version = _column_int(version_row, 0)
         if version not in (0, SCHEMA_VERSION):
             raise RunLedgerCompatibilityError(
                 "run ledger schema "
@@ -446,9 +463,10 @@ class RunLedger(
                 ON commit_point_ids(point_id)
             """
         )
-        columns = {
-            str(row[1]) for row in connection.execute("PRAGMA table_info(generations)")
-        }
+        info_rows: list[sqlite3.Row] = fetch_all(
+            connection, "PRAGMA table_info(generations)"
+        )
+        columns = {_column_text(row, "name") for row in info_rows}
         if "consecutive_failures" not in columns:
             connection.execute(
                 """
@@ -459,17 +477,15 @@ class RunLedger(
         connection.commit()
 
     def _verify_integrity(self, connection: sqlite3.Connection) -> None:
-        rows = connection.execute("PRAGMA quick_check").fetchall()
-        if [row[0] for row in rows] != ["ok"]:
+        rows: list[sqlite3.Row] = fetch_all(connection, "PRAGMA quick_check")
+        if [_column_text(row, 0) for row in rows] != ["ok"]:
             raise RunLedgerCorruptionError("run ledger failed SQLite quick_check")
 
     def _verify_schema(self, connection: sqlite3.Connection) -> None:
-        tables = {
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
+        table_rows: list[sqlite3.Row] = fetch_all(
+            connection, "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+        tables = {_column_text(row, "name") for row in table_rows}
         missing_tables = set(REQUIRED_SCHEMA) - tables
         if missing_tables:
             raise RunLedgerCompatibilityError(
@@ -477,9 +493,10 @@ class RunLedger(
                 + ", ".join(sorted(missing_tables))
             )
         for table, required_columns in REQUIRED_SCHEMA.items():
-            columns = {
-                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
-            }
+            info_rows: list[sqlite3.Row] = fetch_all(
+                connection, f"PRAGMA table_info({table})"
+            )
+            columns = {_column_text(row, "name") for row in info_rows}
             missing_columns = required_columns - columns
             if missing_columns:
                 raise RunLedgerCompatibilityError(
@@ -491,11 +508,12 @@ class RunLedger(
     def _require_mutable_generation(
         connection: sqlite3.Connection,
         generation_id: str,
-    ) -> sqlite3.Row:
-        row = connection.execute(
+    ) -> GenerationRow:
+        row: GenerationRow | None = fetch_one(
+            connection,
             "SELECT * FROM generations WHERE generation_id = ?",
             (generation_id,),
-        ).fetchone()
+        )
         if row is None:
             raise KeyError(generation_id)
         if RunTerminalState(row["terminal_state"]) is not RunTerminalState.RUNNING:
@@ -503,21 +521,15 @@ class RunLedger(
         return row
 
     @staticmethod
-    def _generation_from_row(row: sqlite3.Row) -> RunGeneration:
+    def _generation_from_row(row: GenerationRow) -> RunGeneration:
         try:
-            signature_payload: dict[str, Any] = json.loads(row["signature_json"])
-            signature_payload["source_type"] = ContentKind(
-                signature_payload["source_type"]
-            )
-            signature_payload["operation"] = RunOperation(
-                signature_payload["operation"]
-            )
-            signature = RunSignature(**signature_payload)
+            signature_payload: dict[str, object] = json.loads(row["signature_json"])
+            signature = _signature_from_payload(signature_payload)
             finalization_phase = FinalizationPhase(row["finalization_phase"])
             terminal_state = RunTerminalState(row["terminal_state"])
-            destructive_intent = bool(row["destructive_intent"])
-            created_at = float(row["created_at"])
-            updated_at = float(row["updated_at"])
+            destructive_intent = row["destructive_intent"] != 0
+            created_at = row["created_at"]
+            updated_at = row["updated_at"]
             terminal_detail = row["terminal_detail"]
             parent_generation_id = row["parent_generation_id"]
         except (KeyError, TypeError, ValueError) as exc:
@@ -539,3 +551,67 @@ class RunLedger(
             terminal_detail=terminal_detail,
             parent_generation_id=parent_generation_id,
         )
+
+
+def _column_text(row: sqlite3.Row, key: int | str) -> str:
+    """Return one SQLite result column as text, narrowed from the driver's Any.
+
+    ``sqlite3.Row.__getitem__`` is typed ``Any`` - the driver cannot know a
+    query's column affinity ahead of running it. Every PRAGMA and
+    schema-introspection read in this module goes through this (or
+    :func:`_column_int`) rather than trusting a bare ``str()``/``int()``
+    conversion of that ``Any``, which would silently accept a value that
+    merely stringifies instead of proving the driver returned text.
+    """
+    value = row[key]
+    if not isinstance(value, str):
+        raise RunLedgerCorruptionError(f"run ledger result column {key!r} was not text")
+    return value
+
+
+def _column_int(row: sqlite3.Row, key: int | str) -> int:
+    """Return one SQLite result column as an integer, narrowed from Any."""
+    value = row[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RunLedgerCorruptionError(
+            f"run ledger result column {key!r} was not an integer"
+        )
+    return value
+
+
+def _typed_field[T](payload: dict[str, object], key: str, expected_type: type[T]) -> T:
+    """Return one JSON-decoded signature field, narrowed from the parser's Any.
+
+    ``signature_json`` is genuinely dynamic - decoded JSON, not a value this
+    module controls the shape of - so each field is isinstance-checked here
+    rather than trusted through ``RunSignature(**payload)``, which would pass
+    every field through as ``Any`` and could construct a signature from a
+    field of the wrong type as long as it happened to satisfy the
+    constructor's runtime checks by luck rather than by type.
+    """
+    value = payload.get(key)
+    if not isinstance(value, expected_type):
+        raise TypeError(f"signature field {key!r} must be a {expected_type.__name__}")
+    return value
+
+
+def _signature_from_payload(payload: dict[str, object]) -> RunSignature:
+    """Construct one :class:`RunSignature` from its decoded JSON, field by field."""
+    return RunSignature(
+        root_identity=_typed_field(payload, "root_identity", str),
+        collection_identity=_typed_field(payload, "collection_identity", str),
+        source_type=ContentKind(_typed_field(payload, "source_type", str)),
+        operation=RunOperation(_typed_field(payload, "operation", str)),
+        clean=_typed_field(payload, "clean", bool),
+        model_identity=_typed_field(payload, "model_identity", str),
+        dense_dimensions=_typed_field(payload, "dense_dimensions", int),
+        embedding_schema=_typed_field(payload, "embedding_schema", int),
+        payload_schema=_typed_field(payload, "payload_schema", int),
+        content_epoch=_typed_field(payload, "content_epoch", str),
+        membership_epoch=_typed_field(payload, "membership_epoch", str),
+        preprocessing_identity=_typed_field(payload, "preprocessing_identity", str),
+        configuration_fingerprint=_typed_field(
+            payload, "configuration_fingerprint", str
+        ),
+        policy_fingerprint=_typed_field(payload, "policy_fingerprint", str),
+    )

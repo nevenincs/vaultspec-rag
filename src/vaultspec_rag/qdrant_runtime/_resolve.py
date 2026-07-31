@@ -23,10 +23,11 @@ import time
 import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from http.client import HTTPResponse
 
 from .._atomic_write import write_json_atomically
 from .._loopback_http import LOOPBACK_OPENER
@@ -117,9 +118,14 @@ def probe_qdrant_endpoint(
     listening = False
     ready = False
     try:
-        with LOOPBACK_OPENER.open(f"{base}/readyz", timeout=timeout) as resp:
+        # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it dispatches
+        # across registered handlers); this opener only ever handles loopback
+        # HTTP, so the runtime type is always an ``HTTPResponse``.
+        with cast(
+            "HTTPResponse", LOOPBACK_OPENER.open(f"{base}/readyz", timeout=timeout)
+        ) as resp:
             listening = True
-            ready = int(resp.status) == 200
+            ready = resp.status == 200
     except urllib.error.HTTPError as exc:
         # An HTTP error response still means something is listening and
         # answering - just not ready.
@@ -131,8 +137,8 @@ def probe_qdrant_endpoint(
 
     version = ""
     try:
-        with LOOPBACK_OPENER.open(base, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+        with cast("HTTPResponse", LOOPBACK_OPENER.open(base, timeout=timeout)) as resp:
+            payload = cast("object", json.loads(resp.read().decode("utf-8")))
         if isinstance(payload, dict):
             version = str(cast("dict[str, object]", payload).get("version", ""))
     except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -212,7 +218,7 @@ def qdrant_bin_dir(version: str = QDRANT_SERVER_VERSION) -> Path:
     return managed_status_dir() / "bin" / "qdrant" / version
 
 
-def read_manifest(version_dir: Path) -> dict[str, Any] | None:
+def read_manifest(version_dir: Path) -> dict[str, object] | None:
     """Read and parse the provisioning manifest in *version_dir*.
 
     Returns:
@@ -221,7 +227,7 @@ def read_manifest(version_dir: Path) -> dict[str, Any] | None:
     """
     path = version_dir / MANIFEST_FILENAME
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = cast("object", json.loads(path.read_text(encoding="utf-8")))
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
@@ -230,7 +236,7 @@ def read_manifest(version_dir: Path) -> dict[str, Any] | None:
     if not isinstance(data, dict):
         logger.debug("qdrant manifest at %s is not a dict", path)
         return None
-    return cast("dict[str, Any]", data)
+    return cast("dict[str, object]", data)
 
 
 _IDENTITY_FILENAME = "identity.json"
@@ -336,7 +342,7 @@ def read_qdrant_identity() -> QdrantIdentity | None:
     """
     path = qdrant_identity_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = cast("object", json.loads(path.read_text(encoding="utf-8")))
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:

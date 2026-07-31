@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     import anyio
 
     from .manager import JobManager
+    from .state import JobLifecycleState
 
 from .._job_errors import classify_error_text
 from ..concurrency import get_encode_limiter, get_index_limiter
@@ -24,6 +25,7 @@ from ..config._settings import get_config
 from ..job_control import (
     CancelRequested,
     PauseRequested,
+    QuiesceRequested,
     RunControlToken,
     ShutdownRequested,
     gpu_lock_wait_scope,
@@ -43,6 +45,7 @@ from .models import (
     JobAttemptContext,
     JobExecutionResult,
     JobShutdownResult,
+    QuiescedDispatchClaim,
     ResourceUpdate,
 )
 from .state import (
@@ -76,6 +79,24 @@ class _DispatchAdmission:
 
 
 class JobManagerExecution(JobManagerState):
+    #: Declared here because this owner both adopts and reads it. Adoption
+    #: only ever stores a live loop, so a type inferred from that write alone
+    #: would define the unadopted case out of existence and silently retire
+    #: the rejection a loopless dispatch depends on.
+    _service_loop: asyncio.AbstractEventLoop | None
+
+    #: Owned and initialized by the composed ``JobManager`` (``manager.py``).
+    #: The shared ``JobManagerState`` protocol exposes every attribute it does
+    #: not enumerate through one catch-all ``Any`` fallback; redeclaring the
+    #: concrete types this owner actually reads keeps that fallback from
+    #: leaking into every lock, map and flag access below.
+    _lock: threading.RLock
+    _active: dict[str, ManagedJob]
+    _dispatchers: dict[str, JobDispatchBinding]
+    _retiring_tasks: set[asyncio.Task[Any]]
+    _accepting_dispatch: bool
+    _lifecycle_state: JobLifecycleState
+
     def bind_dispatch(
         self,
         job_id: str,
@@ -97,8 +118,11 @@ class JobManagerExecution(JobManagerState):
                     "A live attempt cannot replace its dispatch binding.",
                     managed,
                 )
+            self._next_dispatch_binding_nonce += 1
+            self._supersede_quiesced_dispatch_claim_locked(job_id)
             self._dispatchers[job_id] = JobDispatchBinding(
                 runner=runner,
+                nonce=self._next_dispatch_binding_nonce,
                 on_started=on_started,
                 on_finished=on_finished,
             )
@@ -114,13 +138,19 @@ class JobManagerExecution(JobManagerState):
         self,
         job_id: str,
         loop: asyncio.AbstractEventLoop,
+        *,
+        quiesced_claim: QuiescedDispatchClaim | None = None,
     ) -> _DispatchAdmission | JobOutcome:
         """Validate one queued job and bind its execution to ``loop``."""
         command = "dispatch"
+        if quiesced_claim is None:
+            self._supersede_quiesced_dispatch_claim_locked(job_id)
         managed = self._active.get(job_id)
         if managed is None:
+            self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
             return self._error(command, "job_not_found", "The job was not found.")
         if not self._accepting_dispatch:
+            self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
             return self._error(
                 command,
                 "dispatch_stopped",
@@ -129,15 +159,47 @@ class JobManagerExecution(JobManagerState):
             )
         binding = self._dispatchers.get(job_id)
         if binding is None:
+            self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
             return self._error(
                 command,
                 "dispatch_not_bound",
                 "The job has no execution binding.",
                 managed,
             )
-        if managed.runtime.task is not None:
+        refusal = self._dispatch_runtime_refusal_locked(managed)
+        if refusal is not None:
+            self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
+            return refusal
+        if quiesced_claim is not None and not (
+            self._consume_quiesced_dispatch_claim_locked(
+                quiesced_claim,
+                managed,
+                binding,
+            )
+        ):
             return self._error(
                 command,
+                "stale_recovery_dispatch",
+                "The recovery dispatch claim was superseded before execution.",
+                managed,
+            )
+        if binding.loop is not loop:
+            binding = replace(binding, loop=loop)
+            self._dispatchers[job_id] = binding
+        return _DispatchAdmission(
+            binding=binding,
+            attempt=managed.snapshot.attempt.number,
+            control=RunControlToken(),
+        )
+
+    def _dispatch_runtime_refusal_locked(
+        self,
+        managed: ManagedJob,
+    ) -> JobOutcome | None:
+        """Return the exact state refusal that prevents attempt admission."""
+        if managed.runtime.task is not None:
+            return self._error(
+                "dispatch",
                 "runtime_already_owned",
                 "The current attempt already has a runtime owner.",
                 managed,
@@ -147,34 +209,40 @@ class JobManagerExecution(JobManagerState):
             or managed.snapshot.desired_state is not DesiredJobState.RUNNING
         ):
             return self._error(
-                command,
+                "dispatch",
                 "invalid_transition",
                 "Only queued work with running desired state can dispatch.",
                 managed,
             )
-        if binding.loop is not loop:
-            binding = replace(binding, loop=loop)
-            self._dispatchers[job_id] = binding
-        return _DispatchAdmission(
-            binding=binding,
-            attempt=managed.snapshot.attempt.number,
-            control=RunControlToken(gate=self._quiesce_gate),
-        )
+        return None
 
     def adopt_service_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Record the loop that owns managed execution for this service life."""
         with self._lock:
             self._service_loop = loop
 
-    def dispatch(self, job_id: str) -> JobOutcome:
+    def dispatch(
+        self,
+        job_id: str,
+        *,
+        _quiesced_claim: QuiescedDispatchClaim | None = None,
+    ) -> JobOutcome:
         """Schedule one queued attempt, from this thread's loop or the service's."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return self._dispatch_from_loopless_thread(job_id)
-        return self._dispatch_on(job_id, loop)
+            return self._dispatch_from_loopless_thread(
+                job_id,
+                _quiesced_claim=_quiesced_claim,
+            )
+        return self._dispatch_on(job_id, loop, _quiesced_claim=_quiesced_claim)
 
-    def _dispatch_from_loopless_thread(self, job_id: str) -> JobOutcome:
+    def _dispatch_from_loopless_thread(
+        self,
+        job_id: str,
+        *,
+        _quiesced_claim: QuiescedDispatchClaim | None = None,
+    ) -> JobOutcome:
         """Hand a dispatch decided off the loop back to the service's own loop.
 
         Job admission runs a policy preflight that scans the tree, so callers
@@ -189,17 +257,26 @@ class JobManagerExecution(JobManagerState):
         with self._lock:
             loop = self._service_loop
         if loop is None or loop.is_closed() or not loop.is_running():
+            with self._lock:
+                self._clear_quiesced_dispatch_claim_locked(_quiesced_claim)
             return self._error(
                 command,
                 "event_loop_required",
                 "Managed dispatch requires a running event loop.",
             )
+        assert loop is not None
 
         outcome: concurrent.futures.Future[JobOutcome] = concurrent.futures.Future()
 
         def _dispatch_on_service_loop() -> None:
             try:
-                outcome.set_result(self._dispatch_on(job_id, loop))
+                outcome.set_result(
+                    self._dispatch_on(
+                        job_id,
+                        loop,
+                        _quiesced_claim=_quiesced_claim,
+                    )
+                )
             except BaseException as exc:
                 # Carried to the waiting caller rather than escaping into the
                 # loop's exception handler, where it would be logged and lost.
@@ -209,6 +286,8 @@ class JobManagerExecution(JobManagerState):
             loop.call_soon_threadsafe(_dispatch_on_service_loop)
         except RuntimeError:
             # Closed between the liveness check above and the handoff.
+            with self._lock:
+                self._clear_quiesced_dispatch_claim_locked(_quiesced_claim)
             return self._error(
                 command,
                 "event_loop_required",
@@ -217,16 +296,28 @@ class JobManagerExecution(JobManagerState):
         try:
             return outcome.result(timeout=_LOOPLESS_DISPATCH_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
+            with self._lock:
+                self._clear_quiesced_dispatch_claim_locked(_quiesced_claim)
             return self._error(
                 command,
                 "dispatch_loop_unresponsive",
                 "The service event loop did not accept the dispatch in time.",
             )
 
-    def _dispatch_on(self, job_id: str, loop: asyncio.AbstractEventLoop) -> JobOutcome:
+    def _dispatch_on(
+        self,
+        job_id: str,
+        loop: asyncio.AbstractEventLoop,
+        *,
+        _quiesced_claim: QuiescedDispatchClaim | None = None,
+    ) -> JobOutcome:
         """Admit and schedule one queued attempt on *loop*, which must be running."""
         with self._lock:
-            admission = self._dispatch_admission_locked(job_id, loop)
+            admission = self._dispatch_admission_locked(
+                job_id,
+                loop,
+                quiesced_claim=_quiesced_claim,
+            )
             if isinstance(admission, JobOutcome):
                 return admission
             task = loop.create_task(
@@ -285,14 +376,6 @@ class JobManagerExecution(JobManagerState):
                 name=f"vaultspec-job-{job_id}-attempt-{admission.attempt}",
             )
             self._retiring_tasks.add(task)
-            task.add_done_callback(
-                partial(
-                    self._complete_attempt,
-                    job_id,
-                    admission.attempt,
-                    binding=admission.binding,
-                )
-            )
 
         try:
             started = await _run_in_thread(
@@ -312,9 +395,18 @@ class JobManagerExecution(JobManagerState):
             owns_runtime = latest is not None and latest.runtime.task is task
             if not owns_runtime:
                 task.cancel()
+                self._retiring_tasks.discard(task)
                 return started
             assert latest is not None
             started_snapshot = self._snapshot_locked(latest)
+            task.add_done_callback(
+                partial(
+                    self._complete_attempt,
+                    job_id,
+                    admission.attempt,
+                    binding=admission.binding,
+                )
+            )
 
         start_gate.set()
         self._notify_started(admission.binding, started_snapshot)
@@ -387,6 +479,7 @@ class JobManagerExecution(JobManagerState):
         with self._lock:
             self._accepting_dispatch = False
             self._lifecycle_state = "stopping"
+            self._pending_quiesced_dispatches.clear()
             requested: list[str] = []
             for job_id, managed in self._active.items():
                 if managed.runtime.task is None or managed.runtime.control is None:
@@ -453,6 +546,11 @@ class JobManagerExecution(JobManagerState):
         if task is None:
             raise RuntimeError("managed attempt requires an asyncio task")
         context = JobAttemptContext(
+            # JobManagerExecution is only ever mixed into JobManager (see
+            # manager.py's class statement); the import cycle keeps that
+            # link TYPE_CHECKING-only, so self's static type stops at this
+            # mixin even though the composed instance is always the concrete
+            # JobManager the attempt context requires.
             manager=cast("JobManager", self),
             job_id=job_id,
             attempt=attempt,
@@ -461,9 +559,13 @@ class JobManagerExecution(JobManagerState):
         )
         started = time.perf_counter()
         result: JobExecutionResult | None = None
-        control_signal: PauseRequested | CancelRequested | ShutdownRequested | None = (
-            None
-        )
+        control_signal: (
+            PauseRequested
+            | CancelRequested
+            | QuiesceRequested
+            | ShutdownRequested
+            | None
+        ) = None
         error: BaseException | None = None
         release_persisted = False
         try:
@@ -473,7 +575,12 @@ class JobManagerExecution(JobManagerState):
                 binding,
                 limiter=self._attempt_limiter(job_id),
             )
-        except (PauseRequested, CancelRequested, ShutdownRequested) as exc:
+        except (
+            PauseRequested,
+            CancelRequested,
+            QuiesceRequested,
+            ShutdownRequested,
+        ) as exc:
             control_signal = exc
         except BaseException as exc:
             error = exc
