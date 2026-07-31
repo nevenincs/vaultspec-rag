@@ -199,6 +199,12 @@ class JobManagerPersistence(JobManagerState):
         at or above the bound, which drains the overflow without destroying
         any of it. This records the condition for the operator who has to
         understand why new work is being refused.
+
+        Startup dispatches every restored queued job, so an overflow becomes
+        a larger dispatch burst than the current bound would allow. That is
+        bookkeeping load rather than a compute stampede - attempt-level
+        limiters still serialise execution - and the count can only be as
+        large as the capacity a previous life admitted under.
         """
         restored = len(self._active)
         if restored <= self._max_nonterminal:
