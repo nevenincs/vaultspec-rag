@@ -1241,6 +1241,70 @@ class TestManagedJobPersistence:
         assert refused.status is JobOutcomeStatus.ERROR
         assert refused.code == "job_capacity_exceeded"
 
+    def test_over_capacity_restore_keeps_every_live_replay_binding(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A job that survived restore keeps the key that names it.
+
+        The replay-binding ceiling is derived from the retention bounds, so
+        restoring more nonterminal jobs than the current bound allows would
+        evict against a number smaller than the jobs actually retained. The
+        binding dropped that way belongs to a job that is still live and
+        still addressable, and the caller replaying its key would be told
+        equivalent work exists instead of that its own request was replayed -
+        a different answer to the same question, and a duplicate submission
+        for anything that keys retries on it.
+
+        Both halves matter: the binding survives, and the replay still
+        resolves through it.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        first = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=3,
+            max_terminal_history=1,
+            state_path=state_path,
+        )
+        for index in range(3):
+            created = first.create(
+                JobSpec(
+                    JobOperation.INDEX,
+                    JobSource.CODE,
+                    str(tmp_path / f"project-{index}"),
+                    JobMode.REBUILD,
+                ),
+                JobInitiator("test", "replay_binding", None),
+                idempotency_key=f"key-{index}",
+            )
+            assert created.job is not None
+
+        # The lowered bound makes the configured ceiling (bound + history)
+        # smaller than the three jobs the file legitimately carries.
+        restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            max_terminal_history=1,
+            state_path=state_path,
+        )
+        assert restarted.restore_persisted().code == "job_state_restored"
+        assert len(restarted.active()) == 3
+
+        for index in range(3):
+            replayed = restarted.create(
+                JobSpec(
+                    JobOperation.INDEX,
+                    JobSource.CODE,
+                    str(tmp_path / f"project-{index}"),
+                    JobMode.REBUILD,
+                ),
+                JobInitiator("test", "replay_binding", None),
+                idempotency_key=f"key-{index}",
+            )
+            assert replayed.code == "idempotency_replayed", (
+                f"key-{index} lost its binding: {replayed.code}"
+            )
+
     @pytest.mark.parametrize(
         "sequence",
         [

@@ -367,13 +367,34 @@ class JobManagerRecords(JobManagerState):
                     self._job_idempotency_keys.pop(previous.job_id, None)
         self._idempotency[key] = _job_persistence.IdempotencyBinding(signature, job_id)
         self._job_idempotency_keys.setdefault(job_id, set()).add(key)
-        while len(self._idempotency) > self._max_idempotency:
+        while len(self._idempotency) > self._idempotency_budget_locked():
             evicted_key, evicted = self._idempotency.popitem(last=False)
             job_keys = self._job_idempotency_keys.get(evicted.job_id)
             if job_keys is not None:
                 job_keys.discard(evicted_key)
                 if not job_keys:
                     self._job_idempotency_keys.pop(evicted.job_id, None)
+
+    def _idempotency_budget_locked(self) -> int:
+        """Return the replay-binding ceiling: one per job that can still be named.
+
+        The configured ceiling is derived from the two retention bounds, which
+        expresses one binding per job either bound can retain. Restored state
+        can legitimately hold more nonterminal jobs than the current
+        nonterminal bound - a bound lowered between service lives limits new
+        admission, not what a previous life already recorded - and evicting
+        against the configured number alone would then discard a binding whose
+        job is still live and still addressable. The caller replaying that key
+        would be told equivalent work exists rather than that its own original
+        request was replayed, which is a different answer to the same
+        question.
+
+        Taking the larger of the two keeps the invariant the ceiling exists to
+        state - a retained job keeps its binding - without letting the map
+        outgrow the jobs it describes, because the floor is the live count and
+        falls back as that work drains.
+        """
+        return max(self._max_idempotency, len(self._active) + len(self._terminal))
 
     def _forget_idempotency_locked(self, job_id: str) -> None:
         for key in self._job_idempotency_keys.pop(job_id, set()):
