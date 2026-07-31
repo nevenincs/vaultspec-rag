@@ -593,7 +593,7 @@ class CollectionIdentity:
     sparse_vector_name: str
     storage_schema_version: int
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self) -> dict[str, str | int | None]:
         """Return the JSON-serialisable form persisted in either home."""
         return {
             "dense_model": self.dense_model,
@@ -616,7 +616,7 @@ class CollectionIdentity:
         """
         if not isinstance(payload, dict):
             return None
-        raw = cast("dict[str, Any]", payload)
+        raw = cast("dict[str, object]", payload)
         dense_model = raw.get("dense_model")
         dense_dim = raw.get("dense_dim")
         if not isinstance(dense_model, str) or not dense_model:

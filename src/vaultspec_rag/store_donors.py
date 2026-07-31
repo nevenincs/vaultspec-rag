@@ -23,7 +23,7 @@ from .store_runtime import DONOR_RETRIEVE_BATCH_SIZE, DonorPoint  # noqa: E402
 __all__ = ["_VaultDonorMixin"]
 
 
-def _numeric_list(raw: Any) -> list[float] | None:
+def _numeric_list(raw: object) -> list[float] | None:
     """Return *raw* as floats when it is a list of numbers, else ``None``.
 
     Every vector half a donor record can carry - dense entries, sparse
@@ -194,14 +194,16 @@ class _VaultDonorMixin:
         vectors = record.vector
         if not isinstance(vectors, dict):
             return None
-        dense = _numeric_list(cast("Any", vectors.get(store_schema.DENSE_VECTOR_NAME)))
+        dense = _numeric_list(
+            cast("object", vectors.get(store_schema.DENSE_VECTOR_NAME))
+        )
         if not dense:
             return None
-        sparse_raw = cast("Any", vectors.get(store_schema.SPARSE_VECTOR_NAME))
-        indices: Any = None
-        values: Any = None
+        sparse_raw = cast("object", vectors.get(store_schema.SPARSE_VECTOR_NAME))
+        indices: object = None
+        values: object = None
         if isinstance(sparse_raw, dict):
-            sparse_map = cast("dict[str, Any]", sparse_raw)
+            sparse_map = cast("dict[str, object]", sparse_raw)
             indices = sparse_map.get("indices")
             values = sparse_map.get("values")
         else:
