@@ -73,11 +73,16 @@ def _resource_summary(job: dict[str, object]) -> str:
         return ""
     parts: list[str] = []
     if "rss_mib" in snapshot:
-        parts.append(f"process {_format_mib(snapshot.get('rss_mib'))}")
+        parts.append(f"process {_format_mib(measurement(snapshot.get('rss_mib')))}")
     if "cuda_allocated_mib" in snapshot:
-        parts.append(f"GPU used {_format_mib(snapshot.get('cuda_allocated_mib'))}")
+        parts.append(
+            f"GPU used {_format_mib(measurement(snapshot.get('cuda_allocated_mib')))}"
+        )
     if "cuda_reserved_mib" in snapshot:
-        parts.append(f"GPU reserved {_format_mib(snapshot.get('cuda_reserved_mib'))}")
+        parts.append(
+            "GPU reserved "
+            f"{_format_mib(measurement(snapshot.get('cuda_reserved_mib')))}"
+        )
     return ", ".join(parts)
 
 
@@ -440,7 +445,8 @@ def _backend_evidence_line(job: dict[str, object]) -> str | None:
     alive = backend.get("alive")
     detail = backend.get("detail")
     if alive is True:
-        return f"Backend: answered in {_format_seconds(backend.get('latency_seconds'))}"
+        latency = measurement(backend.get("latency_seconds"))
+        return f"Backend: answered in {_format_seconds(latency)}"
     if alive is False:
         return f"Backend: failed: {detail}"
     return f"Backend: {detail or 'not probed'}"
@@ -1004,7 +1010,7 @@ def _resilience_summary_lines(job: dict[str, object]) -> tuple[str, ...]:
         f"Checkpoint units: {data.get('committed_units', 0)} committed, "
         f"{data.get('replayed_units', 0)} resumed"
     )
-    deadline = data.get("no_progress_remaining_seconds")
+    deadline = measurement(data.get("no_progress_remaining_seconds"))
     if deadline is not None:
         lines.append(f"No-progress budget remaining: {_format_seconds(deadline)}")
     if circuit := data.get("circuit_state"):
