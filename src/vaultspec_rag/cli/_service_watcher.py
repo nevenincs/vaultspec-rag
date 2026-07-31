@@ -24,7 +24,7 @@ from ._app import (
     UpdateDelayOption,
     server_watcher_app,
 )
-from ._cli_format import _counted_unit, _project_name
+from ._cli_format import _counted_unit, _project_name, _renderable
 from ._render import (
     _display_service_not_running,
     _emit_json,
@@ -48,9 +48,10 @@ def _format_delay_milliseconds(raw: object) -> str:
     and a ``debounce_ms`` of ``True`` would otherwise read as a configured
     one-millisecond delay rather than as an unreported field.
     """
-    if not isinstance(raw, int | float) or isinstance(raw, bool):
+    value = _renderable(raw)
+    if value is None:
         return "not reported"
-    milliseconds = max(0.0, float(raw))
+    milliseconds = max(0.0, value)
     if milliseconds == 0:
         return "immediately"
     if milliseconds < 1000:
@@ -70,9 +71,10 @@ def _format_delay_seconds(raw: object) -> str:
 
     ``bool`` is refused for the same reason as the millisecond renderer.
     """
-    if not isinstance(raw, int | float) or isinstance(raw, bool):
+    value = _renderable(raw)
+    if value is None:
         return "not reported"
-    seconds = max(0.0, float(raw))
+    seconds = max(0.0, value)
     if seconds == 0:
         return "immediately"
     if seconds < 60:
