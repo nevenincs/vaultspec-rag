@@ -102,7 +102,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          # Derived from the pin, never repeated: a literal here drifts the
+          # first time the pin is bumped alone.
+          python-version-file: .python-version
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -147,7 +149,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          # Derived from the pin, never repeated: a literal here drifts the
+          # first time the pin is bumped alone.
+          python-version-file: .python-version
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -169,6 +173,23 @@ jobs:
 
       - name: Install dependencies
         run: just deps sync
+
+      # This runner is long-lived and mutable, so its interpreter can move
+      # between jobs with no workflow change - an OS upgrade once took the
+      # system Python from 3.12 to 3.14 and invalidated every venv under the
+      # work tree in place. The matrix legs compare at minor granularity
+      # because a matrix value IS a minor; this one compares the whole pin,
+      # because a 3.13.0 host answering a 3.13.14 pin is the drift that
+      # otherwise surfaces later as an unrelated-looking failure.
+      - name: Verify the venv interpreter matches the pin
+        run: |
+          uv run --no-sync python -c "
+          import pathlib, sys
+          want = pathlib.Path('.python-version').read_text().strip()
+          got = '.'.join(map(str, sys.version_info[:3]))
+          assert got == want, f'.python-version pins {want}, venv runs {got}'
+          print(f'venv interpreter matches the pin: {got}')
+          "
 
       # Every gate below carries `if: '!cancelled()'` so the job runs all of
       # them and reports each one, instead of stopping at the first red. The
@@ -554,7 +575,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          # Derived from the pin, never repeated: a literal here drifts the
+          # first time the pin is bumped alone.
+          python-version-file: .python-version
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -585,7 +608,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          # Derived from the pin, never repeated: a literal here drifts the
+          # first time the pin is bumped alone.
+          python-version-file: .python-version
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -623,7 +648,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          # Derived from the pin, never repeated: a literal here drifts the
+          # first time the pin is bumped alone.
+          python-version-file: .python-version
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7

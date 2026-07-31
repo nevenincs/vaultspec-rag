@@ -65,7 +65,7 @@ license = { file = "LICENSE" }
 name = "vaultspec-rag"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
-version = "0.3.14"
+version = "0.4.0"
 
   [project.scripts]
   vaultspec-rag = "vaultspec_rag.__main__:main"
@@ -146,6 +146,19 @@ constraint-dependencies = ["python-multipart>=0.0.26"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vaultspec_rag"]
+# The suite lives inside the package, so `packages` swept it into the wheel:
+# 263 of 456 files shipped were tests, importable in a user environment as
+# `vaultspec_rag.tests.*`. That was incidental rather than intended, and the
+# evidence is that nothing could have used it - no runtime module imports the
+# tests package, no verb runs it, and 352 of its files import pytest at module
+# scope while pytest is not a runtime dependency. Every one of them raised on
+# import in the environment they were shipped to.
+#
+# The sdist deliberately keeps them: a source distribution is the artifact a
+# downstream packager runs the suite from, and there pytest is available.
+# Excluding here changes no gate - `just test python` and `just test gpu` both
+# run pytest against the checkout, never the installed copy.
+exclude = ["src/vaultspec_rag/tests"]
 
 # The companion-owned builtins (the rule and MCP definition) ship as
 # committed package data under ``src/vaultspec_rag/builtins/``, mirroring
