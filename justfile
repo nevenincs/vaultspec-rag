@@ -369,7 +369,7 @@ audit target='all':
 # failure, not stop at the first one.
 #
 # "gpu" is the real-GPU CORRECTNESS tier, run serially on a CUDA host through
-# one pytest invocation so the S32 root-conftest coordinator owns the complete
+# one pytest invocation so the root-conftest coordinator owns the complete
 # acknowledged borrower lease. "perf" is a separate quiet-machine-ONLY lane:
 # its wall-clock latency/footprint assertions ARE the system under test, so a
 # loaded machine fails them for reasons unrelated to a regression. It is
@@ -378,7 +378,7 @@ audit target='all':
 #
 # GPU tiers require a self-hosted runner image with the pinned,
 # manifest-verified Qdrant binary used only by test-owned isolated children.
-# The S32 coordinator verifies that prerequisite read-only and refuses a
+# The coordinator verifies that prerequisite read-only and refuses a
 # missing binary; these recipes never provision Qdrant, preflight a GPU, or
 # start a service.
 #
