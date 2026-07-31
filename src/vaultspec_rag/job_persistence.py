@@ -60,6 +60,9 @@ class IdempotencyBinding:
     signature: tuple[JobSpec, JobInitiator, bool]
     job_id: str
 
+    def __post_init__(self) -> None:
+        _required_str(self.job_id, "idempotency job_id")
+
 
 @dataclass(frozen=True, slots=True)
 class PersistedManagerState:
