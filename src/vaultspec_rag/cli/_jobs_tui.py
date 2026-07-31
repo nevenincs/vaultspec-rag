@@ -757,16 +757,19 @@ class _Stamps:
         return True
 
 
-def _search_count_text(value: object) -> str:
-    """Render a whole-number activity field, dashed where none was published."""
-    counted = count(value)
-    return "—" if counted is None else str(counted)
+def _search_reading_text(
+    value: object,
+    reader: Callable[[object], float | int | None],
+) -> str:
+    """Render one numeric activity field, dashed where none was published.
 
-
-def _search_stamp_text(value: object) -> str:
-    """Render an epoch-second activity field, dashed where none was published."""
-    stamp = measurement(value)
-    return "—" if stamp is None else str(stamp)
+    The reader is the only thing that varies between the fields this
+    renders: a whole-number field narrows through :func:`count`, an
+    epoch-second field through :func:`measurement`. Both dash on a value
+    the service did not publish, so the rendering itself is shared.
+    """
+    reading = reader(value)
+    return "—" if reading is None else str(reading)
 
 
 def _search_identity_line(search: dict[str, object]) -> str:
@@ -777,7 +780,7 @@ def _search_identity_line(search: dict[str, object]) -> str:
     return (
         f"{_search_id(search)} · source {source} · type {search_type}"
         f" · root {root}"
-        f" · top_k {_search_count_text(search.get('top_k'))}"
+        f" · top_k {_search_reading_text(search.get('top_k'), count)}"
     )
 
 
@@ -788,16 +791,16 @@ def _search_outcome_line(search: dict[str, object]) -> str:
     total_text = compact_duration(total) if total is not None else "—"
     return (
         f"state {search.get('state', '—')} · outcome {outcome}"
-        f" · status {_search_count_text(search.get('status_code'))}"
-        f" · results {_search_count_text(search.get('result_count'))}"
+        f" · status {_search_reading_text(search.get('status_code'), count)}"
+        f" · results {_search_reading_text(search.get('result_count'), count)}"
         f" · total {total_text}"
     )
 
 
 def _search_clock_line(search: dict[str, object]) -> str:
     """Report the wall-clock bounds the service stamped on the request."""
-    started = _search_stamp_text(search.get("started_at"))
-    finished = _search_stamp_text(search.get("finished_at"))
+    started = _search_reading_text(search.get("started_at"), measurement)
+    finished = _search_reading_text(search.get("finished_at"), measurement)
     return f"started {started} · finished {finished}"
 
 
