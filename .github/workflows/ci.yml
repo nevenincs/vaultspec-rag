@@ -1,10 +1,26 @@
 name: CI
 
+# TWO TIERS, split by trust and by cost.
+#
+#   pull_request  -> `pr-gate` only. Minimal, and on a GitHub-HOSTED runner.
+#   push to main,
+#   release,
+#   workflow_dispatch -> the full tier below, on the self-hosted fleet.
+#
+# The split is not only about speed. This repository is PUBLIC, and a
+# `pull_request` from a fork runs code the author of the pull request
+# controls. Scheduling that onto a self-hosted runner is arbitrary code
+# execution on a real workstation that also hosts a live service and other
+# work. Every trigger that reaches the self-hosted fleet below therefore
+# requires write access to this repository; the one trigger that does not is
+# the one that stays on hosted infrastructure.
 on:
   push:
     branches:
       - main
   pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -32,7 +48,8 @@ jobs:
       # Each job carries its own literal group instead.
       group: ci-workflow-lint-${{ github.ref }}
       cancel-in-progress: false
-    runs-on: [self-hosted, Linux, X64]
+    # Hosted: this runs on pull_request too, so it must not reach the fleet.
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -42,8 +59,66 @@ jobs:
           bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint
 
+  pr-gate:
+    name: PR Gate (ruff, ty, tests)
+    # THE MERGE GATE. Deliberately the smallest set that still catches the
+    # things a reviewer cannot: a syntax or lint regression, a type error, and
+    # a broken test. Everything slower - link checking, markdown, citations,
+    # complexity, strict types, the audits, the second interpreter - runs on
+    # the comprehensive tier, because paying for it on every push to every
+    # branch buys latency, not signal.
+    #
+    # Hosted, and that is load-bearing rather than incidental: see the trust
+    # note on the triggers above. A fork pull request runs here, so "here"
+    # must not be a workstation.
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 25
+    concurrency:
+      # Unlike the main-push jobs, superseding a pull request's own earlier
+      # run is what you want - only the tip of the branch is being reviewed.
+      group: ci-pr-gate-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Install dependencies
+        run: just deps sync
+
+      # Each gate carries `if: '!cancelled()'` so one failure does not hide
+      # the others: a contributor should get every finding from one run
+      # rather than discovering them one push at a time.
+      - name: Ruff
+        if: '!cancelled()'
+        run: just lint python
+
+      - name: Ty
+        if: '!cancelled()'
+        run: just lint type
+
+      - name: Tests
+        if: '!cancelled()'
+        run: just test python
+
   lint-and-type:
     name: Lint, Type, Config, Link, and Markdown Checks
+    # Comprehensive tier: everything except the merge gate above. Skipped on
+    # pull_request, where `pr-gate` stands in for it.
+    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     concurrency:
       group: ci-lint-and-type-${{ github.ref }}
@@ -177,6 +252,7 @@ jobs:
 
   tests:
     name: Tests (py${{ matrix.python-version }})
+    if: github.event_name != 'pull_request'
     timeout-minutes: 45
     concurrency:
       # The matrix leg is part of the group, so the two interpreters queue
@@ -319,6 +395,7 @@ jobs:
 
   vault-audit:
     name: Vault Audit
+    if: github.event_name != 'pull_request'
     timeout-minutes: 15
     concurrency:
       group: ci-vault-audit-${{ github.ref }}
@@ -349,6 +426,7 @@ jobs:
 
   dependency-audit:
     name: Dependency Audit (uv audit)
+    if: github.event_name != 'pull_request'
     timeout-minutes: 15
     concurrency:
       group: ci-dependency-audit-${{ github.ref }}
@@ -386,6 +464,7 @@ jobs:
   # are advice, and the burndown they feed is tracked separately.
   code-audit:
     name: Code Audit (advisory)
+    if: github.event_name != 'pull_request'
     timeout-minutes: 20
     concurrency:
       group: ci-code-audit-${{ github.ref }}
