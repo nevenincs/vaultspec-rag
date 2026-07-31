@@ -162,11 +162,20 @@ def _borrower_holder(tmp_path: Path) -> Generator[subprocess.Popen[str]]:
         text=True,
     )
     try:
+        # Wait for what the marker SAYS, not merely that it exists. The child
+        # reports through ``write_text``, which creates the file before it
+        # writes into it, so an existence check alone can return between the
+        # two and read the empty window - which fails this as ``'' == 'held'``
+        # long after the holder has actually taken the lease.
         deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
-        while not marker.is_file() and process.poll() is None:
+        reported = ""
+        while reported != "held" and process.poll() is None:
             assert time.monotonic() < deadline, "borrower holder did not start"
-            time.sleep(0.01)
-        assert marker.read_text(encoding="ascii") == "held"
+            if marker.is_file():
+                reported = marker.read_text(encoding="ascii")
+            if reported != "held":
+                time.sleep(0.01)
+        assert reported == "held"
         yield process
     finally:
         if process.poll() is None:
