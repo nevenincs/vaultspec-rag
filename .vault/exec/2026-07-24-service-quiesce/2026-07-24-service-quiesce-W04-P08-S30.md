@@ -9,6 +9,7 @@ step_id: 'S30'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # Repair captured service targeting with typed pre-isolation machine-pointer capture and revalidation, then use typed initial-bearer transport with one same-token authenticated 401 retry
 
 ## Scope

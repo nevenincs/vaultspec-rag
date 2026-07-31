@@ -9,6 +9,7 @@ step_id: 'S11'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # Registry transition coordinator remediation
 
 ## Status

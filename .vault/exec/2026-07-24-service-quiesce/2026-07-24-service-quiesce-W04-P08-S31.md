@@ -9,6 +9,7 @@ step_id: 'S31'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # Bind preflight compatibility and authenticated service-state observation to one ready discovered identity
 
 ## Scope
