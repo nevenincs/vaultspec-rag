@@ -687,6 +687,85 @@ def _search_time_cell(search: dict[str, object], cells: int) -> Text:
     )
 
 
+def _search_count_text(value: object) -> str:
+    """Render a whole-number activity field, dashed where none was published."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return "—"
+    return str(value)
+
+
+def _search_stamp_text(value: object) -> str:
+    """Render an epoch-second activity field, dashed where none was published."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return "—"
+    return str(value)
+
+
+def _search_identity_line(search: dict[str, object]) -> str:
+    """Name the request, its lane, the corpus it read, and its asked-for depth."""
+    source = _search_text(search.get("source"), fallback="source unavailable")
+    search_type = _search_text(search.get("type"), fallback="type unavailable")
+    root = _search_text(search.get("root"), fallback="root unavailable")
+    return (
+        f"{_search_id(search)} · source {source} · type {search_type}"
+        f" · root {root}"
+        f" · top_k {_search_count_text(search.get('top_k'))}"
+    )
+
+
+def _search_outcome_line(search: dict[str, object]) -> str:
+    """Report lifecycle state, verdict, transport status, and result volume."""
+    outcome = _search_text(search.get("outcome"), fallback="in progress")
+    total = search.get("total_seconds")
+    total_text = (
+        compact_duration(total)
+        if isinstance(total, int | float) and not isinstance(total, bool)
+        else "—"
+    )
+    return (
+        f"state {search.get('state', '—')} · outcome {outcome}"
+        f" · status {_search_count_text(search.get('status_code'))}"
+        f" · results {_search_count_text(search.get('result_count'))}"
+        f" · total {total_text}"
+    )
+
+
+def _search_clock_line(search: dict[str, object]) -> str:
+    """Report the wall-clock bounds the service stamped on the request."""
+    started = _search_stamp_text(search.get("started_at"))
+    finished = _search_stamp_text(search.get("finished_at"))
+    return f"started {started} · finished {finished}"
+
+
+def _search_timings_line(search: dict[str, object]) -> str:
+    """Break the request down by stage, empty where the service timed none."""
+    timings = search.get("timings")
+    if not isinstance(timings, dict) or not timings:
+        return ""
+    values = [
+        f"{name}={compact_duration(value)}"
+        for name, value in sorted(
+            cast("dict[object, object]", timings).items(),
+            key=lambda item: str(item[0]),
+        )
+        if isinstance(value, int | float) and not isinstance(value, bool)
+    ]
+    return f"timings {' · '.join(values)}" if values else ""
+
+
+def _search_failure_line(search: dict[str, object]) -> str:
+    """Name why a request degraded or failed, empty where it did neither."""
+    availability = _search_text(search.get("availability_cause"), fallback="")
+    error_code = _search_text(search.get("error_code"), fallback="")
+    error_message = _search_text(search.get("error_message"), fallback="")
+    if not (availability or error_code or error_message):
+        return ""
+    return (
+        f"availability {availability or '—'} · error {error_code or '—'}"
+        f" {error_message}"
+    ).rstrip()
+
+
 class _LogPane(Vertical):
     """The log pane's container, allowed to fill the screen on request.
 
@@ -1634,81 +1713,16 @@ class ServerWatchApp(App[None]):
             return
         query = _search_text(search.get("query"), fallback="query unavailable")
         detail = Text(f"query: {query}")
-        source = _search_text(search.get("source"), fallback="source unavailable")
-        search_type = _search_text(search.get("type"), fallback="type unavailable")
-        root = _search_text(search.get("root"), fallback="root unavailable")
-        top_k = search.get("top_k")
-        top_k_text = (
-            str(top_k)
-            if isinstance(top_k, int) and not isinstance(top_k, bool)
-            else "—"
-        )
-        detail.append(
-            f"\n{_search_id(search)} · source {source} · type {search_type}"
-            f" · root {root}"
-            f" · top_k {top_k_text}",
-            style="dim",
-        )
-        status = search.get("status_code")
-        outcome = _search_text(search.get("outcome"), fallback="in progress")
-        result_count = search.get("result_count")
-        status_text = (
-            str(status)
-            if isinstance(status, int) and not isinstance(status, bool)
-            else "—"
-        )
-        result_count_text = (
-            str(result_count)
-            if isinstance(result_count, int) and not isinstance(result_count, bool)
-            else "—"
-        )
-        total = search.get("total_seconds")
-        total_text = (
-            compact_duration(total)
-            if isinstance(total, int | float) and not isinstance(total, bool)
-            else "—"
-        )
-        detail.append(
-            f"\nstate {search.get('state', '—')} · outcome {outcome}"
-            f" · status {status_text} · results {result_count_text}"
-            f" · total {total_text}",
-            style="dim",
-        )
-        started = search.get("started_at")
-        finished = search.get("finished_at")
-        started_text = (
-            str(started)
-            if isinstance(started, int | float) and not isinstance(started, bool)
-            else "—"
-        )
-        finished_text = (
-            str(finished)
-            if isinstance(finished, int | float) and not isinstance(finished, bool)
-            else "—"
-        )
-        detail.append(
-            f"\nstarted {started_text} · finished {finished_text}",
-            style="dim",
-        )
-        timings = search.get("timings")
-        if isinstance(timings, dict) and timings:
-            values = [
-                f"{name}={compact_duration(value)}"
-                for name, value in sorted(
-                    cast("dict[object, object]", timings).items(),
-                    key=lambda item: str(item[0]),
-                )
-                if isinstance(value, int | float) and not isinstance(value, bool)
-            ]
-            if values:
-                detail.append(f"\ntimings {' · '.join(values)}", style="dim")
-        availability = _search_text(search.get("availability_cause"), fallback="")
-        error_code = _search_text(search.get("error_code"), fallback="")
-        error_message = _search_text(search.get("error_message"), fallback="")
-        if availability or error_code or error_message:
+        detail.append(f"\n{_search_identity_line(search)}", style="dim")
+        detail.append(f"\n{_search_outcome_line(search)}", style="dim")
+        detail.append(f"\n{_search_clock_line(search)}", style="dim")
+        timings = _search_timings_line(search)
+        if timings:
+            detail.append(f"\n{timings}", style="dim")
+        failure = _search_failure_line(search)
+        if failure:
             detail.append(
-                f"\navailability {availability or '—'} · error {error_code or '—'}"
-                f" {error_message}".rstrip(),
+                f"\n{failure}",
                 style=tone_style(semantic_tones(self.theme), "bad"),
             )
         found.only_one(Static).update(detail)
