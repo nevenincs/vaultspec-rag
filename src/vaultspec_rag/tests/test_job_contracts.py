@@ -7,6 +7,7 @@ import inspect
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -19,6 +20,7 @@ import pytest
 
 from .. import job_models
 from .. import jobs as jobs_module
+from .._atomic_write import write_json_atomically
 from ..job_manager import state as state_module
 from ..job_manager._execution import logger as execution_logger
 from ..job_manager.manager import JobManager
@@ -330,6 +332,73 @@ def _runtime() -> JobRuntimeSnapshot:
     )
 
 
+_JSON_VALUE_MESSAGE = (
+    "a JSON value: null, a boolean, a number, a string, an array, "
+    "or an object with string keys"
+)
+_OBJECT_MESSAGE = "an object with string keys"
+
+
+def _telemetry_refusal(path: str, requirement: str) -> str:
+    """Return the escaped refusal a telemetry value at *path* must raise.
+
+    Escaped because the path carries brackets and quotes; an unescaped matcher
+    would silently become a much looser regex and pass on the wrong branch.
+    """
+    return re.escape(f"{path} must be {requirement}")
+
+
+def _telemetry_construction(block: dict[str, object]) -> Callable[[], object]:
+    return lambda: replace(_valid_snapshot(), reuse=block)
+
+
+# Values a telemetry block may not carry, each paired with the exact path its
+# refusal must name. A message naming only the block would leave a producer
+# hunting for the offending key by hand, so the path is part of the contract.
+_REFUSED_TELEMETRY_VALUES: list[tuple[str, dict[str, object], str]] = [
+    (
+        "a tuple",
+        {"donor_collections": ("worktree-a",)},
+        _telemetry_refusal("reuse['donor_collections']", _JSON_VALUE_MESSAGE),
+    ),
+    (
+        "a set",
+        {"donor_collections": {"worktree-a"}},
+        _telemetry_refusal("reuse['donor_collections']", _JSON_VALUE_MESSAGE),
+    ),
+    (
+        "an arbitrary object",
+        {"donor": Path("/srv/donor")},
+        _telemetry_refusal("reuse['donor']", _JSON_VALUE_MESSAGE),
+    ),
+    (
+        "a nested non-string key",
+        {"per_collection": {7: "hits"}},
+        _telemetry_refusal("reuse['per_collection']", _OBJECT_MESSAGE),
+    ),
+    (
+        "a non-finite rate",
+        {"hit_rate": math.nan},
+        _telemetry_refusal("reuse['hit_rate']", "a finite number"),
+    ),
+    (
+        "an infinite saving",
+        {"gpu_seconds_saved": math.inf},
+        _telemetry_refusal("reuse['gpu_seconds_saved']", "a finite number"),
+    ),
+    (
+        "a tuple buried in an array",
+        {"buckets": [{"edges": (1, 2)}]},
+        _telemetry_refusal("reuse['buckets'][0]['edges']", _JSON_VALUE_MESSAGE),
+    ),
+    (
+        "a non-finite number buried in an array",
+        {"buckets": [0.5, math.inf]},
+        _telemetry_refusal("reuse['buckets'][1]", "a finite number"),
+    ),
+]
+
+
 # Each case names the exact message its own branch raises. A shared or
 # loosened matcher would pass on whichever branch happened to fire, which is
 # the failure mode this table exists to rule out - do not relax these.
@@ -492,11 +561,24 @@ _REFUSED_AT_CONSTRUCTION: list[tuple[str, str, Callable[[], object]]] = [
     ),
     (
         "telemetry block is not string-keyed",
-        "reuse must be a mapping with string keys or None",
+        r"reuse must be an object with string keys or None",
         lambda: replace(
             _valid_snapshot(), reuse=cast("dict[str, object]", {1: "vectors"})
         ),
     ),
+    (
+        "telemetry block is not a mapping",
+        r"drift must be an object with string keys or None",
+        lambda: replace(_valid_snapshot(), drift=cast("dict[str, object]", ["a"])),
+    ),
+    *[
+        (
+            f"telemetry carries {label}",
+            expected,
+            _telemetry_construction(value),
+        )
+        for label, value, expected in _REFUSED_TELEMETRY_VALUES
+    ],
 ]
 
 
@@ -525,6 +607,20 @@ class TestPersistedJobStateWriteSide:
         with pytest.raises(TypeError, match="idempotency job_id must be a non-empty"):
             IdempotencyBinding(
                 signature=(snapshot.spec, snapshot.initiator, False), job_id=""
+            )
+
+    def test_an_idempotency_binding_refuses_a_non_boolean_start_paused(self) -> None:
+        # The loader checks this flag's type, so a binding carrying anything
+        # else is written without complaint and refused one boot later.
+        snapshot = _valid_snapshot()
+        with pytest.raises(TypeError, match="idempotency start_paused must be boolean"):
+            IdempotencyBinding(
+                signature=(
+                    snapshot.spec,
+                    snapshot.initiator,
+                    cast("bool", 1),
+                ),
+                job_id=snapshot.id,
             )
 
     def test_a_constructible_generation_survives_the_real_writer(
@@ -800,6 +896,37 @@ def _temporaries(directory: Path) -> list[str]:
     return sorted(p.name for p in directory.iterdir() if p.name.endswith(".tmp"))
 
 
+def _identical(left: object, right: object) -> bool:
+    """Return whether two decoded values match in both value and type.
+
+    Equality alone is too weak to see the losses that matter here: ``1``,
+    ``1.0`` and ``True`` all compare equal, so a round trip that turned an
+    integer into a float or a boolean would still pass an ``==`` assertion.
+    """
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        mapping = cast("dict[str, object]", left)
+        other = cast("dict[str, object]", right)
+        return set(mapping) == set(other) and all(
+            _identical(value, other[key]) for key, value in mapping.items()
+        )
+    if isinstance(left, list):
+        items = cast("list[object]", left)
+        others = cast("list[object]", right)
+        return len(items) == len(others) and all(
+            _identical(one, two) for one, two in zip(items, others, strict=True)
+        )
+    return left == right
+
+
+def _telemetry_of(job: JobSnapshot) -> dict[str, object]:
+    """Return a loaded job's reuse block, asserting it survived at all."""
+    block = job.reuse
+    assert block is not None
+    return block
+
+
 def _deeply_nested(depth: int) -> dict[str, object]:
     root: dict[str, object] = {}
     cursor = root
@@ -869,6 +996,142 @@ class TestPersistedJobStateRoundTrip:
         path = tmp_path / "jobs-state.json"
         save_persisted_state(path, state)
         assert load_persisted_state(path) == state
+
+    def _round_tripped_telemetry(
+        self, tmp_path: Path, block: dict[str, object]
+    ) -> dict[str, object]:
+        snapshot = replace(_snapshot_in_state(JobState.SUCCEEDED), reuse=block)
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, _generation(snapshot))
+        return _telemetry_of(load_persisted_state(path).jobs[0])
+
+    def test_the_telemetry_a_run_actually_publishes_survives_intact(
+        self, tmp_path: Path
+    ) -> None:
+        # The exact blocks the reuse and drift producers emit, spelled out
+        # rather than sampled. These are what a real generation carries, so
+        # they are what the round trip has to return unchanged - including the
+        # value types, which plain equality would not notice losing.
+        reuse: dict[str, object] = {
+            "reuse_hits": 128,
+            "reuse_misses": 32,
+            "hit_rate": 0.8,
+            "gpu_seconds_saved": 41.125,
+            "donor_absent": False,
+            "donor_collections": ["code_9f2a", "code_7b41"],
+        }
+        drift: dict[str, object] = {
+            "superseded_paths": 3,
+            "deferred_paths": ["src/pkg/a.py", "src/pkg/b.py"],
+            "collisions_observed": 1,
+            "retry_budget": 4,
+        }
+        snapshot = replace(
+            _snapshot_in_state(JobState.SUCCEEDED), reuse=reuse, drift=drift
+        )
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, _generation(snapshot))
+        loaded = load_persisted_state(path).jobs[0]
+        assert _identical(loaded.reuse, reuse)
+        assert _identical(loaded.drift, drift)
+
+    def test_every_value_a_telemetry_block_may_carry_returns_identical(
+        self, tmp_path: Path
+    ) -> None:
+        # The whole admitted value space in one block, at depth. A block is
+        # free to name whatever counters a run measured, so what pins the
+        # contract is the value space rather than any key list.
+        block: dict[str, object] = {
+            "absent": None,
+            "on": True,
+            "off": False,
+            "zero": 0,
+            "negative": -17,
+            "beyond_double_precision": 2**53 + 1,
+            "ratio": 0.5,
+            "smallest_subnormal": 5e-324,
+            "largest_finite": 1e308,
+            "label": "reuse ✓ 索引 naïve",
+            "empty_text": "",
+            "empty_array": [],
+            "empty_object": {},
+            "mixed_array": [1, 1.0, "1", True, None, [2], {"k": "v"}],
+            "nested_object": {"a": {"b": {"c": [{"d": 1}]}}},
+        }
+        assert _identical(self._round_tripped_telemetry(tmp_path, block), block)
+
+    def test_key_order_is_the_one_thing_a_telemetry_block_does_not_keep(
+        self, tmp_path: Path
+    ) -> None:
+        # A deliberate loss, kept and stated rather than closed. The state file
+        # is written with sorted keys so two equal generations produce equal
+        # bytes; insertion order is the price. Mappings compare without it, so
+        # nothing downstream can observe the difference - but the exact
+        # transformation is asserted here rather than left to be rediscovered.
+        block: dict[str, object] = {"z": 1, "m": 2, "a": 3}
+        loaded = self._round_tripped_telemetry(tmp_path, block)
+        assert loaded == block
+        assert list(block) == ["z", "m", "a"]
+        assert list(loaded) == ["a", "m", "z"]
+
+    def test_a_value_shared_by_two_keys_returns_as_two_equal_copies(
+        self, tmp_path: Path
+    ) -> None:
+        # The other deliberate loss. JSON has no notion of a shared reference,
+        # so a block naming one object under two keys gets two independent
+        # objects back. They compare equal, so no reader can tell - but a
+        # producer that expected to mutate one and see both would be wrong.
+        shared: list[object] = ["code_9f2a"]
+        block: dict[str, object] = {"donors": shared, "fallbacks": shared}
+        assert block["donors"] is block["fallbacks"]
+        loaded = self._round_tripped_telemetry(tmp_path, block)
+        assert _identical(loaded, block)
+        assert loaded["donors"] is not loaded["fallbacks"]
+
+    def test_the_loader_accepts_every_telemetry_shape_a_decode_can_yield(
+        self, tmp_path: Path
+    ) -> None:
+        # The contract on these blocks exists to stop a producer writing a
+        # value that will not come back. It must never be what stops a start
+        # reading one, so the accepted set covers the decoder's whole output
+        # range: a block assembled straight in the file, through no model at
+        # all, still loads. Narrowing the contract below this would strand a
+        # generation of job history over a decorative field.
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, _generation(_snapshot_in_state(JobState.SUCCEEDED)))
+        payload = cast(
+            "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
+        )
+        decoded = cast(
+            "dict[str, object]",
+            json.loads(
+                '{"null":null,"true":true,"false":false,"big":-9007199254740993,'
+                '"exp":1.5e-7,"text":"\\u7d22\\u5f15","deep":[1,[2,[3,[]]]],'
+                '"object":{"nested":{"empty":{}}}}'
+            ),
+        )
+        job = cast("list[dict[str, object]]", payload["jobs"])[0]
+        job["reuse"] = decoded
+        job["drift"] = decoded
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        loaded = load_persisted_state(path).jobs[0]
+        assert _identical(loaded.reuse, decoded)
+        assert _identical(loaded.drift, decoded)
+
+    def test_the_writer_refuses_the_one_decodable_value_the_contract_rejects(
+        self, tmp_path: Path
+    ) -> None:
+        # The premise the argument above rests on. A non-finite number is the
+        # only thing a JSON decode can produce that the telemetry contract
+        # turns away, so it is the only place the reader could end up stricter
+        # than the writer. It does not: the single JSON writer refuses it too,
+        # which is why no file this daemon wrote can hold one, and why
+        # refusing it at construction cannot cost a start.
+        probe = tmp_path / "probe.json"
+        with pytest.raises(ValueError, match="Out of range float values"):
+            write_json_atomically(probe, {"telemetry": {"hit_rate": math.nan}})
+        assert not probe.exists()
+        assert _temporaries(tmp_path) == []
 
     @pytest.mark.parametrize(
         "state", list(JobState), ids=[state.value for state in JobState]
