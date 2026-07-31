@@ -28,6 +28,8 @@ contract in the other's words.
 
 from __future__ import annotations
 
+import math
+
 __all__ = [
     "NOT_REPORTED",
     "_counted_unit",
@@ -37,6 +39,7 @@ __all__ = [
     "_format_seconds",
     "_path_label",
     "_project_name",
+    "_renderable",
 ]
 
 #: What an operator row says when the service did not report the field it
@@ -83,10 +86,49 @@ def _duration_phrase(total_seconds: int, *, days: bool) -> str:
     return _unit_pair(day_count, "day", hours, "hour")
 
 
-def _format_seconds(raw: object) -> str:
+def _renderable(raw: object) -> float | None:
+    """Narrow a value to one this module's cascades can convert to ``int``.
+
+    Every formatter that routes through here ends in an ``int(...)`` or a
+    width-bounded cascade, and both raise on an infinity. Every operator field
+    they read reaches them as a published service payload, and JSON carries
+    neither infinity nor ``nan`` by spec - but Python's ``json`` module emits
+    and accepts both by default, so a persisted record can carry one and the
+    presentation layer would raise mid-row.
+
+    ``nan`` is the worse half and the reason this returns rather than clamps.
+    It does not raise: ``max(0.0, nan)`` is ``0.0``, because ``max`` returns
+    its first argument when the comparison is false and every comparison
+    against ``nan`` is false. So an unreadable field rendered as a real
+    measurement of zero - "0s", "less than 1 second", or, on the watcher's
+    delay renderers, "immediately", which states that no delay is configured.
+    A corrupt measure read as a small one is quieter than the crash and worse,
+    because it looks like an answer.
+
+    Shared across modules on purpose. The delay renderers in the watcher
+    surface keep their own vocabulary and must not be merged into the elapsed
+    formatters, but they narrow identically, and scoping this guard to one
+    module is precisely how the identically-shaped sibling there stayed
+    unhardened last time.
+
+    This is NOT ``jobs.measurement`` and must not be replaced by it. That
+    reader is the contract for a PUBLISHED non-negative quantity and refuses a
+    negative as corrupt; this is a renderer-level backstop that still admits
+    one, because these callers clamp at zero and their clamp is the behaviour
+    their tests pin. Call sites reading a service payload narrow through
+    ``measurement`` first; this catches whatever reaches a formatter anyway.
+    """
     if not isinstance(raw, int | float) or isinstance(raw, bool):
+        return None
+    value = float(raw)
+    return value if math.isfinite(value) else None
+
+
+def _format_seconds(raw: object) -> str:
+    value = _renderable(raw)
+    if value is None:
         return "not reported"
-    raw_seconds = max(0.0, float(raw))
+    raw_seconds = max(0.0, value)
     if raw_seconds < 1:
         return "less than 1 second"
     return _duration_phrase(int(raw_seconds), days=False)
@@ -103,9 +145,10 @@ def compact_duration(raw: object) -> str:
     Returns an em dash for a missing measure, so an absent estimate reads as
     absent instead of as zero.
     """
-    if not isinstance(raw, int | float) or isinstance(raw, bool):
+    value = _renderable(raw)
+    if value is None:
         return "—"
-    total = int(max(0.0, float(raw)))
+    total = int(max(0.0, value))
     if total < 60:
         return f"{total}s"
     minutes, seconds = divmod(total, 60)
@@ -119,9 +162,10 @@ def compact_duration(raw: object) -> str:
 
 
 def _format_milliseconds(raw: object) -> str:
-    if not isinstance(raw, int | float) or isinstance(raw, bool):
+    value = _renderable(raw)
+    if value is None:
         return "not reported"
-    return _format_seconds(float(raw) / 1000.0)
+    return _format_seconds(value / 1000.0)
 
 
 def _format_mib(raw: object) -> str:
@@ -135,11 +179,12 @@ def _format_mib(raw: object) -> str:
     CLI and a large value promotes to the unit a reader would have reached for
     anyway.
     """
-    if not isinstance(raw, int | float) or isinstance(raw, bool):
+    value = _renderable(raw)
+    if value is None:
         return "not reported"
     from .._units import human_bytes, mib_to_bytes
 
-    return human_bytes(mib_to_bytes(float(raw)))
+    return human_bytes(mib_to_bytes(value))
 
 
 def _project_name(root: object) -> str:
