@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#index-progress-bars'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-04-12-index-progress-bars-adr]]'
   - '[[2026-04-12-index-progress-bars-audit]]'

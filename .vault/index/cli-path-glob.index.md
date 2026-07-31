@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#cli-path-glob'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-05-30-cli-path-glob-adr]]'
   - '[[2026-05-30-cli-path-glob-plan]]'

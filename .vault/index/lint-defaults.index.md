@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#lint-defaults'
-date: '2026-07-28'
-modified: '2026-07-28'
+date: '2026-07-31'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - '[[2026-07-27-lint-defaults-P01-S01]]'

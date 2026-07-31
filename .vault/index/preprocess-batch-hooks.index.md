@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#preprocess-batch-hooks'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-07-21-preprocess-batch-hooks-adr]]'
   - '[[2026-07-21-preprocess-batch-hooks-research]]'

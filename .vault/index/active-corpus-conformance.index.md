@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#active-corpus-conformance'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-07-27-active-corpus-conformance-adr]]'
   - '[[2026-07-27-active-corpus-conformance-research]]'

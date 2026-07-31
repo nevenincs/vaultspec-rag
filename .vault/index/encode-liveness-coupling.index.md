@@ -18,4 +18,4 @@ Auto-generated index of all documents tagged with `#encode-liveness-coupling`.
 
 ### adr
 
-- `2026-07-31-encode-liveness-coupling-adr` - `encode-liveness-coupling` adr: `starved is distinguishable from gone on facts already published` | (**status:** `proposed`)
+- `2026-07-31-encode-liveness-coupling-adr` - `encode-liveness-coupling` adr: `starved is distinguishable from gone on facts already published` | (**status:** `accepted`)

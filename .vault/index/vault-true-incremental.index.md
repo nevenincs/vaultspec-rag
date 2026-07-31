@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#vault-true-incremental'
-date: '2026-07-29'
-modified: '2026-07-29'
+date: '2026-07-31'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - '[[2026-07-24-vault-true-incremental-adr]]'

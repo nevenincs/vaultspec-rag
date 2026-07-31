@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#mcp-server-deconflation'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-06-07-mcp-server-deconflation-P01-S01]]'
   - '[[2026-06-07-mcp-server-deconflation-P01-S02]]'

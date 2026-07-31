@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-quiesce'
-date: '2026-07-30'
-modified: '2026-07-30'
+date: '2026-07-31'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - '[[2026-07-24-service-quiesce-P01-S01]]'

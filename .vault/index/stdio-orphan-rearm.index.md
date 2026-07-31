@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#stdio-orphan-rearm'
-date: '2026-07-28'
-modified: '2026-07-28'
+date: '2026-07-31'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - '[[2026-07-28-stdio-orphan-rearm-adr]]'

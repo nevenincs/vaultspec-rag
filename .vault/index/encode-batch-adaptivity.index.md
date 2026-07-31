@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#encode-batch-adaptivity'
-date: '2026-07-29'
-modified: '2026-07-29'
+date: '2026-07-31'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - '[[2026-07-29-encode-batch-adaptivity-P01-S01]]'

@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#service-graph'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'
