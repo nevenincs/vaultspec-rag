@@ -24,6 +24,7 @@ from ..job_models import (
 from ..job_models import (
     capabilities_for_state as _capabilities_for_state,
 )
+from ..logging_config import log_event
 from .state import (
     UNOWNED_RUNTIME,
     JobManagerState,
@@ -211,8 +212,68 @@ class JobManagerPersistence(JobManagerState):
                 code="no_persisted_jobs",
                 message="No persisted job state exists.",
             )
-        except (OSError, UnicodeError, KeyError, TypeError, ValueError) as exc:
-            return self._persistence_error(command, str(exc), code="job_state_invalid")
+        except OSError as exc:
+            # The bytes could not be read at all. That is an environment
+            # fault (permissions, disk, a directory at the path), not a bad
+            # file, and continuing would mask it: the same fault would break
+            # every later persist. Fail startup loudly instead.
+            return self._persistence_error(
+                command,
+                str(exc),
+                code="job_state_unreadable",
+            )
+        except (UnicodeError, KeyError, TypeError, ValueError) as exc:
+            return self._quarantine_invalid_state(command, path, exc)
+
+    def _quarantine_invalid_state(
+        self,
+        command: str,
+        path: Path,
+        reason: Exception,
+    ) -> JobOutcome:
+        """Move an undecodable state file aside so startup proceeds history-less.
+
+        The file holds job history - observability data - while the index
+        itself lives in vector storage, so refusing to start over it would
+        destroy availability to protect a record of past work. Absent history
+        is already a successful restore outcome; unreadable history joins it
+        by being preserved for diagnosis under a timestamped sibling name,
+        never deleted and never partially applied. A failed move means the
+        state directory itself is not dependable, and that fault still aborts
+        startup rather than being masked by continuing without persistence.
+        """
+        destination = _quarantine_destination(path)
+        try:
+            path.rename(destination)
+        except OSError as exc:
+            return self._persistence_error(
+                command,
+                (
+                    f"invalid content ({reason}) could not be quarantined "
+                    f"to {destination}: {exc}"
+                ),
+                code="job_state_quarantine_failed",
+            )
+        log_event(
+            logger,
+            "service.job",
+            "state_quarantined",
+            severity=logging.ERROR,
+            source=path,
+            destination=destination,
+            error=str(reason),
+            job_history="lost",
+            index_data="unaffected",
+        )
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.OK,
+            code="job_state_quarantined",
+            message=(
+                f"Invalid persisted job state was quarantined to {destination}; "
+                f"job history was lost, index data is unaffected: {reason}"
+            ),
+        )
 
     def _replace_snapshot_locked(
         self, managed: ManagedJob, transition: SnapshotTransition, /
@@ -449,6 +510,23 @@ class JobManagerPersistence(JobManagerState):
             message=f"Job state could not be persisted: {detail}",
             job=job,
         )
+
+
+def _quarantine_destination(path: Path) -> Path:
+    """Pick a timestamped sibling name that never overwrites earlier evidence.
+
+    A second quarantine within the same second takes a counter suffix instead
+    of replacing the first. Only plain files are stepped around: any other
+    obstacle at a candidate name is an anomaly in the state directory, and the
+    rename is left to fail loudly on it rather than guessing a way past.
+    """
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    candidate = path.with_name(f"{path.name}.invalid-{stamp}")
+    counter = 1
+    while candidate.is_file():
+        candidate = path.with_name(f"{path.name}.invalid-{stamp}-{counter}")
+        counter += 1
+    return candidate
 
 
 @dataclass(frozen=True, slots=True)
