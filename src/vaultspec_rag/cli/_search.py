@@ -45,7 +45,7 @@ from ._render import (
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Iterator
     from typing import NoReturn
 
     from ..search import (
@@ -80,6 +80,49 @@ def _suppress_hf_progress() -> None:
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+
+
+def _attach_result_collapse(
+    envelope: dict[str, object] | None, results: object
+) -> None:
+    """Record on *envelope* that this page resolved to a single file.
+
+    A result carries its path under ``path``; a combined outcome nests its
+    per-domain lists. Anything without a readable path contributes nothing
+    rather than a placeholder, so a shape this does not understand makes the
+    signal stay silent instead of inventing a collapse.
+
+    Takes an optional envelope because the non-JSON path has none to carry the
+    block: there the warning is rendered from the service payload instead, and
+    silently doing nothing here is the correct behaviour rather than a guard
+    worth raising over.
+    """
+    from .._search_state import result_collapse
+
+    if envelope is None:
+        return
+    state = envelope.get("index_state")
+    if not isinstance(state, dict):
+        return
+    paths = tuple(
+        str(path)
+        for item in _iter_result_rows(results)
+        if isinstance(path := getattr(item, "path", None), str)
+    )
+    collapse = result_collapse(paths)
+    if collapse is not None:
+        cast("dict[str, object]", state)["result_collapse"] = collapse
+
+
+def _iter_result_rows(results: object) -> Iterator[object]:
+    """Yield every result row, flattening a combined outcome's domain lists."""
+    if isinstance(results, list):
+        yield from cast("list[object]", results)
+        return
+    for attribute in ("vault_results", "code_results", "document_results"):
+        nested = getattr(results, attribute, None)
+        if isinstance(nested, list):
+            yield from cast("list[object]", nested)
 
 
 def _handle_service_results(
@@ -603,6 +646,12 @@ def _try_in_process_search(
                         ),
                     )
                 )
+        # The block above is built before the search runs, because its counts
+        # come from the store rather than from the answer. The collapse signal
+        # is the one finding that cannot be known until there IS an answer, so
+        # it is attached here rather than restated as a second builder - the
+        # daemon route reaches the same conclusion through the same function.
+        _attach_result_collapse(envelope, results)
         return cast(
             "list[SearchResult | DocumentSearchResult] | CombinedSearchOutcome",
             results,
