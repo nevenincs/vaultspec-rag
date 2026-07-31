@@ -20,6 +20,7 @@ from ..job_models import (
     JobOutcomeStatus,
     JobSnapshot,
     JobState,
+    JobTimestamps,
 )
 from ..job_models import (
     capabilities_for_state as _capabilities_for_state,
@@ -318,6 +319,7 @@ class JobManagerPersistence(JobManagerState):
         """
         previous = managed.snapshot
         timestamps = previous.timestamps
+        now = ordered_stamp(timestamps, transition.now, job_id=previous.id)
         managed.snapshot = replace(
             previous,
             revision=previous.revision + 1,
@@ -327,11 +329,9 @@ class JobManagerPersistence(JobManagerState):
             attempt=transition.attempt or previous.attempt,
             timestamps=replace(
                 timestamps,
-                state_changed_at=transition.now,
-                started_at=(
-                    timestamps.started_at
-                    if transition.started_at is ...
-                    else transition.started_at
+                state_changed_at=now,
+                started_at=_revision_stamp(
+                    transition.started_at, timestamps.started_at, now
                 ),
                 # Admission is a per-attempt fact: any transition that
                 # rewrites the start clock (a fresh start, a requeued
@@ -341,20 +341,18 @@ class JobManagerPersistence(JobManagerState):
                     if transition.started_at is ...
                     else None
                 ),
-                control_requested_at=(
-                    timestamps.control_requested_at
-                    if transition.control_requested_at is ...
-                    else transition.control_requested_at
+                control_requested_at=_revision_stamp(
+                    transition.control_requested_at,
+                    timestamps.control_requested_at,
+                    now,
                 ),
-                control_acknowledged_at=(
-                    timestamps.control_acknowledged_at
-                    if transition.control_acknowledged_at is ...
-                    else transition.control_acknowledged_at
+                control_acknowledged_at=_revision_stamp(
+                    transition.control_acknowledged_at,
+                    timestamps.control_acknowledged_at,
+                    now,
                 ),
-                finished_at=(
-                    timestamps.finished_at
-                    if transition.finished_at is ...
-                    else transition.finished_at
+                finished_at=_revision_stamp(
+                    transition.finished_at, timestamps.finished_at, now
                 ),
             ),
             result=(previous.result if transition.result is ... else transition.result),
@@ -539,6 +537,81 @@ class JobManagerPersistence(JobManagerState):
             message=f"Job state could not be persisted: {detail}",
             job=job,
         )
+
+
+def ordered_stamp(
+    timestamps: JobTimestamps,
+    candidate: float,
+    *,
+    job_id: str,
+) -> float:
+    """Return a stamp for the next revision that never precedes the record's own.
+
+    Every stamp on a job comes from the wall clock, and the wall clock is free
+    to move backwards: a corrective time sync, a restored virtual-machine
+    snapshot, a container clock resync, an operator setting it by hand. A
+    revision stamped after such a step records a job finishing before it
+    started, or changing state before it was created. The reader refuses that
+    record, and it refuses the whole file with it, so one job's stamps cost the
+    operator every job's history on the next start - over an event nobody
+    caused and nothing else reports.
+
+    Flooring the new stamp at the record's last one keeps each record ordered
+    against itself, which is exactly what is validated: records are never
+    ordered against each other, so two jobs' stamps may still disagree across a
+    step and neither history is distorted to hide it.
+
+    This is not manufacturing a chronology the clock did not support. The order
+    is the part that is known: these transitions happen in sequence, in one
+    process, under one lock. The stamps are the unreliable part. A record
+    asserting a finish before its own start asserts something false about the
+    world; flooring records the weakest true statement left, that the
+    transition did not precede the one before it.
+
+    The cost is real and paid deliberately. A floored stamp is no longer the
+    wall-clock instant of its event, so the interval it closes reads as zero
+    instead of as the negative duration the raw clocks describe - an operator
+    reading it learns the ordering but not the duration. The distortion is
+    bounded by the size of the step and confined to the transitions that fall
+    inside it, against a whole history otherwise lost, and the served views
+    already floor a negative elapsed at zero, so the recorded value is the one
+    an operator was going to be shown either way. The step itself is not
+    swallowed: this is the only place that can see it, so it is reported here.
+    """
+    floor = timestamps.state_changed_at
+    if candidate >= floor:
+        return candidate
+    log_event(
+        logger,
+        "service.job",
+        "clock_stepped_back",
+        severity=logging.WARNING,
+        job_id=job_id,
+        backwards_seconds=floor - candidate,
+        wall_clock=candidate,
+        recorded=floor,
+        stamps="floored to the previous state change",
+    )
+    return floor
+
+
+def _revision_stamp(
+    supplied: float | EllipsisType | None,
+    carried: float | None,
+    floor: float,
+) -> float | None:
+    """Carry forward, clear, or floor one optional clock a revision may set.
+
+    Ellipsis keeps the previous value and ``None`` clears it; anything else is
+    a stamp this revision is taking now, and shares the revision's floor. Every
+    call site supplies the revision's own ``now`` here, so the floor changes a
+    value only when that ``now`` was itself floored.
+    """
+    if supplied is ...:
+        return carried
+    if supplied is None:
+        return None
+    return max(supplied, floor)
 
 
 def _quarantine_destination(path: Path) -> Path:
