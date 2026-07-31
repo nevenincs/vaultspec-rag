@@ -8,6 +8,7 @@ body_schema: 'body-v1'
 related:
   - "[[2026-07-24-service-quiesce-adr]]"
 ---
+
 # `service-quiesce` audit: `S32 GPU pytest borrower integration`
 
 ## Scope
@@ -35,9 +36,11 @@ The captured transport invokes its refresh callback after a 401 but retries only
 ### unrecoverable-machine-holder | high | Production machine lock leaves a stale owner PID
 
 A real nested route host acquired the production machine lock with PID 7172, but a separate contender observed its lock record still naming PID 43480 and therefore reported holder PID zero. The owner-record write is best-effort today, yet capture requires lock-holder, pointer, and health PID agreement. Do not synthesize a test PID or weaken that correlation: make the production machine-lock record update durable and fail acquisition when it cannot be established, then require a separate real contender to observe the exact positive owner PID before the CPU host signals ready.
+
 ### pre-root-original-path-observation | high | Guarded configured-path discovery discards valid host evidence during capture
 
 The durable owner witness repair lets a real pre-ready contender recover the exact host PID, but the S30 child intentionally has pytest containment active with no registered root while it captures the original service. The ordinary configured-path holder reader correctly refuses that state; resolution reports `probe_failed` and loses the otherwise valid machine-pointer evidence. Do not weaken that reader or treat `BOOTSTRAP` as a general containment bypass. Capture needs one private original-path observation that requires existing absolute identity and discovery paths, opens without creation, makes only a momentary nonblocking lock attempt, shares ordinary pointer validation, and never retains a lease or writes the lock, discovery, capability, or authority. Any absence, unreadability, free lock, or PID disagreement must continue to refuse capture.
+
 ### raw-witness-mint | critical | Raw lock paths can mint a post-registration borrower authority
 
 A mint API that accepts an absolute identity-lock path still lets any pre-root pytest caller select a host sibling anchor, even when acquisition later receives an opaque authority. That is the same containment escape in a later phase. S29 must mint `CapturedBorrowerLeaseAuthority` only from its registry-backed `CapturedMachineLockWitness`; S30 must retain a typed `PreIsolationMachinePointer` and pass it to typed post-lease revalidation. Neither minting nor revalidation may accept a raw path, and the shared pointer evaluator must remain the only pointer-validation rule.

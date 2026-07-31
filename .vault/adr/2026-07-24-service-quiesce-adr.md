@@ -12,6 +12,7 @@ related:
   - '[[2026-06-24-service-hardware-singleton-adr]]'
   - '[[2026-07-28-pressure-management-adr]]'
 ---
+
 # `service-quiesce` adr: `Acknowledged global resource quiescence` | (**status:** `accepted`)
 
 ## Problem Statement

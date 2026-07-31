@@ -30,12 +30,12 @@ related:
 Corpus: 2158 vault documents, every one stamp-churned, nothing else edited. One
 unscoped incremental run, same machine, same GPU, same corpus.
 
-| | before | after |
-| --- | --- | --- |
-| documents in corpus | 2158 | 2173 |
-| documents re-embedded | 2158 | 0 |
-| payload-only updates | 0 | 0 |
-| wall time | 86.3 s | 1.90 s |
+|                       | before | after  |
+| --------------------- | ------ | ------ |
+| documents in corpus   | 2158   | 2173   |
+| documents re-embedded | 2158   | 0      |
+| payload-only updates  | 0      | 0      |
+| wall time             | 86.3 s | 1.90 s |
 
 Every document re-embedded before; none after. Forty-five times faster, and the
 remaining two seconds are stat calls, parses, and digests - no GPU work at all.

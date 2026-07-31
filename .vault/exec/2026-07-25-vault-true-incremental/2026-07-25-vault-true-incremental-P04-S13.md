@@ -55,6 +55,5 @@ editing the wrong field.
 
 The multi-chunk guard was added after the payload branch's reported figure turned
 out to be a chunk count. It is proven able to fail the same way: restoring the
-chunk count makes it fail with `reported 6 documents for one document of 6
-chunks`. Every guard in this phase used single-chunk documents, where the two
+chunk count makes it fail with `reported 6 documents for one document of 6 chunks`. Every guard in this phase used single-chunk documents, where the two
 numbers agree, which is exactly why none of them saw it.
