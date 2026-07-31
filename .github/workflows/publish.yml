@@ -21,6 +21,7 @@ concurrency:
 jobs:
   build:
     name: Build
+    timeout-minutes: 20
     # Release artifacts build on GitHub-HOSTED runners, deliberately: a
     # published wheel must not be built on a workstation that also runs agent
     # sessions and a live service. CI's lint/test jobs are the ones on the
@@ -51,6 +52,7 @@ jobs:
 
   smoke-test:
     name: Smoke Test (py${{ matrix.python-version }})
+    timeout-minutes: 20
     needs: build
     runs-on: ubuntu-latest
     strategy:
@@ -106,6 +108,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
+    timeout-minutes: 15
     needs: smoke-test
     # OIDC trusted publishing works from self-hosted runners: the id-token
     # comes from GitHub's OIDC provider, not from the runner host.
@@ -130,6 +133,7 @@ jobs:
 
   github-release:
     name: Attach Release Assets
+    timeout-minutes: 15
     needs: smoke-test
     # Hosted, like every other job in this workflow: `gh` and `sha256sum` both
     # ship on the hosted image, and the whole release path stays off the
