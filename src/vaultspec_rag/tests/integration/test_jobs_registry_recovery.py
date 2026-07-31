@@ -19,6 +19,7 @@ from ... import jobs as _jobs
 from ...job_control import RunControlToken
 from ...job_manager._control import AttemptTerminal
 from ...job_manager.manager import JobManager
+from ...job_manager.models import ResourceUpdate
 from ...job_models import (
     DesiredJobState,
     JobInitiator,
@@ -1338,3 +1339,179 @@ class TestManagedJobPersistence:
         # real loader that start would use.
         assert state_path.is_file()
         load_persisted_state(state_path)
+
+    @staticmethod
+    def _rewind_the_wall_clock_under(state_path: Path, *, seconds: float) -> None:
+        """Age the persisted stamps into the reader's future by ``seconds``.
+
+        A wall clock that steps backwards leaves exactly this behind: a file
+        the previous service life wrote while the clock was ahead of where it
+        is now. Every stamp moves together, so the record stays internally
+        consistent and loads cleanly - the damage appears only once this life
+        stamps a new revision onto it from the corrected clock. Shifting the
+        file rather than the machine's clock keeps the step confined to one
+        temporary directory.
+        """
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        for job in cast("list[dict[str, object]]", payload["jobs"]):
+            for name in (
+                "created_at",
+                "state_changed_at",
+                "started_at",
+                "finished_at",
+                "control_requested_at",
+                "control_acknowledged_at",
+                "admission_acquired_at",
+            ):
+                stamp = job.get(name)
+                if isinstance(stamp, int | float):
+                    job[name] = float(stamp) + seconds
+            progress = job.get("progress")
+            if isinstance(progress, dict):
+                updated = cast("dict[str, object]", progress).get("last_updated")
+                if isinstance(updated, int | float):
+                    cast("dict[str, object]", progress)["last_updated"] = (
+                        float(updated) + seconds
+                    )
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_a_backwards_clock_step_never_persists_an_unreadable_record(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Recovery must not manufacture the file the next start refuses.
+
+        Wall-clock time is not monotonic: a corrective sync, a restored
+        virtual-machine snapshot or a container resync can move it backwards
+        between two transitions of one job. Restore is the sharpest case,
+        because it stamps a fresh interrupt onto stamps a previous service
+        life wrote - so a step between those two lives makes the recovery
+        write a record whose finish predates its own creation, and the start
+        after that refuses the whole file and drops every job's history.
+
+        No clock is manipulated here and no time source is injected. The step
+        is carried by the only thing that outlives it, the file the previous
+        life left behind, which is also how a real one reaches this code.
+        """
+        from ...job_persistence import load_persisted_state
+
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("cli", "server job create", str(tmp_path)),
+        )
+        assert created.job is not None
+        owner_task = asyncio.create_task(pending_attempt())
+        try:
+            assert (
+                manager.start_attempt(
+                    created.job.id,
+                    task=owner_task,
+                    control=RunControlToken(),
+                ).code
+                == "attempt_started"
+            )
+            self._rewind_the_wall_clock_under(state_path, seconds=3600.0)
+            # The previous life's file is intact: the step damages nothing
+            # already written, which is what makes the damage this test is
+            # about attributable to the revision restore stamps onto it.
+            assert len(load_persisted_state(state_path).jobs) == 1
+
+            restarted = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
+                max_nonterminal=2,
+                state_path=state_path,
+            )
+            assert restarted.restore_persisted().code == "job_state_restored"
+            interrupted = restarted.get(created.job.id)
+            assert interrupted is not None
+            assert interrupted.state is JobState.INTERRUPTED
+            stamps = interrupted.timestamps
+            assert stamps.finished_at is not None
+            # Removing the floor in `ordered_stamp` puts the interrupt's raw
+            # `time.time()` an hour behind creation and fails these two.
+            assert stamps.state_changed_at >= stamps.created_at
+            assert stamps.finished_at >= stamps.created_at
+
+            # The record the next start actually reads, through the loader
+            # that start uses. Unfloored, this raises "state change predates
+            # creation" and the whole history is quarantined away.
+            reloaded = load_persisted_state(state_path)
+            assert len(reloaded.jobs) == 1
+        finally:
+            owner_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await owner_task
+
+    @pytest.mark.asyncio
+    async def test_a_backwards_clock_step_never_persists_an_early_admission(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The admission clock is stamped outside the transition funnel.
+
+        Admission is recorded as a resource fact rather than a state change,
+        so it reaches the record by its own path and needs the same floor.
+        Its caller reads the wall clock and passes the reading on unchanged,
+        which is where the reading a stepped-back clock produces is supplied
+        here.
+        """
+        from ...job_persistence import load_persisted_state
+
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("http", "POST /jobs", str(tmp_path)),
+        )
+        assert created.job is not None
+        owner_task = asyncio.create_task(pending_attempt())
+        try:
+            started = manager.start_attempt(
+                created.job.id,
+                task=owner_task,
+                control=RunControlToken(),
+            )
+            assert started.job is not None
+            assert manager.update_execution_resources(
+                created.job.id,
+                task=owner_task,
+                update=ResourceUpdate(
+                    index_capacity_held=True,
+                    admission_acquired_at=started.job.timestamps.created_at - 3600.0,
+                ),
+            )
+            admitted = manager.get(created.job.id)
+            assert admitted is not None
+            admission = admitted.timestamps.admission_acquired_at
+            assert admission is not None
+            # Removing the floor stores the raw reading and fails this.
+            assert admission >= admitted.timestamps.created_at
+
+            # Unfloored, the next start reads "admission_acquired_at predates
+            # creation" and quarantines the file.
+            assert len(load_persisted_state(state_path).jobs) == 1
+        finally:
+            owner_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await owner_task

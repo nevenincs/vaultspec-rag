@@ -18,7 +18,7 @@ from ..job_models import (
     ProcessResourceSnapshot,
 )
 from ..service_quiesce import QuiesceAdmissionClosedError
-from ._persistence import SnapshotTransition
+from ._persistence import SnapshotTransition, ordered_stamp
 from .state import (
     JobManagerState,
     JobRuntimeOwner,
@@ -270,7 +270,11 @@ class JobManagerProgress(JobManagerState):
                     if update.admission_acquired_at is None
                     else replace(
                         timestamps,
-                        admission_acquired_at=update.admission_acquired_at,
+                        admission_acquired_at=ordered_stamp(
+                            timestamps,
+                            update.admission_acquired_at,
+                            job_id=managed.snapshot.id,
+                        ),
                     )
                 ),
                 gpu_lock_wait_seconds=(
