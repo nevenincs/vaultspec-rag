@@ -464,7 +464,11 @@ def _validate_persisted_lifecycle(job: JobSnapshot) -> None:
         JobState.QUEUED: {DesiredJobState.RUNNING},
         JobState.RUNNING: {DesiredJobState.RUNNING},
         JobState.PAUSING: {DesiredJobState.PAUSED, DesiredJobState.RUNNING},
-        JobState.PAUSED: {DesiredJobState.PAUSED},
+        # A paused job wanting to run is how work parked by a service quiesce
+        # is told apart from work an operator paused: the resume pass selects
+        # on exactly that pair. Refusing it here rejects a file the manager
+        # writes itself whenever a daemon dies inside a quiesce window.
+        JobState.PAUSED: {DesiredJobState.PAUSED, DesiredJobState.RUNNING},
         JobState.CANCELLING: {DesiredJobState.CANCELLED},
         JobState.CANCELLED: {DesiredJobState.CANCELLED},
     }

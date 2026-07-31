@@ -1247,6 +1247,7 @@ class TestManagedJobPersistence:
             "created",
             "start_paused",
             "paused",
+            "quiesce_deferred",
             "cancelled",
             "resumed",
             "failed_unstarted",
@@ -1306,6 +1307,14 @@ class TestManagedJobPersistence:
             admit("a", start_paused=True)
         elif sequence == "paused":
             manager.set_desired_state(admit("a"), DesiredJobState.PAUSED)
+        elif sequence == "quiesce_deferred":
+            # Work parked by a quiesce is persisted paused while still wanting
+            # to run, and the resume pass selects on exactly that pair. A
+            # loader refusing it rejects the daemon's own shutdown artifact.
+            assert (
+                manager.defer_unstarted_for_quiesce(admit("a")).code
+                == "quiesce_deferred_before_start"
+            )
         elif sequence == "cancelled":
             manager.set_desired_state(admit("a"), DesiredJobState.CANCELLED)
         elif sequence == "resumed":
