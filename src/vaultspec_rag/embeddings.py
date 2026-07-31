@@ -280,6 +280,30 @@ def _shrink_after_bucket_oom(
     return budget, buckets[:index] + context.plan(budget, start=bucket.start)
 
 
+def _joined_bucket_outputs(
+    outputs: list[object],
+    *,
+    retain_on_device: bool,
+) -> object:
+    """Join per-bucket encode outputs into one result in the caller's mode.
+
+    A single bucket is handed back exactly as the library produced it, so
+    the common case pays no concatenation copy.
+    """
+    if len(outputs) == 1:
+        return outputs[0]
+    if retain_on_device:
+        import torch
+
+        return torch.cat([cast("Tensor", output) for output in outputs], dim=0)
+    import numpy as np
+
+    return np.concatenate(
+        [np.asarray(output) for output in outputs],
+        axis=0,
+    )
+
+
 class EncodeBatchCeiling:
     """Learned CUDA encode ceiling in token units, persistent across calls.
 
@@ -896,6 +920,27 @@ class EmbeddingModel:
             normalize_embeddings=True,
         )
 
+    def _encode_dense_bucket(
+        self,
+        bucket_texts: list[str],
+        gpu_lock: threading.Lock | None,
+        *,
+        retain_on_device: bool,
+    ) -> object:
+        """Run one bucket as one dense forward, holding the GPU lock across it.
+
+        Nothing but the forward is inside the hold. Retaining on device
+        brackets it with the peak capture in the same hold, so the captured
+        peak attributes that forward's demand to the calling job alone.
+        """
+        from .memory_probe import cuda_forward_peak_capture
+
+        if retain_on_device:
+            with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
+                return self._dense_encode_call(bucket_texts, retain_on_device=True)
+        with timed_gpu_lock(gpu_lock):
+            return self._dense_encode_call(bucket_texts, retain_on_device=False)
+
     def _encode_documents_output(
         self,
         texts: list[str],
@@ -933,8 +978,6 @@ class EmbeddingModel:
         """
         import torch
 
-        from .memory_probe import cuda_forward_peak_capture
-
         if batch_size is None:
             batch_size = self._default_encode_batch_size()
 
@@ -971,18 +1014,11 @@ class EmbeddingModel:
                     ),
                 )
             try:
-                if retain_on_device:
-                    with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
-                        encoded = self._dense_encode_call(
-                            bucket_texts,
-                            retain_on_device=True,
-                        )
-                else:
-                    with timed_gpu_lock(gpu_lock):
-                        encoded = self._dense_encode_call(
-                            bucket_texts,
-                            retain_on_device=False,
-                        )
+                encoded = self._encode_dense_bucket(
+                    bucket_texts,
+                    gpu_lock,
+                    retain_on_device=retain_on_device,
+                )
             except torch.cuda.OutOfMemoryError:
                 torch.cuda.empty_cache()
                 oom_count += 1
@@ -1011,16 +1047,7 @@ class EmbeddingModel:
                 )
             index += 1
         self._dense_batch_ceiling.record_success(budget)
-        if len(outputs) == 1:
-            return outputs[0]
-        if retain_on_device:
-            return torch.cat([cast("Tensor", output) for output in outputs], dim=0)
-        import numpy as np
-
-        return np.concatenate(
-            [np.asarray(output) for output in outputs],
-            axis=0,
-        )
+        return _joined_bucket_outputs(outputs, retain_on_device=retain_on_device)
 
     #: Task-specific instruction prompts for the dense encoder. Qwen3
     #: embeddings are instruction-tuned: telling the model what kind of
