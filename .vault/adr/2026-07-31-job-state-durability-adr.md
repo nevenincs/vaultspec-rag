@@ -15,6 +15,7 @@ related:
   - "[[2026-07-21-managed-log-contract-adr]]"
   - '[[2026-07-31-job-state-durability-reference]]'
 ---
+
 # `job-state-durability` adr: `durable job-state contract: writer-validated records, survivable restore` | (**status:** `accepted`)
 
 ## Problem Statement
