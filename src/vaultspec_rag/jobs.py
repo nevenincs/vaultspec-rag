@@ -651,6 +651,97 @@ def progress_rates(record_id: str) -> tuple[float | None, float | None]:
     return None, None
 
 
+def _progress_emit_stamps(record: dict[str, object]) -> dict[str, float]:
+    """The write-throttle stamps *record* holds (caller holds the lock)."""
+    stamps = record.get(_PROGRESS_EMIT_KEY)
+    if isinstance(stamps, dict):
+        return cast("dict[str, float]", stamps)
+    return {}
+
+
+def _due_for_emit(
+    stamps: dict[str, float],
+    key: str,
+    *,
+    moment: float,
+    min_interval: float,
+    step_changed: bool,
+) -> bool:
+    """Whether the write *key* throttles is due, stamping it when it is.
+
+    A step transition always releases the throttle: the transition is the
+    one moment a reader cannot reconstruct from the counter alone.
+    """
+    last = stamps.get(key)
+    if step_changed or last is None or moment - last >= min_interval:
+        stamps[key] = moment
+        return True
+    return False
+
+
+def _apply_progress_update(
+    record: dict[str, object],
+    *,
+    step: str,
+    completed: int,
+    total: int | None,
+    moment: float,
+) -> tuple[dict[str, object] | None, bool]:
+    """Fold one progress report into *record* (caller holds the lock).
+
+    Returns the fields of the log line to emit - or ``None`` where the log
+    line is throttled - and whether the durable snapshot is due. Both
+    writes happen outside the lock, so neither is performed here.
+    """
+    progress = record.get("progress")
+    previous_step = (
+        cast("dict[str, object]", progress).get("step")
+        if isinstance(progress, dict)
+        else None
+    )
+    record["progress"] = {
+        "step": step,
+        "completed": completed,
+        "total": total,
+        "last_updated": moment,
+    }
+    _sample_progress(
+        record,
+        step=step,
+        previous_step=previous_step,
+        completed=completed,
+        at=moment,
+    )
+    step_changed = previous_step != step
+    stamps = _progress_emit_stamps(record)
+    log_fields: dict[str, object] | None = None
+    if _due_for_emit(
+        stamps,
+        "logged_at",
+        moment=moment,
+        min_interval=_PROGRESS_LOG_MIN_INTERVAL_SECONDS,
+        step_changed=step_changed,
+    ):
+        log_fields = {
+            "job_id": record["id"],
+            "source": record.get("source"),
+            "trigger": record.get("trigger"),
+            "phase": record.get("phase"),
+            "step": step,
+            "completed": completed,
+            "total": total,
+        }
+    persist = _due_for_emit(
+        stamps,
+        "persisted_at",
+        moment=moment,
+        min_interval=_PROGRESS_PERSIST_MIN_INTERVAL_SECONDS,
+        step_changed=step_changed,
+    )
+    record[_PROGRESS_EMIT_KEY] = stamps
+    return log_fields, persist
+
+
 def record_progress(
     record_id: str,
     step: str,
@@ -680,57 +771,13 @@ def record_progress(
     with _lock:
         for record in reversed(_records):
             if record["id"] == record_id:
-                progress = record.get("progress")
-                progress_step = None
-                if isinstance(progress, dict):
-                    progress_data = cast("dict[str, object]", progress)
-                    progress_step = progress_data.get("step")
-                moment = time.time() if now is None else now
-                record["progress"] = {
-                    "step": step,
-                    "completed": completed,
-                    "total": total,
-                    "last_updated": moment,
-                }
-                _sample_progress(
+                log_fields, persist = _apply_progress_update(
                     record,
                     step=step,
-                    previous_step=progress_step,
                     completed=completed,
-                    at=moment,
+                    total=total,
+                    moment=time.time() if now is None else now,
                 )
-                step_changed = progress_step != step
-                raw_emitted = record.get(_PROGRESS_EMIT_KEY)
-                emitted = (
-                    cast("dict[str, float]", raw_emitted)
-                    if isinstance(raw_emitted, dict)
-                    else {}
-                )
-                last_logged = emitted.get("logged_at")
-                if (
-                    step_changed
-                    or last_logged is None
-                    or moment - last_logged >= _PROGRESS_LOG_MIN_INTERVAL_SECONDS
-                ):
-                    emitted["logged_at"] = moment
-                    log_fields = {
-                        "job_id": record_id,
-                        "source": record.get("source"),
-                        "trigger": record.get("trigger"),
-                        "phase": record.get("phase"),
-                        "step": step,
-                        "completed": completed,
-                        "total": total,
-                    }
-                last_persisted = emitted.get("persisted_at")
-                persist = (
-                    step_changed
-                    or last_persisted is None
-                    or moment - last_persisted >= _PROGRESS_PERSIST_MIN_INTERVAL_SECONDS
-                )
-                if persist:
-                    emitted["persisted_at"] = moment
-                record[_PROGRESS_EMIT_KEY] = emitted
                 break
     if persist:
         _persist_active_snapshot()
