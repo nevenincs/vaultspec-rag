@@ -1,0 +1,150 @@
+name: Fleet Health
+
+# Watches for work that no runner ever picks up.
+#
+# The failure this exists to catch is silent by construction. When the
+# self-hosted fleet is down, jobs do not fail - they sit pending. Each new
+# push then evicts the previous pending run from its concurrency group, and
+# anything that survives is retired by GitHub's 24h queue timeout. Both
+# outcomes report as `cancelled`, which reads as "somebody stopped this"
+# rather than "nothing is running the tests". A repository can therefore go
+# days with no verdict at all while the Actions tab looks merely untidy.
+#
+# QUEUE AGE IS THE SIGNAL, not runner status. It catches strictly more:
+#   - a runner that is offline, and
+#   - a `runs-on` label that no registered runner carries, which no
+#     runner-status check can see because every runner is perfectly healthy.
+# The second case is not hypothetical here: a workflow targeting a label the
+# fleet never had queued and self-cancelled for four months unnoticed.
+#
+# HOSTED, DELIBERATELY. A health check scheduled onto the fleet it monitors
+# dies with that fleet and reports nothing, which is worse than no check at
+# all - it looks like coverage. This job must stay on `ubuntu-latest`.
+
+on:
+  schedule:
+    # Every 30 minutes, offset off the hour. Scheduled workflows across GitHub
+    # bunch on :00, which is when dispatch is slowest and least punctual.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  issues: write
+
+concurrency:
+  group: fleet-health
+  cancel-in-progress: false
+
+jobs:
+  queue-age:
+    name: Stalled Queue Check
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find runs that no runner has claimed
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # A run legitimately waits a little while the fleet finishes other
+          # work. Thirty minutes is well past normal contention here and well
+          # inside the 24h timeout that would otherwise be first to notice.
+          STALL_MINUTES: "30"
+        run: |
+          set -euo pipefail
+
+          cutoff=$(date -u -d "-${STALL_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ)
+          echo "flagging queued runs created before ${cutoff}"
+
+          # `status=queued` covers both `queued` and `waiting`; a run that a
+          # runner has actually started reports `in_progress` and is excluded.
+          gh api --paginate \
+            "repos/${REPO}/actions/runs?status=queued&per_page=100" \
+            --jq '.workflow_runs[] | [.id, .name, .head_branch, .event, .created_at] | @tsv' \
+            > all_queued.tsv || true
+
+          : > stalled.tsv
+          while IFS=$'\t' read -r id name branch event created; do
+            [ -z "${id:-}" ] && continue
+            if [[ "$created" < "$cutoff" ]]; then
+              printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$name" "$branch" "$event" "$created" >> stalled.tsv
+            fi
+          done < all_queued.tsv
+
+          count=$(wc -l < stalled.tsv | tr -d ' ')
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          echo "cutoff=${cutoff}" >> "$GITHUB_OUTPUT"
+
+          if [ "$count" -gt 0 ]; then
+            echo "stalled runs:"
+            cat stalled.tsv
+          else
+            echo "no stalled runs"
+          fi
+
+      - name: Open or update the alert issue
+        if: steps.scan.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COUNT: ${{ steps.scan.outputs.count }}
+          CUTOFF: ${{ steps.scan.outputs.cutoff }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "\`${COUNT}\` workflow run(s) have been queued since before \`${CUTOFF}\` with no runner claiming them."
+            echo
+            echo "This usually means one of two things:"
+            echo
+            echo "- a self-hosted runner is offline, or"
+            echo "- a job's \`runs-on\` names a label no registered runner carries."
+            echo
+            echo "Stalled runs:"
+            echo
+            echo "| Run | Workflow | Branch | Event | Queued since |"
+            echo "| --- | --- | --- | --- | --- |"
+            while IFS=$'\t' read -r id name branch event created; do
+              [ -z "${id:-}" ] && continue
+              echo "| [${id}](${GITHUB_SERVER_URL}/${REPO}/actions/runs/${id}) | ${name} | ${branch} | ${event} | ${created} |"
+            done < stalled.tsv
+            echo
+            echo "Checked by [Fleet Health](${RUN_URL})."
+          } > body.md
+
+          # One rolling issue, not one per detection: this fires every 30
+          # minutes during an outage, and a fresh issue each time would bury
+          # the signal it exists to raise.
+          existing=$(gh issue list --repo "$REPO" --state open \
+            --label ci-fleet-health --limit 1 --json number --jq '.[0].number // empty')
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body-file body.md
+            echo "commented on #${existing}"
+          else
+            gh label create ci-fleet-health --repo "$REPO" \
+              --description "Automated CI fleet availability alerts" \
+              --color B60205 2>/dev/null || true
+            gh issue create --repo "$REPO" \
+              --title "CI fleet: work is queued with no runner to claim it" \
+              --label ci-fleet-health \
+              --body-file body.md
+          fi
+
+      - name: Close the alert once the queue drains
+        if: steps.scan.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --repo "$REPO" --state open \
+            --label ci-fleet-health --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" \
+              --body "Queue has drained - no run is waiting on a runner. Closing."
+            gh issue close "$existing" --repo "$REPO"
+            echo "closed #${existing}"
+          fi

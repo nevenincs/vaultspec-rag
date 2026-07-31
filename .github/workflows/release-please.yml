@@ -17,6 +17,7 @@ concurrency:
 jobs:
   release-please:
     name: Release Please
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - name: Run release-please

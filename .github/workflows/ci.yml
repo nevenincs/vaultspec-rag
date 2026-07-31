@@ -1,11 +1,43 @@
 name: CI
 
+# TWO TIERS, split by trust and by cost.
+#
+#   pull_request  -> `pr-gate` only. Minimal, and on a GitHub-HOSTED runner.
+#   push to main,
+#   release,
+#   workflow_dispatch -> the full tier below, on the self-hosted fleet.
+#
+# The split is not only about speed. This repository is PUBLIC, and a
+# `pull_request` from a fork runs code the author of the pull request
+# controls. Scheduling that onto a self-hosted runner is arbitrary code
+# execution on a real workstation that also hosts a live service and other
+# work. Every trigger that reaches the self-hosted fleet below therefore
+# requires write access to this repository; the one trigger that does not is
+# the one that stays on hosted infrastructure.
 on:
   push:
     branches:
       - main
   pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      # The two tiers that cannot simply run on a schedule: the GPU tier is
+      # expensive and contends for the single card with a live service, and
+      # the macOS tier targets a laptop that is deliberately out of the fleet
+      # on battery. Both are opt-in per dispatch, so exercising one never
+      # forces the other - before this, any manual run paid for the GPU tier
+      # whether or not that was the point of the run.
+      tier:
+        description: "Optional tier to include in this run"
+        type: choice
+        default: none
+        options:
+          - none
+          - macos
+          - gpu
+          - macos-and-gpu
 
 permissions:
   contents: read
@@ -20,13 +52,20 @@ env:
 jobs:
   workflow-lint:
     name: Workflow Lint
+    # Every job carries an explicit ceiling. Without one the default is six
+    # hours, and a job that never gets a runner sits pending until GitHub's
+    # 24h queue timeout retires it as `cancelled` - a word that reads as
+    # "somebody stopped this" rather than "the fleet is down", so an outage
+    # stays invisible. A tight ceiling converts that silence into a failure.
+    timeout-minutes: 10
     concurrency:
       # github.job is empty in the concurrency context, so interpolating it
       # collapses every job onto one shared group and they cancel each other.
       # Each job carries its own literal group instead.
       group: ci-workflow-lint-${{ github.ref }}
       cancel-in-progress: false
-    runs-on: [self-hosted, Linux, X64]
+    # Hosted: this runs on pull_request too, so it must not reach the fleet.
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -36,8 +75,67 @@ jobs:
           bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint
 
+  pr-gate:
+    name: PR Gate (ruff, ty, tests)
+    # THE MERGE GATE. Deliberately the smallest set that still catches the
+    # things a reviewer cannot: a syntax or lint regression, a type error, and
+    # a broken test. Everything slower - link checking, markdown, citations,
+    # complexity, strict types, the audits, the second interpreter - runs on
+    # the comprehensive tier, because paying for it on every push to every
+    # branch buys latency, not signal.
+    #
+    # Hosted, and that is load-bearing rather than incidental: see the trust
+    # note on the triggers above. A fork pull request runs here, so "here"
+    # must not be a workstation.
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 25
+    concurrency:
+      # Unlike the main-push jobs, superseding a pull request's own earlier
+      # run is what you want - only the tip of the branch is being reviewed.
+      group: ci-pr-gate-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Install dependencies
+        run: just deps sync
+
+      # Each gate carries `if: '!cancelled()'` so one failure does not hide
+      # the others: a contributor should get every finding from one run
+      # rather than discovering them one push at a time.
+      - name: Ruff
+        if: '!cancelled()'
+        run: just lint python
+
+      - name: Ty
+        if: '!cancelled()'
+        run: just lint type
+
+      - name: Tests
+        if: '!cancelled()'
+        run: just test python
+
   lint-and-type:
     name: Lint, Type, Config, Link, and Markdown Checks
+    # Comprehensive tier: everything except the merge gate above. Skipped on
+    # pull_request, where `pr-gate` stands in for it.
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 30
     concurrency:
       group: ci-lint-and-type-${{ github.ref }}
       cancel-in-progress: false
@@ -170,6 +268,8 @@ jobs:
 
   tests:
     name: Tests (py${{ matrix.python-version }})
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
     concurrency:
       # The matrix leg is part of the group, so the two interpreters queue
       # independently. Without it both legs share one group and serialise.
@@ -224,8 +324,131 @@ jobs:
       - name: Run tests
         run: just test python
 
+  # WINDOWS AND macOS UNIT TIERS.
+  #
+  # Both are ADVISORY (`continue-on-error`) and that is a deliberate, temporary
+  # state rather than a permanent exemption. Neither platform is green: the
+  # Linux tier passes, Windows fails a handful of source-scanning guards, and
+  # macOS fails on the order of a hundred tests that have never been triaged.
+  # Landing them as blocking would turn every release red on day one and the
+  # pressure would be to delete the jobs rather than fix the platform.
+  #
+  # So they report instead. The failures become visible and attributable, and
+  # each platform flips to blocking - by deleting its `continue-on-error` -
+  # once its count reaches zero. Ratchet down, never up; an advisory job that
+  # nobody ever promotes is just an expensive way to ignore a platform.
+  #
+  # Neither uses actions/setup-python. The GPU job below documents why: its
+  # MSI registry cleanup fails under a runner service account. uv fetches the
+  # interpreter named by UV_PYTHON instead, which is what the suite runs under
+  # anyway.
+  tests-windows:
+    name: Tests (Windows, advisory)
+    if: github.event_name != 'pull_request'
+    continue-on-error: true
+    timeout-minutes: 60
+    concurrency:
+      group: ci-tests-windows-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: [self-hosted, Windows, X64]
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Same pinned, checksum-verified download the GPU job uses: this
+      # runner's service account has no bash on PATH, so the marketplace
+      # action's shell is unavailable.
+      - name: Install just
+        shell: pwsh
+        run: |
+          $ver = "1.57.0"
+          $sha = "4c7391d17cb1d17b758b52004ee6411372b8a13ff37c3c9b9031625cb6026e09"
+          $zip = "$env:RUNNER_TEMP\just-$ver.zip"
+          $dest = "$env:RUNNER_TEMP\just-$ver"
+          $url = "https://github.com/casey/just/releases/download/$ver/just-$ver-x86_64-pc-windows-msvc.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $sha) { throw "just checksum mismatch: got $actual" }
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          Add-Content -Path $env:GITHUB_PATH -Value $dest
+
+      - name: Install dependencies
+        run: just deps sync
+
+      - name: Run tests
+        run: just test python
+
+  tests-macos:
+    name: Tests (macOS, advisory)
+    # Releases and manual dispatch only - NOT every push to main, and this is
+    # about availability rather than cost. The macOS runner is a laptop under
+    # an AC-power policy: on battery it is deliberately booted out of the
+    # fleet, so it is absent for long stretches by design.
+    #
+    # `timeout-minutes` does not help here. It bounds how long a job may RUN;
+    # it does not bound time spent queued waiting for a runner. A job
+    # scheduled while the machine is on battery would therefore sit pending up
+    # to GitHub's 24h limit and then report `cancelled` - the exact signature
+    # of the label-with-no-runner bug this workflow was just cleaned of, and
+    # equally invisible.
+    #
+    # A release is a deliberate act, taken at a moment when the machine can be
+    # plugged in, which makes it the honest place to ask for a macOS verdict.
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'))
+    continue-on-error: true
+    timeout-minutes: 60
+    concurrency:
+      group: ci-tests-macos-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      # The runner's environment does not necessarily carry Homebrew's prefix:
+      # a non-login shell omits /opt/homebrew/bin, which is where uv lives, and
+      # pwsh sits under ~/.local/bin. Without this every recipe fails with
+      # "uv: command not found" on a machine where an interactive shell finds
+      # it perfectly well. `just` needs pwsh on POSIX too - the justfile's
+      # `windows-shell` is the override, not the rule.
+      - name: Put Homebrew and user binaries on PATH
+        run: |
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Install dependencies
+        run: just deps sync
+
+      - name: Run tests
+        run: just test python
+
   gpu-tests:
     name: GPU Tests
+    # Generous relative to the other jobs because this tier is the ~40 minute
+    # long pole, but still finite: a wedged GPU test holds the only machine
+    # carrying the cuda label, so an unbounded hang blocks every future GPU
+    # run rather than just its own.
+    timeout-minutes: 90
     # Never cancel an in-progress GPU run: it is the long pole (~40 min) on a
     # single self-hosted GPU runner, so a superseding push already queues
     # behind it naturally (the runner label has exactly one machine). Scoping
@@ -252,7 +475,13 @@ jobs:
     # arbitrary code here is RCE on the host. workflow_dispatch requires write
     # access, so a fork PR can never start this job; the hosted tiers above run
     # on every PR with no secrets.
-    if: github.event_name == 'workflow_dispatch'
+    # Opt-in per dispatch. Previously ANY manual run started this tier, so a
+    # dispatch aimed at something else silently paid ~40 minutes on the one
+    # machine carrying the cuda label - and blocked every other GPU run while
+    # it did. Still dispatch-only, so a fork pull request can never reach it.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu')
     runs-on: [self-hosted, windows, gpu, cuda]
     permissions:
       contents: read
@@ -306,6 +535,8 @@ jobs:
 
   vault-audit:
     name: Vault Audit
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 15
     concurrency:
       group: ci-vault-audit-${{ github.ref }}
       cancel-in-progress: false
@@ -335,6 +566,8 @@ jobs:
 
   dependency-audit:
     name: Dependency Audit (uv audit)
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 15
     concurrency:
       group: ci-dependency-audit-${{ github.ref }}
       cancel-in-progress: false
@@ -371,6 +604,8 @@ jobs:
   # are advice, and the burndown they feed is tracked separately.
   code-audit:
     name: Code Audit (advisory)
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 20
     concurrency:
       group: ci-code-audit-${{ github.ref }}
       cancel-in-progress: false
