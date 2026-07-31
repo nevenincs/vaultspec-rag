@@ -55,6 +55,13 @@ logger = logging.getLogger("vaultspec_rag.jobs")
 # synchronously before their call returns.
 PROGRESS_FLUSH_BUDGET_SECONDS = 0.2
 
+# What a set-aside state file is named for, spelled once each. The name is the
+# only diagnosis left once the log has rotated and the operator is looking at a
+# directory listing months later, so it states which of the two conditions put
+# the file there rather than asserting damage in both.
+_INVALID_SUFFIX = "invalid"
+_NEWER_BUILD_SUFFIX = "from-newer-build"
+
 
 class JobManagerPersistence(JobManagerState):
     def _restore_snapshot_locked(self, snapshot: JobSnapshot, *, now: float) -> None:
@@ -252,6 +259,11 @@ class JobManagerPersistence(JobManagerState):
                 str(exc),
                 code="job_state_unreadable",
             )
+        except _job_persistence.NewerStateVersionError as exc:
+            # Ahead of the general clause on purpose: this is a subclass of
+            # ValueError, so the broad tuple below would otherwise swallow an
+            # intact file into the corrupt-content diagnosis.
+            return self._preserve_newer_state(command, path, exc)
         except (UnicodeError, KeyError, TypeError, ValueError) as exc:
             return self._quarantine_invalid_state(command, path, exc)
 
@@ -268,29 +280,24 @@ class JobManagerPersistence(JobManagerState):
         destroy availability to protect a record of past work. Absent history
         is already a successful restore outcome; unreadable history joins it
         by being preserved for diagnosis under a timestamped sibling name,
-        never deleted and never partially applied. A failed move means the
-        state directory itself is not dependable, and that fault still aborts
-        startup rather than being masked by continuing without persistence.
+        never deleted and never partially applied.
         """
-        destination = _quarantine_destination(path)
-        try:
-            path.rename(destination)
-        except OSError as exc:
-            return self._persistence_error(
-                command,
-                (
-                    f"invalid content ({reason}) could not be quarantined "
-                    f"to {destination}: {exc}"
-                ),
-                code="job_state_quarantine_failed",
-            )
+        moved = self._set_state_aside(
+            command,
+            path,
+            suffix=_INVALID_SUFFIX,
+            reason=f"invalid content: {reason}",
+            failure_code="job_state_quarantine_failed",
+        )
+        if isinstance(moved, JobOutcome):
+            return moved
         log_event(
             logger,
             "service.job",
             "state_quarantined",
             severity=logging.ERROR,
             source=path,
-            destination=destination,
+            destination=moved,
             error=str(reason),
             job_history="lost",
             index_data="unaffected",
@@ -300,10 +307,99 @@ class JobManagerPersistence(JobManagerState):
             status=JobOutcomeStatus.OK,
             code="job_state_quarantined",
             message=(
-                f"Invalid persisted job state was quarantined to {destination}; "
+                f"Invalid persisted job state was quarantined to {moved}; "
                 f"job history was lost, index data is unaffected: {reason}"
             ),
         )
+
+    def _preserve_newer_state(
+        self,
+        command: str,
+        path: Path,
+        reason: _job_persistence.NewerStateVersionError,
+    ) -> JobOutcome:
+        """Set aside intact state this build is too old to interpret, and say so.
+
+        Nothing is wrong with this file. A newer build wrote it, a downgrade
+        put an older reader in front of it, and a build that knows the layout
+        would load every record in it. Reporting that as damage is a false
+        diagnosis an operator acts on, and a name asserting damage outlives
+        every log that could have corrected it.
+
+        The disposition is still to move it. Leaving it in place would not
+        preserve it: the first lifecycle transition after a history-less start
+        rewrites the state file unconditionally, so the one option that looks
+        like restraint is the one that destroys the data. Renaming keeps the
+        bytes, and keeps them under a name that says a newer build wrote them.
+        """
+        moved = self._set_state_aside(
+            command,
+            path,
+            suffix=_NEWER_BUILD_SUFFIX,
+            reason=str(reason),
+            failure_code="job_state_preserve_failed",
+        )
+        if isinstance(moved, JobOutcome):
+            return moved
+        log_event(
+            logger,
+            "service.job",
+            "state_from_newer_build",
+            severity=logging.WARNING,
+            source=path,
+            destination=moved,
+            declared_version=reason.declared_version,
+            reads_versions=f"{reason.minimum_readable} to {reason.maximum_readable}",
+            job_state="intact and preserved",
+            index_data="unaffected",
+        )
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.OK,
+            code="job_state_from_newer_build",
+            message=(
+                f"Persisted job state declares version {reason.declared_version}, "
+                f"written by a newer build; this build reads versions "
+                f"{reason.minimum_readable} to {reason.maximum_readable}. The file "
+                f"is intact and was preserved unchanged at {moved}; move it back "
+                f"into place to read it under a build that supports its version."
+            ),
+        )
+
+    def _set_state_aside(
+        self,
+        command: str,
+        path: Path,
+        *,
+        suffix: str,
+        reason: str,
+        failure_code: str,
+    ) -> Path | JobOutcome:
+        """Move the state file to a fresh sibling, or report what stopped it.
+
+        One move serves every condition that keeps this build from reading the
+        file, because the disposition never differs: the next lifecycle
+        transition rewrites the state file unconditionally, so a file left in
+        place is a file about to be overwritten. Only the name it lands under
+        and the diagnosis the caller then reports are per-condition.
+
+        A failed move means the state directory itself is not dependable, and
+        that fault aborts startup rather than being masked by continuing
+        without persistence.
+        """
+        destination = _preserved_destination(path, suffix)
+        try:
+            path.rename(destination)
+        except OSError as exc:
+            return self._persistence_error(
+                command,
+                (
+                    f"job state ({reason}) could not be moved aside to "
+                    f"{destination}: {exc}"
+                ),
+                code=failure_code,
+            )
+        return destination
 
     def _replace_snapshot_locked(
         self, managed: ManagedJob, transition: SnapshotTransition, /
@@ -614,19 +710,28 @@ def _revision_stamp(
     return max(supplied, floor)
 
 
-def _quarantine_destination(path: Path) -> Path:
+def _preserved_destination(path: Path, suffix: str) -> Path:
     """Pick a timestamped sibling name that never overwrites earlier evidence.
 
-    A second quarantine within the same second takes a counter suffix instead
-    of replacing the first. Only plain files are stepped around: any other
-    obstacle at a candidate name is an anomaly in the state directory, and the
-    rename is left to fail loudly on it rather than guessing a way past.
+    A second set-aside under the same suffix within the same second takes a
+    counter instead of replacing the first, so evidence accumulates rather
+    than the newest arrival erasing the oldest. Only plain files are stepped
+    around: any other obstacle at a candidate name is an anomaly in the state
+    directory, and the rename is left to fail loudly on it rather than
+    guessing a way past.
+
+    No name this produces can be reclaimed as an abandoned temporary, for
+    either suffix. Reclamation only ever names a candidate that both begins
+    with a dot and ends in ``.tmp``; every name here begins with the state
+    file's own name and ends in a timestamp or a counter. Both halves fail,
+    so exclusion is structural rather than a matter of the pattern happening
+    not to collide.
     """
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    candidate = path.with_name(f"{path.name}.invalid-{stamp}")
+    candidate = path.with_name(f"{path.name}.{suffix}-{stamp}")
     counter = 1
     while candidate.is_file():
-        candidate = path.with_name(f"{path.name}.invalid-{stamp}-{counter}")
+        candidate = path.with_name(f"{path.name}.{suffix}-{stamp}-{counter}")
         counter += 1
     return candidate
 

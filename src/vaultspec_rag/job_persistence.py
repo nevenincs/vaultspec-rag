@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "MAX_IDEMPOTENCY_KEY_LENGTH",
     "IdempotencyBinding",
+    "NewerStateVersionError",
     "PersistedManagerState",
     "PersistenceWriteError",
     "load_persisted_state",
@@ -129,6 +130,37 @@ class PersistenceWriteError(Exception):
     def __init__(self, detail: str, *, published: bool) -> None:
         super().__init__(detail)
         self.published = published
+
+
+class NewerStateVersionError(ValueError):
+    """Refuse an intact file whose layout postdates every version read here.
+
+    A ``ValueError`` so that no caller narrowing to the parse layer's error
+    type stops catching this: the read still failed, and a build that only
+    knows the general case must keep handling it as it did before.
+
+    A distinct type because the file is not damaged. A downgrade is the only
+    way a build meets state numbered above what it reads, and the bytes are
+    well-formed history that a build supporting the layout would load. The
+    declared version and the readable range travel as fields so a caller can
+    diagnose the mismatch and quote the numbers without parsing a message,
+    which is the coupling that makes such a diagnosis break silently.
+    """
+
+    def __init__(
+        self,
+        declared_version: int,
+        *,
+        minimum_readable: int,
+        maximum_readable: int,
+    ) -> None:
+        super().__init__(
+            f"job-state version {declared_version} was written by a newer build; "
+            f"this one reads versions {minimum_readable} to {maximum_readable}"
+        )
+        self.declared_version = declared_version
+        self.minimum_readable = minimum_readable
+        self.maximum_readable = maximum_readable
 
 
 def load_persisted_state(path: Path) -> PersistedManagerState:
@@ -340,6 +372,14 @@ def _validate_schema_header(root: dict[str, object]) -> None:
     One message for three unrelated conditions left an operator unable to tell
     a file this build predates from one it cannot parse at all, so each states
     the direction of the mismatch and the range that would have been read.
+
+    Only one of the three carries a dedicated type. A file numbered above this
+    range is intact and a newer build wrote it, which is a condition a caller
+    must be able to act on differently. The other two are not: a layout older
+    than the readable floor is one this build genuinely cannot interpret and
+    has no newer sibling to preserve it for, and a foreign schema is not this
+    format at all. Both stay plain refusals so neither can ever be reported as
+    an intact file waiting for a build that reads it.
     """
     schema = root.get("schema")
     if schema != _SCHEMA:
@@ -350,9 +390,10 @@ def _validate_schema_header(root: dict[str, object]) -> None:
     if isinstance(version, bool) or not isinstance(version, int):
         raise ValueError("job-state version must be an integer")
     if version > _VERSION:
-        raise ValueError(
-            f"job-state version {version} was written by a newer build; this one "
-            f"reads versions {_MINIMUM_READABLE_VERSION} to {_VERSION}"
+        raise NewerStateVersionError(
+            version,
+            minimum_readable=_MINIMUM_READABLE_VERSION,
+            maximum_readable=_VERSION,
         )
     if version < _MINIMUM_READABLE_VERSION:
         raise ValueError(
