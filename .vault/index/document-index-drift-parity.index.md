@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#document-index-drift-parity'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-07-25-document-index-drift-parity-adr]]'
   - '[[2026-07-27-document-index-drift-parity-grounding-research]]'

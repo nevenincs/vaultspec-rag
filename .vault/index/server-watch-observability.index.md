@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#server-watch-observability'
-date: '2026-07-29'
-modified: '2026-07-29'
+date: '2026-07-31'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - '[[2026-07-29-server-watch-observability-adr]]'
@@ -12,6 +12,7 @@ related:
   - '[[2026-07-29-server-watch-observability-reference]]'
   - '[[2026-07-29-server-watch-observability-research]]'
   - '[[2026-07-29-server-watch-observability-tui-integration-audit]]'
+  - '[[2026-07-30-server-watch-observability-closeout-audit]]'
 ---
 
 # `server-watch-observability` feature index
@@ -27,6 +28,7 @@ Auto-generated index of all documents tagged with `#server-watch-observability`.
 ### audit
 
 - `2026-07-29-server-watch-observability-tui-integration-audit` - `server-watch-observability` audit: `P03 dual-lane TUI integration`
+- `2026-07-30-server-watch-observability-closeout-audit` - `server-watch-observability` audit: `server-watch-observability closeout review`
 
 ### plan
 

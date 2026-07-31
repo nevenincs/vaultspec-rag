@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#adr-plan-coverage-triage'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-07-25-adr-plan-coverage-triage-audit]]'
   - '[[2026-07-26-adr-plan-coverage-triage-corpus-reconciliation-audit]]'

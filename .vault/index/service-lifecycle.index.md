@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#service-lifecycle'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-05-30-service-lifecycle-adr]]'
   - '[[2026-05-30-service-lifecycle-plan]]'

@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#service-health-client-hardening'
-date: '2026-07-27'
-modified: '2026-07-27'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-07-22-service-health-client-hardening-P01-S01]]'
   - '[[2026-07-22-service-health-client-hardening-P01-S02]]'

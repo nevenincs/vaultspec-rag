@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#module-split'
-date: '2026-07-28'
-modified: '2026-07-28'
+date: '2026-07-31'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - '[[2026-06-01-module-split-P07-S07]]'

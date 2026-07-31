@@ -18,4 +18,4 @@ Auto-generated index of all documents tagged with `#rate-collapse-baseline`.
 
 ### adr
 
-- `2026-07-31-rate-collapse-baseline-adr` - `rate-collapse-baseline` adr: `high-percentile rate-collapse baseline` | (**status:** `proposed`)
+- `2026-07-31-rate-collapse-baseline-adr` - `rate-collapse-baseline` adr: `high-percentile rate-collapse baseline` | (**status:** `accepted`)

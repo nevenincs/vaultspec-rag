@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#index-observability'
-date: '2026-07-28'
-modified: '2026-07-28'
+date: '2026-07-31'
+modified: '2026-07-31'
 body_schema: 'body-v1'
 related:
   - '[[2026-07-28-index-observability-adr]]'
@@ -20,7 +20,7 @@ Auto-generated index of all documents tagged with `#index-observability`.
 
 ### adr
 
-- `2026-07-28-index-observability-adr` - `index-observability` adr: `Degradation truth for long encode phases` | (**status:** `{proposed|accepted|rejected|superseded|deprecated}`)
+- `2026-07-28-index-observability-adr` - `index-observability` adr: `Degradation truth for long encode phases` | (**status:** `accepted`)
 
 ### plan
 

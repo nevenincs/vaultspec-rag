@@ -3,8 +3,9 @@ generated: true
 tags:
   - '#index'
   - '#jobs-tui'
-date: '2026-07-27'
-modified: '2026-07-28'
+date: '2026-07-31'
+modified: '2026-07-31'
+body_schema: 'body-v1'
 related:
   - '[[2026-07-27-jobs-tui-adr]]'
   - '[[2026-07-27-jobs-tui-audit]]'
