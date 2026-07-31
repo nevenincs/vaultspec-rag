@@ -14,7 +14,7 @@ short-circuits the device read entirely.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 
@@ -29,7 +29,10 @@ if TYPE_CHECKING:
 
     from ..memory_probe import MemoryBudget
 
-pytestmark = [pytest.mark.unit]
+# The lane is declared per class rather than once for the module: a
+# module-level mark is added to a class's own rather than overridden by it,
+# so a blanket ``unit`` here would pair with ``cuda`` below and read as a
+# test claiming both the fast lane and a slow one.
 
 # Every ceiling here sits far above a test process's real RSS, because
 # admission samples the live process once the budget is frozen: a ceiling
@@ -146,6 +149,8 @@ def pinned_ceilings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 class TestAdmittedRssCeiling:
     """The admitted RSS ceiling is the tighter of the two declared bounds."""
 
+    pytestmark: ClassVar = [pytest.mark.unit]
+
     @BOTH_INDEXERS
     def test_profile_below_config_wins(
         self, derive: BudgetFactory, tmp_path: Path
@@ -213,6 +218,8 @@ class TestAdmittedRssCeiling:
 class TestCudaEnforcementGate:
     """A model that is not on CUDA admits no CUDA ceiling at all."""
 
+    pytestmark: ClassVar = [pytest.mark.unit]
+
     @BOTH_INDEXERS
     def test_no_cuda_device_admits_no_cuda_ceiling(
         self, derive: BudgetFactory, tmp_path: Path
@@ -250,6 +257,12 @@ class TestCudaEnforcementGate:
 
 class TestConfiguredCudaCeiling:
     """A positive operator ceiling is authoritative on both paths."""
+
+    # These drive a real CUDA measurement rather than the gate that refuses
+    # one, so they belong to the GPU lane. They passed while every runner
+    # was the self-hosted card; on a hosted runner the measurement is
+    # unavailable and the ceiling refuses at dispatch.
+    pytestmark: ClassVar = [pytest.mark.cuda]
 
     @pytest.fixture(autouse=True)
     def _operator_ceiling(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -316,6 +329,8 @@ class TestConfiguredCudaCeiling:
 class TestAdmissionSamplesBeforeDispatch:
     """Freezing a budget also takes the pre-dispatch reading."""
 
+    pytestmark: ClassVar = [pytest.mark.unit]
+
     def test_code_admission_publishes_a_snapshot(self, tmp_path: Path) -> None:
         from ..indexer import CodebaseIndexer
 
@@ -364,6 +379,8 @@ class TestNoHeadroomIsRefusedAtAdmission:
     structurally zero and no ceiling can be pinned beneath it. What lives here
     is the decision itself and the CPU-path exemption.
     """
+
+    pytestmark: ClassVar = [pytest.mark.unit]
 
     @BOTH_INDEXERS
     def test_the_cpu_path_is_not_refused(
