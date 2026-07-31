@@ -45,6 +45,7 @@ from ..job_models import (
 )
 from ..job_persistence import (
     IdempotencyBinding,
+    NewerStateVersionError,
     PersistedManagerState,
     PersistenceWriteError,
     load_persisted_state,
@@ -1266,13 +1267,26 @@ class TestPersistedJobStateSchemaContract:
         self, tmp_path: Path
     ) -> None:
         # Reading a layout this build does not know would turn a misread
-        # record into a wrong decision. The message must name the direction so
-        # an operator is not told their intact file was corrupt.
+        # record into a wrong decision. The refusal carries its own type and
+        # the numbers as fields, so a caller can tell an intact file it is too
+        # old for from a damaged one without matching on message text.
         path, payload = self._written_payload(tmp_path)
-        payload["version"] = 2
+        declared = 2
+        payload["version"] = declared
         self._rewrite(path, payload)
-        with pytest.raises(ValueError, match="written by a newer build"):
+        with pytest.raises(NewerStateVersionError) as caught:
             load_persisted_state(path)
+        assert caught.value.declared_version == declared
+        assert caught.value.maximum_readable < declared
+        assert caught.value.minimum_readable <= caught.value.maximum_readable
+
+    def test_the_newer_build_refusal_remains_a_value_error(self) -> None:
+        # Every reader narrowing to the parse layer's error type must keep
+        # catching this. Promoting it out of that hierarchy would silently
+        # un-handle the case in callers that never named the new type -
+        # mutate the base class to prove this assertion is the one that
+        # fails.
+        assert issubclass(NewerStateVersionError, ValueError)
 
     def test_a_file_older_than_this_build_reads_is_refused_as_older(
         self, tmp_path: Path
@@ -1289,6 +1303,26 @@ class TestPersistedJobStateSchemaContract:
         self._rewrite(path, payload)
         with pytest.raises(ValueError, match="declares schema"):
             load_persisted_state(path)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("version", 0), ("schema", "vaultspec.rag.something-else")],
+    )
+    def test_only_a_too_new_file_carries_the_newer_build_refusal(
+        self, tmp_path: Path, field: str, value: object
+    ) -> None:
+        # A layout below the readable floor is one this build genuinely cannot
+        # interpret, with no newer sibling to preserve it for, and a foreign
+        # schema is not this format at all. Widening the dedicated type to
+        # either would tell an operator an intact file is waiting for a build
+        # that reads it. Loosen the version comparison guarding the too-new
+        # branch to prove this assertion is the one that fails.
+        path, payload = self._written_payload(tmp_path)
+        payload[field] = value
+        self._rewrite(path, payload)
+        with pytest.raises(ValueError) as caught:
+            load_persisted_state(path)
+        assert not isinstance(caught.value, NewerStateVersionError)
 
     def test_a_non_integer_version_is_refused(self, tmp_path: Path) -> None:
         path, payload = self._written_payload(tmp_path)
@@ -1439,15 +1473,26 @@ class TestAbandonedTemporaryRecovery:
         load_persisted_state(path)
         assert live.exists()
 
+    @pytest.mark.parametrize(
+        "preserved",
+        [
+            "jobs-state.json.invalid-20260101T000000Z",
+            "jobs-state.json.invalid-20260101T000000Z-3",
+            "jobs-state.json.from-newer-build-20260101T000000Z",
+            "jobs-state.json.from-newer-build-20260101T000000Z-3",
+        ],
+    )
     def test_a_file_set_aside_as_evidence_is_never_reclaimed(
-        self, tmp_path: Path
+        self, tmp_path: Path, preserved: str
     ) -> None:
-        # Preserved evidence outlives every grace window by design. It is
-        # excluded because it carries neither the leading dot nor the suffix,
-        # not because it is unlikely to be matched - do not loosen either
-        # half of that test.
+        # Preserved evidence outlives every grace window by design, whichever
+        # condition set it aside. Each name is excluded because it carries
+        # neither the leading dot nor the ``.tmp`` suffix, not because it is
+        # unlikely to be matched - do not loosen either half of that test.
+        # Reaping a file kept as the only copy of an operator's history would
+        # be a worse defect than any this reclamation prevents.
         path = self._existing_state(tmp_path)
-        evidence = tmp_path / "jobs-state.json.invalid-20260101T000000Z"
+        evidence = tmp_path / preserved
         evidence.write_text("{}", encoding="utf-8")
         _age(evidence, 365 * 24 * 3600)
         load_persisted_state(path)

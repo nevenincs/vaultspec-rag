@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -1176,6 +1177,149 @@ class TestManagedJobPersistence:
         assert outcome.status is JobOutcomeStatus.ERROR
         assert outcome.code == "job_state_quarantine_failed"
         assert state_path.read_text(encoding="utf-8") == "not json"
+        assert manager.list_jobs() == []
+
+    def _seed_one_queued_job(self, tmp_path: Path, state_path: Path) -> None:
+        seeded = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        created = seeded.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
+        )
+        assert created.job is not None
+
+    def _write_state_from_a_newer_build(self, state_path: Path) -> tuple[str, int]:
+        """Bump a real written generation past this build's readable range."""
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        declared = int(cast("int", payload["version"])) + 1
+        payload["version"] = declared
+        newer = json.dumps(payload)
+        state_path.write_text(newer, encoding="utf-8")
+        return newer, declared
+
+    def test_state_from_a_newer_build_is_preserved_not_reported_as_invalid(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An intact file this build predates must not be diagnosed as damage.
+
+        A downgrade is the only way a reader meets state numbered above what
+        it reads. The bytes are well-formed and every record in them is real
+        history a newer build would load, so the diagnosis has to name the
+        version mismatch, the name left on disk has to state the file's
+        provenance, and neither may call the content invalid or the history
+        lost. Startup still proceeds with an empty registry.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        self._seed_one_queued_job(tmp_path, state_path)
+        newer, declared = self._write_state_from_a_newer_build(state_path)
+
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag.jobs"):
+            outcome = manager.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.OK
+        assert outcome.code == "job_state_from_newer_build"
+        assert manager.list_jobs() == []
+        assert not state_path.exists()
+
+        preserved = list(tmp_path.glob("managed-jobs.json.from-newer-build-*"))
+        assert len(preserved) == 1
+        assert preserved[0].read_text(encoding="utf-8") == newer
+        assert list(tmp_path.glob("managed-jobs.json.invalid-*")) == []
+
+        assert str(preserved[0]) in outcome.message
+        assert f"version {declared}" in outcome.message
+        assert re.search(r"reads versions \d+ to \d+", outcome.message) is not None
+        # The defect being fixed was a correct file reported as damaged. These
+        # are the exact words that misreported it; neither may come back.
+        assert "invalid" not in outcome.message.lower()
+        assert "lost" not in outcome.message.lower()
+
+        assert "event=state_from_newer_build" in caplog.text
+        assert f"declared_version={declared}" in caplog.text
+        assert "event=state_quarantined" not in caplog.text
+
+    def test_a_preserved_newer_build_file_is_never_reclaimed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Temporary reclamation must not be able to name preserved evidence.
+
+        The name is taken from production rather than written out here, so a
+        later change to the set-aside suffix is checked against the reaper
+        instead of against a literal that would keep passing. Reaping this
+        file would destroy the only copy of an operator's history - strictly
+        worse than the misdiagnosis this preservation exists to correct.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        self._seed_one_queued_job(tmp_path, state_path)
+        self._write_state_from_a_newer_build(state_path)
+        downgraded = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        assert downgraded.restore_persisted().code == "job_state_from_newer_build"
+        preserved = next(tmp_path.glob("managed-jobs.json.from-newer-build-*"))
+        # Far beyond any grace window a reclaimable temporary would need.
+        aged = time.time() - 365 * 24 * 3600
+        os.utime(preserved, (aged, aged))
+
+        self._seed_one_queued_job(tmp_path, state_path)
+        revived = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+
+        assert revived.restore_persisted().code == "job_state_restored"
+        assert preserved.exists()
+
+    def test_a_blocked_preservation_fails_restore_without_calling_it_invalid(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A state directory that cannot take the move aborts the start.
+
+        Continuing would leave the newer file in place for the first lifecycle
+        transition to overwrite, which is the one outcome preservation exists
+        to prevent. The failure carries its own code so it is not read as a
+        verdict on content that is in fact intact.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        self._seed_one_queued_job(tmp_path, state_path)
+        newer, _declared = self._write_state_from_a_newer_build(state_path)
+        # A directory obstacle at every candidate the clock could pick makes
+        # the rename fail instead of being stepped around.
+        now = int(time.time())
+        for offset in range(-1, 6):
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now + offset))
+            (tmp_path / f"managed-jobs.json.from-newer-build-{stamp}").mkdir()
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+
+        outcome = manager.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.ERROR
+        assert outcome.code == "job_state_preserve_failed"
+        assert state_path.read_text(encoding="utf-8") == newer
         assert manager.list_jobs() == []
 
     def test_lowered_capacity_admits_restored_work_and_refuses_new(
