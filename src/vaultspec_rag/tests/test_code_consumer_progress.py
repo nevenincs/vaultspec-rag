@@ -466,7 +466,7 @@ class TestConsumerAdvancesProgress:
         read the number against, so it has to mean the same thing at every
         boundary it is written at.
 
-        Mutation check: giving ``_EncodeBucketReporter._publish`` back the
+        Mutation check: giving ``EncodeBucketReporter._publish`` back the
         completed-so-far count - ``items=progress.items_done`` in both its
         ``forward_started`` and ``forward_finished`` calls - makes this fail
         on the ``{len(chunks)}`` set assertion below, which comes back as

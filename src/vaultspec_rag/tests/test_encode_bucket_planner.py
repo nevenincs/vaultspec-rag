@@ -448,7 +448,11 @@ class TestBucketedDenseEncode:
         result = model.encode_documents_on_device(texts, gpu_lock=gpu_lock)
         assert fake.calls == [texts[0:2], texts[2:4]]
         assert not gpu_lock.locked()
-        assert [float(result[index, 0]) for index in range(4)] == [200.0] * 4
+        # The on-device result stays a tensor: read the first column back
+        # element-wise, which is typed, rather than through the untyped
+        # whole-tensor ``tolist``.
+        first_column = [float(result[index][0].item()) for index in range(len(texts))]
+        assert first_column == [200.0] * 4
 
     def test_bucket_callback_reports_progress_and_budget(self):
         texts = _distinct_texts(4)

@@ -766,9 +766,9 @@ class TestTheLookalikesThatMustNotBeMerged:
         # Its ``None`` is consumed to suppress a captioned block entirely.
         # The canonical mapping reader cannot express that difference, which
         # is why this one is not routed through it.
-        assert _nested_section({}, "resources", "current") is None
-        empty_record: dict[str, object] = {}
-        assert mapping(empty_record.get("resources")) == {}
+        absent: dict[str, object] = {}
+        assert _nested_section(absent, "resources", "current") is None
+        assert mapping(absent.get("resources")) == {}
 
         present: dict[str, object] = {"resources": {"current": {"rss_mib": 12.0}}}
         assert _nested_section(present, "resources", "current") == {"rss_mib": 12.0}

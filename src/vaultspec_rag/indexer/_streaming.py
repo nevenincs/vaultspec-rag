@@ -44,6 +44,7 @@ __all__ = [
     "CodebaseStreamRequest",
     "DocumentSliceRequest",
     "DocumentSliceStreamRequest",
+    "EncodeBucketReporter",
     "StoreWriteTask",
     "UnsettledStoreWriterError",
     "VaultStreamRequest",
@@ -60,6 +61,8 @@ __all__ = [
     "iter_code_file_segments",
     "iter_weighted_code_slices",
     "iter_weighted_document_slices",
+    "report_forward_entry",
+    "report_forward_exit",
 ]
 
 # Polling bound for every wait against the writer-side queue, so cooperative
