@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -28,8 +29,10 @@ from ...job_models import (
     JobSpec,
     JobState,
 )
+from ...server._lifespan import _start_job_manager
 from ...server._routes import _service_job_snapshot
 from ...server._routes_jobs import _job_with_liveness
+from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
 from .._job_manager_transition_helpers import pending_attempt
 
@@ -687,12 +690,13 @@ class TestManagedJobPersistence:
         assert set(observed_versions) == {1}
         assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
 
-    def test_invalid_state_does_not_partially_restore(self, tmp_path: Path) -> None:
+    def test_invalid_state_quarantines_without_partial_restore(
+        self,
+        tmp_path: Path,
+    ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        state_path.write_text(
-            '{"schema":"vaultspec.rag.jobs","version":1,"jobs":[',
-            encoding="utf-8",
-        )
+        truncated = '{"schema":"vaultspec.rag.jobs","version":1,"jobs":['
+        state_path.write_text(truncated, encoding="utf-8")
         manager = JobManager(
             quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
@@ -701,8 +705,14 @@ class TestManagedJobPersistence:
 
         outcome = manager.restore_persisted()
 
-        assert outcome.code == "job_state_invalid"
+        assert outcome.status is JobOutcomeStatus.OK
+        assert outcome.code == "job_state_quarantined"
         assert manager.list_jobs() == []
+        assert not state_path.exists()
+        quarantined = list(tmp_path.glob("managed-jobs.json.invalid-*"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_text(encoding="utf-8") == truncated
+        assert str(quarantined[0]) in outcome.message
 
     def test_failed_persistence_rolls_back_reversible_intent(
         self,
@@ -813,7 +823,7 @@ class TestManagedJobPersistence:
             with pytest.raises(asyncio.CancelledError):
                 await task
 
-    def test_structurally_valid_inconsistent_state_is_rejected(
+    def test_structurally_valid_inconsistent_state_is_quarantined_unapplied(
         self,
         tmp_path: Path,
     ) -> None:
@@ -840,7 +850,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert inconsistent.restore_persisted().code == "job_state_invalid"
+        assert inconsistent.restore_persisted().code == "job_state_quarantined"
         assert inconsistent.list_jobs() == []
 
         payload["jobs"][0]["desired_state"] = "running"
@@ -851,7 +861,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert dangling.restore_persisted().code == "job_state_invalid"
+        assert dangling.restore_persisted().code == "job_state_quarantined"
         assert dangling.list_jobs() == []
 
         payload["idempotency"][0]["job_id"] = payload["jobs"][0]["id"]
@@ -863,7 +873,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert unstarted.restore_persisted().code == "job_state_invalid"
+        assert unstarted.restore_persisted().code == "job_state_quarantined"
         assert unstarted.list_jobs() == []
 
         payload["jobs"][0]["state"] = "queued"
@@ -874,7 +884,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert unlinked_resume.restore_persisted().code == "job_state_invalid"
+        assert unlinked_resume.restore_persisted().code == "job_state_quarantined"
         assert unlinked_resume.list_jobs() == []
 
         payload["jobs"][0]["attempt"] = 1
@@ -886,8 +896,12 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert false_first_resume.restore_persisted().code == "job_state_invalid"
+        assert false_first_resume.restore_persisted().code == "job_state_quarantined"
         assert false_first_resume.list_jobs() == []
+        # Five same-named quarantines in rapid succession must land as five
+        # distinct siblings; losing one means a later quarantine replaced
+        # earlier evidence.
+        assert len(list(tmp_path.glob("managed-jobs.json.invalid-*"))) == 5
 
     def test_version_and_timestamp_invariants_are_strict(
         self,
@@ -919,7 +933,7 @@ class TestManagedJobPersistence:
                 max_nonterminal=1,
                 state_path=state_path,
             )
-            assert invalid.restore_persisted().code == "job_state_invalid"
+            assert invalid.restore_persisted().code == "job_state_quarantined"
             assert invalid.list_jobs() == []
 
         payload["version"] = 1
@@ -931,7 +945,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert unrequested_ack.restore_persisted().code == "job_state_invalid"
+        assert unrequested_ack.restore_persisted().code == "job_state_quarantined"
         assert unrequested_ack.list_jobs() == []
 
         job["control_acknowledged_at"] = None
@@ -945,7 +959,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert impossible_finish.restore_persisted().code == "job_state_invalid"
+        assert impossible_finish.restore_persisted().code == "job_state_quarantined"
         assert impossible_finish.list_jobs() == []
 
     def test_legacy_v1_start_paused_round_trip_has_control_request_lineage(
@@ -1044,3 +1058,121 @@ class TestManagedJobPersistence:
             for task in tasks:
                 with pytest.raises(asyncio.CancelledError):
                     await task
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("isolated_status_dir")
+    async def test_null_resource_reading_quarantines_and_startup_proceeds(
+        self,
+        _clean_jobs: None,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A null resource reading must cost the history, never the daemon.
+
+        The state file records job history - observability data - while the
+        index itself lives in vector storage. A daemon refusing to start over
+        one non-numeric field in its own shutdown artifact is a total outage
+        the operator cannot self-service, so service startup must quarantine
+        the file byte-for-byte, log the loss loudly, and come up with an
+        empty registry.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        seeded = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        created = seeded.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
+        )
+        assert created.job is not None
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        payload["jobs"][0]["resources"]["started"] = {
+            "rss_mib": None,
+            "cuda_allocated_mib": 0.0,
+            "cuda_reserved_mib": 0.0,
+        }
+        corrupted = json.dumps(payload)
+        state_path.write_text(corrupted, encoding="utf-8")
+
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        with caplog.at_level(logging.ERROR, logger="vaultspec_rag.jobs"):
+            await _start_job_manager(manager, ServiceRegistry())
+
+        assert manager.list_jobs() == []
+        assert not state_path.exists()
+        quarantined = list(tmp_path.glob("managed-jobs.json.invalid-*"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_text(encoding="utf-8") == corrupted
+        assert "state_quarantined" in caplog.text
+        assert "resource rss_mib must be numeric" in caplog.text
+
+    def test_unreadable_state_path_still_fails_restore(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """An unreadable state path is an environment fault, not a bad file.
+
+        A directory squatting on the state path makes the read itself fail
+        before any content is seen. Quarantining there would dress a
+        filesystem fault up as corrupt history and let the daemon continue
+        into the same fault on its next persist, so restore must keep
+        reporting an error and move nothing.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        state_path.mkdir()
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+
+        outcome = manager.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.ERROR
+        assert outcome.code == "job_state_unreadable"
+        assert state_path.is_dir()
+        assert list(tmp_path.glob("managed-jobs.json.invalid-*")) == []
+        assert manager.list_jobs() == []
+
+    def test_quarantine_obstacle_fails_restore_with_evidence_kept(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A blocked quarantine keeps the failure loud and the evidence put.
+
+        With a non-file obstacle at the candidate destination the rename
+        cannot preserve the invalid file; continuing anyway would leave the
+        corrupt file in place for the first persist to overwrite. Restore
+        must fail on the quarantine branch with the original file untouched.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        state_path.write_text("not json", encoding="utf-8")
+        # A directory obstacle at every candidate the clock could pick makes
+        # the rename fail instead of being stepped around.
+        now = int(time.time())
+        for offset in range(-1, 6):
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now + offset))
+            (tmp_path / f"managed-jobs.json.invalid-{stamp}").mkdir()
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+
+        outcome = manager.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.ERROR
+        assert outcome.code == "job_state_quarantine_failed"
+        assert state_path.read_text(encoding="utf-8") == "not json"
+        assert manager.list_jobs() == []
