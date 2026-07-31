@@ -390,9 +390,15 @@ class JobManagerRecords(JobManagerState):
         question.
 
         Taking the larger of the two keeps the invariant the ceiling exists to
-        state - a retained job keeps its binding - without letting the map
-        outgrow the jobs it describes, because the floor is the live count and
-        falls back as that work drains.
+        state without letting the map outgrow the jobs it describes, because
+        the floor is the live count and falls back as that work drains.
+
+        The floor counts jobs while the map holds bindings, and a job can
+        carry several keys, so a job adopted repeatedly under new keys can
+        still push the map past it and evict a live binding. That is the
+        residual bound of a per-job ceiling rather than something this floor
+        introduces - the configured number makes the same assumption - and
+        closing it means counting the union of the per-job key sets.
         """
         return max(self._max_idempotency, len(self._active) + len(self._terminal))
 

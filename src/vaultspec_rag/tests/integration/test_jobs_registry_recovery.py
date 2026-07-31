@@ -1318,6 +1318,7 @@ class TestManagedJobPersistence:
             "retried",
             "deleted",
             "idempotent",
+            "quiesce_deferred",
         ],
     )
     def test_every_persisted_transition_reloads(
@@ -1395,6 +1396,12 @@ class TestManagedJobPersistence:
             job_id = admit("a")
             manager.fail_unstarted(job_id, result="no runtime")
             assert manager.delete(job_id).code == "job_deleted"
+        elif sequence == "quiesce_deferred":
+            # Parked for a service quiesce: observed paused, intent still
+            # running. Resume selects on exactly that pair, so it has to
+            # survive a round trip rather than being read back as incoherent.
+            deferred = manager.defer_unstarted_for_quiesce(admit("a"))
+            assert deferred.code == "quiesce_deferred_before_start"
         else:
             admit("a", idempotency_key="replay-key")
 
