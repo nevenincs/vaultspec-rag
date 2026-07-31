@@ -114,6 +114,10 @@ class SearchIndexStateInput:
     covered_files: float | None = None
     integrity: IndexIntegrity | None = None
     integrity_repair_job_id: str | None = None
+    #: Path of every result on the page, in rank order. Empty on the routes
+    #: that build a block without having searched, where there is nothing to
+    #: judge and the collapse signal correctly stays silent.
+    result_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +262,7 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
     domain builder expects, and renders whatever that returns.
     """
     from .._index_breadth import BreadthShortfall, FileBreadthShortfall
-    from .._search_state import BreadthFindings, search_index_state
+    from .._search_state import BreadthFindings, result_collapse, search_index_state
 
     count = int(input.indexed_count)
     shortfall = (
@@ -282,6 +286,7 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
             file_shortfall=file_shortfall,
             integrity=input.integrity,
             integrity_repair_job_id=input.integrity_repair_job_id,
+            collapse=result_collapse(input.result_paths),
         ),
     )
 
@@ -718,6 +723,7 @@ def _execute_search_request(
                 covered_files=phase_timing.get("covered_files"),
                 integrity=integrity,
                 integrity_repair_job_id=integrity_repair_job_id,
+                result_paths=tuple(result.path for result in results),
             )
         )
         index_state_seconds = time.perf_counter() - phase_started

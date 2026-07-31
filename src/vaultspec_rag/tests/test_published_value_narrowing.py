@@ -299,6 +299,64 @@ class TestTheFormattersRefuseABool:
         assert _format_seconds(3600) == "1 hour"
 
 
+class TestTheFormattersRefuseANonFiniteValue:
+    """The same last line of defence, against the shape that is not a bool.
+
+    JSON carries neither an infinity nor a ``nan`` by spec, but Python's
+    ``json`` module emits and accepts both by default, so a persisted service
+    record can hold one and reach a formatter that ends in ``int(...)``.
+
+    Both halves were live, and they failed in opposite directions. An infinity
+    raised out of the presentation layer: ``_format_seconds``, ``_format_mib``,
+    ``compact_duration`` and ``_format_delay_seconds`` all died on
+    ``OverflowError: cannot convert float infinity to integer``, and
+    ``_format_delay_milliseconds`` printed the literal string ``inf seconds``.
+    A ``nan`` did not raise at all - it rendered as a real measurement of
+    zero, because ``max(0.0, nan)`` is ``0.0``, so an unreadable field read as
+    ``0s``, as ``less than 1 second``, and, on both delay renderers, as
+    ``immediately`` - which states that no delay is configured. That last one
+    is the reason this is a defect and not a crash report: a corrupt measure
+    rendered as a small one looks like an answer.
+
+    Proved able to fail: removing the ``math.isfinite`` return from
+    ``_cli_format._renderable`` fails all 15 cells. Five of them - the whole
+    ``nan`` row - fail on the ``== absent`` assertion rather than by raising,
+    which is the half that matters: ``_format_seconds`` renders ``less than 1
+    second``, ``compact_duration`` renders ``0s``, ``_format_mib`` renders a
+    zero size, and both delay renderers render ``immediately``. The other ten
+    fail by raising ``OverflowError``, except ``_format_delay_milliseconds``
+    on an infinity, which renders the literal ``inf seconds``. Restoring the
+    return puts all 15 back to green.
+    """
+
+    @pytest.mark.parametrize(
+        ("render", "absent"),
+        [(row[1], row[2]) for row in _FORMATTERS],
+        ids=_FORMATTER_IDS,
+    )
+    @pytest.mark.parametrize(
+        "value",
+        [float("inf"), float("-inf"), float("nan")],
+        ids=["inf", "negative-inf", "nan"],
+    )
+    def test_every_formatter_refuses_a_non_finite_value(
+        self,
+        render: Callable[[object], str],
+        absent: str,
+        value: float,
+    ) -> None:
+        assert render(value) == absent
+
+    def test_a_finite_value_at_the_same_magnitude_still_renders(self) -> None:
+        # The guard must refuse the non-finite value specifically, not large
+        # magnitudes: a real multi-day age and a real multi-gigabyte reading
+        # are both ordinary operator figures.
+        assert _format_seconds(864000) == "240 hours"
+        assert _format_mib(1048576) != "not reported"
+        assert compact_duration(864000) == "10d00h"
+        assert _format_delay_seconds(0.5) == "0.5 seconds"
+
+
 class TestABooleanTimestampReadsAsUnreported:
     """A job timestamp of ``True`` must not render as a 1970 clock time."""
 
@@ -391,20 +449,14 @@ _NARROWING_SURFACE_TREES: tuple[str, ...] = ("tests/integration",)
 #: values a reader already narrowed and by raw payload fields, and they cannot
 #: delegate their guard to a caller that may not exist.
 _NARROWING_EXEMPT: dict[str, str] = {
-    # Renders an elapsed duration for any caller; also the backstop reached
-    # directly with a raw payload field.
-    "_format_seconds": "terminal renderer of an untrusted object",
-    # Same, in the bounded fixed-width form a table column needs.
-    "compact_duration": "terminal renderer of an untrusted object",
-    # Same, converting from milliseconds before delegating.
-    "_format_milliseconds": "terminal renderer of an untrusted object",
-    # Same, for a mebibyte measure.
-    "_format_mib": "terminal renderer of an untrusted object",
-    # Renders a CONFIGURED delay, whose vocabulary differs from an elapsed
-    # duration's; reads the watcher payload with no reader in front of it.
-    "_format_delay_milliseconds": "terminal renderer of an untrusted object",
-    # Same, at second granularity.
-    "_format_delay_seconds": "terminal renderer of an untrusted object",
+    # The one narrowing the renderers share. Six terminal formatters used to
+    # carry a copy of this clause each - four in the shared format module and
+    # two in the watcher surface - and the copies had drifted apart in exactly
+    # the way that arrangement invites: every one refused a bool, and not one
+    # refused an infinity or a nan. Collapsing them onto this leaves a single
+    # site to harden, and the six names below it are no longer offenders,
+    # which is why they are no longer listed here.
+    "_renderable": "the one narrowing every terminal renderer delegates to",
     # Not a published value at all: it sorts a heterogeneous ``Future``
     # result, where the shape IS the discriminator between the search futures
     # and the reindex future. Routing that through a published-value reader
