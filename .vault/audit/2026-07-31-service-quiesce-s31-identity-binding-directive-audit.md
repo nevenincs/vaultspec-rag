@@ -9,38 +9,37 @@ related:
   - "[[2026-07-24-service-quiesce-adr]]"
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
-# `service-quiesce` audit: `S31 identity-binding directive`
+# `service-quiesce` audit: `S31 identity-binding acceptance`
 
 ## Scope
 
-Read-only review of S31 preflight before source repair. The review covered the relationship between machine discovery, health, authenticated service-state, strict quiesce timestamps, device capacity, and preflight's non-authorizing output.
+Acceptance review of S31 after commit `d08edec6`. The review covered discovery version authority, health identity corroboration, authenticated service-state bearer pinning, strict safe-quiesce timestamps, and preflight's non-authorizing output.
 
 ## Findings
 
-### discovery-version-authority | high | Compatibility was classified from ungated health instead of discovery
+### implementation-complete | low | S31 is implemented and accepted
 
-Preflight previously classified compatibility from the health response. Discovery is the address-and-identity authority, so its published `package_version` must supply the compatibility verdict before any health or service-state request. Missing, blank, or non-string discovery version must refuse as `service_version_unreported`; a differing discovered version must refuse as `service_version_mismatch`.
+Preflight now classifies compatibility from the ready discovery payload before any health request. It requires health to confirm the discovered positive PID, exact port, non-empty token, and exact package version. Only then does it request service state with that discovered token as `initial_bearer_token`; it supplies no ambient fallback or unpinned refresh. A claimed safe snapshot requires finite, non-null `pause_requested_at`, `drain_acknowledged_at`, and `quiesced_at`. Every successful observation still reports `authorized: false` and `lease_required: true`.
 
-### ambient-service-state-bearer | high | Authenticated observation was not pinned to verified discovery identity
+### real-route-evidence | low | Reachable refusals and bearer pinning passed without GPU authority
 
-The service-state call previously used the transport's ambient status-file bearer. The repaired call must use the already verified discovery token as `initial_bearer_token`, with no ambient fallback and no unpinned refresh. Health must confirm exact discovered PID, port, token, and package version before that request. A missing or different field, including health version disagreement, must refuse as `service_identity_mismatch`; an authenticated-state 401, failed route, or non-object result must refuse as `service_state_unavailable`.
+The focused preflight suite passed 18 CPU-only tests. It exercised safe and unsafe observations; stale, future, and incomplete discovery; discovery version absence and skew; unreachable and requested-port mismatch; health PID, port, and token mismatch; zero discovery PID; empty discovery token; authenticated service-state failure; and a contended machine-pointer service whose verified bearer succeeds despite a different isolated ambient status token. The routes used no-lifespan loopback Uvicorn and the contention proof used a real OS-lock child.
 
-### safe-quiesce-timestamps | high | Complete-shaped state could claim safety without transition evidence
+### static-fail-closed-boundary | low | Canonical-unreachable malformed successful payloads remain defenses, not fabricated tests
 
-The strict quiesce parser allowed null transition timestamps and the safe predicate did not require them. A safe preflight success must require finite non-null `pause_requested_at`, `drain_acknowledged_at`, and `quiesced_at`; missing, boolean, NaN, infinite, or otherwise invalid values refuse as `service_state_incomplete`. `warming_started_at` remains optional because safe quiescence does not pass through warming.
+Production health always publishes the complete device-capacity mapping and service state always serializes the complete quiesce envelope. The production runtime also rejects an empty service token before it can serve a route, and discovery and health use the same installed package-version function. Consequently partial capacity or state, missing safe timestamps in an otherwise successful canonical route, matching empty health/discovery tokens, and same-install health-version drift cannot be induced without a forbidden proxy, hook, patch, source mutation, or second install. The corresponding parser and identity guards remain static fail-closed defenses; no artificial seam was introduced.
 
-### refusal-matrix | medium | Every observation failure needs one stable non-authorizing outcome
+## Validation
 
-Non-ready discovery or absent port is `service_discovery_unavailable`; an unusable heartbeat window is `service_discovery_incomplete`; a future heartbeat is `service_discovery_unknown`; a stale heartbeat is `service_discovery_stale`; and an explicit port conflict is `service_port_mismatch`. Unreachable health is `service_unreachable`; missing, partial, or invalid capacity is `device_capacity_unavailable`; partial quiesce is `service_state_incomplete`; and a valid but unsafe snapshot is `service_not_safe_to_borrow_gpu`. Every error and success retains `authorized: false` and `lease_required: true`.
+- `uv run --no-sync pytest src/vaultspec_rag/tests/test_service_preflight_cli.py -q`: 18 passed; the only warning was the existing `.pytest_cache` access-denied warning.
+- Ruff format/check, Ty, scoped BasedPyright, and `git diff --check` passed for the two S31 files.
+- No GPU, Qdrant, model, resident daemon, or daemon lifespan was started.
 
-### required-real-route-proof | high | Existing tests do not exercise reachable identity and authentication refusals
+## Release boundary
 
-S31 must add CPU-only real production-route coverage for unknown and incomplete discovery, discovery version unreported and mismatch, unreachable health, health PID, port, and token mismatch, authenticated service-state refusal, and successful safe versus unsafe observation. It must also prove bearer pinning with a contended machine-pointer identity and a deliberately different isolated ambient status token: the old ambient route would receive 401, while the explicit discovered bearer succeeds. The proof must not use mocks, patches, source mutation, a local GPU, Qdrant child, model, or daemon lifespan.
-
-The canonical production health route always emits the complete device-capacity mapping and the production service-state route always serializes the complete controller envelope. Partial capacity, partial quiesce, missing-safe-timestamp, and same-install health-version-mismatch mappings therefore cannot be induced through a real production route without a forbidden proxy, hook, patch, source mutation, or second installed release. `_strict_capacity` and `_strict_quiesce`, including the finite safe-timestamp and health-version equality guards, remain static unexercised defense-in-depth for older services, proxies, and future wire drift; no fabricated malformed-success test seam is permitted.
+S31 implementation is complete. Repository-wide strict type health, the delegated self-hosted GPU-live tier, and the historical S07 execution-record trace are separate release or traceability concerns; none keeps this plan step open.
 
 ## Recommendations
 
-- Implement S31 only to the accepted ADR refinement and revised plan row.
-- Preserve the existing service-client transport seam; pass the discovered bearer only through its typed `initial_bearer_token` option and never raw headers or a parallel client.
-- Keep preflight observation-only. No refusal recovery may start a service, read a local GPU, authorize a borrower, or fall back to local compute.
+- Keep the static malformed-payload guards fail closed; do not introduce a proxy, patch, source mutation, or fabricated route solely to exercise canonical-unreachable branches.
+- Resolve the external release and traceability concerns in their own records rather than reopening S31.
