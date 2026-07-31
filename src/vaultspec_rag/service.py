@@ -1210,6 +1210,54 @@ class ServiceRegistry:
             if slot is not None or reserved:
                 return (slot, reserved)
 
+    def _refuse_when_shutting_down(self) -> None:
+        """Refuse to begin construction once shutdown has been declared."""
+        with self._project_admission_condition:
+            if self._shutting_down:
+                msg = "ServiceRegistry is shutting down"
+                raise RuntimeError(msg)
+
+    def _publish_slot_locked(
+        self,
+        resolved: Path,
+        slot: ProjectSlot,
+        *,
+        pin: bool,
+    ) -> bool:
+        """Publish *slot* and release its seat, unless shutdown got there first.
+
+        Publication and the seat release happen under one hold, so no caller
+        can observe the slot listed while its seat is still reserved. Reports
+        whether it published: a shutdown that landed during construction
+        leaves the slot for its builder to discard.
+        """
+        with self._project_admission_condition:
+            if self._shutting_down:
+                return False
+            if pin:
+                self._pin_slot_locked(slot)
+            self._projects[resolved] = slot
+            self._release_project_admission_locked(resolved)
+            return True
+
+    def _discard_unpublished_slot(
+        self,
+        resolved: Path,
+        slot: ProjectSlot | None,
+        *,
+        store_closed: bool,
+    ) -> None:
+        """Close a slot that never got published and give its seat back.
+
+        The seat is released even when the close raises, because a seat held
+        for a slot no caller can reach is a permanent loss of capacity.
+        """
+        try:
+            if slot is not None and not store_closed:
+                slot.store.close()
+        finally:
+            self._release_project_admission(resolved)
+
     def _construct_admitted_project_slot(
         self,
         resolved: Path,
@@ -1224,20 +1272,15 @@ class ServiceRegistry:
                 published = False
                 store_closed = False
                 try:
-                    with self._project_admission_condition:
-                        if self._shutting_down:
-                            msg = "ServiceRegistry is shutting down"
-                            raise RuntimeError(msg)
+                    self._refuse_when_shutting_down()
                     created_slot = self._create_slot(resolved)
-                    with self._project_admission_condition:
-                        if not self._shutting_down:
-                            if pin:
-                                self._pin_slot_locked(created_slot)
-                            self._projects[resolved] = created_slot
-                            self._release_project_admission_locked(resolved)
-                            released = True
-                            published = True
+                    published = self._publish_slot_locked(
+                        resolved,
+                        created_slot,
+                        pin=pin,
+                    )
                     if published:
+                        released = True
                         return created_slot
                     created_slot.store.close()
                     store_closed = True
@@ -1245,12 +1288,12 @@ class ServiceRegistry:
                     raise RuntimeError(msg)
                 finally:
                     if not published:
-                        try:
-                            if created_slot is not None and not store_closed:
-                                created_slot.store.close()
-                        finally:
-                            self._release_project_admission(resolved)
-                            released = True
+                        self._discard_unpublished_slot(
+                            resolved,
+                            created_slot,
+                            store_closed=store_closed,
+                        )
+                        released = True
         except BaseException:
             if not released:
                 self._release_project_admission(resolved)
