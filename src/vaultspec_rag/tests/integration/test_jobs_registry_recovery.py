@@ -1176,3 +1176,156 @@ class TestManagedJobPersistence:
         assert outcome.code == "job_state_quarantine_failed"
         assert state_path.read_text(encoding="utf-8") == "not json"
         assert manager.list_jobs() == []
+
+    def test_lowered_capacity_admits_restored_work_and_refuses_new(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A capacity cut below recorded work must not cost the daemon its start.
+
+        The bound governs admission of new jobs, so a valid file holding more
+        queued work than the lowered setting is real intent, not corruption:
+        restoring it must succeed and keep every ID. Refusing to start would
+        repeat identically on every retry with no way back but hand-editing
+        state, and dropping the excess would silently evict controllable work.
+        The bound still has to bite on new creation, which is what drains the
+        overflow, so both halves are asserted together.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        roots = [tmp_path / f"project-{index}" for index in range(3)]
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=3,
+            state_path=state_path,
+        )
+        recorded: list[str] = []
+        for root in roots:
+            created = manager.create(
+                JobSpec(
+                    JobOperation.INDEX,
+                    JobSource.VAULT,
+                    str(root),
+                    JobMode.INCREMENTAL,
+                ),
+                JobInitiator("watcher", "watcher_vault_index", str(root)),
+            )
+            assert created.job is not None
+            recorded.append(created.job.id)
+
+        restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag.jobs"):
+            outcome = restarted.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.OK
+        assert outcome.code == "job_state_restored"
+        assert sorted(job.id for job in restarted.active()) == sorted(recorded)
+        assert all(job.state is JobState.QUEUED for job in restarted.active())
+        assert "event=restored_over_capacity" in caplog.text
+        assert "restored_nonterminal=3" in caplog.text
+        assert "configured_capacity=1" in caplog.text
+
+        refused = restarted.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path / "project-new"),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
+        )
+        assert refused.status is JobOutcomeStatus.ERROR
+        assert refused.code == "job_capacity_exceeded"
+
+    @pytest.mark.parametrize(
+        "sequence",
+        [
+            "created",
+            "start_paused",
+            "paused",
+            "cancelled",
+            "resumed",
+            "failed_unstarted",
+            "retried",
+            "deleted",
+            "idempotent",
+        ],
+    )
+    def test_every_persisted_transition_reloads(
+        self,
+        tmp_path: Path,
+        sequence: str,
+    ) -> None:
+        """What the manager writes, the loader must accept.
+
+        The loader enforces relational rules over a whole generation -
+        timestamp ordering, terminal state against the finish clock, observed
+        against desired state, attempt lineage - that no single frozen record
+        can check on its own. A transition that persists a combination those
+        rules reject does not fail when it is written; it fails one boot
+        later, in another process, with the write long gone. Driving each
+        supported transition and reading the real file back through the real
+        loader is what turns that into an immediate failure here.
+        """
+        from ...job_persistence import load_persisted_state
+
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=4,
+            state_path=state_path,
+        )
+
+        def admit(
+            name: str,
+            *,
+            start_paused: bool = False,
+            idempotency_key: str | None = None,
+        ) -> str:
+            created = manager.create(
+                JobSpec(
+                    JobOperation.INDEX,
+                    JobSource.CODE,
+                    str(tmp_path / name),
+                    JobMode.REBUILD,
+                ),
+                JobInitiator("test", "transition_reload", None),
+                start_paused=start_paused,
+                idempotency_key=idempotency_key,
+            )
+            assert created.job is not None
+            return created.job.id
+
+        if sequence == "created":
+            admit("a")
+        elif sequence == "start_paused":
+            admit("a", start_paused=True)
+        elif sequence == "paused":
+            manager.set_desired_state(admit("a"), DesiredJobState.PAUSED)
+        elif sequence == "cancelled":
+            manager.set_desired_state(admit("a"), DesiredJobState.CANCELLED)
+        elif sequence == "resumed":
+            manager.set_desired_state(
+                admit("a", start_paused=True), DesiredJobState.RUNNING
+            )
+        elif sequence == "failed_unstarted":
+            manager.fail_unstarted(admit("a"), result="no runtime")
+        elif sequence == "retried":
+            job_id = admit("a")
+            manager.fail_unstarted(job_id, result="no runtime")
+            assert manager.retry(job_id).code == "job_retry_created"
+        elif sequence == "deleted":
+            job_id = admit("a")
+            manager.fail_unstarted(job_id, result="no runtime")
+            assert manager.delete(job_id).code == "job_deleted"
+        else:
+            admit("a", idempotency_key="replay-key")
+
+        # The real file the daemon would find on its next start, read by the
+        # real loader that start would use.
+        assert state_path.is_file()
+        load_persisted_state(state_path)

@@ -135,16 +135,13 @@ class JobManagerProgress(JobManagerState):
         in-memory progress stays authoritative for the retrying flush.
         """
         command = "update_progress"
-        normalized_progress = _normalize_progress(
-            update.step, update.completed, update.total
-        )
-        if isinstance(normalized_progress, str):
+        progress = _normalized_progress(update)
+        if isinstance(progress, str):
             return self._error(
                 command,
                 "invalid_progress",
-                normalized_progress,
+                progress,
             )
-        normalized_step, normalized_completed, normalized_total = normalized_progress
         with self._lock:
             managed = self._active.get(job_id)
             if managed is None:
@@ -171,12 +168,7 @@ class JobManagerProgress(JobManagerState):
             managed.snapshot = replace(
                 previous,
                 revision=previous.revision + 1,
-                progress=JobProgress(
-                    step=normalized_step,
-                    completed=normalized_completed,
-                    total=normalized_total,
-                    last_updated=time.time(),
-                ),
+                progress=progress,
             )
             self._note_progress_mutation_locked()
             updated = JobOutcome(
@@ -435,18 +427,29 @@ class JobManagerProgress(JobManagerState):
             return True
 
 
-def _normalize_progress(
-    step: object,
-    completed: object,
-    total: object,
-) -> tuple[str, int, int | None] | str:
-    """Validate and normalize one untrusted progress publication."""
-    if not isinstance(step, str) or not step.strip():
-        return "Progress step is required."
-    if not isinstance(completed, int) or isinstance(completed, bool) or completed < 0:
-        return "Progress counts must satisfy 0 <= completed <= total when total is set."
-    if total is None:
-        return step.strip(), completed, None
-    if not isinstance(total, int) or isinstance(total, bool) or total < completed:
-        return "Progress counts must satisfy 0 <= completed <= total when total is set."
-    return step.strip(), completed, total
+def _normalized_progress(update: ProgressUpdate) -> JobProgress | str:
+    """Adapt one publication request to the canonical progress record.
+
+    What counts as valid progress is the record's own rule, applied by
+    constructing it, so this boundary cannot drift from what the rest of the
+    service and the persisted state already accept. Only two things belong
+    here: the surrounding whitespace a caller's step label may carry, and the
+    translation of a rejection into a message an API caller can act on.
+
+    A label that is not a string at all cannot be stripped; it is forwarded
+    untouched so the record rejects it by the same rule that rejects an empty
+    one, rather than surfacing an attribute error to the caller.
+    """
+    try:
+        step = update.step.strip()
+    except AttributeError:
+        step = update.step
+    try:
+        return JobProgress(
+            step=step,
+            completed=update.completed,
+            total=update.total,
+            last_updated=time.time(),
+        )
+    except ValueError as exc:
+        return str(exc)

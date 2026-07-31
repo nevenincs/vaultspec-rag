@@ -152,16 +152,6 @@ class JobManagerPersistence(JobManagerState):
 
         restored_jobs = persisted.jobs
         restored_bindings = persisted.bindings
-        active_count = sum(job.state.is_idle for job in restored_jobs)
-        if active_count > self._max_nonterminal:
-            return self._persistence_error(
-                command,
-                (
-                    f"persisted nonterminal count {active_count} exceeds configured "
-                    f"capacity {self._max_nonterminal}"
-                ),
-                code="job_state_capacity_exceeded",
-            )
         with self._lock:
             if self._active or self._terminal:
                 return self._error(
@@ -174,6 +164,7 @@ class JobManagerPersistence(JobManagerState):
             self._restore_jobs_locked(restored_jobs, now=now)
             self._trim_restored_history_locked()
             self._restore_bindings_locked(restored_bindings)
+            self._report_restored_capacity_locked()
 
             persistence_error = self._persist_locked()
             if persistence_error is not None:
@@ -189,6 +180,38 @@ class JobManagerPersistence(JobManagerState):
                     f"{len(self._terminal)} interrupted records."
                 ),
             )
+
+    def _report_restored_capacity_locked(self) -> None:
+        """Report durable nonterminal work outnumbering the admission bound.
+
+        The configured bound limits admission of *new* work; it is not a cap
+        on state a previous service life already recorded. Lowering it below
+        what that life had queued must not cost the daemon its start: the
+        file is valid and its contents are real queued and paused work, so
+        refusing it would brick every subsequent start over a setting change
+        and leave no way back that does not involve editing state by hand.
+        Dropping the excess is equally wrong, because nonterminal jobs are
+        controllable resources an operator can still pause, resume, cancel or
+        delete, and silently evicting them discards intent nobody withdrew.
+
+        So every restored job is kept and the excess is carried openly:
+        creation and retry already refuse admission while the active set is
+        at or above the bound, which drains the overflow without destroying
+        any of it. This records the condition for the operator who has to
+        understand why new work is being refused.
+        """
+        restored = len(self._active)
+        if restored <= self._max_nonterminal:
+            return
+        log_event(
+            logger,
+            "service.job",
+            "restored_over_capacity",
+            severity=logging.WARNING,
+            restored_nonterminal=restored,
+            configured_capacity=self._max_nonterminal,
+            admission="refused until restored work drains",
+        )
 
     def _load_restore_state(
         self,
