@@ -535,6 +535,48 @@ class TestPersistedJobStateWriteSide:
         save_persisted_state(path, state)
         assert load_persisted_state(path) == state
 
+    def test_a_quiesce_parked_job_reloads_through_the_real_loader(
+        self, tmp_path: Path
+    ) -> None:
+        # A service quiesce parks queued work as paused while its intent stays
+        # running, and resume selects on exactly that pair to tell it from work
+        # an operator paused. The loader used to refuse the pair, so the manager
+        # wrote a generation it could not read back.
+        state_path = tmp_path / "jobs-state.json"
+        root = str(tmp_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=4,
+            state_path=state_path,
+        )
+        created = manager.create(
+            JobSpec(JobOperation.INDEX, JobSource.CODE, root, JobMode.INCREMENTAL),
+            JobInitiator("service", "reindex_codebase", root),
+        )
+        assert created.job is not None
+        deferred = manager.defer_unstarted_for_quiesce(created.job.id)
+        assert deferred.job is not None
+        assert deferred.job.state is JobState.PAUSED
+        assert deferred.job.desired_state is DesiredJobState.RUNNING
+
+        restored = load_persisted_state(state_path)
+        assert [job.id for job in restored.jobs] == [created.job.id]
+        assert restored.jobs[0].state is JobState.PAUSED
+        assert restored.jobs[0].desired_state is DesiredJobState.RUNNING
+
+    def test_paused_work_may_not_persist_cancelled_intent(self, tmp_path: Path) -> None:
+        # Widening the paused pair set to admit running intent must not retire
+        # the check: paused-but-cancelled remains incoherent.
+        snapshot = replace(
+            _valid_snapshot(),
+            state=JobState.PAUSED,
+            desired_state=DesiredJobState.CANCELLED,
+        )
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, PersistedManagerState(jobs=(snapshot,), bindings=()))
+        with pytest.raises(ValueError, match="observed and desired states disagree"):
+            load_persisted_state(path)
+
     def test_the_loader_still_refuses_a_null_memory_reading(
         self, tmp_path: Path
     ) -> None:
