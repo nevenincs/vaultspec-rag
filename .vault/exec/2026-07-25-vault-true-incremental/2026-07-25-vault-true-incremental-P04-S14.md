@@ -28,8 +28,7 @@ related:
 Proven able to fail, in one uninterrupted sequence. Dropped the body from the
 fingerprint - digesting a constant instead of the normalised body in
 `fingerprint_text()` - ran the guard alone, and watched it fail on its own
-re-embed assertion: `a body edit did not re-embed; the stored vectors no longer
-describe the document`, `assert 0 == 1`. Restored the body digest; the guard
+re-embed assertion: `a body edit did not re-embed; the stored vectors no longer describe the document`, `assert 0 == 1`. Restored the body digest; the guard
 passed again. No mutation was left on disk.
 
 That mutation is the exact silent-degradation shape this plan exists to prevent.

@@ -9,6 +9,7 @@ related:
   - "[[2026-07-24-service-quiesce-adr]]"
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # `service-quiesce` audit: `W04 S29-S33 final acceptance`
 
 ## Scope

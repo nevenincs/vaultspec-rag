@@ -9,6 +9,7 @@ step_id: 'S15'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # Streaming safe checkpoint boundaries
 
 ## Description

@@ -9,6 +9,7 @@ step_id: 'S29'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # Repair borrower authority with an opaque captured machine-lock witness, remove raw-path minting, add no-create momentary original-path observation, and make the service machine-lock owner PID durably recoverable
 
 ## Scope

@@ -9,6 +9,7 @@ step_id: 'S33'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # Route self-hosted CI and Just GPU tiers through S32's guarded coordinator only, remove direct GPU preflight and Qdrant installation, and declare the compatible resident service plus runner Qdrant binary and manifest as external prerequisites
 
 ## Scope
