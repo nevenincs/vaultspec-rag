@@ -410,7 +410,11 @@ class TestBucketedDenseEncode:
         result = model.encode_documents_on_device(texts, gpu_lock=gpu_lock)
         assert fake.calls == [texts[0:2], texts[2:4]]
         assert not gpu_lock.locked()
-        assert [row[0] for row in result.tolist()] == [200.0] * 4
+        # The on-device result stays a tensor: read the first column back
+        # element-wise, which is typed, rather than through the untyped
+        # whole-tensor ``tolist``.
+        first_column = [float(result[index][0].item()) for index in range(len(texts))]
+        assert first_column == [200.0] * 4
 
     def test_bucket_callback_reports_progress_and_budget(self):
         texts = _distinct_texts(4)
@@ -613,7 +617,7 @@ class TestCalibrationBoundsUnderPlanning:
     MAX_UNDER_PLAN_FACTOR = 3.5
 
     def test_estimator_under_plan_stays_within_the_stated_margin(self):
-        from transformers import AutoTokenizer
+        from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
         from ..config._settings import get_config
         from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
@@ -630,9 +634,12 @@ class TestCalibrationBoundsUnderPlanning:
             (model_id,),
             timeout_seconds=model_setup_timeout_seconds(),
         )
-        tokenizer = AutoTokenizer.from_pretrained(  # pyright: ignore[reportUnknownMemberType]  # transformers factory is partially stubbed
-            model_id,
-            local_files_only=True,
+        tokenizer = cast(
+            "PreTrainedTokenizerBase",
+            AutoTokenizer.from_pretrained(  # pyright: ignore[reportUnknownMemberType]  # transformers factory is partially stubbed
+                model_id,
+                local_files_only=True,
+            ),
         )
         assert tokenizer is not None, f"no tokenizer backend resolved for {model_id}"
         divisor = int(config.embedding_encode_chars_per_token)
@@ -646,7 +653,7 @@ class TestCalibrationBoundsUnderPlanning:
                 chars_per_token=divisor,
                 max_items=1,
             )
-            real_tokens = len(tokenizer(text)["input_ids"])
+            real_tokens = len(cast("list[int]", tokenizer(text)["input_ids"]))
             factor = real_tokens / bucket.estimated_tokens
             if factor > self.MAX_UNDER_PLAN_FACTOR:
                 offenders[name] = round(factor, 3)
