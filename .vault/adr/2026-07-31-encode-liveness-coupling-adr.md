@@ -12,7 +12,7 @@ related:
   - '[[2026-07-28-pressure-management-adr]]'
 ---
 
-# `encode-liveness-coupling` adr: `starved is distinguishable from gone on facts already published` | (**status:** `proposed`)
+# `encode-liveness-coupling` adr: `starved is distinguishable from gone on facts already published` | (**status:** `accepted`)
 
 ## Problem Statement
 

@@ -11,7 +11,7 @@ related:
   - '[[2026-07-31-issue-triage-research]]'
 ---
 
-# `rate-collapse-baseline` adr: `high-percentile rate-collapse baseline` | (**status:** `proposed`)
+# `rate-collapse-baseline` adr: `high-percentile rate-collapse baseline` | (**status:** `accepted`)
 
 ## Problem Statement
 
