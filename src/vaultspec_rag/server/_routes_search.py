@@ -40,6 +40,10 @@ from .._source_types import (
 from .._store_locks import VaultStoreLockedError
 from ..concurrency import get_search_limiter
 from ..logging_config import log_event
+from ..search._outcomes import (
+    COMBINED_SEARCH_FAILED,
+    COMBINED_SEARCH_FAILED_MESSAGE,
+)
 from ..search._result_shaping import (
     PHASE_EMBEDDING,
     PHASE_MODEL_LOAD,
@@ -48,14 +52,17 @@ from ..search._result_shaping import (
     PHASE_QDRANT,
     PHASE_RERANK,
 )
-from ..service import RegistryFullError
+from ..service import RegistryFullError, ServiceRegistry
+from ..service_quiesce import QuiesceAdmissionClosedError
 from ._auth import require_token
+from ._runtime import get_request_runtime
 from ._search_activity import (
     SearchActivityCompletion,
     SearchActivityStart,
     SearchActivityTicket,
 )
 from ._search_availability import (
+    SearchAvailabilityContext,
     SearchResponseClassification,
     classify_qdrant_collection_disappearance,
     classify_search_response,
@@ -76,6 +83,8 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from .._index_integrity import IndexIntegrity
+    from ..service import ServiceRegistry
+    from ..service_quiesce import QuiesceSnapshot
 logger = logging.getLogger("vaultspec_rag.server")
 
 __all__ = ["search_route"]
@@ -108,14 +117,61 @@ class SearchIndexStateInput:
 
 
 @dataclass(frozen=True, slots=True)
-class SearchAvailabilityContext:
-    """Stable request facts used while classifying search availability."""
+class SearchAvailabilityRequestFacts:
+    """Stable pre-retrieval request facts used while classifying availability.
+
+    Deliberately a different type from
+    :class:`~._search_availability.SearchAvailabilityContext`, not a second
+    spelling of it: these are the facts fixed before retrieval runs, while the
+    context additionally carries the after-retrieval job snapshot and the
+    index-state block. Both of those exist only once retrieval has finished,
+    and the index-state block differs between the completed-search and
+    vanished-collection call sites, so the two cannot share one lifetime.
+
+    ``source`` names one concrete corpus. The ``combined`` fan-out has no
+    single index to classify against and never builds these facts at all.
+    """
 
     job_snapshot_before: list[dict[str, object]]
     root: Path
     source: IndexSource
     request_id: str
     port: int | None
+
+    def __post_init__(self) -> None:
+        """Refuse a source no index job can ever be recorded against.
+
+        The declared type already excludes the fan-out and the checker enforces
+        it at the one construction site. This costs one set membership test per
+        classified search and closes the gap that type alone leaves: a value
+        arriving through ``object``, ``Any``, or an untyped test helper reaches
+        the field unchecked, and the failure it causes is a silent misroute -
+        the classifier compares this against a job spec's own source, matches
+        nothing, and reports a healthy index for one that is mid-rebuild.
+        """
+        if self.source not in INDEX_SOURCES:
+            raise ValueError(
+                f"search availability facts require one concrete index source, "
+                f"got {self.source!r}; the combined fan-out has no single index "
+                f"to classify against"
+            )
+
+    def to_context(
+        self,
+        *,
+        after_snapshot: list[dict[str, object]],
+        index_state: dict[str, object],
+    ) -> SearchAvailabilityContext:
+        """Complete these facts with the evidence retrieval has since produced."""
+        return SearchAvailabilityContext(
+            before_snapshot=self.job_snapshot_before,
+            after_snapshot=after_snapshot,
+            requested_root=self.root,
+            source=self.source,
+            request_id=self.request_id,
+            index_state=index_state,
+            port=self.port,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,7 +345,8 @@ def _empty_search_diagnostics(
         # The search proved this: candidates matched the query and the path
         # patterns removed every one. Saying so, with the patterns, is the
         # difference between a fixable typo and an operator concluding the
-        # filter is unsupported.
+        # filter is unsupported. "patterns" is always a list: the search
+        # response builds it from the normalized include-glob patterns.
         patterns = ", ".join(
             str(p) for p in cast("list[object]", path_filter["patterns"])
         )
@@ -317,27 +374,28 @@ def _empty_search_diagnostics(
 
 def _classify_search_result(
     result: dict[str, object],
-    context: SearchAvailabilityContext,
+    facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification:
     """Apply availability classification and stable-empty diagnostics."""
     from ._routes import canonical_job_snapshot
 
+    # A completed search always builds "index_state" from search_index_state(),
+    # which returns a dict; absent means the envelope never carried a search
+    # outcome (the quiesce/collection-disappearance synthetic results), which
+    # the default covers.
     index_state = cast("dict[str, object]", result.get("index_state", {}))
     classification = classify_search_response(
         result,
-        before_snapshot=context.job_snapshot_before,
-        after_snapshot=canonical_job_snapshot(),
-        requested_root=context.root,
-        source=context.source,
-        request_id=context.request_id,
-        index_state=index_state,
-        port=context.port,
+        facts.to_context(
+            after_snapshot=canonical_job_snapshot(),
+            index_state=index_state,
+        ),
     )
     if classification.status_code == 200 and not classification.response["results"]:
         raw_path_filter = classification.response.get("path_filter")
         classification.response["empty"] = _empty_search_diagnostics(
             index_state,
-            port=context.port,
+            port=facts.port,
             path_filter=cast("dict[str, object]", raw_path_filter)
             if isinstance(raw_path_filter, dict)
             else None,
@@ -347,7 +405,7 @@ def _classify_search_result(
 
 def _classify_collection_disappearance(
     exc: UnexpectedResponse,
-    context: SearchAvailabilityContext,
+    facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
     from .._index_integrity import evaluate_index_integrity
@@ -355,35 +413,32 @@ def _classify_collection_disappearance(
 
     return classify_qdrant_collection_disappearance(
         exc,
-        before_snapshot=context.job_snapshot_before,
-        after_snapshot=canonical_job_snapshot(),
-        requested_root=context.root,
-        source=context.source,
-        request_id=context.request_id,
-        index_state=_search_index_state(
-            SearchIndexStateInput(
-                indexed_count=0,
-                requested_root=context.root,
-                # The collection vanished mid-flight, so there is no live
-                # count to reconcile: the verdict is honestly unverifiable,
-                # and carrying it keeps the daemon envelope uniform - every
-                # route response has the block, so absence still means only
-                # "old daemon".
-                integrity=evaluate_index_integrity(
-                    context.root,
-                    PublicSourceType(context.source),
-                    None,
-                ),
-                search_type=context.source,
-            )
+        facts.to_context(
+            after_snapshot=canonical_job_snapshot(),
+            index_state=_search_index_state(
+                SearchIndexStateInput(
+                    indexed_count=0,
+                    requested_root=facts.root,
+                    # The collection vanished mid-flight, so there is no live
+                    # count to reconcile: the verdict is honestly unverifiable,
+                    # and carrying it keeps the daemon envelope uniform - every
+                    # route response has the block, so absence still means only
+                    # "old daemon".
+                    integrity=evaluate_index_integrity(
+                        facts.root,
+                        PublicSourceType(facts.source),
+                        None,
+                    ),
+                    search_type=facts.source,
+                )
+            ),
         ),
-        port=context.port,
     )
 
 
 async def _run_search_with_availability(
     run: Callable[[], dict[str, object]],
-    context: SearchAvailabilityContext,
+    facts: SearchAvailabilityRequestFacts,
 ) -> tuple[dict[str, object], SearchResponseClassification | None]:
     """Run retrieval and recover only an evidenced collection disappearance."""
     try:
@@ -391,7 +446,7 @@ async def _run_search_with_availability(
     except UnexpectedResponse as exc:
         classification = _classify_collection_disappearance(
             exc,
-            context,
+            facts,
         )
         if classification is None:
             raise
@@ -401,15 +456,16 @@ async def _run_search_with_availability(
 def _complete_classified_search(
     classification: SearchResponseClassification,
     *,
-    root: Path,
-    source: IndexSource,
-    request_id: str,
+    facts: SearchAvailabilityRequestFacts,
+    registry: ServiceRegistry,
     total_seconds: float,
 ) -> tuple[dict[str, object], Literal[200, 503]]:
     """Complete watcher and log effects from one classification decision."""
     result = classification.response
     response_status = classification.status_code
-    _m._ensure_watcher_soon(root)
+    root = facts.root
+    source = facts.source
+    _m._ensure_watcher_soon(root, registry)
     hits = result.get("results")
     hit_count = len(cast("list[object]", hits)) if isinstance(hits, list) else 0
     unavailable = response_status == 503 and result.get("error") == "index_unavailable"
@@ -425,7 +481,7 @@ def _complete_classified_search(
                 if classification.availability_cause is not None
                 else {}
             ),
-            "request_id": request_id,
+            "request_id": facts.request_id,
             "source": source,
             "search_type": source,
             "root": root,
@@ -464,9 +520,9 @@ def _activity_timings(
 def _activity_outcome(result: dict[str, object], status_code: int) -> str:
     """Classify one terminal response for bounded activity review."""
     error = result.get("error")
-    if error == "index_unavailable":
+    if error in ("index_unavailable", "quiesce_admission_closed"):
         return "unavailable"
-    if error == "combined_search_failed":
+    if error == COMBINED_SEARCH_FAILED:
         return "combined_failed"
     if error in ("registry_full", "local_store_locked"):
         return "admission_failed"
@@ -514,22 +570,28 @@ def _finish_search_activity(
 
 def _dispatch_public_search(
     request: SearchRequest,
+    registry: ServiceRegistry,
     notes: dict[str, object],
 ) -> tuple[list[Any], dict[str, float], Any | None]:
     """Dispatch one canonical source without adapter fallback."""
-    import vaultspec_rag
-
     from .._public_search import (
         CodeCombinedSearchFilters,
         CombinedSearchRequest,
         DocumentCombinedSearchFilters,
         DocumentSearchRequest,
         VaultCombinedSearchFilters,
+        search_combined_timed,
+        search_documents_timed,
     )
-    from ..api import CodebaseSearchRequest, VaultSearchRequest
+    from ..api import (
+        CodebaseSearchRequest,
+        VaultSearchRequest,
+        search_codebase_timed,
+        search_vault_timed,
+    )
 
     if request.search_type is PublicSourceType.VAULT:
-        results, timings = vaultspec_rag.search_vault_timed(
+        results, timings = search_vault_timed(
             VaultSearchRequest(
                 root_dir=request.root,
                 query=request.query,
@@ -541,11 +603,12 @@ def _dispatch_public_search(
                 intent=request.payload.get("intent"),
                 like_ids=request.payload.get("like_ids"),
                 unlike_ids=request.payload.get("unlike_ids"),
-            )
+            ),
+            registry=registry,
         )
         return results, timings, None
     if request.search_type is PublicSourceType.CODE:
-        results, timings = vaultspec_rag.search_codebase_timed(
+        results, timings = search_codebase_timed(
             CodebaseSearchRequest(
                 root_dir=request.root,
                 query=request.query,
@@ -565,11 +628,12 @@ def _dispatch_public_search(
                 like_ids=request.payload.get("like_ids"),
                 unlike_ids=request.payload.get("unlike_ids"),
                 notes=notes,
-            )
+            ),
+            registry=registry,
         )
         return results, timings, None
     if request.search_type is PublicSourceType.DOCUMENT:
-        results, timings = vaultspec_rag.search_documents_timed(
+        results, timings = search_documents_timed(
             DocumentSearchRequest(
                 root_dir=request.root,
                 query=request.query,
@@ -578,10 +642,11 @@ def _dispatch_public_search(
                 extractor_id=request.payload.get("extractor_id"),
                 extractor_version=request.payload.get("extractor_version"),
                 locator_kind=request.payload.get("locator_kind"),
-            )
+            ),
+            registry=registry,
         )
         return results, timings, None
-    combined, timings = vaultspec_rag.search_combined_timed(
+    combined, timings = search_combined_timed(
         CombinedSearchRequest(
             root_dir=request.root,
             query=request.query,
@@ -613,17 +678,25 @@ def _dispatch_public_search(
                 extractor_version=request.payload.get("extractor_version"),
                 locator_kind=request.payload.get("locator_kind"),
             ),
-        )
+        ),
+        registry=registry,
     )
     return combined.results, timings, combined
 
 
-def _execute_search_request(request: SearchRequest) -> dict[str, object]:
+def _execute_search_request(
+    request: SearchRequest, registry: ServiceRegistry
+) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
+    ticket = registry.acquire_compute_ticket()
     try:
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
-        results, phase_timing, combined = _dispatch_public_search(request, notes)
+        results, phase_timing, combined = _dispatch_public_search(
+            request,
+            registry,
+            notes,
+        )
         search_seconds = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
         indexed_count = (
@@ -692,16 +765,18 @@ def _execute_search_request(request: SearchRequest) -> dict[str, object]:
             if not combined.ok:
                 response.update(
                     {
-                        "error": "combined_search_failed",
-                        "message": "Every combined-search domain failed.",
+                        "error": COMBINED_SEARCH_FAILED,
+                        "message": COMBINED_SEARCH_FAILED_MESSAGE,
                         "summary": "Combined search failed in every domain.",
                     }
                 )
         return response
     except RegistryFullError as exc:
-        return _m._registry_full_error_dict(exc)
+        return _m._registry_full_error_dict(exc, registry)
     except VaultStoreLockedError as exc:
         return _m._local_store_locked_error_dict(exc)
+    finally:
+        ticket.release()
 
 
 async def search_route(request: Request) -> JSONResponse:
@@ -781,6 +856,9 @@ def _normalise_search_request(
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
     project_root = payload.get("project_root")
+    # _search_field_error narrows query to str, top_k to a non-bool int, and
+    # project_root to str | None; a None return means every field already
+    # has the type each cast below asserts.
     field_error = _search_field_error(query, top_k, project_root)
     if field_error is not None:
         return field_error
@@ -798,7 +876,7 @@ def _normalise_search_request(
         root=root,
         query=query,
         top_k=_clamp_top_k(cast("int", top_k)),
-        payload=cast("dict[str, Any]", payload),
+        payload=payload,
         search_type=search_type,
         request_id=request_id,
     )
@@ -835,6 +913,7 @@ def _bad_search_field(error_code: str, message: str) -> SearchRouteError:
 
 def _search_root(project_root: object) -> Path | SearchRouteError:
     """Resolve the validated root while preserving the established envelopes."""
+    # Only reached after _search_field_error confirmed project_root is str | None.
     try:
         return _resolve_root(cast("str | None", project_root))
     except ProjectRootRequiredError:
@@ -879,48 +958,86 @@ def _record_validation_rejection(
 async def _execute_search_route(
     search_request: SearchRequest,
     port: int | None,
+    registry: ServiceRegistry,
 ) -> SearchRouteResult:
     """Run, classify, and record the public response for one valid search."""
     from ._routes import canonical_job_snapshot
 
-    availability_context = SearchAvailabilityContext(
-        job_snapshot_before=canonical_job_snapshot(),
-        root=search_request.root,
-        source=cast(
-            'Literal["vault", "code", "document"]', search_request.search_type.value
-        ),
-        request_id=search_request.request_id,
-        port=port,
+    # The fan-out has no single index to classify against, so it builds no
+    # availability facts at all. Deriving ``source`` only on this branch is
+    # what lets it stay typed as one concrete corpus: the checker narrows
+    # ``search_type.value`` here and rejects the fan-out anywhere else, which
+    # a cast at an unconditional construction site could only assert.
+    availability_facts = (
+        None
+        if search_request.search_type is PublicSourceType.COMBINED
+        else SearchAvailabilityRequestFacts(
+            job_snapshot_before=canonical_job_snapshot(),
+            root=search_request.root,
+            source=search_request.search_type.value,
+            request_id=search_request.request_id,
+            port=port,
+        )
     )
-    run = partial(_execute_search_request, search_request)
+    run = partial(_execute_search_request, search_request, registry)
     started = time.perf_counter()
-    if search_request.search_type is PublicSourceType.COMBINED:
-        result = await _run_in_thread(run, limiter=get_search_limiter())
-        classification = None
-    else:
-        result, classification = await _run_search_with_availability(
-            run,
-            availability_context,
+    try:
+        if availability_facts is None:
+            result = await _run_in_thread(run, limiter=get_search_limiter())
+            classification = None
+        else:
+            result, classification = await _run_search_with_availability(
+                run,
+                availability_facts,
+            )
+    except QuiesceAdmissionClosedError as exc:
+        total_seconds = time.perf_counter() - started
+        result = _quiesce_admission_closed_result(
+            exc.snapshot,
+            request_id=search_request.request_id,
+        )
+        _m.incr("search_total")
+        _m.observe("search_last_duration_seconds", total_seconds)
+        log_event(
+            logger,
+            "service.search",
+            "unavailable",
+            fields={
+                "status_code": 503,
+                "error": "quiesce_admission_closed",
+                "request_id": search_request.request_id,
+                "source": search_request.search_type.value,
+                "search_type": search_request.search_type.value,
+                "root": search_request.root,
+                "results": 0,
+                "total_seconds": f"{total_seconds:.3f}",
+            },
+        )
+        return SearchRouteResult(
+            result=result,
+            status_code=503,
+            total_seconds=total_seconds,
+            availability_cause=None,
         )
     total_seconds = time.perf_counter() - started
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
-    response_status = _search_response_status(search_request, result)
-    classification = _classify_completed_search(
-        result,
-        search_request,
-        availability_context,
-        classification,
-        total_seconds,
-    )
-    if classification is not None:
-        result, response_status = _complete_classified_search(
+    response_status = _search_response_status(result)
+    if availability_facts is not None:
+        classification = _classify_completed_search(
+            result,
+            search_request,
+            availability_facts,
             classification,
-            root=search_request.root,
-            source=availability_context.source,
-            request_id=search_request.request_id,
-            total_seconds=total_seconds,
+            total_seconds,
         )
+        if classification is not None:
+            result, response_status = _complete_classified_search(
+                classification,
+                facts=availability_facts,
+                registry=registry,
+                total_seconds=total_seconds,
+            )
     return SearchRouteResult(
         result=result,
         status_code=response_status,
@@ -931,38 +1048,68 @@ async def _execute_search_route(
     )
 
 
-def _search_response_status(
-    search_request: SearchRequest,
-    result: dict[str, object],
-) -> int:
-    """Apply the combined-search response status rule before classification."""
-    if (
-        search_request.search_type is PublicSourceType.COMBINED
-        and result.get("ok") is False
-    ):
-        return 503
-    return 200
+def _search_response_status(result: dict[str, object]) -> int:
+    """Fail the response status for any envelope that declares itself failed.
+
+    Retrieval envelopes carry no ``ok`` key, so only a failure declares one.
+    Keying the status on that declaration rather than on which failures the
+    route happens to enumerate means a newly added error envelope reports a
+    failure status the day it is written.
+    """
+    return 503 if result.get("ok") is False else 200
+
+
+def _quiesce_admission_closed_result(
+    snapshot: QuiesceSnapshot,
+    *,
+    request_id: str,
+) -> dict[str, object]:
+    """Render retryable admission closure without a local remediation path."""
+    return {
+        "ok": False,
+        "error": "quiesce_admission_closed",
+        "message": (
+            "Search is temporarily unavailable while service compute admission is "
+            "closed; retry after the service returns to running."
+        ),
+        "retryable": True,
+        "request_id": request_id,
+        "quiesce": {
+            "state": snapshot.state.value,
+            "admission_epoch": snapshot.admission_epoch,
+            "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
+        },
+    }
 
 
 def _classify_completed_search(
     result: dict[str, object],
     search_request: SearchRequest,
-    context: SearchAvailabilityContext,
+    facts: SearchAvailabilityRequestFacts,
     classification: SearchResponseClassification | None,
     total_seconds: float,
 ) -> SearchResponseClassification | None:
-    """Classify an ordinary completed source search after adding route timing."""
-    if (
-        classification is not None
-        or "results" not in result
-        or search_request.search_type is PublicSourceType.COMBINED
-    ):
+    """Classify an ordinary completed source search after adding route timing.
+
+    Availability classification refines a successful retrieval into an
+    index-unavailable verdict, so a failed envelope is skipped on its own
+    declaration.  Skipping on an absent ``results`` key instead would tie
+    "did this fail" to "does the payload carry hits", which silently held
+    every failure envelope at the success status.
+
+    The ``combined`` fan-out is excluded before this point rather than tested
+    here: it builds no :class:`SearchAvailabilityRequestFacts`, so the route
+    cannot reach this function with it, and the exclusion is now carried by a
+    type the checker enforces instead of by a condition a reader can mistake
+    for redundant and drop.
+    """
+    if classification is not None or result.get("ok") is False:
         return classification
     result["request_id"] = search_request.request_id
     timing = result.get("timing")
     if isinstance(timing, dict):
         cast("dict[str, object]", timing)["server_total_seconds"] = total_seconds
-    return _classify_search_result(result, context)
+    return _classify_search_result(result, facts)
 
 
 async def _search_route_response(request: Request) -> JSONResponse:
@@ -997,7 +1144,11 @@ async def _search_route_response(request: Request) -> JSONResponse:
             _record_validation_rejection(finalization, search_request)
             return search_request.response
         _record_normalized_activity(activity_ticket, search_request)
-        completed = await _execute_search_route(search_request, request.url.port)
+        completed = await _execute_search_route(
+            search_request,
+            request.url.port,
+            get_request_runtime(request).registry,
+        )
         finalization.result = completed.result
         finalization.status_code = completed.status_code
         finalization.total_seconds = completed.total_seconds

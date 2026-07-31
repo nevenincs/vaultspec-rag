@@ -26,7 +26,7 @@ uninterrupted sequence, so no mutation outlived it on disk.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -53,7 +53,7 @@ _CONFIG_ONLY_HEADING = "Config-only keys"
 _PREFIX = "VAULTSPEC_RAG_"
 _CODE_SPAN = re.compile(r"`([^`]+)`")
 
-_DEFAULTS: dict[str, Any] = VaultSpecConfigWrapper._RAG_DEFAULTS
+_DEFAULTS: dict[str, object] = VaultSpecConfigWrapper._RAG_DEFAULTS
 _SETTINGS_KEY_BY_ENV: dict[str, str] = {
     member.value: key for key, member in ENV_OVERRIDE_MAP.items()
 }
@@ -163,7 +163,7 @@ def test_every_documented_variable_is_a_declared_setting() -> None:
 def test_every_declared_variable_is_documented() -> None:
     """Every declared variable must appear in the reference.
 
-    Mutation: deleted the ``VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB`` row - the
+    Mutation: deleted the ``VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`` row - the
     omission shape the page shipped for eight variables at once. Observed this
     assertion fail naming that variable.
     """
@@ -178,7 +178,7 @@ def test_documented_defaults_match_the_shipped_defaults() -> None:
     """Every restated default must equal the value the settings ship.
 
     Mutation: restored the stale ``12288`` as the documented
-    ``VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB`` default - the exact defect this
+    ``VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`` default - the exact defect this
     page shipped. Observed this assertion fail naming that variable, its
     documented value and its real one.
     """

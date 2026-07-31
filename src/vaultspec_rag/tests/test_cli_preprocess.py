@@ -15,7 +15,7 @@ import os
 import shlex
 import sys
 import textwrap
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -112,15 +112,20 @@ def _config_with_rule(root: Path) -> None:
     (root / ".vaultragpreprocess.toml").write_text(body, encoding="utf-8")
 
 
-def _json(output: str) -> dict[str, Any]:
+def _json(output: str) -> dict[str, object]:
     # The runner may mix a stray log line into the captured output; the JSON
     # envelope is the last line that parses as an object.
     for line in reversed(output.splitlines()):
         line = line.strip()
         if line.startswith("{"):
-            return json.loads(line)
+            return cast("dict[str, object]", json.loads(line))
     msg = f"no JSON envelope in output: {output!r}"
     raise AssertionError(msg)
+
+
+def _data(payload: dict[str, object]) -> dict[str, object]:
+    """Return the ``data`` block a preprocess envelope carries."""
+    return cast("dict[str, object]", payload["data"])
 
 
 def _human_fields(output: str) -> dict[str, str]:
@@ -164,7 +169,7 @@ def test_list_empty(tmp_path: Path) -> None:
     root = make_workspace(tmp_path)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "list", "--json"])
     assert result.exit_code == 0
-    assert _json(result.output)["data"]["rules"] == []
+    assert _data(_json(result.output))["rules"] == []
 
 
 def test_list_shows_rule(tmp_path: Path) -> None:
@@ -172,7 +177,7 @@ def test_list_shows_rule(tmp_path: Path) -> None:
     _config_with_rule(root)
     result = runner.invoke(app, ["--target", str(root), "preprocess", "list", "--json"])
     assert result.exit_code == 0
-    rules = _json(result.output)["data"]["rules"]
+    rules = cast("list[dict[str, object]]", _data(_json(result.output))["rules"])
     assert len(rules) == 1
     assert rules[0]["pattern"] == "*.pdf"
     assert rules[0]["on_error"] == "skip"
@@ -207,7 +212,7 @@ def test_check_valid(tmp_path: Path) -> None:
         app, ["--target", str(root), "preprocess", "check", "--json"]
     )
     assert result.exit_code == 0
-    data = _json(result.output)["data"]
+    data = _data(_json(result.output))
     assert data["valid"] is True
     assert data["rule_count"] == 1
     assert data["schema_version"] == 2
@@ -268,7 +273,7 @@ def test_run_one_no_match(tmp_path: Path) -> None:
         app, ["--target", str(root), "preprocess", "run-one", "notes.txt", "--json"]
     )
     assert result.exit_code == 0
-    assert _json(result.output)["data"]["matched"] is False
+    assert _data(_json(result.output))["matched"] is False
 
 
 def test_run_one_matches_and_runs(tmp_path: Path) -> None:
@@ -279,11 +284,11 @@ def test_run_one_matches_and_runs(tmp_path: Path) -> None:
         app, ["--target", str(root), "preprocess", "run-one", "report.pdf", "--json"]
     )
     assert result.exit_code == 0
-    data = _json(result.output)["data"]
+    data = _data(_json(result.output))
     assert data["matched"] is True
     assert data["status"] == "ok"
     assert data["unit_count"] == 1
-    assert data["output"]["preprocessor_id"] == "fake"
+    assert cast("dict[str, object]", data["output"])["preprocessor_id"] == "fake"
 
 
 def test_run_one_human_output_uses_plain_result_language(tmp_path: Path) -> None:
@@ -330,7 +335,7 @@ def test_run_one_gated_off_json_reports_mode(
         app, ["--target", str(root), "preprocess", "run-one", "report.pdf", "--json"]
     )
     assert result.exit_code == 0, result.output
-    data = _json(result.output)["data"]
+    data = _data(_json(result.output))
     assert data["matched"] is False
     assert data["gated"] is True
     assert data["mode"] == "off"
@@ -346,7 +351,7 @@ def test_status_default_mode_reports_would_run(tmp_path: Path) -> None:
         app, ["--target", str(root), "preprocess", "status", "--json"]
     )
     assert result.exit_code == 0, result.output
-    data = _json(result.output)["data"]
+    data = _data(_json(result.output))
     assert data["mode"] == "default"
     assert data["config_present"] is True
     assert data["config_valid"] is True
@@ -368,7 +373,7 @@ def test_status_no_config_reports_no_rules(tmp_path: Path) -> None:
         app, ["--target", str(root), "preprocess", "status", "--json"]
     )
     assert result.exit_code == 0, result.output
-    data = _json(result.output)["data"]
+    data = _data(_json(result.output))
     assert data["config_present"] is False
     assert data["rule_count"] == 0
     assert data["schema_version"] is None
@@ -385,7 +390,7 @@ def test_status_off_mode_reports_off(
         app, ["--target", str(root), "preprocess", "status", "--json"]
     )
     assert result.exit_code == 0, result.output
-    data = _json(result.output)["data"]
+    data = _data(_json(result.output))
     assert data["mode"] == "off"
     assert data["rule_count"] == 1
     assert data["would_run"] is False

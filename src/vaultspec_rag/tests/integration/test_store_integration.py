@@ -5,7 +5,7 @@ Tests updated for Qdrant-backed store (replacing LanceDB).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -61,7 +61,11 @@ class TestVaultStore:
             with pytest.raises(VaultStoreLockedError) as excinfo:
                 VaultStore(tmp_path)
             assert str(first.db_path) == excinfo.value.db_path
-            assert "already in use" in str(excinfo.value)
+            # Both stores live in this process and the OS lock is per open
+            # handle, so the refusal must name this process rather than blame
+            # a second one that was never involved.
+            assert excinfo.value.held_in_process is True
+            assert "already open in this process" in str(excinfo.value)
         finally:
             first.close()
 
@@ -111,6 +115,9 @@ class TestVaultStore:
         # Re-insert it so other tests aren't affected (session-scoped fixture)
         from ... import VaultDocument
 
+        # The retrieved payload is genuinely dynamic store content; narrow it
+        # here at the point it is unpacked into the reconstructed document.
+        doc = cast("dict[str, Any]", doc)
         reinsert = VaultDocument(
             id=doc["id"],
             path=doc["path"],

@@ -22,14 +22,14 @@ import logging
 from contextvars import Context
 from typing import TYPE_CHECKING, cast
 
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
-from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.mcps import (
     mcp_status,
     mcp_sync,
 )
-from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.workspace_mode import (
     ModeProvenance,
     PackageDeclaration,
     ResolvedMode,
@@ -42,7 +42,7 @@ from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissin
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+    from vaultspec_core.core.types import (
         SyncResult,
     )
 
@@ -150,7 +150,7 @@ def infer_rag_upgrade_mode(
 
 
 def mode_is_deployed(target: Path, *, require_all: bool = True) -> bool:
-    from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+    from vaultspec_core.core.enums import (
         Tool,
     )
 

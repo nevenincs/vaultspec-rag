@@ -26,7 +26,7 @@ import json
 import re
 import urllib.error
 import zipfile
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pytest
 import typer
@@ -40,6 +40,8 @@ from ..cli._progress import StartupStatusReporter
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from qdrant_client import QdrantClient
 
 pytestmark = [pytest.mark.unit]
 
@@ -80,19 +82,30 @@ class _Clock:
         return self.now
 
 
-def _byte_bar(bar_class: type[Any], *, desc: str) -> Any:
+class _ByteBar(Protocol):
+    """The members this module drives on a hub-constructed tqdm bar."""
+
+    total: int | float | None
+    disable: bool
+
+    def update(self, n: int) -> bool | None: ...
+
+
+def _byte_bar(bar_class: type[Any], *, desc: str) -> _ByteBar:
     """Build one byte bar exactly as ``snapshot_download`` builds its own.
 
     Through the hub's own factory rather than a hand-written call: that factory
     is what decides whether a custom bar class is handed ``disable`` and
     ``name``, and getting that wrong is how a bar class silently stops
-    counting.
+    counting. ``bar_class`` stays ``type[Any]`` because it is threaded straight
+    through from the hub's own ``tqdm_class`` property, which is typed exactly
+    that way against the hub's partially-unknown tqdm stubs.
     """
     from huggingface_hub.utils.tqdm import (
         _create_progress_bar,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
     )
 
-    create = cast("Callable[..., Any]", _create_progress_bar)
+    create = cast("Callable[..., _ByteBar]", _create_progress_bar)
     return create(
         cls=bar_class,
         log_level=20,
@@ -106,7 +119,7 @@ def _byte_bar(bar_class: type[Any], *, desc: str) -> Any:
     )
 
 
-def _seed_totals(bars: list[Any], totals: list[int]) -> None:
+def _seed_totals(bars: list[_ByteBar], totals: list[int]) -> None:
     """Grow each bar's total the way the hub's per-file adapter grows them."""
     for bar, total in zip(bars, totals, strict=True):
         bar.total = (bar.total or 0) + total
@@ -487,7 +500,7 @@ class TestQdrantProvisionProgress:
             )
 
         assert result.exit_code == 0, result.output
-        payload = json.loads(result.output)
+        payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == "server.qdrant.install"
         assert "Installing the managed Qdrant server" not in result.output
 
@@ -660,7 +673,7 @@ class TestStartPathProvisionProgress:
         assert calls == ["provision"], "the interception was never reached"
         assert exit_info.value.exit_code == 1
         captured = capsys.readouterr()
-        payload = json.loads(captured.out)
+        payload = cast("dict[str, object]", json.loads(captured.out))
         assert payload["ok"] is False
         assert payload["error"] == "qdrant_provision_failed"
         assert "Downloading the Qdrant server" not in captured.out
@@ -735,7 +748,7 @@ class TestReconcileProgress:
         del isolated_singleton_dirs
         result = runner.invoke(app, ["server", "reconcile", "--json", "--timeout", "0"])
 
-        payload = json.loads(result.output)
+        payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == "service.reconcile"
         assert "Waiting for service discovery" not in result.output
 
@@ -744,7 +757,7 @@ class TestStorageProgress:
     """``server storage``: the walks that used to run silent."""
 
     @staticmethod
-    def _client_with(collections: tuple[str, ...]) -> Any:
+    def _client_with(collections: tuple[str, ...]) -> QdrantClient:
         from qdrant_client import QdrantClient, models
 
         client = QdrantClient(":memory:")
@@ -852,7 +865,7 @@ class TestStorageProgress:
         del isolated_singleton_dirs
         result = runner.invoke(app, ["server", "storage", "survey", "--json"])
 
-        payload = json.loads(result.output)
+        payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == "server.storage.survey"
         assert "Surveying stored index namespaces" not in result.output
         assert "Counting points" not in result.output
@@ -892,6 +905,6 @@ class TestStorageProgress:
             result = runner.invoke(app, argv)
 
         assert result.exit_code == 2, result.output
-        payload = json.loads(result.output)
+        payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == command
         assert payload["ok"] is False

@@ -13,7 +13,6 @@ from ..logging_config import (
     MAX_MANAGED_LOG_SOURCE_BYTES,
     POLLED_ROUTES,
     InvalidManagedLogSourceError,
-    ManagedLogGroup,
     PolledAccessFilter,
     log_event,
     query_managed_logs,
@@ -136,7 +135,7 @@ def test_managed_log_query_caps_one_oversized_record_and_marks_truncation(
     )
 
     payload = query_managed_logs(1, source="service", status_dir=tmp_path)
-    group = cast("list[ManagedLogGroup]", payload["groups"])[0]
+    group = payload["groups"][0]
 
     assert group.get("truncated") is True
     assert group.get("marker") == MANAGED_LOG_TRUNCATION_MARKER
@@ -155,7 +154,7 @@ def test_newline_free_log_read_scans_only_finite_source_tail(tmp_path: Path) -> 
     (tmp_path / "service.log").write_bytes(b"z" * record_bytes)
 
     payload = query_managed_logs(1, source="service", status_dir=tmp_path)
-    group = cast("list[ManagedLogGroup]", payload["groups"])[0]
+    group = payload["groups"][0]
     details = group.get("truncation")
     assert details is not None
 
@@ -180,7 +179,7 @@ def test_managed_log_query_caps_each_source_response_independently(
 
     payload = query_managed_logs(5_000, status_dir=tmp_path)
 
-    for group in cast("list[ManagedLogGroup]", payload["groups"]):
+    for group in payload["groups"]:
         details = group.get("truncation")
         assert details is not None
         assert group.get("marker") == MANAGED_LOG_TRUNCATION_MARKER

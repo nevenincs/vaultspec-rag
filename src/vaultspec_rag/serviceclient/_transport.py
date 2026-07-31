@@ -39,8 +39,16 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict, Unpack, cast
+from dataclasses import dataclass, field
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    NoReturn,
+    Protocol,
+    TypedDict,
+    Unpack,
+    cast,
+)
 
 from .._loopback_http import (
     FAST_CONNECT_TIMEOUT_SECONDS,
@@ -57,6 +65,8 @@ from .._source_types import (
 from ..config._settings import get_config, rag_default
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     # The job-source vocabulary has one declaration, the canonical enum.
     # Annotation-only, so the client does not import the domain at runtime.
     from ..job_models import DesiredJobState, JobMode, JobSource
@@ -90,15 +100,27 @@ __all__ = [
     "resolve_service_port",
 ]
 
+
+def _default_seconds(key: str) -> float:
+    """Return a shipped numeric default, narrowed from the settings dict's Any.
+
+    ``rag_default`` reads ``_RAG_DEFAULTS``, a literal dict authored in this
+    codebase rather than external input, so this narrows a static, own-code
+    invariant instead of guarding against anything dynamic.
+    """
+    value = rag_default(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{key} default must be a number")
+    return float(value)
+
+
 #: Client-side request bounds. The values live in the settings defaults so the
 #: settings object stays the one home for them; these names remain because
 #: callers and tests import them.
-DEFAULT_SEARCH_TIMEOUT_SECONDS: float = float(
-    rag_default("service_search_timeout_seconds")
+DEFAULT_SEARCH_TIMEOUT_SECONDS: float = _default_seconds(
+    "service_search_timeout_seconds"
 )
-DEFAULT_ADMIN_TIMEOUT_SECONDS: float = float(
-    rag_default("service_admin_timeout_seconds")
-)
+DEFAULT_ADMIN_TIMEOUT_SECONDS: float = _default_seconds("service_admin_timeout_seconds")
 #: Bound for the health probe. Matches the command-line probe it replaces, so
 #: repointed call sites wait exactly as long as they did before.
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 5.0
@@ -111,7 +133,14 @@ type HTTPMethod = Literal["GET", "POST", "PUT", "DELETE"]
 type JobControlMode = Literal["graceful", "force"]
 
 
-class HTTPCallOptions(TypedDict, total=False):
+class InitialBearerOptions(TypedDict, total=False):
+    """Ephemeral bearer controls for a caller that has pinned its target."""
+
+    initial_bearer_token: str | None
+    refresh_bearer_token: Callable[[], str] | None
+
+
+class HTTPCallOptions(InitialBearerOptions, total=False):
     """Optional wire controls retained by the general HTTP-call surface."""
 
     method: HTTPMethod | None
@@ -125,9 +154,11 @@ class _HTTPCallRequest:
     port: int
     path: str
     payload: dict[str, object] | None
-    token: str
+    token: str = field(repr=False)
     method: HTTPMethod | None = None
     headers: dict[str, str] | None = None
+    initial_bearer_token: str | None = field(default=None, repr=False)
+    refresh_bearer_token: Callable[[], str] | None = field(default=None, repr=False)
 
 
 class JobCallOptions(TypedDict, total=False):
@@ -303,9 +334,32 @@ class ServiceResponseTooLargeError(ValueError):
     """Raised before a service response can exceed the client memory bound."""
 
 
-def read_service_response(response: Any) -> bytes:
+class _ReadableResponse(Protocol):
+    """The one method this transport needs from an opened HTTP response.
+
+    Structural rather than ``http.client.HTTPResponse`` by name: the opener
+    yields whatever handler chain produced it (typed ``Any`` upstream), and
+    ``urllib.error.HTTPError`` reaches this same call as the response for a
+    non-2xx status. Both share only this read method.
+    """
+
+    def read(self, amt: int, /) -> bytes: ...
+
+
+class _StatusReadableResponse(_ReadableResponse, Protocol):
+    """A response exposing an HTTP status code alongside :meth:`read`.
+
+    Only the success path needs the status to report back to its caller;
+    the ``HTTPError`` branch reads its own ``.code`` instead, so only this
+    narrower success-path type declares it.
+    """
+
+    status: int
+
+
+def read_service_response(response: _ReadableResponse) -> bytes:
     """Read at most one byte beyond the finite service-response ceiling."""
-    raw = cast("bytes", response.read(MAX_SERVICE_RESPONSE_BYTES + 1))
+    raw = response.read(MAX_SERVICE_RESPONSE_BYTES + 1)
     if len(raw) > MAX_SERVICE_RESPONSE_BYTES:
         raise ServiceResponseTooLargeError(
             "service response exceeded the "
@@ -389,7 +443,9 @@ def _status_file_token() -> str:
     status = read_service_status()
     if not status:
         return ""
-    token = status.get("service_token", status.get("token", ""))
+    token: object = status.get("service_token")
+    if token is None:
+        token = status.get("token")
     return token if isinstance(token, str) else ""
 
 
@@ -398,14 +454,19 @@ def _try_http_health(
     timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
     *,
     connect_timeout: float | None = FAST_CONNECT_TIMEOUT_SECONDS,
-) -> dict[str, Any] | None:
+) -> dict[str, object] | None:
     """Probe the ungated ``/health`` route, distinguishing down from unhealthy.
 
-    This is the single owner of the health call. It deliberately does not share
-    the general entry point's contract: callers here branch on a sentinel rather
-    than catch an exception, because several of them sit inside lifecycle verbs
-    that must emit exactly one structured outcome on every exit path, and an
-    escaping exception would become a second one.
+    This is the readiness probe every CLI and status surface reads through -
+    not the only code in this module that calls ``/health``.
+    :func:`_fetch_health_token` calls it separately to read the token alone,
+    because that caller must propagate a timeout to its own retry budget
+    rather than swallow it into the sentinel contract below; merging the two
+    would either lose that propagation or leak an exception into every caller
+    here. Callers here branch on a sentinel rather than catch an exception,
+    because several of them sit inside lifecycle verbs that must emit exactly
+    one structured outcome on every exit path, and an escaping exception would
+    become a second one.
 
     ``/health`` is ungated, so no credential is sent and no token-recovery retry
     is needed; the request goes through the same redirect-refusing opener as
@@ -443,6 +504,7 @@ def _try_http_health(
         return None
     url = f"http://127.0.0.1:{port}/health"
     try:
+        resp: _ReadableResponse
         with LOOPBACK_OPENER.open(url, timeout=timeout) as resp:
             parsed: object = json.loads(read_service_response(resp).decode("utf-8"))
         if not isinstance(parsed, dict):
@@ -457,7 +519,7 @@ def _try_http_health(
                 type(parsed).__name__,
             )
             return None
-        return cast("dict[str, Any]", parsed)
+        return cast("dict[str, object]", parsed)
     except urllib.error.HTTPError as exc:
         # The service answered, so report the code rather than "unreachable" -
         # a caller must be able to tell a sick daemon from an absent one.
@@ -485,6 +547,7 @@ def _fetch_health_token(port: int, timeout: float | None = None) -> str:
     url = f"http://127.0.0.1:{port}/health"
     try:
         req = urllib.request.Request(url, method="GET")
+        resp: _ReadableResponse
         with LOOPBACK_OPENER.open(
             req, timeout=timeout or DEFAULT_ADMIN_TIMEOUT_SECONDS
         ) as resp:
@@ -523,6 +586,35 @@ def _build_call_request(
     return urllib.request.Request(url, headers=headers, method=resolved_method)
 
 
+def _foreign_peer_body(code: int, url: str, detail: str) -> dict[str, object]:
+    """Describe a response body that cannot have come from this daemon.
+
+    Returned rather than raised, for the reason :func:`_try_http_health` gives
+    for its own sentinel: several callers sit inside lifecycle verbs that must
+    emit exactly one structured outcome on every exit path, and an escaping
+    exception there would become a second one. The ``ok=False`` shape is the
+    one every ``_try_http_*`` wrapper and every CLI reader already branches on.
+    """
+    return {
+        "ok": False,
+        "error": "http_error",
+        "http_code": code,
+        "message": (
+            f"HTTP {code} from {url} with {detail}. This usually means the "
+            "request reached a service that is not the vaultspec-rag daemon "
+            "(for example the Qdrant port). Confirm the running service with "
+            "`vaultspec-rag server status`."
+        ),
+    }
+
+
+def _non_object_body(code: int, url: str, parsed: object) -> dict[str, object]:
+    """Report valid JSON that is not an object as a foreign-peer answer."""
+    kind = type(parsed).__name__
+    logger.debug("call to %s returned a non-object body (%s)", url, kind)
+    return _foreign_peer_body(code, url, f"a JSON body that is not an object ({kind})")
+
+
 def _send_call(
     req: urllib.request.Request, timeout: float | None
 ) -> tuple[int, dict[str, object]]:
@@ -532,32 +624,33 @@ def _send_call(
     returned alongside their status code rather than raised, so the caller can
     react to a 401 by refreshing the token. Connection-level failures still
     propagate to the caller's unreachable handling.
+
+    A body that decodes as JSON but is not an object is not an answer from this
+    daemon on either path, so it is reported as a foreign-peer failure rather
+    than passed through. Passing it through would hand every caller a value it
+    immediately reads as a mapping, and the failure would surface as an
+    ``AttributeError`` inside whichever verb read it, far from this cause.
     """
     try:
+        resp: _StatusReadableResponse
         with LOOPBACK_OPENER.open(req, timeout=timeout) as resp:
-            body = cast(
-                "dict[str, object]",
-                json.loads(read_service_response(resp).decode("utf-8")),
-            )
-            return int(resp.status), body
+            parsed: object = json.loads(read_service_response(resp).decode("utf-8"))
+            code = resp.status
+            if not isinstance(parsed, dict):
+                return code, _non_object_body(code, req.full_url, parsed)
+            return code, cast("dict[str, object]", parsed)
     except urllib.error.HTTPError as e:
         raw = read_service_response(e).decode("utf-8")
         try:
-            return e.code, cast("dict[str, object]", json.loads(raw))
+            error_body: object = json.loads(raw)
         except json.JSONDecodeError:
             detail = raw.strip() or "(empty response body)"
-            return e.code, {
-                "ok": False,
-                "error": "http_error",
-                "http_code": e.code,
-                "message": (
-                    f"HTTP {e.code} from {req.full_url} with a non-JSON body: "
-                    f"{detail}. This usually means the request reached a service "
-                    "that is not the vaultspec-rag daemon (for example the Qdrant "
-                    "port). Confirm the running service with `vaultspec-rag server "
-                    "status`."
-                ),
-            }
+            return e.code, _foreign_peer_body(
+                e.code, req.full_url, f"a non-JSON body: {detail}"
+            )
+        if not isinstance(error_body, dict):
+            return e.code, _non_object_body(e.code, req.full_url, error_body)
+        return e.code, cast("dict[str, object]", error_body)
 
 
 def _raise_deadline_exhausted(
@@ -593,12 +686,13 @@ def _do_http_call(
 ) -> dict[str, object] | None:
     """Call a service route, recovering the auth token on a 401.
 
-    The token from the local status file is sent first (it may be empty or
-    stale). Only if the route rejects it with 401 does the client fetch the
-    live token from the target port's ungated ``/health`` and retry once. This
-    keeps the happy path a single request while letting ``--port`` authenticate
-    against a service started out-of-band (missing status file) or restarted
-    (rotated token), without an extra round-trip when the first call succeeds.
+    An ``initial_bearer_token`` is sent before the local status-file token.
+    That option exists for a caller that has already pinned the service identity
+    through an independent coordination witness. It must provide
+    ``refresh_bearer_token`` as well: after a 401 only that caller's renewed
+    witness may supply a retry credential. The ordinary path retains its
+    status-file-first request and one ``/health`` token refresh, preserving
+    support for an explicitly addressed service outside the local status dir.
 
     An omitted or ``None`` timeout resolves through the administrative timeout
     policy rather than to no bound at all, so the operator override applies here
@@ -664,25 +758,50 @@ def _do_http_call(
                 deadline=deadline,
             )
 
-    token = _status_file_token()
+    initial_bearer_token = request_options.initial_bearer_token
+    token = (
+        initial_bearer_token
+        if initial_bearer_token is not None
+        else _status_file_token()
+    )
     status_code, result = send("initial request", token)
     remaining("initial response")
 
     if status_code == 401:
-        try:
-            fresh = _fetch_health_token(port, remaining("health-token request"))
-        except Exception as exc:
-            _raise_deadline_exhausted(
-                exc,
-                stage="health-token request",
-                timeout=resolved_timeout,
-                started=started,
-                deadline=deadline,
-            )
-        remaining("health-token response")
-        if fresh and fresh != token:
+        if initial_bearer_token is not None:
+            refresh_bearer_token = request_options.refresh_bearer_token
+            if refresh_bearer_token is None:
+                return result
+            try:
+                fresh = refresh_bearer_token()
+            except Exception as exc:
+                _raise_deadline_exhausted(
+                    exc,
+                    stage="verified-token refresh",
+                    timeout=resolved_timeout,
+                    started=started,
+                    deadline=deadline,
+                )
+            remaining("verified-token refresh")
+        else:
+            try:
+                fresh = _fetch_health_token(port, remaining("health-token request"))
+            except Exception as exc:
+                _raise_deadline_exhausted(
+                    exc,
+                    stage="health-token request",
+                    timeout=resolved_timeout,
+                    started=started,
+                    deadline=deadline,
+                )
+            remaining("health-token response")
+        # A captured caller has just revalidated one pinned identity.  A 401 can
+        # be a transient authentication race even when that identity retains
+        # the same bearer, so it receives exactly one authenticated retry.  The
+        # ordinary status-file flow still retries only a changed health token.
+        if fresh and (initial_bearer_token is not None or fresh != token):
             logger.debug(
-                "token rejected on port %s; retrying with the /health token", port
+                "token rejected on port %s; retrying with a refreshed token", port
             )
             _, result = send("authenticated retry", fresh)
             remaining("authenticated retry response")
@@ -905,7 +1024,7 @@ def _try_http_delete_job(
     )
 
 
-def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
+def _admin_url_with_root(base: str, args: dict[str, object]) -> str:
     """Append ?project_root=... to base when args contains it."""
     project_root = args.get("project_root")
     if project_root:
@@ -916,7 +1035,7 @@ def _admin_url_with_root(base: str, args: dict[str, Any]) -> str:
 _LOGS_PARAMS = {"lines", "source", "job_id", "contains"}
 
 
-def _bounded_route_path(base: str, args: dict[str, Any], allowed: set[str]) -> str:
+def _bounded_route_path(base: str, args: dict[str, object], allowed: set[str]) -> str:
     """Append the allowlisted, non-``None`` entries of ``args`` to ``base``."""
     params = {
         key: value
@@ -928,7 +1047,7 @@ def _bounded_route_path(base: str, args: dict[str, Any], allowed: set[str]) -> s
     return base
 
 
-def _logs_route_path(args: dict[str, Any]) -> str:
+def _logs_route_path(args: dict[str, object]) -> str:
     """Build the grouped JSON logs route with source and bounded filters.
 
     The daemon's ``/logs/json`` route returns source-tagged groups which the
@@ -969,7 +1088,7 @@ _JOBS_PARAMS = {
 }
 
 
-def _jobs_route_path(args: dict[str, Any]) -> str:
+def _jobs_route_path(args: dict[str, object]) -> str:
     """Build the ``/jobs`` route path with its bounded query filters."""
     return _bounded_route_path("/jobs", args, _JOBS_PARAMS)
 
@@ -984,7 +1103,7 @@ _SEARCH_ACTIVITY_PARAMS = {
 }
 
 
-def _search_activity_route_path(args: dict[str, Any]) -> str:
+def _search_activity_route_path(args: dict[str, object]) -> str:
     """Build the bounded active/recent served-search activity route."""
     return _bounded_route_path("/search-activity", args, _SEARCH_ACTIVITY_PARAMS)
 
@@ -992,14 +1111,14 @@ def _search_activity_route_path(args: dict[str, Any]) -> str:
 _STORAGE_SURVEY_PARAMS = {"status", "limit", "root", "fresh"}
 
 
-def _storage_survey_route_path(args: dict[str, Any]) -> str:
+def _storage_survey_route_path(args: dict[str, object]) -> str:
     """Build the ``/storage/survey`` route path with its bounded filters."""
     return _bounded_route_path("/storage/survey", args, _STORAGE_SURVEY_PARAMS)
 
 
 def _resolve_admin_call(
-    tool_name: str, args: dict[str, Any]
-) -> tuple[str, dict[str, Any] | None] | None:
+    tool_name: str, args: dict[str, object]
+) -> tuple[str, dict[str, object] | None] | None:
     """Resolve an admin tool to its ``(path, body)`` pair, or ``None`` if unknown."""
     filtered_routes = {
         "get_logs": _logs_route_path,
@@ -1022,13 +1141,13 @@ def _resolve_admin_call(
 
 def _route_admin_tool(
     tool_name: str,
-    args: dict[str, Any],
+    args: dict[str, object],
     port: int,
-) -> dict[str, Any] | None:
+    *,
+    timeout: float,
+    **auth: Unpack[InitialBearerOptions],
+) -> dict[str, object] | None:
     """Map an admin tool name to an HTTP call and return the raw result."""
-    raw_timeout = args.get("_timeout")
-    timeout = float(raw_timeout) if isinstance(raw_timeout, int | float) else None
-    args = {key: value for key, value in args.items() if key != "_timeout"}
     resolved = _resolve_admin_call(tool_name, args)
     if resolved is None:
         return {
@@ -1037,20 +1156,39 @@ def _route_admin_tool(
             "message": f"Tool {tool_name} not mapped",
         }
     path, body = resolved
-    return _do_http_call(port, path, body, timeout=timeout)
+    return _do_http_call(
+        port,
+        path,
+        body,
+        timeout=timeout,
+        **auth,
+    )
 
 
 def _try_http_admin(
     tool_name: str,
-    args: dict[str, Any],
+    args: dict[str, object],
     port: int | None,
     timeout: float | None = None,
-) -> dict[str, Any] | None:
+    **auth: Unpack[InitialBearerOptions],
+) -> dict[str, object] | None:
+    """Run one admin call without serializing caller-held bearer credentials.
+
+    A caller that supplies ``initial_bearer_token`` has independently pinned a
+    service identity. Its refresh callable is consulted only after that exact
+    bearer receives a 401; neither value becomes part of the route body.
+    """
     if port is None:
         return None
     resolved_timeout = _get_admin_timeout(timeout)
     try:
-        res = _route_admin_tool(tool_name, {**args, "_timeout": resolved_timeout}, port)
+        res = _route_admin_tool(
+            tool_name,
+            args,
+            port,
+            timeout=resolved_timeout,
+            **auth,
+        )
         return res if res is not None else {}
     except Exception as exc:
         if _is_connection_refused(exc):
@@ -1117,7 +1255,7 @@ def _try_http_vault_document(
     the admin-call discrimination (refused -> ``None``). Empty ``project_root``
     is omitted so the daemon resolves its default root.
     """
-    args: dict[str, Any] = {"doc_id": doc_id}
+    args: dict[str, object] = {"doc_id": doc_id}
     if project_root:
         args["project_root"] = project_root
     return _try_http_admin(
@@ -1363,6 +1501,120 @@ def _search_response_envelope(response: object, port: int) -> dict[str, object]:
     return _invalid_search_service_response(port)
 
 
+def _str_search_field(values: dict[str, object], key: str) -> str:
+    """Return one required string search argument, narrowed from ``object``.
+
+    Positional arguments to ``_try_http_search`` arrive typed bare
+    ``object`` (there is no way to check a positional value's type before it
+    is zipped to its name), so this is where a caller's wrong-typed value is
+    caught instead of reaching :class:`_SearchCallRequest` through an
+    unchecked ``**cast("Any", ...)`` unpack.
+    """
+    value = values.get(key)
+    if not isinstance(value, str):
+        raise TypeError(f"_try_http_search argument {key!r} must be a string")
+    return value
+
+
+def _optional_str_search_field(values: dict[str, object], key: str) -> str | None:
+    """Return one optional string search argument, narrowed from ``object``."""
+    value = values.get(key)
+    if value is None:
+        return None
+    return _str_search_field(values, key)
+
+
+def _int_search_field(values: dict[str, object], key: str) -> int:
+    """Return one required integer search argument, narrowed from ``object``."""
+    value = values.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"_try_http_search argument {key!r} must be an int")
+    return value
+
+
+def _optional_numeric_search_field(values: dict[str, object], key: str) -> float | None:
+    """Return one optional numeric search argument as a float.
+
+    Mirrors the admin-call numeric coercion elsewhere in this module: an
+    int literal is a reasonable spelling of a float-typed argument, so both
+    are accepted and coerced; anything else is rejected.
+    """
+    value = values.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"_try_http_search argument {key!r} must be a number")
+    return float(value)
+
+
+def _optional_bool_search_field(values: dict[str, object], key: str) -> bool | None:
+    """Return one optional boolean search argument, narrowed from ``object``."""
+    value = values.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise TypeError(f"_try_http_search argument {key!r} must be a bool")
+    return value
+
+
+def _optional_str_list_search_field(
+    values: dict[str, object], key: str
+) -> list[str] | None:
+    """Return one optional string-list search argument, narrowed from ``object``."""
+    value = values.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise TypeError(f"_try_http_search argument {key!r} must be a list of strings")
+    # A confirmed list's element type is still Unknown to the checker; this
+    # names it `object` so the per-element isinstance check just below does
+    # the actual narrowing instead of the cast asserting it away.
+    raw_list = cast("list[object]", value)
+    if not all(isinstance(item, str) for item in raw_list):
+        raise TypeError(f"_try_http_search argument {key!r} must be a list of strings")
+    return cast("list[str]", raw_list)
+
+
+def _optional_id_list_search_field(
+    values: dict[str, object], key: str
+) -> list[str | int] | None:
+    """Return one optional id-list search argument, narrowed from ``object``."""
+    value = values.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise TypeError(f"_try_http_search argument {key!r} must be a list of ids")
+    raw_list = cast("list[object]", value)
+    if not all(
+        isinstance(item, str) or (isinstance(item, int) and not isinstance(item, bool))
+        for item in raw_list
+    ):
+        raise TypeError(f"_try_http_search argument {key!r} must be a list of ids")
+    return cast("list[str | int]", raw_list)
+
+
+def _optional_document_filters_search_field(
+    values: dict[str, object], key: str
+) -> DocumentSearchFilters | None:
+    """Return one optional document-filter mapping, narrowed from ``object``."""
+    value = values.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError(
+            f"_try_http_search argument {key!r} must be a string-keyed mapping"
+        )
+    raw_mapping = cast("dict[object, object]", value)
+    if not all(
+        isinstance(k, str) and (v is None or isinstance(v, str))
+        for k, v in raw_mapping.items()
+    ):
+        raise TypeError(
+            f"_try_http_search argument {key!r} must be a string-keyed mapping"
+        )
+    return cast("DocumentSearchFilters", raw_mapping)
+
+
 def _search_request_from_arguments(
     positional: tuple[object, ...],
     arguments: SearchCallArguments,
@@ -1380,7 +1632,33 @@ def _search_request_from_arguments(
                 f"_try_http_search got multiple values for argument {name!r}"
             )
         values[name] = value
-    return _SearchCallRequest(**cast("Any", values))
+    return _SearchCallRequest(
+        query=_str_search_field(values, "query"),
+        search_type=_str_search_field(values, "search_type"),
+        top_k=_int_search_field(values, "top_k"),
+        port=_int_search_field(values, "port"),
+        project_root=_str_search_field(values, "project_root"),
+        timeout=_optional_numeric_search_field(values, "timeout"),
+        language=_optional_str_search_field(values, "language"),
+        path=_optional_str_search_field(values, "path"),
+        node_type=_optional_str_search_field(values, "node_type"),
+        function_name=_optional_str_search_field(values, "function_name"),
+        class_name=_optional_str_search_field(values, "class_name"),
+        doc_type=_optional_str_search_field(values, "doc_type"),
+        feature=_optional_str_search_field(values, "feature"),
+        date=_optional_str_search_field(values, "date"),
+        tag=_optional_str_search_field(values, "tag"),
+        intent=_optional_str_search_field(values, "intent"),
+        include_paths=_optional_str_list_search_field(values, "include_paths"),
+        exclude_paths=_optional_str_list_search_field(values, "exclude_paths"),
+        dedup_locales=_optional_bool_search_field(values, "dedup_locales"),
+        prefer=_optional_str_search_field(values, "prefer"),
+        like_ids=_optional_id_list_search_field(values, "like_ids"),
+        unlike_ids=_optional_id_list_search_field(values, "unlike_ids"),
+        document_filters=_optional_document_filters_search_field(
+            values, "document_filters"
+        ),
+    )
 
 
 def _validate_search_request(
@@ -1405,7 +1683,7 @@ def _validate_search_request(
         return None, refusal
     try:
         validate_search_filters(
-            cast("Any", source.value),
+            source.value,
             SearchFilterOptions(
                 language=request.language,
                 path=request.path,

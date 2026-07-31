@@ -33,6 +33,7 @@ from ...cli._service_status import (
     read_service_status,
 )
 from ...config._types import EnvVar
+from ...jobs import count
 from .._model_setup import (
     model_setup_timeout_seconds,
 )
@@ -177,18 +178,12 @@ def _wait_for_published_qdrant(
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         status = read_service_status()
-        raw_pid = status.get("qdrant_pid") if status else None
-        raw_port = status.get("qdrant_port") if status else None
-        valid_pid = (
-            isinstance(raw_pid, int) and not isinstance(raw_pid, bool) and raw_pid > 0
-        )
-        valid_port = (
-            isinstance(raw_port, int)
-            and not isinstance(raw_port, bool)
-            and raw_port > 0
-        )
-        if valid_pid and valid_port:
-            return cast("int", raw_pid), cast("int", raw_port)
+        published_pid = count(status.get("qdrant_pid") if status else None)
+        published_port = count(status.get("qdrant_port") if status else None)
+        # A count reads zero as a legitimate quantity; neither a process
+        # identifier nor a listening port ever is.
+        if published_pid and published_port:
+            return published_pid, published_port
         if not pid_alive(service_pid):
             return None
         time.sleep(0.1)
@@ -211,8 +206,8 @@ def _service_processes_on_port(port: int) -> dict[int, list[str]]:
             argv[index : index + len(expected)] == expected
             for index in range(len(argv) - len(expected) + 1)
         ):
-            pid = info.get("pid")
-            if isinstance(pid, int) and not isinstance(pid, bool):
+            pid = count(info.get("pid"))
+            if pid is not None:
                 found[pid] = argv
     return found
 
@@ -568,17 +563,16 @@ def _identity_health_process(
 import os
 
 import uvicorn
-from starlette.applications import Starlette
-from starlette.routing import Route
-
-import vaultspec_rag.server as server
 from vaultspec_rag._machine_lock import (  # absolute-import-ok
     acquire_machine_lock_lease,
     release_machine_lock_lease,
 )
-from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok
+from vaultspec_rag.server import (  # absolute-import-ok
+    ServerRouteRuntime,
+    create_http_app,
+)
+from vaultspec_rag.service import ServiceRegistry  # absolute-import-ok
 
-server._SERVICE_TOKEN = os.environ["VAULTSPEC_TEST_HEALTH_TOKEN"]
 lease = None
 if os.environ["VAULTSPEC_TEST_HOLD_MACHINE_LOCK"] == "1":
     lease, holder = acquire_machine_lock_lease()
@@ -586,7 +580,14 @@ if os.environ["VAULTSPEC_TEST_HOLD_MACHINE_LOCK"] == "1":
         raise RuntimeError(f"machine lock held by {holder}")
 try:
     uvicorn.run(
-        Starlette(routes=[Route("/health", health_handler)]),
+        create_http_app(
+            ServerRouteRuntime(
+                token=os.environ["VAULTSPEC_TEST_HEALTH_TOKEN"],
+                registry=ServiceRegistry(),
+                port=int(os.environ["VAULTSPEC_TEST_HEALTH_PORT"]),
+            ),
+            lifespan=None,
+        ),
         host="127.0.0.1",
         port=int(os.environ["VAULTSPEC_TEST_HEALTH_PORT"]),
         lifespan="off",
@@ -622,7 +623,7 @@ finally:
             # The real serving pid equals the Popen pid normally, or a descendant
             # when the interpreter relaunches through a stub; the token match
             # already proved this is the child either way.
-            serving_pid = int(health["pid"])
+            serving_pid = int(str(health["pid"]))
             try:
                 yield serving_pid, port, token
             finally:

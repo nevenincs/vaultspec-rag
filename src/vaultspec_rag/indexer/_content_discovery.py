@@ -220,6 +220,12 @@ class CodeContentDiscovery:
     ) -> CodeIndexPreflight:
         """Resolve and discover once before any mutable index resource."""
         policy = self.resolve_policy()
+        # An execution preflight is the membership observation the run it
+        # authorizes diffs and publishes claims from, so it must see the tree
+        # as it stands now: a cached walk would hide any create or delete
+        # since the walk was taken. The fresh walk re-primes the cache, so
+        # reads inside the authorized run serve this same observation.
+        self._scan_cache.invalidate()
         scan = self.scan_content(policy, sample_limit=sample_limit)
         return CodeIndexPreflight(
             root_dir=self.root_dir.resolve(),

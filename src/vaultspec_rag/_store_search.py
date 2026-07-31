@@ -25,7 +25,10 @@ if TYPE_CHECKING:
     from qdrant_client.http.models.models import (
         Condition,
         Filter,
+        Prefetch,
+        RecommendQuery,
         ScoredPoint,
+        VectorInput,
     )
 
     from ._source_types import IndexSource
@@ -53,8 +56,8 @@ class HybridSearchRequest:
 
 @dataclass(frozen=True, slots=True)
 class _HybridQuery:
-    prefetch: list[Any]
-    dense_query: Any
+    prefetch: list[Prefetch]
+    dense_query: list[float] | RecommendQuery
     query_filter: Filter | None
     limit: int
 
@@ -83,6 +86,10 @@ class _VaultSearchMixin:
 
         def ensure_document_table(self) -> None: ...
 
+        def _reconcile_for_read(
+            self, collection: str, ensure: Callable[[], None]
+        ) -> bool: ...
+
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
         @staticmethod
@@ -108,13 +115,13 @@ class _VaultSearchMixin:
         """
         query_filter = self._build_filter(request.filters)
         dense_vec = request.query_vector
-        dense_query: Any = self._build_dense_query(
+        dense_query: list[float] | RecommendQuery = self._build_dense_query(
             dense_vec,
             request.like_ids,
             request.unlike_ids,
             id_resolver=self._resolve_vault_feedback_id,
         )
-        prefetch: list[Any] = self._build_prefetch(
+        prefetch: list[Prefetch] = self._build_prefetch(
             dense_query, request.sparse_vector, query_filter, request.limit
         )
         scored_points = self._execute_hybrid_query(
@@ -149,10 +156,10 @@ class _VaultSearchMixin:
             only_domains=request.only_domains,
         )
         dense_vec = request.query_vector
-        dense_query: Any = self._build_dense_query(
+        dense_query: list[float] | RecommendQuery = self._build_dense_query(
             dense_vec, request.like_ids, request.unlike_ids
         )
-        prefetch: list[Any] = self._build_prefetch(
+        prefetch: list[Prefetch] = self._build_prefetch(
             dense_query,
             request.sparse_vector,
             query_filter,
@@ -172,7 +179,7 @@ class _VaultSearchMixin:
     ) -> list[dict[str, Any]]:
         """Execute hybrid search against the independent document collection."""
         query_filter = self._build_document_filter(request.filters)
-        dense_query: Any = request.query_vector
+        dense_query: list[float] = request.query_vector
         prefetch = self._build_prefetch(
             dense_query,
             request.sparse_vector,
@@ -198,12 +205,16 @@ class _VaultSearchMixin:
             doc_id: Document stem from a prior search result.
 
         Returns:
-            The integer point id to feed into the recommend query.
+            The integer point id to feed into the recommend query. Falls back
+            to the head chunk when the collection is not there to probe -
+            resolving an anchor must not be what brings it into being, and the
+            search this anchors returns nothing either way.
         """
         head_id = self._stable_id(f"{doc_id}#c0")
         bare_id = self._stable_id(doc_id)
         try:
-            self.ensure_table()
+            if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
+                return head_id
             with self._point_lock(self.TABLE_NAME):
                 # Interactive search reads deliberately stay single-shot
                 # rather than routing through the store's bounded retry:
@@ -232,17 +243,17 @@ class _VaultSearchMixin:
         like_ids: list[str | int] | None,
         unlike_ids: list[str | int] | None,
         id_resolver: Callable[[str], int] | None = None,
-    ) -> Any:
+    ) -> list[float] | RecommendQuery:
         if not like_ids and not unlike_ids:
             return dense_vec
 
         from qdrant_client import models
 
         resolve = id_resolver or self._stable_id
-        pos: list[Any] = [dense_vec]
+        pos: list[VectorInput] = [dense_vec]
         if like_ids:
             pos.extend(resolve(i) if isinstance(i, str) else i for i in like_ids)
-        neg: list[Any] = (
+        neg: list[VectorInput] = (
             [resolve(i) if isinstance(i, str) else i for i in unlike_ids]
             if unlike_ids
             else []
@@ -256,14 +267,14 @@ class _VaultSearchMixin:
 
     def _build_prefetch(
         self,
-        dense_query: Any,
+        dense_query: list[float] | RecommendQuery,
         sparse_vector: SparseResult | None,
         query_filter: Filter | None,
         limit: int,
-    ) -> list[Any]:
+    ) -> list[Prefetch]:
         from qdrant_client import models
 
-        prefetch: list[Any] = [
+        prefetch: list[Prefetch] = [
             models.Prefetch(
                 query=dense_query,
                 using="dense",
@@ -299,11 +310,13 @@ class _VaultSearchMixin:
         )
 
         if source == "code":
-            self.ensure_code_table()
+            ensure: Callable[[], None] = self.ensure_code_table
         elif source == "document":
-            self.ensure_document_table()
+            ensure = self.ensure_document_table
         else:
-            self.ensure_table()
+            ensure = self.ensure_table
+        if not self._reconcile_for_read(collection_name, ensure):
+            return []
 
         with self._point_lock(collection_name):
             if len(query.prefetch) < 2:
@@ -357,9 +370,9 @@ class _VaultSearchMixin:
             List of dicts with payload fields, ``id``, and
             ``_relevance_score``.
         """
-        results: list[dict[str, Any]] = []
+        results: list[dict[str, object]] = []
         for point in scored_points:
-            row: dict[str, Any] = dict(point.payload) if point.payload else {}
+            row: dict[str, object] = dict(point.payload) if point.payload else {}
             if id_field not in row:
                 logger.warning(
                     "Point %s missing id field '%s'",

@@ -24,7 +24,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, cast
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
 from .._rmtree import remove_tree
@@ -42,8 +42,7 @@ from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir, read_
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from http.client import HTTPMessage
-    from typing import Any
+    from http.client import HTTPMessage, HTTPResponse
 
 logger = logging.getLogger(__name__)
 
@@ -236,13 +235,18 @@ def _download(
         )
     opener = urllib.request.build_opener(_HostPinnedRedirect)
     with (
-        opener.open(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS) as resp,
+        # ``OpenerDirector.open`` is typed ``Any`` in typeshed (it dispatches
+        # across registered handlers); an HTTPS download always resolves to
+        # an ``HTTPResponse`` at runtime.
+        cast(
+            "HTTPResponse", opener.open(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS)
+        ) as resp,
         dest.open("wb") as out,
     ):
         _stream_capped(
             resp,
             out,
-            declared=_declared_length(getattr(resp, "headers", None)),
+            declared=_declared_length(resp.headers),
             on_progress=on_progress,
         )
 
@@ -351,7 +355,7 @@ def _write_manifest(
     source: str,
 ) -> None:
     """Atomically write the provisioning manifest into *version_dir*."""
-    manifest: dict[str, Any] = {
+    manifest: dict[str, str] = {
         "version": QDRANT_SERVER_VERSION,
         "asset": asset,
         "asset_sha256": asset_sha256,

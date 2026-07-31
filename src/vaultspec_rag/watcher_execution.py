@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from anyio.to_thread import run_sync as _run_in_thread
 
 from . import jobs as _jobs
+from .job_control import QuiesceRequested
 from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceUpdate
 from .job_models import (
     IndexResilienceSnapshot,
@@ -32,6 +33,7 @@ from .job_models import (
     JobState,
 )
 from .logging_config import log_event
+from .service_quiesce import QuiesceAdmissionClosedError
 from .watcher_durability import (
     raise_if_cancellation_requested,
     run_durable_retry_transaction,
@@ -58,7 +60,7 @@ if TYPE_CHECKING:
     from .indexer._codebase_indexer import CodeExecutionPreflight
     from .indexer._document_indexer import DocumentExecutionPreflight
     from .indexer._vault_prep import IndexResult
-    from .service import ProjectSlot
+    from .service import ProjectComputeRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +289,20 @@ async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> N
 
     dispatched = await manager.dispatch_async(job_id)
     if dispatched.status is JobOutcomeStatus.ERROR:
+        if dispatched.code == "quiesce_admission_closed":
+            deferred = await _run_in_thread(
+                partial(manager.defer_unstarted_for_quiesce, job_id),
+            )
+            if deferred.status is not JobOutcomeStatus.ERROR:
+                log_event(
+                    logger,
+                    "service.watcher",
+                    "quiesce_admission_deferred",
+                    source=slot.source.value,
+                    job_id=job_id,
+                    pending_paths=slot.pending_count(),
+                )
+                return
         await _finish_unstarted_watcher_failure(
             slot,
             UnstartedFailure(
@@ -623,7 +639,7 @@ def _resolve_attempt_preflights(
 
 
 def _execute_project_incremental(
-    project: ProjectSlot,
+    runtime: ProjectComputeRuntime,
     slot: WatcherConvergenceSlot,
     context: JobAttemptContext,
     scope: ManagedAttemptScope,
@@ -632,22 +648,23 @@ def _execute_project_incremental(
     """Dispatch one exhaustively typed domain under an acquired project lease."""
     reporter = _jobs.JobProgressReporter(context.job_id, context=context)
     if slot.source is JobSource.VAULT:
-        result = project.vault_indexer.incremental_index(
+        result = runtime.vault_indexer.incremental_index(
             reporter=reporter,
             changed_paths=scope.paths,
             run_control=context.control,
         )
-        project.graph_cache.invalidate()
+        primary_graph_cache = slot.registry.peek_project(slot.root).graph_cache
+        primary_graph_cache.invalidate()
         if (
             inputs.secondary_graph_cache is not None
-            and inputs.secondary_graph_cache is not project.graph_cache
+            and inputs.secondary_graph_cache is not primary_graph_cache
         ):
             inputs.secondary_graph_cache.invalidate()
         return result
     if slot.source is JobSource.CODE:
         if scope.code_preflight is None:
             raise RuntimeError("code watcher attempt has no execution preflight")
-        return project.code_indexer.incremental_index(
+        return runtime.code_indexer.incremental_index(
             reporter=reporter,
             changed_paths=scope.paths,
             preflight=scope.code_preflight,
@@ -655,7 +672,7 @@ def _execute_project_incremental(
         )
     if scope.document_preflight is None:
         raise RuntimeError("document watcher attempt has no execution preflight")
-    return project.document_indexer.incremental_index(
+    return runtime.document_indexer.incremental_index(
         reporter=reporter,
         changed_paths=scope.paths,
         preflight=scope.document_preflight,
@@ -692,9 +709,10 @@ def _run_managed_index_attempt(
     context.set_resilience(_watcher_attempt_resilience(slot))
     pipeline_active = slot.source in {JobSource.CODE, JobSource.DOCUMENT}
     registry = slot.registry
-    registry.load_model()
+    result: IndexResult | None = None
     try:
-        with registry.lease(slot.root) as project:
+        with registry.compute_lease(slot.root) as lease:
+            runtime = lease.runtime
             context.set_resources(ResourceUpdate(project_lease_held=True))
             try:
                 context.set_resources(
@@ -705,14 +723,14 @@ def _run_managed_index_attempt(
                 )
                 try:
                     result = _execute_project_incremental(
-                        project,
+                        runtime,
                         slot,
                         context,
                         scope,
                         inputs,
                     )
                 finally:
-                    _publish_watcher_index_resilience(slot, project, context)
+                    _publish_watcher_index_resilience(slot, runtime, context)
             finally:
                 context.set_resources(
                     ResourceUpdate(
@@ -720,8 +738,17 @@ def _run_managed_index_attempt(
                         pipeline_active=False,
                     )
                 )
+    except QuiesceAdmissionClosedError as exc:
+        # The controller may close between intake's admission observation and
+        # this worker reaching compute.  Convert that race to the manager's
+        # cooperative quiesce outcome so dirty paths are deferred rather than
+        # charged to retry/circuit failure state.
+        context.control.request_quiesce()
+        raise QuiesceRequested() from exc
     finally:
         context.set_resources(ResourceUpdate(project_lease_held=False))
+    if result is None:
+        raise RuntimeError("watcher index attempt ended without a result")
     skipped_suffix = (
         f" ~{result.preprocess_skipped}" if result.preprocess_skipped else ""
     )
@@ -758,10 +785,13 @@ def _watcher_attempt_resilience(
     slot: WatcherConvergenceSlot,
 ) -> IndexResilienceSnapshot:
     """Project admission and retry truth before model acquisition."""
-    if slot.source in {JobSource.CODE, JobSource.DOCUMENT}:
+    # Spelled as a tuple, not a set: only the two mapped sources have admitted
+    # limits, and the tuple form is the one both type checkers narrow, so the
+    # guard is what proves the delegation below is a legal call.
+    if slot.source in (JobSource.CODE, JobSource.DOCUMENT):
         # Package-internal resilience projectors, shared with the dispatcher.
         from .job_dispatch import (
-            _admitted_resilience,  # pyright: ignore[reportPrivateUsage]
+            _admitted_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
         )
 
         base = _admitted_resilience(slot.source)
@@ -772,15 +802,15 @@ def _watcher_attempt_resilience(
 
 def _publish_watcher_index_resilience(
     slot: WatcherConvergenceSlot,
-    project: ProjectSlot,
+    runtime: ProjectComputeRuntime,
     context: JobAttemptContext,
 ) -> None:
     """Publish checkpoint evidence for watcher-owned code and document work."""
     # Package-internal resilience projectors, shared with the dispatcher.
     from .job_dispatch import (
-        _code_resilience,  # pyright: ignore[reportPrivateUsage]
-        _document_resilience,  # pyright: ignore[reportPrivateUsage]
-        _publish_resilience,  # pyright: ignore[reportPrivateUsage]
+        _code_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+        _document_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
+        _publish_resilience,  # pyright: ignore[reportPrivateUsage]  # intra-package sibling module: shared delegation seam
     )
 
     if slot.source not in {JobSource.CODE, JobSource.DOCUMENT}:
@@ -788,9 +818,9 @@ def _publish_watcher_index_resilience(
 
     def snapshot_factory() -> IndexResilienceSnapshot:
         base = (
-            _code_resilience(project.code_indexer)
+            _code_resilience(runtime.code_indexer)
             if slot.source is JobSource.CODE
-            else _document_resilience(project.document_indexer)
+            else _document_resilience(runtime.document_indexer)
         )
         return _retry_resilience(slot.retry_policy.state, base=base)
 

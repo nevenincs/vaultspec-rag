@@ -17,6 +17,7 @@ from ..job_models import (
     JobSpec,
     JobState,
 )
+from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,6 +26,7 @@ from ..jobs import (
     reset,
     snapshot,
 )
+from ._job_manager_transition_helpers import pending_attempt
 from ._jobs_restore_helpers import job_recorded_by_a_now_dead_process
 
 pytestmark = [pytest.mark.unit]
@@ -51,7 +53,11 @@ class TestInterruptedJobDegradationSplit:
         and finds an attempt no live worker owns. No state is hand-written.
         """
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=2, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
         created = manager.create(
             JobSpec(
                 JobOperation.INDEX,
@@ -62,7 +68,7 @@ class TestInterruptedJobDegradationSplit:
             JobInitiator("service", "degradation split coverage", str(tmp_path)),
         )
         assert created.job is not None
-        task = asyncio.create_task(asyncio.Event().wait())
+        task = asyncio.create_task(pending_attempt())
         try:
             started = manager.start_attempt(
                 created.job.id,
@@ -72,7 +78,11 @@ class TestInterruptedJobDegradationSplit:
             assert started.job is not None
             assert started.job.state is JobState.RUNNING
 
-            restarted = JobManager(max_nonterminal=2, state_path=state_path)
+            restarted = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
+                max_nonterminal=2,
+                state_path=state_path,
+            )
             assert restarted.restore_persisted().code == "job_state_restored"
         finally:
             task.cancel()

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -58,7 +58,7 @@ def _collection_names(qdrant_port: int) -> set[str]:
 
 def _wait_for_maintenance_jobs(
     port: int, *, started_after: float, timeout: float = 120.0
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Poll ``/jobs`` until a maintenance cycle that STARTED after the
     given wall-clock instant has finished; return all finished cycles.
 
@@ -72,7 +72,7 @@ def _wait_for_maintenance_jobs(
         raw_jobs = (result or {}).get("jobs", [])
         jobs = [
             j
-            for j in cast("list[dict[str, Any]]", raw_jobs)
+            for j in cast("list[dict[str, object]]", raw_jobs)
             if j.get("source") == "maintenance" and j.get("finished_at")
         ]
         if any(float(str(j.get("started_at", 0))) > started_after for j in jobs):

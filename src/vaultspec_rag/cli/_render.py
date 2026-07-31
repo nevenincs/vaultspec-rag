@@ -13,7 +13,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import typer
 
@@ -24,7 +24,7 @@ from .._operator_commands import (
     server_start_command,
     server_status_command,
 )
-from ..commands._models import SYNC_COUNTERS
+from ..commands._models import SYNC_COUNTERS, InstallReport, UninstallReport
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
@@ -464,46 +464,65 @@ def _display_port_unreachable_error(
     *,
     command: str,
     json_mode: bool = False,
+    local_fallback_available: bool = True,
 ) -> None:
     """Render the standard remediation when ``--port`` is dead.
 
     Mirrors the lock-error UX so users see consistent guidance whether
     the resident service refused the connection or refused parallel
-    access. The CLI used to silently fall back to in-process here; that
-    behaviour is now opt-in via ``--allow-fallback``.
+    access. Callers that cannot safely fall back locally set
+    ``local_fallback_available`` to ``False``.
 
     When ``json_mode`` is True the helper emits a ``port_unreachable``
     envelope and exits with code 1; the prose path is unchanged.
     """
+    unreachable = f"Service on port {port} is unreachable."
+    safe_condition = (
+        "Local indexing requires a borrower lease and a verified safe service "
+        "condition."
+    )
+    if local_fallback_available:
+        message = (
+            f"Service on port {port} is unreachable. "
+            f"The CLI will not silently run {command} locally; "
+            "start the service or re-run with "
+            f"--allow-fallback (one local user only)."
+        )
+        remediation = [
+            server_status_command(),
+            server_start_command(),
+            "rerun with --allow-fallback (one user only)",
+        ]
+    else:
+        message = f"{unreachable} {safe_condition}"
+        remediation = [server_status_command(), server_start_command()]
+
     if json_mode:
         _emit_json_error_and_exit(
             command,
             "port_unreachable",
-            (
-                f"Service on port {port} is unreachable. "
-                f"The CLI will not silently run {command} locally; "
-                f"start the service or re-run with "
-                f"--allow-fallback (one local user only)."
-            ),
+            message,
             1,
             port=port,
-            remediation=[
-                server_status_command(),
-                server_start_command(),
-                "rerun with --allow-fallback (one user only)",
-            ],
+            remediation=remediation,
+        )
+        return
+    if local_fallback_available:
+        _plain(
+            f"{message}\n"
+            f"Next actions:\n"
+            f"  1. Check status:  {server_status_command()}\n"
+            f"  2. Start service: {server_start_command()}\n"
+            "  3. Or run locally anyway: re-run with "
+            "--allow-fallback (one user only)."
         )
         return
     _plain(
-        f"Service on port {port} is unreachable.\n"
-        f"The CLI will not silently run {command} locally because that would "
-        f"open the local search index directly "
-        f"and block other users waiting on the service.\n"
-        f"Next actions:\n"
-        f"  1. Check status:  vaultspec-rag server status\n"
-        f"  2. Start service: vaultspec-rag server start\n"
-        f"  3. Or run locally anyway: re-run with "
-        f"--allow-fallback (one user only)."
+        f"{unreachable}\n"
+        f"{safe_condition}\n"
+        "Next actions:\n"
+        f"  1. Check status:  {server_status_command()}\n"
+        f"  2. Start service: {server_start_command()}"
     )
 
 
@@ -547,7 +566,7 @@ def _display_service_version_error(
         f"Next actions:\n"
         f"  1. Restart the service: vaultspec-rag server stop, then "
         f"vaultspec-rag server start\n"
-        f"  2. Confirm the release:  vaultspec-rag server status"
+        f"  2. Confirm the release:  {server_status_command()}"
     )
 
 
@@ -597,9 +616,13 @@ def _render_provider_outcome(provider: str, outcome: dict[str, object]) -> None:
                 _plain(f"  {label[:-1]}: {message}")
 
 
-def _render_provider_sync(report: Any) -> None:
+def _render_provider_sync(report: object) -> None:
     """Render the same per-provider MCP outcomes exposed by report JSON."""
-    data = report.to_dict()
+    to_dict = getattr(report, "to_dict", None)
+    raw_data: object = to_dict() if callable(to_dict) else {}
+    data: dict[str, object] = (
+        cast("dict[str, object]", raw_data) if isinstance(raw_data, dict) else {}
+    )
     providers = data.get("sync_providers")
     if isinstance(providers, dict):
         for provider, raw_outcome in cast("dict[object, object]", providers).items():
@@ -635,17 +658,21 @@ def _print_warning_or_note(warning: object) -> None:
     _plain(f"{prefix}: {text}")
 
 
-def _render_mcp_extra(report: Any) -> None:
+def _render_mcp_extra(report: InstallReport | UninstallReport) -> None:
     """Render the structured MCP optional-dependency lifecycle result."""
-    action = getattr(report, "mcp_extra_action", "skipped")
+    action = report.mcp_extra_action
     if action == "skipped":
         return
-    location = getattr(report, "mcp_extra_location", "")
+    # Only the uninstall report carries a location for the mcp extra: install
+    # never removes from more than one place, so InstallReport has no field.
+    location = report.mcp_extra_location if isinstance(report, UninstallReport) else ""
     suffix = f" ({location})" if location else ""
     _plain(f"MCP optional dependency: {_action_label(action)}{suffix}")
 
 
-def _render_provider_and_torch_sections(report: object) -> None:
+def _render_provider_and_torch_sections(
+    report: InstallReport | UninstallReport,
+) -> None:
     """Render the sections install and uninstall report identically.
 
     Provider sync, the MCP extra, and the whole PyTorch block read the same
@@ -655,23 +682,24 @@ def _render_provider_and_torch_sections(report: object) -> None:
     that stops being true without anything failing. Each report then
     continues differently, which is why only the shared part moved.
 
-    Reads through ``getattr`` with defaults because the two report shapes are
-    separate dataclasses and not every field exists on both.
+    Every field this function reads is declared on both dataclasses, so it
+    reads them directly; ``_render_mcp_extra`` is the one exception, since
+    ``mcp_extra_location`` exists only on ``UninstallReport``.
     """
     _render_provider_sync(report)
     _render_mcp_extra(report)
-    tc_action = getattr(report, "torch_config_action", "skipped")
+    tc_action = report.torch_config_action
     _plain(f"PyTorch configuration: {_action_label(tc_action)}")
-    td_action = getattr(report, "torch_direct_dep_action", "skipped")
+    td_action = report.torch_direct_dep_action
     if td_action not in ("skipped",):
-        td_location = getattr(report, "torch_direct_dep_location", "")
+        td_location = report.torch_direct_dep_location
         suffix = f" ({td_location})" if td_location else ""
         _plain(f"PyTorch dependency: {_action_label(td_action)}{suffix}")
-    for conflict in getattr(report, "torch_config_conflicts", []):
+    for conflict in report.torch_config_conflicts:
         _plain(f"  conflict: {conflict}")
 
 
-def _render_install_report(report: Any) -> None:
+def _render_install_report(report: InstallReport) -> None:
     """Render an install report as plain CLI lines."""
     title = {
         "install": "vaultspec-rag installed",
@@ -773,7 +801,7 @@ def _render_provisioning_outcome(outcome: ProvisionOutcome | None) -> None:
         _plain(f"  {label}: {phrase}{suffix}")
 
 
-def _render_uninstall_report(report: Any) -> None:
+def _render_uninstall_report(report: UninstallReport) -> None:
     """Render an uninstall report as plain CLI lines."""
     title = {
         "uninstall": "vaultspec-rag uninstalled",

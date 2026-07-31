@@ -1,10 +1,11 @@
-"""Raw, source-grouped managed-log review for the server watch interface.
+"""Raw managed-log records, grouped by source, for the server watch interface.
 
-This view deliberately does not share the selected-job renderer's structured
-parsing, polling suppression, or per-record display cap. Its only record
-transformation is neutralizing terminal control bytes before Rich receives the
-text. The service contract supplies one stable group per producer; displaying
-those groups separately avoids inventing a cross-producer chronology.
+This view shares only how content is held and repainted with the selected-job
+pane; it deliberately does not share that pane's structured parsing, polling
+suppression, or per-record display cap. Its only record transformation is
+neutralizing terminal control bytes before Rich receives the text. The service
+contract supplies one stable group per producer; displaying those groups
+separately avoids inventing a cross-producer chronology.
 """
 
 from __future__ import annotations
@@ -12,14 +13,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from rich.text import Text
-from textual.widgets import RichLog
 
 from ..logging_config import (
     MAX_MANAGED_LOG_LINES,
     MAX_MANAGED_LOG_SOURCE_BYTES,
     ManagedLogGroup,
 )
-from ._jobs_tui_log import sanitize_log_text
+from ._jobs_tui_log import RetainedLog, sanitize_log_text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -72,50 +72,21 @@ def managed_log_group_metadata(group: ManagedLogGroup) -> str:
     return f"{summary} · {'; '.join(details)}"
 
 
-class ManagedLogTankView(RichLog):
+class ManagedLogTankView(RetainedLog[ManagedLogGroup]):
     """Render the bounded service and Qdrant records as independent raw groups."""
 
-    def __init__(self, *, id: str | None = None) -> None:
-        super().__init__(
-            wrap=True,
-            markup=False,
-            auto_scroll=True,
-            max_lines=None,
-            min_width=1,
-            id=id,
-        )
-        self.can_focus = True
-        self._groups: list[ManagedLogGroup] = []
-        self._message: str | None = None
-
     def show_groups(self, groups: Sequence[ManagedLogGroup]) -> None:
-        """Replace the tank with the exact source-grouped server response."""
-        self._groups = list(groups)
+        """Replace the tank with the exact server response, group by group."""
+        self._records = list(groups)
         self._message = None
-        self._paint_groups()
+        self._paint()
 
-    def show_message(self, message: str) -> None:
-        """Replace the tank with a fetch or validation failure."""
-        self._groups = []
-        self._message = message
-        self._paint_groups()
-
-    def on_show(self) -> None:
-        """Write held content once the full-height pane becomes visible."""
-        if self._groups or self._message is not None:
-            self._paint_groups()
-
-    def repaint_theme(self) -> None:
-        """Repaint the held groups after the interface palette changes."""
-        if self._groups or self._message is not None:
-            self._paint_groups()
-
-    def _paint_groups(self) -> None:
+    def _paint(self) -> None:
         self.clear()
         if self._message is not None:
             self.write(Text(self._message))
             return
-        for index, group in enumerate(self._groups):
+        for index, group in enumerate(self._records):
             if index:
                 self.write(Text(""))
             self.write(Text(f"[{group['source']}]", style="bold"))

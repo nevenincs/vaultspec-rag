@@ -277,7 +277,7 @@ class TestHelpfulness:
 
         Requires the full corpus for meaningful authority signal.
         """
-        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.graph import (
             VaultGraph,
         )
 

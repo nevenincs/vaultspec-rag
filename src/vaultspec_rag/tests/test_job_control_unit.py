@@ -18,7 +18,7 @@ from ..job_control import (
     ControlRequest,
     NullRunControl,
     PauseRequested,
-    QuiesceGate,
+    QuiesceRequested,
     RunControl,
     RunControlToken,
     ShutdownRequested,
@@ -180,6 +180,26 @@ def test_cancellation_is_absorbing_and_reaches_every_checkpoint() -> None:
     assert snapshot.delivered is ControlRequest.CANCEL
 
 
+def test_checkpoint_precedence_is_shutdown_cancel_pause_then_quiesce() -> None:
+    cases = (
+        ("quiesce", QuiesceRequested),
+        ("pause", PauseRequested),
+        ("cancel", CancelRequested),
+        ("shutdown", ShutdownRequested),
+    )
+    for requested, expected in cases:
+        token = RunControlToken()
+        assert token.request_quiesce()
+        if requested in {"pause", "cancel", "shutdown"}:
+            assert token.request_pause()
+        if requested in {"cancel", "shutdown"}:
+            assert token.request_cancel()
+        if requested == "shutdown":
+            assert token.request_shutdown()
+        with pytest.raises(expected):
+            token.checkpoint()
+
+
 def test_pending_pause_is_delivered_before_protected_entry() -> None:
     token = RunControlToken()
     entered = False
@@ -227,130 +247,6 @@ def test_null_control_is_runtime_compatible_and_never_interrupts() -> None:
             events.append("inner")
 
     assert events == ["outer", "inner"]
-
-
-def test_worker_blocks_when_gate_is_quiesced() -> None:
-    """A checkpoint parks a worker while the gate is paused.
-
-    Guard: a bounded join is mandatory so a broken-open gate (wait returns
-    despite pause) fails the still-alive assertion instead of hanging the
-    suite. The mutation that proves red is making the gate wait ignore pause.
-    """
-    gate = QuiesceGate()
-    token = RunControlToken(gate=gate)
-    reached = threading.Event()
-    finished: list[str] = []
-    gate.pause()
-
-    def run() -> None:
-        reached.set()
-        token.checkpoint()
-        finished.append("returned")
-
-    worker = threading.Thread(target=run, name="quiesce-block-worker")
-    worker.start()
-    assert reached.wait(timeout=_THREAD_TIMEOUT_SECONDS)
-    worker.join(timeout=_PARK_OBSERVE_SECONDS)
-    assert worker.is_alive(), "worker did not park at the quiesced gate"
-    assert finished == []
-
-    gate.resume()
-    _join_thread(worker)
-    assert finished == ["returned"]
-
-
-def test_worker_resumes_when_gate_is_released() -> None:
-    """A parked worker completes promptly once the gate resumes.
-
-    Guard: the bounded join in ``_join_thread`` fails red if release is broken
-    (worker never wakes). The mutation that proves red is making ``resume`` a
-    no-op.
-    """
-    gate = QuiesceGate()
-    token = RunControlToken(gate=gate)
-    reached = threading.Event()
-    finished: list[str] = []
-    gate.pause()
-
-    def run() -> None:
-        reached.set()
-        token.checkpoint()
-        finished.append("returned")
-
-    worker = threading.Thread(target=run, name="quiesce-resume-worker")
-    worker.start()
-    assert reached.wait(timeout=_THREAD_TIMEOUT_SECONDS)
-    worker.join(timeout=_PARK_OBSERVE_SECONDS)
-    assert worker.is_alive(), "worker did not park before release"
-
-    gate.resume()
-    _join_thread(worker)
-    assert finished == ["returned"]
-
-
-def test_shutdown_wins_over_concurrent_re_pause() -> None:
-    """An absorbing shutdown latches the gate open even against a racing pause.
-
-    Guard: the worker must wake and raise ``ShutdownRequested`` rather than
-    re-park. The bounded join fails red if the shutdown does not latch the gate
-    open. The mutation that proves red is removing the ``latch_open`` call from
-    ``request_shutdown``.
-    """
-    gate = QuiesceGate()
-    token = RunControlToken(gate=gate)
-    reached = threading.Event()
-    outcome: list[str] = []
-    gate.pause()
-
-    def run() -> None:
-        reached.set()
-        try:
-            token.checkpoint()
-        except ShutdownRequested:
-            outcome.append("shutdown")
-        else:
-            outcome.append("returned")
-
-    worker = threading.Thread(target=run, name="quiesce-shutdown-worker")
-    worker.start()
-    assert reached.wait(timeout=_THREAD_TIMEOUT_SECONDS)
-    worker.join(timeout=_PARK_OBSERVE_SECONDS)
-    assert worker.is_alive(), "worker did not park before shutdown"
-
-    racing_pause = threading.Thread(target=gate.pause, name="quiesce-racing-pause")
-    racing_pause.start()
-    token.request_shutdown()
-    racing_pause.join(timeout=_THREAD_TIMEOUT_SECONDS)
-
-    _join_thread(worker)
-    assert outcome == ["shutdown"]
-
-
-def test_checkpoint_inside_protected_span_never_parks() -> None:
-    """A checkpoint inside a protected span skips the hold gate entirely.
-
-    Guard: a paused gate must not park a worker mid-mutation. The bounded join
-    fails red if the protected-depth guard on the gate wait is dropped. The
-    mutation that proves red is removing that depth guard from ``checkpoint``.
-    """
-    gate = QuiesceGate()
-    token = RunControlToken(gate=gate)
-    reached = threading.Event()
-    finished: list[str] = []
-    gate.pause()
-
-    def run() -> None:
-        with token.protected():
-            reached.set()
-            token.checkpoint()
-            finished.append("protected-checkpoint-returned")
-        finished.append("span-exited")
-
-    worker = threading.Thread(target=run, name="quiesce-protected-worker")
-    worker.start()
-    assert reached.wait(timeout=_THREAD_TIMEOUT_SECONDS)
-    _join_thread(worker)
-    assert finished == ["protected-checkpoint-returned", "span-exited"]
 
 
 def test_job_control_config_defaults_are_bounded_and_typed() -> None:

@@ -29,9 +29,13 @@ from ..job_models import (
     JobState,
 )
 from ..job_persistence import load_persisted_state
+from ..service_quiesce import ServiceQuiesceController
+from ._job_manager_transition_helpers import pending_attempt
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ..job_manager.state import AttemptExit
 
 pytestmark = [pytest.mark.unit]
 
@@ -39,10 +43,14 @@ pytestmark = [pytest.mark.unit]
 def _started_manager(
     state_path: Path,
     root: str,
-    task: asyncio.Task[bool],
+    task: asyncio.Task[AttemptExit],
 ) -> tuple[JobManager, str]:
     """Create one persisted manager whose only job owns a started attempt."""
-    manager = JobManager(max_nonterminal=1, state_path=state_path)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=state_path,
+    )
     created = manager.create(
         JobSpec(JobOperation.INDEX, JobSource.CODE, root, JobMode.INCREMENTAL),
         JobInitiator("service", "reindex_codebase", root),
@@ -70,7 +78,7 @@ async def test_progress_publish_inside_the_budget_defers_the_durable_write(
     tmp_path: Path,
 ) -> None:
     state_path = tmp_path / "jobs-state.json"
-    task = asyncio.create_task(asyncio.Event().wait())
+    task = asyncio.create_task(pending_attempt())
     try:
         manager, job_id = _started_manager(state_path, str(tmp_path), task)
         before = state_path.read_bytes()
@@ -101,7 +109,7 @@ async def test_terminal_transition_is_durable_and_carries_deferred_progress(
     tmp_path: Path,
 ) -> None:
     state_path = tmp_path / "jobs-state.json"
-    task = asyncio.create_task(asyncio.Event().wait())
+    task = asyncio.create_task(pending_attempt())
     try:
         manager, job_id = _started_manager(state_path, str(tmp_path), task)
         published = manager.update_progress(
@@ -139,7 +147,7 @@ async def test_terminal_transition_is_durable_and_carries_deferred_progress(
 
 async def test_expired_budget_flushes_on_the_next_publish(tmp_path: Path) -> None:
     state_path = tmp_path / "jobs-state.json"
-    task = asyncio.create_task(asyncio.Event().wait())
+    task = asyncio.create_task(pending_attempt())
     try:
         manager, job_id = _started_manager(state_path, str(tmp_path), task)
         deferred = manager.update_progress(
@@ -170,7 +178,7 @@ async def test_flush_persistence_makes_deferred_progress_durable(
     tmp_path: Path,
 ) -> None:
     state_path = tmp_path / "jobs-state.json"
-    task = asyncio.create_task(asyncio.Event().wait())
+    task = asyncio.create_task(pending_attempt())
     try:
         manager, job_id = _started_manager(state_path, str(tmp_path), task)
         published = manager.update_progress(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -36,7 +36,7 @@ def test_jobs_route_respects_limit_param(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "limit": "1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", params={"token": token, "limit": "1"}),
     )
     assert response.status_code == 200
     assert len(response.json()["jobs"]) == 1
@@ -50,13 +50,14 @@ def test_jobs_route_prioritises_running_before_limit(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "limit": "1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", params={"token": token, "limit": "1"}),
     )
     assert response.status_code == 200
-    payload: dict[str, Any] = response.json()
-    assert payload["jobs"][0]["id"] == running_id
-    assert payload["jobs"][0]["phase"] == "running"
-    assert "current" in payload["jobs"][0]["resources"]
+    payload: dict[str, object] = response.json()
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    assert jobs[0]["id"] == running_id
+    assert jobs[0]["phase"] == "running"
+    assert "current" in cast("dict[str, object]", jobs[0]["resources"])
 
 
 @pytest.mark.unit
@@ -70,13 +71,14 @@ def test_jobs_route_prioritises_failed_before_completed_limit(
 
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "limit": "1"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", params={"token": token, "limit": "1"}),
     )
 
     assert response.status_code == 200
-    payload: dict[str, Any] = response.json()
-    assert payload["jobs"][0]["id"] == failed_id
-    assert payload["jobs"][0]["phase"] == "error"
+    payload: dict[str, object] = response.json()
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    assert jobs[0]["id"] == failed_id
+    assert jobs[0]["phase"] == "error"
 
 
 @pytest.mark.unit
@@ -87,7 +89,7 @@ def test_jobs_route_filters_phase_source_trigger_and_query(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get(
             "/jobs",
             params={
                 "token": token,
@@ -99,11 +101,12 @@ def test_jobs_route_filters_phase_source_trigger_and_query(
         ),
     )
     assert response.status_code == 200
-    payload: dict[str, Any] = response.json()
+    payload: dict[str, object] = response.json()
     assert payload["returned"] == 1
-    assert payload["jobs"][0]["source"] == "code"
-    assert payload["jobs"][0]["trigger"] == "watcher"
-    assert payload["jobs"][0]["phase"] == "running"
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    assert jobs[0]["source"] == "code"
+    assert jobs[0]["trigger"] == "watcher"
+    assert jobs[0]["phase"] == "running"
 
 
 @pytest.mark.unit
@@ -114,13 +117,15 @@ def test_jobs_route_accepts_codebase_source_alias(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "source": "codebase"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", params={"token": token, "source": "codebase"}),
     )
     assert response.status_code == 200
-    payload: dict[str, Any] = response.json()
-    ids = [job["id"] for job in payload["jobs"]]
+    payload: dict[str, object] = response.json()
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    ids = [job["id"] for job in jobs]
     assert running_id in ids
-    assert payload["filters"]["source"] == "code"
+    filters = cast("dict[str, object]", payload["filters"])
+    assert filters["source"] == "code"
 
 
 @pytest.mark.unit
@@ -134,7 +139,7 @@ def test_jobs_route_filters_failed_job_id_and_since(
 
     response = cast(
         "httpx.Response",
-        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get(
             "/jobs",
             params={
                 "token": token,
@@ -146,15 +151,17 @@ def test_jobs_route_filters_failed_job_id_and_since(
     )
 
     assert response.status_code == 200
-    payload: dict[str, Any] = response.json()
+    payload: dict[str, object] = response.json()
     assert payload["returned"] == 1
-    job = payload["jobs"][0]
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    job = jobs[0]
     assert job["id"] == failed_id
     assert job["phase"] == "error"
     assert isinstance(job["runtime_seconds"], float)
-    assert payload["filters"]["failed"] is True
-    assert payload["filters"]["job_id"] == failed_id[:8]
-    assert payload["filters"]["since"] == 60.0
+    filters = cast("dict[str, object]", payload["filters"])
+    assert filters["failed"] is True
+    assert filters["job_id"] == failed_id[:8]
+    assert filters["since"] == 60.0
 
 
 @pytest.mark.unit
@@ -171,12 +178,13 @@ def test_jobs_route_query_matches_runtime_and_initiator(
 
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "query": "cli"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", params={"token": token, "query": "cli"}),
     )
 
     assert response.status_code == 200
-    payload: dict[str, Any] = response.json()
-    ids = [job["id"] for job in payload["jobs"]]
+    payload: dict[str, object] = response.json()
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    ids = [job["id"] for job in jobs]
     assert running_id in ids
 
 
@@ -202,15 +210,16 @@ def test_jobs_route_since_uses_progress_update_time(
 
     response = cast(
         "httpx.Response",
-        client.get(  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get(
             "/jobs",
             params={"token": token, "since": str(_SINCE_WINDOW_SECONDS)},
         ),
     )
 
     assert response.status_code == 200
-    payload: dict[str, Any] = response.json()
-    ids = [job["id"] for job in payload["jobs"]]
+    payload: dict[str, object] = response.json()
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    ids = [job["id"] for job in jobs]
     assert running_id in ids
 
 
@@ -227,10 +236,11 @@ def test_jobs_route_job_id_prefix_can_return_multiple_matches(
 
     response = cast(
         "httpx.Response",
-        client.get("/jobs", params={"token": token, "job_id": prefix}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", params={"token": token, "job_id": prefix}),
     )
 
     assert response.status_code == 200
-    payload: dict[str, Any] = response.json()
-    assert payload["returned"] >= 2
-    assert all(str(job["id"]).startswith(prefix) for job in payload["jobs"])
+    payload: dict[str, object] = response.json()
+    assert cast("int", payload["returned"]) >= 2
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    assert all(str(job["id"]).startswith(prefix) for job in jobs)

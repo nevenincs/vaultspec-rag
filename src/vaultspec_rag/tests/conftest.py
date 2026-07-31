@@ -4,7 +4,7 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import pytest
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from ..indexer import IndexResult
     from ..store_runtime import VaultStore
 
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config import (
     reset_config,
 )
 
@@ -391,7 +391,7 @@ def vaultspec_config() -> Generator[VaultSpecConfig]:
 
 
 @pytest.fixture
-def config_override() -> Generator[Callable[[dict[str, Any]], VaultSpecConfig]]:
+def config_override() -> Generator[Callable[[dict[str, object]], VaultSpecConfig]]:
     """Factory fixture: call with overrides dict to get a custom config.
 
     Example::
@@ -402,7 +402,7 @@ def config_override() -> Generator[Callable[[dict[str, Any]], VaultSpecConfig]]:
     """
     created: list[VaultSpecConfig] = []
 
-    def _make(overrides: dict[str, Any]) -> VaultSpecConfig:
+    def _make(overrides: dict[str, object]) -> VaultSpecConfig:
         cfg = VaultSpecConfig.from_environment(overrides=overrides)
         created.append(cfg)
         return cfg

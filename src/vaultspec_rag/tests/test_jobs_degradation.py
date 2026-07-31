@@ -26,6 +26,7 @@ from .._job_errors import (
 )
 from ..job_models import JobSource
 from ..jobs import (
+    TERMINAL_PHASES,
     DegradationInputs,
     JobProgressReporter,
     degradation_evidence,
@@ -36,10 +37,15 @@ from ..jobs import (
     snapshot,
     telemetry_block,
 )
-from ..server._routes_jobs import _job_degradation, _job_summary, _job_with_liveness
+from ..server._routes_jobs import (
+    _LEGACY_TERMINAL_PHASES,
+    _job_degradation,
+    _job_summary,
+    _job_with_liveness,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     import httpx
@@ -66,7 +72,7 @@ _ENCODE_KEYS = {
     "oom_count",
 }
 _RATE_KEYS = {"recent_per_second", "median_per_second", "ratio"}
-_GPU_KEYS = {"available", "utilization_percent", "memory_used_mb", "memory_total_mb"}
+_GPU_KEYS = {"available", "utilization_percent", "memory_used_mib", "memory_total_mib"}
 _BACKEND_KEYS = {"alive", "latency_seconds", "detail"}
 
 
@@ -214,6 +220,110 @@ class TestForwardTelemetry:
         )
         assert events == ["enter-dense", "forward", "exit-dense"]
         assert chunk.vector == [0.0, 1.0]
+
+    def test_the_encode_slice_hands_the_bucket_seam_to_the_sparse_encode(
+        self,
+    ) -> None:
+        """The sparse encode publishes through the same bucket seam as dense.
+
+        A sparse CUDA OOM lowers the sparse ceiling and retries without any
+        dense boundary firing; evidence fed only through the dense seam then
+        carries a zero retry count and a healthy budget while the sparse
+        ceiling is the collapsing one, pointing the operator away from the
+        memory squeeze. Half-populated evidence misdirects, so the sparse
+        call must receive the slice's bucket callback.
+
+        Mutation check: dropping ``on_bucket=request.on_encode_bucket`` from
+        the sparse call in ``_encode_slice_vector_fields`` makes this fail
+        on the sparse-events assertion below - the sparse encoder receives
+        no callback and publishes nothing - and restoring it returns the
+        test to green.
+        """
+        from .._store_models import VaultChunk
+        from ..embeddings import EncodeBucketProgress
+        from ..indexer._streaming import (
+            _encode_slice_vector_fields,
+            _VectorEncodeRequest,
+        )
+
+        observed: list[tuple[str, str, int]] = []
+
+        def _bucket_progress(kind: str, oom_count: int) -> EncodeBucketProgress:
+            return EncodeBucketProgress(
+                kind=kind,
+                items_done=0,
+                items_total=1,
+                bucket_items=1,
+                bucket_estimated_tokens=500,
+                token_budget=1000,
+                oom_count=oom_count,
+            )
+
+        class SliceEncoder:
+            """Deterministic encoder replaying one bucket per encode kind."""
+
+            def encode_documents_on_device(
+                self,
+                texts: list[str],
+                batch_size: int | None = None,
+                gpu_lock: object | None = None,
+                on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
+            ) -> list[list[float]]:
+                del batch_size, gpu_lock
+                if on_bucket is not None:
+                    on_bucket("before", _bucket_progress("dense", 0))
+                    on_bucket("after", _bucket_progress("dense", 0))
+                return [[0.0, 1.0] for _ in texts]
+
+            def encode_documents_sparse(
+                self,
+                texts: list[str],
+                batch_size: int | None = None,
+                gpu_lock: object | None = None,
+                on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
+            ) -> list[None]:
+                del batch_size, gpu_lock
+                if on_bucket is not None:
+                    on_bucket("before", _bucket_progress("sparse", 1))
+                    on_bucket("after", _bucket_progress("sparse", 1))
+                return [None for _ in texts]
+
+        chunk = VaultChunk(
+            doc_id="doc",
+            ordinal=0,
+            chunk_count=1,
+            text="body",
+            path="adr/doc.md",
+            doc_type="adr",
+            feature="search",
+            date="2026-01-01",
+            tags=[],
+            related=[],
+            title="doc",
+        )
+        _encode_slice_vector_fields(
+            _VectorEncodeRequest(
+                chunks=[chunk],
+                slice_texts=["doc\n\nbody"],
+                model=cast("EmbeddingModel", SliceEncoder()),
+                gpu_lock=None,
+                sparse_enabled=True,
+                encode_batch_size=None,
+                on_encode_bucket=lambda phase, progress: observed.append(
+                    (progress.kind, phase, progress.oom_count)
+                ),
+            )
+        )
+        # The sparse boundaries - and the retry count they carry - reach the
+        # slice's callback, after the dense ones.
+        assert [event for event in observed if event[0] == "sparse"] == [
+            ("sparse", "before", 1),
+            ("sparse", "after", 1),
+        ]
+        assert [event for event in observed if event[0] == "dense"] == [
+            ("dense", "before", 0),
+            ("dense", "after", 0),
+        ]
 
     def test_the_vault_stream_wires_the_reporter_boundaries(self) -> None:
         """The vault slice loop hands the reporter both forward boundaries.
@@ -581,25 +691,21 @@ class TestJobsRouteGpuExposure:
     """GET /jobs carries the GPU block beside the work list."""
 
     def test_the_listing_envelope_carries_the_gpu_block(self) -> None:
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        from .. import server as server_package
-        from ..server._routes import jobs_route
+        from ..server import ServerRouteRuntime, create_http_app
+        from ..service import ServiceRegistry
 
         token = "gpu-exposure-test-token"
-        previous_token = server_package._SERVICE_TOKEN
-        server_package._SERVICE_TOKEN = token
-        try:
-            app = Starlette(routes=[Route("/jobs", jobs_route)])
-            client: httpx.Client = cast("httpx.Client", TestClient(app))
-            response: httpx.Response = client.get(
-                "/jobs", headers={"Authorization": f"Bearer {token}"}
-            )
-            payload = _as_map(cast("object", response.json()))
-        finally:
-            server_package._SERVICE_TOKEN = previous_token
+        app = create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
+            lifespan=None,
+        )
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        response: httpx.Response = client.get(
+            "/jobs", headers={"Authorization": f"Bearer {token}"}
+        )
+        payload = _as_map(cast("object", response.json()))
         gpu = _as_map(payload["gpu"])
         assert set(gpu) == _GPU_KEYS, (
             "the polled listing is where the header reads GPU pressure from"
@@ -848,3 +954,15 @@ class TestBackendEvidence:
             assert backend_again["latency_seconds"] == latency
         finally:
             reset_config()
+
+
+def test_legacy_terminal_phase_table_covers_every_terminal_phase() -> None:
+    # ``jobs.TERMINAL_PHASES`` is derived from the ``Phase`` literal and is
+    # documented there as "the sole definition of that set" that deletion,
+    # retention, and the read surface all agree on. The read surface's own
+    # ``_LEGACY_TERMINAL_PHASES`` translation table restates the same phase
+    # spellings as a second, hand-maintained set of keys rather than deriving
+    # them - a phase added to ``Phase`` without a matching key here would
+    # read as "unknown" (not terminal) through ``job_state`` instead of
+    # through whatever alias it should carry.
+    assert set(_LEGACY_TERMINAL_PHASES) == TERMINAL_PHASES

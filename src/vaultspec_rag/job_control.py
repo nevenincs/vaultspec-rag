@@ -26,7 +26,7 @@ __all__ = [
     "GpuLockWaitAccumulator",
     "NullRunControl",
     "PauseRequested",
-    "QuiesceGate",
+    "QuiesceRequested",
     "RunControl",
     "RunControlSignal",
     "RunControlSnapshot",
@@ -112,6 +112,7 @@ class ControlRequest(StrEnum):
     PAUSE = "pause"
     CANCEL = "cancel"
     SHUTDOWN = "shutdown"
+    QUIESCE = "quiesce"
 
 
 class RunControlSignal(BaseException):
@@ -147,6 +148,12 @@ class ShutdownRequested(RunControlSignal):
     request = ControlRequest.SHUTDOWN
 
 
+class QuiesceRequested(RunControlSignal):
+    """Raised at a safe checkpoint when service quiesce needs an unwind."""
+
+    request = ControlRequest.QUIESCE
+
+
 @runtime_checkable
 class RunControl(Protocol):
     """Control surface consumed by synchronous indexing code."""
@@ -168,60 +175,6 @@ class RunControlSnapshot:
     protected_depth: int
 
 
-class QuiesceGate:
-    """Zero-CPU cooperative hold gate over a :class:`threading.Event`.
-
-    Convention: set means running, clear means paused. Waiters park in the OS
-    futex at zero CPU while paused and wake instantly on resume, with no
-    sleep-poll or busy loop. The gate starts running.
-
-    Hold-and-resume is orthogonal to the unwinding pause carried by
-    :class:`RunControlToken`: this gate holds the *same* attempt in place, it
-    never raises. The absorbing-open latch is the load-bearing correctness
-    mechanism: once latched open the gate can never re-close, so a quiesced
-    worker can never block forever behind an absorbing shutdown or cancel that
-    races a concurrent re-pause.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._event = threading.Event()
-        self._event.set()
-        self._latched = False
-
-    def wait(self) -> None:
-        """Block in-kernel while paused; return at once when running or latched."""
-        with self._lock:
-            if self._latched:
-                return
-        self._event.wait()
-
-    def pause(self) -> None:
-        """Clear the gate so waiters park; a no-op once latched open."""
-        with self._lock:
-            if self._latched:
-                return
-            self._event.clear()
-
-    def resume(self) -> None:
-        """Set the gate so parked waiters wake and new waiters pass through."""
-        with self._lock:
-            self._event.set()
-
-    def is_paused(self) -> bool:
-        """Report whether the gate currently holds waiters; latched is never paused."""
-        with self._lock:
-            if self._latched:
-                return False
-            return not self._event.is_set()
-
-    def latch_open(self) -> None:
-        """Open the gate irreversibly: waiters wake, and pause becomes a no-op."""
-        with self._lock:
-            self._latched = True
-            self._event.set()
-
-
 class RunControlToken:
     """Thread-safe cooperative control token for one indexing attempt.
 
@@ -231,19 +184,17 @@ class RunControlToken:
     pending after signal delivery so every cooperating thread that reaches a
     checkpoint also unwinds.
 
-    An optional :class:`QuiesceGate` supplies the separate hold-and-resume
-    concern: when injected, ``checkpoint()`` waits on it at every unprotected
-    boundary, and absorbing requests latch it open so a held worker always
-    unwinds rather than parking forever. A gateless token behaves exactly as
-    before.
+    Service quiesce is a separate cooperative request. It always unwinds an
+    attempt; the manager releases that attempt's concrete resources and lets
+    the service controller decide when a later reconciliation attempt may run.
     """
 
-    def __init__(self, gate: QuiesceGate | None = None) -> None:
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._desired: ControlRequest | None = None
         self._delivered: ControlRequest | None = None
         self._protected_depth = 0
-        self._gate = gate
+        self._quiesce_requested = False
 
     def request_pause(self) -> bool:
         """Request pause, returning whether the desired request changed."""
@@ -278,8 +229,6 @@ class RunControlToken:
                 return False
             changed = self._desired is not ControlRequest.CANCEL
             self._desired = ControlRequest.CANCEL
-            if self._gate is not None:
-                self._gate.latch_open()
             return changed
 
     def request_shutdown(self) -> bool:
@@ -287,8 +236,13 @@ class RunControlToken:
         with self._lock:
             changed = self._desired is not ControlRequest.SHUTDOWN
             self._desired = ControlRequest.SHUTDOWN
-            if self._gate is not None:
-                self._gate.latch_open()
+            return changed
+
+    def request_quiesce(self) -> bool:
+        """Request cooperative service quiesce without changing job intent."""
+        with self._lock:
+            changed = not self._quiesce_requested
+            self._quiesce_requested = True
             return changed
 
     def snapshot(self) -> RunControlSnapshot:
@@ -301,24 +255,7 @@ class RunControlToken:
             )
 
     def checkpoint(self) -> None:
-        """Deliver a pending request, then honour the hold gate, span permitting.
-
-        Order is exact: take any absorbing or pause signal first (a no-op while
-        a protected span is open, deferring to the next unprotected checkpoint).
-        Then, only outside a protected span, wait on the injected hold gate so
-        the wait never parks a worker mid-mutation under the writer lock. After
-        the gate releases, re-check absorbing signals so a worker woken by a
-        shutdown or cancel latch unwinds rather than continuing the attempt.
-        """
-        signal = self._take_signal_if_safe()
-        if signal is not None:
-            raise signal
-        if self._gate is None:
-            return
-        with self._lock:
-            if self._protected_depth > 0:
-                return
-        self._gate.wait()
+        """Deliver the highest-priority pending request at a safe boundary."""
         signal = self._take_signal_if_safe()
         if signal is not None:
             raise signal
@@ -363,14 +300,19 @@ class RunControlToken:
 
     def _take_signal_locked(self) -> RunControlSignal | None:
         request = self._desired
-        if request is None:
-            return None
-        self._delivered = request
         if request is ControlRequest.SHUTDOWN:
+            self._delivered = request
             return ShutdownRequested()
         if request is ControlRequest.CANCEL:
+            self._delivered = request
             return CancelRequested()
-        return PauseRequested()
+        if request is ControlRequest.PAUSE:
+            self._delivered = request
+            return PauseRequested()
+        if self._quiesce_requested:
+            self._delivered = ControlRequest.QUIESCE
+            return QuiesceRequested()
+        return None
 
 
 class NullRunControl:

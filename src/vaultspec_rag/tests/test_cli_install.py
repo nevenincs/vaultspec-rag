@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,6 +12,9 @@ from ._cli_helpers import (
     app,
     runner,
 )
+
+if TYPE_CHECKING:
+    from ..commands._models import InstallReport, UninstallReport
 
 pytestmark = [pytest.mark.unit]
 
@@ -136,7 +140,7 @@ class TestRenderInstallReport:
     """
 
     @staticmethod
-    def _render(report: object) -> str:
+    def _render(report: InstallReport) -> str:
         import io
 
         from rich.console import Console
@@ -262,7 +266,7 @@ class TestRenderInstallReport:
             assert forbidden not in out
 
     def test_preserves_provider_outcomes_in_json_and_human_output(self) -> None:
-        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.core.types import (
             SyncResult,
         )
 
@@ -312,7 +316,7 @@ class TestRenderInstallReport:
         assert "error: native target malformed" in out
 
     def test_preserves_unattributed_mcp_errors_in_json_and_human_output(self) -> None:
-        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.core.types import (
             SyncResult,
         )
 
@@ -338,7 +342,7 @@ class TestRenderUninstallReport:
     """Symmetric guard rail for the uninstall renderer."""
 
     @staticmethod
-    def _render(report: object) -> str:
+    def _render(report: UninstallReport) -> str:
         import io
 
         from rich.console import Console
@@ -435,7 +439,7 @@ class TestRenderUninstallReport:
         assert "MCP optional dependency: removed ([project].dependencies)" in out
 
     def test_preserves_provider_prunes_in_json_and_human_output(self) -> None:
-        from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+        from vaultspec_core.core.types import (
             SyncResult,
         )
 

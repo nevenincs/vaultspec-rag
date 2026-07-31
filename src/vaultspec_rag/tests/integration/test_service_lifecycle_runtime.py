@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -103,23 +103,29 @@ def _index_isolation_projects(
     """Index both real projects and include daemon output if either fails."""
     for manifest in manifests:
         try:
-            response = json.loads(
-                asyncio.run(
-                    _mcp_session_call(
-                        port,
-                        "reindex_vault",
-                        {"clean": True, "project_root": str(manifest.root)},
+            response = cast(
+                "dict[str, object]",
+                json.loads(
+                    asyncio.run(
+                        _mcp_session_call(
+                            port,
+                            "reindex_vault",
+                            {"clean": True, "project_root": str(manifest.root)},
+                        )
                     )
-                )
+                ),
             )
             assert response.get("ok") is True
             job_id = response.get("job_id")
             assert job_id is not None
             for _ in range(100):
-                jobs_data = json.loads(
-                    asyncio.run(_mcp_session_call(port, "get_jobs", {"limit": 50}))
+                jobs_data = cast(
+                    "dict[str, object]",
+                    json.loads(
+                        asyncio.run(_mcp_session_call(port, "get_jobs", {"limit": 50}))
+                    ),
                 )
-                jobs = jobs_data.get("jobs", [])
+                jobs = cast("list[dict[str, object]]", jobs_data.get("jobs", []))
                 matched = [job for job in jobs if job.get("id") == job_id]
                 if matched and matched[0].get("phase") in {"done", "error", "failed"}:
                     break
@@ -216,6 +222,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
         JobSpec,
         JobState,
     )
+    from ...service_quiesce import ServiceQuiesceController
     from ...synthetic import build_synthetic_vault
 
     queued_root = tmp_path / "queued-vault"
@@ -223,7 +230,10 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     build_synthetic_vault(queued_root, n_docs=24, seed=2201)
     paused_root.mkdir()
     state_path = tmp_path / "jobs-state.json"
-    seed_manager = JobManager(state_path=state_path)
+    seed_manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        state_path=state_path,
+    )
     queued = seed_manager.create(
         JobSpec(
             JobOperation.INDEX,
@@ -335,11 +345,12 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         required_host_provisioned_qdrant_source,
     ) as (port, shutdown_pid):
         health = _poll_health(port)
-        service_pid = int(health["pid"])
+        service_pid = int(str(health["pid"]))
         status = read_service_status()
         assert status is not None
-        qdrant_pid = int(status["qdrant_pid"])
-        qdrant_port = int(status["qdrant_port"])
+        status = cast("dict[str, object]", status)
+        qdrant_pid = int(str(status["qdrant_pid"]))
+        qdrant_port = int(str(status["qdrant_port"]))
         response = httpx.post(
             f"http://127.0.0.1:{port}/reindex",
             headers={"Authorization": f"Bearer {health['service_token']}"},
@@ -351,7 +362,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             timeout=30.0,
         )
         assert response.status_code == 200, response.text
-        payload = response.json()
+        payload = cast("dict[str, object]", response.json())
         assert payload["ok"] is True
         job_id = str(payload["job_id"])
 
@@ -387,7 +398,8 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         restarted_health = _poll_health(restart_port)
         restarted_status = read_service_status()
         assert restarted_status is not None
-        assert int(restarted_status["qdrant_pid"]) != qdrant_pid
+        restarted_status = cast("dict[str, object]", restarted_status)
+        assert int(str(restarted_status["qdrant_pid"])) != qdrant_pid
         restored = _wait_for_persisted_job(
             state_path,
             job_id,
@@ -460,7 +472,8 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
                 f"Expected new status file after stale recovery, got None. "
                 f"CLI output: {result2.stdout!r}"
             )
-            new_pid = int(new_status["pid"])
+            new_status = cast("dict[str, object]", new_status)
+            new_pid = int(str(new_status["pid"]))
             assert new_pid != 99999
             assert pid_alive(new_pid)
 
@@ -469,7 +482,8 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
         finally:
             status = read_service_status()
             if status is not None:
-                pid = int(status["pid"])
+                status = cast("dict[str, object]", status)
+                pid = int(str(status["pid"]))
                 _terminate_pid(pid)
                 _wait_for_exit(pid)
 
@@ -534,7 +548,7 @@ def test_stop_running_service_by_port_without_status_file(
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
         health = _poll_health(port)
-        serving_pid = int(health["pid"])
+        serving_pid = int(str(health["pid"]))
 
         # The daemon now publishes before the parent. Remove that authoritative
         # file to recreate the case where discovery is absent even though the
@@ -574,7 +588,7 @@ def test_service_status_running(
         # so status reports "running" rather than "crashed (heartbeat stale)".
         _write_service_status(pid, port)
         health = _poll_health(port)
-        serving_pid = int(health["pid"])
+        serving_pid = int(str(health["pid"]))
         assert serving_pid > 0
 
         # Poll status until the daemon's heartbeat lands (the initial tick
@@ -601,13 +615,15 @@ def test_service_status_running(
             env={"VAULTSPEC_RAG_STATUS_DIR": str(tmp_path)},
         )
         assert json_result.exit_code == 0
-        payload = json.loads(json_result.stdout)
-        data = payload["data"]
+        payload = cast("dict[str, object]", json.loads(json_result.stdout))
+        data = cast("dict[str, object]", payload["data"])
         assert data["state"] == "running"
         assert data["pid"] == serving_pid
-        assert data["pid"] != pid or data["health"].get("parent_pid") == pid
-        operational = data["operational"]
-        assert operational["jobs"]["available"] is True
+        health_data = cast("dict[str, object]", data["health"])
+        assert data["pid"] != pid or health_data.get("parent_pid") == pid
+        operational = cast("dict[str, object]", data["operational"])
+        jobs_info = cast("dict[str, object]", operational["jobs"])
+        assert jobs_info["available"] is True
         assert "next_action" in operational
 
 

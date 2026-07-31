@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ...indexer._stat_gate import StatEvidenceGate, hash_paths
-from ...job_control import QuiesceGate, RunControlToken
+from ...job_control import RunControlToken
 from ...job_persistence import PersistedManagerState, save_persisted_state
 
 if TYPE_CHECKING:
@@ -80,7 +80,7 @@ def test_hash_gate_overhead_breakdown_and_throughput(
         os.stat(path)
     stat_ms = (time.perf_counter() - start) / _N_FILES * 1000
 
-    token = RunControlToken(QuiesceGate())
+    token = RunControlToken()
     checkpoint_ms = _per_call_ms(token.checkpoint, 100_000)
 
     # What one unbatched service progress tick pays: a full job-state

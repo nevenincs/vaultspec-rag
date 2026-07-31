@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .._atomic_write import JsonWriteOptions, write_json_atomically
-from .._index_breadth import PUBLISHED_FILES_KEY, PUBLISHED_POINTS_KEY
+from .._index_breadth import (
+    PUBLISHED_FILES_KEY,
+    PUBLISHED_POINTS_KEY,
+    index_meta_path,
+)
+from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _code_meta, _preprocess_glue, _stat_gate
 from ._chunk_producer import CodeChunkProducer
@@ -46,13 +51,23 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
-from ._generation_lifecycle import CodeGenerationBindings, CodeGenerationLifecycle
+from ._generation_lifecycle import (
+    CodeGenerationBindings,
+    CodeGenerationLifecycle,
+    CodeGenerationOpenRequest,
+)
 from ._incremental_commit import (
     CodeIncrementalCommit,
     IncrementalPublicationRequest,
     IncrementalReplacementRequest,
 )
-from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
+from ._index_lifecycle import (
+    IndexLifecycleRequest,
+    incremental_mode,
+    preprocess_completion_fields,
+    run_index_lifecycle,
+)
+from ._resolved_policy import preprocess_stale_note
 from ._run_ledger_models import RunLedgerCompatibilityError, RunOperation
 from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
@@ -153,11 +168,12 @@ class CodebaseIndexer:
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
-        from ..config._settings import get_config
+        from .._store_writes import workspace_volume_path
 
-        cfg = get_config()
-        self._data_root = root_dir / cfg.data_dir
-        self._meta_path = self._data_root / cfg.code_index_metadata_file
+        # The data root also locates the generation lifecycle's artifacts and
+        # the preprocess context, so it stays independent of the sidecar.
+        self._data_root = workspace_volume_path(root_dir)
+        self._meta_path = index_meta_path(root_dir, PublicSourceType.CODE)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
@@ -390,25 +406,12 @@ class CodebaseIndexer:
             _preprocess_glue.prep_rule_count(self._prep_ctx),
         )
 
-    @staticmethod
-    def _disabled_transform(
-        policy: ResolvedIndexPolicy,
-        rel_path: str,
-    ) -> bool:
-        """Return whether routing is retained while its transform is disabled."""
-        return (
-            policy.execution_mode == "off"
-            and policy.match_preprocess(rel_path) is not None
-        )
-
     def _mark_preprocess_stale(self, rel_path: str) -> None:
         """Surface disabled transform work once without changing membership."""
         if rel_path in self._prep_stale_paths:
             return
         self._prep_stale_paths.add(rel_path)
-        self._prep_skips.append(
-            f"{rel_path}: preprocessing disabled; retained work as stale"
-        )
+        self._prep_skips.append(preprocess_stale_note(rel_path))
 
     def _partition_disabled_paths(
         self,
@@ -419,7 +422,7 @@ class CodebaseIndexer:
         executable: list[pathlib.Path] = []
         for path in paths:
             rel = str(path.relative_to(self.root_dir)).replace("\\", "/")
-            if self._disabled_transform(policy, rel):
+            if policy.transform_disabled(rel):
                 self._mark_preprocess_stale(rel)
                 continue
             executable.append(path)
@@ -433,7 +436,7 @@ class CodebaseIndexer:
         """Return published transform rows that off mode must retain stale."""
         preserved: dict[str, str] = {}
         for rel, content_hash in previous_metadata.items():
-            if not self._disabled_transform(policy, rel):
+            if not policy.transform_disabled(rel):
                 continue
             if not (self.root_dir / pathlib.PurePosixPath(rel)).is_file():
                 continue
@@ -713,14 +716,16 @@ class CodebaseIndexer:
                     reporter=reporter,
                     run_control=run_control,
                 ),
-                event_logger=logger,
-                store=self.store,
-                source="code",
-                mode="full",
-                clean=clean,
-                root=self.root_dir,
-                run_control=run_control,
-                completion_fields=self._completed_event_fields,
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=self.store,
+                    source="code",
+                    mode="full",
+                    clean=clean,
+                    root=self.root_dir,
+                    run_control=run_control,
+                    completion_fields=self._completed_event_fields,
+                ),
             )
 
     def _completed_event_fields(self, result: IndexResult) -> dict[str, object]:
@@ -816,13 +821,15 @@ class CodebaseIndexer:
         )
         limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._lifecycle.open_checkpoint(
-            policy=policy,
-            operation=RunOperation.FULL,
-            clean=effective_clean,
-            configuration=limits.run_configuration,
-            dense_dimensions=limits.dense_dimension,
-            sparse_enabled=limits.sparse_enabled,
-            run_control=run_control,
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=effective_clean,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                run_control=run_control,
+            )
         )
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
@@ -1000,16 +1007,16 @@ class CodebaseIndexer:
                     ),
                     run_control=run_control,
                 ),
-                event_logger=logger,
-                store=self.store,
-                source="code",
-                mode=(
-                    "scoped_incremental" if changed_paths is not None else "incremental"
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=self.store,
+                    source="code",
+                    mode=incremental_mode(scoped=changed_paths is not None),
+                    clean=False,
+                    root=self.root_dir,
+                    run_control=run_control,
+                    completion_fields=self._completed_event_fields,
                 ),
-                clean=False,
-                root=self.root_dir,
-                run_control=run_control,
-                completion_fields=self._completed_event_fields,
             )
 
     def _incremental_index_locked(
@@ -1088,7 +1095,7 @@ class CodebaseIndexer:
             run_control=run_control,
         )
         disabled_current = {
-            rel for rel in current_files if self._disabled_transform(policy, rel)
+            rel for rel in current_files if policy.transform_disabled(rel)
         }
         for rel in disabled_current:
             self._mark_preprocess_stale(rel)
@@ -1114,13 +1121,15 @@ class CodebaseIndexer:
         limits = self._consumer_pipeline.resolve_limits()
         try:
             checkpoint = self._lifecycle.open_checkpoint(
-                policy=policy,
-                operation=RunOperation.INCREMENTAL,
-                clean=False,
-                configuration=limits.run_configuration,
-                dense_dimensions=limits.dense_dimension,
-                sparse_enabled=limits.sparse_enabled,
-                run_control=run_control,
+                CodeGenerationOpenRequest(
+                    policy=policy,
+                    operation=RunOperation.INCREMENTAL,
+                    clean=False,
+                    configuration=limits.run_configuration,
+                    dense_dimensions=limits.dense_dimension,
+                    sparse_enabled=limits.sparse_enabled,
+                    run_control=run_control,
+                )
             )
         except RunLedgerCompatibilityError:
             logger.info(
@@ -1234,7 +1243,7 @@ class CodebaseIndexer:
         if path.is_file():
             classified = self._classify_file(path, rel, policy)
             disposition = classified.disposition
-            if self._disabled_transform(policy, rel):
+            if policy.transform_disabled(rel):
                 self._mark_preprocess_stale(rel)
                 return
             if disposition.admitted and disposition.kind is ContentKind.CODE:
@@ -1339,13 +1348,15 @@ class CodebaseIndexer:
         limits = self._consumer_pipeline.resolve_limits()
         try:
             checkpoint = self._lifecycle.open_checkpoint(
-                policy=policy,
-                operation=RunOperation.SCOPED_INCREMENTAL,
-                clean=False,
-                configuration=limits.run_configuration,
-                dense_dimensions=limits.dense_dimension,
-                sparse_enabled=limits.sparse_enabled,
-                run_control=run_control,
+                CodeGenerationOpenRequest(
+                    policy=policy,
+                    operation=RunOperation.SCOPED_INCREMENTAL,
+                    clean=False,
+                    configuration=limits.run_configuration,
+                    dense_dimensions=limits.dense_dimension,
+                    sparse_enabled=limits.sparse_enabled,
+                    run_control=run_control,
+                )
             )
         except RunLedgerCompatibilityError:
             logger.info(

@@ -12,7 +12,7 @@ import logging
 import os
 
 import pytest
-from vaultspec_core.logging_config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.logging_config import (
     reset_logging,
 )
 

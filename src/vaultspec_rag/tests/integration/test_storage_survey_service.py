@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import time
 import urllib.parse
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from ..._store_models import root_collection_prefix
+from ...jobs import count
 from ...serviceclient._transport import _do_http_call, _try_http_admin
 
 if TYPE_CHECKING:
@@ -26,7 +27,9 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.integration, pytest.mark.subprocess_gpu]
 
 
-def _survey_root_call(port: int, root: Path, *, fresh: bool = False) -> dict[str, Any]:
+def _survey_root_call(
+    port: int, root: Path, *, fresh: bool = False
+) -> dict[str, object]:
     """Query the survey route scoped to *root* and return the envelope."""
     quoted = urllib.parse.quote(str(root))
     suffix = "&fresh=true" if fresh else ""
@@ -66,8 +69,11 @@ def test_storage_survey_route_returns_bounded_envelope(
     assert isinstance(result.get("namespaces"), list)
     assert "returned" in result
     assert "total" in result
-    limit = result.get("limit")
-    assert isinstance(limit, int)
+    # Routed through the canonical reader because a bare int assert admitted
+    # exactly the value it existed to reject: isinstance(True, int) and
+    # True > 0 both hold, so a published ``limit: True`` passed the pin.
+    limit = count(result.get("limit"))
+    assert limit is not None
     assert limit > 0
 
 
@@ -222,7 +228,7 @@ def test_storage_survey_serves_cache_after_warmup(
     """
     port, _status_dir = live_service
     deadline = time.monotonic() + 60.0
-    result: dict[str, Any] | None = None
+    result: dict[str, object] | None = None
     while time.monotonic() < deadline:
         result = _do_http_call(port, "/storage/survey", None)
         if result is not None and result.get("source") == "cache":
@@ -234,7 +240,12 @@ def test_storage_survey_serves_cache_after_warmup(
     again = _do_http_call(port, "/storage/survey", None)
     assert again is not None
     assert again.get("source") == "cache"
-    assert again.get("computed_at") == result.get("computed_at")
+    # Read the stamp before comparing: two absent stamps are equal, so a
+    # response that dropped the field entirely would satisfy a bare
+    # comparison while proving nothing about the snapshot being reused.
+    warmed_at = result.get("computed_at")
+    assert warmed_at is not None, f"warmed response carried no stamp: {result}"
+    assert again.get("computed_at") == warmed_at
 
 
 @pytest.mark.usefixtures("live_service")
@@ -249,4 +260,8 @@ def test_storage_survey_fresh_recomputes_and_reseeds_cache(
     cached = _do_http_call(port, "/storage/survey", None)
     assert cached is not None
     assert cached.get("source") == "cache"
-    assert cached.get("computed_at") == fresh.get("computed_at")
+    # As above: the stamp must exist before equality means anything, or a
+    # recompute that published no stamp would read as a successful reseed.
+    fresh_at = fresh.get("computed_at")
+    assert fresh_at is not None, f"fresh response carried no stamp: {fresh}"
+    assert cached.get("computed_at") == fresh_at

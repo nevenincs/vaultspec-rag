@@ -1,8 +1,7 @@
 """Validation, clamping, root resolution, and structured-error helpers.
 
-Split out of the original ``server.py`` monolith. Rebindable globals (``_http_mode``,
-``_registry``) are read at call time through the package alias so a
-test rebind on ``vaultspec_rag.server`` is observed.
+Split out of the original ``server.py`` monolith. The transport mode is read at call
+time through the package alias; request route registry access is explicit.
 """
 
 from __future__ import annotations
@@ -42,7 +41,7 @@ from ._state import (
 
 if TYPE_CHECKING:
     from .._store_locks import VaultStoreLockedError
-    from ..service import RegistryFullError
+    from ..service import RegistryFullError, ServiceRegistry
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -72,27 +71,43 @@ class ProjectRootRequiredError(ValueError):
     """
 
 
-def _registry_full_error_dict(exc: RegistryFullError) -> dict[str, Any]:
+def _registry_full_error_dict(
+    exc: RegistryFullError, registry: ServiceRegistry
+) -> dict[str, Any]:
     """Build the structured error dict for registry-full errors."""
     return {
         "ok": False,
         "error": "registry_full",
         "message": str(exc),
-        "max_projects": _m._registry.max_projects,
-        "busy_projects": [str(p) for p in _m._registry.busy_roots()],
+        "max_projects": registry.max_projects,
+        "busy_projects": [str(p) for p in registry.busy_roots()],
     }
 
 
 def _local_store_locked_error_dict(exc: VaultStoreLockedError) -> dict[str, Any]:
-    """Build a structured error for local Qdrant file-lock contention."""
+    """Build a structured error for local Qdrant file-lock contention.
+
+    Renders what the exception proved rather than restating the old
+    unconditional "another process" claim: the lock table can now confirm
+    when the blocker is a store this same process already opened.
+    """
+    if exc.held_in_process:
+        message = (
+            "The local Qdrant index is already open by a store this process "
+            "opened earlier. Reuse that store rather than opening a second "
+            "one on the same root."
+        )
+    else:
+        message = (
+            "The local Qdrant index could not be locked, and no store this "
+            "process opened holds it, so the holder is unidentified. Route "
+            "concurrent searches through one resident vaultspec-rag "
+            "service, or retry after the holder exits."
+        )
     return {
         "ok": False,
         "error": "local_store_locked",
-        "message": (
-            "The local Qdrant index is already open by another vaultspec-rag "
-            "process. Route concurrent searches through one resident "
-            "vaultspec-rag service, or retry after the other process exits."
-        ),
+        "message": message,
         "db_path": exc.db_path,
         "backend_capabilities": backend_capabilities_dict(),
     }

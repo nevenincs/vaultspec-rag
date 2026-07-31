@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config import (
     reset_config as reset_core_config,
 )
 

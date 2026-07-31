@@ -39,7 +39,7 @@ class TestRobustness:
         The synthetic corpus does not ship story files, so this test
         creates them on the fly inside the fixture's vault root.
         """
-        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.vaultcore import (
             scan_vault,
         )
 
@@ -72,7 +72,7 @@ class TestRobustness:
         instead of 'tags:' array. DocType.AUDIT exists, so get_doc_type
         returns AUDIT and the doc is indexed despite nonstandard frontmatter.
         """
-        from vaultspec_core.vaultcore import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.vaultcore import (
             scan_vault,
         )
 

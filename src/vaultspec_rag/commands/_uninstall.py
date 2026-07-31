@@ -7,12 +7,12 @@ import tempfile
 from contextvars import Context
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
-from vaultspec_core.core.commands import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.commands import (
     sync_provider,
 )
-from vaultspec_core.core.mcps import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.mcps import (
     mcp_uninstall,
 )
 
@@ -35,6 +35,9 @@ from ._mode import resolve_rag_mode
 from ._models import UninstallReport
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
+
+if TYPE_CHECKING:
+    from vaultspec_core.core.types import SyncResult
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +172,7 @@ def _run_mcp_cleanup(
 ) -> None:
     """Remove only RAG-owned provider projections through Core's authority."""
 
-    def cleanup() -> object:
+    def cleanup() -> SyncResult:
         return mcp_uninstall(
             target,
             dry_run=dry_run,

@@ -59,11 +59,11 @@ logger = logging.getLogger(__name__)
 CU130_INDEX_NAME: Final[str] = "pytorch-cu130"
 CU130_INDEX_URL: Final[str] = "https://download.pytorch.org/whl/cu130"
 CU130_MARKER: Final[str] = "sys_platform == 'linux' or sys_platform == 'win32'"
-# Minimum supported torch version. Surfaced in three places: the
-# educational comment in :func:`manual_snippet`, the warning text in
-# ``commands._maybe_warn_transitive_dep``, and the README's
-# direct-dep example. Extracting the value as a single constant keeps
-# the three surfaces in lockstep when PyTorch drops a major version.
+# Minimum supported torch version. Surfaced through :data:`DIRECT_TORCH_REQUIREMENT`
+# in the educational comment :func:`manual_snippet` appends and in the
+# direct-dep warnings ``commands._torch_flow._ensure_torch_direct_dep`` /
+# ``_handle_dry_run_state`` emit. Extracting the value as a single constant
+# keeps those surfaces in lockstep when PyTorch drops a major version.
 TORCH_MIN_VERSION: Final[str] = "2.4"
 # Fallback torch version for the tool-env remediation command, used only
 # when NO torch distribution is present in the env (the command otherwise

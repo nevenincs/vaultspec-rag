@@ -6,17 +6,15 @@ import os
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
-
-import vaultspec_rag.server as server
 
 from ..._source_types import PublicSourceType
 from ...cli._search import _validate_search_type
 from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...mcp._tools import _canonical_tool_source
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -31,15 +29,21 @@ pytestmark = [pytest.mark.integration]
 def canonical_routes(tmp_path: Path) -> Iterator[tuple[TestClient, str]]:
     """Serve the production route table with isolated real service state."""
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
-    prior_token = server._SERVICE_TOKEN
     os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
-    server._SERVICE_TOKEN = "canonical-source-test-token"
     reset_config()
     try:
-        with TestClient(Starlette(routes=ROUTES)) as client:
+        with TestClient(
+            create_http_app(
+                ServerRouteRuntime(
+                    token="canonical-source-test-token",
+                    registry=ServiceRegistry(),
+                    port=8765,
+                ),
+                lifespan=None,
+            )
+        ) as client:
             yield client, "canonical-source-test-token"
     finally:
-        server._SERVICE_TOKEN = prior_token
         if prior_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:
@@ -64,7 +68,7 @@ def test_http_routes_reject_compatibility_source_aliases(
     client, token = canonical_routes
     response = cast(
         "httpx.Response",
-        client.post(  # pyright: ignore[reportUnknownMemberType] - starlette TestClient stub gap
+        client.post(
             path,
             headers={"Authorization": f"Bearer {token}"},
             json={

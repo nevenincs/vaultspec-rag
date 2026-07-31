@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path  # noqa: TC003
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -30,6 +30,11 @@ from ...job_models import (
 )
 from ...server._routes import _service_job_snapshot
 from ...server._routes_jobs import _job_with_liveness
+from ...service_quiesce import ServiceQuiesceController
+from .._job_manager_transition_helpers import pending_attempt
+
+if TYPE_CHECKING:
+    from ...job_manager.state import AttemptExit
 
 
 def _exited_process_pid() -> int:
@@ -290,7 +295,11 @@ class TestManagedJobPersistence:
         tmp_path: Path,
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=2, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
@@ -313,7 +322,11 @@ class TestManagedJobPersistence:
         assert paused_payload["jobs"][0]["state"] == "paused"
         assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
 
-        restarted = JobManager(max_nonterminal=2, state_path=state_path)
+        restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
         restored = restarted.restore_persisted()
         assert restored.code == "job_state_restored"
         snapshot = restarted.get(job_id)
@@ -357,7 +370,11 @@ class TestManagedJobPersistence:
             "POST /jobs",
             str(project_root),
         )
-        manager = JobManager(max_nonterminal=2, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
 
         created = manager.create(canonical_spec, canonical_initiator)
         deduplicated = manager.create(
@@ -369,7 +386,11 @@ class TestManagedJobPersistence:
         assert deduplicated.job is not None
         assert deduplicated.job.id == created.job.id
 
-        restarted = JobManager(max_nonterminal=2, state_path=state_path)
+        restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
         assert restarted.restore_persisted().code == "job_state_restored"
         replay = restarted.create(
             alias_spec,
@@ -387,7 +408,11 @@ class TestManagedJobPersistence:
         tmp_path: Path,
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=2, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
@@ -397,8 +422,8 @@ class TestManagedJobPersistence:
         initiator = JobInitiator("cli", "server job create", str(tmp_path))
         created = manager.create(spec, initiator)
         assert created.job is not None
-        owner_task = asyncio.create_task(asyncio.Event().wait())
-        stale_task = asyncio.create_task(asyncio.Event().wait())
+        owner_task = asyncio.create_task(pending_attempt())
+        stale_task = asyncio.create_task(pending_attempt())
         try:
             started = manager.start_attempt(
                 created.job.id,
@@ -424,7 +449,11 @@ class TestManagedJobPersistence:
             payload["jobs"][0]["runtime"]["executable"] = "old-service.exe"
             state_path.write_text(json.dumps(payload), encoding="utf-8")
 
-            restarted = JobManager(max_nonterminal=2, state_path=state_path)
+            restarted = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
+                max_nonterminal=2,
+                state_path=state_path,
+            )
             assert restarted.restore_persisted().code == "job_state_restored"
             interrupted = restarted.get(created.job.id)
             assert interrupted is not None
@@ -454,6 +483,7 @@ class TestManagedJobPersistence:
         completed_root.mkdir()
         interrupted_root.mkdir()
         manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=2,
             max_terminal_history=1,
             state_path=state_path,
@@ -468,8 +498,8 @@ class TestManagedJobPersistence:
             JobInitiator("http", "POST /jobs", str(completed_root)),
         )
         assert completed.job is not None
-        completed_task = asyncio.create_task(asyncio.Event().wait())
-        interrupted_task = asyncio.create_task(asyncio.Event().wait())
+        completed_task = asyncio.create_task(pending_attempt())
+        interrupted_task = asyncio.create_task(pending_attempt())
         try:
             assert (
                 manager.start_attempt(
@@ -511,6 +541,7 @@ class TestManagedJobPersistence:
             )
 
             restarted = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
                 max_nonterminal=2,
                 max_terminal_history=1,
                 state_path=state_path,
@@ -523,6 +554,7 @@ class TestManagedJobPersistence:
             assert terminal[0].state is JobState.INTERRUPTED
 
             restarted_again = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
                 max_nonterminal=2,
                 max_terminal_history=1,
                 state_path=state_path,
@@ -544,6 +576,7 @@ class TestManagedJobPersistence:
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
         manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
             max_terminal_history=3,
             state_path=state_path,
@@ -571,6 +604,7 @@ class TestManagedJobPersistence:
             requests.append((spec, initiator, key, created.job.id))
 
         restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
             max_terminal_history=1,
             state_path=state_path,
@@ -592,7 +626,11 @@ class TestManagedJobPersistence:
         self, tmp_path: Path
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
@@ -655,7 +693,11 @@ class TestManagedJobPersistence:
             '{"schema":"vaultspec.rag.jobs","version":1,"jobs":[',
             encoding="utf-8",
         )
-        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
 
         outcome = manager.restore_persisted()
 
@@ -667,7 +709,11 @@ class TestManagedJobPersistence:
         tmp_path: Path,
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
@@ -704,7 +750,11 @@ class TestManagedJobPersistence:
         tmp_path: Path,
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
@@ -714,7 +764,7 @@ class TestManagedJobPersistence:
         initiator = JobInitiator("cli", "server job create", str(tmp_path))
         created = manager.create(spec, initiator)
         assert created.job is not None
-        task = asyncio.create_task(asyncio.Event().wait())
+        task = asyncio.create_task(pending_attempt())
         try:
             manager.start_attempt(
                 created.job.id,
@@ -747,7 +797,11 @@ class TestManagedJobPersistence:
             assert manager.persistence_dirty is False
             assert manager.flush_persistence().code == "persistence_clean"
 
-            restarted = JobManager(max_nonterminal=1, state_path=state_path)
+            restarted = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
+                max_nonterminal=1,
+                state_path=state_path,
+            )
             assert restarted.restore_persisted().code == "job_state_restored"
             recovered = restarted.get(created.job.id)
             assert recovered is not None
@@ -764,7 +818,11 @@ class TestManagedJobPersistence:
         tmp_path: Path,
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
@@ -777,14 +835,22 @@ class TestManagedJobPersistence:
 
         payload["jobs"][0]["desired_state"] = "paused"
         state_path.write_text(json.dumps(payload), encoding="utf-8")
-        inconsistent = JobManager(max_nonterminal=1, state_path=state_path)
+        inconsistent = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         assert inconsistent.restore_persisted().code == "job_state_invalid"
         assert inconsistent.list_jobs() == []
 
         payload["jobs"][0]["desired_state"] = "running"
         payload["idempotency"][0]["job_id"] = "missing-job"
         state_path.write_text(json.dumps(payload), encoding="utf-8")
-        dangling = JobManager(max_nonterminal=1, state_path=state_path)
+        dangling = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         assert dangling.restore_persisted().code == "job_state_invalid"
         assert dangling.list_jobs() == []
 
@@ -792,14 +858,22 @@ class TestManagedJobPersistence:
         payload["jobs"][0]["state"] = "running"
         payload["jobs"][0]["started_at"] = None
         state_path.write_text(json.dumps(payload), encoding="utf-8")
-        unstarted = JobManager(max_nonterminal=1, state_path=state_path)
+        unstarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         assert unstarted.restore_persisted().code == "job_state_invalid"
         assert unstarted.list_jobs() == []
 
         payload["jobs"][0]["state"] = "queued"
         payload["jobs"][0]["attempt"] = 2
         state_path.write_text(json.dumps(payload), encoding="utf-8")
-        unlinked_resume = JobManager(max_nonterminal=1, state_path=state_path)
+        unlinked_resume = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         assert unlinked_resume.restore_persisted().code == "job_state_invalid"
         assert unlinked_resume.list_jobs() == []
 
@@ -807,7 +881,11 @@ class TestManagedJobPersistence:
         payload["jobs"][0]["resumed_from_attempt"] = 1
         payload["jobs"][0]["resume_strategy"] = "reconcile"
         state_path.write_text(json.dumps(payload), encoding="utf-8")
-        false_first_resume = JobManager(max_nonterminal=1, state_path=state_path)
+        false_first_resume = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         assert false_first_resume.restore_persisted().code == "job_state_invalid"
         assert false_first_resume.list_jobs() == []
 
@@ -816,7 +894,11 @@ class TestManagedJobPersistence:
         tmp_path: Path,
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         created = manager.create(
             JobSpec(
                 JobOperation.INDEX,
@@ -832,7 +914,11 @@ class TestManagedJobPersistence:
         for invalid_version in (True, 1.0):
             payload["version"] = invalid_version
             state_path.write_text(json.dumps(payload), encoding="utf-8")
-            invalid = JobManager(max_nonterminal=1, state_path=state_path)
+            invalid = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
+                max_nonterminal=1,
+                state_path=state_path,
+            )
             assert invalid.restore_persisted().code == "job_state_invalid"
             assert invalid.list_jobs() == []
 
@@ -840,7 +926,11 @@ class TestManagedJobPersistence:
         job = payload["jobs"][0]
         job["control_acknowledged_at"] = job["created_at"]
         state_path.write_text(json.dumps(payload), encoding="utf-8")
-        unrequested_ack = JobManager(max_nonterminal=1, state_path=state_path)
+        unrequested_ack = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         assert unrequested_ack.restore_persisted().code == "job_state_invalid"
         assert unrequested_ack.list_jobs() == []
 
@@ -850,7 +940,11 @@ class TestManagedJobPersistence:
         job["state_changed_at"] = job["created_at"] + 1
         job["finished_at"] = job["created_at"]
         state_path.write_text(json.dumps(payload), encoding="utf-8")
-        impossible_finish = JobManager(max_nonterminal=1, state_path=state_path)
+        impossible_finish = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         assert impossible_finish.restore_persisted().code == "job_state_invalid"
         assert impossible_finish.list_jobs() == []
 
@@ -859,7 +953,11 @@ class TestManagedJobPersistence:
         tmp_path: Path,
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=1, state_path=state_path)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         created = manager.create(
             JobSpec(
                 JobOperation.INDEX,
@@ -882,7 +980,11 @@ class TestManagedJobPersistence:
         legacy_v1["jobs"][0]["control_requested_at"] = None
         state_path.write_text(json.dumps(legacy_v1), encoding="utf-8")
 
-        restarted = JobManager(max_nonterminal=1, state_path=state_path)
+        restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
         assert restarted.restore_persisted().code == "job_state_restored"
         assert restarted.get(created.job.id) == created.job
         migrated = json.loads(state_path.read_text(encoding="utf-8"))["jobs"][0]
@@ -894,8 +996,12 @@ class TestManagedJobPersistence:
         tmp_path: Path,
     ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        manager = JobManager(max_nonterminal=3, state_path=state_path)
-        tasks: list[asyncio.Task[bool]] = []
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=3,
+            state_path=state_path,
+        )
+        tasks: list[asyncio.Task[AttemptExit]] = []
         try:
             for index in range(3):
                 root = tmp_path / f"project-{index}"
@@ -909,8 +1015,7 @@ class TestManagedJobPersistence:
                     JobInitiator("watcher", "watcher_vault_index", str(root)),
                 )
                 assert created.job is not None
-                event = asyncio.Event()
-                task = asyncio.create_task(event.wait())
+                task = asyncio.create_task(pending_attempt())
                 tasks.append(task)
                 assert (
                     manager.start_attempt(
@@ -921,7 +1026,11 @@ class TestManagedJobPersistence:
                     == "attempt_started"
                 )
 
-            restarted = JobManager(max_nonterminal=1, state_path=state_path)
+            restarted = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
+                max_nonterminal=1,
+                state_path=state_path,
+            )
             outcome = restarted.restore_persisted()
             assert outcome.code == "job_state_restored"
             assert restarted.active() == []

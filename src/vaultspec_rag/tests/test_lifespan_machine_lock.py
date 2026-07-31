@@ -21,7 +21,6 @@ from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 import pytest
-from starlette.applications import Starlette
 
 from .._machine_lock import (
     acquire_machine_lock,
@@ -30,7 +29,8 @@ from .._machine_lock import (
 )
 from ..config._settings import reset_config
 from ..config._types import EnvVar
-from ..server._lifespan import service_lifespan
+from ..server import ServerRouteRuntime, create_http_app, service_lifespan
+from ..service import ServiceRegistry
 from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
@@ -107,8 +107,19 @@ class TestLifespanReleasesLockOnStartupFailure:
         os.environ[port_key] = str(port)
         reset_config()
         try:
-            cm = service_lifespan(Starlette())  # the app arg is unused by the lifespan
-            with pytest.raises(RuntimeError):
+            app = create_http_app(
+                ServerRouteRuntime(
+                    token="lifespan-machine-lock-test-token",
+                    registry=ServiceRegistry(),
+                    port=8765,
+                ),
+                lifespan=service_lifespan,
+            )
+            with pytest.raises(
+                RuntimeError,
+                match="port held by a non-managed process",
+            ):
+                cm = app.router.lifespan_context(app)
                 await cm.__aenter__()
 
             # The held lock must be free now: a fresh acquire in this same
@@ -140,8 +151,19 @@ class TestLifespanReleasesLockOnStartupFailure:
         reset_config()
         try:
             for _ in range(2):
-                cm = service_lifespan(Starlette())
-                with pytest.raises(RuntimeError):
+                app = create_http_app(
+                    ServerRouteRuntime(
+                        token="lifespan-machine-lock-test-token",
+                        registry=ServiceRegistry(),
+                        port=8765,
+                    ),
+                    lifespan=service_lifespan,
+                )
+                with pytest.raises(
+                    RuntimeError,
+                    match="port held by a non-managed process",
+                ):
+                    cm = app.router.lifespan_context(app)
                     await cm.__aenter__()
             acquired, _holder = acquire_machine_lock()
             assert acquired is True

@@ -10,7 +10,7 @@ import pathlib
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack, cast
 
 from .._job_errors import JobError, JobErrorKind
 from ..index_profiles import get_index_support_profile
@@ -18,7 +18,11 @@ from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
 from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
-from ._document_checkpoint import DocumentRunCheckpoint, DocumentRunConfiguration
+from ._document_checkpoint import (
+    DocumentRunCheckpoint,
+    DocumentRunConfiguration,
+    DocumentRunOpenRequest,
+)
 from ._document_meta import (
     DocumentFileMetadata,
     DocumentIndexMetadata,
@@ -27,7 +31,13 @@ from ._document_meta import (
     read_document_meta,
 )
 from ._file_state import FileStateKind
-from ._index_lifecycle import preprocess_completion_fields, run_index_lifecycle
+from ._index_lifecycle import (
+    IndexLifecycleRequest,
+    incremental_mode,
+    preprocess_completion_fields,
+    run_index_lifecycle,
+)
+from ._resolved_policy import preprocess_stale_note
 from ._route_migration import reconcile_generation_storage
 from ._run_ledger_models import (
     FinalizationPhase,
@@ -91,9 +101,9 @@ class _DocumentResourceBudget:
     """Aggregate document ceilings enforced at each measurable runtime edge."""
 
     limits: SupportProfileLimits
-    rss_ceiling_mb: float | None = None
-    cuda_ceiling_mb: float | None = None
-    cuda_baseline_mb: float | None = None
+    rss_ceiling_mib: float | None = None
+    cuda_ceiling_mib: float | None = None
+    cuda_baseline_mib: float | None = None
     enforce_cuda: bool = True
     generated_chunks: int = 0
     weighted_bytes: int = 0
@@ -106,20 +116,20 @@ class _DocumentResourceBudget:
         from .._units import bytes_to_mib
         from ..memory_probe import MemoryBudget
 
-        rss_ceiling_mb = (
+        rss_ceiling_mib = (
             bytes_to_mib(self.limits.rss_bytes)
-            if self.rss_ceiling_mb is None
-            else self.rss_ceiling_mb
+            if self.rss_ceiling_mib is None
+            else self.rss_ceiling_mib
         )
-        cuda_ceiling_mb = (
+        cuda_ceiling_mib = (
             bytes_to_mib(self.limits.cuda_bytes)
-            if self.cuda_ceiling_mb is None
-            else self.cuda_ceiling_mb
+            if self.cuda_ceiling_mib is None
+            else self.cuda_ceiling_mib
         )
         self.memory_budget = MemoryBudget(
-            rss_ceiling_mb=rss_ceiling_mb,
-            cuda_ceiling_mb=cuda_ceiling_mb if self.enforce_cuda else None,
-            cuda_baseline_mb=self.cuda_baseline_mb if self.enforce_cuda else None,
+            rss_ceiling_mib=rss_ceiling_mib,
+            cuda_ceiling_mib=cuda_ceiling_mib if self.enforce_cuda else None,
+            cuda_baseline_mib=self.cuda_baseline_mib if self.enforce_cuda else None,
         )
 
     def reserve(
@@ -197,9 +207,9 @@ class _DocumentResourceBudget:
         try:
             snapshot = self.memory_budget.observe(
                 label=label,
-                rss_mb=bytes_to_mib(rss_bytes),
-                cuda_allocated_mb=bytes_to_mib(allocated_bytes),
-                cuda_reserved_mb=bytes_to_mib(cuda_bytes),
+                rss_mib=bytes_to_mib(rss_bytes),
+                cuda_allocated_mib=bytes_to_mib(allocated_bytes),
+                cuda_reserved_mib=bytes_to_mib(cuda_bytes),
             )
         except JobError:
             snapshot = self.memory_budget.snapshot
@@ -310,9 +320,9 @@ class DocumentIndexer:
             SourceProfileVersion.CONVENTIONAL_V1
         )
         self._writer_lock = threading.RLock()
-        from ..config._settings import get_config
+        from .._store_writes import workspace_volume_path
 
-        self._data_root = self.root_dir / get_config().data_dir
+        self._data_root = workspace_volume_path(self.root_dir)
         self._meta_path = document_metadata_path(self.root_dir)
         self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
         # Resident between runs; every acquire/retain pair runs under
@@ -333,6 +343,36 @@ class DocumentIndexer:
         # result on this long-lived per-root indexer instance.
         self._reuse_stats: ReuseStats | None = None
         self._donor_reuse: DonorReuseContext | None = None
+
+    @classmethod
+    def for_preflight(
+        cls,
+        root_dir: pathlib.Path,
+        *,
+        extra_excludes: list[str] | None = None,
+        content_policy: RootContentPolicy | None = None,
+    ) -> DocumentIndexer:
+        """Build one indexer for read-only preflight, with no model and no store.
+
+        The only construction path that omits both. ``__init__`` stores
+        ``model`` and ``store`` without reading either, and the preflight
+        methods resolve policy and walk the tree without reaching them: both
+        are read only inside an index run, by donor reuse and the encode
+        pipeline. An instance built here must therefore never enter a run -
+        it answers ``resolve_policy_snapshot``, ``preflight_content`` and
+        ``preflight_changed_paths``, and nothing else.
+
+        The two casts are the whole cost of expressing that. They live here,
+        beside the ``__init__`` whose behaviour makes them safe, instead of
+        being restated at every caller that wants a model-free preflight.
+        """
+        return cls(
+            root_dir,
+            cast("Any", None),
+            cast("Any", None),
+            extra_excludes=extra_excludes,
+            content_policy=content_policy,
+        )
 
     def _resolve_reuse(self, policy: ResolvedIndexPolicy) -> None:
         """Resolve this run's donor reuse context, once per index run."""
@@ -361,8 +401,9 @@ class DocumentIndexer:
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
         """Return the latest immutable enforced-memory observation."""
-        budget = self._memory_budget
-        return budget.snapshot if budget is not None else None
+        from ..memory_probe import held_budget_snapshot
+
+        return held_budget_snapshot(self._memory_budget)
 
     def resolve_policy_snapshot(self) -> ResolvedIndexPolicy:
         """Resolve the immutable admission and extraction policy for one run."""
@@ -421,6 +462,12 @@ class DocumentIndexer:
         """Resolve policy and document discovery before any mutable resource."""
         run_control.checkpoint()
         policy = self.resolve_policy_snapshot()
+        # An execution preflight is the membership observation the run it
+        # authorizes diffs and publishes claims from, so it must see the tree
+        # as it stands now: a cached walk would hide any create or delete
+        # since the walk was taken. The fresh walk re-primes the cache, so
+        # reads inside the authorized run serve this same observation.
+        self._discover_cache.invalidate()
         files = self._discover(policy, run_control=run_control)
         run_control.checkpoint()
         return DocumentIndexPreflight(self.root_dir, policy, files)
@@ -531,9 +578,9 @@ class DocumentIndexer:
         ceilings = admit_index_ceilings(self.model, limits)
         budget = _DocumentResourceBudget(
             limits,
-            rss_ceiling_mb=ceilings.rss_ceiling_mb,
-            cuda_ceiling_mb=ceilings.cuda_ceiling_mb,
-            cuda_baseline_mb=ceilings.cuda_baseline_mb,
+            rss_ceiling_mib=ceilings.rss_ceiling_mib,
+            cuda_ceiling_mib=ceilings.cuda_ceiling_mib,
+            cuda_baseline_mib=ceilings.cuda_baseline_mib,
             enforce_cuda=ceilings.uses_cuda,
         )
         self._memory_budget = budget.memory_budget
@@ -711,7 +758,7 @@ class DocumentIndexer:
         # Route the lock-bracketed forward captures into this job's own
         # budget so checkpoints enforce the job's demand rather than a
         # process-wide high-water.
-        with record_forward_peaks(request.budget.memory_budget.record_forward_peak_mb):
+        with record_forward_peaks(request.budget.memory_budget.record_forward_peak_mib):
             encode_and_upsert_document_slice(
                 DocumentSliceRequest(
                     chunks=request.selected,
@@ -757,23 +804,25 @@ class DocumentIndexer:
             separators=(",", ":"),
         )
         checkpoint = DocumentRunCheckpoint.open(
-            data_root=self._data_root,
-            root_dir=self.root_dir,
-            policy=policy,
-            run_policy=RunPolicy.from_config(run_control=run_control),
-            operation=operation,
-            clean=clean,
-            model_identity=model_identity,
-            dense_dimensions=int(config.embedding_dimension),
-            configuration=DocumentRunConfiguration(
-                slice_max_chunks=max(1, int(config.embedding_batch_size)),
-                source_bytes=limits.source_bytes,
-                generated_chunks=limits.generated_chunks,
-                weighted_bytes=limits.weighted_bytes,
-                sparse_enabled=sparse_enabled,
-                sparse_dimension=sparse_dimension,
-                encode_batch_size=int(config.embedding_document_encode_batch_size),
-            ),
+            DocumentRunOpenRequest(
+                data_root=self._data_root,
+                root_dir=self.root_dir,
+                policy=policy,
+                run_policy=RunPolicy.from_config(run_control=run_control),
+                operation=operation,
+                clean=clean,
+                model_identity=model_identity,
+                dense_dimensions=int(config.embedding_dimension),
+                configuration=DocumentRunConfiguration(
+                    slice_max_chunks=max(1, int(config.embedding_batch_size)),
+                    source_bytes=limits.source_bytes,
+                    generated_chunks=limits.generated_chunks,
+                    weighted_bytes=limits.weighted_bytes,
+                    sparse_enabled=sparse_enabled,
+                    sparse_dimension=sparse_dimension,
+                    encode_batch_size=int(config.embedding_document_encode_batch_size),
+                ),
+            )
         )
         self._last_checkpoint = checkpoint
         return checkpoint
@@ -853,16 +902,11 @@ class DocumentIndexer:
         fresh_hashes: dict[str, str] = {}
         for path in paths:
             rel = path.relative_to(self.root_dir).as_posix()
-            if (
-                request.policy.execution_mode == "off"
-                and request.policy.match_preprocess(rel)
-            ):
+            if request.policy.transform_disabled(rel):
                 retained = previous_files.get(rel)
                 if retained is not None:
                     published.append(retained)
-                failures.append(
-                    f"{rel}: preprocessing disabled; retained work as stale"
-                )
+                failures.append(preprocess_stale_note(rel))
                 continue
             metadata, chunk_count, failure = self._publish_file(
                 path,
@@ -975,13 +1019,8 @@ class DocumentIndexer:
                     request.checkpoint.record_confirmed_deletion(rel, old.point_ids)
                     counts.removed += len(old.point_ids)
                 continue
-            if (
-                request.policy.execution_mode == "off"
-                and request.policy.match_preprocess(rel)
-            ):
-                failures.append(
-                    f"{rel}: preprocessing disabled; retained work as stale"
-                )
+            if request.policy.transform_disabled(rel):
+                failures.append(preprocess_stale_note(rel))
                 continue
             old = current.get(rel)
             metadata, chunk_count, failure = self._publish_file(
@@ -1047,9 +1086,8 @@ class DocumentIndexer:
         self._resolve_reuse(policy)
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
-        preprocessing_disabled = policy.execution_mode == "off" and any(
-            policy.match_preprocess(path.relative_to(self.root_dir).as_posix())
-            is not None
+        preprocessing_disabled = any(
+            policy.transform_disabled(path.relative_to(self.root_dir).as_posix())
             for path in paths
         )
         effective_clean = clean and not preprocessing_disabled
@@ -1077,14 +1115,16 @@ class DocumentIndexer:
                         run_control=run_control,
                     ),
                 ),
-                event_logger=logger,
-                store=self.store,
-                source="document",
-                mode="full",
-                clean=clean,
-                root=self.root_dir,
-                run_control=run_control,
-                completion_fields=preprocess_completion_fields,
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=self.store,
+                    source="document",
+                    mode="full",
+                    clean=clean,
+                    root=self.root_dir,
+                    run_control=run_control,
+                    completion_fields=preprocess_completion_fields,
+                ),
             )
 
     def _full_index_locked(
@@ -1322,16 +1362,16 @@ class DocumentIndexer:
                     ),
                     previous=previous,
                 ),
-                event_logger=logger,
-                store=self.store,
-                source="document",
-                mode=(
-                    "scoped_incremental" if changed_paths is not None else "incremental"
+                IndexLifecycleRequest(
+                    event_logger=logger,
+                    store=self.store,
+                    source="document",
+                    mode=incremental_mode(scoped=changed_paths is not None),
+                    clean=False,
+                    root=self.root_dir,
+                    run_control=run_control,
+                    completion_fields=preprocess_completion_fields,
                 ),
-                clean=False,
-                root=self.root_dir,
-                run_control=run_control,
-                completion_fields=preprocess_completion_fields,
             )
 
     def _incremental_index_locked(

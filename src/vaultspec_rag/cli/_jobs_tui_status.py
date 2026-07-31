@@ -527,8 +527,15 @@ class ServiceStatusBar(Static):
     waiting for the next fetch.
     """
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__("", **kwargs)
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+        disabled: bool = False,
+    ) -> None:
+        super().__init__("", name=name, id=id, classes=classes, disabled=disabled)
         self._status: ServiceStatusHeader | None = None
 
     def show(self, status: ServiceStatusHeader) -> None:

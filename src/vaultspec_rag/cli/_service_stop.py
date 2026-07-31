@@ -34,6 +34,7 @@ from ._process import (
 from ._service_lifecycle import (
     _fail_lifecycle,
     _lifecycle_success,
+    _LifecycleFailure,
     _process_line,
     _should_unlink_discovery_file,
 )
@@ -438,11 +439,13 @@ def _fail_stop(
     """
     return _fail_lifecycle(
         json_mode,
-        command=_STOP_COMMAND,
-        error=error,
-        message=message,
-        human_lines=human_lines,
-        next_actions=next_actions,
+        _LifecycleFailure(
+            command=_STOP_COMMAND,
+            error=error,
+            message=message,
+            human_lines=human_lines,
+            next_actions=next_actions,
+        ),
         **data,
     )
 

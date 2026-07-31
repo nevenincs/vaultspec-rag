@@ -182,7 +182,7 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
             [name for s in bounded for name in s.collections],
         )
     }
-    payload: dict[str, Any] = {
+    payload: dict[str, object] = {
         "namespaces": [
             {
                 "prefix": s.prefix,

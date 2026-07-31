@@ -17,7 +17,7 @@ import http.server
 import json
 import os
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
@@ -47,20 +47,22 @@ runner = CliRunner()
 _FOREIGN_RELEASE = "0.0.1-foreign"
 
 
+class _HealthServiceState:
+    """The mutable body and bound port behind a stub ``/health`` server."""
+
+    body: bytes = b"{}"
+    port: int = 0
+
+
 @pytest.fixture
-def health_service() -> Iterator[Any]:
+def health_service() -> Iterator[_HealthServiceState]:
     """Serve one caller-chosen ``/health`` body from a real loopback server.
 
     Yields a setter; the port is read off the returned object. A real server
     rather than a patched transport, so the CLI exercises its own HTTP client,
     its own envelope construction, and its own exit codes.
     """
-
-    class _State:
-        body: bytes = b"{}"
-        port: int = 0
-
-    state = _State()
+    state = _HealthServiceState()
 
     class _Handler(QuietHandler):
         def do_GET(self) -> None:
@@ -82,7 +84,7 @@ def health_service() -> Iterator[Any]:
         thread.join(timeout=5)
 
 
-def _publish_health(state: Any, **fields: object) -> None:
+def _publish_health(state: _HealthServiceState, **fields: object) -> None:
     """Set the served ``/health`` body and record the matching discovery file."""
     from ..cli._service_status import _write_service_status
     from ..serviceclient._discovery import _status_file
@@ -139,7 +141,7 @@ def test_different_release_is_a_mismatch_naming_both_sides() -> None:
     ],
 )
 def test_unreadable_release_is_never_a_silent_pass(
-    payload: Mapping[str, Any] | None,
+    payload: Mapping[str, object] | None,
 ) -> None:
     """An unconfirmable version fails closed, as the Qdrant attach check does.
 
@@ -202,7 +204,7 @@ def test_the_cli_parent_stamps_the_release_into_the_discovery_file() -> None:
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_refuses_to_report_already_running_for_a_foreign_release(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """The load-bearing gate: attaching to another install is not success.
 
@@ -224,7 +226,7 @@ def test_start_refuses_to_report_already_running_for_a_foreign_release(
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_refuses_a_daemon_that_reports_no_release(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """A daemon predating version reporting gets its own code, not the mismatch one."""
     _publish_health(health_service)
@@ -239,7 +241,7 @@ def test_start_refuses_a_daemon_that_reports_no_release(
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_emits_exactly_one_envelope_on_the_refusal_path(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """One structured document on stdout, never zero and never two.
 
@@ -259,7 +261,7 @@ def test_start_emits_exactly_one_envelope_on_the_refusal_path(
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_refusal_is_non_zero_and_actionable_in_human_mode(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """Human mode fails too, and prints the one action that resolves it.
 
@@ -278,7 +280,7 @@ def test_start_refusal_is_non_zero_and_actionable_in_human_mode(
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_start_still_attaches_to_a_daemon_of_this_release(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """The gate must not break the idempotent-start contract it sits in front of.
 
@@ -302,7 +304,7 @@ def test_start_still_attaches_to_a_daemon_of_this_release(
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_mcp_tools_refuse_a_foreign_release_with_the_same_code(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """One condition, one diagnosis across both adapters.
 
@@ -473,7 +475,7 @@ def test_the_data_plane_seam_pairs_the_address_with_the_verdict() -> None:
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_cli_search_refuses_a_foreign_release_rather_than_answering(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """A CLI search must not silently answer over a foreign daemon's results.
 
@@ -494,7 +496,7 @@ def test_cli_search_refuses_a_foreign_release_rather_than_answering(
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_cli_search_refusal_is_actionable_in_human_mode(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """Human mode fails too, and names the one action that resolves it."""
     _record_foreign_daemon(health_service.port)
@@ -508,7 +510,7 @@ def test_cli_search_refusal_is_actionable_in_human_mode(
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_cli_index_refuses_rather_than_indexing_around_a_foreign_daemon(
-    health_service: Any,
+    health_service: _HealthServiceState,
 ) -> None:
     """Index refuses instead of falling through to the in-process path.
 

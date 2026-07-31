@@ -12,8 +12,8 @@ Gating model (ADR Constraints). The HTTP service binds to loopback only
 (``127.0.0.1``), which is the real boundary; on top of that these
 monitoring routes accept the per-process ``service_token`` as an
 optional bearer - via ``Authorization: Bearer <token>`` or a ``?token=``
-query parameter - compared in constant time against
-``_state._SERVICE_TOKEN``. This is a pragmatic monitoring gate, not an
+query parameter - compared in constant time against the app-scoped route
+runtime token. This is a pragmatic monitoring gate, not an
 auth boundary. ``/health`` stays ungated and is registered in
 :mod:`._main`, not here.
 
@@ -29,11 +29,12 @@ for the canonical job-admission pipeline they build on.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -43,15 +44,22 @@ import vaultspec_rag.server as _m
 
 from .. import jobs as _jobs
 from .._store_locks import VaultStoreLockedError
+from ..gpu_borrow_lease import is_borrower_capability
 from ..job_models import JobOutcome
 from ..logging_config import (
     InvalidManagedLogSourceError,
+    ManagedLogsResult,
     log_event,
     managed_log_filters,
     query_managed_logs,
     render_managed_log_groups,
 )
 from ..service import RegistryFullError
+from ..service_quiesce import (
+    QuiesceState,
+    ServiceQuiesceTransitionConflictError,
+    ServiceQuiesceTransitionWaitTimeoutError,
+)
 from ._auth import require_token
 from ._routes_jobs import (
     JobFilter,
@@ -76,7 +84,8 @@ from ._routes_registry import (
 from ._routes_reindex import clean_route, reindex_route
 from ._routes_search import search_route
 from ._routes_storage import storage_survey_route
-from ._search_activity import SearchActivityFilters
+from ._runtime import get_request_runtime
+from ._search_activity import DEFAULT_SEARCH_ACTIVITY_ROWS, SearchActivityFilters
 from ._state import search_activity_ledger
 from ._utils import (
     _BAD_REQUEST_MISSING_ROOT,
@@ -90,8 +99,9 @@ if TYPE_CHECKING:
 
     from ..indexer._codebase_indexer import CodeIndexPreflight
     from ..indexer._document_indexer import DocumentIndexPreflight
-    from ..job_control import QuiesceGate
     from ..job_models import JobInitiator, JobSpec
+    from ..service import ServiceRegistry
+    from ..service_quiesce import QuiesceSnapshot, QuiesceTransition
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -508,7 +518,7 @@ def _normalise_controllable_filter(raw: str | None) -> bool | None:
     value = _normalise_filter_value(raw)
     if value is None:
         return None
-    if value in {"1", "true", "yes"}:
+    if value in _TRUTHY_QUERY_VALUES:
         return True
     if value in {"0", "false", "no"}:
         return False
@@ -536,6 +546,7 @@ async def jobs_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
+    registry = get_request_runtime(request).registry
     records = _service_job_snapshot()
     phase = _normalise_filter_value(request.query_params.get("phase"))
     state = _normalise_filter_value(request.query_params.get("state"))
@@ -586,6 +597,7 @@ async def jobs_route(request: Request) -> JSONResponse:
             "total": len(records),
             "returned": len(filtered_records),
             "summary": _job_summary(records, now=now),
+            "quiesce": registry.quiesce_snapshot().as_envelope(),
             # Machine-wide GPU pressure beside the work list, so a header can
             # show the card's condition without a request of its own. Served
             # from a short-lived cache; every measurement is null where this
@@ -597,6 +609,14 @@ async def jobs_route(request: Request) -> JSONResponse:
             # the key's absence marks a daemon that predates the tier - and
             # purely informational: nothing acts on it.
             "pressure": _machine_pressure(records, now=now),
+            # A different thing from both blocks above: whether the device
+            # will actually admit a new model load right now, against the
+            # configured floor. Synchronous and fail-fast, not a display
+            # reading and not folded through hysteresis - an operator watching
+            # this listing can see the one fact that decides whether the next
+            # load or test run is refused. Null when this host's reading could
+            # not be taken; the key's absence marks a daemon that predates it.
+            "device_load": _jobs.device_load_snapshot(now=now),
             "filters": {
                 "phase": phase,
                 "state": state,
@@ -637,7 +657,10 @@ async def search_activity_route(request: Request) -> JSONResponse:
                 root=root or None,
                 request_id=request_id or None,
                 since=since,
-                limit=_clamp_limit(request.query_params.get("limit")),
+                # Bounded by default: an absent limit means the caller
+                # named none, not that they want every retained record.
+                limit=_clamp_limit(request.query_params.get("limit"))
+                or DEFAULT_SEARCH_ACTIVITY_ROWS,
             ),
         )
     )
@@ -841,13 +864,12 @@ async def logs_route(request: Request) -> PlainTextResponse | JSONResponse:
     result = await _managed_logs_for_request(request)
     if isinstance(result, JSONResponse):
         return result
-    groups = cast("list[Any]", result["groups"])
-    return PlainTextResponse(render_managed_log_groups(groups))
+    return PlainTextResponse(render_managed_log_groups(result["groups"]))
 
 
 async def _managed_logs_for_request(
     request: Request,
-) -> dict[str, object] | JSONResponse:
+) -> ManagedLogsResult | JSONResponse:
     """Read, filter, and shape one bounded managed-log request."""
     lines = request.query_params.get("lines")
     source = request.query_params.get("source", "all")
@@ -917,9 +939,14 @@ async def get_service_state_route(request: Request) -> JSONResponse:
 
     with _m._watcher_lock:
         watching_roots = [str(r) for r in _m._watcher_tasks]
+    registry = get_request_runtime(request).registry
 
-    def _run():
-        return vaultspec_rag.get_service_state(root, watching_roots=watching_roots)
+    def _run() -> dict[str, object]:
+        return vaultspec_rag.get_service_state(
+            root,
+            registry=registry,
+            watching_roots=watching_roots,
+        )
 
     from anyio.to_thread import run_sync as _run_in_thread
 
@@ -990,10 +1017,16 @@ async def benchmark_route(request: Request) -> JSONResponse:
     except ProjectRootRequiredError:
         return _BAD_REQUEST_MISSING_ROOT
 
+    registry = get_request_runtime(request).registry
+
     def _run():
         import vaultspec_rag
 
-        return vaultspec_rag.run_benchmark(root, n_queries=n_queries)
+        return vaultspec_rag.run_benchmark(
+            root,
+            n_queries=n_queries,
+            registry=registry,
+        )
 
     from anyio.to_thread import run_sync as _run_in_thread
 
@@ -1006,10 +1039,12 @@ async def quality_route(request: Request) -> JSONResponse:
     if denied is not None:
         return denied
 
+    registry = get_request_runtime(request).registry
+
     def _run():
         import vaultspec_rag
 
-        return vaultspec_rag.run_quality_probe()
+        return vaultspec_rag.run_quality_probe(registry=registry)
 
     from anyio.to_thread import run_sync as _run_in_thread
 
@@ -1060,15 +1095,17 @@ async def vault_document_route(request: Request) -> JSONResponse:
     except ProjectRootRequiredError:
         return _BAD_REQUEST_MISSING_ROOT
 
+    registry = get_request_runtime(request).registry
+
     def _run() -> dict[str, Any]:
         try:
-            with _m._registry.lease(root) as slot:
+            with registry.lease(root) as slot:
                 doc = slot.store.get_by_id(doc_id)
                 if not doc:
                     return {"ok": False, "error": "not_found"}
                 return {"content": doc.get("content", "")}
         except RegistryFullError as exc:
-            return _m._registry_full_error_dict(exc)
+            return _m._registry_full_error_dict(exc, registry)
         except VaultStoreLockedError as exc:
             return _m._local_store_locked_error_dict(exc)
 
@@ -1076,40 +1113,205 @@ async def vault_document_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
-def _quiesce_transition(gate: QuiesceGate, *, pause: bool) -> str:
-    """Apply one pause/resume transition and name the outcome.
+def _quiesce_envelope(
+    *,
+    achieved: bool,
+    status: str,
+    snapshot: QuiesceSnapshot,
+    message: str | None = None,
+) -> JSONResponse:
+    """Emit the one quiesce envelope, on the achieved and failed exits alike.
 
-    The prior gate state is read BEFORE the mutation so an
-    already-satisfied request is reported as ``already_*`` rather than
-    as a fresh state change. This is the single service-domain owner of
-    the pause/resume status vocabulary; adapters (CLI, MCP) render it
-    without recomputing state.
+    Every exit carries the same ``ok``/``status``/``quiesce`` shape so an
+    adapter branches on ``ok`` alone.  A failure adds ``error`` and
+    ``message``: the operator asked for a state change and did not get it,
+    and the reason is the whole content of that answer.  The daemon answered
+    in every one of these cases, so the transport status stays 200 and the
+    achieved/failed distinction lives in the body - a broker pausing
+    speculatively must be able to tell a refused lifecycle request from a
+    gateway that never reached the service.
     """
-    was_paused = gate.is_paused()
-    if pause:
-        gate.pause()
-        return "already_paused" if was_paused else "paused"
-    gate.resume()
-    return "resumed" if was_paused else "already_running"
+    log_event(
+        logger,
+        "service.quiesce",
+        status,
+        fields={
+            "state": snapshot.state.value,
+            "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
+        },
+    )
+    payload: dict[str, object] = {
+        "ok": achieved,
+        "status": status,
+        "quiesce": snapshot.as_envelope(),
+    }
+    if not achieved:
+        payload["error"] = status
+        payload["message"] = (
+            message
+            if message is not None
+            else _quiesce_reason(
+                status,
+                snapshot,
+            )
+        )
+        payload["retryable"] = True
+    return JSONResponse(payload)
+
+
+def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
+    """Describe an unachieved transition from the controller's own evidence."""
+    failure_reason = snapshot.failure_reason
+    held = f"the service is {snapshot.state.value!r}"
+    if failure_reason is not None:
+        return f"Quiesce transition {status!r} left {held}: {failure_reason}."
+    return f"Quiesce transition {status!r} left {held}."
+
+
+async def _borrower_capability_from_request(
+    request: Request,
+) -> tuple[str | None, str | None]:
+    """Read the optional single borrower capability without logging it."""
+    body = await request.body()
+    if not body:
+        return (None, None)
+    try:
+        parsed: object = json.loads(body)
+    except (UnicodeDecodeError, ValueError):
+        return (None, "invalid_borrower_capability")
+    if not _is_json_object(parsed):
+        return (None, "invalid_borrower_capability")
+    if not parsed:
+        return (None, None)
+    capability = _single_borrower_capability(parsed)
+    if capability is not None:
+        return (capability, None)
+    return (None, "invalid_borrower_capability")
+
+
+def _single_borrower_capability(payload: dict[str, object]) -> str | None:
+    """Return the one structurally valid borrower capability from a body."""
+    match payload:
+        case {"borrower_capability": str() as capability} if len(payload) == 1:
+            return capability if is_borrower_capability(capability) else None
+        case _:
+            return None
+
+
+def _is_json_object(value: object) -> TypeGuard[dict[str, object]]:
+    """Narrow a decoded JSON value to the object surface this route reads."""
+    return isinstance(value, dict)
+
+
+async def _borrower_lifecycle_authorization(
+    request: Request,
+    registry: ServiceRegistry,
+    *,
+    pause: bool,
+) -> tuple[str | None, JSONResponse | None]:
+    """Return the parsed capability and any unchanged-state borrower refusal."""
+    capability, capability_error = await _borrower_capability_from_request(request)
+    if capability_error is not None:
+        return (
+            None,
+            _quiesce_envelope(
+                achieved=False,
+                status=capability_error,
+                snapshot=registry.quiesce_snapshot(),
+                message=capability_error,
+            ),
+        )
+    lease_error = registry.validate_borrower_lifecycle_request(
+        capability,
+        pause=pause,
+    )
+    if lease_error is not None:
+        return (
+            None,
+            _quiesce_envelope(
+                achieved=False,
+                status=lease_error,
+                snapshot=registry.quiesce_snapshot(),
+                message=lease_error,
+            ),
+        )
+    return (capability, None)
+
+
+def _post_pause_binding_error(
+    registry: ServiceRegistry,
+    capability: str | None,
+    transition: QuiesceTransition,
+) -> str | None:
+    """Bind a still-live borrower after safe quiescence, or name its refusal."""
+    if capability is None or not transition.achieved:
+        return None
+    lease_error = registry.validate_borrower_lifecycle_request(capability, pause=True)
+    if lease_error is not None:
+        return lease_error
+    if (
+        transition.snapshot.state is not QuiesceState.QUIESCED
+        or not registry.bind_borrower_capability(capability)
+    ):
+        return "borrower_lease_mismatch"
+    return None
 
 
 async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    gate = _m._registry.quiesce_gate
-    status = _quiesce_transition(gate, pause=pause)
-    # Re-read after the transition: a gate latched open by a pending
-    # shutdown ignores pause(), and the honest post-state lets the
-    # caller detect the unachieved hold instead of trusting the verb.
-    paused = gate.is_paused()
-    log_event(
-        logger,
-        "service.quiesce",
-        status,
-        fields={"paused": paused},
+    registry = get_request_runtime(request).registry
+    capability, borrower_denied = await _borrower_lifecycle_authorization(
+        request,
+        registry,
+        pause=pause,
     )
-    return JSONResponse({"ok": True, "status": status, "paused": paused})
+    if borrower_denied is not None:
+        return borrower_denied
+    try:
+        if pause:
+            transition = await _run_in_thread(
+                partial(registry.quiesce_resources, timeout_seconds=5.0),
+            )
+        else:
+            transition = await _run_in_thread(registry.resume_resources)
+    except (
+        ServiceQuiesceTransitionConflictError,
+        ServiceQuiesceTransitionWaitTimeoutError,
+    ) as exc:
+        return _quiesce_envelope(
+            achieved=False,
+            status=exc.code,
+            snapshot=exc.snapshot,
+            message=str(exc),
+        )
+    except Exception as exc:
+        return _quiesce_envelope(
+            achieved=False,
+            status="quiesce_transition_failed",
+            snapshot=registry.quiesce_snapshot(),
+            message=f"{exc.__class__.__name__}: {exc}",
+        )
+    binding_error = _post_pause_binding_error(
+        registry,
+        capability if pause else None,
+        transition,
+    )
+    if binding_error is not None:
+        return _quiesce_envelope(
+            achieved=False,
+            status=binding_error,
+            snapshot=transition.snapshot,
+            message=binding_error,
+        )
+    if not pause and capability is not None and transition.achieved:
+        registry.clear_borrower_capability_after_resume(capability)
+    return _quiesce_envelope(
+        achieved=transition.achieved,
+        status=transition.code.value,
+        snapshot=transition.snapshot,
+    )
 
 
 async def pause_service_route(request: Request) -> JSONResponse:

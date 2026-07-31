@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypedDict
 
 from ._content_policy import AdmissionReason, ContentKind
 from ._file_state import FileState, FileStateKind, validate_rel_path
@@ -12,14 +12,41 @@ from ._run_ledger_models import (
     FinalizationPhase,
     RunLedgerCorruptionError,
     RunLedgerStateError,
+    fetch_all,
+    fetch_one,
 )
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator
     from contextlib import AbstractContextManager
 
-    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_models import GenerationRow, RunGeneration
+
+
+class FileStateRow(TypedDict):
+    """The ``file_states`` row columns :func:`file_state_from_row` reads."""
+
+    rel_path: str
+    state: str
+    content_kind: str | None
+    content_hash: str | None
+    admission_reason: str | None
+    error_kind: str | None
+    detail: str | None
+
+
+class _DeletionEvidenceRow(TypedDict):
+    """The aggregate columns read to confirm a path deletion is committed."""
+
+    unit_count: int
+    end_count: int
+
+
+class _PointIdRow(TypedDict):
+    """A single ``commit_point_ids.point_id`` column, read across queries."""
+
+    point_id: str
 
 
 class RunLedgerFileMethods:
@@ -32,7 +59,7 @@ class RunLedgerFileMethods:
         @staticmethod
         def _require_mutable_generation(
             connection: sqlite3.Connection, generation_id: str
-        ) -> sqlite3.Row: ...
+        ) -> GenerationRow: ...
 
         @staticmethod
         def _file_completion_evidence(
@@ -40,7 +67,7 @@ class RunLedgerFileMethods:
         ) -> tuple[bool, str | None]: ...
 
         @staticmethod
-        def _generation_from_row(row: sqlite3.Row) -> RunGeneration: ...
+        def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
 
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
@@ -107,14 +134,15 @@ class RunLedgerFileMethods:
                 raise RunLedgerStateError(
                     "cannot change file state after finalization begins"
                 )
-            evidence = connection.execute(
+            evidence: _DeletionEvidenceRow | None = fetch_one(
+                connection,
                 """
                 SELECT COUNT(*) AS unit_count, SUM(is_file_end) AS end_count
                 FROM commit_units
                 WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
                 """,
                 (generation_id, rel_path, CommitUnitKind.DELETE_PATH.value),
-            ).fetchone()
+            )
             assert evidence is not None
             if int(evidence["unit_count"]) != 1 or int(evidence["end_count"]) != 1:
                 raise RunLedgerStateError(
@@ -147,7 +175,8 @@ class RunLedgerFileMethods:
         """
         validate_rel_path(rel_path)
         with self._connect() as connection:
-            rows = connection.execute(
+            rows: list[_PointIdRow] = fetch_all(
+                connection,
                 """
                 SELECT points.point_id
                 FROM commit_point_ids AS points
@@ -165,7 +194,7 @@ class RunLedgerFileMethods:
                     CommitUnitKind.UPSERT.value,
                     source_digest,
                 ),
-            ).fetchall()
+            )
         return tuple(str(row["point_id"]) for row in rows)
 
     def reopen_drifted_path(
@@ -245,24 +274,27 @@ class RunLedgerFileMethods:
         last_path: str | None = None
         while True:
             with self._connect() as connection:
+                rows: list[FileStateRow]
                 if last_path is None:
-                    rows = connection.execute(
+                    rows = fetch_all(
+                        connection,
                         """
                         SELECT * FROM file_states
                         WHERE generation_id = ?
                         ORDER BY rel_path LIMIT ?
                         """,
                         (generation_id, batch_size),
-                    ).fetchall()
+                    )
                 else:
-                    rows = connection.execute(
+                    rows = fetch_all(
+                        connection,
                         """
                         SELECT * FROM file_states
                         WHERE generation_id = ? AND rel_path > ?
                         ORDER BY rel_path LIMIT ?
                         """,
                         (generation_id, last_path, batch_size),
-                    ).fetchall()
+                    )
             if not rows:
                 return
             for row in rows:
@@ -284,13 +316,14 @@ class RunLedgerFileMethods:
         unique_paths = tuple(dict.fromkeys(rel_paths))
         placeholders = ", ".join("?" for _path in unique_paths)
         with self._connect() as connection:
-            rows = connection.execute(
+            rows: list[FileStateRow] = fetch_all(
+                connection,
                 f"""
                 SELECT * FROM file_states
                 WHERE generation_id = ? AND rel_path IN ({placeholders})
                 """,
                 (generation_id, *unique_paths),
-            ).fetchall()
+            )
         return {
             state.rel_path: state
             for state in (file_state_from_row(row) for row in rows)
@@ -346,7 +379,8 @@ class RunLedgerFileMethods:
             # generation owns the matching unit; constraining them to the
             # queried generation instead drops every inherited point, which
             # then reads as obsolete and is deleted.
-            rows = connection.execute(
+            rows: list[_PointIdRow] = fetch_all(
+                connection,
                 f"""
                 SELECT points.point_id
                 FROM commit_point_ids AS points
@@ -368,11 +402,11 @@ class RunLedgerFileMethods:
                     generation_id,
                     FileStateKind.INDEXED.value,
                 ),
-            ).fetchall()
+            )
         return frozenset(str(row["point_id"]) for row in rows)
 
 
-def file_state_from_row(row: Mapping[str, Any]) -> FileState:
+def file_state_from_row(row: FileStateRow) -> FileState:
     from .._job_errors import JobErrorKind
 
     try:

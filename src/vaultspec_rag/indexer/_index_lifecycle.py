@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from ..logging_config import log_event
+from ._run_ledger_models import RunOperation
 
 if TYPE_CHECKING:
     import pathlib
@@ -35,6 +36,13 @@ INDEX_EVENT_NAMESPACE = "service.index"
 
 @dataclass(frozen=True, slots=True)
 class IndexLifecycleRequest:
+    """Everything a run needs from its caller beyond the body itself.
+
+    One grouped shape rather than a spread of keywords, so a domain that
+    gains an input gains it here and every call site is re-checked against
+    the field's real type.
+    """
+
     event_logger: logging.Logger
     store: VaultStore
     source: str
@@ -43,6 +51,19 @@ class IndexLifecycleRequest:
     root: pathlib.Path
     run_control: RunControl
     completion_fields: Callable[[IndexResult], Mapping[str, object]] | None = None
+
+
+def incremental_mode(*, scoped: bool) -> str:
+    """The run-shape label an incremental run's events carry.
+
+    Every content domain branches on the same thing - whether the caller
+    named the paths to reconcile - so the two spellings are chosen here
+    once. Derived from the closed run-operation vocabulary rather than
+    respelled, so the event label and the ledger's recorded operation
+    cannot say different words for the same run.
+    """
+    operation = RunOperation.SCOPED_INCREMENTAL if scoped else RunOperation.INCREMENTAL
+    return operation.value
 
 
 def preprocess_completion_fields(result: IndexResult) -> dict[str, object]:
@@ -60,9 +81,7 @@ def preprocess_completion_fields(result: IndexResult) -> dict[str, object]:
 
 
 def run_index_lifecycle(
-    body: Callable[[], IndexResult],
-    request: IndexLifecycleRequest | None = None,
-    **legacy: object,
+    body: Callable[[], IndexResult], request: IndexLifecycleRequest, /
 ) -> IndexResult:
     """Run ``body`` as an observable, activity-stamped index run.
 
@@ -72,19 +91,16 @@ def run_index_lifecycle(
 
     Args:
         body: The indexer's locked implementation, called once.
-        event_logger: Logger the events are attributed to, so records keep
-            naming the indexer module that produced them.
-        store: Store whose persisted activity clock this run refreshes.
-        source: Content-domain label carried by every event of this run.
-        mode: Run-shape label (``full``, ``incremental``,
-            ``scoped_incremental``).
-        clean: Whether this run rebuilds from empty.
-        root: Workspace root being indexed.
-        run_control: Cooperative attempt control, checked around the
-            stamps so a cancelled attempt stops before and after the body
-            rather than only inside it.
-        completion_fields: Optional per-domain extras for the
-            ``completed`` event, derived from the run's result.
+        request: The run's labels and collaborators. Its
+            ``event_logger`` attributes the records, so they keep naming
+            the indexer module that produced them; its ``store`` owns the
+            persisted activity clock this run refreshes; ``source``,
+            ``mode`` and ``clean`` are the labels every event of this run
+            carries; ``root`` is the workspace being indexed;
+            ``run_control`` is checked around the stamps so a cancelled
+            attempt stops before and after the body rather than only
+            inside it; and ``completion_fields`` optionally derives
+            per-domain extras for the ``completed`` event.
 
     Returns:
         Whatever ``body`` returned.
@@ -93,10 +109,6 @@ def run_index_lifecycle(
         Exception: Re-raises anything ``body`` raises, after emitting the
             ``failed`` event.
     """
-    if request is None:
-        request = IndexLifecycleRequest(**cast("dict[str, Any]", legacy))
-    elif legacy:
-        raise TypeError("use either IndexLifecycleRequest or named inputs")
     run_fields: dict[str, object] = {
         "source": request.source,
         "mode": request.mode,

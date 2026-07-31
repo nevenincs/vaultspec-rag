@@ -37,6 +37,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "override, so a real run cannot be driven under it; production's own "
         "ensure_disk_headroom raises, classifies and words the refusal",
     ),
+    "test_cli_server.py": (
+        1,
+        "asserts which watch mode 'server --watch' dispatches, which is only "
+        "observable at the run_service_jobs boundary - driving it for real "
+        "opens the full-screen interactive app and never returns; the "
+        'source-scan this replaced matched the literal watch_mode="server" '
+        "and so passed while the verb really dispatched jobs mode",
+    ),
     "test_cli_progress_surfaces.py": (
         1,
         "no substitute source can be staged - the provisioner requires https "
@@ -44,6 +52,31 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "the only real alternative is re-downloading the pinned release on "
         "every run, which the suite's mirror-the-installed-binary design "
         "exists to avoid",
+    ),
+    "test_gpu_admission.py": (
+        2,
+        "asserts the shared device-load reading's raise-swallowing behaviour "
+        "and its composition with the live evaluator, which requires forcing "
+        "a specific reading and a raised exception from it - neither "
+        "reachable through a real device on a CPU-only runner",
+    ),
+    "test_jobs_device_load.py": (
+        5,
+        "asserts the jobs-listing cache's call count and its handling of a "
+        "cached-absent reading against the shared device-load reading, which "
+        "requires forcing a controlled reading (and counting how often it is "
+        "taken) - neither reachable through a real device on a CPU-only "
+        "runner",
+    ),
+    "test_server.py": (
+        3,
+        "asserts the stdio runner wires watcher cleanup and loads no model - "
+        "both observable only at the instant the MCP transport is entered, "
+        "and mcp.run(transport='stdio') blocks on real stdin forever, so the "
+        "transport, the lifetime watchdog it arms, and the model load it must "
+        "not perform are the three boundaries substituted; the source scans "
+        "these replaced read main(), a two-line dispatcher containing neither "
+        "contract, and passed against a real load added one frame down",
     ),
 }
 

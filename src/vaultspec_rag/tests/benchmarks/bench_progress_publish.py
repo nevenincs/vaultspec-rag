@@ -32,6 +32,8 @@ from ...job_models import (
     JobSpec,
 )
 from ...job_persistence import load_persisted_state, save_persisted_state
+from ...service_quiesce import ServiceQuiesceController
+from .._job_manager_transition_helpers import pending_attempt
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -43,14 +45,18 @@ _PERSIST_ROUNDS = 100
 @pytest.mark.performance
 async def test_progress_publish_amortized_cost(tmp_path: Path) -> None:
     state_path = tmp_path / "jobs-state.json"
-    manager = JobManager(max_nonterminal=1, state_path=state_path)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=state_path,
+    )
     created = manager.create(
         JobSpec(JobOperation.INDEX, JobSource.CODE, str(tmp_path), JobMode.INCREMENTAL),
         JobInitiator("service", "reindex_codebase", str(tmp_path)),
     )
     assert created.job is not None
     job_id = created.job.id
-    task = asyncio.create_task(asyncio.Event().wait())
+    task = asyncio.create_task(pending_attempt())
     try:
         started = manager.start_attempt(
             job_id,
