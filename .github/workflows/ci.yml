@@ -22,6 +22,22 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      # The two tiers that cannot simply run on a schedule: the GPU tier is
+      # expensive and contends for the single card with a live service, and
+      # the macOS tier targets a laptop that is deliberately out of the fleet
+      # on battery. Both are opt-in per dispatch, so exercising one never
+      # forces the other - before this, any manual run paid for the GPU tier
+      # whether or not that was the point of the run.
+      tier:
+        description: "Optional tier to include in this run"
+        type: choice
+        default: none
+        options:
+          - none
+          - macos
+          - gpu
+          - macos-and-gpu
 
 permissions:
   contents: read
@@ -385,7 +401,10 @@ jobs:
     #
     # A release is a deliberate act, taken at a moment when the machine can be
     # plugged in, which makes it the honest place to ask for a macOS verdict.
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'))
     continue-on-error: true
     timeout-minutes: 60
     concurrency:
@@ -456,7 +475,13 @@ jobs:
     # arbitrary code here is RCE on the host. workflow_dispatch requires write
     # access, so a fork PR can never start this job; the hosted tiers above run
     # on every PR with no secrets.
-    if: github.event_name == 'workflow_dispatch'
+    # Opt-in per dispatch. Previously ANY manual run started this tier, so a
+    # dispatch aimed at something else silently paid ~40 minutes on the one
+    # machine carrying the cuda label - and blocked every other GPU run while
+    # it did. Still dispatch-only, so a fork pull request can never reach it.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu')
     runs-on: [self-hosted, windows, gpu, cuda]
     permissions:
       contents: read
