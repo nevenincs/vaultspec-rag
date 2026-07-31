@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, cast
 import typer
 
 from .._units import human_bytes
+from ..jobs import count
 from ._app import JsonMode, server_storage_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _emit_json_error_and_exit, _plain_line
@@ -248,8 +249,11 @@ def _survey_from_service(
                 root=entry_root if isinstance(entry_root, str) else None,
                 status=str(entry.get("status", "")),
                 collections=names,
-                points=int(cast("int", entry.get("points", 0) or 0)),
-                footprint_bytes=int(cast("int", entry.get("footprint_bytes", 0) or 0)),
+                # A version-skewed daemon can publish a point/byte field the
+                # client does not recognise as a number; count() reads it as
+                # "not measured" (0) rather than raising on a malformed value.
+                points=count(entry.get("points")) or 0,
+                footprint_bytes=count(entry.get("footprint_bytes")) or 0,
             )
         )
     raw_queried = result.get("queried_root")
@@ -477,6 +481,8 @@ def storage_delete(  # noqa: PLR0913 - Typer exposes the stable public CLI optio
         resolved = str(pathlib.Path(root).resolve())
         prefix = root_collection_prefix(resolved)
         queried_root = {"root": resolved, "prefix": prefix}
+    # The XOR guard above already exited unless exactly one of prefix/root
+    # was given; when root was given, prefix was just resolved to a str above.
     target = cast("str", prefix)
     _require_yes_for_json(_DELETE_CMD, json_mode, yes)
     preview = dry_run or not yes

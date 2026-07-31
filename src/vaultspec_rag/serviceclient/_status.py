@@ -113,7 +113,7 @@ class DiscoveryStatus:
     exit_code: int
     resolution: MachineResolution
     signals: LivenessSignals = field(default_factory=LivenessSignals)
-    health: dict[str, Any] | None = None
+    health: dict[str, object] | None = None
 
     @property
     def is_live(self) -> bool:
@@ -127,7 +127,7 @@ class DiscoveryStatus:
 
     def as_dict(self) -> dict[str, Any]:
         """Render the JSON body shared by every operator adapter."""
-        payload: dict[str, Any] = {
+        payload: dict[str, object] = {
             "state": self.state,
             "label": self.label,
             "discovery": {
@@ -187,7 +187,7 @@ def compose_discovery_status(
     resolution: MachineResolution,
     signals: LivenessSignals | None = None,
     *,
-    health: dict[str, Any] | None = None,
+    health: dict[str, object] | None = None,
 ) -> DiscoveryStatus:
     """Compose the canonical operator verdict for *resolution*.
 
@@ -315,7 +315,7 @@ class ReconcileRequest:
 
     resolve: Callable[[], MachineResolution]
     probe_liveness: Callable[[MachineResolution], LivenessSignals]
-    probe_health: Callable[[int], dict[str, Any] | None]
+    probe_health: Callable[[int], dict[str, object] | None]
     timeout_s: float = RECONCILE_TIMEOUT_SECONDS
     interval_s: float = RECONCILE_INTERVAL_SECONDS
     sleep: Callable[[float], None] | None = None
@@ -374,7 +374,7 @@ def _signals_confirm_pointer(
 
 
 def _health_matches_pointer(
-    health: dict[str, Any], resolution: MachineResolution
+    health: dict[str, object], resolution: MachineResolution
 ) -> bool:
     """The live ``/health`` response's pid and token match the pointer's."""
     served_token = health.get("service_token")
@@ -389,7 +389,7 @@ def _health_matches_pointer(
 
 
 def _identity_confirmed(
-    verdict: DiscoveryStatus, health: dict[str, Any] | None
+    verdict: DiscoveryStatus, health: dict[str, object] | None
 ) -> bool:
     """Whether the serving daemon is the one the pointer advertises.
 

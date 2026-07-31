@@ -8,7 +8,7 @@ embedding dimension and dummy vectors - no model, no mocks.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -57,7 +57,7 @@ def _preproc_chunk(
     )
 
 
-def _scroll_payloads(store: VaultStore) -> list[dict[str, Any]]:
+def _scroll_payloads(store: VaultStore) -> list[dict[str, object]]:
     client = store._client
     assert client is not None
     points, _ = client.scroll(
@@ -65,7 +65,7 @@ def _scroll_payloads(store: VaultStore) -> list[dict[str, Any]]:
         with_payload=True,
         limit=100,
     )
-    return [cast("dict[str, Any]", p.payload) for p in points]
+    return [cast("dict[str, object]", p.payload) for p in points]
 
 
 def test_preproc_payload_persists_int_locator(store: VaultStore) -> None:

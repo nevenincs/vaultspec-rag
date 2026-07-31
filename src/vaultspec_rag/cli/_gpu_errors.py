@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import NoReturn
 
+    from packaging.tags import Tag
+
     from ..torch_config._constants import TorchDiagnosis
 
 __all__ = [
@@ -171,21 +173,58 @@ def durable_tool_install_command() -> str:
     import sys
 
     from packaging.tags import cpython_tags
-    from packaging.version import InvalidVersion, Version
-
-    from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
 
     try:
-        torch_version = Version(importlib.metadata.version("torch")).base_version
-    except (importlib.metadata.PackageNotFoundError, InvalidVersion):
-        torch_version = TORCH_TOOL_PIN_VERSION
+        installed = importlib.metadata.version("torch")
+    except importlib.metadata.PackageNotFoundError:
+        installed = None
 
-    platform_tag = (
-        "win_amd64"
-        if sys.platform == "win32"
-        else f"manylinux_2_28_{platform.machine().lower()}"
+    return _durable_install_command(
+        torch_version=_wheel_torch_version(installed),
+        tag=next(iter(cpython_tags())),
+        platform_tag=_wheel_platform_tag(sys.platform, platform.machine()),
     )
-    tag = next(iter(cpython_tags()))
+
+
+def _wheel_torch_version(installed: str | None) -> str:
+    """The cu130 release to pin for an env whose torch reports *installed*.
+
+    The local suffix is stripped: an env resolved ``+cpu``, and the index
+    names the same release ``+cu130``. An absent or unparseable version falls
+    back to the pin, which is the only case a constant is right for.
+    """
+    from packaging.version import InvalidVersion, Version
+
+    from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
+
+    if installed is None:
+        return TORCH_TOOL_PIN_VERSION
+    try:
+        return Version(installed).base_version
+    except InvalidVersion:
+        return TORCH_TOOL_PIN_VERSION
+
+
+def _wheel_platform_tag(platform_name: str, machine: str) -> str:
+    """The wheel's platform segment for a host reporting *platform_name*.
+
+    The manylinux level is hand-picked to match what PyTorch publishes; only
+    the architecture is read from the host, since that level is published per
+    architecture.
+    """
+    if platform_name == "win32":
+        return "win_amd64"
+    return f"manylinux_2_28_{machine.lower()}"
+
+
+def _durable_install_command(*, torch_version: str, tag: Tag, platform_tag: str) -> str:
+    """Assemble the pinned reinstall for one interpreter tag and platform.
+
+    The ``--python`` request is derived from the same tag as the wheel name so
+    the two cannot name different interpreters.
+    """
+    from ..torch_config._constants import CU130_INDEX_URL
+
     # tag.interpreter is ``cp<major><minor>`` (single-digit major); uv's
     # free-threaded request form is ``X.Yt``, signalled by the abi suffix.
     python_request = f"{tag.interpreter[2]}.{tag.interpreter[3:]}"

@@ -25,15 +25,38 @@ import typing
 import urllib.parse
 
 import pytest
+from textual.app import ScreenStackError
 from textual.widgets import DataTable
 
-from ..cli._jobs_tui import _SPINNER_FRAMES, _SPINNER_INTERVAL, ServerWatchApp
+from ..cli._jobs_tui import (
+    _LOG_LINES,
+    _SPINNER_FRAMES,
+    _SPINNER_INTERVAL,
+    ServerWatchApp,
+)
 from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
-from ..serviceclient._transport import _try_http_admin
+from ..service_quiesce import QuiesceSnapshot, QuiesceState
+from ..serviceclient._transport import DEFAULT_ADMIN_TIMEOUT_SECONDS, _try_http_admin
 
 pytestmark = [pytest.mark.unit]
 
-_HANDOFF_TIMEOUT = 10.0
+# Every wait below fails at this bound and none of them synchronises on it. A
+# deadline that can be lengthened into a pass is a tolerance rather than a
+# bound, so this one is derived from the longest legitimate single attempt a
+# wait can be sitting on: the transport's own administrative timeout. A bound
+# below that declares the interface never got there while the request it is
+# waiting for is still legitimately outstanding - a spurious failure, landing on
+# whichever test drew the slow socket rather than on anything at fault. Never
+# lower it to shorten a run: the first paint takes about half a second with
+# eight suites running on the box, so nothing healthy waits on this number, and
+# raising it can only delay how soon a real regression is reported.
+_HANDOFF_TIMEOUT = DEFAULT_ADMIN_TIMEOUT_SECONDS * 1.5
+# How many times a wait re-asks for a list whose fetch failed. This view polls
+# once an hour under test, so one refused socket would otherwise leave nothing
+# to arrive for the whole of the bound above. Asking again is what an operator
+# does; a service that is genuinely not answering fails every attempt and the
+# wait still ends at its bound.
+_READY_RETRIES = 3
 # How often the waits below re-read the screen. Everything they wait on arrives
 # on a worker thread, so the granularity is dead time added to every wait, not
 # work: it buys nothing to sit on a settled frame for a whole tick.
@@ -195,6 +218,10 @@ class _JobService:
         self.qdrant_log_lines: list[str] = ["a qdrant log line"]
         self.search_active: list[dict[str, object]] = []
         self.search_recent: list[dict[str, object]] = []
+        # When set, the response reports more retained records than it
+        # returns, which is what a bounded projection over a busy ledger
+        # looks like. Absent, every record is served and no marker is due.
+        self.search_total_override: int | None = None
         # When set, the jobs listing carries this GPU pressure block; when
         # ``None`` the key is omitted entirely, which is how a daemon older
         # than the field answers.
@@ -202,6 +229,10 @@ class _JobService:
         # When set, the jobs listing carries this machine pressure block;
         # ``None`` omits the key - a daemon that predates the tier.
         self.pressure: dict[str, object] | None = None
+        # When set, the jobs listing carries this quiesce controller
+        # observation; ``None`` omits the key, which is how a daemon older
+        # than the controller answers.
+        self.quiesce: dict[str, object] | None = None
         # What ``/health`` reports as the daemon's release. ``None`` omits
         # the field, which is how a daemon that predates version reporting
         # answers - not an empty string, and never the client's own number.
@@ -337,6 +368,35 @@ class _JobService:
             return [path for method, path in self.requests if method != "GET"]
 
 
+def _quiesce_block(
+    *,
+    state: QuiesceState,
+    vram_released: bool,
+    safe_to_borrow_gpu: bool,
+) -> dict[str, object]:
+    """Publish one controller observation exactly as the service renders it.
+
+    Built through the controller's own snapshot rather than as a literal
+    mapping, so a field added to or dropped from the canonical vocabulary
+    reaches this fixture instead of leaving it asserting against a shape the
+    service stopped publishing.
+    """
+    return QuiesceSnapshot(
+        state=state,
+        admission_epoch=7,
+        admissions_open=state is QuiesceState.RUNNING,
+        active_compute_tickets=0,
+        drain_complete=state is not QuiesceState.RUNNING,
+        vram_released=vram_released,
+        safe_to_borrow_gpu=safe_to_borrow_gpu,
+        pause_requested_at=None,
+        drain_acknowledged_at=None,
+        quiesced_at=None,
+        warming_started_at=None,
+        failure_reason=None,
+    ).as_envelope()
+
+
 def _jobs_payload(
     service: _JobService, query: dict[str, list[str]]
 ) -> dict[str, object]:
@@ -346,6 +406,7 @@ def _jobs_payload(
         held = list(service.jobs)
         gpu = service.gpu
         pressure = service.pressure
+        quiesce = service.quiesce
     page = held[:limit]
     payload: dict[str, object] = {
         "ok": True,
@@ -360,6 +421,8 @@ def _jobs_payload(
         payload["gpu"] = gpu
     if pressure is not None:
         payload["pressure"] = pressure
+    if quiesce is not None:
+        payload["quiesce"] = quiesce
     return payload
 
 
@@ -425,7 +488,7 @@ def _search_activity_payload(service: _JobService) -> dict[str, object]:
         "counts": {
             "active": len(active),
             "recent": len(recent),
-            "total": len(active) + len(recent),
+            "total": service.search_total_override or (len(active) + len(recent)),
         },
         "returned": len(active) + len(recent),
         "filters": {
@@ -1528,7 +1591,7 @@ class TestDurableRequestState:
             # when the control lands - which is the ordinary case at a
             # two-second interval against a thirty-second timeout.
             control_service.fetch_delay = 1.2
-            stale_generation = app._generation + 1
+            stale_generation = app._job_stamps.issued + 1
             app.refresh_jobs()
 
             await pilot.press("y")
@@ -1577,7 +1640,7 @@ class TestServiceHealthIsVisible:
                     "error": "admin_timeout",
                     "message": "The service did not answer within 30s.",
                 },
-                app._generation + 1,
+                app._job_stamps.issued + 1,
             )
             await pilot.pause()
             painted = _screen_text(app)
@@ -1601,7 +1664,9 @@ class TestServiceHealthIsVisible:
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
-            app._apply_result({"detail": "Not authenticated"}, app._generation + 1)
+            app._apply_result(
+                {"detail": "Not authenticated"}, app._job_stamps.issued + 1
+            )
             await pilot.pause()
             painted = _screen_text(app)
 
@@ -1632,7 +1697,7 @@ class TestServiceHealthIsVisible:
             # rather than derived later: how many generations the refresh below
             # consumes is not this test's business, and counting backwards from
             # the end makes the assertion depend on it.
-            stale_generation = app._generation
+            stale_generation = app._job_stamps.issued
             stale = _try_http_admin("get_jobs", {"limit": 20}, control_service.port)
 
             control_service.set_jobs(jobs[1:])
@@ -1873,8 +1938,8 @@ class TestHeaderCounts:
         control_service.gpu = {
             "available": True,
             "utilization_percent": 97.0,
-            "memory_used_mb": 15770.0,
-            "memory_total_mb": 16384.0,
+            "memory_used_mib": 15770.0,
+            "memory_total_mib": 16384.0,
         }
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
@@ -1912,8 +1977,8 @@ class TestHeaderCounts:
         control_service.gpu = {
             "available": False,
             "utilization_percent": None,
-            "memory_used_mb": None,
-            "memory_total_mb": None,
+            "memory_used_mib": None,
+            "memory_total_mib": None,
         }
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
@@ -2010,6 +2075,75 @@ class TestHeaderCounts:
 
         assert "pressure catastrophic" in painted, (
             "an unrecognised tier is the service's verdict and is shown as given"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_running_controller_spends_no_header_width(
+        self, control_service: _JobService
+    ) -> None:
+        """The controller's steady state is the one that must stay silent.
+
+        A running controller holding its VRAM with no borrower admitted is
+        what an operator already assumes, and it is what every healthy daemon
+        publishes on every refresh. Spending the widest cell in the bar on it
+        sheds the state labels for a claim nobody was waiting on - and the
+        evidence is not lost by the silence, because the detail row carries
+        the whole block whatever the pill decides.
+
+        Proven able to fail: returning the evidence pill for the running
+        steady state - the shape that renders every observation alike -
+        paints ``borrower safety unsafe`` and fails the first two assertions
+        below by name; restored, it passes.
+        """
+        control_service.quiesce = _quiesce_block(
+            state=QuiesceState.RUNNING,
+            vram_released=False,
+            safe_to_borrow_gpu=False,
+        )
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "borrower safety" not in painted, (
+            "a controller in its steady state must not spend header width saying so"
+        )
+        assert "▶ 1 running" in painted, (
+            "and the labels the pill would have cost must still be painted"
+        )
+        assert "quiesce details:" in painted, (
+            "silence in the header is not silence on screen: the detail row "
+            "still carries the block the service published"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_quiesced_controller_keeps_its_cell_over_the_labels(
+        self, control_service: _JobService
+    ) -> None:
+        """Controller news outranks every label the bar could have kept.
+
+        A controller past running is the window in which an operator needs
+        all three facts at once, so the cell is painted whole and the labels
+        go instead - the reverse of the steady-state case, from the same
+        header width.
+        """
+        control_service.quiesce = _quiesce_block(
+            state=QuiesceState.QUIESCED,
+            vram_released=True,
+            safe_to_borrow_gpu=True,
+        )
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "quiesce quiesced" in painted
+        assert "vram released" in painted
+        assert "borrower safety safe" in painted, (
+            "the borrower's own answer is the reason the cell exists"
+        )
+        assert "▶ 1 running" not in painted, (
+            "reported controller evidence is never shed; the labels are"
         )
 
     @pytest.mark.asyncio
@@ -2308,35 +2442,86 @@ async def _ready(pilot: typing.Any, app: ServerWatchApp) -> None:
     of it. Sleeping a tick and re-reading afterwards checks two instants and
     is blind to everything between them, and pays a full tick for each of the
     several rounds the first paint takes.
+
+    That held interval is a stability requirement and not a tolerance:
+    lengthening it demands agreement over more of the interface's own beat and
+    can only ever refuse a frame it would previously have accepted. The
+    deadline is the opposite kind of number and is documented where it is set.
     """
     deadline = time.monotonic() + _HANDOFF_TIMEOUT
     matched_at: float | None = None
     matched_width: int | None = None
+    retries = _READY_RETRIES
     while time.monotonic() < deadline:
         await pilot.pause()
-        table = app.query("#jobs")
-        if not (
-            app._jobs
-            and table
-            and table.only_one(DataTable).row_count == len(app._jobs)
-            and app._bar_cells > 0
-            and app._divided_width == table.only_one(DataTable).size.width
-            # A row must be selected too. Every control acts on the selection,
-            # so a test that starts pressing keys before one exists is testing
-            # a frame no operator ever sees.
-            and app.selected_id
+        # A failed fetch is not a paint still on its way: nothing else will ask
+        # again inside this test's lifetime, so the wait would sit out its whole
+        # bound over one refused socket and report it as an interface that never
+        # painted. Re-asked only once per finished attempt, and only a bounded
+        # number of times, so a service that is genuinely silent still ends at
+        # the deadline rather than being hammered until it.
+        if (
+            app._last_error is not None
+            and retries > 0
+            and not any(worker.is_running for worker in app.workers)
         ):
+            retries -= 1
+            app.action_refresh_now()
+        unmet = _unpainted(app)
+        if unmet:
             matched_at = None
             await asyncio.sleep(_POLL_INTERVAL)
             continue
-        width = table.only_one(DataTable).size.width
+        width = app.query_one("#jobs", DataTable).size.width
         now = time.monotonic()
         if matched_at is None or matched_width != width:
             matched_at, matched_width = now, width
         elif now - matched_at >= _SPINNER_INTERVAL * 1.5:
             return
         await asyncio.sleep(_POLL_INTERVAL)
-    raise AssertionError("the interface never completed its first paint")
+    raise AssertionError(
+        "the interface never completed its first paint after "
+        f"{_HANDOFF_TIMEOUT:g}s: {'; '.join(_unpainted(app)) or 'nothing outstanding'}"
+        + (
+            f"; the interface last reported: {app._last_error}"
+            if app._last_error is not None
+            else ""
+        )
+    )
+
+
+def _unpainted(app: ServerWatchApp) -> list[str]:
+    """Name whatever the first paint is still missing, in the operator's terms.
+
+    The wait and its failure message read the same list, so a timeout says which
+    part never arrived instead of leaving the next reader to guess between a
+    list that never landed, a division that never settled and a fetch that
+    failed. Three separate investigations have started from that guess.
+    """
+    found = app.query("#jobs")
+    if not found:
+        return ["the table is not mounted"]
+    table = app._table()
+    if table is None:
+        return ["the table is not mounted"]
+    missing: list[str] = []
+    if not app._jobs:
+        missing.append("no job list has been applied")
+    elif table.row_count != len(app._jobs):
+        missing.append(f"{table.row_count} rows painted for {len(app._jobs)} jobs")
+    if app._bar_cells <= 0:
+        missing.append("the columns have not been divided")
+    elif app._divided_width != table.size.width:
+        missing.append(
+            f"the division is for width {app._divided_width}, "
+            f"the table is {table.size.width}"
+        )
+    # A row must be selected too. Every control acts on the selection, so a test
+    # that starts pressing keys before one exists is testing a frame no operator
+    # ever sees.
+    if not app.selected_id:
+        missing.append("no row is selected")
+    return missing
 
 
 async def _settle(pilot: typing.Any) -> None:
@@ -2658,3 +2843,289 @@ class TestRemainingTimeOnTheRow:
         assert "2m20s left" in snapped, (
             "a fresh service payload must snap the countdown back to its value"
         )
+
+
+def _screen_failure(deliver: typing.Callable[[], object]) -> ScreenStackError | None:
+    """Run *deliver*, returning the screen error it raised, or ``None``.
+
+    The raise is the finding, so it is captured and named by an assertion
+    rather than left to surface as an error on the run.
+    """
+    try:
+        deliver()
+    except ScreenStackError as error:
+        return error
+    return None
+
+
+class TestClosingTheSession:
+    """Nothing the interface set in motion outlives the screen it paints.
+
+    A session ends by removing the screen, and the stack is empty from that
+    moment on. Anything still beating or still answering reads the screen,
+    raises there, and is reported as the interface having crashed rather than
+    closed - on whichever unrelated thing happened to be in progress. Every
+    test below drives the removal directly, because the window it opens is
+    microseconds wide on an idle machine and a loaded one lands in it about
+    once in several hundred sessions.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_beat_survives_the_screen_it_paints(
+        self, control_service: _JobService
+    ) -> None:
+        """Removing the screen stops every one of the interface's beats.
+
+        The removal empties the screen stack before the timers an application
+        owns are stopped, so a beat owned there fires once more with no screen
+        left to read.
+
+        Proven able to fail two ways, each on its own assertion: registering
+        the frame beat on the application - the ownership before this change -
+        fires it against the empty stack and fails on the outlived assertion;
+        registering the jobs beat there instead leaves a beat running without
+        firing one, and fails on the ownership assertion. Restored, both pass.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            await _settle(pilot)
+            with control_service._lock:
+                polls_before_close = sum(
+                    method == "GET" and path.startswith("/jobs")
+                    for method, path in control_service.requests
+                )
+            # The step that removes the interface's screen.
+            await app._close_all()
+            # Several frames' worth, so a beat that survived has to fire.
+            await asyncio.sleep(_SPINNER_INTERVAL * 4)
+            # Read and cleared here so the assertion below is what fails,
+            # rather than the session's own close re-raising it.
+            recorded = app._exception
+            app._exception = None
+            # The job interval is an hour, so a misplaced application-owned
+            # timer remains live here without firing during this bounded
+            # window. Its presence is therefore distinct from the real
+            # transport observation below: together they prove teardown
+            # stopped the timer, rather than merely that it happened not to
+            # poll yet.
+            beats = {app._tick, app.refresh_jobs, app.refresh_service_status}
+            timer_names = {
+                timer.name for timer in app._timers if timer._callback in beats
+            }
+            left_running = [
+                task.get_name()
+                for task in asyncio.all_tasks()
+                if task.get_name() in timer_names and not task.done()
+            ]
+            with control_service._lock:
+                polls_after_close = sum(
+                    method == "GET" and path.startswith("/jobs")
+                    for method, path in control_service.requests
+                )
+
+        assert recorded is None, f"a beat outlived the screen it paints: {recorded!r}"
+        assert not left_running, (
+            "the beats must end with the screen they paint, not with the "
+            f"application: {left_running}"
+        )
+        assert polls_after_close == polls_before_close, (
+            "the jobs refresh beat outlived the screen without raising"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_answer_that_outlives_the_session_is_dropped(
+        self, control_service: _JobService
+    ) -> None:
+        """A poll answering after the screen has gone is dropped, not applied.
+
+        A blocking transport call cannot be cancelled, so a request issued a
+        moment before the session ended answers into an interface that no
+        longer has a screen to paint onto.
+
+        Proven able to fail two ways, each on its own assertion: removing the
+        screen check from ``_apply_result`` raises out of the binding refresh
+        at the end of it and fails on the dropped assertion; removing both
+        that check and the binding refresh applies a payload no operator can
+        see and fails on the not-applied assertion. Restored, both pass.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            # An answer that differs from what the interface holds, so applying
+            # it is visible rather than indistinguishable from dropping it.
+            control_service.set_jobs([_job("999999999999")])
+            answer = _try_http_admin("get_jobs", {"limit": 20}, control_service.port)
+            await app._close_all()
+            failure = _screen_failure(
+                lambda: app._apply_result(answer, app._job_stamps.issued + 1)
+            )
+            held = [str(job.get("id")) for job in app._jobs]
+
+        assert failure is None, (
+            f"an answer arriving after the screen went must be dropped: {failure!r}"
+        )
+        assert held == ["abc123def456"], (
+            "an answer arriving after the screen went must not be applied either"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_log_answer_that_outlives_the_session_is_dropped(
+        self, control_service: _JobService
+    ) -> None:
+        """A log window answering after the screen has gone is dropped as well.
+
+        Pinned separately from its neighbour for two reasons, neither of which
+        the code itself records.
+
+        First, this one is protected by accident rather than on purpose: the
+        pane's absence is noticed before anything reads the screen, so what
+        stops the read is a lookup that happens to sit in front of it. Hoisting
+        the binding refresh above that lookup is an ordinary-looking tidy-up
+        which removes the protection with nothing else in the file to notice -
+        so the two tests are not the duplicates they resemble, and neither
+        covers the other.
+
+        Second, that lookup comes back empty rather than raising only because
+        a query issued from the application resolves against the screen the
+        application composed on, held separately from the screen stack that
+        teardown empties (``App._compose_screen``, assigned once at compose
+        time). Nothing here governs that. Were it to stop being held, every
+        callback answering after the screen has gone would begin raising at its
+        first lookup, and this test is the only tripwire that says so - the
+        failures otherwise surface as an unexplained intermittent crash in
+        whatever else happened to be running.
+
+        Proven able to fail: moving the binding refresh above the absent-pane
+        return raises out of it and fails on the assertion below by name, while
+        the neighbouring poll test still passes; restored, it passes.
+        """
+        app = _app(control_service, [_job("abc123def456")])
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            selected = app.selected_id
+            # The same window the interface asks for, from the same transport.
+            answer = _try_http_admin(
+                "get_logs",
+                {"lines": _LOG_LINES, "source": "service", "job_id": selected},
+                control_service.port,
+            )
+            assert answer is not None and answer.get("ok") is True, (
+                "the delivery below has to carry an answer the interface would act on"
+            )
+            await app._close_all()
+            failure = _screen_failure(lambda: app._apply_logs(selected, answer))
+
+        assert failure is None, (
+            f"a log answer arriving after the screen went must be dropped: {failure!r}"
+        )
+
+
+class TestRedactedSearchActivity:
+    """A service that withholds query text is serving, not broken.
+
+    The ledger's serializer omits ``query`` and publishes ``query_redacted``
+    whenever it is asked not to disclose the text, and a test pins that
+    contract. The console required the text outright, so a supported service
+    mode made the whole lane read as an invalid response - counts, rows and
+    detail all replaced by an error string.
+    """
+
+    def test_a_redacted_record_is_accepted(self) -> None:
+        """Mutation: requiring ``query`` again fails this on the returned error."""
+        from ..cli._jobs_tui import _search_activity_records_error
+
+        redacted: dict[str, object] = {
+            "request_id": "r-1",
+            "state": "active",
+            "query_redacted": True,
+        }
+        assert _search_activity_records_error([redacted], []) is None
+
+    def test_a_record_carrying_neither_query_nor_redaction_is_rejected(self) -> None:
+        """Silence about the text is not the same as a declared redaction.
+
+        A record that simply lost the field must still fail: the check is that
+        exactly one of the two is present, not that the strict one was relaxed.
+        """
+        from ..cli._jobs_tui import _search_activity_records_error
+
+        silent: dict[str, object] = {"request_id": "r-2", "state": "active"}
+        assert _search_activity_records_error([silent], []) is not None
+
+    def test_a_record_claiming_both_is_rejected(self) -> None:
+        """Disclosed and redacted at once describes no service state."""
+        from ..cli._jobs_tui import _search_activity_records_error
+
+        both: dict[str, object] = {
+            "request_id": "r-3",
+            "state": "active",
+            "query": "vector search",
+            "query_redacted": True,
+        }
+        assert _search_activity_records_error([both], []) is not None
+
+    def test_the_cell_says_redacted_rather_than_unavailable(self) -> None:
+        """An operator must not go looking for a fault that is not there."""
+        from ..cli._jobs_tui import _search_query_cell
+
+        rendered = _search_query_cell({"query_redacted": True}, 40).plain
+        assert "redacted" in rendered
+        assert "unavailable" not in rendered
+
+
+class TestBoundedSearchProjectionAnnouncesItself:
+    """A limited row set beside an unlimited count must say so.
+
+    The counts are computed over every retained record; the rows are the
+    bounded projection the route returned. Rendering the first beside the
+    second with nothing between them lets an operator scroll to the end of
+    the table and conclude they have seen everything.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_truncated_projection_renders_its_served_figure(
+        self, control_service: _JobService
+    ) -> None:
+        """Mutation: dropping the marker leaves only the unqualified counts.
+
+        Removing the ``showing`` append in ``_render_search_title`` fails this
+        on the membership assertion below, not on a count.
+        """
+        control_service.set_search_activity(
+            active=[_served_search("search-active-001", query="a served query")],
+            recent=[],
+        )
+        control_service.search_total_override = 300
+        app = _app(control_service, [_job("abc123def456")], watch_mode="server")
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "showing 1 of 300" in painted, (
+            "a bounded projection must name what it served against what exists"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_untruncated_projection_spends_no_width_saying_so(
+        self, control_service: _JobService
+    ) -> None:
+        """Every record served is the ordinary case and stays silent.
+
+        Asserted on a two-record figure rather than the bare phrase: the jobs
+        header carries its own ``showing N of M`` for the work list, so a
+        looser matcher passes on that one and proves nothing about this lane.
+        """
+        control_service.set_search_activity(
+            active=[
+                _served_search("search-active-002", query="a served query"),
+                _served_search("search-active-003", query="another served query"),
+            ],
+            recent=[],
+        )
+        app = _app(control_service, [_job("abc123def456")], watch_mode="server")
+        async with app.run_test(size=_WIDE, notifications=True) as pilot:
+            await _ready(pilot, app)
+            painted = _screen_text(app)
+
+        assert "showing 2 of 2" not in painted

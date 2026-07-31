@@ -9,11 +9,13 @@ import pytest
 
 from ._cli_helpers import (
     _hold_local_index_lock,
+    _parsed_json_object,
     _plain_lines,
     app,
     runner,
 )
 from ._http_stubs import QuietHandler
+from ._production_service import production_service
 from ._scaffold import make_workspace
 
 if typing.TYPE_CHECKING:
@@ -86,10 +88,12 @@ class TestCleanCommand:
 
         root = make_workspace(tmp_path)
         cfg = get_config()
-        data_dir = root / cfg.data_dir
+        data_dir = root / str(cfg.data_dir)
         data_dir.mkdir(parents=True)
-        (data_dir / cfg.index_metadata_file).write_text('{"x": "y"}', encoding="utf-8")
-        (data_dir / cfg.code_index_metadata_file).write_text(
+        index_metadata_file = data_dir / str(cfg.index_metadata_file)
+        index_metadata_file.write_text('{"x": "y"}', encoding="utf-8")
+        code_index_metadata_file = data_dir / str(cfg.code_index_metadata_file)
+        code_index_metadata_file.write_text(
             '{"src/app.py": "hash"}',
             encoding="utf-8",
         )
@@ -117,8 +121,76 @@ class TestCleanCommand:
             assert store.count_code() == 0
         finally:
             store.close()
-        assert not (data_dir / cfg.index_metadata_file).exists()
-        assert not (data_dir / cfg.code_index_metadata_file).exists()
+        assert not index_metadata_file.exists()
+        assert not code_index_metadata_file.exists()
+
+    @pytest.mark.parametrize(
+        ("selection", "removed_attr", "kept_attr"),
+        [
+            ("vault", "index_metadata_file", "code_index_metadata_file"),
+            ("codebase", "code_index_metadata_file", "index_metadata_file"),
+        ],
+    )
+    def test_clean_one_source_removes_only_its_own_sidecar(
+        self,
+        tmp_path: Path,
+        selection: str,
+        removed_attr: str,
+        kept_attr: str,
+    ) -> None:
+        """A selective clean must not resolve the other source's sidecar.
+
+        Cleaning everything cannot tell a correct resolution from one with the
+        two filenames transposed, because both files go either way. Only a
+        single-source clean observes which name each branch resolved.
+        """
+        from ..config._settings import get_config
+
+        root = make_workspace(tmp_path)
+        cfg = get_config()
+        data_dir = root / str(cfg.data_dir)
+        data_dir.mkdir(parents=True)
+        removed = data_dir / str(getattr(cfg, removed_attr))
+        kept = data_dir / str(getattr(cfg, kept_attr))
+        removed.write_text('{"x": "y"}', encoding="utf-8")
+        kept.write_text('{"kept": "kept"}', encoding="utf-8")
+
+        result = runner.invoke(
+            app, ["--target", str(root), "clean", selection, "--yes"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert not removed.exists()
+        assert kept.read_text(encoding="utf-8") == '{"kept": "kept"}'
+
+    def test_clean_document_removes_only_the_document_record(
+        self, tmp_path: Path
+    ) -> None:
+        """The document record is named independently of the two index sidecars."""
+        from ..config._settings import get_config
+        from ..indexer._document_meta import document_metadata_path
+
+        root = make_workspace(tmp_path)
+        cfg = get_config()
+        data_dir = root / str(cfg.data_dir)
+        data_dir.mkdir(parents=True)
+        survivors = [
+            data_dir / str(cfg.index_metadata_file),
+            data_dir / str(cfg.code_index_metadata_file),
+        ]
+        for survivor in survivors:
+            survivor.write_text('{"kept": "kept"}', encoding="utf-8")
+        record = document_metadata_path(root)
+        record.write_text('{"x": "y"}', encoding="utf-8")
+
+        result = runner.invoke(
+            app, ["--target", str(root), "clean", "document", "--yes"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert not record.exists()
+        for survivor in survivors:
+            assert survivor.read_text(encoding="utf-8") == '{"kept": "kept"}'
 
     def test_clean_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
         root = make_workspace(tmp_path)
@@ -207,7 +279,7 @@ class TestIndexRebuild:
         )
 
         assert result.exit_code == 2
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is False
         assert envelope["command"] == "index"
         assert envelope["error"] == "dry_run_requires_supported_type"
@@ -273,9 +345,14 @@ class TestIndexRebuild:
         )
 
         assert result.exit_code == 0, result.output
-        envelope = json.loads(result.output)
+        envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is True
-        files = set(envelope["data"]["files"])
+        data_raw = envelope["data"]
+        assert isinstance(data_raw, dict)
+        data = typing.cast("dict[str, object]", data_raw)
+        raw_files = data["files"]
+        assert isinstance(raw_files, list)
+        files = set(typing.cast("list[str]", raw_files))
         assert files == {"alpha.py", "beta.py", "gamma.py"}
 
     def test_index_dry_run_rejects_negative_limit(self, tmp_path: Path) -> None:
@@ -333,12 +410,14 @@ class TestIndexRebuild:
             ["--target", str(tmp_path), "index", "--rebuild", "--json"],
         )
         assert result.exit_code == 2
-        env = json.loads(result.output.strip())
+        env = typing.cast("dict[str, object]", json.loads(result.output.strip()))
         assert env["ok"] is False
         assert env["command"] == "index"
         assert env["error"] == "rebuild_requires_explicit_type"
         # Remediation lists the three valid forms.
-        rem = env["remediation"]
+        raw_rem = env["remediation"]
+        assert isinstance(raw_rem, list)
+        rem = typing.cast("list[str]", raw_rem)
         assert any("--type vault" in r for r in rem)
         assert any("--type code" in r for r in rem)
         assert any("--type all" in r for r in rem)
@@ -397,7 +476,7 @@ class TestIndexSummaryCLI:
         class _IndexServiceHandler(QuietHandler):
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                body = _parsed_json_object(self.rfile.read(length))
                 requests.append(body)
 
                 response = {
@@ -467,7 +546,7 @@ class TestIndexSummaryCLI:
         class SparseIndexServiceHandler(QuietHandler):
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                body = _parsed_json_object(self.rfile.read(length))
                 requests.append(body)
 
                 response: dict[str, object] = {
@@ -1020,18 +1099,25 @@ def project_refused_by_the_disk_preflight(
     return project
 
 
-@pytest.mark.usefixtures("isolated_singleton_dirs")
 class TestDiskPreflightRefusal:
     """The in-process index path surfaces a disk-preflight refusal as one
     structured non-zero envelope - never the GPU-error diagnosis.
 
-    The in-process path is reached the way an operator reaches it: the
-    singleton dirs are isolated and empty, so real discovery finds no daemon
-    to delegate to. Nothing rehearses that verdict.
+    The in-process path is reached the way an operator reaches it, which now
+    means passing the borrower gate rather than falling through it: local GPU
+    indexing requires ``--borrow-gpu`` and a live compatible service to
+    quiesce, so each test stands up the real authenticated route host, lets
+    real discovery find it, and lets the production coordinator take its lease
+    and pause. Nothing rehearses the refusal that follows.
+
+    Both tests below therefore also fail if the borrower coordination stops
+    reaching local indexing at all - a refusal from the gate carries neither
+    the classification nor the wording they assert.
     """
 
     def test_json_mode_emits_disk_preflight_failed(
         self,
+        isolated_singleton_dirs: Path,
         project_refused_by_the_disk_preflight: Path,
     ) -> None:
         """A refused preflight is one classified envelope, exit 1.
@@ -1044,16 +1130,30 @@ class TestDiskPreflightRefusal:
 
         Proven able to fail: deleting the ``except InsufficientDiskSpaceError``
         branch in the in-process index path drops the refusal into the
-        ``(ImportError, RuntimeError)`` GPU handler, and the
-        ``disk_preflight_failed`` assertion fails on a GPU diagnosis;
-        restoring the branch passes.
+        ``(ImportError, RuntimeError)`` GPU handler. That handler takes no
+        JSON mode and always renders human prose, so the run emits no
+        envelope at all and the one-envelope assertion below is what fails -
+        not the ``disk_preflight_failed`` one, which is never reached.
+        Restoring the branch passes. The classification assertion still binds
+        the branch's verdict wherever an envelope is produced; both are kept
+        because the mutation is caught earlier only by accident of how the
+        GPU handler writes.
         """
 
         project = project_refused_by_the_disk_preflight
-        result = runner.invoke(
-            app,
-            ["--target", str(project), "index", "--type", "vault", "--json"],
-        )
+        with production_service(isolated_singleton_dirs):
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(project),
+                    "index",
+                    "--type",
+                    "vault",
+                    "--borrow-gpu",
+                    "--json",
+                ],
+            )
         assert result.exit_code == 1
         # No console redirect: a --json run reports no progress at all, so
         # stdout carries the envelope and nothing else. Before that, this had
@@ -1072,6 +1172,7 @@ class TestDiskPreflightRefusal:
 
     def test_human_mode_prints_the_refusal(
         self,
+        isolated_singleton_dirs: Path,
         project_refused_by_the_disk_preflight: Path,
     ) -> None:
         """Human mode prints the store's own wording, exit 1.
@@ -1088,9 +1189,17 @@ class TestDiskPreflightRefusal:
         this test binds only the wording that reaches the operator.
         """
         project = project_refused_by_the_disk_preflight
-        result = runner.invoke(
-            app,
-            ["--target", str(project), "index", "--type", "vault"],
-        )
+        with production_service(isolated_singleton_dirs):
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(project),
+                    "index",
+                    "--type",
+                    "vault",
+                    "--borrow-gpu",
+                ],
+            )
         assert result.exit_code == 1
         assert "not enough free disk space" in " ".join(_plain_lines(result.output))

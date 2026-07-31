@@ -60,6 +60,55 @@ class _EmptyJSONHandler(QuietHandler):
         self.wfile.write(body)
 
 
+class _JSONArrayHandler(QuietHandler):
+    """Answer every GET with a 200 whose body is a JSON array, not an object.
+
+    A stray non-vaultspec-rag service answering on the port can send this, and
+    it is the shape a bare ``cast`` waves through: valid JSON that no caller can
+    call ``.get()`` on.
+    """
+
+    def do_GET(self) -> None:
+        body = b'[{"not": "an object"}]'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class _ErrorJSONArrayHandler(QuietHandler):
+    """Answer every GET with a 503 whose body is a JSON array, not an object."""
+
+    def do_GET(self) -> None:
+        body = b'["service unavailable"]'
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class _PopulatedJSONHandler(QuietHandler):
+    """Answer every GET with a well-formed, populated JSON object."""
+
+    payload: ClassVar[dict[str, object]] = {
+        "ok": True,
+        "projects": ["alpha", "beta"],
+        "count": 2,
+    }
+
+    def do_GET(self) -> None:
+        import json
+
+        body = json.dumps(type(self).payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 class _AuthDeadlineHandler(QuietHandler):
     """Exercise the real 401, health-token, authenticated-retry sequence."""
 
@@ -213,6 +262,55 @@ class TestAdminErrorSurfacing:
         assert result.get("ok") is False
         assert result.get("error") == "http_call_failed"
         assert result.get("message")
+
+    def test_non_object_success_body_becomes_a_structured_refusal(self) -> None:
+        """A 200 carrying a JSON array must not reach a caller as a list.
+
+        Without the transport's isinstance check the array is cast to a mapping
+        and handed on, so the first caller that reads it - every CLI reader does
+        ``result.get(...)`` - dies with ``AttributeError`` far from this cause.
+        The assertions below name the refusal envelope, not merely "not a list",
+        so a mutation that returns some other error still fails here.
+        """
+        server, port = _serve(_JSONArrayHandler)
+        try:
+            result = _try_http_admin("list_projects", {}, port)
+        finally:
+            server.shutdown()
+        assert result is not None, "a live-but-broken call must not look unreachable"
+        assert isinstance(result, dict), "the caller contract is a mapping"
+        assert result.get("ok") is False
+        assert result.get("error") == "http_error"
+        assert result.get("http_code") == 200
+        message = result.get("message")
+        assert isinstance(message, str)
+        assert "a JSON body that is not an object (list)" in message
+        assert "not the vaultspec-rag daemon" in message
+
+    def test_non_object_error_body_becomes_a_structured_refusal(self) -> None:
+        """The same refusal covers an HTTP error status carrying a JSON array."""
+        server, port = _serve(_ErrorJSONArrayHandler)
+        try:
+            result = _try_http_admin("list_projects", {}, port)
+        finally:
+            server.shutdown()
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result.get("ok") is False
+        assert result.get("error") == "http_error"
+        assert result.get("http_code") == 503
+        message = result.get("message")
+        assert isinstance(message, str)
+        assert "a JSON body that is not an object (list)" in message
+
+    def test_well_formed_object_body_passes_through_unchanged(self) -> None:
+        """A well-formed answer must be returned byte-for-byte as decoded."""
+        server, port = _serve(_PopulatedJSONHandler)
+        try:
+            result = _try_http_admin("list_projects", {}, port)
+        finally:
+            server.shutdown()
+        assert result == _PopulatedJSONHandler.payload
 
     def test_genuinely_empty_result_stays_empty_dict(self) -> None:
         # A successful call whose body is an empty object is a legitimate empty

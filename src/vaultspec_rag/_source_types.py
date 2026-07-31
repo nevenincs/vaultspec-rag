@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import Final, Literal, get_args
 
 __all__ = [
     "INDEX_SOURCES",
@@ -43,13 +43,30 @@ _ALIASES: Final = MappingProxyType(
 #: both resolve it.
 IndexSource = Literal["vault", "code", "document"]
 
-#: The same vocabulary at runtime, derived from the enum so the two cannot
-#: drift. A guard pins the pair.
-INDEX_SOURCES: tuple[str, ...] = tuple(
+#: The same vocabulary at runtime, mechanically pulled out of the Literal
+#: above with ``get_args`` rather than re-declared. A hand-written tuple next
+#: to a hand-written Literal is two spellings of one fact: nothing stops them
+#: naming different sources, and a membership test against the tuple then
+#: guards a field typed by the Literal without either noticing the other
+#: moved. Deriving the tuple from the Literal removes that seam entirely -
+#: there is only one spelling left to edit.
+INDEX_SOURCES: tuple[str, ...] = get_args(IndexSource)
+
+#: ``IndexSource`` itself is still hand-written, because a ``Literal`` cannot
+#: be computed from ``StrEnum`` members at a level a type checker honours.
+#: This is the other half of the pair the Literal cannot self-check: catch it
+#: loudly at import instead of leaving it to silently disagree.
+_NON_COMBINED_SOURCES = {
     member.value
     for member in PublicSourceType
     if member is not PublicSourceType.COMBINED
-)
+}
+if set(INDEX_SOURCES) != _NON_COMBINED_SOURCES:
+    _drift_message = (
+        "IndexSource has drifted from PublicSourceType: update the Literal in "
+        "_source_types.py to match every non-combined PublicSourceType member"
+    )
+    raise RuntimeError(_drift_message)
 
 
 @dataclass(frozen=True, slots=True)

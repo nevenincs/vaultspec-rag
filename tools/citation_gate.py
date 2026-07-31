@@ -57,17 +57,64 @@ filenames, and a name scan cannot tell a fixture from a citation.
 Harness-owned trees are skipped whole: the harness IS the development record,
 so naming a rule or a ``.vault/`` path there is its subject matter, not a
 leak. ``uv.lock``, ``.python-version`` and ``LICENSE`` carry generated or
-third-party content, not project prose.
+third-party content, not project prose - none of which excuses them from the
+identity walk, which reads the licence.
 
-The rendered terminal captures under ``assets/`` are the one KNOWN unscanned
-prose surface, recorded here rather than quietly omitted. They are generated
-SVG, but what they render is a real session, so they carry whatever that session
-displayed - and one of them, embedded in the README, shows a workstation root
-today: the hard-fail class everywhere else in this tree. They stay out of the
-walk because the fix is to re-record the capture, not to match a pattern.
-Admitting them would park a finding no edit to the file can honestly clear, and
-would then fire a second time on a different capture, where the vault document
-names on screen are the product's own search output rather than a citation.
+The rendered terminal captures under ``assets/`` fall on opposite sides of this
+file's two checks, and that split is the whole point of keeping the walks
+separate. They are OUTSIDE the citation walk: what a capture renders is the
+product's own search output, so the vault document names on screen are the
+result being demonstrated rather than a pointer, and a citation finding there is
+one no edit to the file could honestly clear. They are INSIDE the identity walk,
+because ``.svg`` is in the identity suffix set: a capture is generated from a
+real session, so it embeds whatever working directory produced it, which is how
+one shipped a drive and a workspace name into an image the README displays. That
+capture is corrected, with length-preserving stand-ins so the ``textLength``
+attributes still measure the strings they carry - edit one in place and keep its
+width, or the glyphs stop lining up.
+
+The durable hazard is the GENERATOR, not the file. Re-recording remains the
+right fix for the next capture, because the next capture will embed its own
+session exactly the same way; what changed is that the gate now sees that before
+it ships rather than after. Identity coverage is the whole tracked tree, several
+times the citation surface, and both counts are printed on every run - a
+coverage that shrank silently would otherwise read as a pass.
+
+Machine identity, and the limit of what it can promise. Every path pattern
+above matches a PATH; none has any notion of a bare personal name sitting in a
+sentence, which is how a developer's own given name came to sit in a test
+fixture - in the file whose purpose is keeping identity out - and pass every
+check. Detecting an arbitrary human name is not attempted, because it is not
+mechanically possible. What IS knowable at scan time is the identity of the
+machine running the scan: its account name from the environment, the
+``user.name`` git is configured with, and the local part of ``user.email``.
+That identity, and only that, becomes a pattern for the duration of the run.
+
+Be plain about the consequence. This check passes on any machine whose identity
+differs from the leaked one - continuous integration included, where the
+account is a service account and the committer is a bot. It is a developer-side
+tripwire, not a repository-wide guarantee: it catches the leak at the moment
+and on the machine that introduces it, which is the one moment the fix is free.
+A green run elsewhere says nothing about it, and no run of it anywhere proves
+the tree carries nobody else's name.
+
+A candidate only becomes a pattern once it can be matched safely: long enough
+not to be an initial or a handle, and absent from the reserved set of
+documentation placeholders, role and automation accounts, and ordinary words.
+That filter is what earns this a hard failure rather than a report. An account
+named ``user`` or ``dev``, or a family name that is also a common word, would
+match most of the tree, and a gate that fires everywhere is disabled inside a
+day - so the rejection happens before any pattern exists, where it costs a
+missed detection instead of a blocked commit. What survives the filter is
+unambiguous when it fires, so it fails beside the path leaks.
+
+Declared authorship is exempt, by file and for the identity patterns only.
+``LICENSE`` carries a copyright notice and ``pyproject.toml`` carries the
+package author and contact address; naming the author is what those files are
+FOR, and a gate failing on them would be routed around rather than satisfied.
+The exemption is for DECLARED AUTHORSHIP, not for identity generally: both
+files stay in the walk and are still matched against every path pattern, so a
+home directory or a workstation root in either one still fails.
 
 What it cannot do, and why the convention half exists. This gate enforces "no
 citation token remains". It cannot enforce "the sentence still parses once the
@@ -101,6 +148,7 @@ from __future__ import annotations
 import argparse
 import ast
 import io
+import os
 import re
 import subprocess
 import sys
@@ -146,6 +194,14 @@ EXCLUDED_FILES: frozenset[str] = frozenset(
 #: baseline recording a workstation root would be a real leak this scan is the
 #: only one positioned to catch.
 TEXT_SUFFIXES: tuple[str, ...] = (".md", ".toml", ".yaml", ".yml", ".json", ".ps1")
+
+#: Suffixes the IDENTITY scan reads, which is a wider set than the citation scan
+#: above. It adds the shapes that carry a path without being prose: ``.svg`` is
+#: here because a terminal capture rendered for documentation embeds whatever
+#: working directory produced it, and one shipped a real drive and workspace
+#: layout into a README image - a leak the drive-path pattern would have matched
+#: on sight, in a file nothing looked at.
+IDENTITY_SUFFIXES: tuple[str, ...] = (*TEXT_SUFFIXES, ".svg", ".txt", ".cfg", ".ini")
 TEXT_FILENAMES: tuple[str, ...] = (
     "justfile",
     ".env.example",
@@ -153,6 +209,111 @@ TEXT_FILENAMES: tuple[str, ...] = (
     ".gitattributes",
     ".vaultragignore",
 )
+
+#: Suffix-less files the IDENTITY scan reads. The suffix set above is wider than
+#: the citation scan's; the FILENAME set was not, which left every recipe file
+#: and comment-bearing dotfile - the shapes most likely to hold a hand-typed
+#: absolute path - out of the privacy walk while they were in the citation one.
+#: ``LICENSE`` joins them: it is excluded from the citation walk as third-party
+#: text, but a licence is still a tracked file that can carry a path, and its
+#: copyright line is the reason the authorship exemption below has to exist.
+IDENTITY_FILENAMES: tuple[str, ...] = (*TEXT_FILENAMES, "LICENSE")
+
+#: Files whose whole job includes naming the author, exempt from the
+#: MACHINE-IDENTITY patterns and from nothing else. A licence states a copyright
+#: holder and a package manifest states an author and a contact address: that is
+#: published-by-intent identity, the mechanism by which a package declares who
+#: wrote it, and a gate failing on it would teach everyone to pass ``--report-
+#: only`` instead. The exemption is for DECLARED AUTHORSHIP only - both files
+#: remain in the identity walk and are still matched against every path
+#: pattern, so a home directory or a workstation root in either one still fails.
+#: These two are the whole set in this tree; a scan for the author name found no
+#: third file declaring it.
+AUTHORSHIP_FILES: frozenset[str] = frozenset({"LICENSE", "pyproject.toml"})
+
+#: Shortest identity candidate that may become a pattern. Below four characters
+#: a candidate is an initial pair, an abbreviation or a short service handle,
+#: and those collide with ordinary identifiers at a density no reserved list can
+#: keep up with. Four still admits the shortest common family names.
+MACHINE_IDENTITY_MIN_LENGTH: int = 4
+
+#: Identity candidates that never become a pattern, whatever this machine calls
+#: itself. Three classes, and each is load-bearing rather than defensive: the
+#: documentation placeholders the home-path pattern already excludes by name;
+#: role and automation accounts, because continuous integration runs as one and
+#: configures a bot committer whose name parts are infrastructure words that
+#: appear in every workflow file; and ordinary English words, because an account
+#: or a family name that is also a common word would match most of the tree.
+#: That last class is not hypothetical - this tree carries several of these
+#: words dozens of times in fixture text, which is exactly how a detector gets
+#: switched off. Compared casefolded against the whole candidate, never a
+#: substring, so a real name merely CONTAINING one of these still matches.
+RESERVED_IDENTITY_TOKENS: frozenset[str] = frozenset(
+    {
+        "actions",
+        "admin",
+        "administrator",
+        "azureuser",
+        "bot",
+        "build",
+        "builder",
+        "buildkite",
+        "cache",
+        "circleci",
+        "code",
+        "codespace",
+        "contact",
+        "container",
+        "data",
+        "default",
+        "demo",
+        "developer",
+        "docker",
+        "dummy",
+        "email",
+        "example",
+        "github",
+        "gitlab",
+        "guest",
+        "hello",
+        "home",
+        "info",
+        "jenkins",
+        "local",
+        "localhost",
+        "mail",
+        "main",
+        "name",
+        "none",
+        "null",
+        "operator",
+        "owner",
+        "project",
+        "public",
+        "repo",
+        "root",
+        "runner",
+        "runneradmin",
+        "sample",
+        "self",
+        "service",
+        "support",
+        "team",
+        "temp",
+        "test",
+        "tester",
+        "ubuntu",
+        "user",
+        "username",
+        "vagrant",
+        "work",
+    }
+)
+
+#: Splits a configured name or an email local part into its parts. Anything that
+#: is not alphanumeric separates: a space, a dot, a dash, an underscore, and the
+#: bracket a bot identity wears.
+_IDENTITY_SPLIT: re.Pattern[str] = re.compile(r"[^A-Za-z0-9]+")
 
 #: The single sanctioned prose-embedded data case: a docstring that names a
 #: synthetic fixture filename to describe the fixture, not to cite a record.
@@ -357,6 +518,97 @@ PATH_SMELL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 #: so a genuine need (a documented example, a platform-specific system path) is
 #: allowed without widening the pattern. Empty until a real case is confirmed.
 PATH_ALLOWLIST: frozenset[tuple[str, int, str]] = frozenset()
+
+
+def _git_config(key: str, repo_root: Path) -> str:
+    """Return a git configuration value, or empty when git cannot answer.
+
+    Tolerant on purpose. A checkout with no configured identity, a host with no
+    git on ``PATH``, and a directory that is not a work tree must each leave the
+    rest of the scan running - a gate that raises because it could not learn who
+    you are stops reporting the citations it was already finding.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "config", "--get", key],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def discover_machine_identity(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
+    """Return the identity strings this machine advertises about itself.
+
+    Three sources, each independently absent on some host, so all three are
+    read and none is required: the account name from the environment
+    (``USERNAME`` on Windows, ``USER`` or ``LOGNAME`` elsewhere), the configured
+    git ``user.name`` split into its parts, and ``user.email`` - kept whole, and
+    also split the same way after dropping the domain, because ``first.last@``
+    is how a personal address is usually spelled.
+
+    The email DOMAIN is deliberately NOT split. On a personal domain it only
+    yields the name a second time; on a hosted one it yields ``gmail``,
+    ``github`` or ``noreply``, and a detector matching those fires on every
+    workflow file in the tree.
+
+    Candidates are returned RAW. Which of them may be matched is decided in
+    ``machine_identity_patterns``, so discovery and admission stay separable and
+    separately testable - and so a candidate rejected as too common can be seen
+    to have been discovered rather than missed.
+    """
+    candidates: list[str] = []
+    for variable in ("USERNAME", "USER", "LOGNAME"):
+        account = os.environ.get(variable, "").strip()
+        if account:
+            candidates.append(account)
+    candidates.extend(_IDENTITY_SPLIT.split(_git_config("user.name", repo_root)))
+    email = _git_config("user.email", repo_root)
+    if email:
+        candidates.append(email)
+        candidates.extend(_IDENTITY_SPLIT.split(email.split("@", 1)[0]))
+    return tuple(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
+def machine_identity_patterns(
+    candidates: tuple[str, ...],
+) -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """Return one pattern per candidate that can be matched safely.
+
+    Rejection happens here rather than at match time, and that is the whole
+    reason a hit can be a hard failure: a candidate too short or too ordinary
+    yields no pattern at all, so it cannot produce a finding to be argued with.
+    The cost is stated rather than hidden - an identity made entirely of such
+    candidates leaves the detector inert on that machine, and the run reports
+    how many tokens it is carrying so an inert one is visible.
+
+    Matching is case-insensitive, because a path lowercases an account while a
+    signature capitalises a name and both are the same leak. The boundaries are
+    spelled out instead of using ``\\b`` because ``\\b`` counts ``_`` as a word
+    character, and an account name reaches a tree as ``project_<account>`` or
+    ``<account>_backup`` as readily as it does standing alone.
+    """
+    usable = sorted(
+        {
+            candidate.casefold()
+            for candidate in candidates
+            if len(candidate) >= MACHINE_IDENTITY_MIN_LENGTH
+            and candidate.casefold() not in RESERVED_IDENTITY_TOKENS
+        }
+    )
+    return tuple(
+        (
+            "machine-identity",
+            re.compile(
+                rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])",
+                re.IGNORECASE,
+            ),
+        )
+        for token in usable
+    )
 
 
 class Finding(tuple[str, int, str, str]):
@@ -645,18 +897,31 @@ def scan_file(path: Path, *, repo_root: Path = REPO_ROOT) -> list[Finding]:
 
 
 def scan_file_paths(
-    path: Path, *, repo_root: Path = REPO_ROOT
+    path: Path,
+    *,
+    repo_root: Path = REPO_ROOT,
+    identity_patterns: tuple[tuple[str, re.Pattern[str]], ...] = (),
 ) -> tuple[list[Finding], list[Finding]]:
-    """Return (hard identity leaks, soft absolute-path smells) for a Python file."""
+    """Return (hard identity leaks, soft absolute-path smells) for a Python file.
+
+    *identity_patterns* are this machine's own, built by
+    ``machine_identity_patterns``. They join the hard leaks because a bare
+    account or author name reveals identity exactly as a home directory does,
+    and they are passed in rather than read from a constant because which
+    identity is being looked for is a property of the run, not of the gate.
+    """
     rel = path.relative_to(repo_root).as_posix()
     items = _iter_values_and_comments(path)
-    return _match_patterns(items, rel, PATH_PATTERNS), _match_patterns(
-        items, rel, PATH_SMELL_PATTERNS
+    return _match_patterns(items, rel, PATH_PATTERNS + identity_patterns), (
+        _match_patterns(items, rel, PATH_SMELL_PATTERNS)
     )
 
 
 def scan_text(
-    path: Path, *, repo_root: Path = REPO_ROOT
+    path: Path,
+    *,
+    repo_root: Path = REPO_ROOT,
+    identity_patterns: tuple[tuple[str, re.Pattern[str]], ...] = (),
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
     """Return (citations, hard leaks, soft smells) for a non-Python file.
 
@@ -664,12 +929,15 @@ def scan_text(
     the whole line is scanned for citations as well as for paths. That is sound
     only because the excluded set keeps harness trees and the evaluation rubric -
     the two places holding legitimate vault-shaped data - out of this walk.
+
+    *identity_patterns* carry this machine's own identity and join the hard leak
+    bucket, for the reason given on the Python-side scanner.
     """
     rel = path.relative_to(repo_root).as_posix()
     items = _text_lines(path)
     return (
         _match_blocks(_text_blocks(path), rel, PATTERNS, allowed_lines=ALLOWLIST),
-        _match_patterns(items, rel, PATH_PATTERNS),
+        _match_patterns(items, rel, PATH_PATTERNS + identity_patterns),
         _match_patterns(items, rel, PATH_SMELL_PATTERNS),
     )
 
@@ -679,6 +947,59 @@ def _is_excluded(rel: str) -> bool:
     return rel in EXCLUDED_FILES or any(
         rel == d or rel.startswith(f"{d}/") for d in EXCLUDED_DIRS
     )
+
+
+def iter_identity_files(repo_root: Path) -> list[Path]:
+    """Return every tracked file the PATH scan reads. One file is exempt.
+
+    The citation exclusions do not apply here, and that separation is the whole
+    point. A development record naming a vault stem or a rule is content - that
+    is what makes the citation exemption right. A development record naming
+    somebody's home directory is not content, and no argument was ever made for
+    exempting it; the one exclusion list was doing both jobs, so a subtree
+    excused from the citation rules was silently excused from the privacy rules
+    too. Every real machine path this gate failed to catch was in such a
+    subtree: a corpus excluded for its subject matter, and an asset type absent
+    from the suffix list.
+
+    So path scanning is subtractive over the whole tree with one subtraction.
+    The cost is that generic absolute paths in development records now report as
+    smells, which do not fail the gate - a backlog rather than a wall - while an
+    identity-revealing path fails wherever it lives.
+
+    That one subtraction is this gate's own file, which states every path pattern
+    as a literal and in prose beside it, so scanning itself reports its own
+    definitions. The exemption is PATH-shaped and does not extend to the machine
+    identity: an identity token is never a literal here, and the file whose job
+    is keeping names out must not be the one place nothing looks. The collector
+    scans it for identity separately, which is why that half is not exempt.
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    gate_file = Path(__file__).resolve()
+    files: list[Path] = []
+    for rel in sorted(entry for entry in listing.split("\0") if entry):
+        path = repo_root / rel
+        if not path.is_file():
+            continue
+        name = path.name
+        if not (
+            name.endswith(".py")
+            or name.endswith(IDENTITY_SUFFIXES)
+            or name in IDENTITY_FILENAMES
+        ):
+            continue
+        # The gate's own file states every pattern as a literal, including the
+        # path shapes, so scanning itself reports its own definitions.
+        if path.resolve() == gate_file:
+            continue
+        files.append(path)
+    return files
 
 
 def iter_surface_files(repo_root: Path) -> tuple[list[Path], list[Path]]:
@@ -738,13 +1059,22 @@ def iter_surface_files(repo_root: Path) -> tuple[list[Path], list[Path]]:
 
 def collect_findings(
     repo_root: Path = REPO_ROOT,
+    *,
+    machine_identity: tuple[str, ...] | None = None,
 ) -> tuple[list[Finding], list[Finding], list[Finding], list[Finding]]:
     """Return (active citations, deferred citations, path leaks, path smells).
 
-    Active citations and hard path leaks (identity-revealing) FAIL the gate.
-    Deferred citations and soft path smells (generic absolute paths) are
-    reported but do not fail - the smell surfaces a tmp_path-conversion backlog
-    without blocking on non-leaking synthetic values.
+    Active citations and hard path leaks (identity-revealing, this machine's own
+    identity included) FAIL the gate. Deferred citations and soft path smells
+    (generic absolute paths) are reported but do not fail - the smell surfaces a
+    tmp_path-conversion backlog without blocking on non-leaking synthetic values.
+
+    *machine_identity* supplies the raw identity candidates instead of reading
+    them off the host. ``None`` discovers this machine's own, which is what a
+    real run does; an explicit tuple is what lets the detector be pointed at a
+    throwaway tree carrying a synthetic identity, for the same reason
+    *repo_root* is a parameter - a detector that can only ever be aimed at the
+    live checkout can be confirmed green and never shown able to go red.
     """
     active: list[Finding] = []
     deferred: list[Finding] = []
@@ -755,16 +1085,52 @@ def collect_findings(
         rel = path.relative_to(repo_root).as_posix()
         target = deferred if rel in DEFERRED_PENDING_FOLLOWUP else active
         target.extend(scan_file(path, repo_root=repo_root))
-        f_leaks, f_smells = scan_file_paths(path, repo_root=repo_root)
-        leaks.extend(f_leaks)
-        smells.extend(f_smells)
     for path in text_files:
         rel = path.relative_to(repo_root).as_posix()
         target = deferred if rel in DEFERRED_PENDING_FOLLOWUP else active
-        t_citations, t_leaks, t_smells = scan_text(path, repo_root=repo_root)
+        t_citations, _t_leaks, _t_smells = scan_text(path, repo_root=repo_root)
         target.extend(t_citations)
-        leaks.extend(t_leaks)
-        smells.extend(t_smells)
+    identity = machine_identity_patterns(
+        discover_machine_identity(repo_root)
+        if machine_identity is None
+        else machine_identity
+    )
+    # Paths are scanned over their own enumeration, which exempts one file for a
+    # reason that does not extend to identity - see below. The citation loops
+    # above deliberately discard the path findings their scanners also return, so
+    # a file reached by both is not reported twice.
+    for path in iter_identity_files(repo_root):
+        rel = path.relative_to(repo_root).as_posix()
+        # A file that declares authorship loses the identity patterns and keeps
+        # every path pattern. Dropping it from the walk instead would excuse a
+        # home directory pasted into a manifest, which nothing argues for.
+        applied = () if rel in AUTHORSHIP_FILES else identity
+        if path.name.endswith(".py"):
+            p_leaks, p_smells = scan_file_paths(
+                path, repo_root=repo_root, identity_patterns=applied
+            )
+        else:
+            _citations, p_leaks, p_smells = scan_text(
+                path, repo_root=repo_root, identity_patterns=applied
+            )
+        leaks.extend(p_leaks)
+        smells.extend(p_smells)
+    # The mirror image of the authorship exemption. This gate's own file is out
+    # of the walk above because it spells every path pattern out as a literal,
+    # which is a reason to skip the PATH patterns and no reason at all to skip
+    # the identity ones - a name typed into the file whose job is keeping names
+    # out would otherwise be the one leak nothing in the tree can see. Guarded
+    # on containment so a scan pointed at a throwaway tree stays confined to it.
+    gate_file = Path(__file__).resolve()
+    root = repo_root.resolve()
+    if identity and gate_file.is_relative_to(root):
+        leaks.extend(
+            _match_patterns(
+                _iter_values_and_comments(gate_file),
+                gate_file.relative_to(root).as_posix(),
+                identity,
+            )
+        )
     for bucket in (active, deferred, leaks, smells):
         bucket.sort(key=lambda f: (f[0], f[1]))
     return active, deferred, leaks, smells
@@ -780,13 +1146,27 @@ def main() -> int:
     args = parser.parse_args()
 
     py_files, text_files = iter_surface_files(REPO_ROOT)
-    active, deferred, leaks, smells = collect_findings(REPO_ROOT)
+    identity_files = iter_identity_files(REPO_ROOT)
+    machine_identity = discover_machine_identity(REPO_ROOT)
+    active, deferred, leaks, smells = collect_findings(
+        REPO_ROOT, machine_identity=machine_identity
+    )
     mode = "REPORT-ONLY" if args.report_only else "GATE"
+    # Both counts are printed because they are deliberately different, and the
+    # wider one is the whole point: an unreached surface is invisible from a
+    # green run, so a coverage that shrank silently would read as a pass. The
+    # machine-identity token COUNT is printed and the tokens are not: the count
+    # is what tells an operator the detector is carrying something rather than
+    # sitting inert, and printing the tokens would write the identity into every
+    # log the gate ever produces.
     print(
-        f"[citation-gate] {mode} - {len(py_files)} python and {len(text_files)} "
-        "text file(s): docstrings, comments, documentary strings, exception, "
-        "assert and log messages, documentation, config, and string values "
-        "(paths)"
+        f"[citation-gate] {mode} - citations over {len(py_files)} python and "
+        f"{len(text_files)} text file(s); paths and identity over "
+        f"{len(identity_files)} file(s) under no citation exclusion: "
+        "docstrings, comments, documentary strings, exception, assert and log "
+        "messages, documentation, config, and string values (paths); "
+        f"{len(machine_identity_patterns(machine_identity))} usable "
+        "machine-identity token(s), values not printed"
     )
 
     if deferred:
@@ -806,7 +1186,7 @@ def main() -> int:
             print(f"  (smell) {rel}:{line}: {slug}: {text}")
 
     if leaks:
-        print(f"[citation-gate] {len(leaks)} workstation-identity path leak(s):")
+        print(f"[citation-gate] {len(leaks)} workstation-identity leak(s):")
         for rel, line, slug, text in leaks:
             print(f"  {rel}:{line}: {slug}: {text}")
 
@@ -818,7 +1198,7 @@ def main() -> int:
     if not active and not leaks:
         print(
             "[citation-gate] clean - no active development-record citations "
-            "or workstation-identity path leaks"
+            "or workstation-identity leaks"
         )
         return 0
 
@@ -828,7 +1208,8 @@ def main() -> int:
     print(
         "[citation-gate] FAIL - state the constraint directly and remove the "
         "citation; remove the workstation-identity path (worktree root or user "
-        "home). See the Code Stands Alone rule."
+        "home) and this machine's own account or author name. See the Code "
+        "Stands Alone rule."
     )
     return 1
 

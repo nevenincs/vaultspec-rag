@@ -8,6 +8,8 @@ or its error type.
 
 from __future__ import annotations
 
+import os
+import threading
 import time
 from contextlib import ExitStack, contextmanager, suppress
 from typing import TYPE_CHECKING, Protocol
@@ -16,6 +18,16 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Generator, Mapping
     from types import TracebackType
+
+# Storage paths this process currently holds an exclusive handle on, keyed by
+# normalised path and counted so nested holders are tracked exactly. The OS
+# primitive is per open handle rather than per process, so a second handle
+# taken inside one process is refused exactly as a foreign holder's is - and a
+# refusal that blames "another process" then sends the reader hunting for a
+# process that does not exist. This is the one fact the refusing process can
+# establish about itself, so it is recorded where the lock is taken.
+_process_held_paths: dict[str, int] = {}
+_process_held_paths_lock = threading.Lock()
 
 
 class ReentrantLock(Protocol):
@@ -84,35 +96,70 @@ def acquire_collection_locks_bounded(
 
 
 class VaultStoreLockedError(RuntimeError):
-    """Raised when the Qdrant storage folder is already opened by another process.
+    """Raised when a local Qdrant storage folder could not be locked exclusively.
 
     Attributes:
-        db_path: Absolute path to the locked Qdrant storage folder.
+        db_path: Absolute path to the Qdrant storage folder that stayed locked.
+        held_in_process: Whether a store *this* process opened is the holder.
+            The two cases have opposite remedies - stop opening a second store
+            here, versus wait for a holder this process cannot see - and only
+            this one is verifiable, so the other names no holder at all rather
+            than asserting one.
     """
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, held_in_process: bool = False) -> None:
         self.db_path = db_path
-        super().__init__(
-            "Qdrant storage at "
-            f"{db_path} is already in use by another process. "
-            "Local-file-backed RAG storage is not parallel-safe across "
-            "multiple vaultspec-rag processes; route concurrent searches "
-            "through one resident service or retry after the holder exits.",
-        )
+        self.held_in_process = held_in_process
+        if held_in_process:
+            detail = (
+                "is already open in this process. Local-file storage is locked "
+                "per open handle, so a second store on the same root is refused "
+                "exactly as a foreign holder would be; reuse the store this "
+                "process already has open rather than opening another."
+            )
+        else:
+            detail = (
+                "could not be locked, and no store opened by this process holds "
+                "it, so the holder is unidentified. Local-file-backed RAG "
+                "storage is not parallel-safe across vaultspec-rag processes; "
+                "route concurrent searches through one resident service, or "
+                "retry after the holder releases it."
+            )
+        super().__init__(f"Qdrant storage at {db_path} {detail}")
 
 
 class FileLock:
-    """Cross-platform non-blocking file lock."""
+    """Cross-platform non-blocking file lock.
+
+    Records every path it holds in a process-wide table, so a refused
+    acquisition can report whether this process is its own holder. Nothing
+    about the lock's exclusivity depends on that table: it is diagnostic only,
+    and the OS primitive remains the sole arbiter.
+    """
 
     def __init__(self, path: pathlib.Path) -> None:
         self.path = path
         self.fd = None
         self.last_error: OSError | None = None
         self.last_error_stage: str | None = None
+        self._registered = False
+
+    @property
+    def _key(self) -> str:
+        """Return the process-table key for this lock's path."""
+        return os.path.normcase(os.path.abspath(os.fspath(self.path)))
+
+    def held_elsewhere_in_this_process(self) -> bool:
+        """Return whether a *different* live lock in this process holds this path.
+
+        Excludes this instance's own registration, so a caller that already
+        holds the lock does not read itself back as the contending holder.
+        """
+        with _process_held_paths_lock:
+            held = _process_held_paths.get(self._key, 0)
+        return held > (1 if self._registered else 0)
 
     def acquire(self) -> bool:
-        import os
-
         self.last_error = None
         self.last_error_stage = None
         try:
@@ -131,6 +178,9 @@ class FileLock:
             self.last_error_stage = "lock"
             self.close()
             return False
+        with _process_held_paths_lock:
+            _process_held_paths[self._key] = _process_held_paths.get(self._key, 0) + 1
+        self._registered = True
         return True
 
     def release(self) -> None:
@@ -139,11 +189,22 @@ class FileLock:
         if self.fd is not None:
             unlock_fd(self.fd)
             self.close()
+        self._unregister()
 
     def close(self) -> None:
-        import os
-
         if self.fd is not None:
             with suppress(OSError):
                 os.close(self.fd)
             self.fd = None
+
+    def _unregister(self) -> None:
+        """Drop this instance's process-table entry, at most once."""
+        if not self._registered:
+            return
+        self._registered = False
+        with _process_held_paths_lock:
+            remaining = _process_held_paths.get(self._key, 0) - 1
+            if remaining > 0:
+                _process_held_paths[self._key] = remaining
+            else:
+                _process_held_paths.pop(self._key, None)

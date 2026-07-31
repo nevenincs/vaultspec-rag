@@ -116,7 +116,7 @@ def test_benchmark_evidence_retention_is_safe_for_concurrent_writers(
     def _retain(run: int) -> Path:
         destination = retain_benchmark_evidence(
             "concurrent-search-headroom",
-            {"run": run, "observed_headroom_mb": float(run)},
+            {"run": run, "observed_headroom_mib": float(run)},
             report_dir=report_dir,
         )
         assert destination is not None
@@ -136,6 +136,6 @@ def test_benchmark_evidence_retention_is_safe_for_concurrent_writers(
         assert payload["evidence"] == "concurrent-search-headroom"
         run = cast("int", payload["run"])
         retained_runs.add(run)
-        assert payload["observed_headroom_mb"] == float(run)
+        assert payload["observed_headroom_mib"] == float(run)
     assert retained_runs == set(range(32))
     assert not list(report_dir.glob("*.tmp"))

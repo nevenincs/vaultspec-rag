@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Unpack, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -13,7 +13,10 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from qdrant_client import QdrantClient
+    from qdrant_client.conversions.common_types import PointId, PointsSelector
     from qdrant_client.http.models.models import Condition, Filter, Record
+
+    from .store_runtime import ScrollOptions
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,7 @@ class _ContentScrollRequest:
     noun: str
     ensure: Callable[[], None]
     limit: int
-    offset: Any
+    offset: PointId | None
     source_paths: set[str] | None
     with_vectors: bool
 
@@ -58,13 +61,34 @@ class _VaultCatalogMixin:
 
         def _collection_exists(self, name: str) -> bool: ...
 
+        def _reconcile_for_read(
+            self, collection: str, ensure: Callable[[], None]
+        ) -> bool: ...
+
         def _point_lock(self, collection: str) -> AbstractContextManager[object]: ...
 
-        def _scroll(self, **kwargs: Any) -> tuple[list[Record], Any]: ...
+        def _scroll(
+            self,
+            *,
+            collection_name: str,
+            **options: Unpack[ScrollOptions],
+        ) -> tuple[list[Record], PointId | None]: ...
 
-        def _retrieve(self, **kwargs: Any) -> list[Record]: ...
+        def _retrieve(
+            self,
+            *,
+            collection_name: str,
+            ids: Sequence[PointId],
+            with_payload: bool | Sequence[str] = ...,
+            with_vectors: bool | Sequence[str] = ...,
+        ) -> list[Record]: ...
 
-        def _delete_points(self, **kwargs: Any) -> None: ...
+        def _delete_points(
+            self,
+            *,
+            collection_name: str,
+            points_selector: PointsSelector,
+        ) -> None: ...
 
         def _id_scan_page_limit(self, collection: str) -> int: ...
 
@@ -74,27 +98,34 @@ class _VaultCatalogMixin:
         """Return the set of all document ``id`` values in the store.
 
         Returns:
-            Set of document stem IDs from the vault_docs collection.
+            Set of document stem IDs from the vault_docs collection, empty
+            when it does not exist. Creates nothing, for the same reason
+            :meth:`count` does not.
         """
-        self.ensure_table()
+        if not self._collection_exists(self.TABLE_NAME):
+            return set()
         with self._point_lock(self.TABLE_NAME):
             return self._scroll_all_ids(self.TABLE_NAME, "doc_id")
 
-    def get_chunk_counts(
+    def _scan_chunk_ordinals(
         self,
-        doc_ids: set[str] | None = None,
-    ) -> dict[str, int]:
-        """Return the stored chunk count per vault document.
+        doc_ids: set[str] | None,
+    ) -> dict[str, set[int | None]]:
+        """Scan the ordinals each vault document has points stored under.
 
-        Points written before chunking carry no ordinal and count as a
-        single chunk. Used to detect documents that shrank between
-        index runs so their stale tail chunks can be purged.
+        The one scan behind both public answers below. ``None`` stands for a
+        point written before chunking, which carries no ordinal at all - kept
+        as a member rather than dropped, because a document represented only
+        by such points is a different fact from one with no points, and both
+        callers need to tell them apart.
 
         Args:
             doc_ids: When given, restrict the scan to these documents.
 
         Returns:
-            Mapping of document stem ID to its stored chunk count.
+            Mapping of document stem ID to the ordinals it has points under,
+            empty when the collection does not exist. Creates nothing, for the
+            same reason :meth:`count` does not.
         """
         from qdrant_client import models
 
@@ -111,9 +142,10 @@ class _VaultCatalogMixin:
                 ],
             )
 
-        counts: dict[str, int] = {}
-        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
-        self.ensure_table()
+        ordinals: dict[str, set[int | None]] = {}
+        offset: PointId | None = None
+        if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
+            return {}
         page_limit = self._id_scan_page_limit(self.TABLE_NAME)
         while True:
             with self._point_lock(self.TABLE_NAME):
@@ -132,13 +164,73 @@ class _VaultCatalogMixin:
                 if doc_id is None:
                     continue
                 ordinal = payload.get("chunk_ordinal")
-                chunk_no = (ordinal + 1) if isinstance(ordinal, int) else 1
-                key = str(doc_id)
-                counts[key] = max(counts.get(key, 0), chunk_no)
+                # Qdrant payload values are genuinely arbitrary JSON; narrow
+                # to object at this extraction point before coercing to str.
+                ordinals.setdefault(str(cast("object", doc_id)), set()).add(
+                    ordinal if isinstance(ordinal, int) else None
+                )
             if next_offset is None:
                 break
             offset = next_offset
-        return counts
+        return ordinals
+
+    def get_chunk_counts(
+        self,
+        doc_ids: set[str] | None = None,
+    ) -> dict[str, int]:
+        """Return the stored chunk count per vault document.
+
+        Points written before chunking carry no ordinal and count as a
+        single chunk. Used to detect documents that shrank between
+        index runs so their stale tail chunks can be purged.
+
+        This is the highest ordinal plus one, not a census of the points that
+        exist. That is what the tail purge wants - it deletes an ordinal range
+        and needs to know where the range ends - but it means a document
+        missing an ordinal in the middle reports the same count as a whole one.
+        A caller that needs to know which points actually exist must ask
+        :meth:`get_stored_chunk_ordinals` instead.
+
+        Args:
+            doc_ids: When given, restrict the scan to these documents.
+
+        Returns:
+            Mapping of document stem ID to its stored chunk count.
+        """
+        return {
+            doc_id: max(
+                (ordinal + 1 if ordinal is not None else 1) for ordinal in ordinals
+            )
+            for doc_id, ordinals in self._scan_chunk_ordinals(doc_ids).items()
+        }
+
+    def get_stored_chunk_ordinals(
+        self,
+        doc_ids: set[str],
+    ) -> dict[str, set[int]]:
+        """Return the exact chunk ordinals each named document has points under.
+
+        Answers "which points exist", where :meth:`get_chunk_counts` answers
+        "how far do they reach". A caller about to write to specific point ids
+        needs the former: the two disagree precisely when a document's ordinal
+        range has a hole in it, and that is the case where writing by assumed
+        ordinal silently reaches nothing.
+
+        Points from the pre-chunking layout are excluded rather than mapped to
+        an ordinal. They are stored under the bare document id, so no
+        ordinal-keyed write addresses them at all, and reporting them as
+        ordinal 0 would claim a point exists where the writer cannot reach one.
+
+        Args:
+            doc_ids: Documents to scan. An empty set scans nothing.
+
+        Returns:
+            Mapping of document stem ID to the ordinals it stores points under.
+        """
+        return {
+            doc_id: {ordinal for ordinal in ordinals if ordinal is not None}
+            for doc_id, ordinals in self._scan_chunk_ordinals(doc_ids).items()
+        }
 
     def delete_document_chunk_tail(self, doc_id: str, from_ordinal: int) -> None:
         """Delete a document's chunks at or beyond *from_ordinal*.
@@ -232,14 +324,16 @@ class _VaultCatalogMixin:
 
     def _scroll_content(
         self, request: _ContentScrollRequest
-    ) -> tuple[list[dict[str, Any]], Any]:
+    ) -> tuple[list[dict[str, Any]], PointId | None]:
         """Return one bounded page from *collection*.
 
         The code and document pages differed only by the collection, the
         payload key holding the source path, and the noun in the two limit
         errors. ``ensure`` is passed rather than called by the public methods
-        so the limit is still validated BEFORE anything creates a collection -
-        a bad limit must not have a side effect.
+        so the limit is still validated BEFORE the collection is reached - a
+        bad limit must not have a side effect. An absent collection pages
+        nothing and stays absent, for the same reason :meth:`count` does not
+        create one.
         """
         from qdrant_client import models
 
@@ -285,7 +379,8 @@ class _VaultCatalogMixin:
                     )
                 ]
             )
-        ensure()
+        if not self._reconcile_for_read(collection, ensure):
+            return [], None
         with self._point_lock(collection):
             records, next_offset = self._scroll(
                 collection_name=collection,
@@ -309,10 +404,10 @@ class _VaultCatalogMixin:
         self,
         *,
         limit: int = 100,
-        offset: Any = None,
+        offset: PointId | None = None,
         source_paths: set[str] | None = None,
         with_vectors: bool = False,
-    ) -> tuple[list[dict[str, Any]], Any]:
+    ) -> tuple[list[dict[str, Any]], PointId | None]:
         """Return one bounded page from the code collection."""
         return self._scroll_content(
             _ContentScrollRequest(
@@ -330,16 +425,29 @@ class _VaultCatalogMixin:
     def code_content_ids_exist(
         self, ids: Sequence[str], collection: str | None = None
     ) -> bool:
-        """Return whether every requested code identity is currently stored."""
+        """Return whether every requested code identity is currently stored.
+
+        A collection that does not exist stores nothing, so it answers
+        ``False`` and stays absent. Addresses points by id rather than through
+        a filter, so it needs no schema reconcile on the way - it only needs
+        the collection to be there.
+        """
         _target = self._code_collection(collection)
         if not ids:
             return False
-        self.ensure_code_table()
+        if not self._collection_exists(_target):
+            return False
         return self._content_ids_exist(_target, ids)
 
     def get_all_document_content_ids(self) -> set[str]:
-        """Return every deterministic ID in the document collection."""
-        self.ensure_document_table()
+        """Return every deterministic ID in the document collection.
+
+        Empty when the collection does not exist. Scrolls unfiltered, so it
+        needs no schema reconcile on the way, and creates nothing for the same
+        reason :meth:`count` does not.
+        """
+        if not self._collection_exists(self.DOCUMENT_TABLE_NAME):
+            return set()
         with self._point_lock(self.DOCUMENT_TABLE_NAME):
             return self._scroll_all_ids(self.DOCUMENT_TABLE_NAME, "document_id")
 
@@ -347,10 +455,10 @@ class _VaultCatalogMixin:
         self,
         *,
         limit: int = 100,
-        offset: Any = None,
+        offset: PointId | None = None,
         source_paths: set[str] | None = None,
         with_vectors: bool = False,
-    ) -> tuple[list[dict[str, Any]], Any]:
+    ) -> tuple[list[dict[str, Any]], PointId | None]:
         """Return one bounded page from the document collection."""
         return self._scroll_content(
             _ContentScrollRequest(
@@ -366,10 +474,16 @@ class _VaultCatalogMixin:
         )
 
     def document_content_ids_exist(self, ids: Sequence[str]) -> bool:
-        """Return whether every requested document identity is currently stored."""
+        """Return whether every requested document identity is currently stored.
+
+        Answers ``False`` for a collection that does not exist, and addresses
+        points by id rather than through a filter, exactly as
+        :meth:`code_content_ids_exist` does.
+        """
         if not ids:
             return False
-        self.ensure_document_table()
+        if not self._collection_exists(self.DOCUMENT_TABLE_NAME):
+            return False
         return self._content_ids_exist(self.DOCUMENT_TABLE_NAME, ids)
 
     def _content_ids_exist(
@@ -400,7 +514,7 @@ class _VaultCatalogMixin:
             Set of string IDs extracted from point payloads.
         """
         ids: set[str] = set()
-        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        offset: PointId | None = None
         page_limit = self._id_scan_page_limit(collection)
         while True:
             with self._point_lock(collection):
@@ -414,7 +528,7 @@ class _VaultCatalogMixin:
             point: Record
             for point in records:
                 if point.payload and id_field in point.payload:
-                    ids.add(str(point.payload[id_field]))
+                    ids.add(str(cast("object", point.payload[id_field])))
             if next_offset is None:
                 break
             offset = next_offset
@@ -453,7 +567,7 @@ class _VaultCatalogMixin:
         )
 
         ids: list[str] = []
-        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        offset: PointId | None = None
         page_limit = self._id_scan_page_limit(_target)
         while True:
             with self._point_lock(_target):
@@ -468,14 +582,39 @@ class _VaultCatalogMixin:
             point: Record
             for point in records:
                 if point.payload and "chunk_id" in point.payload:
-                    ids.append(str(point.payload["chunk_id"]))
+                    ids.append(str(cast("object", point.payload["chunk_id"])))
             if next_offset is None:
                 break
             offset = next_offset
         return ids
 
     def _count_collection(self, collection: str) -> int:
-        """Return the point count for one already-ensured collection."""
+        """Return *collection*'s point count, creating nothing.
+
+        The one counting reader behind every public count. An absent
+        collection counts zero and stays absent, for two reasons.
+
+        It keeps the answer honest. A read that created the name it failed to
+        find would convert "this index does not exist" into "this index is
+        empty", and every downstream guard compares counts, so the fabricated
+        empty collection then reads as a healthy small one.
+
+        It also keeps creation to one owner. A count runs on whatever handle
+        its caller holds, and a root can be counted through a transient store
+        opened while its project slot is still being constructed - a different
+        instance from the one the index job writes through, with its own
+        lifecycle lock and its own ensure latch, so neither serialises against
+        the other. Both would find the collection absent and both would issue
+        the create; the loser took a conflict from the backend, and when the
+        loser was the index job that conflict failed the run. Creation belongs
+        to the index path, which is the only caller that must have the
+        collection before it can proceed.
+
+        Returns:
+            Point count in *collection*, or ``0`` when it does not exist.
+        """
+        if not self._collection_exists(collection):
+            return 0
         with self._point_lock(collection):
             return self._retried(
                 f"count {collection}",
@@ -488,28 +627,19 @@ class _VaultCatalogMixin:
         """Return total number of indexed documents in vault_docs.
 
         Returns:
-            Point count in the vault_docs collection.
+            Point count in the vault_docs collection, or ``0`` when it does
+            not exist.
         """
-        self.ensure_table()
         return self._count_collection(self.TABLE_NAME)
 
     def count_code(self, collection: str | None = None) -> int:
         """Return total number of indexed codebase chunks.
 
-        Reads the collection the call targets and creates nothing. An absent
-        collection counts zero, and stays absent: a read that created the name
-        it failed to find would convert "this index does not exist" into "this
-        index is empty", and every downstream guard compares counts, so the
-        fabricated empty collection then reads as a healthy small one.
-
         Returns:
             Point count in the targeted code collection, or ``0`` when it does
             not exist.
         """
-        _target = self._code_collection(collection)
-        if not self._collection_exists(_target):
-            return 0
-        return self._count_collection(_target)
+        return self._count_collection(self._code_collection(collection))
 
     def count_code_files(self, collection: str | None = None) -> int:
         """Return how many distinct files the code collection holds points for.
@@ -530,21 +660,28 @@ class _VaultCatalogMixin:
         return len(self._scroll_all_ids(_target, "path"))
 
     def count_document(self) -> int:
-        """Return the point count in the document collection."""
-        self.ensure_document_table()
+        """Return the point count in the document collection.
+
+        Returns:
+            Point count in the document collection, or ``0`` when it does not
+            exist.
+        """
         return self._count_collection(self.DOCUMENT_TABLE_NAME)
 
-    def get_by_id(self, doc_id: str) -> dict[str, Any] | None:
+    def get_by_id(self, doc_id: str) -> dict[str, object] | None:
         """Retrieve a single document by ID, or ``None`` if not found.
 
         Args:
             doc_id: Document stem to look up.
 
         Returns:
-            Document payload dict (vectors stripped), or ``None``
-            if no matching point exists.
+            Document payload dict (vectors stripped), or ``None`` if no
+            matching point exists - including when the collection holding
+            them does not. Creates nothing, for the same reason :meth:`count`
+            does not.
         """
-        self.ensure_table()
+        if not self._collection_exists(self.TABLE_NAME):
+            return None
         with self._point_lock(self.TABLE_NAME):
             # The head chunk (ordinal 0) carries the full body as
             # ``doc_content``; fall back to the pre-chunking point id
@@ -562,7 +699,7 @@ class _VaultCatalogMixin:
             if not records:
                 return None
             raw = records[0].payload
-            payload: dict[str, Any] = dict(raw) if raw else {}
+            payload: dict[str, object] = dict(raw) if raw else {}
             payload["id"] = payload.pop("doc_id", doc_id)
             doc_content = payload.pop("doc_content", None)
             if isinstance(doc_content, str):
@@ -581,11 +718,17 @@ class _VaultCatalogMixin:
             doc_type: If provided, only return documents of this type.
 
         Returns:
-            List of document dicts (id, path, doc_type, title, etc.).
+            List of document dicts (id, path, doc_type, title, etc.), empty
+            when the collection does not exist. Creates nothing, for the same
+            reason :meth:`count` does not.
         """
+        # A caller downstream casts this result to list[dict[str, object]];
+        # returning dict[str, Any] here keeps that cast meaningful instead
+        # of a no-op the type checker flags as redundant.
         from qdrant_client import models
 
-        self.ensure_table()
+        if not self._reconcile_for_read(self.TABLE_NAME, self.ensure_table):
+            return []
 
         # One row per document: match only head chunks (ordinal 0) or
         # points written before chunking (no ordinal field at all).
@@ -610,8 +753,8 @@ class _VaultCatalogMixin:
             )
         scroll_filter = models.Filter(must=conditions)
 
-        docs: list[dict[str, Any]] = []
-        offset: Any = None  # qdrant scroll offset is int|str|UUID|PointId|None
+        docs: list[dict[str, object]] = []
+        offset: PointId | None = None
         while True:
             with self._point_lock(self.TABLE_NAME):
                 records, next_offset = self._scroll(
@@ -624,7 +767,9 @@ class _VaultCatalogMixin:
                 )
             point: Record
             for point in records:
-                payload: dict[str, Any] = dict(point.payload) if point.payload else {}
+                payload: dict[str, object] = (
+                    dict(point.payload) if point.payload else {}
+                )
                 payload["id"] = payload.pop("doc_id", str(point.id))
                 doc_content = payload.pop("doc_content", None)
                 if isinstance(doc_content, str):

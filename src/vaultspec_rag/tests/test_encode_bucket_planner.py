@@ -1,8 +1,10 @@
 """Unit tests for token-budget encode bucket planning and bucketed encoding."""
 
+from __future__ import annotations
+
 import threading
 from itertools import pairwise
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 import pytest
 
@@ -14,10 +16,31 @@ from ..embeddings import (
     plan_encode_buckets,
 )
 
+if TYPE_CHECKING:
+    import numpy as np
+    import torch
+    from sentence_transformers import SentenceTransformer, SparseEncoder
+
 
 def _texts_of_lengths(lengths: list[int]) -> list[str]:
     """Build texts whose character lengths are exactly *lengths*."""
     return ["x" * length for length in lengths]
+
+
+class _TokenCounter(Protocol):
+    """The concrete tokenizer operation the calibration guard exercises."""
+
+    def tokenize(
+        self,
+        text: str,
+        pair: str | None = None,
+        add_special_tokens: bool = False,
+    ) -> list[str]: ...
+
+
+def _token_count(tokenizer: _TokenCounter, text: str) -> int:
+    """Count one text with the tokenizer interface the guard requires."""
+    return len(tokenizer.tokenize(text, add_special_tokens=True))
 
 
 class TestPlanEncodeBuckets:
@@ -94,7 +117,17 @@ class TestPlanEncodeBuckets:
         )
         # Descending input keeps every bucket's padded estimate equal to
         # its first item's estimate, so no bucket pays padding for a
-        # longer item introduced later.
+        # longer item introduced later. The exact partition is pinned
+        # rather than restated as an invariant over whatever came back: a
+        # planner that merged nothing would satisfy the per-bucket
+        # identity trivially, one bucket per item, and a planner that
+        # ignored the budget would still put the longest item first.
+        assert buckets == [
+            EncodeBucket(start=0, end=2, estimated_tokens=800),
+            EncodeBucket(start=2, end=4, estimated_tokens=726),
+            EncodeBucket(start=4, end=8, estimated_tokens=780),
+            EncodeBucket(start=8, end=10, estimated_tokens=20),
+        ]
         for bucket in buckets:
             first_estimate = max(1, -(-lengths[bucket.start] // 4))
             assert bucket.estimated_tokens == (
@@ -222,7 +255,7 @@ class _BucketRecordingDenseModel:
         batch_size: int,
         show_progress_bar: bool,
         normalize_embeddings: bool,
-    ) -> Any:
+    ) -> np.ndarray:
         # Mirrors the production call site's keyword set; a double that
         # accepts only batch_size fails on the call rather than on the
         # behaviour the test is actually about.
@@ -258,7 +291,7 @@ class _LockAssertingTensorDenseModel:
         show_progress_bar: bool,
         normalize_embeddings: bool,
         **retention: bool,
-    ) -> Any:
+    ) -> torch.Tensor:
         del batch_size, show_progress_bar, normalize_embeddings
         assert retention == {"convert_to_numpy": False, "convert_to_tensor": True}
         import torch
@@ -288,7 +321,7 @@ class _BucketRecordingSparseModel:
         *,
         batch_size: int,
         **options: object,
-    ) -> Any:
+    ) -> torch.Tensor:
         # Mirrors the production call site's keyword set; the sparse
         # encode path passes these explicitly, so a double that accepts
         # only batch_size fails on the call rather than on the behaviour
@@ -323,7 +356,7 @@ class TestBucketedDenseEncode:
         texts = _distinct_texts(4)
         fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
-        model._dense_model = cast("Any", fake)
+        model._dense_model = cast("SentenceTransformer", fake)
         result = model.encode_documents(texts)
         assert fake.calls == [texts[0:2], texts[2:4]]
         # The bucket is handed over as a single library sub-batch, so the
@@ -335,7 +368,7 @@ class TestBucketedDenseEncode:
         texts = _distinct_texts(6)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
-        model._dense_model = cast("Any", fake)
+        model._dense_model = cast("SentenceTransformer", fake)
         result = model.encode_documents(texts)
         # Catches the retry scope regressing from the bucket to the whole
         # call: a slice-wide retry discards completed outputs and replans
@@ -353,7 +386,10 @@ class TestBucketedDenseEncode:
             [texts[5]],
         ]
         # Every input still comes back exactly once, in input order.
-        assert [row[0] for row in result.tolist()] == [200.0] * 6
+        # ndarray.tolist() stubs to Any; `result` is the (N, 2) array the
+        # dense double above returns, so each row is genuinely `list[float]`.
+        rows = cast("list[list[float]]", result.tolist())
+        assert [row[0] for row in rows] == [200.0] * 6
 
     def test_single_text_bucket_oom_reraises(self):
         import torch
@@ -361,7 +397,7 @@ class TestBucketedDenseEncode:
         texts = _distinct_texts(1)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[0:1]])
         model = _model_shell(token_budget=100)
-        model._dense_model = cast("Any", fake)
+        model._dense_model = cast("SentenceTransformer", fake)
         with pytest.raises(torch.cuda.OutOfMemoryError):
             model.encode_documents(texts)
         # A one-text bucket cannot shrink, so there is no retry attempt.
@@ -371,7 +407,7 @@ class TestBucketedDenseEncode:
         texts = _distinct_texts(4)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
-        model._dense_model = cast("Any", fake)
+        model._dense_model = cast("SentenceTransformer", fake)
         model.encode_documents(texts)
         first_call_count = len(fake.calls)
         model.encode_documents(texts)
@@ -386,17 +422,19 @@ class TestBucketedDenseEncode:
         texts = _texts_of_lengths(lengths)
         fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
-        model._dense_model = cast("Any", fake)
+        model._dense_model = cast("SentenceTransformer", fake)
         result = model.encode_documents(texts)
         # Estimates 75/50/25/13 plan buckets [t0], [t1, t2], [t3]; the
         # concatenated rows must still follow the input order.
         assert fake.calls == [texts[0:1], texts[1:3], texts[3:4]]
-        assert [row[0] for row in result.tolist()] == [float(n) for n in lengths]
+        # See the same ndarray.tolist() note above.
+        rows = cast("list[list[float]]", result.tolist())
+        assert [row[0] for row in rows] == [float(n) for n in lengths]
 
     def test_empty_input_is_one_library_call(self):
         fake = _BucketRecordingDenseModel()
         model = _model_shell()
-        model._dense_model = cast("Any", fake)
+        model._dense_model = cast("SentenceTransformer", fake)
         result = model.encode_documents([])
         assert fake.calls == [[]]
         assert result.shape[0] == 0
@@ -405,7 +443,7 @@ class TestBucketedDenseEncode:
         gpu_lock = threading.Lock()
         fake = _LockAssertingTensorDenseModel(gpu_lock)
         model = _model_shell(token_budget=100)
-        model._dense_model = cast("Any", fake)
+        model._dense_model = cast("SentenceTransformer", fake)
         texts = _distinct_texts(4)
         result = model.encode_documents_on_device(texts, gpu_lock=gpu_lock)
         assert fake.calls == [texts[0:2], texts[2:4]]
@@ -420,7 +458,7 @@ class TestBucketedDenseEncode:
         texts = _distinct_texts(4)
         fake = _BucketRecordingDenseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
-        model._dense_model = cast("Any", fake)
+        model._dense_model = cast("SentenceTransformer", fake)
         events: list[tuple[str, EncodeBucketProgress]] = []
 
         def observe(phase: str, progress: EncodeBucketProgress) -> None:
@@ -451,6 +489,7 @@ class TestBucketedDenseEncode:
         # After the OOM the live budget halves and the counter advances.
         assert events[3][1].token_budget == 50
         assert events[3][1].oom_count == 1
+        assert {progress.kind for _phase, progress in events} == {"dense"}
         assert all(progress.items_total == 4 for _phase, progress in events)
 
 
@@ -463,7 +502,7 @@ class TestBucketedSparseEncode:
         texts = _distinct_texts(4)
         fake = _BucketRecordingSparseModel()
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("Any", fake)
+        model._sparse_model = cast("SparseEncoder", fake)
         results = model.encode_documents_sparse(texts)
         assert fake.calls == [texts[0:2], texts[2:4]]
         # The bucket is handed over as a single library sub-batch, so the
@@ -475,7 +514,7 @@ class TestBucketedSparseEncode:
         texts = _distinct_texts(6)
         fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("Any", fake)
+        model._sparse_model = cast("SparseEncoder", fake)
         results = model.encode_documents_sparse(texts)
         # Catches the retry scope regressing from the bucket to the whole
         # call: a slice-wide retry discards completed rows and replans
@@ -501,7 +540,7 @@ class TestBucketedSparseEncode:
         texts = _distinct_texts(1)
         fake = _BucketRecordingSparseModel(oom_on_first=[texts[0:1]])
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("Any", fake)
+        model._sparse_model = cast("SparseEncoder", fake)
         with pytest.raises(torch.cuda.OutOfMemoryError):
             model.encode_documents_sparse(texts)
         # A one-text bucket cannot shrink, so there is no retry attempt.
@@ -511,7 +550,7 @@ class TestBucketedSparseEncode:
         texts = _distinct_texts(4)
         fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("Any", fake)
+        model._sparse_model = cast("SparseEncoder", fake)
         model.encode_documents_sparse(texts)
         first_call_count = len(fake.calls)
         model.encode_documents_sparse(texts)
@@ -526,8 +565,8 @@ class TestBucketedSparseEncode:
         sparse_fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
         dense_fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("Any", sparse_fake)
-        model._dense_model = cast("Any", dense_fake)
+        model._sparse_model = cast("SparseEncoder", sparse_fake)
+        model._dense_model = cast("SentenceTransformer", dense_fake)
         model.encode_documents_sparse(texts)
         model.encode_documents(texts)
         # The sparse OOM must not clamp the dense budget: dense still
@@ -537,15 +576,55 @@ class TestBucketedSparseEncode:
     def test_empty_input_returns_no_rows_without_a_forward(self):
         fake = _BucketRecordingSparseModel()
         model = _model_shell()
-        model._sparse_model = cast("Any", fake)
+        model._sparse_model = cast("SparseEncoder", fake)
         assert model.encode_documents_sparse([]) == []
         assert fake.calls == []
 
     def test_non_positive_batch_size_is_rejected(self):
         model = _model_shell()
-        model._sparse_model = cast("Any", _BucketRecordingSparseModel())
+        model._sparse_model = cast("SparseEncoder", _BucketRecordingSparseModel())
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
             model.encode_documents_sparse(["text"], batch_size=0)
+
+    def test_bucket_callback_reports_progress_and_budget(self):
+        """A sparse memory retry is published, not silently absorbed.
+
+        A sparse CUDA OOM lowers the sparse ceiling and retries; a
+        callback seam that only the dense path fires leaves that retry
+        invisible, so degradation evidence points away from the memory
+        squeeze that caused it.
+        """
+        texts = _distinct_texts(4)
+        fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
+        model = _model_shell(token_budget=100)
+        model._sparse_model = cast("SparseEncoder", fake)
+        events: list[tuple[str, EncodeBucketProgress]] = []
+
+        def observe(phase: str, progress: EncodeBucketProgress) -> None:
+            events.append((phase, progress))
+
+        model.encode_documents_sparse(texts, on_bucket=observe)
+        phases = [phase for phase, _progress in events]
+        # The failing [t2, t3] attempt fires "before" without an "after";
+        # its replanned single-item retries each fire a full pair.
+        assert phases == [
+            "before",
+            "after",
+            "before",
+            "before",
+            "after",
+            "before",
+            "after",
+        ]
+        done = [progress.items_done for phase, progress in events if phase == "after"]
+        assert done == [2, 3, 4]
+        assert events[0][1].token_budget == 100
+        assert events[0][1].oom_count == 0
+        # After the OOM the live budget halves and the counter advances.
+        assert events[3][1].token_budget == 50
+        assert events[3][1].oom_count == 1
+        assert {progress.kind for _phase, progress in events} == {"sparse"}
+        assert all(progress.items_total == 4 for _phase, progress in events)
 
 
 #: Fixed worst-case calibration corpus: token-dense shapes a code or
@@ -617,7 +696,8 @@ class TestCalibrationBoundsUnderPlanning:
     MAX_UNDER_PLAN_FACTOR = 3.5
 
     def test_estimator_under_plan_stays_within_the_stated_margin(self):
-        from transformers import AutoTokenizer, PreTrainedTokenizerBase
+        from huggingface_hub import scan_cache_dir
+        from transformers import PreTrainedTokenizerFast
 
         from ..config._settings import get_config
         from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
@@ -634,14 +714,18 @@ class TestCalibrationBoundsUnderPlanning:
             (model_id,),
             timeout_seconds=model_setup_timeout_seconds(),
         )
-        tokenizer = cast(
-            "PreTrainedTokenizerBase",
-            AutoTokenizer.from_pretrained(  # pyright: ignore[reportUnknownMemberType]  # transformers factory is partially stubbed
-                model_id,
-                local_files_only=True,
-            ),
+        snapshots = [
+            revision.snapshot_path
+            for repository in scan_cache_dir().repos
+            if repository.repo_id == model_id
+            for revision in repository.revisions
+            if "main" in revision.refs
+            and (revision.snapshot_path / "tokenizer.json").is_file()
+        ]
+        assert snapshots, f"no tokenizer snapshot resolved for {model_id}"
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_file=str(snapshots[0] / "tokenizer.json")
         )
-        assert tokenizer is not None, f"no tokenizer backend resolved for {model_id}"
         divisor = int(config.embedding_encode_chars_per_token)
         offenders: dict[str, float] = {}
         for name, text in _CALIBRATION_CORPUS.items():
@@ -653,7 +737,7 @@ class TestCalibrationBoundsUnderPlanning:
                 chars_per_token=divisor,
                 max_items=1,
             )
-            real_tokens = len(cast("list[int]", tokenizer(text)["input_ids"]))
+            real_tokens = _token_count(tokenizer, text)
             factor = real_tokens / bucket.estimated_tokens
             if factor > self.MAX_UNDER_PLAN_FACTOR:
                 offenders[name] = round(factor, 3)

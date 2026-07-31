@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
 
     from ...embeddings import EmbeddingModel
-    from ..conftest import RagComponentsWithManifest
     from ._frozen_corpus_evidence import FrozenCorpusEvidence
 
 from ..._machine_lock import (
@@ -35,6 +34,7 @@ from ..._machine_lock import (
 )
 from ...config._settings import get_config, reset_config
 from ...config._types import EnvVar
+from ...jobs import count, measurement
 from ...progress import NullProgressReporter
 from .._model_setup import (
     configured_service_model_ids,
@@ -42,7 +42,7 @@ from .._model_setup import (
     model_setup_timeout_seconds,
     models_are_cached,
 )
-from ..conftest import _index_corpus, managed_env
+from ..conftest import RagComponentsWithManifest, _index_corpus, managed_env
 from ..corpus import build_synthetic_vault
 
 _MAX_STARTUP_CLEANUP_RESERVE_SECONDS = 15.0
@@ -57,19 +57,19 @@ def pin_index_cuda_ceiling() -> Generator[None]:
 
     Without it the ceiling is derived from free device memory when the budget
     is built, so a neighbouring CUDA process decides whether these tests pass.
-    See ``INTEGRATION_CUDA_CEILING_MB`` for the measurements behind the value.
+    See ``INTEGRATION_CUDA_CEILING_MIB`` for the measurements behind the value.
 
     Session-scoped and set before any config is cached, so a later
     ``reset_config()`` re-reads it rather than dropping back to derivation. An
     explicit setting already in the environment is left alone, which is what
     lets an operator reproduce a ceiling failure by exporting their own.
     """
-    from ._helpers import INTEGRATION_CUDA_CEILING_MB
+    from ._helpers import INTEGRATION_CUDA_CEILING_MIB
 
-    key = EnvVar.INDEX_CUDA_CEILING_MB.value
+    key = EnvVar.INDEX_CUDA_CEILING_MIB.value
     previous = os.environ.get(key)
     if previous is None:
-        os.environ[key] = str(INTEGRATION_CUDA_CEILING_MB)
+        os.environ[key] = str(INTEGRATION_CUDA_CEILING_MIB)
         reset_config()
     try:
         yield
@@ -327,13 +327,10 @@ def rag_components_with_code(
         preflight=code_indexer.preflight_content(),
     )
 
-    yield cast(
-        "RagComponentsWithManifest",
-        components.__class__(  # type: ignore[call-arg]
-            **components,
-            manifest=manifest,
-            reranker=shared_reranker,
-        ),
+    yield RagComponentsWithManifest(
+        **components,
+        manifest=manifest,
+        reranker=shared_reranker,
     )
 
     components["store"].close()
@@ -376,15 +373,14 @@ def _wait_for_qdrant_publication(
         status = read_service_status()
         if status is not None:
             last = cast("dict[str, object]", status)
-            daemon_pid = status.get("pid")
+            daemon_pid = count(status.get("pid"))
             if (
-                isinstance(daemon_pid, int)
-                and not isinstance(daemon_pid, bool)
+                daemon_pid is not None
                 and pid_alive(daemon_pid)
                 and status.get("port") == service_port
-                and isinstance(status.get("qdrant_pid"), int)
-                and isinstance(status.get("qdrant_port"), int)
-                and isinstance(status.get("qdrant_start_time"), int | float)
+                and count(status.get("qdrant_pid")) is not None
+                and count(status.get("qdrant_port")) is not None
+                and measurement(status.get("qdrant_start_time")) is not None
                 and bool(status.get("qdrant_version"))
             ):
                 return last
@@ -408,22 +404,13 @@ def _resolve_owned_pids(*, port: int, fallback_pid: int) -> tuple[int, int | Non
     from ...cli._service_status import read_service_status
 
     status = read_service_status()
-    raw_daemon_pid = (
+    published_daemon_pid = count(
         status.get("pid") if status is not None and status.get("port") == port else None
     )
-    daemon_pid = (
-        raw_daemon_pid
-        if isinstance(raw_daemon_pid, int)
-        and not isinstance(raw_daemon_pid, bool)
-        and raw_daemon_pid > 0
-        else fallback_pid
-    )
-    raw_qdrant_pid = status.get("qdrant_pid") if status else None
-    qdrant_pid = (
-        raw_qdrant_pid
-        if isinstance(raw_qdrant_pid, int) and not isinstance(raw_qdrant_pid, bool)
-        else None
-    )
+    # A count reads zero as a legitimate quantity; a process identifier never
+    # is, so the accepting branch still requires a positive one.
+    daemon_pid = published_daemon_pid if published_daemon_pid else fallback_pid
+    qdrant_pid = count(status.get("qdrant_pid") if status else None)
     return daemon_pid, qdrant_pid
 
 

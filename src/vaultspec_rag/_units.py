@@ -20,7 +20,7 @@ __all__ = ["bytes_to_mib", "human_bytes", "mib_to_bytes"]
 #: produces. Labelling a 1024-divided value "GB" understates it by ~7%.
 _UNITS: Final = ("B", "KiB", "MiB", "GiB", "TiB")
 
-#: One mebibyte. Every megabyte-denominated reading in the codebase - the RSS
+#: One mebibyte. Every mebibyte-denominated reading in the codebase - the RSS
 #: and CUDA probes, the memory ceilings, the GPU diagnostics - divides by this,
 #: so it is spelled once and named rather than restated as a bare literal.
 _BYTES_PER_MIB: Final = 1024.0 * 1024.0
@@ -29,9 +29,12 @@ _BYTES_PER_MIB: Final = 1024.0 * 1024.0
 def bytes_to_mib(num_bytes: float) -> float:
     """Convert a raw byte count to mebibytes.
 
-    The ``_mb`` suffixes throughout the memory probe, the budget ceilings, and
-    the GPU diagnostics all denote this unit; the conversion lives here so a
-    reading cannot pick up a decimal-megabyte divisor by accident.
+    The ``_mib`` suffix throughout the memory probe, the budget ceilings, and
+    the GPU diagnostics denotes this unit; the conversion lives here so a
+    reading cannot pick up a decimal-megabyte divisor by accident. That suffix
+    is the one spelling in use: ``_mb`` would read as a decimal megabyte to
+    anyone who had not found this docstring, which is the confusion a single
+    named divisor exists to remove.
     """
     return float(num_bytes) / _BYTES_PER_MIB
 

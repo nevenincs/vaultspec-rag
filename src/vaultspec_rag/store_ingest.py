@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from qdrant_client import QdrantClient
+    from qdrant_client.conversions.common_types import PointsSelector
+    from qdrant_client.http.models import PointStruct, Vector
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,23 @@ logger = logging.getLogger(__name__)
 from .store_runtime import INGEST_FENCE_POINT_ID, IngestVerificationError  # noqa: E402
 
 __all__ = ["_VaultIngestMixin"]
+
+
+def _point_vector(
+    vector: list[float],
+    sparse_indices: list[int],
+    sparse_values: list[float],
+) -> dict[str, Vector]:
+    """Build a point's vector payload: a dense vector plus an optional sparse one."""
+    from qdrant_client import models
+
+    payload: dict[str, Vector] = {store_schema.DENSE_VECTOR_NAME: vector}
+    if sparse_indices:
+        payload[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
+            indices=sparse_indices,
+            values=sparse_values,
+        )
+    return payload
 
 
 class _VaultIngestMixin:
@@ -73,7 +92,12 @@ class _VaultIngestMixin:
             policy: StoreWritePolicy | None,
         ) -> AbstractContextManager[None]: ...
 
-        def _delete_points(self, **kwargs: Any) -> None: ...
+        def _delete_points(
+            self,
+            *,
+            collection_name: str,
+            points_selector: PointsSelector,
+        ) -> None: ...
 
     @staticmethod
     def _document_chunk_payload(
@@ -121,20 +145,14 @@ class _VaultIngestMixin:
 
         from qdrant_client import models
 
-        points: list[Any] = []
+        points: list[PointStruct] = []
         for doc in docs:
-            vector: dict[str, Any] = {
-                store_schema.DENSE_VECTOR_NAME: doc.vector,
-            }
-            if doc.sparse_indices:
-                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
-                    indices=doc.sparse_indices,
-                    values=doc.sparse_values,
-                )
             points.append(
                 models.PointStruct(
                     id=self._stable_id(doc.id),
-                    vector=vector,
+                    vector=_point_vector(
+                        doc.vector, doc.sparse_indices, doc.sparse_values
+                    ),
                     payload=cast("dict[str, Any]", _vault_doc_payload(doc)),
                 ),
             )
@@ -177,20 +195,14 @@ class _VaultIngestMixin:
 
         from qdrant_client import models
 
-        points: list[Any] = []
+        points: list[PointStruct] = []
         for chunk in chunks:
-            vector: dict[str, Any] = {
-                store_schema.DENSE_VECTOR_NAME: chunk.vector,
-            }
-            if chunk.sparse_indices:
-                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
-                    indices=chunk.sparse_indices,
-                    values=chunk.sparse_values,
-                )
             points.append(
                 models.PointStruct(
                     id=self._stable_id(chunk.point_key),
-                    vector=vector,
+                    vector=_point_vector(
+                        chunk.vector, chunk.sparse_indices, chunk.sparse_values
+                    ),
                     payload=cast("dict[str, Any]", _vault_chunk_payload(chunk)),
                 ),
             )
@@ -205,6 +217,57 @@ class _VaultIngestMixin:
                 wait=wait,
             )
         logger.info("Upserted %d vault chunk(s)", len(chunks))
+
+    def overwrite_vault_chunk_payloads(
+        self,
+        chunks: list[VaultChunk],
+        *,
+        write_policy: StoreWritePolicy | None,
+    ) -> None:
+        """Replace the payloads of existing vault chunk points, keeping vectors.
+
+        The write path for a document whose indexed metadata changed while its
+        body did not. Its stored vectors still describe its body exactly, so
+        re-encoding them would buy nothing; only what the payload says about
+        the document is stale.
+
+        Payloads are overwritten rather than merged. A merge would leave a
+        field that has since been removed from the payload shape sitting in the
+        store forever, invisible to every later write - the payload has to end
+        up as though it had just been built, because that is the claim
+        indexing makes about it. The payloads themselves come from the same
+        builder the upsert uses, so a payload written this way and one written
+        by a re-embed cannot disagree.
+
+        Args:
+            chunks: Vault chunks whose point ids already exist in the store.
+                Vectors on these chunks are ignored - only payloads are sent.
+            write_policy: Caller-owned retry/deadline policy for managed runs;
+                direct store callers pass ``None``.
+        """
+        if not chunks:
+            return
+
+        ensure_disk_headroom(self._storage_probe_path)
+        self.ensure_table()
+        description = f"overwrite vault chunk payload in {self.TABLE_NAME}"
+        with self._point_lock(self.TABLE_NAME):
+            for chunk in chunks:
+                payload = cast("dict[str, Any]", _vault_chunk_payload(chunk))
+                point_id = self._stable_id(chunk.point_key)
+                run_store_operation_with_retry(
+                    lambda attempt_timeout, payload=payload, point_id=point_id: (
+                        self.client.overwrite_payload(
+                            collection_name=self.TABLE_NAME,
+                            payload=payload,
+                            points=[point_id],
+                            timeout=attempt_timeout,
+                        )
+                    ),
+                    description=description,
+                    policy=write_policy,
+                )
+        logger.info("Rebuilt payloads for %d vault chunk(s)", len(chunks))
 
     def upsert_code_chunks(
         self,
@@ -232,20 +295,14 @@ class _VaultIngestMixin:
 
         from qdrant_client import models
 
-        points: list[Any] = []
+        points: list[PointStruct] = []
         for chunk in chunks:
-            vector: dict[str, Any] = {
-                store_schema.DENSE_VECTOR_NAME: chunk.vector,
-            }
-            if chunk.sparse_indices:
-                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
-                    indices=chunk.sparse_indices,
-                    values=chunk.sparse_values,
-                )
             points.append(
                 models.PointStruct(
                     id=self._stable_id(chunk.id),
-                    vector=vector,
+                    vector=_point_vector(
+                        chunk.vector, chunk.sparse_indices, chunk.sparse_values
+                    ),
                     payload=cast("dict[str, Any]", _code_chunk_payload(chunk)),
                 ),
             )
@@ -273,18 +330,14 @@ class _VaultIngestMixin:
 
         from qdrant_client import models
 
-        points: list[Any] = []
+        points: list[PointStruct] = []
         for chunk in chunks:
-            vector: dict[str, Any] = {store_schema.DENSE_VECTOR_NAME: chunk.vector}
-            if chunk.sparse_indices:
-                vector[store_schema.SPARSE_VECTOR_NAME] = models.SparseVector(
-                    indices=chunk.sparse_indices,
-                    values=chunk.sparse_values,
-                )
             points.append(
                 models.PointStruct(
                     id=self._stable_id(chunk.id),
-                    vector=vector,
+                    vector=_point_vector(
+                        chunk.vector, chunk.sparse_indices, chunk.sparse_values
+                    ),
                     payload=cast(
                         "dict[str, Any]",
                         self._document_chunk_payload(chunk),
@@ -305,7 +358,7 @@ class _VaultIngestMixin:
     def _guarded_upsert(
         self,
         collection_name: str,
-        points: list[Any],
+        points: list[PointStruct],
         description: str,
         *,
         write_policy: StoreWritePolicy | None,

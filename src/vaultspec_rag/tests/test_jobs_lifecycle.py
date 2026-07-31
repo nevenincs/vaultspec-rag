@@ -23,6 +23,7 @@ from ..jobs import (
     reset,
     snapshot,
 )
+from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import _TEST_PROJECT_ROOT
 from ._jobs_restore_helpers import job_recorded_by_a_now_dead_process
 
@@ -184,7 +185,11 @@ class TestJobStallShaping:
     """The /jobs shaping computes the service-domain ``stalled`` flag."""
 
     def _paused_canonical_record(self) -> dict[str, object]:
-        manager = JobManager(max_nonterminal=2, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=None,
+        )
         created = manager.create(
             JobSpec(
                 JobOperation.INDEX,
@@ -246,7 +251,9 @@ class TestJobStallShaping:
         assert shaped["state"] == "paused"
         assert shaped["phase"] == "paused"
         assert shaped["stalled"] is False
-        assert "current" not in cast("dict[str, object]", shaped["resources"])
+        resources = shaped["resources"]
+        assert isinstance(resources, dict)
+        assert "current" not in resources
 
     def test_fresh_progress_is_not_stalled(self) -> None:
         from ..server._routes_jobs import _job_with_liveness
@@ -290,7 +297,9 @@ class TestJobStallShaping:
         assert shaped["control_acknowledgement_seconds"] == 0.0
         assert shaped["control_pending_age_seconds"] is None
         assert shaped["stalled"] is False
-        assert "current" not in cast("dict[str, object]", shaped["resources"])
+        resources = shaped["resources"]
+        assert isinstance(resources, dict)
+        assert "current" not in resources
 
     def test_canonical_filters_use_state_desired_state_and_capabilities(self) -> None:
         from ..server._routes_jobs import JobFilter, _job_matches
@@ -348,7 +357,9 @@ class TestJobStallShaping:
         assert shaped["phase"] == "pausing"
         assert shaped["control_pending_age_seconds"] == 400.0
         assert shaped["stalled"] is True
-        assert "current" not in cast("dict[str, object]", shaped["resources"])
+        resources = shaped["resources"]
+        assert isinstance(resources, dict)
+        assert "current" not in resources
 
     def test_summary_and_ordering_are_canonical_and_actionable(self) -> None:
         from ..server._routes_jobs import _job_summary, _prioritise_running_jobs
@@ -399,7 +410,11 @@ class TestJobStallShaping:
 def test_index_job_status_reports_latest_generation_and_degradation(
     tmp_path: Path,
 ) -> None:
-    manager = JobManager(max_nonterminal=3, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=3,
+        state_path=None,
+    )
     initiator = JobInitiator("service", "status coverage", str(tmp_path))
     created = {
         source: manager.create(

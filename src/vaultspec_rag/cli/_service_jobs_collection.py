@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from typer.core import TyperCommand, TyperOption
 
 from ..serviceclient._discovery import _default_service_port
 from ._app import (
+    JOBS_WATCH_OPTION_HELP,
     JSON_OPTION_HELP,
     PORT_OPTION_HELP,
     WATCH_INTERVAL_OPTION_HELP,
-    WATCH_OPTION_HELP,
     server_app,
 )
 from ._render import _emit_json
@@ -36,6 +36,26 @@ from ._service_jobs_watch import (
 
 if TYPE_CHECKING:
     from typer._click import Context as ClickContext
+
+    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
+    # and value types are only known once a command's options are parsed at
+    # runtime. This TypedDict is the producer-side cast target for
+    # ``_ServiceJobsCommand.invoke``: the field types mirror the
+    # ``TyperOption`` declarations registered in ``__init__``, so a single
+    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
+    class _JobsParams(TypedDict):
+        limit: int
+        state: str | None
+        index: str | None
+        started_by: str | None
+        query: str | None
+        failed: bool
+        job_id: str | None
+        since: float | None
+        port: int | None
+        json: bool
+        watch: bool
+        interval: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +156,7 @@ class _ServiceJobsCommand(TyperCommand):
                     param_decls=["--watch"],
                     default=False,
                     is_flag=True,
-                    help=WATCH_OPTION_HELP,
+                    help=JOBS_WATCH_OPTION_HELP,
                 ),
                 TyperOption(
                     param_decls=["--interval"],
@@ -147,22 +167,22 @@ class _ServiceJobsCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: ClickContext) -> Any:
-        params = ctx.params
+    def invoke(self, ctx: ClickContext) -> None:
+        params = cast("_JobsParams", ctx.params)
         return run_service_jobs(
             ServiceJobsOptions(
-                limit=cast("int", params["limit"]),
-                state=cast("str | None", params["state"]),
-                index=cast("str | None", params["index"]),
-                started_by=cast("str | None", params["started_by"]),
-                query=cast("str | None", params["query"]),
-                failed=cast("bool", params["failed"]),
-                job_id=cast("str | None", params["job_id"]),
-                since=cast("float | None", params["since"]),
-                port=cast("int | None", params["port"]),
-                json_mode=cast("bool", params["json"]),
-                watch=cast("bool", params["watch"]),
-                interval=cast("float", params["interval"]),
+                limit=params["limit"],
+                state=params["state"],
+                index=params["index"],
+                started_by=params["started_by"],
+                query=params["query"],
+                failed=params["failed"],
+                job_id=params["job_id"],
+                since=params["since"],
+                port=params["port"],
+                json_mode=params["json"],
+                watch=params["watch"],
+                interval=params["interval"],
             )
         )
 

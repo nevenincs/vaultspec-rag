@@ -48,6 +48,7 @@ from . import (
     _service_jobs_control,
     _service_lifecycle,
     _service_logs,
+    _service_preflight,
     _service_projects,
     _service_qdrant,
     _service_quiesce,
@@ -58,7 +59,6 @@ from . import (
     _service_watcher,
     _status,
     _status_render,
-    _store,
 )
 from ._app import app
 from ._core import console
@@ -74,6 +74,7 @@ __all__ = [
     "_service_jobs_control",
     "_service_lifecycle",
     "_service_logs",
+    "_service_preflight",
     "_service_projects",
     "_service_qdrant",
     "_service_quiesce",
@@ -84,7 +85,6 @@ __all__ = [
     "_service_watcher",
     "_status",
     "_status_render",
-    "_store",
     "app",
     "console",
 ]

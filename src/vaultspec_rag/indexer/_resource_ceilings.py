@@ -32,27 +32,27 @@ __all__ = [
 class AdmittedCeilings:
     """The memory ceilings one index run is admitted under."""
 
-    rss_ceiling_mb: float
-    cuda_ceiling_mb: float
-    cuda_baseline_mb: float | None
+    rss_ceiling_mib: float
+    cuda_ceiling_mib: float
+    cuda_baseline_mib: float | None
     uses_cuda: bool
 
     @property
-    def enforced_cuda_ceiling_mb(self) -> float | None:
+    def enforced_cuda_ceiling_mib(self) -> float | None:
         """Return the CUDA ceiling only where CUDA is actually enforced.
 
         Off the GPU path the derived figure is a profile default rather than
         anything the host can honour, and every reading it would be compared
         against is structurally zero, so no ceiling is admitted at all.
         """
-        return self.cuda_ceiling_mb if self.uses_cuda else None
+        return self.cuda_ceiling_mib if self.uses_cuda else None
 
 
 def _require_cuda_headroom(
     *,
-    ceiling_mb: float,
-    baseline_mb: float,
-    configured_mb: float,
+    ceiling_mib: float,
+    baseline_mib: float,
+    configured_mib: float,
 ) -> None:
     """Refuse before dispatch when the ceiling admits no forward at all.
 
@@ -78,20 +78,20 @@ def _require_cuda_headroom(
             typed identity, envelope, and remediation channel as the mid-run
             breach it replaces.
     """
-    if ceiling_mb - baseline_mb > 0.0:
+    if ceiling_mib - baseline_mib > 0.0:
         return
     from .._job_errors import JobError, JobErrorKind
 
-    if configured_mb > 0:
+    if configured_mib > 0:
         detail = (
-            f"the configured CUDA ceiling of {configured_mb:.1f} MiB is at or "
-            f"below the {baseline_mb:.1f} MiB resident model baseline, leaving "
+            f"the configured CUDA ceiling of {configured_mib:.1f} MiB is at or "
+            f"below the {baseline_mib:.1f} MiB resident model baseline, leaving "
             "no memory for any forward pass; raise the configured ceiling "
             "above the baseline, or load fewer models"
         )
     else:
         detail = (
-            f"no CUDA memory remains above the {baseline_mb:.1f} MiB resident "
+            f"no CUDA memory remains above the {baseline_mib:.1f} MiB resident "
             "model baseline; free device memory or stop competing GPU work "
             "before indexing"
         )
@@ -117,38 +117,38 @@ def admit_index_ceilings(
     from ..config._settings import get_config
     from ..memory_probe import (
         reset_cuda_peak_memory_stats,
-        resident_cuda_baseline_mb,
-        resolve_index_cuda_ceiling_mb,
+        resident_cuda_baseline_mib,
+        resolve_index_cuda_ceiling_mib,
     )
 
     config = get_config()
-    rss_ceiling_mb = config.index_rss_ceiling_mb
-    profile_cuda_mb = config.index_cuda_ceiling_mb
+    rss_ceiling_mib = config.index_rss_ceiling_mib
+    profile_cuda_mib = config.index_cuda_ceiling_mib
     if limits is not None:
-        rss_ceiling_mb = min(rss_ceiling_mb, bytes_to_mib(limits.rss_bytes))
-        profile_cuda_mb = bytes_to_mib(limits.cuda_bytes)
+        rss_ceiling_mib = min(rss_ceiling_mib, bytes_to_mib(limits.rss_bytes))
+        profile_cuda_mib = bytes_to_mib(limits.cuda_bytes)
     uses_cuda = getattr(model, "device", None) == "cuda"
     if uses_cuda:
         reset_cuda_peak_memory_stats()
-    cuda_baseline_mb = resident_cuda_baseline_mb() if uses_cuda else None
-    cuda_ceiling_mb = resolve_index_cuda_ceiling_mb(
-        configured_mb=config.index_cuda_ceiling_mb,
-        headroom_mb=config.index_cuda_headroom_mb,
-        profile_cuda_mb=profile_cuda_mb,
-        baseline_mb=cuda_baseline_mb or 0.0,
+    cuda_baseline_mib = resident_cuda_baseline_mib() if uses_cuda else None
+    cuda_ceiling_mib = resolve_index_cuda_ceiling_mib(
+        configured_mib=config.index_cuda_ceiling_mib,
+        headroom_mib=config.index_cuda_headroom_mib,
+        profile_cuda_mib=profile_cuda_mib,
+        baseline_mib=cuda_baseline_mib or 0.0,
     )
     # Only where CUDA is actually enforced: off the GPU path every reading the
     # ceiling would be compared against is structurally zero, so a ceiling that
     # looks empty there costs nothing and must not refuse the run.
     if uses_cuda:
         _require_cuda_headroom(
-            ceiling_mb=cuda_ceiling_mb,
-            baseline_mb=cuda_baseline_mb or 0.0,
-            configured_mb=config.index_cuda_ceiling_mb,
+            ceiling_mib=cuda_ceiling_mib,
+            baseline_mib=cuda_baseline_mib or 0.0,
+            configured_mib=config.index_cuda_ceiling_mib,
         )
     return AdmittedCeilings(
-        rss_ceiling_mb=rss_ceiling_mb,
-        cuda_ceiling_mb=cuda_ceiling_mb,
-        cuda_baseline_mb=cuda_baseline_mb,
+        rss_ceiling_mib=rss_ceiling_mib,
+        cuda_ceiling_mib=cuda_ceiling_mib,
+        cuda_baseline_mib=cuda_baseline_mib,
         uses_cuda=uses_cuda,
     )

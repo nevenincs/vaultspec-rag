@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path  # noqa: TC003
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -14,6 +14,9 @@ from ._install_helpers import (
     _CONSUMER_PYPROJECT,
 )
 
+if TYPE_CHECKING:
+    from ...commands._models import InstallReport
+
 pytestmark = [pytest.mark.integration]
 
 
@@ -21,7 +24,7 @@ class TestProvisioningReport:
     @pytest.fixture()
     def provisioned_report(
         self, fresh_workspace: Path, isolated_status_dir: Path
-    ) -> Any:
+    ) -> InstallReport:
         _ = isolated_status_dir
         (fresh_workspace / "pyproject.toml").write_text(
             _CONSUMER_PYPROJECT, encoding="utf-8", newline=""
@@ -35,7 +38,7 @@ class TestProvisioningReport:
         )
 
     def test_report_carries_a_provisioning_outcome(
-        self, provisioned_report: Any
+        self, provisioned_report: InstallReport
     ) -> None:
         assert provisioned_report.provision_outcome is not None
         steps = {r.step for r in provisioned_report.provision_outcome.steps}
@@ -46,7 +49,7 @@ class TestProvisioningReport:
         assert "qdrant" in {str(s) for s in steps}
 
     def test_json_provisioning_key_is_heterogeneous_and_serialisable(
-        self, provisioned_report: Any
+        self, provisioned_report: InstallReport
     ) -> None:
         data = provisioned_report.to_dict()
         json.dumps(data)  # must not raise
@@ -61,7 +64,7 @@ class TestProvisioningReport:
         assert "skipped" in actions
 
     def test_torch_enrollment_step_reports_configured_sync_pending(
-        self, provisioned_report: Any
+        self, provisioned_report: InstallReport
     ) -> None:
         from ...torch_config._constants import TorchConfigAction
 
@@ -72,7 +75,7 @@ class TestProvisioningReport:
         assert provisioned_report.torch_sync_action == "skipped"
 
     def test_rendered_report_surfaces_heterogeneous_provisioning_wording(
-        self, provisioned_report: Any
+        self, provisioned_report: InstallReport
     ) -> None:
         from rich.console import Console
 

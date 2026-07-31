@@ -42,6 +42,7 @@ __all__ = [
     "ResolvedIndexPolicy",
     "ResolvedPreprocessRule",
     "compile_content_policy",
+    "preprocess_stale_note",
     "resolve_index_policy",
 ]
 
@@ -440,7 +441,7 @@ class ResolvedIndexPolicy:
         html_strip = cast("object", self.html_strip)
         if not isinstance(html_strip, bool):
             raise ValueError("html_strip must be a boolean")
-        validate_max_emitted_bytes(cast("object", self.max_emitted_bytes))
+        validate_max_emitted_bytes(self.max_emitted_bytes)
         if self.execution_mode not in {"default", "off"}:
             raise ValueError(
                 f"unknown preprocess execution mode {self.execution_mode!r}"
@@ -525,6 +526,16 @@ class ResolvedIndexPolicy:
                 return rule
         return None
 
+    def transform_disabled(self, rel_path: str) -> bool:
+        """Return whether routing is retained while its transform is disabled.
+
+        A path in this state keeps its published membership and its prior
+        points; the run reports it through ``preprocess_stale_note``.
+        """
+        return (
+            self.execution_mode == "off" and self.match_preprocess(rel_path) is not None
+        )
+
     def classify(self, rel_path: str) -> ClassifiedContent:
         """Classify one path using only this snapshot's resolved inputs."""
         rule = self.match_preprocess(rel_path)
@@ -541,6 +552,15 @@ class ResolvedIndexPolicy:
     ) -> _config_epoch.ContentKindFingerprints:
         """Return the independent membership/content identity for one kind."""
         return self.fingerprints.per_kind.for_kind(kind)
+
+
+def preprocess_stale_note(rel_path: str) -> str:
+    """Report one path whose retained work went stale under a disabled transform.
+
+    The companion to ``ResolvedIndexPolicy.transform_disabled``: every run that
+    retains a path on that predicate surfaces it with this one wording.
+    """
+    return f"{rel_path}: preprocessing disabled; retained work as stale"
 
 
 def compile_content_policy(config: RootContentPolicyConfig) -> RootContentPolicy:

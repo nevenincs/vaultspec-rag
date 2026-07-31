@@ -21,15 +21,15 @@ unchanged through an explicit ``__all__``.
 Import order is load-bearing and mirrors the ``cli`` split:
 
 1. ``_state`` first - owns the process-wide globals (``_registry``,
-   ``_watcher_*``, ``_SERVICE_TOKEN``, ``_http_mode``, ``_start_time``).
+   ``_watcher_*``, ``_http_mode``, ``_start_time``).
    These names live in *this* package namespace because that is where
    every consumer reads them, so a runtime reassignment is observed.
 2. Leaf helper submodules (``_models``, ``_utils``, ``_lifecycle``,
    ``_lifespan``, ``_watcher``) - pure logic.
 3. ``_main`` - the console-script ``main`` entry point.
 
-Reassigned globals (``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
-``_registry``) are read by submodules at call time through
+Reassigned globals (``_http_mode``, ``_start_time``, ``_registry``) are
+read by non-request submodules at call time through
 ``import vaultspec_rag.server as _m`` so a rebind on this package
 namespace is observed - the same discipline the ``cli`` split uses.
 """
@@ -53,7 +53,7 @@ from ._lifecycle import (
 from ._lifespan import health_handler, service_lifespan
 
 # 4. Entry point.
-from ._main import main
+from ._main import create_http_app, main
 from ._models import (
     HealthResponse,
     IndexResponse,
@@ -61,16 +61,15 @@ from ._models import (
     SearchResponse,
     SearchResultItem,
 )
+from ._runtime import ServerRouteRuntime, get_request_runtime
 
 # 1. State globals
 from ._state import (
-    _SERVICE_TOKEN,
     _daemon_log_capture,
     _daemon_process,
     _http_mode,
     _launch_token,
     _registry,
-    _service_port,
     _shutdown_hooks_installed,
     _shutdown_recorded,
     _start_time,
@@ -100,13 +99,13 @@ from ._watcher import (
 )
 
 __all__ = [
-    "_SERVICE_TOKEN",
     "HealthResponse",
     "IndexResponse",
     "IndexStatus",
     "ProjectRootRequiredError",
     "SearchResponse",
     "SearchResultItem",
+    "ServerRouteRuntime",
     "WatcherStartOutcome",
     "_daemon_log_capture",
     "_daemon_process",
@@ -124,7 +123,6 @@ __all__ = [
     "_registry",
     "_registry_full_error_dict",
     "_resolve_log_path",
-    "_service_port",
     "_shutdown_hooks_installed",
     "_shutdown_recorded",
     "_start_time",
@@ -139,6 +137,8 @@ __all__ = [
     "_watcher_lock",
     "_watcher_stops",
     "_watcher_tasks",
+    "create_http_app",
+    "get_request_runtime",
     "health_handler",
     "incr",
     "main",

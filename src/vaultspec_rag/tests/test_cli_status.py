@@ -44,7 +44,7 @@ class TestStatusCommand:
             {
                 "cuda": False,
                 "gpu_name": "",
-                "vram_mb": 0,
+                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
                 "vault_documents": 12,
                 "codebase_chunks": 34,
@@ -78,7 +78,7 @@ class TestStatusCommand:
             {
                 "cuda": False,
                 "gpu_name": "",
-                "vram_mb": 0,
+                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
                 "vault_documents": 0,
                 "codebase_chunks": 0,
@@ -101,7 +101,7 @@ class TestStatusCommand:
             {
                 "cuda": False,
                 "gpu_name": "",
-                "vram_mb": 0,
+                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
                 "vault_documents": 3,
                 "codebase_chunks": 0,
@@ -135,7 +135,7 @@ class TestStatusCommand:
                     "index": {
                         "cuda": False,
                         "gpu_name": "",
-                        "vram_mb": 0,
+                        "vram_mib": 0,
                         "storage_path": "http://127.0.0.1:8765",
                         "vault_documents": 7,
                         "codebase_chunks": 9,
@@ -556,8 +556,6 @@ class TestServiceTokenIdentity:
     ):
         import json
 
-        import vaultspec_rag.server as server_state
-
         from .._machine_lock import (
             acquire_machine_lock_lease,
             release_machine_lock_lease,
@@ -569,14 +567,20 @@ class TestServiceTokenIdentity:
         os.environ[EnvVar.QDRANT_STORAGE_DIR] = str(tmp_path / "qdrant" / "storage")
         reset_base_config()
         reset_rag_config()
-        previous_port = server_state._service_port
-        previous_token = server_state._SERVICE_TOKEN
-        server_state._service_port = 8766
-        server_state._SERVICE_TOKEN = "phase-stamp-test-token"
         lease, holder = acquire_machine_lock_lease()
         assert lease is not None
         assert holder == os.getpid()
-        publisher = _DiscoveryPublisher(lease)
+        from ..server import ServerRouteRuntime
+        from ..service import ServiceRegistry
+
+        publisher = _DiscoveryPublisher(
+            ServerRouteRuntime(
+                token="phase-stamp-test-token",
+                registry=ServiceRegistry(),
+                port=8766,
+            ),
+            lease,
+        )
         try:
             _stamp_service_phase(publisher, "warming")
             sf = tmp_path / "service.json"
@@ -597,8 +601,6 @@ class TestServiceTokenIdentity:
             publisher.quiesce()
             publisher.cleanup()
             release_machine_lock_lease(lease)
-            server_state._service_port = previous_port
-            server_state._SERVICE_TOKEN = previous_token
             os.environ.pop(EnvVar.STATUS_DIR, None)
             os.environ.pop(EnvVar.QDRANT_STORAGE_DIR, None)
             reset_base_config()

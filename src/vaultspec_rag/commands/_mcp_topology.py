@@ -13,7 +13,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Protocol, cast
 
-from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.types import (
     init_paths,
 )
 
@@ -433,15 +433,20 @@ def _provider_paths(root: Path) -> tuple[set[Path], set[Path], set[Path]]:
         managed_trees: set[Path] = set()
         for config in context.tool_configs.values():
             for attribute in _PROVIDER_FILE_ATTRIBUTES:
-                projected = cast("Path | None", getattr(config, attribute))
-                if projected is None:
+                # ToolConfig types every name in _PROVIDER_FILE_ATTRIBUTES as
+                # ``Path | None``; getattr's dynamic string lookup is what
+                # erases that to Any, so the isinstance guard (not a cast)
+                # re-establishes it.
+                projected = getattr(config, attribute, None)
+                if not isinstance(projected, Path):
                     continue
                 translated = _translate_projection_path(projected, projection, root)
                 files.add(translated)
                 containers.add(translated.parent)
             for attribute in _PROVIDER_TREE_ATTRIBUTES:
-                projected = cast("Path | None", getattr(config, attribute))
-                if projected is None:
+                # Same ToolConfig-declared ``Path | None`` shape as above.
+                projected = getattr(config, attribute, None)
+                if not isinstance(projected, Path):
                     continue
                 translated = _translate_projection_path(projected, projection, root)
                 containers.add(translated)

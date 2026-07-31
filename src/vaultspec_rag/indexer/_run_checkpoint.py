@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
@@ -70,7 +70,12 @@ class CodeRunConfiguration:
 
 @dataclass(frozen=True, slots=True)
 class CodeRunOpenRequest:
-    """All compatibility inputs for opening one code generation."""
+    """All compatibility inputs for opening one code generation.
+
+    One grouped shape rather than a spread of keywords, so a field added
+    here is declared once and every call site is re-checked against its
+    real type.
+    """
 
     data_root: Path
     root_dir: Path
@@ -91,16 +96,8 @@ class CodeRunCheckpoint(RunCheckpointBase):
     _kind_label: ClassVar[str] = "code"
 
     @classmethod
-    def open(
-        cls,
-        request: CodeRunOpenRequest | None = None,
-        **legacy: object,
-    ) -> CodeRunCheckpoint:
+    def open(cls, request: CodeRunOpenRequest, /) -> CodeRunCheckpoint:
         """Open or resume the compatible code generation for one attempt."""
-        if request is None:
-            request = CodeRunOpenRequest(**cast("dict[str, Any]", legacy))
-        elif legacy:
-            raise TypeError("use either a CodeRunOpenRequest or named inputs")
         kind_fingerprints = request.policy.fingerprints_for(ContentKind.CODE)
         signature = RunSignature(
             root_identity=str(request.root_dir.resolve()),

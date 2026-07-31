@@ -26,6 +26,7 @@ from .job_models import (
 )
 from .logging_config import log_event
 from .registry import get_registry
+from .service_quiesce import QuiesceState
 from .watcher_durability import (
     admit_watcher_attempt,
     initialize_retry_policies,
@@ -141,6 +142,17 @@ def _record_deleted_prior_owners(
     return code_owned, document_owned
 
 
+def _refresh_policy_snapshot(
+    root_dir: Path,
+    previous: ResolvedIndexPolicy | None,
+) -> ResolvedIndexPolicy | None:
+    """Resolve intake policy without retaining a compute runtime in the watcher."""
+    from .indexer._content_discovery import CodeContentDiscovery
+
+    discovery = CodeContentDiscovery(root_dir)
+    return refresh_watcher_policy(discovery.resolve_policy, root_dir, previous)
+
+
 async def _reconcile_watcher_slots(
     vault_slot: WatcherConvergenceSlot,
     code_slot: WatcherConvergenceSlot,
@@ -183,8 +195,8 @@ class WatcherInitializationError(RuntimeError):
 async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     """Watch for file changes and trigger incremental re-indexing.
 
-    Runs until stop_event is set. GPU serialization is handled
-    internally by the indexers' ``gpu_lock``. Applies an
+    Runs until stop_event is set. Each admitted indexing job acquires its
+    runtime only for execution. Applies an
     application-level cooldown between index runs to prevent
     thrashing. Cooldown is tracked independently per source: vault
     and code each have separate 30-second windows so a vault reindex
@@ -193,12 +205,6 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     Args:
         root_dir: Project root directory to watch.
         vault_dir: Path to the .vault/ documentation directory.
-        vault_indexer: Initialized VaultIndexer for doc re-indexing.
-        code_indexer: Initialized CodebaseIndexer for source
-            re-indexing.
-        document_indexer: Managed document indexer bound to the same project.
-            Document job dispatch is introduced independently; carrying it here
-            prevents watcher construction from inventing a second lifecycle.
         stop_event: Set this event to stop the watcher gracefully.
         debounce: Milliseconds to wait for additional changes
             before processing.
@@ -224,7 +230,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     try:
         vault_retry, code_retry, document_retry = await initialize_retry_policies(
             root_dir,
-            document_enabled=configuration.document_indexer is not None,
+            document_enabled=True,
         )
     except Exception as exc:
         log_event(
@@ -260,15 +266,6 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         ),
     )
     resolved_root = root_dir.resolve()
-    if (
-        configuration.vault_indexer.root_dir.resolve() != resolved_root
-        or configuration.code_indexer.root_dir.resolve() != resolved_root
-        or (
-            configuration.document_indexer is not None
-            and configuration.document_indexer.root_dir.resolve() != resolved_root
-        )
-    ):
-        raise ValueError("watcher indexers must belong to the watched project root")
 
     # Each source owns one convergence slot. Manager callbacks and attempt
     # runners cross the event-loop/worker-thread boundary, so generation
@@ -304,7 +301,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     # the prior intake snapshot while the unconditional control-file event is
     # still sent to the indexer, whose entry gate then fails closed.
     code_policy: list[ResolvedIndexPolicy | None] = [
-        refresh_watcher_policy(configuration.code_indexer, root_dir, None)
+        _refresh_policy_snapshot(root_dir, None)
     ]
 
     try:
@@ -329,11 +326,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 for _change_type, path_str in changes
             )
             if policy_changed:
-                code_policy[0] = refresh_watcher_policy(
-                    configuration.code_indexer,
-                    root_dir,
-                    code_policy[0],
-                )
+                code_policy[0] = _refresh_policy_snapshot(root_dir, code_policy[0])
             (
                 vault_events_observed,
                 code_events_observed,
@@ -453,6 +446,23 @@ async def _reconcile_watcher_slot(
     secondary_graph_cache: GraphCache | None = None,
 ) -> None:
     """Observe the canonical owner, then admit one eligible convergence job."""
+    quiesce_snapshot = slot.registry.quiesce_snapshot()
+    if quiesce_snapshot.state is not QuiesceState.RUNNING:
+        # A closed controller owns the pause boundary.  Do not touch durable
+        # retry state here: its current generation and the slot's dirty paths
+        # are the deferred work that the normal idle tick reconciles after
+        # warming opens the next admission epoch.
+        log_event(
+            logger,
+            "service.watcher",
+            "quiesce_admission_closed",
+            severity=logging.DEBUG,
+            source=slot.source.value,
+            state=quiesce_snapshot.state.value,
+            pending_paths=slot.pending_count(),
+        )
+        return
+
     manager = _jobs.get_job_manager()
     with slot.lock:
         job_id = slot.job_id

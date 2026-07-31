@@ -10,9 +10,8 @@ import sys
 import threading
 import typing
 import uuid
-from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -35,7 +34,8 @@ from ..server import (
     ProjectRootRequiredError,
     SearchResponse,
     SearchResultItem,
-    health_handler,
+    ServerRouteRuntime,
+    create_http_app,
 )
 from ..server._lifecycle import _DiscoveryPublisher
 from ..server._utils import (
@@ -45,6 +45,7 @@ from ..server._utils import (
     _resolve_root,
     _validate_vault_root,
 )
+from ..service import ServiceRegistry
 
 pytestmark = [pytest.mark.unit]
 
@@ -62,14 +63,48 @@ def test_missing_mcp_extra_guidance_respects_all_install_modes() -> None:
     assert "uv add vaultspec-rag[mcp]" not in message
 
 
-def _run[T](coro: Coroutine[Any, Any, T]) -> T:
+class TestServerRouteRuntime:
+    """The HTTP app owns one explicit, fail-closed route authority."""
+
+    def test_empty_token_is_rejected_before_an_app_can_be_built(self) -> None:
+        with pytest.raises(ValueError, match="non-empty service token"):
+            ServerRouteRuntime(token="", registry=ServiceRegistry(), port=8765)
+
+    @pytest.mark.parametrize("port", [0, 65536])
+    def test_invalid_port_is_rejected_before_an_app_can_be_built(
+        self,
+        port: int,
+    ) -> None:
+        with pytest.raises(ValueError, match=r"port in 1\.\.65535"):
+            ServerRouteRuntime(
+                token="invalid-runtime-port-test-token",
+                registry=ServiceRegistry(),
+                port=port,
+            )
+
+    def test_factory_installs_the_exact_runtime_and_missing_state_fails_closed(
+        self,
+    ) -> None:
+        from starlette.applications import Starlette
+
+        from ..server._runtime import get_app_runtime
+
+        runtime = ServerRouteRuntime(
+            token="direct-runtime-test-token",
+            registry=ServiceRegistry(),
+            port=8765,
+        )
+        app = create_http_app(runtime, lifespan=None)
+
+        assert get_app_runtime(app) is runtime
+        assert get_app_runtime(app).port == 8765
+        with pytest.raises(RuntimeError, match="no valid server route runtime"):
+            get_app_runtime(Starlette())
+
+
+def _run[T](coro: Coroutine[object, object, T]) -> T:
     """Run an async coroutine synchronously."""
     return asyncio.run(coro)
-
-
-@asynccontextmanager
-async def _empty_lifespan(_app: object) -> typing.AsyncGenerator[None]:
-    yield
 
 
 class TestPackageEntryPoint:
@@ -97,7 +132,6 @@ class TestPackageEntryPoint:
 @pytest.fixture
 def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
     """Retain a real isolated discovery owner for lifecycle helper tests."""
-    from .. import server as server_state
     from .._machine_lock import (
         acquire_machine_lock_lease,
         release_machine_lock_lease,
@@ -109,25 +143,26 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
         status_key: os.environ.get(status_key),
         storage_key: os.environ.get(storage_key),
     }
-    previous_port = server_state._service_port
-    previous_token = server_state._SERVICE_TOKEN
     os.environ[status_key] = str(tmp_path / "status")
     os.environ[storage_key] = str(tmp_path / "qdrant" / "storage")
     reset_config()
-    server_state._service_port = 8766
-    server_state._SERVICE_TOKEN = "test-owner-token"
     lease, holder = acquire_machine_lock_lease()
     assert lease is not None
     assert holder == os.getpid()
-    publisher = _DiscoveryPublisher(lease)
+    publisher = _DiscoveryPublisher(
+        ServerRouteRuntime(
+            token="test-owner-token",
+            registry=ServiceRegistry(),
+            port=8766,
+        ),
+        lease,
+    )
     try:
         yield publisher
     finally:
         publisher.quiesce()
         publisher.cleanup()
         release_machine_lock_lease(lease)
-        server_state._service_port = previous_port
-        server_state._SERVICE_TOKEN = previous_token
         for key, value in previous_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -720,71 +755,81 @@ class TestHttpModeResolveRoot:
 
 
 class TestMainTransportSetup:
-    """Verify main() correctly sets transport mode and lifecycle hooks."""
+    """The stdio runner's lifecycle wiring, driven for real."""
 
-    def test_http_mode_flag_for_http(self) -> None:
-        """port=8888 → _http_mode=True."""
-        from typing import cast
+    def test_stdio_runner_wires_cleanup_and_loads_no_model(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stdio is a thin client: it wires watcher cleanup and loads nothing.
 
-        import vaultspec_rag.server as mod
+        Two contracts share one drive of ``_run_stdio_mcp`` because both are
+        observed at the same instant - when the transport is entered - and
+        because each extra substitution site has to earn itself (see
+        ``test_substitution_discipline``).
 
-        orig = mod._http_mode
-        try:
-            port: int | None = cast("int | None", 8888)
-            mod._http_mode = port is not None
-            assert mod._http_mode is True
-        finally:
-            mod._http_mode = orig
+        The previous tests here asserted neither contract. One scanned
+        ``inspect.getsource(server.main)`` for ``"load_model"``, but ``main``
+        only dispatches to ``_run_stdio_mcp``, so a load added where the work
+        actually happens passed the scan untouched. The other assigned
+        ``registry._on_close_project`` in the test body and then asserted its
+        own assignment, never calling production at all.
 
-    def test_http_mode_flag_for_stdio(self):
-        """port=None → _http_mode=False."""
-        import vaultspec_rag.server as mod
-
-        orig = mod._http_mode
-        try:
-            port = None
-            mod._http_mode = port is not None
-            assert mod._http_mode is False
-        finally:
-            mod._http_mode = orig
-
-    def test_stdio_wires_on_close_project(self):
-        """Stdio path must wire _on_close_project for watcher cleanup."""
-        import vaultspec_rag.server as mod
-
-        orig = mod._registry._on_close_project
-        try:
-            # Simulate what main(port=None) does before mcp.run()
-            mod._registry._on_close_project = mod._stop_watcher
-            assert mod._registry._on_close_project is mod._stop_watcher
-        finally:
-            mod._registry._on_close_project = orig
-
-    def test_stdio_does_not_load_a_model(self):
-        """Stdio MCP is a thin client: main() must not call load_model().
-
-        The MCP server is a thin service client, so the in-process GPU model
-        load is removed from the stdio branch - every tool delegates to
-        the daemon over HTTP, so a model loaded here would be dead weight
-        and would violate the thin-client "load no Torch" contract.
+        Mutations this catches: any ``load_model()`` reachable from
+        ``_run_stdio_mcp``, and dropping its ``_on_close_project`` wiring.
         """
-        import inspect
+        import vaultspec_rag.server as mod
 
-        from .. import server
+        from ..server import _main
+        from ..server import _stdio_lifetime as stdio_lifetime
+        from ..service import ServiceRegistry
 
-        source = inspect.getsource(server.main)
-        assert "load_model" not in source, (
+        loads: list[str | None] = []
+
+        def _record_load(_self: ServiceRegistry, model_name: str | None = None) -> None:
+            loads.append(model_name)
+
+        def _no_watchdog(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        seen_hooks: list[object] = []
+        entered: list[str] = []
+
+        class _FakeMcp:
+            @staticmethod
+            def run(transport: str) -> None:
+                entered.append(transport)
+                seen_hooks.append(mod._registry._on_close_project)
+
+        monkeypatch.setattr(ServiceRegistry, "load_model", _record_load)
+        monkeypatch.setattr(
+            stdio_lifetime, "install_stdio_lifetime_watchdog", _no_watchdog
+        )
+        monkeypatch.setattr("vaultspec_rag.mcp.mcp", _FakeMcp())
+
+        from ..registry import reset_registry
+
+        original_hook = mod._registry._on_close_project
+        mod._registry._on_close_project = None
+        try:
+            _main._run_stdio_mcp(None)
+        finally:
+            mod._registry._on_close_project = original_hook
+            # The runner closes the process-wide registry on its way out, so
+            # driving it for real - which is what stopped this being a source
+            # scan - leaves the singleton refusing every later lease. Discard
+            # it here or the next file to reach the registry inherits a
+            # shut-down one and fails for reasons that have nothing to do with
+            # it.
+            reset_registry()
+
+        # Non-emptiness first: if the runner never reached the transport, the
+        # two assertions below would both hold vacuously.
+        assert entered == ["stdio"], entered
+        assert seen_hooks == [mod._stop_watcher], seen_hooks
+        assert loads == [], (
             "stdio MCP must not load a model; it delegates to the daemon"
         )
-
-    def test_stop_all_watchers_clears_state(self):
-        """_stop_all_watchers empties both dicts even when empty."""
-        import vaultspec_rag.server as mod
-
-        # Verify it's safe to call with no watchers running
-        mod._stop_all_watchers()
-        assert len(mod._watcher_tasks) == 0
-        assert len(mod._watcher_stops) == 0
 
 
 class TestServiceRegistryIntegration:
@@ -807,28 +852,30 @@ class TestHealthHandler:
 
     def test_health_handler_returns_json(self):
         """health_handler returns a JSONResponse with expected keys."""
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        app = Starlette(
-            routes=[Route("/health", health_handler)],
-            lifespan=_empty_lifespan,
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-response-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
         resp: httpx.Response = client.get("/health")
         assert resp.status_code == 200
-        data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+        data: dict[str, object] = cast("dict[str, object]", resp.json())
         assert "status" in data
         assert "cuda" in data
         assert "models_loaded" in data
         assert "project_count" in data
         assert "uptime_s" in data
-        assert data["backend_capabilities"]["concurrent_search_supported"] is True
-        assert (
-            data["backend_capabilities"]["same_project_search_strategy"] == "serialized"
-        )
-        profile = cast("dict[str, Any]", data["support_profile"])
+        assert data["port"] == 8765
+        capabilities = cast("dict[str, object]", data["backend_capabilities"])
+        assert capabilities["concurrent_search_supported"] is True
+        assert capabilities["same_project_search_strategy"] == "serialized"
+        profile = cast("dict[str, object]", data["support_profile"])
         domains = cast("dict[str, dict[str, int]]", profile["domains"])
         assert set(domains) == {"code", "document"}
         expected_limits = {
@@ -848,36 +895,35 @@ class TestHealthHandler:
     def test_health_status_reflects_model_state(self):
         """Without models loaded, status should not be 'ready'.
 
-        Swaps in a fresh, model-less registry for the duration of the
-        test and restores the original in finally.
+        Uses a fresh, model-less registry to keep the route state isolated.
         """
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        import vaultspec_rag.server as mod
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-model-state-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
+        )
+        client: httpx.Client = cast("httpx.Client", TestClient(app))
+        # A fresh registry is not enough: the not-started verdict reads a
+        # reassigned process global that lifespan startup stamps once and
+        # never clears, so any earlier test that ran a lifespan leaves this
+        # asserting the opposite of what it names. The isolation the
+        # docstring claims has to cover that global too.
+        from .. import server as _m
 
-        from ..service import ServiceRegistry
-
-        orig_registry = mod._registry
-        orig_start = mod._start_time
-
+        prior_start_time = _m._start_time
+        _m._start_time = 0.0
         try:
-            mod._registry = ServiceRegistry()
-            mod._start_time = 0.0
-
-            app = Starlette(
-                routes=[Route("/health", health_handler)],
-                lifespan=_empty_lifespan,
-            )
-            client: httpx.Client = cast("httpx.Client", TestClient(app))
             resp: httpx.Response = client.get("/health")
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["status"] == "error"
             assert data["models_loaded"] is False
         finally:
-            mod._registry = orig_registry
-            mod._start_time = orig_start
+            _m._start_time = prior_start_time
 
 
 class TestHealthInfoReduction:
@@ -885,32 +931,38 @@ class TestHealthInfoReduction:
 
     def test_health_no_project_paths(self):
         """Health response must not contain absolute project paths."""
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        app = Starlette(
-            routes=[Route("/health", health_handler)],
-            lifespan=_empty_lifespan,
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-project-path-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
-        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
+        raw = client.get("/health").json()
+        data: dict[str, object] = cast("dict[str, object]", raw)
         assert "projects" not in data
         assert "project_count" in data
         assert isinstance(data["project_count"], int)
 
     def test_health_no_gpu_name(self):
         """Health response must not contain GPU device name."""
-        from starlette.applications import Starlette
-        from starlette.routing import Route
         from starlette.testclient import TestClient
 
-        app = Starlette(
-            routes=[Route("/health", health_handler)],
-            lifespan=_empty_lifespan,
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="health-gpu-name-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
         )
         client: httpx.Client = cast("httpx.Client", TestClient(app))
-        data: dict[str, Any] = cast("dict[str, Any]", client.get("/health").json())
+        raw = client.get("/health").json()
+        data: dict[str, object] = cast("dict[str, object]", raw)
         assert "gpu_name" not in data
 
     def test_index_status_no_gpu_name(self):
@@ -928,44 +980,79 @@ class TestHealthInfoReduction:
 
 
 class TestMultiProjectWatcher:
-    """Module-level watcher state supports multiple projects (PHASE3-001)."""
+    """``_stop_all_watchers`` really drains every registered project root."""
 
-    def test_watcher_tasks_is_dict(self):
-        from ..server import _watcher_tasks
+    def test_stop_watcher_on_an_unregistered_root_returns_no_cleanup(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """An unknown root has nothing to drain, so no cleanup task is owed.
 
-        assert isinstance(_watcher_tasks, dict)
-
-    def test_watcher_stops_is_dict(self):
-        from ..server import _watcher_stops
-
-        assert isinstance(_watcher_stops, dict)
-
-    def test_stop_all_watchers_callable(self):
-        from ..server import _stop_all_watchers
-
-        assert callable(_stop_all_watchers)
-
-    def test_stop_watcher_callable(self):
+        Mutation this catches: manufacturing a drain (and therefore a cleanup
+        task) for a root that was never registered. The earlier version of
+        this test called ``_stop_watcher`` and asserted nothing at all, so it
+        held for any return value.
+        """
+        from .. import server
         from ..server import _stop_watcher
+        from ..server import _watcher as watcher_lifecycle
 
-        assert callable(_stop_watcher)
+        root = tmp_path.resolve()
+        assert root not in server._watcher_tasks
 
-    def test_ensure_watcher_callable(self):
-        from ..server import _ensure_watcher
+        assert _stop_watcher(root) is None
+        assert root not in watcher_lifecycle._watcher_drains
 
-        assert callable(_ensure_watcher)
+    async def test_stop_all_watchers_drains_every_registered_root(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Two roots are registered; one call must clear intake for both.
 
-    def test_stop_all_on_empty_is_safe(self):
-        """Calling _stop_all_watchers with no running watchers is a no-op."""
-        from ..server import _stop_all_watchers
+        Mutation this catches: an early ``return ()`` from
+        ``_stop_all_watchers``, or a body that visits only one root. The
+        previous tests here asserted ``callable(...)``, ``isinstance(..., dict)``
+        and "does not raise" against already-empty state, so all of them held
+        against a ``_stop_all_watchers`` whose body did nothing at all.
+        """
+        from .. import server
+        from ..server import _stop_all_watchers, _watcher_stops, _watcher_tasks
+        from ..server import _watcher as watcher_lifecycle
 
-        _stop_all_watchers()  # must not raise
+        release = asyncio.Event()
 
-    def test_stop_watcher_nonexistent_root_is_safe(self, tmp_path: Path) -> None:
-        """Stopping a watcher for a root that was never started is safe."""
-        from ..server import _stop_watcher
+        async def _intake() -> None:
+            await release.wait()
 
-        _stop_watcher(tmp_path)  # must not raise
+        roots = [(tmp_path / "a").resolve(), (tmp_path / "b").resolve()]
+        intakes: dict[Path, asyncio.Task[None]] = {}
+        try:
+            for root in roots:
+                root.mkdir()
+                intakes[root] = asyncio.create_task(_intake())
+                with server._watcher_lock:
+                    _watcher_tasks[root] = intakes[root]
+                    _watcher_stops[root] = asyncio.Event()
+
+            # Precondition: both roots really are registered, so the
+            # post-conditions below cannot pass over empty state.
+            assert all(root in _watcher_tasks for root in roots)
+
+            cleanups = _stop_all_watchers()
+
+            assert len(cleanups) == len(roots), cleanups
+            for root in roots:
+                assert root not in _watcher_tasks, root
+                assert root not in _watcher_stops, root
+                assert root in watcher_lifecycle._watcher_drains, root
+        finally:
+            release.set()
+            for root in roots:
+                assert await server._wait_for_watcher_cleanup(root, timeout_seconds=10)
+            await asyncio.gather(*intakes.values(), return_exceptions=True)
+
+        for root in roots:
+            assert root not in watcher_lifecycle._watcher_drains, root
 
 
 class TestRegistryFullErrorShape:
@@ -980,7 +1067,7 @@ class TestRegistryFullErrorShape:
         from ..service import RegistryFullError
 
         exc = RegistryFullError(_registry.max_projects)
-        result = _registry_full_error_dict(exc)
+        result = _registry_full_error_dict(exc, _registry)
         assert result["ok"] is False
         assert result["error"] == "registry_full"
         assert result["max_projects"] == _registry.max_projects
@@ -1007,7 +1094,7 @@ class TestRegistryFullErrorShape:
         assert caps["local_storage_process_model"] == "exclusive"
         assert "resident vaultspec-rag service" in result["message"]
 
-    def test_ensure_watcher_uses_peek_project(self) -> None:
+    def test_ensure_watcher_uses_its_explicit_registry_for_peek_project(self) -> None:
         """_ensure_watcher must not bump ref_count on the slot.
 
         Reads the module source directly so the assertion is robust to
@@ -1015,49 +1102,55 @@ class TestRegistryFullErrorShape:
         """
         import inspect
 
-        from .. import server
+        from ..server import _watcher as watcher_lifecycle
 
-        source = inspect.getsource(server._ensure_watcher)
-        assert "_registry.peek_project" in source
-        assert "_registry.get_project" not in source
+        source = inspect.getsource(watcher_lifecycle._warm_and_publish_watcher)
+        assert "registry.peek_project" in source
+        assert "_m._registry" not in source
+        assert "registry.get_project" not in source
 
 
 class TestDaemonServesNativeRestOnly:
-    """The HTTP daemon serves native REST only - no MCP mount, no wrapper.
+    """The HTTP daemon serves native REST only - no MCP surface is mounted.
 
-    Stdio is the sole MCP
-    transport. The daemon's ``Mount("/mcp")`` and the ``_mcp_no_redirect``
-    ASGI path-rewrite wrapper were removed outright (no shim, no
-    feature-flagged path), so a tool call no longer loops back into the
-    daemon that serves it. The function-source check is cheap, stable,
-    and survives refactors that keep the no-mount intent.
+    Stdio is the sole MCP transport. The daemon's ``Mount("/mcp")`` and the
+    ``_mcp_no_redirect`` ASGI path-rewrite wrapper were removed outright (no
+    shim, no feature-flagged path), so a tool call no longer loops back into
+    the daemon that serves it.
+
+    This drives the real route factory and reads the real route table, rather
+    than scanning ``main``'s source. The scan could not see this contract at
+    all: ``main`` is a two-line dispatcher, so it contains neither the mount
+    nor the app it would be added to.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
-    def test_main_has_no_mcp_mount_or_redirect_wrapper(self):
-        """Regression guard: main() must not mount the MCP app or wrap ASGI."""
-        import inspect
-
-        from .. import server
-
-        source = inspect.getsource(server.main)
-        assert "_mcp_no_redirect" not in source, (
-            "main() must not reintroduce the /mcp redirect wrapper"
+    @staticmethod
+    def _served_paths() -> list[str]:
+        """Return the real route paths of the app the daemon serves."""
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="native-rest-only-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
         )
-        assert "/mcp" not in source, "main() must not reintroduce the daemon /mcp mount"
-        assert "streamable_http_app" not in source, (
-            "the daemon must not serve the streamable-HTTP MCP app"
-        )
+        return [str(getattr(route, "path", "")) for route in app.routes]
 
-    def test_main_hands_raw_app_to_uvicorn(self):
-        """The HTTP app is handed to uvicorn directly, with no ASGI wrapper."""
-        import inspect
+    def test_daemon_mounts_no_mcp_surface(self) -> None:
+        """No route the daemon serves sits under /mcp.
 
-        from .. import server
+        Mutation this catches: adding a ``Mount("/mcp", ...)`` - with or
+        without the streamable-HTTP app behind it - to the route table.
+        """
+        paths = self._served_paths()
 
-        source = inspect.getsource(server._main._run_http_daemon)
-        assert "uvicorn.run(\n            app," in source
+        # Non-emptiness first: an empty route table would satisfy the
+        # no-/mcp assertion below while proving nothing.
+        assert "/health" in paths, paths
+        assert not [p for p in paths if p.startswith("/mcp")], paths
 
 
 class TestDaemonLifecycleHelpers:
@@ -1114,7 +1207,7 @@ class TestDaemonLifecycleHelpers:
 
         server._heartbeat_tick_sync(discovery_publisher)
 
-        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, object] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["pid"] == os.getpid()
         assert data["parent_pid"] == os.getppid()
         assert data["port"] == 8766
@@ -1136,7 +1229,7 @@ class TestDaemonLifecycleHelpers:
         sf = server._status_file_path()
         server._heartbeat_tick_sync(discovery_publisher)
 
-        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, object] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["service_token"] == "test-owner-token"
 
     def test_heartbeat_tick_sync_replaces_stale_token(
@@ -1162,7 +1255,7 @@ class TestDaemonLifecycleHelpers:
 
         server._heartbeat_tick_sync(discovery_publisher)
 
-        data: dict[str, Any] = json.loads(sf.read_text(encoding="utf-8"))
+        data: dict[str, object] = json.loads(sf.read_text(encoding="utf-8"))
         assert data["service_token"] == "test-owner-token"
 
     def test_discovery_cleanup_missing_is_idempotent(
@@ -1262,30 +1355,26 @@ class TestRouteMissingProjectRoot:
     """Routes return HTTP 400 (not 500) when project_root is absent in HTTP mode.
 
     The Starlette TestClient drives the route handlers synchronously.
-    Module state (``_http_mode`` and ``_SERVICE_TOKEN``) is set for the
-    duration of each test and restored in ``finally`` blocks.  No GPU,
+    Module state (``_http_mode``) is set for the duration of each test and
+    restored in ``finally`` blocks.  No GPU,
     no Qdrant, no model loading - the validation fires before any
     model/store access.
 
-    The token gate (``require_token``) is satisfied by setting a known
-    token on ``_SERVICE_TOKEN`` and passing it as a bearer header so the
-    handler proceeds to the root-validation guard.
+    The app-scoped runtime carries the known token used by the bearer header,
+    so the handler proceeds to the root-validation guard.
     """
 
     _TOKEN = "test-token-s07"
 
     def _make_app(self) -> Starlette:
-        from contextlib import asynccontextmanager
-
-        from starlette.applications import Starlette
-
-        from ..server._routes import ROUTES
-
-        @asynccontextmanager
-        async def _lifespan(_app: object) -> typing.AsyncGenerator[None]:
-            yield
-
-        return Starlette(routes=ROUTES, lifespan=_lifespan)
+        return create_http_app(
+            ServerRouteRuntime(
+                token=self._TOKEN,
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
+        )
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._TOKEN}"}
@@ -1299,10 +1388,8 @@ class TestRouteMissingProjectRoot:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         query = f"search-activity-missing-root-{uuid.uuid4().hex}"
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1313,10 +1400,10 @@ class TestRouteMissingProjectRoot:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
 
             activity = search_activity_ledger().snapshot(include_query=True)
             records = [
@@ -1332,7 +1419,6 @@ class TestRouteMissingProjectRoot:
             ]
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_search_route_records_invalid_bodies_as_validation_rejections(self):
         """Malformed and non-object bodies finish once before search admission."""
@@ -1344,9 +1430,7 @@ class TestRouteMissingProjectRoot:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1375,7 +1459,7 @@ class TestRouteMissingProjectRoot:
                 )
 
                 assert response.status_code == 400, label
-                data: dict[str, Any] = cast("dict[str, Any]", response.json())
+                data: dict[str, object] = cast("dict[str, object]", response.json())
                 assert data["error"] == "bad_request", label
                 activity = search_activity_ledger().snapshot(include_query=True)
                 records = [
@@ -1394,7 +1478,6 @@ class TestRouteMissingProjectRoot:
                 ), label
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_unauthenticated_search_activity_route_never_exposes_query(self):
         """The token gate rejects the in-memory query-review surface."""
@@ -1426,7 +1509,7 @@ class TestRouteMissingProjectRoot:
             response: httpx.Response = client.get("/search-activity")
 
             assert response.status_code == 401
-            data: dict[str, Any] = cast("dict[str, Any]", response.json())
+            data: dict[str, object] = cast("dict[str, object]", response.json())
             assert data["error"] == "unauthorized"
             assert query not in response.text
         finally:
@@ -1442,27 +1525,28 @@ import json
 import threading
 import time
 
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 import vaultspec_rag.server as server
-from vaultspec_rag.server._routes import ROUTES
+from vaultspec_rag.server import ServerRouteRuntime, create_http_app
 from vaultspec_rag.server._search_activity import (
     DEFAULT_MAX_ACTIVE_SEARCHES,
     SearchActivityCompletion,
     SearchActivityStart,
 )
+from vaultspec_rag.service import ServiceRegistry
 from vaultspec_rag.server._state import search_activity_ledger
 
 
 token = "activity-capacity-route-token"
 waiting_query = "wait for activity capacity before validation"
 previous_mode = server._http_mode
-previous_token = server._SERVICE_TOKEN
 server._http_mode = True
-server._SERVICE_TOKEN = token
 try:
-    app = Starlette(routes=ROUTES)
+    app = create_http_app(
+        ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
+        lifespan=None,
+    )
     with TestClient(app, raise_server_exceptions=False) as client:
         baseline = client.post(
             "/search",
@@ -1533,7 +1617,6 @@ try:
     )
 finally:
     server._http_mode = previous_mode
-    server._SERVICE_TOKEN = previous_token
 """
         completed = subprocess.run(
             [sys.executable, "-c", child],
@@ -1550,15 +1633,15 @@ finally:
             for line in completed.stdout.splitlines()
             if line.startswith(prefix)
         )
-        result = cast("dict[str, Any]", json.loads(rendered))
+        result = cast("dict[str, object]", json.loads(rendered))
         assert result["pending_before_release"] is True
-        constrained = cast("dict[str, Any]", result["constrained"])
+        constrained = cast("dict[str, object]", result["constrained"])
         assert constrained["status_code"] == 400
         assert constrained["status_code"] != 429
         counts = cast("dict[str, int]", result["counts"])
         assert counts["active"] == result["remaining_active"]
-        assert counts["active_overflow"] == 0
-        terminal = cast("list[dict[str, Any]]", result["terminal"])
+        assert counts["total"] == counts["active"] + counts["recent"]
+        terminal = cast("list[dict[str, object]]", result["terminal"])
         assert len(terminal) == 1
         assert terminal[0]["state"] == "terminal"
         assert terminal[0]["query"] == "wait for activity capacity before validation"
@@ -1572,9 +1655,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1585,13 +1666,12 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_reindex_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
@@ -1600,9 +1680,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1613,13 +1691,12 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "invalid_job_spec"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_service_state_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
@@ -1628,9 +1705,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1640,13 +1715,12 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_code_file_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
@@ -1655,9 +1729,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1668,13 +1740,12 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
     def test_vault_document_route_returns_400_without_project_root(self):
         from starlette.testclient import TestClient
@@ -1683,9 +1754,7 @@ finally:
 
         app = self._make_app()
         orig_mode = mod._http_mode
-        orig_token = mod._SERVICE_TOKEN
         mod._http_mode = True
-        mod._SERVICE_TOKEN = self._TOKEN
         try:
             client: httpx.Client = cast(
                 "httpx.Client", TestClient(app, raise_server_exceptions=False)
@@ -1696,13 +1765,12 @@ finally:
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
-            data: dict[str, Any] = cast("dict[str, Any]", resp.json())
+            data: dict[str, object] = cast("dict[str, object]", resp.json())
             assert data["ok"] is False
             assert data["error"] == "bad_request"
-            assert "project_root" in data["message"]
+            assert "project_root" in cast("str", data["message"])
         finally:
             mod._http_mode = orig_mode
-            mod._SERVICE_TOKEN = orig_token
 
 
 class TestReindexPreprocessPreflight:
@@ -1723,20 +1791,27 @@ class TestReindexPreprocessPreflight:
 import json
 import sys
 
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 import vaultspec_rag.jobs as jobs
 import vaultspec_rag.server as server
-from vaultspec_rag.server._routes import ROUTES  # absolute-import-ok
+from vaultspec_rag.server import (  # absolute-import-ok
+    ServerRouteRuntime,
+    create_http_app,
+)
+from vaultspec_rag.service import ServiceRegistry  # absolute-import-ok
 
 token = "isolated-preflight-token"
 jobs.reset()
 jobs.get_job_manager().begin_shutdown()
 server._http_mode = True
-server._SERVICE_TOKEN = token
 try:
-    with TestClient(Starlette(routes=ROUTES)) as client:
+    with TestClient(
+        create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
+            lifespan=None,
+        )
+    ) as client:
         response = client.post(
             "/reindex",
             json={"type": "code", "project_root": sys.argv[1]},
@@ -1765,7 +1840,7 @@ finally:
 
     def _post_reindex(
         self, root: Path, *, preprocess_mode: str | None
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         env = os.environ.copy()
         env[EnvVar.STATUS_DIR.value] = str(root.parent / "status")
         env[EnvVar.QDRANT_STORAGE_DIR.value] = str(root.parent / "qdrant" / "storage")
@@ -1791,9 +1866,9 @@ finally:
             for line in completed.stdout.splitlines()
             if line.startswith(prefix)
         )
-        result = cast("dict[str, Any]", json.loads(rendered))
+        result = cast("dict[str, object]", json.loads(rendered))
         assert result["status_code"] == 200
-        return cast("dict[str, Any]", result["body"])
+        return cast("dict[str, object]", result["body"])
 
     def test_reindex_reports_hooks_will_run_under_default_mode(
         self, tmp_path: Path
@@ -1802,7 +1877,7 @@ finally:
         self._write_config(root)
         data = self._post_reindex(root, preprocess_mode=None)
         assert data["status"] == "queued"
-        pre = cast("dict[str, Any]", data["preprocess"])
+        pre = cast("dict[str, object]", data["preprocess"])
         assert pre["config_present"] is True
         assert pre["rule_count"] == 1
         assert pre["mode"] == "default"
@@ -1812,7 +1887,7 @@ finally:
         root = tmp_path / "proj"
         self._write_config(root)
         data = self._post_reindex(root, preprocess_mode="off")
-        pre = cast("dict[str, Any]", data["preprocess"])
+        pre = cast("dict[str, object]", data["preprocess"])
         # The count is still reported (the config's own), but the kill switch
         # means hooks will not run.
         assert pre["config_present"] is True
@@ -1824,7 +1899,7 @@ finally:
         root = tmp_path / "proj"
         (root / ".vault").mkdir(parents=True)
         data = self._post_reindex(root, preprocess_mode=None)
-        pre = cast("dict[str, Any]", data["preprocess"])
+        pre = cast("dict[str, object]", data["preprocess"])
         assert pre["config_present"] is False
         assert pre["rule_count"] == 0
         assert pre["hooks_will_run"] is False

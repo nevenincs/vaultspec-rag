@@ -7,7 +7,7 @@ import http.server
 import json
 import threading
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -34,6 +34,8 @@ from ._http_stubs import QuietHandler
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
+
+    from typer.testing import Result
 
 pytestmark = [pytest.mark.unit]
 
@@ -115,7 +117,7 @@ def _health_payload(
 @contextlib.contextmanager
 def _live_status_service(
     status_dir: Path,
-    contract_server: tuple[Any, Any],
+    contract_server: tuple[http.server.HTTPServer, threading.Thread],
     *,
     drop: tuple[str, ...] = (),
 ) -> Generator[int]:
@@ -140,7 +142,7 @@ def _status_against(
     health: dict[str, object],
     *args: str,
     jobs: dict[str, object] | None = None,
-) -> Any:
+) -> Result:
     """Run ``server status`` against a service reporting the given health."""
     with _live_status_service(
         tmp_path,
@@ -306,7 +308,9 @@ class TestDegradedStatusExplainsItself:
         )
 
         assert result.exit_code == 0, result.output
-        operational = json.loads(result.stdout)["data"]["operational"]
+        envelope = cast("dict[str, object]", json.loads(result.stdout))
+        data = cast("dict[str, object]", envelope["data"])
+        operational = cast("dict[str, object]", data["operational"])
         findings = cast("list[dict[str, str]]", operational["degraded"])
         assert [finding["cause"] for finding in findings] == [
             "the latest indexing job failed: other"
@@ -315,7 +319,8 @@ class TestDegradedStatusExplainsItself:
         assert findings[0]["command"] == (
             f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
         )
-        assert operational["failure"]["command"] == "vaultspec-rag server jobs --failed"
+        failure = cast("dict[str, object]", operational["failure"])
+        assert failure["command"] == "vaultspec-rag server jobs --failed"
 
 
 class TestReasonsSurviveRewording:
@@ -612,7 +617,7 @@ class TestServiceDaemonHelpers:
             import json
 
             sf = tmp_path / "service.json"
-            data = json.loads(sf.read_text(encoding="utf-8"))
+            data = cast("dict[str, object]", json.loads(sf.read_text(encoding="utf-8")))
             assert set(data.keys()) == {
                 "schema",
                 "version",
@@ -877,14 +882,15 @@ class TestServiceDaemonHelpers:
             )
 
             assert result.exit_code == 0
-            envelope = json.loads(result.stdout)
-            data = envelope["data"]
+            envelope = cast("dict[str, object]", json.loads(result.stdout))
+            data = cast("dict[str, object]", envelope["data"])
             assert data["service_json_present"] is False
             assert data["port"] == port
             assert data["state"] == "running"
-            operational = data["operational"]
-            assert f"--port {port}" in operational["next_action"]
-            assert "server info" not in operational["next_action"]
+            operational = cast("dict[str, object]", data["operational"])
+            next_action = cast("str", operational["next_action"])
+            assert f"--port {port}" in next_action
+            assert "server info" not in next_action
 
     def test_service_status_sparse_health_uses_reported_absence_language(
         self, tmp_path: Path
@@ -1020,13 +1026,14 @@ class TestServiceDaemonHelpers:
             )
 
             assert result.exit_code == 0
-            envelope = json.loads(result.stdout)
-            data = envelope["data"]
+            envelope = cast("dict[str, object]", json.loads(result.stdout))
+            data = cast("dict[str, object]", envelope["data"])
             assert data["service_json_present"] is True
             assert data["pid_alive"] is False
             assert data["port"] == port
             assert data["state"] == "running"
-            assert data["operational"]["status_file_port"] == 1
+            operational = cast("dict[str, object]", data["operational"])
+            assert operational["status_file_port"] == 1
 
             human = runner.invoke(
                 app,
@@ -1056,7 +1063,7 @@ class TestUnreachableStaysASentinelNotAnEscape:
 
     def _one_envelope(self, output: str) -> dict[str, object]:
         payloads = [
-            json.loads(line)
+            cast("dict[str, object]", json.loads(line))
             for line in output.splitlines()
             if line.strip().startswith("{")
         ]
@@ -1149,10 +1156,9 @@ class TestDegradedFamilyRegistryHasOneEntryPerBehaviour:
         """
         from ..cli import _status_labels
 
-        labels = [
-            value
-            for name, value in vars(_status_labels).items()
-            if name.endswith("_FAMILY") and isinstance(value, str)
-        ]
+        labels: list[str] = []
+        for name, value in vars(_status_labels).items():
+            if name.endswith("_FAMILY") and isinstance(value, str):
+                labels.append(value)
 
         assert len(labels) == len(set(labels)), f"duplicate family labels: {labels}"

@@ -24,7 +24,7 @@ import sys
 import sysconfig
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
@@ -61,7 +61,7 @@ def _spawn_shim(env: dict[str, str] | None = None) -> subprocess.Popen[bytes]:
     )
 
 
-def _send(shim: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
+def _send(shim: subprocess.Popen[bytes], message: dict[str, object]) -> None:
     assert shim.stdin is not None
     shim.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
     shim.stdin.flush()
@@ -69,12 +69,15 @@ def _send(shim: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
 
 def _recv(
     shim: subprocess.Popen[bytes], want_id: int, timeout: float = 60.0
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Read line-delimited JSON-RPC until the response with ``want_id``."""
     assert shim.stdout is not None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        line = shim.stdout.readline()
+        # Popen's stdout/stderr are typed IO[Any] regardless of the Popen[AnyStr]
+        # type parameter (a typeshed imprecision); this shim's pipes are opened
+        # without text=True, so a read is genuinely bytes.
+        line = cast("bytes", shim.stdout.readline())
         if not line:
             raise AssertionError(
                 "shim closed stdout before responding; stderr tail: "
@@ -83,7 +86,7 @@ def _recv(
                 ]
             )
         try:
-            message = json.loads(line.decode("utf-8"))
+            message = cast("dict[str, object]", json.loads(line.decode("utf-8")))
         except json.JSONDecodeError:
             continue
         if message.get("id") == want_id:
@@ -91,7 +94,7 @@ def _recv(
     raise AssertionError(f"no response with id {want_id} within {timeout}s")
 
 
-def _handshake(shim: subprocess.Popen[bytes]) -> dict[str, Any]:
+def _handshake(shim: subprocess.Popen[bytes]) -> dict[str, object]:
     """initialize -> initialized; returns the server's initialize result."""
     _send(
         shim,
@@ -108,7 +111,7 @@ def _handshake(shim: subprocess.Popen[bytes]) -> dict[str, Any]:
     )
     response = _recv(shim, 1)
     assert "result" in response, response
-    return response["result"]
+    return cast("dict[str, object]", response["result"])
 
 
 def _initialized(shim: subprocess.Popen[bytes]) -> None:
@@ -121,7 +124,9 @@ def _list_tool_names(shim: subprocess.Popen[bytes], request_id: int = 2) -> set[
     _send(shim, {"jsonrpc": "2.0", "id": request_id, "method": "tools/list"})
     response = _recv(shim, request_id)
     assert "result" in response, response
-    return {tool["name"] for tool in response["result"]["tools"]}
+    result = cast("dict[str, object]", response["result"])
+    tools = cast("list[dict[str, object]]", result["tools"])
+    return {str(tool["name"]) for tool in tools}
 
 
 def test_shim_serves_the_five_tool_surface_then_exits_on_eof() -> None:
@@ -129,7 +134,8 @@ def test_shim_serves_the_five_tool_surface_then_exits_on_eof() -> None:
     shim = _spawn_shim()
     try:
         init = _handshake(shim)
-        assert init["serverInfo"]["name"] == "VaultSpec Search"
+        server_info = cast("dict[str, object]", init["serverInfo"])
+        assert server_info["name"] == "VaultSpec Search"
         _initialized(shim)
         assert _list_tool_names(shim) == EXPECTED_TOOLS
 
@@ -175,9 +181,10 @@ def test_degraded_search_vault_reports_service_down_through_the_wire(
         )
         response = _recv(shim, 3, timeout=90)
         assert "result" in response, response
-        content = cast("list[Any]", response["result"]["content"])
+        result = cast("dict[str, object]", response["result"])
+        content = cast("list[object]", result["content"])
         text = " ".join(
-            str(cast("dict[str, Any]", block).get("text", ""))
+            str(cast("dict[str, object]", block).get("text", ""))
             for block in content
             if isinstance(block, dict)
         )
@@ -273,9 +280,11 @@ def test_shim_reaps_instantly_when_its_serving_client_dies(tmp_path: Path) -> No
         while not report_file.exists() and time.monotonic() < deadline:
             time.sleep(0.2)
         assert report_file.exists(), "client never completed the shim handshake"
-        report = json.loads(report_file.read_text(encoding="utf-8"))
-        assert set(report["tools"]) == EXPECTED_TOOLS, report
-        shim_pid = int(report["shim_pid"])
+        report = cast(
+            "dict[str, object]", json.loads(report_file.read_text(encoding="utf-8"))
+        )
+        assert set(cast("list[object]", report["tools"])) == EXPECTED_TOOLS, report
+        shim_pid = int(str(report["shim_pid"]))
         assert _pid_alive(shim_pid)
 
         client.kill()
@@ -293,9 +302,11 @@ def test_shim_reaps_instantly_when_its_serving_client_dies(tmp_path: Path) -> No
         if client.poll() is None:
             client.kill()
         if report_file.exists():
-            leftover = int(
-                json.loads(report_file.read_text(encoding="utf-8"))["shim_pid"]
+            leftover_report = cast(
+                "dict[str, object]",
+                json.loads(report_file.read_text(encoding="utf-8")),
             )
+            leftover = int(str(leftover_report["shim_pid"]))
             if _pid_alive(leftover) and sys.platform == "win32":
                 subprocess.run(
                     ["taskkill", "/F", "/PID", str(leftover)],
@@ -499,7 +510,7 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
         while _pid_alive(orphan_pid) and time.monotonic() < deadline:
             time.sleep(0.25)
         events = [
-            json.loads(line)
+            cast("dict[str, object]", json.loads(line))
             for line in log_file.read_text(encoding="utf-8").splitlines()
             if line.startswith("{")
         ]

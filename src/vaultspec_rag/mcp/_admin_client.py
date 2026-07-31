@@ -54,7 +54,7 @@ class _JobQuery:
 
 async def _admin(
     tool_name: str,
-    args: dict[str, Any],
+    args: dict[str, object],
     *,
     timeout: float = 30.0,
 ) -> dict[str, Any]:
@@ -82,7 +82,7 @@ async def _admin_for_root(tool: str, project_root: str | None) -> dict[str, Any]
     service resolves its own default root for an absent argument, and an empty
     string would be a request to resolve nothing.
     """
-    args: dict[str, Any] = {}
+    args: dict[str, object] = {}
     if project_root:
         args["project_root"] = project_root
     return await _admin(tool, args)
@@ -120,7 +120,7 @@ async def survey_storage(
     prefix computed by the service - callers never derive the hash
     themselves.
     """
-    args: dict[str, Any] = {}
+    args: dict[str, object] = {}
     if status:
         args["status"] = status
     if limit is not None:
@@ -136,7 +136,7 @@ async def get_logs(
     contains: str | None = None,
 ) -> dict[str, Any]:
     """Return the last *lines* of the rotated service log."""
-    args: dict[str, Any] = {"lines": lines}
+    args: dict[str, object] = {"lines": lines}
     if job_id:
         args["job_id"] = job_id
     if contains:
@@ -162,7 +162,7 @@ async def _get_jobs(query: _JobQuery) -> dict[str, Any]:
         query.since,
         query.timeout,
     )
-    args: dict[str, Any] = {}
+    args: dict[str, object] = {}
     if limit is not None:
         args["limit"] = limit
     if phase:
@@ -188,7 +188,7 @@ async def reconfigure_watcher(
     cooldown_s: float | None = None,
 ) -> dict[str, Any]:
     """Restart *root*'s watcher with new tuning values."""
-    args: dict[str, Any] = {"root": root}
+    args: dict[str, object] = {"root": root}
     if debounce_ms is not None:
         args["debounce_ms"] = debounce_ms
     if cooldown_s is not None:

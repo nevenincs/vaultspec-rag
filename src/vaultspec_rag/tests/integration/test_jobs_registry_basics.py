@@ -79,7 +79,7 @@ def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
     started_resources = resources["started"]
     assert isinstance(started_resources, dict)
     started_resources = cast("dict[str, object]", started_resources)
-    started_resources["rss_mb"] = -1.0
+    started_resources["rss_mib"] = -1.0
 
     assert _jobs.snapshot()[0]["phase"] == "running"
     next_initiator = _jobs.snapshot()[0]["initiator"]
@@ -92,7 +92,7 @@ def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
     next_started_resources = next_resources["started"]
     assert isinstance(next_started_resources, dict)
     next_started_resources = cast("dict[str, object]", next_started_resources)
-    assert next_started_resources["rss_mb"] != -1.0
+    assert next_started_resources["rss_mib"] != -1.0
 
 
 @pytest.mark.unit

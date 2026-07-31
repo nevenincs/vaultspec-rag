@@ -81,7 +81,7 @@ async def test_watch_disabled_starts_no_watcher(
     prev = set_env(EnvVar.WATCH_ENABLED, "0")
     try:
         reset_config()
-        server._ensure_watcher(root)
+        server._ensure_watcher(root, get_registry())
         assert root.resolve() not in server._watcher_tasks
     finally:
         restore_env(EnvVar.WATCH_ENABLED, prev)
@@ -111,7 +111,7 @@ async def test_watch_enabled_propagates_debounce_and_cooldown(
         # a literal: the level has to be raised on the emitting logger itself,
         # so a stale name captures nothing and the values look unwired.
         with caplog.at_level(logging.INFO, logger=watch_and_reindex.__module__):
-            server._ensure_watcher(root)
+            server._ensure_watcher(root, get_registry())
             # The startup line lands after retry-state initialization, which
             # touches disk; poll rather than betting on one yield.
             for _ in range(40):
@@ -143,7 +143,10 @@ async def test_failed_watcher_task_is_removed_from_running_registry(
         corrupt.write_text("{not-json", encoding="utf-8")
 
         with caplog.at_level(logging.INFO, logger="vaultspec_rag.server"):
-            assert server._ensure_watcher(root) is WatcherStartOutcome.STARTED
+            assert (
+                server._ensure_watcher(root, get_registry())
+                is WatcherStartOutcome.STARTED
+            )
             for _ in range(20):
                 await asyncio.sleep(0.05)
                 if root.resolve() not in server._watcher_tasks:

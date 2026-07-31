@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import click
 import typer
@@ -10,7 +10,7 @@ from tomlkit.exceptions import ParseError
 from typer._types import TyperChoice
 from typer.core import TyperCommand, TyperOption
 from typer.models import TyperPath
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
 
@@ -22,9 +22,51 @@ from ._render import _plain, _render_install_report, _render_uninstall_report
 if TYPE_CHECKING:
     from typer._click import Context as ClickContext
 
+    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
+    # and value types are only known once a command's options are parsed at
+    # runtime. Each TypedDict below is the producer-side cast target for one
+    # command's ``invoke``: the field types mirror the ``TyperOption``
+    # declarations the corresponding ``__init__`` registers, so a single
+    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
+    class _InstallParams(TypedDict):
+        target: Path | None
+        upgrade: bool
+        dry_run: bool
+        force: bool
+        skip: tuple[str, ...]
+        mode: str | None
+        torch_config: bool
+        torch_group: str | None
+        yes: bool
+        sync: bool
+        provision: bool
+        mcp: bool
+        local_only: bool
+        skip_torch: bool
+        skip_models: bool
+        skip_qdrant: bool
+        json: bool
+
+    class _UninstallParams(TypedDict):
+        target: Path | None
+        remove_data: bool
+        dry_run: bool
+        force: bool
+        skip: tuple[str, ...]
+        yes: bool
+        json: bool
+
+
 # Group name used when ``--torch-group`` is passed without an explicit
 # value. Surfaced both in the help text and as the Click ``flag_value``.
 _DEFAULT_TORCH_GROUP = "dev"
+
+# ``--skip``'s empty default, shared by both commands below. Bound to an
+# explicitly-typed name rather than passed as the inline literal ``()``:
+# ``TyperOption.__init__``'s ``default`` parameter is typed ``Any | None``
+# upstream, and pyright's bidirectional inference widens an inline literal
+# passed there to ``Any``; a pre-typed local keeps the tuple's real type.
+_NO_SKIP: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +105,12 @@ class _InstallCommand(TyperCommand):
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # ``*args``/``**kwargs`` forward whatever ``TyperCommand.__init__``
+        # (typer instantiates this class directly as its ``cls=``) is
+        # called with. A field-for-field mirror of that constructor was
+        # tried and reverted: it exceeds the project's 5-argument cap
+        # (PLR0913), which is enforced with no per-call suppression
+        # allowed. Genuinely dynamic; left as ``Any``.
         super().__init__(*args, **kwargs)
         self.params.extend(
             (
@@ -103,7 +151,7 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--skip"],
                     type=str,
                     multiple=True,
-                    default=(),
+                    default=_NO_SKIP,
                     help="Skip a component (repeatable).",
                 ),
                 TyperOption(
@@ -232,30 +280,30 @@ class _InstallCommand(TyperCommand):
                 # the default group rather than demanding an argument.
                 param._flag_needs_value = True  # pyright: ignore[reportPrivateUsage]  # Click optional-value mechanism
 
-    def invoke(self, ctx: "ClickContext") -> Any:
+    def invoke(self, ctx: "ClickContext") -> None:
         """Dispatch parsed Click parameters as one install request."""
-        params = ctx.params
-        mode = cast("str | None", params["mode"])
+        params = cast("_InstallParams", ctx.params)
+        mode = params["mode"]
         return _run_install(
             ctx,
             _InstallOptions(
-                target=cast("Path | None", params["target"]),
-                upgrade=cast("bool", params["upgrade"]),
-                dry_run=cast("bool", params["dry_run"]),
-                force=cast("bool", params["force"]),
-                skip=cast("tuple[str, ...]", params["skip"]),
+                target=params["target"],
+                upgrade=params["upgrade"],
+                dry_run=params["dry_run"],
+                force=params["force"],
+                skip=params["skip"],
                 mode=InstallMode(mode) if mode is not None else None,
-                configure_torch=cast("bool", params["torch_config"]),
-                torch_group=cast("str | None", params["torch_group"]),
-                yes=cast("bool", params["yes"]),
-                sync_after=cast("bool", params["sync"]),
-                provision=cast("bool", params["provision"]),
-                install_mcp=cast("bool", params["mcp"]),
-                local_only=cast("bool", params["local_only"]),
-                skip_torch=cast("bool", params["skip_torch"]),
-                skip_models=cast("bool", params["skip_models"]),
-                skip_qdrant=cast("bool", params["skip_qdrant"]),
-                json_output=cast("bool", params["json"]),
+                configure_torch=params["torch_config"],
+                torch_group=params["torch_group"],
+                yes=params["yes"],
+                sync_after=params["sync"],
+                provision=params["provision"],
+                install_mcp=params["mcp"],
+                local_only=params["local_only"],
+                skip_torch=params["skip_torch"],
+                skip_models=params["skip_models"],
+                skip_qdrant=params["skip_qdrant"],
+                json_output=params["json"],
             ),
         )
 
@@ -408,6 +456,10 @@ class _UninstallCommand(TyperCommand):
     """Expose uninstall options without expanding the callback signature."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # See _InstallCommand.__init__: a field-for-field mirror of
+        # TyperCommand's constructor was tried and reverted (exceeds the
+        # project's 5-argument cap, PLR0913, with no suppression allowed).
+        # Genuinely dynamic; left as ``Any``.
         super().__init__(*args, **kwargs)
         self.params.extend(
             (
@@ -444,7 +496,7 @@ class _UninstallCommand(TyperCommand):
                     param_decls=["--skip"],
                     type=str,
                     multiple=True,
-                    default=(),
+                    default=_NO_SKIP,
                     help="Skip a component (repeatable).",
                 ),
                 TyperOption(
@@ -462,19 +514,19 @@ class _UninstallCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: "ClickContext") -> Any:
+    def invoke(self, ctx: "ClickContext") -> None:
         """Dispatch parsed Click parameters as one uninstall request."""
-        params = ctx.params
+        params = cast("_UninstallParams", ctx.params)
         return _run_uninstall(
             ctx,
             _UninstallOptions(
-                target=cast("Path | None", params["target"]),
-                remove_data=cast("bool", params["remove_data"]),
-                dry_run=cast("bool", params["dry_run"]),
-                force=cast("bool", params["force"]),
-                skip=cast("tuple[str, ...]", params["skip"]),
-                yes=cast("bool", params["yes"]),
-                json_output=cast("bool", params["json"]),
+                target=params["target"],
+                remove_data=params["remove_data"],
+                dry_run=params["dry_run"],
+                force=params["force"],
+                skip=params["skip"],
+                yes=params["yes"],
+                json_output=params["json"],
             ),
         )
 

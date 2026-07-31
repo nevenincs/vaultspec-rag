@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -23,9 +23,9 @@ def test_jobs_route_401_without_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, _token = _routes_app
-    response = cast("httpx.Response", client.get("/jobs"))  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+    response = cast("httpx.Response", client.get("/jobs"))
     assert response.status_code == 401
-    payload: dict[str, Any] = response.json()
+    payload: dict[str, object] = response.json()
     assert payload["ok"] is False
     assert payload["error"] == "unauthorized"
 
@@ -37,7 +37,7 @@ def test_jobs_route_401_with_wrong_token(
     client, _token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", headers={"Authorization": "Bearer wrong"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", headers={"Authorization": "Bearer wrong"}),
     )
     assert response.status_code == 401
 
@@ -49,18 +49,35 @@ def test_jobs_route_200_with_bearer_token(
     client, token = _routes_app
     response = cast(
         "httpx.Response",
-        client.get("/jobs", headers={"Authorization": f"Bearer {token}"}),  # pyright: ignore[reportUnknownMemberType]  # starlette TestClient stub incomplete
+        client.get("/jobs", headers={"Authorization": f"Bearer {token}"}),
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
-    payload: dict[str, Any] = response.json()
-    assert set(payload) == {"jobs", "total", "returned", "summary", "filters"}
-    assert len(payload["jobs"]) == 1
-    assert payload["jobs"][0]["source"] == "vault"
-    assert payload["jobs"][0]["phase"] == "done"
-    assert payload["summary"]["running"] == 0
-    assert payload["summary"]["initiators"]["tool"] == 1
-    assert payload["summary"]["users"]
+    payload: dict[str, object] = response.json()
+    # An exact set, not a subset: a field appearing here without a reader is an
+    # envelope an adapter can drift from, so growth has to be stated. ``gpu``,
+    # ``pressure`` and ``device_load`` ride beside the work list so a header can
+    # show the card's condition without a request of its own.
+    assert set(payload) == {
+        "jobs",
+        "total",
+        "returned",
+        "summary",
+        "filters",
+        "gpu",
+        "pressure",
+        "device_load",
+        "quiesce",
+    }
+    jobs = cast("list[dict[str, object]]", payload["jobs"])
+    assert len(jobs) == 1
+    assert jobs[0]["source"] == "vault"
+    assert jobs[0]["phase"] == "done"
+    summary = cast("dict[str, object]", payload["summary"])
+    assert summary["running"] == 0
+    initiators = cast("dict[str, object]", summary["initiators"])
+    assert initiators["tool"] == 1
+    assert summary["users"]
 
 
 @pytest.mark.unit
@@ -68,6 +85,6 @@ def test_jobs_route_200_with_query_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
     client, token = _routes_app
-    response = cast("httpx.Response", client.get("/jobs", params={"token": token}))  # pyright: ignore[reportUnknownMemberType]
+    response = cast("httpx.Response", client.get("/jobs", params={"token": token}))
     assert response.status_code == 200
     assert len(response.json()["jobs"]) == 1

@@ -1,8 +1,8 @@
 """Shared module-level state for the RAG daemon (server) package.
 
 Split out of the original ``server.py`` monolith. This module is the canonical home of
-the daemon's process-wide globals (registry, watcher bookkeeping,
-identity token, HTTP-mode flag). The package ``__init__`` re-imports
+the daemon's process-wide globals (registry, watcher bookkeeping, and
+HTTP-mode flag). The package ``__init__`` re-imports
 these names so they live in the ``vaultspec_rag.server`` namespace,
 which is where every consumer reads them. The MCP ``MCPServer`` instance
 is not owned here - after the thin-client rework it lives only in
@@ -14,10 +14,9 @@ Rebind discipline (mirrors the ``cli`` split):
 - ``_watcher_tasks``, ``_watcher_stops``, ``_watcher_lock`` are mutated
   *in place* (dict insert/pop, lock acquire) and may be imported by
   reference.
-- ``_http_mode``, ``_SERVICE_TOKEN``, ``_start_time``,
-  ``_start_wall_time`` are *reassigned* at runtime (``main`` sets
-  ``_http_mode``; ``service_lifespan`` sets the start stamps and
-  ``_SERVICE_TOKEN``). Consumers must read them at call time through
+- ``_http_mode``, ``_start_time``, ``_start_wall_time`` are *reassigned* at
+  runtime (``main`` sets ``_http_mode``; ``service_lifespan`` sets the start
+  stamps). Consumers must read them at call time through
   ``import vaultspec_rag.server as _m``, or they bind the value the
   daemon held before startup finished rather than the one it runs on.
 - ``_registry`` is bound once here at import and never reassigned. It is
@@ -39,14 +38,12 @@ __all__ = [
     "_MAX_QUERY_LEN",
     "_SENSITIVE_DIRS",
     "_SENSITIVE_PATTERNS",
-    "_SERVICE_TOKEN",
     "SurveySnapshot",
     "_daemon_log_capture",
     "_daemon_process",
     "_http_mode",
     "_launch_token",
     "_registry",
-    "_service_port",
     "_shutdown_hooks_installed",
     "_shutdown_recorded",
     "_start_time",
@@ -98,7 +95,6 @@ _start_time: float = 0.0
 # job is judged against, never narrow it.
 _start_wall_time: float = 0.0
 _http_mode: bool = False  # set once in main() before event loop starts
-_service_port: int = 0  # set by main() before the HTTP lifespan starts
 _launch_token: str = ""  # unique CLI launch-attempt witness, HTTP mode only
 
 # Standalone-daemon exit backstop. ``_daemon_process`` is set True exactly once
@@ -112,15 +108,6 @@ _launch_token: str = ""  # unique CLI launch-attempt witness, HTTP mode only
 # backstop can flush ``service.log`` before ``os._exit`` skips the drain thread.
 _daemon_process: bool = False
 _daemon_log_capture: DaemonLogCapture | None = None
-
-# Per-process identity token. Generated once in ``service_lifespan``
-# startup, written into ``service.json`` via the first heartbeat
-# tick, and returned from ``/health``. The CLI's ``_is_our_service``
-# compares the file's recorded value against the live ``/health``
-# response - mismatch reports the responding process is not the
-# daemon named in ``service.json`` (gh #124 + #125: closes
-# PID-reuse false-positives and unrelated-HTTP-server-on-port).
-_SERVICE_TOKEN: str = ""
 
 # Heartbeat contract. The daemon writes ``last_heartbeat`` to
 # service.json every _HEARTBEAT_INTERVAL_SECONDS so

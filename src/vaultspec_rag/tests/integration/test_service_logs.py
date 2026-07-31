@@ -19,8 +19,6 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
-import vaultspec_rag.server as _m
-
 from ...cli import app
 from ...config._settings import reset_config
 from ...config._types import EnvVar
@@ -28,7 +26,8 @@ from ...logging_config import (
     MANAGED_LOG_TRUNCATION_MARKER,
     MAX_MANAGED_LOG_SOURCE_BYTES,
 )
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 from ...serviceclient._transport import (
     MAX_SERVICE_RESPONSE_BYTES,
     _logs_route_path,
@@ -66,17 +65,26 @@ def managed_log_app(
 ) -> Iterator[tuple[HTTPTestClient, str, Path]]:
     """Serve the production routes against an isolated real log directory."""
     token = "managed-log-test-token"
-    previous_token = _m._SERVICE_TOKEN
     previous_status_dir = os.environ.get(EnvVar.STATUS_DIR.value)
-    _m._SERVICE_TOKEN = token
     os.environ[EnvVar.STATUS_DIR.value] = str(tmp_path)
     reset_config()
-    client = cast("HTTPTestClient", TestClient(Starlette(routes=ROUTES)))
+    client = cast(
+        "HTTPTestClient",
+        TestClient(
+            create_http_app(
+                ServerRouteRuntime(
+                    token=token,
+                    registry=ServiceRegistry(),
+                    port=8765,
+                ),
+                lifespan=None,
+            )
+        ),
+    )
     try:
         yield client, token, tmp_path
     finally:
         client.close()
-        _m._SERVICE_TOKEN = previous_token
         if previous_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR.value, None)
         else:
@@ -392,7 +400,14 @@ def test_admin_transport_preserves_live_structured_log_error(
     )
     server = uvicorn.Server(
         uvicorn.Config(
-            Starlette(routes=ROUTES),
+            create_http_app(
+                ServerRouteRuntime(
+                    token=token,
+                    registry=ServiceRegistry(),
+                    port=port,
+                ),
+                lifespan=None,
+            ),
             host="127.0.0.1",
             port=port,
             log_config=None,
@@ -429,7 +444,6 @@ import sys
 from pathlib import Path
 
 import uvicorn
-from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
@@ -438,6 +452,9 @@ from vaultspec_rag.logging_config import (  # absolute-import-ok
     install_daemon_log_capture,
 )
 from vaultspec_rag.server._lifespan import health_handler  # absolute-import-ok
+# absolute-import-ok
+from vaultspec_rag.server import ServerRouteRuntime, create_http_app
+from vaultspec_rag.service import ServiceRegistry  # absolute-import-ok
 
 log_path = Path(sys.argv[1])
 port = int(sys.argv[2])
@@ -455,8 +472,16 @@ try:
     # Deliberately not a route the daemon filters out of the access stream:
     # this probe exists to prove access bytes alone drive rollover, so its
     # traffic has to reach the sink.
-    app = Starlette(
-        routes=[
+    app = create_http_app(
+        ServerRouteRuntime(
+            token="uvicorn-access-rollover-probe-token",
+            registry=ServiceRegistry(),
+            port=port,
+        ),
+        lifespan=None,
+    )
+    app.routes.extend(
+        [
             Route("/probe", health_handler),
             Route("/stop", stop_handler),
         ]

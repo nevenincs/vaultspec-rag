@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, Any, TypedDict, cast, get_args
 
 import typer
 from typer._types import TyperChoice
@@ -32,6 +32,21 @@ from ._render import _emit_json, _emit_json_error_and_exit, _plain
 
 if TYPE_CHECKING:
     from typer._click import Context as ClickContext
+
+    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
+    # and value types are only known once a command's options are parsed at
+    # runtime. This TypedDict is the producer-side cast target for
+    # ``_ServiceLogsCommand.invoke``: the field types mirror the
+    # ``TyperOption`` declarations registered in ``__init__``, so a single
+    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
+    class _LogsParams(TypedDict):
+        limit: int
+        source: ManagedLogSource
+        job_id: str | None
+        contains: str | None
+        port: int | None
+        json: bool
+
 
 _LOGS_COMMAND = "server.logs"
 
@@ -94,16 +109,16 @@ class _ServiceLogsCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: ClickContext) -> Any:
-        params = ctx.params
+    def invoke(self, ctx: ClickContext) -> None:
+        params = cast("_LogsParams", ctx.params)
         return _run_service_logs(
             _ServiceLogsOptions(
-                lines=cast("int", params["limit"]),
-                source=cast("ManagedLogSource", params["source"]),
-                job_id=cast("str | None", params["job_id"]),
-                contains=cast("str | None", params["contains"]),
-                port=cast("int | None", params["port"]),
-                json_mode=cast("bool", params["json"]),
+                lines=params["limit"],
+                source=params["source"],
+                job_id=params["job_id"],
+                contains=params["contains"],
+                port=params["port"],
+                json_mode=params["json"],
             )
         )
 
@@ -162,7 +177,7 @@ def _run_service_logs(options: _ServiceLogsOptions) -> None:
             job_id=filters.get("job_id"),
             contains=filters.get("contains"),
         )
-        groups = cast("list[ManagedLogGroup]", payload["groups"])
+        groups = payload["groups"]
     else:
         if result.get("ok") is False:
             _exit_live_log_error(result, json_mode=options.json_mode)

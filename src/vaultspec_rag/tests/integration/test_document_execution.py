@@ -62,6 +62,7 @@ from ...jobs import (
     validate_document_support_profile,
 )
 from ...service import ServiceRegistry
+from ...service_quiesce import ServiceQuiesceController
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
 from ._helpers import _document_policy
 
@@ -318,7 +319,11 @@ def test_real_extractor_no_progress_watchdog_terminates_child(tmp_path: Path) ->
 async def test_document_attempt_honors_cancellation_before_admission(
     tmp_path: Path,
 ) -> None:
-    manager = JobManager(max_nonterminal=1, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=None,
+    )
     created = manager.create(
         JobSpec(
             JobOperation.INDEX,

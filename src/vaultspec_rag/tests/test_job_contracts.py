@@ -14,9 +14,11 @@ import pytest
 
 from .. import job_models
 from .. import jobs as jobs_module
+from ..job_manager import state as state_module
 from ..job_manager._execution import logger as execution_logger
 from ..job_manager.manager import JobManager
 from ..service import ServiceRegistry
+from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
@@ -46,8 +48,89 @@ def test_job_manager_logs_under_the_jobs_namespace() -> None:
     assert execution_logger.name == jobs_module.logger.name == "vaultspec_rag.jobs"
 
 
+_OWNER_MODULES = (
+    "_control.py",
+    "_execution.py",
+    "_persistence.py",
+    "_progress.py",
+    "_records.py",
+)
+
+
+def _owner_class(tree: ast.Module) -> ast.ClassDef:
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+    owners = [node for node in classes if node.name.startswith("JobManager")]
+    assert len(owners) == 1, "each owner module defines exactly one owner class"
+    return owners[0]
+
+
+def _declared_members(node: ast.ClassDef) -> set[str]:
+    declared: set[str] = set()
+    for statement in node.body:
+        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+            declared.add(statement.name)
+        elif isinstance(statement, ast.AnnAssign) and isinstance(
+            statement.target, ast.Name
+        ):
+            declared.add(statement.target.id)
+    return declared
+
+
+def _contract_class() -> ast.ClassDef:
+    source = Path(state_module.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ClassDef) and node.name == "JobManagerState":
+            for base in node.bases:
+                if isinstance(base, ast.Name) and base.id == "Protocol":
+                    return node
+    raise AssertionError("job_manager.state declares no JobManagerState protocol")
+
+
+def test_shared_owner_surface_is_declared_not_dynamic() -> None:
+    # Responsibility for one coordinator is split across several owner classes,
+    # so each one reaches state and behaviour a sibling owns. That surface has
+    # to be declared member by member on the shared contract. A catch-all
+    # ``__getattr__`` there would satisfy every such reference by typing it as
+    # ``Any``, which silently retires type checking across the whole package -
+    # and no configured rule reports it, so nothing else would catch the
+    # regression. Both halves below are load-bearing: the first keeps the
+    # escape hatch out, the second keeps the declarations complete.
+    contract = _contract_class()
+    declared = _declared_members(contract)
+
+    assert "__getattr__" not in declared, (
+        "JobManagerState must declare its members explicitly; a __getattr__ "
+        "escape hatch types every cross-owner reference as Any"
+    )
+
+    package = Path(state_module.__file__).parent
+    undeclared: dict[str, set[str]] = {}
+    for module_name in _OWNER_MODULES:
+        tree = ast.parse((package / module_name).read_text(encoding="utf-8"))
+        owner = _owner_class(tree)
+        local = _declared_members(owner)
+        reached = {
+            node.attr
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        }
+        missing = reached - local - declared
+        if missing:
+            undeclared[module_name] = missing
+
+    assert not undeclared, (
+        f"owner modules reach undeclared members on JobManagerState: {undeclared}"
+    )
+
+
 def test_job_manager_rejects_unknown_attributes() -> None:
-    manager = JobManager(max_nonterminal=1, state_path=None)
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=1,
+        state_path=None,
+    )
 
     with pytest.raises(AttributeError):
         _ = manager.misspelled_manager_attribute
@@ -102,19 +185,23 @@ class TestIndexDispatchIsExtracted:
     that pair the two calls rather than the two that had a test.
     """
 
+    @staticmethod
+    def _defined_names(tree: ast.Module) -> set[str]:
+        """Return every function name the module defines, sync or async.
+
+        ``ast`` gives the two no common base, so both are named. Filtering
+        ``FunctionDef`` alone let an ``async def`` back into the facade
+        unseen, and ``jobs`` already defines one.
+        """
+        return {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        }
+
     def test_dispatch_implementations_are_extracted_from_jobs_facade(self) -> None:
-        jobs_tree = _parse_jobs_module()
-        jobs_functions = {
-            node.name
-            for node in ast.walk(jobs_tree)
-            if isinstance(node, ast.FunctionDef)
-        }
-        dispatch_tree = _parse_job_dispatch_module()
-        dispatch_functions = {
-            node.name
-            for node in ast.walk(dispatch_tree)
-            if isinstance(node, ast.FunctionDef)
-        }
+        jobs_functions = self._defined_names(_parse_jobs_module())
+        dispatch_functions = self._defined_names(_parse_job_dispatch_module())
         assert "_bg_run" not in jobs_functions
         assert {"_run_vault_attempt", "_run_indexing_attempt"} <= dispatch_functions
 

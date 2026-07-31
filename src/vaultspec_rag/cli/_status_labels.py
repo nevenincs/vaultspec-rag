@@ -22,6 +22,7 @@ from .._operator_commands import (
 )
 from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
+from ..jobs import text
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 if TYPE_CHECKING:
@@ -248,16 +249,11 @@ class DegradedFinding:
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> DegradedFinding:
         """Rebuild a finding a caller carried through a JSON envelope."""
-
-        def text(key: str) -> str:
-            value = payload.get(key)
-            return value if isinstance(value, str) else ""
-
         return cls(
-            cause=text("cause"),
-            detail=text("detail"),
-            command=text("command"),
-            family=text("family"),
+            cause=text(payload.get("cause")),
+            detail=text(payload.get("detail")),
+            command=text(payload.get("command")),
+            family=text(payload.get("family")),
         )
 
 

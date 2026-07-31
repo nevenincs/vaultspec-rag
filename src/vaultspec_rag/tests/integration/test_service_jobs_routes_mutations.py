@@ -8,16 +8,16 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
-from starlette.applications import Starlette
-
-import vaultspec_rag.server as _m
 
 from ... import jobs as _jobs
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
     from pathlib import Path
+
+    from ...job_manager.manager import JobManager
 
 
 def _make_vault_roots(tmp_path: Path) -> tuple[Path, Path]:
@@ -28,7 +28,7 @@ def _make_vault_roots(tmp_path: Path) -> tuple[Path, Path]:
     return large_root, target_root
 
 
-def _seed_persistence_backpressure(manager: Any, root: Path) -> None:
+def _seed_persistence_backpressure(manager: JobManager, root: Path) -> None:
     """Create one real large terminal record before the ASGI overlap probe."""
     from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 
@@ -81,13 +81,11 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
     from ...jobs import get_job_manager, reset
 
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
-    prior_token = _m._SERVICE_TOKEN
     os.environ[EnvVar.STATUS_DIR] = str(tmp_path / "status")
     reset_config()
     reset()
     _jobs.reset()
     token = "test-token-responsive-job-writes"
-    _m._SERVICE_TOKEN = token
     headers = {"Authorization": f"Bearer {token}"}
     large_root, target_root = _make_vault_roots(tmp_path)
 
@@ -95,7 +93,10 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
         manager = get_job_manager()
         _seed_persistence_backpressure(manager, large_root)
 
-        app_under_test = Starlette(routes=ROUTES)
+        app_under_test = create_http_app(
+            ServerRouteRuntime(token=token, registry=ServiceRegistry(), port=8765),
+            lifespan=None,
+        )
         transport = httpx.ASGITransport(app=app_under_test)
         async with httpx.AsyncClient(
             transport=transport,
@@ -116,7 +117,7 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
                 ),
             )
             assert created.status_code == 202, created.text
-            job = cast("dict[str, Any]", created.json()["job"])
+            job = cast("dict[str, object]", created.json()["job"])
             job_id = str(job["id"])
 
             cancelled = await _assert_mutation_overlaps_auth_probe(
@@ -145,7 +146,6 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
     finally:
         reset()
         _jobs.reset()
-        _m._SERVICE_TOKEN = prior_token
         if prior_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:
