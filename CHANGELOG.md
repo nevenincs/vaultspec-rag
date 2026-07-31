@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.0...vaultspec-rag-v0.4.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* interpreter pin, non-finite formatters, wheel contents, and the single-file collapse signal ([5b9f353](https://github.com/nevenincs/vaultspec-rag/commit/5b9f353f816e56e68d2aad3a8fbcb4e342934034))
+
 ## [0.4.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.3.14...vaultspec-rag-v0.4.0) (2026-07-31)
 
 
