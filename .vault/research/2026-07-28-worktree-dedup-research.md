@@ -172,7 +172,7 @@ within a live root have their own unreferenced-hours grace and drop path
 
 Six worktrees of this repository exist - `main` plus five `agent-*` trees under
 `.claude/worktrees/`. The persisted manifest at
-`C:\Users\hello\.vaultspec-rag\storage-manifest.json` (schema version 2) records
+`C:\Users\user\.vaultspec-rag\storage-manifest.json` (schema version 2) records
 seven roots, and none of the five live agent worktrees is among them. The only
 namespace attributable to this repository's live tree is the one for `main`.
 
@@ -295,9 +295,9 @@ In-repo, verified in the working tree at time of writing:
 
 Observed machine state, read-only, at time of writing:
 
-- `C:\Users\hello\.vaultspec-rag\storage-manifest.json` - 7 roots, schema
+- `C:\Users\user\.vaultspec-rag\storage-manifest.json` - 7 roots, schema
   version 2, one entry with an absent root and an empty `first_seen_orphaned`
-- `C:\Users\hello\.vaultspec-rag\qdrant-server\storage\collections` - 15
+- `C:\Users\user\.vaultspec-rag\qdrant-server\storage\collections` - 15
   collection directories, 5.3 GB total; per-directory sizes as tabulated
 - `git worktree list` in this repository - 6 worktrees, 5 of them `agent-*`
   trees under `.claude/worktrees/`

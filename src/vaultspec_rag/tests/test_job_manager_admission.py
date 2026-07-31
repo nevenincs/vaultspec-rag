@@ -16,6 +16,7 @@ from ..job_models import (
     JobSource,
     JobSpec,
 )
+from ..service_quiesce import ServiceQuiesceController
 from ._job_roots import (
     _TEST_PROJECT_ROOT,
     _TEST_PROJECT_ROOT_DIFFERENT,
@@ -32,7 +33,11 @@ class TestManagedJobAdmission:
     """The canonical manager owns admission and replay under real contention."""
 
     def test_concurrent_equivalent_creates_share_one_exact_job(self) -> None:
-        manager = JobManager(max_nonterminal=1, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.VAULT,
@@ -69,7 +74,11 @@ class TestManagedJobAdmission:
         assert capacity.code == "job_capacity_exceeded"
 
     def test_idempotency_replays_only_the_original_request(self) -> None:
-        manager = JobManager(max_nonterminal=2, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=None,
+        )
         spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
@@ -102,8 +111,14 @@ class TestManagedJobAdmission:
 
         from ..config._settings import get_config
 
-        managed = JobManager(max_nonterminal=1)
-        memory_only = JobManager(max_nonterminal=1, state_path=None)
+        managed = JobManager(
+            quiesce_controller=ServiceQuiesceController(), max_nonterminal=1
+        )
+        memory_only = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
 
         assert managed.state_path == (
             Path(str(get_config().status_dir)).expanduser() / "jobs-state.json"
@@ -130,7 +145,9 @@ class TestManagedJobAdmission:
         monkeypatch.setenv(EnvVar.STATUS_DIR.value, "~/.vaultspec-rag-jobs-guard")
         reset_config()
         try:
-            managed = JobManager(max_nonterminal=1)
+            managed = JobManager(
+                quiesce_controller=ServiceQuiesceController(), max_nonterminal=1
+            )
             assert managed.state_path is not None
             assert "~" not in managed.state_path.parts
             assert managed.state_path == (
@@ -142,6 +159,7 @@ class TestManagedJobAdmission:
 
     def test_idempotency_aliases_and_key_length_are_bounded(self) -> None:
         manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
             max_terminal_history=1,
             state_path=None,
@@ -171,7 +189,11 @@ class TestManagedJobAdmission:
         )
 
     def test_invalid_job_kinds_are_not_admitted(self) -> None:
-        manager = JobManager(max_nonterminal=1, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=None,
+        )
         maintenance = manager.create(
             JobSpec(
                 JobOperation.MAINTENANCE,
@@ -216,7 +238,11 @@ class TestManagedJobAdmission:
         assert manager.active() == []
 
     def test_equivalent_root_spellings_deduplicate(self, tmp_path: Path) -> None:
-        manager = JobManager(max_nonterminal=2, state_path=None)
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=None,
+        )
         initiator = JobInitiator("cli", "server job create", str(tmp_path))
         canonical = JobSpec(
             JobOperation.INDEX,

@@ -24,6 +24,8 @@ from ...serviceclient._transport import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from mcp.types import CallToolResult, Tool
+
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(900)]
 
 
@@ -109,7 +111,7 @@ async def _exercise_document_tools(
         await _request_mcp_reindexes(session, root)
 
 
-def _assert_document_tool_catalog(tools: list[Any]) -> None:
+def _assert_document_tool_catalog(tools: list[Tool]) -> None:
     names = {tool.name for tool in tools}
     assert {
         "search_documents",
@@ -130,7 +132,7 @@ def _assert_document_tool_catalog(tools: list[Any]) -> None:
 
 async def _call_mcp_tool(
     session: ClientSession, name: str, arguments: dict[str, Any]
-) -> Any:
+) -> CallToolResult:
     result = await asyncio.wait_for(
         session.call_tool(name, arguments=arguments, read_timeout_seconds=60),
         timeout=70,
@@ -152,8 +154,8 @@ async def _assert_mcp_searches(
                 "source_path": source_path,
             },
         )
-        payload = cast("dict[str, Any]", result.structured_content)
-        results = cast("list[dict[str, Any]]", payload["results"])
+        payload = cast("dict[str, object]", result.structured_content)
+        results = cast("list[dict[str, object]]", payload["results"])
         assert results, (name, payload)
         assert {item["path"] for item in results} == {source_path}
 
@@ -169,10 +171,15 @@ async def _assert_empty_document_status(session: ClientSession, root: Path) -> N
         session, "get_index_status", {"project_root": str(root)}
     )
     index = cast(
-        "dict[str, Any]", cast("dict[str, Any]", result.structured_content)["index"]
+        "dict[str, object]",
+        cast("dict[str, object]", result.structured_content)["index"],
     )
     assert index["document_chunks"] == 0
-    assert set(index["support_profile"]["domains"]) == {"code", "document"}
+    support_profile = cast("dict[str, object]", index["support_profile"])
+    assert set(cast("list[object]", support_profile["domains"])) == {
+        "code",
+        "document",
+    }
 
 
 async def _request_mcp_reindexes(session: ClientSession, root: Path) -> None:
@@ -181,10 +188,10 @@ async def _request_mcp_reindexes(session: ClientSession, root: Path) -> None:
         assert isinstance(result.structured_content, dict), (name, result)
 
 
-def _assert_partial_reindex(partial: dict[str, Any], port: int) -> None:
+def _assert_partial_reindex(partial: dict[str, object], port: int) -> None:
     assert partial["ok"] is False
     assert partial["partial"] is True, partial
-    domains = cast("dict[str, dict[str, Any]]", partial["domains"])
+    domains = cast("dict[str, dict[str, object]]", partial["domains"])
     assert domains["vault"]["ok"] is True
     assert any(not domain["ok"] for domain in domains.values())
     _wait_for_succeeded_job(port, cast("str", domains["vault"]["job_id"]))
@@ -206,7 +213,7 @@ def _assert_service_searches(
         assert response is not None
         assert response.get("ok", True) is True, response
         assert "error" not in response, response
-        results = cast("list[dict[str, Any]]", response["results"])
+        results = cast("list[dict[str, object]]", response["results"])
         assert results
         assert {item["path"] for item in results} == {source_path}
 

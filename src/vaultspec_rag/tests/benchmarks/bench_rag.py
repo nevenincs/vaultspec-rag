@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import statistics
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 @pytest.mark.performance
 def test_bench_embedding_throughput(
     model: EmbeddingModel, n_docs: int = 50
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Time embedding N synthetic documents."""
     texts = [
         f"Document {i}: Architecture decision about component {i} "
@@ -47,7 +47,7 @@ def test_bench_embedding_throughput(
 
 @pytest.mark.performance
 @pytest.mark.usefixtures("root", "model", "store")
-def test_bench_full_index(indexer: VaultIndexer) -> dict[str, Any]:
+def test_bench_full_index(indexer: VaultIndexer) -> dict[str, object]:
     """Time full_index() on the entire vault corpus."""
     start = time.perf_counter()
     result: IndexResult = indexer.full_index(reporter=NullProgressReporter())
@@ -62,7 +62,7 @@ def test_bench_full_index(indexer: VaultIndexer) -> dict[str, Any]:
 
 
 @pytest.mark.performance
-def test_bench_incremental_noop(indexer: VaultIndexer) -> dict[str, Any]:
+def test_bench_incremental_noop(indexer: VaultIndexer) -> dict[str, object]:
     """Time incremental_index() when nothing has changed."""
     start = time.perf_counter()
     result: IndexResult = indexer.incremental_index(reporter=NullProgressReporter())
@@ -78,7 +78,7 @@ def test_bench_incremental_noop(indexer: VaultIndexer) -> dict[str, Any]:
 @pytest.mark.performance
 def test_bench_search_latency(
     searcher: VaultSearcher, n_queries: int = 20
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Measure search latency distribution over N queries."""
     queries = [
         "architecture decision",
@@ -126,14 +126,14 @@ def test_bench_search_latency(
 
 
 @pytest.mark.performance
-def test_bench_memory(root: Path) -> dict[str, Any]:
+def test_bench_memory(root: Path) -> dict[str, object]:
     """Measure GPU VRAM and Qdrant disk size. Requires CUDA GPU."""
     import torch
 
-    result: dict[str, Any] = {}
+    result: dict[str, object] = {}
     result["gpu_name"] = torch.cuda.get_device_name(0)
-    result["vram_allocated_mb"] = torch.cuda.memory_allocated(0) / (1024 * 1024)
-    result["vram_reserved_mb"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
+    result["vram_allocated_mib"] = torch.cuda.memory_allocated(0) / (1024 * 1024)
+    result["vram_reserved_mib"] = torch.cuda.memory_reserved(0) / (1024 * 1024)
 
     # Qdrant disk size
     from ...config._settings import get_config
@@ -144,8 +144,8 @@ def test_bench_memory(root: Path) -> dict[str, Any]:
         total_bytes = sum(
             f.stat().st_size for f in qdrant_dir.rglob("*") if f.is_file()
         )
-        result["qdrant_disk_mb"] = total_bytes / (1024 * 1024)
+        result["qdrant_disk_mib"] = total_bytes / (1024 * 1024)
     else:
-        result["qdrant_disk_mb"] = 0
+        result["qdrant_disk_mib"] = 0
 
     return result

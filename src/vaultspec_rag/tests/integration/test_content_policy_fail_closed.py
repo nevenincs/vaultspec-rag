@@ -56,6 +56,8 @@ def policy_boundary_project(
 ) -> Generator[PolicyBoundaryProject]:
     """Seed a real collection, sidecar, and cache behind conflicting routing."""
     from ... import CodebaseIndexer
+    from ..._index_breadth import index_meta_path
+    from ..._source_types import PublicSourceType
     from ..._store_models import CodeChunk
     from ...config._settings import get_config
     from ...indexer._content_policy import (
@@ -101,7 +103,7 @@ def policy_boundary_project(
     )
 
     data_root = tmp_path / get_config().data_dir
-    metadata_path = data_root / get_config().code_index_metadata_file
+    metadata_path = index_meta_path(tmp_path, PublicSourceType.CODE)
     metadata_path.write_bytes(b'{"sentinel":"metadata"}')
     cache_root = preprocess_cache_dir(data_root)
     cache_root.mkdir(parents=True)

@@ -6,7 +6,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from .storage_manifest import load_manifest, remove_prefix
 from .storage_survey import (
@@ -94,19 +94,9 @@ def collection_footprints(
     """
     if storage_dir is None:
         return {}
-    sizes: dict[str, int] = {}
-    for name in collection_names:
-        path = storage_dir / name
-        total = 0
-        if path.exists():
-            for dirpath, _, filenames in os.walk(path):
-                for filename in filenames:
-                    try:
-                        total += (Path(dirpath) / filename).stat().st_size
-                    except OSError:
-                        continue
-        sizes[name] = total
-    return sizes
+    # A missing directory needs no guard: os.walk over an absent path
+    # silently yields nothing, so directory_size_bytes already returns 0.
+    return {name: directory_size_bytes(storage_dir / name) for name in collection_names}
 
 
 def directory_size_bytes(path: Path) -> int:
@@ -166,7 +156,19 @@ def debris_surveys(
     ]
 
 
-def backend_totals(surveys: list[NamespaceSurvey]) -> dict[str, object]:
+class BackendTotals(TypedDict):
+    """The whole-backend rollup :func:`backend_totals` reports."""
+
+    total_bytes: int
+    namespaces: int
+    points: int
+    vault_points: int
+    code_points: int
+    document_points: int
+    by_status_bytes: dict[str, int]
+
+
+def backend_totals(surveys: list[NamespaceSurvey]) -> BackendTotals:
     """Aggregate backend size over a classified survey.
 
     The incident's 117.9 GB pile was invisible to every metric because
@@ -214,6 +216,8 @@ def prune_debris(
     results: list[DeleteResult] = []
     reclaimed = 0
     for survey in debris_surveys(live_names, storage_dir):
+        # debris_surveys() returns [] whenever storage_dir is None, so a
+        # non-empty survey here proves storage_dir was given.
         for name in survey.collections:
             path = cast("Path", storage_dir) / name
             size = directory_size_bytes(path)

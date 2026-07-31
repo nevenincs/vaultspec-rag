@@ -21,7 +21,10 @@ raise, so they keep their own guarded function-local import and do not call
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 __all__ = [
     "CUDA_REQUIRED_MESSAGE",
@@ -52,14 +55,35 @@ def is_cuda_out_of_memory(exc: BaseException) -> bool:
     return isinstance(exc, torch.cuda.OutOfMemoryError)
 
 
-def load_torch() -> Any:
+def load_torch() -> ModuleType:
     """Import torch for a local-mode compute path, asserting CUDA, or fail hard.
 
     The single gate every local-mode torch *compute* load must pass through.
     Returns the imported ``torch`` module. Raises ``ImportError`` when torch is
-    not installed, or ``RuntimeError`` when torch is installed but exposes no
-    CUDA device (a CPU-only build, or no GPU) - it never silently degrades to
-    CPU compute.
+    not installed, ``RuntimeError`` when torch is installed but exposes no CUDA
+    device (a CPU-only build, or no GPU) - it never silently degrades to CPU
+    compute - and ``RuntimeError`` when the device has no room for a model
+    stack, so a contended card is refused instead of starved.
+
+    The device is checked once per process, before the first successful load,
+    and the verdict is latched: a later call is exactly as cheap as it was
+    before the check existed, and - the load-bearing half - the admitted
+    workload's remaining components come up without re-interrogation. A release
+    of resident models retires the latch; the fresh verdict a reload then takes
+    credits whatever this process still holds, so its own residency is never
+    read back as foreign pressure.
+    """
+    from ._gpu_admission import admit_gpu_load
+
+    return admit_gpu_load(_import_torch_for_compute)
+
+
+def _import_torch_for_compute() -> ModuleType:
+    """Import torch, require a CUDA device, and apply the process allocator cap.
+
+    The load itself, separated from the admission that precedes it so the two
+    concerns stay legible: this function answers "can torch run compute here at
+    all", and the admission gate answers "is there room for it right now".
     """
     try:
         import torch

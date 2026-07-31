@@ -450,7 +450,7 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
     the kind of thing that can be dropped in transit without any test noticing.
     """
     from ..server._routes_search import (
-        SearchAvailabilityContext,
+        SearchAvailabilityRequestFacts,
         _classify_search_result,
     )
 
@@ -472,7 +472,7 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
 
     classification = _classify_search_result(
         searched,
-        SearchAvailabilityContext(
+        SearchAvailabilityRequestFacts(
             job_snapshot_before=[],
             root=tmp_path,
             source="code",

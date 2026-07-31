@@ -61,7 +61,16 @@ class SearchResponseClassification:
 
 @dataclass(frozen=True, slots=True)
 class SearchAvailabilityContext:
-    """One request's immutable search-availability evidence and routing data."""
+    """One request's immutable search-availability evidence and routing data.
+
+    ``source`` names one concrete corpus, never the ``combined`` fan-out:
+    :func:`_canonical_match` compares it against a job spec's own source, and
+    no job is ever recorded against the fan-out. Callers construct this
+    directly so the checker verifies that at the construction site; the value
+    previously crossed a ``**values: object`` boundary that erased the type and
+    then re-asserted it by cast, which is precisely how a ``combined`` value
+    reached a field typed to exclude it without any checker objecting.
+    """
 
     before_snapshot: Sequence[object]
     after_snapshot: Sequence[object]
@@ -70,24 +79,6 @@ class SearchAvailabilityContext:
     request_id: str
     index_state: Mapping[str, object]
     port: int | None
-
-
-def _availability_context(
-    context: SearchAvailabilityContext | None,
-    values: Mapping[str, object],
-) -> SearchAvailabilityContext:
-    """Normalize legacy keyword callers at the request-classification seam."""
-    if context is not None:
-        return context
-    return SearchAvailabilityContext(
-        before_snapshot=cast("Sequence[object]", values["before_snapshot"]),
-        after_snapshot=cast("Sequence[object]", values["after_snapshot"]),
-        requested_root=cast("Path", values["requested_root"]),
-        source=cast("IndexSource", values["source"]),
-        request_id=cast("str", values["request_id"]),
-        index_state=cast("Mapping[str, object]", values["index_state"]),
-        port=cast("int | None", values["port"]),
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +157,8 @@ def _matching_jobs(
     for candidate in snapshot:
         if not isinstance(candidate, Mapping):
             continue
+        # Mapping is invariant in its key type, so isinstance narrows only to
+        # Mapping[Unknown, object]; every job record is str-keyed JSON.
         record = cast("Mapping[str, object]", candidate)
         spec = record.get("spec")
         if not isinstance(spec, Mapping):
@@ -282,13 +275,11 @@ def _is_qdrant_collection_disappearance(exc: BaseException) -> bool:
 
 def classify_qdrant_collection_disappearance(
     exc: BaseException,
-    context: SearchAvailabilityContext | None = None,
-    **values: object,
+    context: SearchAvailabilityContext,
 ) -> SearchResponseClassification | None:
     """Convert a matching collection-disappearance race, or decline it."""
     if not _is_qdrant_collection_disappearance(exc):
         return None
-    context = _availability_context(context, values)
     classification = classify_search_response(
         {"results": []},
         context,
@@ -300,11 +291,9 @@ def classify_qdrant_collection_disappearance(
 
 def classify_search_response(
     result: dict[str, object],
-    context: SearchAvailabilityContext | None = None,
-    **values: object,
+    context: SearchAvailabilityContext,
 ) -> SearchResponseClassification:
     """Classify one response and preserve one bounded before/after evidence set."""
-    context = _availability_context(context, values)
     normalized_root = _normalized_root(context.requested_root)
     matches = (
         _combined_matches(

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import typer
 from typer.core import TyperGroup, TyperOption
 from typer.models import TyperPath
-from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.config.workspace import (
     WorkspaceError,
     WorkspaceLayout,
     resolve_workspace,
@@ -30,15 +30,18 @@ from ..logging_config import configure_logging
 from ._render import _plain
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import click
     from typer._click import Context as ClickContext
 
 __all__ = [
+    "JOBS_WATCH_OPTION_HELP",
     "JSON_ENVELOPE_OPTION_HELP",
     "JSON_OPTION_HELP",
     "PORT_OPTION_HELP",
+    "SERVER_WATCH_OPTION_HELP",
     "WATCH_INTERVAL_OPTION_HELP",
-    "WATCH_OPTION_HELP",
     "CLIState",
     "JobIdArgument",
     "JsonEnvelopeMode",
@@ -104,12 +107,16 @@ JobIdArgument = Annotated[
     str, typer.Argument(help="Exact job id or human-mode prefix.")
 ]
 
-#: The interactive server watch is declared once for both entry points.
-#: ``server jobs --watch`` opens its jobs-focused mode with parsed filters;
-#: ``server --watch`` opens the balanced server mode.
-WATCH_OPTION_HELP = (
+#: The two entry points into the interactive watch open different screens, so
+#: each names the one it opens. ``server --watch`` opens the balanced server
+#: mode, which weighs indexing against served searches; ``server jobs --watch``
+#: opens the jobs-focused mode with the filters that verb parsed. One shared
+#: sentence would have promised every operator the screen only one of them gets.
+SERVER_WATCH_OPTION_HELP = (
     "Open the interactive server watch with indexing and served searches."
 )
+JOBS_WATCH_OPTION_HELP = "Open the interactive jobs interface with per-job controls."
+#: The refresh cadence is one knob with one meaning in either mode.
 WATCH_INTERVAL_OPTION_HELP = "Seconds between refreshes in the interactive interface."
 
 #: Watcher tuning, declared once for the two verbs that accept it. ``server
@@ -201,11 +208,32 @@ class _LiteralArgvGroup(TyperGroup):
     name real filesystem paths are expanded explicitly where they resolve.
     """
 
-    def main(self, *args: Any, **kwargs: Any) -> Any:
-        kwargs["windows_expand_args"] = False
-        return super().main(*args, **kwargs)
+    def main(
+        self,
+        args: Sequence[str] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **extra: Any,
+    ) -> Any:
+        # Always disabled regardless of what the caller passes - see the
+        # class docstring.
+        _ = windows_expand_args
+        return super().main(
+            args=args,
+            prog_name=prog_name,
+            complete_var=complete_var,
+            standalone_mode=standalone_mode,
+            windows_expand_args=False,
+            **extra,
+        )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # TyperGroup.__init__ takes nine-plus keyword-only parameters;
+        # spelling them out here to escape Any trips the too-many-arguments
+        # gate for a pure forwarding wrapper, so this stays a genuinely
+        # dynamic passthrough instead.
         super().__init__(*args, **kwargs)
         self.params.extend(
             (
@@ -272,6 +300,9 @@ class _LiteralArgvGroup(TyperGroup):
 
     def invoke(self, ctx: ClickContext) -> Any:
         """Invoke the empty registration callback without root option kwargs."""
+        # ctx.params is click's untyped dict[str, Any] of parsed option
+        # values; each cast below narrows one entry to the type its own
+        # option declaration guarantees at runtime.
         params = ctx.params
         ctx.meta[_ROOT_OPTIONS_CONTEXT_KEY] = _RootOptions(
             target=cast("Path | None", params["target"]),
@@ -374,7 +405,9 @@ def _show_group_help_if_no_command(ctx: typer.Context) -> None:
 @server_root_app.callback(invoke_without_command=True)
 def server_main(
     ctx: typer.Context,
-    watch: Annotated[bool, typer.Option("--watch", help=WATCH_OPTION_HELP)] = False,
+    watch: Annotated[
+        bool, typer.Option("--watch", help=SERVER_WATCH_OPTION_HELP)
+    ] = False,
     interval: Annotated[
         float, typer.Option("--interval", help=WATCH_INTERVAL_OPTION_HELP)
     ] = 2.0,
@@ -475,7 +508,7 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
     # Wire CLI overrides into the config system.
     from ..config._settings import get_config
 
-    cli_overrides: dict[str, Any] = {}
+    cli_overrides: dict[str, str] = {}
     if options.data_dir is not None:
         cli_overrides["data_dir"] = options.data_dir
     if options.storage_dir is not None:
@@ -546,7 +579,9 @@ def _global_target(ctx: ClickContext) -> Path | None:
     other subcommands receive a ``CLIState`` instance instead, which
     we ignore.
     """
-    obj = ctx.obj
+    # ctx.obj is genuinely dynamic: click types it Any because it is
+    # arbitrary application state stashed by the root callback.
+    obj = cast("object", ctx.obj)
     if isinstance(obj, dict):
         obj_dict = cast("dict[str, object]", obj)
         value = obj_dict.get("target")

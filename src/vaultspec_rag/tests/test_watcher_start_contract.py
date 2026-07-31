@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
@@ -63,21 +63,24 @@ async def watcher_client() -> AsyncIterator[httpx.AsyncClient]:
     The routes must run on the loop the drain lives on, so the ASGI transport
     is used in-process rather than a thread-portal test client.
     """
-    from starlette.applications import Starlette
+    from ..server import ServerRouteRuntime, create_http_app
+    from ..service import ServiceRegistry
 
-    from ..server._routes import ROUTES
-
-    previous_token = server._SERVICE_TOKEN
-    server._SERVICE_TOKEN = _TOKEN
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=Starlette(routes=ROUTES)),
-            base_url="http://service",
-            headers={"Authorization": f"Bearer {_TOKEN}"},
-        ) as client:
-            yield client
-    finally:
-        server._SERVICE_TOKEN = previous_token
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(
+            app=create_http_app(
+                ServerRouteRuntime(
+                    token=_TOKEN,
+                    registry=ServiceRegistry(),
+                    port=8765,
+                ),
+                lifespan=None,
+            )
+        ),
+        base_url="http://service",
+        headers={"Authorization": f"Bearer {_TOKEN}"},
+    ) as client:
+        yield client
 
 
 @contextlib.asynccontextmanager
@@ -114,10 +117,10 @@ async def _post(
     client: httpx.AsyncClient,
     path: str,
     body: dict[str, object],
-) -> dict[str, Any]:
+) -> dict[str, object]:
     response = await client.post(path, json=body)
     assert response.status_code == 200
-    return cast("dict[str, Any]", response.json())
+    return cast("dict[str, object]", response.json())
 
 
 @pytest.mark.usefixtures("watching_service")
@@ -132,8 +135,10 @@ async def test_start_behind_a_draining_stop_is_not_reported_as_running(
     no watcher task exists for the root at the moment the answer is given.
     """
     root = tmp_path.resolve()
+    from ..service import ServiceRegistry
+
     async with _stop_still_draining(root):
-        outcome = server._ensure_watcher(root)
+        outcome = server._ensure_watcher(root, ServiceRegistry())
         watching = root in server._watcher_tasks
 
     assert watching is False

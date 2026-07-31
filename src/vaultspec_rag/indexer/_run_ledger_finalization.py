@@ -14,13 +14,20 @@ from ._run_ledger_models import (
     RunGeneration,
     RunLedgerStateError,
     RunTerminalState,
+    fetch_one,
 )
 
 if TYPE_CHECKING:
     import sqlite3
     from contextlib import AbstractContextManager
+    from typing import TypedDict
 
-    from ._run_ledger_models import RunGeneration
+    from ._run_ledger_models import GenerationRow, RunGeneration
+
+    class _RelPathRow(TypedDict):
+        """A single ``rel_path`` column, read across finalization guards."""
+
+        rel_path: str
 
 
 class RunLedgerFinalizationMethods:
@@ -31,10 +38,10 @@ class RunLedgerFinalizationMethods:
         @staticmethod
         def _require_mutable_generation(
             connection: sqlite3.Connection, generation_id: str
-        ) -> sqlite3.Row: ...
+        ) -> GenerationRow: ...
 
         @staticmethod
-        def _generation_from_row(row: sqlite3.Row) -> RunGeneration: ...
+        def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
 
     def advance_finalization(
         self,
@@ -70,10 +77,11 @@ class RunLedgerFinalizationMethods:
                 """,
                 (phase.value, now, generation_id),
             )
-            updated = connection.execute(
+            updated: GenerationRow | None = fetch_one(
+                connection,
                 "SELECT * FROM generations WHERE generation_id = ?",
                 (generation_id,),
-            ).fetchone()
+            )
             assert updated is not None
             return self._generation_from_row(updated)
 
@@ -82,7 +90,8 @@ class RunLedgerFinalizationMethods:
         connection: sqlite3.Connection,
         generation_id: str,
     ) -> None:
-        incomplete = connection.execute(
+        incomplete: _RelPathRow | None = fetch_one(
+            connection,
             """
             SELECT rel_path, unit_kind
             FROM commit_units
@@ -97,13 +106,14 @@ class RunLedgerFinalizationMethods:
             LIMIT 1
             """,
             (generation_id,),
-        ).fetchone()
+        )
         if incomplete is not None:
             raise RunLedgerStateError(
                 "cannot finalize an incomplete commit-unit sequence for "
                 f"{incomplete['rel_path']}"
             )
-        missing_state = connection.execute(
+        missing_state: _RelPathRow | None = fetch_one(
+            connection,
             """
             SELECT units.rel_path
             FROM commit_units AS units
@@ -123,13 +133,14 @@ class RunLedgerFinalizationMethods:
                 CommitUnitKind.UPSERT.value,
                 FileStateKind.INDEXED.value,
             ),
-        ).fetchone()
+        )
         if missing_state is not None:
             raise RunLedgerStateError(
                 "cannot finalize storage evidence without matching indexed state for "
                 f"{missing_state['rel_path']}"
             )
-        undeleted_manifest = connection.execute(
+        undeleted_manifest: _RelPathRow | None = fetch_one(
+            connection,
             """
             SELECT units.rel_path
             FROM commit_units AS units
@@ -140,13 +151,14 @@ class RunLedgerFinalizationMethods:
             LIMIT 1
             """,
             (generation_id, CommitUnitKind.DELETE_PATH.value),
-        ).fetchone()
+        )
         if undeleted_manifest is not None:
             raise RunLedgerStateError(
                 "cannot finalize a deleted path retained in the manifest: "
                 f"{undeleted_manifest['rel_path']}"
             )
-        unresolved = connection.execute(
+        unresolved: _RelPathRow | None = fetch_one(
+            connection,
             """
             SELECT rel_path FROM file_states
             WHERE generation_id = ? AND (
@@ -173,7 +185,7 @@ class RunLedgerFinalizationMethods:
                 AdmissionReason.SOURCE_TOO_LARGE.value,
                 AdmissionReason.SOURCE_BINARY.value,
             ),
-        ).fetchone()
+        )
         if unresolved is not None:
             raise RunLedgerStateError(
                 f"cannot finalize unresolved file state for {unresolved['rel_path']}"
@@ -193,10 +205,11 @@ class RunLedgerFinalizationMethods:
             raise ValueError("detail must not be empty")
         now = time.time()
         with self._transaction() as connection:
-            row = connection.execute(
+            row: GenerationRow | None = fetch_one(
+                connection,
                 "SELECT * FROM generations WHERE generation_id = ?",
                 (generation_id,),
-            ).fetchone()
+            )
             if row is None:
                 raise KeyError(generation_id)
             current = RunTerminalState(row["terminal_state"])
@@ -232,10 +245,11 @@ class RunLedgerFinalizationMethods:
                     generation_id,
                 ),
             )
-            updated = connection.execute(
+            updated: GenerationRow | None = fetch_one(
+                connection,
                 "SELECT * FROM generations WHERE generation_id = ?",
                 (generation_id,),
-            ).fetchone()
+            )
             assert updated is not None
             return self._generation_from_row(updated)
 
@@ -257,10 +271,11 @@ class RunLedgerFinalizationMethods:
         compacting an older one is refused.
         """
         with self._transaction() as connection:
-            keep = connection.execute(
+            keep: GenerationRow | None = fetch_one(
+                connection,
                 "SELECT * FROM generations WHERE generation_id = ?",
                 (keep_generation_id,),
-            ).fetchone()
+            )
             if keep is None:
                 raise KeyError(keep_generation_id)
             if (
@@ -276,7 +291,8 @@ class RunLedgerFinalizationMethods:
             # Strictly newer is the predicate on purpose: two stamps taken from
             # one coarse clock reading cannot be ordered, and the in-order
             # publisher must never be refused over a timestamp tie.
-            newer = connection.execute(
+            newer: object | None = fetch_one(
+                connection,
                 """
                 SELECT 1 FROM generations
                 WHERE generation_id != ?
@@ -293,7 +309,7 @@ class RunLedgerFinalizationMethods:
                     RunTerminalState.SUCCEEDED.value,
                     keep["updated_at"],
                 ),
-            ).fetchone()
+            )
             if newer is not None:
                 raise RunLedgerStateError(
                     "only the newest published generation compacts its collection"

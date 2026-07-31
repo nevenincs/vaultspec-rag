@@ -6,10 +6,11 @@ import logging
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import EllipsisType
 
 from .. import job_persistence as _job_persistence
 from ..job_models import (
@@ -24,10 +25,11 @@ from ..job_models import (
     capabilities_for_state as _capabilities_for_state,
 )
 from .state import (
+    UNOWNED_RUNTIME,
     JobManagerState,
-    JobRuntimeOwner,
     ManagedJob,
     ManagerStateBackup,
+    assign_runtime_owner,
 )
 
 logger = logging.getLogger("vaultspec_rag.jobs")
@@ -55,7 +57,7 @@ PROGRESS_FLUSH_BUDGET_SECONDS = 0.2
 class JobManagerPersistence(JobManagerState):
     def _restore_snapshot_locked(self, snapshot: JobSnapshot, *, now: float) -> None:
         """Restore one validated snapshot with no live execution resources."""
-        resumable = snapshot.state in {JobState.QUEUED, JobState.PAUSED}
+        resumable = snapshot.state.is_idle
         restored_runtime = (
             self._process_runtime_snapshot()
             if resumable
@@ -77,7 +79,7 @@ class JobManagerPersistence(JobManagerState):
                     pipeline_active=False,
                 ),
             ),
-            runtime=JobRuntimeOwner(task=None, control=None),
+            runtime=UNOWNED_RUNTIME,
         )
         if resumable:
             self._active[snapshot.id] = managed
@@ -86,12 +88,14 @@ class JobManagerPersistence(JobManagerState):
             self._active[snapshot.id] = managed
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.INTERRUPTED,
-                desired_state=snapshot.desired_state,
-                now=now,
-                finished_at=now,
-                result="The service stopped before the attempt acknowledged.",
-                error_kind="interrupted",
+                SnapshotTransition(
+                    state=JobState.INTERRUPTED,
+                    desired_state=snapshot.desired_state,
+                    now=now,
+                    finished_at=now,
+                    result="The service stopped before the attempt acknowledged.",
+                    error_kind="interrupted",
+                ),
             )
             self._archive_terminal_locked(managed)
             return
@@ -147,9 +151,7 @@ class JobManagerPersistence(JobManagerState):
 
         restored_jobs = persisted.jobs
         restored_bindings = persisted.bindings
-        active_count = sum(
-            job.state in {JobState.QUEUED, JobState.PAUSED} for job in restored_jobs
-        )
+        active_count = sum(job.state.is_idle for job in restored_jobs)
         if active_count > self._max_nonterminal:
             return self._persistence_error(
                 command,
@@ -213,15 +215,17 @@ class JobManagerPersistence(JobManagerState):
             return self._persistence_error(command, str(exc), code="job_state_invalid")
 
     def _replace_snapshot_locked(
-        self,
-        managed: ManagedJob,
-        transition: _SnapshotTransition | None = None,
-        **legacy: object,
+        self, managed: ManagedJob, transition: SnapshotTransition, /
     ) -> None:
-        if transition is None:
-            transition = _SnapshotTransition(**cast("dict[str, Any]", legacy))
-        elif legacy:
-            raise TypeError("use either _SnapshotTransition or named inputs")
+        """Advance one job to its next revision under the manager lock.
+
+        Args:
+            managed: The job whose snapshot this revision replaces.
+            transition: The next state, its desired state, the stamp the
+                revision carries, and the optional attempt, clocks and
+                outcome fields. A clock left unset keeps its previous
+                value; passing ``None`` clears it.
+        """
         previous = managed.snapshot
         timestamps = previous.timestamps
         managed.snapshot = replace(
@@ -237,7 +241,7 @@ class JobManagerPersistence(JobManagerState):
                 started_at=(
                     timestamps.started_at
                     if transition.started_at is ...
-                    else cast("float | None", transition.started_at)
+                    else transition.started_at
                 ),
                 # Admission is a per-attempt fact: any transition that
                 # rewrites the start clock (a fresh start, a requeued
@@ -250,34 +254,26 @@ class JobManagerPersistence(JobManagerState):
                 control_requested_at=(
                     timestamps.control_requested_at
                     if transition.control_requested_at is ...
-                    else cast("float | None", transition.control_requested_at)
+                    else transition.control_requested_at
                 ),
                 control_acknowledged_at=(
                     timestamps.control_acknowledged_at
                     if transition.control_acknowledged_at is ...
-                    else cast("float | None", transition.control_acknowledged_at)
+                    else transition.control_acknowledged_at
                 ),
                 finished_at=(
                     timestamps.finished_at
                     if transition.finished_at is ...
-                    else cast("float | None", transition.finished_at)
+                    else transition.finished_at
                 ),
             ),
-            result=(
-                previous.result
-                if transition.result is ...
-                else cast("str | None", transition.result)
-            ),
+            result=(previous.result if transition.result is ... else transition.result),
             error_kind=(
                 previous.error_kind
                 if transition.error_kind is ...
-                else cast("str | None", transition.error_kind)
+                else transition.error_kind
             ),
-            reuse=(
-                previous.reuse
-                if transition.reuse is ...
-                else cast("dict[str, object] | None", transition.reuse)
-            ),
+            reuse=(previous.reuse if transition.reuse is ... else transition.reuse),
         )
 
     def _get_terminal_locked(self, job_id: str) -> ManagedJob | None:
@@ -302,6 +298,12 @@ class JobManagerPersistence(JobManagerState):
         )
 
     def _restore_state_locked(self, backup: ManagerStateBackup) -> None:
+        """Roll one failed generation back to its captured predecessor.
+
+        Rolling a job back to an owner that never held the current ticket puts
+        that ticket beyond reach, so restoration replaces owners through the
+        one assignment that releases what it drops.
+        """
         for managed in [*backup.active.values(), *backup.terminal]:
             job_id = managed.snapshot.id
             snapshot = backup.snapshots.get(job_id)
@@ -309,7 +311,7 @@ class JobManagerPersistence(JobManagerState):
             if snapshot is not None:
                 managed.snapshot = snapshot
             if runtime is not None:
-                managed.runtime = runtime
+                assign_runtime_owner(managed, runtime)
         self._active = backup.active
         self._terminal = backup.terminal
         self._idempotency = OrderedDict(backup.idempotency)
@@ -368,7 +370,7 @@ class JobManagerPersistence(JobManagerState):
         """Advance the in-memory generation past the last durable write."""
         self._state_generation = self._state_generation + 1
 
-    def _begin_progress_flush_locked(self) -> _PendingProgressFlush | None:
+    def _begin_progress_flush_locked(self) -> PendingProgressFlush | None:
         """Claim and serialize one deferred progress flush, or decline.
 
         Called with the manager lock held, immediately after a progress-only
@@ -395,7 +397,7 @@ class JobManagerPersistence(JobManagerState):
             return None
         if not self._write_lock.acquire(blocking=False):
             return None
-        return _PendingProgressFlush(
+        return PendingProgressFlush(
             path=path,
             state=self._persisted_generation_locked(),
             generation=self._state_generation,
@@ -403,7 +405,7 @@ class JobManagerPersistence(JobManagerState):
 
     def _complete_progress_flush(
         self,
-        pending: _PendingProgressFlush,
+        pending: PendingProgressFlush,
     ) -> _job_persistence.PersistenceWriteError | None:
         """Write one claimed serialization outside the manager lock.
 
@@ -450,7 +452,7 @@ class JobManagerPersistence(JobManagerState):
 
 
 @dataclass(frozen=True, slots=True)
-class _PendingProgressFlush:
+class PendingProgressFlush:
     """One claimed, serialized generation awaiting its out-of-lock write."""
 
     path: Path
@@ -459,15 +461,23 @@ class _PendingProgressFlush:
 
 
 @dataclass(frozen=True, slots=True)
-class _SnapshotTransition:
+class SnapshotTransition:
+    """Everything one snapshot revision needs beyond the job it replaces.
+
+    One grouped shape rather than a spread of keywords, so a transition that
+    gains an input gains it here and every call site is re-checked against
+    the field's real type. The clock and outcome fields default to ellipsis
+    meaning "carry the previous value forward"; ``None`` clears instead.
+    """
+
     state: JobState
     desired_state: DesiredJobState
     now: float
     attempt: JobAttempt | None = None
-    started_at: float | object | None = ...
-    control_requested_at: float | object | None = ...
-    control_acknowledged_at: float | object | None = ...
-    finished_at: float | object | None = ...
-    result: str | object | None = ...
-    error_kind: str | object | None = ...
-    reuse: dict[str, object] | object | None = ...
+    started_at: float | EllipsisType | None = ...
+    control_requested_at: float | EllipsisType | None = ...
+    control_acknowledged_at: float | EllipsisType | None = ...
+    finished_at: float | EllipsisType | None = ...
+    result: str | EllipsisType | None = ...
+    error_kind: str | EllipsisType | None = ...
+    reuse: dict[str, object] | EllipsisType | None = ...

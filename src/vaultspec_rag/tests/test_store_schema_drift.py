@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
+    from qdrant_client.http.models import SparseVectorParams, VectorParams
+
 pytestmark = [pytest.mark.integration]
 
 
@@ -39,16 +41,17 @@ def tmp_store(tmp_path: Path) -> Generator[VaultStore]:
 
 def _vectors(
     store: VaultStore, collection: str
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, VectorParams], dict[str, SparseVectorParams]]:
     """Return the (dense, sparse) vector configs of a live collection.
 
-    The qdrant-client return types are loosely stubbed, so the named-vector
-    maps are cast to typed dicts for the assertions.
+    ``vectors``/``sparse_vectors`` are typed as a union with the single- and
+    absent-vector forms; every collection this store creates uses named
+    vectors, so the cast narrows away arms this store never produces.
     """
     assert store._client is not None
     info = store._client.get_collection(collection)
-    dense = cast("dict[str, Any]", info.config.params.vectors)
-    sparse = cast("dict[str, Any]", info.config.params.sparse_vectors)
+    dense = cast("dict[str, VectorParams]", info.config.params.vectors)
+    sparse = cast("dict[str, SparseVectorParams]", info.config.params.sparse_vectors)
     return dense, sparse
 
 
@@ -76,7 +79,7 @@ def test_descriptor_dim_matches_live_collection(tmp_store: VaultStore) -> None:
     # validates before deserializing.
     tmp_store.ensure_table()
     vectors, _ = _vectors(tmp_store, tmp_store.TABLE_NAME)
-    live_dim = cast("int", vectors[store_schema.DENSE_VECTOR_NAME].size)
+    live_dim = vectors[store_schema.DENSE_VECTOR_NAME].size
     descriptor = store_schema.describe_storage_schema()
     vault = cast("dict[str, Any]", descriptor["vault"])
     assert vault["vectors"]["dense"]["dim"] == live_dim

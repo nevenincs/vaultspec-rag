@@ -47,7 +47,13 @@ class _NumericBound:
         return self.maximum is None or numeric <= self.maximum
 
     def narrow(self, value: object) -> object:
-        """Return *value* as this bound's declared type."""
+        """Return *value* as this bound's declared type.
+
+        Only reached through ``_checked`` (config/_settings.py), which calls
+        ``admits`` first; ``admits`` is what establishes ``value`` is an
+        ``int`` (or ``int | float``) here, since this method has no isinstance
+        check of its own.
+        """
         return int(cast("int", value)) if self.integral else float(cast("float", value))
 
 
@@ -72,7 +78,12 @@ class _ChoiceBound:
         return isinstance(value, str) and value.strip().lower() in self.allowed
 
     def narrow(self, value: object) -> object:
-        """Return the normalised choice name."""
+        """Return the normalised choice name.
+
+        Only reached through ``_checked`` (config/_settings.py), which calls
+        ``admits`` first; ``admits`` is what establishes ``value`` is a
+        ``str`` here, since this method has no isinstance check of its own.
+        """
         return cast("str", value).strip().lower()
 
 
@@ -151,10 +162,11 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "watch_retry_max_seconds": EnvVar.WATCH_RETRY_MAX_SECONDS,
     "watch_retry_jitter_fraction": EnvVar.WATCH_RETRY_JITTER_FRACTION,
     "watch_circuit_failure_threshold": EnvVar.WATCH_CIRCUIT_FAILURE_THRESHOLD,
-    "index_rss_ceiling_mb": EnvVar.INDEX_RSS_CEILING_MB,
-    "index_cuda_ceiling_mb": EnvVar.INDEX_CUDA_CEILING_MB,
-    "index_cuda_headroom_mb": EnvVar.INDEX_CUDA_HEADROOM_MB,
+    "index_rss_ceiling_mib": EnvVar.INDEX_RSS_CEILING_MIB,
+    "index_cuda_ceiling_mib": EnvVar.INDEX_CUDA_CEILING_MIB,
+    "index_cuda_headroom_mib": EnvVar.INDEX_CUDA_HEADROOM_MIB,
     "index_cuda_allocator_fraction": EnvVar.INDEX_CUDA_ALLOCATOR_FRACTION,
+    "gpu_admission_floor_mib": EnvVar.GPU_ADMISSION_FLOOR_MIB,
     "index_support_profile": EnvVar.INDEX_SUPPORT_PROFILE,
     # Performance tuning knobs - surface them via env vars too so
     # deploy-time tuning does not require CLI flags or config file edits.
@@ -287,10 +299,15 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "watch_circuit_failure_threshold": _POSITIVE_INT,
     # Memory ceilings. The CUDA ceiling's zero means "auto-derive from the
     # device", so it admits zero where the RSS ceiling does not.
-    "index_rss_ceiling_mb": _POSITIVE_NUMBER,
-    "index_cuda_ceiling_mb": _NON_NEGATIVE_NUMBER,
-    "index_cuda_headroom_mb": _POSITIVE_NUMBER,
+    "index_rss_ceiling_mib": _POSITIVE_NUMBER,
+    "index_cuda_ceiling_mib": _NON_NEGATIVE_NUMBER,
+    "index_cuda_headroom_mib": _POSITIVE_NUMBER,
     "index_cuda_allocator_fraction": _OPEN_UNIT_INTERVAL,
+    # Model-load admission floor, in MiB. Zero is admitted and means derive the
+    # floor from the configured workload's declared CUDA demand, the way the
+    # CUDA ceiling above treats its own zero; a positive value overrides that
+    # derivation for one card. Negatives are refused, having no reading.
+    "gpu_admission_floor_mib": _NON_NEGATIVE_INT,
     "index_support_profile": _ChoiceBound(
         "one of " + ", ".join(sorted(VALID_INDEX_SUPPORT_PROFILES)),
         frozenset(VALID_INDEX_SUPPORT_PROFILES),

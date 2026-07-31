@@ -14,13 +14,31 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from typer.core import TyperCommand, TyperOption
 
 if TYPE_CHECKING:
     import typer
     from typer._click import Context as ClickContext
+
+    # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
+    # and value types are only known once a command's options are parsed at
+    # runtime. This TypedDict is the producer-side cast target for
+    # ``_ServiceStartCommand.invoke``: the field types mirror the
+    # ``TyperOption`` declarations registered in ``__init__``, so a single
+    # cast on ``ctx.params`` replaces every per-field ``Any`` read below it.
+    class _StartParams(TypedDict):
+        port: int
+        updates: bool | None
+        update_delay_ms: int | None
+        repeat_update_delay_s: float | None
+        local_only: bool
+        qdrant: bool | None
+        qdrant_auto_provision: bool
+        no_preprocess: bool
+        json: bool
+
 
 from .._operator_commands import (
     server_jobs_command,
@@ -67,6 +85,7 @@ from ._render import address_line
 from ._service_lifecycle import (
     _fail_lifecycle,
     _lifecycle_success,
+    _LifecycleFailure,
     _print_lifecycle_lines,
     _process_line,
     _should_unlink_discovery_file,
@@ -234,23 +253,21 @@ class _ServiceStartCommand(TyperCommand):
             )
         )
 
-    def invoke(self, ctx: ClickContext) -> Any:
+    def invoke(self, ctx: ClickContext) -> None:
         """Dispatch parsed Click parameters as the typed start options."""
-        params = ctx.params
+        params = cast("_StartParams", ctx.params)
         return _run_service_start(
             ctx,
             _ServiceStartOptions(
-                port=cast("int", params["port"]),
-                updates=cast("bool | None", params["updates"]),
-                update_delay_ms=cast("int | None", params["update_delay_ms"]),
-                repeat_update_delay_s=cast(
-                    "float | None", params["repeat_update_delay_s"]
-                ),
-                local_only=cast("bool", params["local_only"]),
-                qdrant=cast("bool | None", params["qdrant"]),
-                qdrant_auto_provision=cast("bool", params["qdrant_auto_provision"]),
-                no_preprocess=cast("bool", params["no_preprocess"]),
-                json_mode=cast("bool", params["json"]),
+                port=params["port"],
+                updates=params["updates"],
+                update_delay_ms=params["update_delay_ms"],
+                repeat_update_delay_s=params["repeat_update_delay_s"],
+                local_only=params["local_only"],
+                qdrant=params["qdrant"],
+                qdrant_auto_provision=params["qdrant_auto_provision"],
+                no_preprocess=params["no_preprocess"],
+                json_mode=params["json"],
             ),
         )
 
@@ -390,8 +407,8 @@ def _existing_service_running() -> _AttachCandidate | None:
     status = read_service_status()
     if status is None:
         return None
-    existing_pid = int(status["pid"])
-    existing_port = int(status["port"])
+    existing_pid = int(cast("int", status["pid"]))
+    existing_port = int(cast("int", status["port"]))
     existing_token = status.get("service_token")
     existing_token_str = existing_token if isinstance(existing_token, str) else None
     if _is_our_service(
@@ -458,11 +475,13 @@ def _fail_start(
     """
     return _fail_lifecycle(
         json_mode,
-        command=_START_COMMAND,
-        error=error,
-        message=message,
-        human_lines=human_lines,
-        next_actions=next_actions,
+        _LifecycleFailure(
+            command=_START_COMMAND,
+            error=error,
+            message=message,
+            human_lines=human_lines,
+            next_actions=next_actions,
+        ),
         **data,
     )
 
@@ -691,8 +710,8 @@ def _attach_warming_service(json_mode: bool) -> bool:
         _service_phase(warming_status) != SERVICE_PHASE_WARMING
     ):
         return False
-    warming_pid = int(warming_status["pid"])
-    warming_port = int(warming_status["port"])
+    warming_pid = int(cast("int", warming_status["pid"]))
+    warming_port = int(cast("int", warming_status["port"]))
     if not pid_alive(warming_pid) or not _is_our_service(warming_pid):
         return False
     _start_success(

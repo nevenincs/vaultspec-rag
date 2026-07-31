@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from ._source_types import PublicSourceType, parse_source_type
 from ._units import bytes_to_mib
@@ -21,6 +21,7 @@ from .search._result_shaping import PHASE_MODEL_LOAD, PHASE_PROJECT_LEASE
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable
 
     from .indexer import IndexResult
     from .indexer._codebase_indexer import CodeIndexPreflight, ContentScanResult
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     )
     from .progress import ProgressReporter
     from .search import SearchResult
+    from .service import ServiceRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -175,16 +177,16 @@ def _preflight_code_index(
     extra_excludes: list[str] | None = None,
     sample_limit: int = 100,
 ) -> CodeIndexPreflight:
-    """Resolve policy and discovery without opening storage or loading models."""
-    from .indexer import CodebaseIndexer
+    """Resolve policy and discovery without opening storage or loading models.
 
-    indexer = CodebaseIndexer(
-        root,
-        model=cast("Any", None),
-        store=cast("Any", None),
-        options=CodebaseIndexer.Options(extra_excludes=extra_excludes),
-    )
-    return indexer.preflight_content(sample_limit=sample_limit)
+    Code discovery is the read-only half of an index operation and needs no
+    model and no store to construct, so this asks it directly rather than
+    routing through an indexer it would have to leave unfinished.
+    """
+    from .indexer._content_discovery import CodeContentDiscovery
+
+    discovery = CodeContentDiscovery(root, extra_excludes=extra_excludes or ())
+    return discovery.preflight_content(sample_limit=sample_limit)
 
 
 def _preflight_document_index(
@@ -196,14 +198,11 @@ def _preflight_document_index(
     """Resolve document policy and discovery before storage or model loading."""
     from .indexer import DocumentIndexer
 
-    indexer = DocumentIndexer(
+    return DocumentIndexer.for_preflight(
         root,
-        model=cast("Any", None),
-        store=cast("Any", None),
         extra_excludes=extra_excludes,
         content_policy=content_policy,
-    )
-    return indexer.preflight_content()
+    ).preflight_content()
 
 
 def _preflight_document_scope(
@@ -216,14 +215,11 @@ def _preflight_document_scope(
     """Resolve document policy against only the caller-selected paths."""
     from .indexer import DocumentIndexer
 
-    indexer = DocumentIndexer(
+    return DocumentIndexer.for_preflight(
         root,
-        model=cast("Any", None),
-        store=cast("Any", None),
         extra_excludes=extra_excludes,
         content_policy=content_policy,
-    )
-    return indexer.preflight_changed_paths(changed_paths)
+    ).preflight_changed_paths(changed_paths)
 
 
 def index(
@@ -258,15 +254,18 @@ def index(
     root = _resolve(root_dir)
     rep = reporter if reporter is not None else NullProgressReporter()
     registry = get_registry()
-    registry.load_model(model_name)
-    with registry.lease(root) as slot:
+    result: IndexResult | None = None
+    with registry.compute_lease(root, model_name=model_name) as lease:
+        runtime = lease.runtime
         result = (
-            slot.vault_indexer.full_index(clean=clean, reporter=rep)
+            runtime.vault_indexer.full_index(clean=clean, reporter=rep)
             if (full or clean)
-            else slot.vault_indexer.incremental_index(reporter=rep)
+            else runtime.vault_indexer.incremental_index(reporter=rep)
         )
-        slot.graph_cache.invalidate()
-        return result
+        registry.peek_project(root).graph_cache.invalidate()
+    if result is None:
+        raise RuntimeError("vault indexing lease ended without a result")
+    return result
 
 
 def index_codebase(
@@ -292,18 +291,23 @@ def index_codebase(
     rep = options.reporter if options.reporter is not None else NullProgressReporter()
     preflight = _preflight_code_index(root, extra_excludes=options.extra_excludes)
     registry = get_registry()
-    registry.load_model(options.model_name)
-    with registry.lease(root) as slot:
+    result: IndexResult | None = None
+    with registry.compute_lease(root, model_name=options.model_name) as lease:
+        runtime = lease.runtime
         if options.full or options.clean:
-            return slot.code_indexer.full_index(
+            result = runtime.code_indexer.full_index(
                 clean=options.clean,
                 reporter=rep,
                 preflight=preflight,
             )
-        return slot.code_indexer.incremental_index(
-            reporter=rep,
-            preflight=preflight,
-        )
+        else:
+            result = runtime.code_indexer.incremental_index(
+                reporter=rep,
+                preflight=preflight,
+            )
+    if result is None:
+        raise RuntimeError("code indexing lease ended without a result")
+    return result
 
 
 def index_documents(
@@ -332,22 +336,31 @@ def index_documents(
         )
     )
     registry = get_registry()
-    registry.load_model(options.model_name)
-    with registry.lease(root) as slot:
+    result: IndexResult | None = None
+    with registry.compute_lease(root, model_name=options.model_name) as lease:
+        runtime = lease.runtime
         if options.full or options.clean:
-            return slot.document_indexer.full_index(
+            # The scoped-indexing guard above already raises when
+            # ``options.full or options.clean`` and ``changed_paths`` is set,
+            # so reaching here means ``preflight`` came from
+            # ``_preflight_document_index``, never ``_preflight_document_scope``.
+            result = runtime.document_indexer.full_index(
                 clean=options.clean,
                 reporter=rep,
                 preflight=cast("DocumentIndexPreflight", preflight),
             )
-        return slot.document_indexer.incremental_index(
-            reporter=rep,
-            changed_paths=options.changed_paths,
-            preflight=preflight,
-        )
+        else:
+            result = runtime.document_indexer.incremental_index(
+                reporter=rep,
+                changed_paths=options.changed_paths,
+                preflight=preflight,
+            )
+    if result is None:
+        raise RuntimeError("document indexing lease ended without a result")
+    return result
 
 
-def _domain_outcome(operation: Any) -> DomainIndexOutcome:
+def _domain_outcome(operation: Callable[[], IndexResult]) -> DomainIndexOutcome:
     """Run one domain operation while retaining its explicit failure."""
     try:
         return DomainIndexOutcome(result=operation())
@@ -428,9 +441,9 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
     # cheap and works on a CPU-only host).
     if registry.vault_doc_count(root) == 0:
         return []
-    registry.load_model()
-    with registry.lease(root) as slot:
-        return slot.searcher.search_vault(
+    results: list[SearchResult] | None = None
+    with registry.search_lease(root) as lease:
+        results = lease.searcher.search_vault(
             request.query,
             top_k=request.top_k,
             doc_type=request.doc_type,
@@ -441,10 +454,15 @@ def search_vault(request: VaultSearchRequest) -> list[SearchResult]:
             like_ids=request.like_ids,
             unlike_ids=request.unlike_ids,
         )
+    if results is None:
+        raise RuntimeError("vault search lease ended without a result")
+    return results
 
 
 def search_vault_timed(
     request: VaultSearchRequest,
+    *,
+    registry: ServiceRegistry | None = None,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search the vault and return phase timings for service diagnostics."""
     from .search import SearchFilterOptions, validate_search_filters
@@ -459,9 +477,9 @@ def search_vault_timed(
         ),
     )
     root = _resolve(request.root_dir)
-    registry = get_registry()
+    active_registry = registry if registry is not None else get_registry()
     # Empty/unbuilt index: return an empty result without loading the model.
-    indexed_count = registry.vault_doc_count(root)
+    indexed_count = active_registry.vault_doc_count(root)
     if indexed_count == 0:
         return [], {
             "indexed_count": indexed_count,
@@ -469,12 +487,12 @@ def search_vault_timed(
             "project_lease_seconds": 0.0,
         }
     phase_started = time.perf_counter()
-    registry.load_model()
-    model_load_seconds = time.perf_counter() - phase_started
-    phase_started = time.perf_counter()
-    with registry.lease(root) as slot:
+    project_lease_seconds: float | None = None
+    results: list[SearchResult] | None = None
+    timings: dict[str, float] | None = None
+    with active_registry.search_lease(root) as lease:
         project_lease_seconds = time.perf_counter() - phase_started
-        results, timings = slot.searcher.search_vault_timed(
+        results, timings = lease.searcher.search_vault_timed(
             request.query,
             top_k=request.top_k,
             doc_type=request.doc_type,
@@ -485,7 +503,9 @@ def search_vault_timed(
             like_ids=request.like_ids,
             unlike_ids=request.unlike_ids,
         )
-    timings[PHASE_MODEL_LOAD] = model_load_seconds
+    if results is None or timings is None or project_lease_seconds is None:
+        raise RuntimeError("vault search lease ended without a result")
+    timings[PHASE_MODEL_LOAD] = 0.0
     timings[PHASE_PROJECT_LEASE] = project_lease_seconds
     timings["indexed_count"] = indexed_count
     return results, timings
@@ -524,9 +544,9 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
     # Empty/unbuilt code index: return an empty result without loading the model.
     if registry.code_chunk_count(root) == 0:
         return []
-    registry.load_model()
-    with registry.lease(root) as slot:
-        return slot.searcher.search_codebase(
+    results: list[SearchResult] | None = None
+    with registry.search_lease(root) as lease:
+        results = lease.searcher.search_codebase(
             request.query,
             top_k=request.top_k,
             language=request.language,
@@ -544,6 +564,9 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
             like_ids=request.like_ids,
             unlike_ids=request.unlike_ids,
         )
+    if results is None:
+        raise RuntimeError("code search lease ended without a result")
+    return results
 
 
 def _code_breadth_timings(
@@ -573,6 +596,8 @@ def _code_breadth_timings(
 
 def search_codebase_timed(
     request: CodebaseSearchRequest,
+    *,
+    registry: ServiceRegistry | None = None,
 ) -> tuple[list[SearchResult], dict[str, float]]:
     """Search codebase and return phase timings for service diagnostics."""
     from .search import SearchFilterOptions, validate_search_filters
@@ -595,9 +620,9 @@ def search_codebase_timed(
         ),
     )
     root = _resolve(request.root_dir)
-    registry = get_registry()
+    active_registry = registry if registry is not None else get_registry()
     # Empty/unbuilt code index: return an empty result without loading the model.
-    indexed_count = registry.code_chunk_count(root)
+    indexed_count = active_registry.code_chunk_count(root)
     # The completeness fact is settled here, once, from the count this path
     # already takes - so it costs no extra store round trip and every adapter
     # reads one conclusion rather than comparing figures for itself.
@@ -610,12 +635,12 @@ def search_codebase_timed(
             **breadth,
         }
     phase_started = time.perf_counter()
-    registry.load_model()
-    model_load_seconds = time.perf_counter() - phase_started
-    phase_started = time.perf_counter()
-    with registry.lease(root) as slot:
+    project_lease_seconds: float | None = None
+    results: list[SearchResult] | None = None
+    timings: dict[str, float] | None = None
+    with active_registry.search_lease(root) as lease:
         project_lease_seconds = time.perf_counter() - phase_started
-        results, timings = slot.searcher.search_codebase_timed(
+        results, timings = lease.searcher.search_codebase_timed(
             request.query,
             top_k=request.top_k,
             language=request.language,
@@ -634,7 +659,9 @@ def search_codebase_timed(
             unlike_ids=request.unlike_ids,
             notes=request.notes,
         )
-    timings[PHASE_MODEL_LOAD] = model_load_seconds
+    if results is None or timings is None or project_lease_seconds is None:
+        raise RuntimeError("code search lease ended without a result")
+    timings[PHASE_MODEL_LOAD] = 0.0
     timings[PHASE_PROJECT_LEASE] = project_lease_seconds
     timings["indexed_count"] = indexed_count
     timings.update(breadth)
@@ -703,6 +730,7 @@ def clean(
     | Literal[
         "vault", "code", "document", "combined", "all", "codebase", "docs"
     ] = "all",
+    registry: ServiceRegistry,
 ) -> list[str]:
     """Wipe the selected collections and their index metadata sidecars.
 
@@ -717,40 +745,33 @@ def clean(
     """
     source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
-    from .config._settings import get_config
-    from .registry import get_registry
-    from .store_runtime import VaultStore
+    from ._index_breadth import index_meta_path
 
-    cfg = get_config()
     cleared: list[str] = []
-
-    # Evict project from registry to close Qdrant connections and release locks
-    registry = get_registry()
-    registry.close_project(root)
 
     combined = source_type is PublicSourceType.COMBINED
     do_vault = source_type is PublicSourceType.VAULT or combined
     do_code = source_type is PublicSourceType.CODE or combined
     do_document = source_type is PublicSourceType.DOCUMENT or combined
 
-    # Sidecars go before collections, and the ordering is load-bearing: a
-    # sidecar is a breadth claim, and a crash between the two steps must
-    # never leave a claim standing over data that is already gone - a
-    # serve-time check would read that as a full index over an empty husk.
-    # The safe interruption is the reverse: intact data with no claim, which
-    # reads as honestly unverifiable.
-    data_dir = root / cfg.data_dir
-    if do_vault:
-        (data_dir / cfg.index_metadata_file).unlink(missing_ok=True)
-    if do_code:
-        (data_dir / cfg.code_index_metadata_file).unlink(missing_ok=True)
-    if do_document:
-        from .indexer._document_meta import DOCUMENT_META_FILENAME
+    with registry.lease_maintenance_store(root) as store:
+        # Sidecars go before collections, and the ordering is load-bearing: a
+        # sidecar is a breadth claim, and a crash between the two steps must
+        # never leave a claim standing over data that is already gone - a
+        # serve-time check would read that as a full index over an empty husk.
+        # The safe interruption is the reverse: intact data with no claim, which
+        # reads as honestly unverifiable.
+        if do_vault:
+            index_meta_path(root, PublicSourceType.VAULT).unlink(missing_ok=True)
+        if do_code:
+            index_meta_path(root, PublicSourceType.CODE).unlink(missing_ok=True)
+        if do_document:
+            # Documents publish a differently shaped record under an independently
+            # chosen name, so it resolves through its own owner rather than here.
+            from .indexer._document_meta import document_metadata_path
 
-        (data_dir / DOCUMENT_META_FILENAME).unlink(missing_ok=True)
+            document_metadata_path(root).unlink(missing_ok=True)
 
-    store = VaultStore(root)
-    try:
         if do_vault:
             store.drop_table()
             store.ensure_table()
@@ -763,8 +784,6 @@ def clean(
             store.drop_document_table()
             store.ensure_document_table()
             cleared.append("document")
-    finally:
-        store.close()
 
     return cleared
 
@@ -778,7 +797,11 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     Returns:
         Dict containing RAG status information.
     """
-    root = _resolve(root_dir)
+    return _get_status(_resolve(root_dir), get_registry())
+
+
+def _get_status(root: pathlib.Path, registry: ServiceRegistry) -> dict[str, object]:
+    """Build status for one explicit registry and resolved workspace root."""
     torch: Any = None
     try:
         import torch as _torch
@@ -791,20 +814,18 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     if cuda_available and torch is not None:
         gpu_name = torch.cuda.get_device_name(0)
         props = torch.cuda.get_device_properties(0)
-        vram_mb = int(bytes_to_mib(props.total_memory))
+        vram_mib = int(bytes_to_mib(props.total_memory))
         vram_gb = round(props.total_memory / 1e9, 2)
     else:
         gpu_name = None
-        vram_mb = 0
+        vram_mib = 0
         vram_gb = 0.0
 
     from .capabilities import backend_capabilities_dict
     from .config._settings import get_config
     from .index_profiles import index_support_profile_status
     from .jobs import index_job_status
-    from .registry import get_registry
 
-    registry = get_registry()
     with registry.lease_store(root) as store:
         vault_count = store.count()
         code_count = store.count_code()
@@ -817,7 +838,7 @@ def get_status(root_dir: pathlib.Path) -> dict[str, object]:
     return {
         "cuda": cuda_available,
         "gpu_name": gpu_name,
-        "vram_mb": vram_mb,
+        "vram_mib": vram_mib,
         "vram_gb": vram_gb,
         "storage_path": storage_path,
         "vault_documents": vault_count,
@@ -873,6 +894,7 @@ def run_benchmark(
     root_dir: pathlib.Path,
     *,
     n_queries: int = 20,
+    registry: ServiceRegistry,
 ) -> dict[str, Any]:
     """Run search latency benchmarks against the indexed vault.
 
@@ -882,24 +904,23 @@ def run_benchmark(
 
     Returns:
         Dict containing benchmark results: p50, p95, p99, mean, stdev,
-        vault_count, code_count, gpu_name, vram_mb.
+        vault_count, code_count, gpu_name, vram_mib.
     """
     import statistics
     import time
 
     root = _resolve(root_dir)
-    registry = get_registry()
-    registry.load_model()
-
-    with registry.lease(root) as slot:
-        vault_count = slot.store.count()
+    with registry.lease_store(root) as store:
+        vault_count = store.count()
         if vault_count == 0:
             raise ValueError("No vault documents indexed.")
 
-        code_count = slot.store.count_code()
+        code_count = store.count_code()
 
+    benchmark: dict[str, object] | None = None
+    with registry.search_lease(root) as lease:
         # Warmup
-        slot.searcher.search_vault("warmup", top_k=1)
+        lease.searcher.search_vault("warmup", top_k=1)
 
         _bench_queries = [
             "architecture decision",
@@ -928,7 +949,7 @@ def run_benchmark(
         for i in range(n_queries):
             q = _bench_queries[i % len(_bench_queries)]
             t0 = time.perf_counter()
-            slot.searcher.search_vault(q, top_k=5)
+            lease.searcher.search_vault(q, top_k=5)
             latencies.append((time.perf_counter() - t0) * 1000)
 
         latencies.sort()
@@ -944,16 +965,16 @@ def run_benchmark(
             gpu_name = (
                 torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
             )
-            vram_mb = (
+            vram_mib = (
                 bytes_to_mib(torch.cuda.memory_allocated(0))
                 if torch.cuda.is_available()
                 else 0.0
             )
         except ImportError:
             gpu_name = "N/A"
-            vram_mb = 0.0
+            vram_mib = 0.0
 
-        return {
+        benchmark = {
             "p50": p50,
             "p95": p95,
             "p99": p99,
@@ -962,13 +983,17 @@ def run_benchmark(
             "vault_count": vault_count,
             "code_count": code_count,
             "gpu": gpu_name,
-            "vram_mb": vram_mb,
+            "vram_mib": vram_mib,
         }
+    if benchmark is None:
+        raise RuntimeError("benchmark search lease ended without a result")
+    return benchmark
 
 
 def run_quality_probe(
     *,
     threshold: float = 0.75,
+    registry: ServiceRegistry,
 ) -> dict[str, Any]:
     """Run search quality probes against a synthetic test corpus.
 
@@ -989,22 +1014,19 @@ def run_quality_probe(
     from .progress import NullProgressReporter
     from .synthetic import build_synthetic_vault
 
-    registry = get_registry()
-    registry.load_model()
-
     with tempfile.TemporaryDirectory(prefix="vaultspec-quality-") as tmp:
         root = Path(tmp)
         manifest = build_synthetic_vault(root, n_docs=24, seed=42)
+        probes: list[dict[str, object]] = []
+        passed = 0
+        needles = list(manifest.needles.items())[:8]
 
-        with registry.lease(root) as slot:
-            slot.vault_indexer.full_index(reporter=NullProgressReporter())
+        with registry.compute_lease(root) as lease:
+            runtime = lease.runtime
+            runtime.vault_indexer.full_index(reporter=NullProgressReporter())
 
-            probes: list[dict[str, Any]] = []
-            passed = 0
-
-            needles = list(manifest.needles.items())[:8]
             for needle, doc_id in needles:
-                results = slot.searcher.search_vault(needle, top_k=5)
+                results = runtime.searcher.search_vault(needle, top_k=5)
                 ok = any(doc_id in r.id for r in results)
                 if ok:
                     passed += 1
@@ -1017,8 +1039,8 @@ def run_quality_probe(
                     }
                 )
 
-            total = len(needles)
-            precision = passed / total if total else 0.0
+        total = len(needles)
+        precision = passed / total if total else 0.0
 
         registry.close_project(root)
 
@@ -1059,15 +1081,27 @@ def get_readiness() -> dict[str, Any]:
     return compute_readiness().to_dict()
 
 
+class _WatcherState(TypedDict):
+    """The filesystem-watcher section of :func:`get_service_state`."""
+
+    watch_enabled: bool
+    debounce_ms: int
+    cooldown_s: float
+    watching: list[str]
+    running: bool
+
+
 def get_service_state(
     root_dir: pathlib.Path,
     *,
+    registry: ServiceRegistry,
     watching_roots: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return a consolidated read-only snapshot of the service's state.
 
     Args:
         root_dir: Workspace root directory.
+        registry: Registry that owns the observed service generation.
         watching_roots: Optional list of root paths currently watched.
 
     Returns:
@@ -1077,13 +1111,12 @@ def get_service_state(
 
     from ._store_locks import VaultStoreLockedError
     from .config._settings import get_config
-    from .registry import get_registry
     from .service import RegistryFullError
 
     root = _resolve(root_dir)
 
     try:
-        index_data = get_status(root)
+        index_data = _get_status(root, registry)
     except RegistryFullError as exc:
         index_data = {
             "error": "registry_full",
@@ -1101,7 +1134,6 @@ def get_service_state(
             "message": str(exc),
         }
 
-    registry = get_registry()
     snapshot = registry.snapshot()
     wall_now = datetime.now().astimezone()
     projects: list[dict[str, object]] = []
@@ -1119,15 +1151,11 @@ def get_service_state(
                 "ref_count": int(entry["ref_count"]),
             },
         )
-    projects_data = {
-        "projects": projects,
-        "max_projects": registry.max_projects,
-        "idle_ttl_seconds": registry.idle_ttl_seconds,
-    }
+    projects_data = registry.projects_envelope(projects)
 
     cfg = get_config()
     watching = watching_roots or []
-    watcher_data: dict[str, Any] = {
+    watcher_data: _WatcherState = {
         "watch_enabled": bool(cfg.watch_enabled),
         "debounce_ms": int(cfg.watch_debounce_ms),
         "cooldown_s": float(cfg.watch_cooldown_s),
@@ -1143,6 +1171,7 @@ def get_service_state(
         "projects": projects_data,
         "watcher": watcher_data,
         "qdrant": runtime_state().to_dict(),
+        "quiesce": registry.quiesce_snapshot().as_envelope(),
         # Bare storage-schema version echo: lets a consumer polling
         # /service-state for freshness also pre-check the data shape without a
         # separate /readiness round-trip. The full descriptor is on /readiness.

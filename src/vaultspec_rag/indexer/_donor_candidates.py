@@ -34,9 +34,11 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, Unpack
+from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
 from .. import store_schema
+from .._index_breadth import index_meta_path
+from .._source_types import PublicSourceType
 from ._code_meta import CODE_EMBED_SCHEMA
 from ._code_meta import CONTENT_EPOCH_KEY as _CODE_CONTENT_EPOCH_KEY
 from ._code_meta import EMBED_SCHEMA_KEY as _CODE_EMBED_SCHEMA_KEY
@@ -87,6 +89,7 @@ __all__ = [
     "discover_donor_candidates",
     "evaluate_donor_eligibility",
     "expected_vector_schema",
+    "index_meta_source",
     "read_donor_recorded_state",
 ]
 
@@ -112,6 +115,28 @@ class CollectionKind(enum.Enum):
         if self is CollectionKind.CODE:
             return store_schema.CODE_COLLECTION
         return store_schema.DOCUMENT_COLLECTION
+
+
+def index_meta_source(
+    kind: Literal[CollectionKind.CODE, CollectionKind.VAULT],
+) -> Literal[PublicSourceType.CODE, PublicSourceType.VAULT]:
+    """Return the public source vocabulary member naming *kind*'s corpus.
+
+    Two vocabularies describe the same corpora: a collection kind names what a
+    namespace stores, a public source type names what a caller asked for. Any
+    holder of a kind that needs a reader keyed by source has to cross between
+    them, and a site crossing inline reads as a place to resolve the sidecar
+    inline too - which is how the same path resolution ends up written twice
+    and one copy misses the next change.
+
+    The domain is the two kinds publishing an index-metadata sidecar.
+    Documents publish a differently shaped record reached through its own
+    path, so admitting that kind would buy a runtime rejection where the type
+    already says the call cannot be written.
+    """
+    return (
+        PublicSourceType.CODE if kind is CollectionKind.CODE else PublicSourceType.VAULT
+    )
 
 
 class IneligibilityReason(enum.Enum):
@@ -269,8 +294,6 @@ def read_donor_recorded_state(
     predating the epoch keys, or an incomplete document publication all
     return ``None`` - the caller must treat that candidate as ineligible.
     """
-    from ..config._settings import get_config
-
     root = Path(donor_root)
     if kind is CollectionKind.DOCUMENT:
         try:
@@ -283,14 +306,11 @@ def read_donor_recorded_state(
             content_epoch=meta.content_fingerprint,
             embed_schema=str(meta.meta_schema_version),
         )
-    cfg = get_config()
     if kind is CollectionKind.CODE:
-        sidecar = root / cfg.data_dir / cfg.code_index_metadata_file
         epoch_key, marker_key = _CODE_CONTENT_EPOCH_KEY, _CODE_EMBED_SCHEMA_KEY
     else:
-        sidecar = root / cfg.data_dir / cfg.index_metadata_file
         epoch_key, marker_key = VAULT_CONTENT_EPOCH_KEY, VAULT_POINT_SCHEMA_KEY
-    raw = _read_json_object(sidecar)
+    raw = _read_json_object(index_meta_path(root, index_meta_source(kind)))
     epoch = raw.get(epoch_key)
     marker = raw.get(marker_key)
     if not isinstance(epoch, str) or not epoch:

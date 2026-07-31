@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from ..job_models import (
     DesiredJobState,
@@ -17,9 +17,12 @@ from ..job_models import (
     JobState,
     ProcessResourceSnapshot,
 )
+from ..service_quiesce import QuiesceAdmissionClosedError
+from ._persistence import SnapshotTransition
 from .state import (
     JobManagerState,
     JobRuntimeOwner,
+    assign_runtime_owner,
 )
 
 if TYPE_CHECKING:
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
 
     from ..job_control import RunControlToken
     from .models import ProgressUpdate, ResourceUpdate
+    from .state import AttemptExit
 
 logger = logging.getLogger("vaultspec_rag.jobs")
 
@@ -37,7 +41,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         control: RunControlToken,
     ) -> JobOutcome:
         """Atomically claim and start the queued attempt for one exact job."""
@@ -47,21 +51,23 @@ class JobManagerProgress(JobManagerState):
             managed = self._active.get(job_id)
             if managed is None:
                 return self._error(command, "job_not_found", "The job was not found.")
-            if not self._accepting_dispatch:
-                return self._error(
-                    command,
-                    "dispatch_stopped",
-                    "Managed dispatch is stopped for service shutdown.",
-                    managed,
-                )
             if (
-                managed.snapshot.state is not JobState.QUEUED
+                not self._accepting_dispatch
+                or managed.snapshot.state is not JobState.QUEUED
                 or managed.snapshot.desired_state is not DesiredJobState.RUNNING
             ):
                 return self._error(
                     command,
-                    "invalid_transition",
-                    "Only queued work with running desired state can start.",
+                    (
+                        "dispatch_stopped"
+                        if not self._accepting_dispatch
+                        else "invalid_transition"
+                    ),
+                    (
+                        "Managed dispatch is stopped for service shutdown."
+                        if not self._accepting_dispatch
+                        else "Only queued work with running desired state can start."
+                    ),
                     managed,
                 )
             if managed.runtime.task is not None:
@@ -72,14 +78,28 @@ class JobManagerProgress(JobManagerState):
                     managed,
                 )
 
-            managed.runtime = JobRuntimeOwner(task=task, control=control)
+            try:
+                ticket = self._quiesce_controller.acquire_ticket()
+            except QuiesceAdmissionClosedError:
+                return self._error(
+                    command,
+                    "quiesce_admission_closed",
+                    "Service quiesce has closed compute admission.",
+                    managed,
+                )
+            assign_runtime_owner(
+                managed,
+                JobRuntimeOwner(task=task, control=control, compute_ticket=ticket),
+            )
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.RUNNING,
-                desired_state=DesiredJobState.RUNNING,
-                now=now,
-                started_at=now,
+                SnapshotTransition(
+                    state=JobState.RUNNING,
+                    desired_state=DesiredJobState.RUNNING,
+                    now=now,
+                    started_at=now,
+                ),
             )
             persistence_error = self._persist_locked()
             if persistence_error is not None:
@@ -115,10 +135,9 @@ class JobManagerProgress(JobManagerState):
         in-memory progress stays authoritative for the retrying flush.
         """
         command = "update_progress"
-        raw_step = cast("object", update.step)
-        raw_completed = cast("object", update.completed)
-        raw_total = cast("object", update.total)
-        normalized_progress = _normalize_progress(raw_step, raw_completed, raw_total)
+        normalized_progress = _normalize_progress(
+            update.step, update.completed, update.total
+        )
         if isinstance(normalized_progress, str):
             return self._error(
                 command,
@@ -213,7 +232,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         active: bool,
         worker_thread: threading.Thread | None = None,
     ) -> bool:
@@ -223,10 +242,13 @@ class JobManagerProgress(JobManagerState):
             managed = self._active.get(job_id)
             if managed is None or managed.runtime.task is not task:
                 return False
-            managed.runtime = replace(
-                managed.runtime,
-                worker_active=active,
-                worker_thread=worker_thread if active else None,
+            assign_runtime_owner(
+                managed,
+                replace(
+                    managed.runtime,
+                    worker_active=active,
+                    worker_thread=worker_thread if active else None,
+                ),
             )
             persistence_error = self._persist_locked()
             if persistence_error is not None:
@@ -239,7 +261,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         update: ResourceUpdate,
     ) -> bool:
         with self._lock:
@@ -267,14 +289,10 @@ class JobManagerProgress(JobManagerState):
                 resources=replace(
                     previous,
                     started=(
-                        previous.started
-                        if update.started is ...
-                        else cast("ProcessResourceSnapshot | None", update.started)
+                        previous.started if update.started is ... else update.started
                     ),
                     finished=(
-                        previous.finished
-                        if update.finished is ...
-                        else cast("ProcessResourceSnapshot | None", update.finished)
+                        previous.finished if update.finished is ... else update.finished
                     ),
                     index_capacity_held=(
                         previous.index_capacity_held
@@ -309,7 +327,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         resilience: IndexResilienceSnapshot,
     ) -> bool:
         """Publish resilience state only for the currently attached attempt."""
@@ -361,7 +379,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         finished: ProcessResourceSnapshot,
     ) -> bool:
         """Atomically clear worker and physical ownership for one exact attempt."""
@@ -369,10 +387,14 @@ class JobManagerProgress(JobManagerState):
             managed = self._active.get(job_id)
             if managed is None or managed.runtime.task is not task:
                 return False
-            managed.runtime = replace(
-                managed.runtime,
-                worker_active=False,
-                worker_thread=None,
+            assign_runtime_owner(
+                managed,
+                replace(
+                    managed.runtime,
+                    worker_active=False,
+                    worker_thread=None,
+                    compute_ticket=None,
+                ),
             )
             managed.snapshot = replace(
                 managed.snapshot,
@@ -395,7 +417,7 @@ class JobManagerProgress(JobManagerState):
         self,
         job_id: str,
         *,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
         resources: JobResourceSnapshot,
     ) -> bool:
         """Publish resource ownership for the exact currently running attempt."""

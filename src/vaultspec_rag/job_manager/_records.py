@@ -6,6 +6,11 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import threading
+    from collections import OrderedDict, deque
 
 from .. import job_persistence as _job_persistence
 from .._runtime_identity import process_identity_fields
@@ -33,10 +38,12 @@ from ..job_models import (
     job_spec_error as _job_spec_error,
 )
 from .state import (
+    UNOWNED_RUNTIME,
+    JobDispatchBinding,
     JobManagerState,
-    JobRuntimeOwner,
     ManagedJob,
     ManagerStateBackup,
+    assign_runtime_owner,
 )
 
 logger = logging.getLogger("vaultspec_rag.jobs")
@@ -59,6 +66,21 @@ class _CreateRequest:
 
 
 class JobManagerRecords(JobManagerState):
+    #: Owned and initialized by the composed ``JobManager`` (``manager.py``).
+    #: The shared ``JobManagerState`` protocol exposes every attribute it does
+    #: not enumerate through one catch-all ``Any`` fallback; redeclaring the
+    #: concrete types this owner actually reads keeps that fallback from
+    #: leaking into every lock, map and count access below.
+    _lock: threading.RLock
+    _active: dict[str, ManagedJob]
+    _terminal: deque[ManagedJob]
+    _dispatchers: dict[str, JobDispatchBinding]
+    _idempotency: OrderedDict[str, _job_persistence.IdempotencyBinding]
+    _job_idempotency_keys: dict[str, set[str]]
+    _max_nonterminal: int
+    _max_terminal_history: int
+    _max_idempotency: int
+
     def _replay_idempotent_locked(
         self,
         normalized_key: str | None,
@@ -236,7 +258,7 @@ class JobManagerRecords(JobManagerState):
         )
         self._active[resolved_id] = ManagedJob(
             snapshot=created,
-            runtime=JobRuntimeOwner(task=None, control=None),
+            runtime=UNOWNED_RUNTIME,
         )
         if request.idempotency_key is not None:
             self._bind_idempotency_locked(
@@ -313,7 +335,7 @@ class JobManagerRecords(JobManagerState):
         if not managed.snapshot.state.is_terminal:
             raise ValueError("only terminal jobs may enter terminal history")
         self._active.pop(managed.snapshot.id, None)
-        managed.runtime = JobRuntimeOwner(task=None, control=None)
+        assign_runtime_owner(managed, UNOWNED_RUNTIME)
         self._dispatchers.pop(managed.snapshot.id, None)
         self._terminal.append(managed)
         while len(self._terminal) > self._max_terminal_history:
@@ -379,11 +401,11 @@ class JobManagerRecords(JobManagerState):
 
     @staticmethod
     def _process_resource_snapshot() -> ProcessResourceSnapshot:
-        from ..memory_probe import current_cuda_mb, current_rss_mb
+        from ..memory_probe import current_cuda_mib, current_rss_mib
 
-        cuda_allocated_mb, cuda_reserved_mb = current_cuda_mb()
+        cuda_allocated_mib, cuda_reserved_mib = current_cuda_mib()
         return ProcessResourceSnapshot(
-            rss_mb=round(current_rss_mb(), 1),
-            cuda_allocated_mb=round(cuda_allocated_mb, 1),
-            cuda_reserved_mb=round(cuda_reserved_mb, 1),
+            rss_mib=round(current_rss_mib(), 1),
+            cuda_allocated_mib=round(cuda_allocated_mib, 1),
+            cuda_reserved_mib=round(cuda_reserved_mib, 1),
         )

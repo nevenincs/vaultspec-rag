@@ -6,10 +6,10 @@ import json
 from pathlib import Path  # noqa: TC003
 
 import pytest
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
-from vaultspec_core.core.workspace_mode import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.workspace_mode import (
     read_package_declaration,
 )
 

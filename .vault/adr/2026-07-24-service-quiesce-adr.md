@@ -3,336 +3,91 @@ tags:
   - '#adr'
   - '#service-quiesce'
 date: '2026-07-24'
-modified: '2026-07-24'
+modified: '2026-07-31'
 related:
-  - "[[2026-07-24-service-quiesce-research]]"
-  - "[[2026-06-12-service-concurrency-adr]]"
-  - "[[2026-07-23-ci-self-hosted-gpu-runner-adr]]"
+  - '[[2026-07-24-service-quiesce-research]]'
+  - '[[2026-06-12-service-concurrency-adr]]'
+  - '[[2026-07-23-ci-self-hosted-gpu-runner-adr]]'
+  - '[[2026-07-21-service-job-control-adr]]'
+  - '[[2026-06-24-service-hardware-singleton-adr]]'
+  - '[[2026-07-28-pressure-management-adr]]'
 ---
-
-# `service-quiesce` adr: `Cooperative zero-CPU GPU quiesce gate` | (**status:** `accepted`)
+# `service-quiesce` adr: `Acknowledged global resource quiescence` | (**status:** `accepted`)
 
 ## Problem Statement
 
-The resident RAG daemon, the self-hosted GPU CI runner, and the local test suite
-share one physical RTX 4080 SUPER (16 GiB) and contend for it indefinitely,
-producing OOM crashes and CI wedges (`2026-07-24-service-quiesce-research`;
-`2026-07-23-ci-self-hosted-gpu-runner-adr` constrains the runner to a separate
-account and serialises out-of-lock process VRAM precisely because 16 GiB cannot
-co-schedule two GPU tenants). The daemon has no way to stand down: an ephemeral
-consumer that needs the whole device cannot get it, and best-effort account
-isolation is the only lever today. We need a global pause the daemon can hold
-with zero idle CPU (no busy-poll, no sleep-loop) that even deeply in-flight work
-threads honour promptly, so a short-lived external GPU consumer can borrow the
-device and the daemon resumes afterward. The decision is needed now because the
-contention is actively wedging CI, and the project already owns every primitive
-required, so the cost of building it is small and the cost of not building it is
-recurring outages.
+The shipped hold gate can report pause before compute drains or resident GPU memory is released. It also shares one mutable gate with every attempt token, so one token's absorbing cancellation can disable later global pauses. A pause that is merely requested, or that retains an admitted worker, project lease, model reference, or VRAM, cannot safely hand the device to another tenant. The accepted job-control, hardware-singleton, and pressure-management records establish the lifecycle, single-machine, and advisory boundaries this amendment must preserve.
 
 ## Considerations
 
-- The existing `RunControl` pause is **unwinding** - `checkpoint()` raises a
-  `BaseException`-derived signal that aborts the attempt so orchestration
-  reconciles desired state (`2026-07-24-service-quiesce-research`). Quiesce needs
-  the opposite: hold-and-resume the *same* attempt. These are orthogonal and must
-  coexist, not merge.
-- `checkpoint()` is called from **inside** `protected()` spans today (the codebase
-  indexer brackets its publication mutation in `protected()` and checkpoints
-  within it). A hold that parks a worker mid-indivisible-mutation wedges the
-  indexer under its writer lock - the same shutdown-hang failure class the single
-  GPU consumer already guards. The gate wait must therefore be protected-aware,
-  deferred exactly like the existing unwind delivery.
-- There is exactly one GPU lock per process serialising every forward pass, and
-  holding it beyond the forward pass serialises all tenants
-  (`2026-06-12-service-concurrency-adr`; `gpu-lock-wraps-forward-passes-only`).
-  Any quiesce wait must sit outside the GPU lock and outside a `protected()`
-  span or a held store write, or it deadlocks the writer lock.
-- The gate primitive must be torch-free: it is reachable from the spawn-worker
-  import chain and from search, and importing torch there reintroduces the
-  CUDA-in-subprocess crash class (`index-workers-stay-cpu-only`,
-  `torch-loads-through-centralized-gpu-gate`).
-- The promptness bound is set by physics already accepted for cancellation: a
-  dispatched CUDA kernel is not preemptible from Python mid-kernel, and the
-  consumer RTX 4080 has no MIG partitioning to force it
-  (`2026-07-24-service-quiesce-research`). "Promptly" means at the next unprotected
-  checkpoint or slice boundary - sub-second, identical to today's cancellation
-  latency.
-- Search is multi-tenant: several requests run concurrently (around concurrency 4)
-  each taking the GPU lock in turn (`2026-06-12-service-concurrency-adr`). An
-  admission gate stops new entrants but cannot preempt requests already past
-  admission.
-- An idle daemon - the common case exactly when CI wants the GPU - reaches no
-  checkpoint and runs no search, yet still holds its resident model VRAM (several
-  GiB). A purely lazy checkpoint-time observation therefore covers the busy daemon
-  but not the idle one; freeing idle VRAM needs an active wakeup, not a passive
-  probe.
-- Crash-safety is load-bearing: if an external actor dies mid-borrow, the daemon
-  must not stay paused forever (`2026-07-24-service-quiesce-research`).
-- Quiesce pauses; it never stops or kills. It must not become a channel by which
-  one actor terminates another (`storage-maintenance-is-lifecycle-inert`).
-- The machine already owns a crash-safe, cross-platform OS advisory lock with a
-  STATUS_DIR-independent machine-global anchor and an atomic discovery pointer
-  (`2026-07-24-service-quiesce-research`), reusable for a cross-process signal.
+- `2026-07-21-service-job-control-adr` requires cooperative control acknowledgement only after execution resources release; a global pause cannot retain a worker or capacity slot and claim quiescence.
+- `2026-06-24-service-hardware-singleton-adr` makes the resident service the sole hardware authority. A GPU-borrow lease must therefore be distinct from, and never weaken, the service identity lock.
+- `2026-07-28-pressure-management-adr` remains observe-only. Quiesce state is an explicit lifecycle command, not an automatic response to a pressure tier.
+- CUDA work remains non-preemptible. The bounded handoff point is a safe checkpoint or completion of a previously admitted GPU section; no wait may occur under `gpu_lock`, a protected mutation, or a store write.
+- MCP remains service-only and no-local-fallback. Its existing service-state visibility consumes the controller status; public MCP does not gain lifecycle mutation authority.
 
 ## Considered options
 
-- **In-process `threading.Event` gate with an absorbing-open latch (chosen
-  primitive).** Convention set = running, clear = paused; a worker calls `wait()`
-  at an unprotected checkpoint and parks in the OS futex at zero CPU until `set()`
-  wakes all waiters. A latch makes an absorbing request (cancel/shutdown) open the
-  gate irreversibly. Torch-free pure `threading`, exactly the required semantics.
-  Chosen.
-- **Busy or sleep poll (`while paused: sleep`).** Burns a wakeup per worker per
-  interval, adds up to the interval of resume latency, scales CPU with worker
-  count. Rejected - it is the idle spin the requirement forbids.
-- **`threading.Condition` with a predicate.** A correct, zero-CPU way to wait on
-  the *disjunction* the gate genuinely needs - "resume requested OR an absorbing
-  request is pending" - which a bare boolean `Event` cannot express, exposing a
-  lost-wakeup if a `pause()` races a pending shutdown. But the latch (an absorbing
-  request opens the gate irreversibly and makes `pause()`/`clear()` a no-op while
-  pending) collapses that disjunction back to a single boolean without the extra
-  predicate-and-lock machinery a `Condition` carries. Rejected in favour of
-  Event-plus-latch, which is strictly less machinery for the same guarantee.
-- **A lock the worker tries to acquire.** A paused daemon would hold a lock across
-  an unbounded external window, and lock ownership is thread-bound (releaser must
-  be acquirer), mismatching a controller-sets/worker-waits topology. Rejected.
-- **Cross-process RELEASE: second OS advisory lock the external actor holds (chosen
-  for phase 2).** A distinct "quiesce lease" lock beside `service.lock`; process
-  death auto-releases the OS lock, so a dead actor can never leave the lease held.
-  Chosen as the crash-safe release mechanism - strongest crash-safety, maximal
-  reuse of hardened machinery. The daemon-side OBSERVATION and wakeup of this lease
-  is a separate, still-open question (see Implementation), not settled by this
-  choice.
-- **Cross-process: heartbeat-expiry JSON sentinel.** A `service.quiesce.json` with
-  an `expires_at` the actor renews; the daemon treats an expired lease as absent.
-  Viable and observable, but relies on a wall-clock renewal loop and a dead actor
-  un-wedges only after the expiry lapses, not immediately. Rejected as the release
-  mechanism in favour of the OS lock (death is the release, no clock).
-- **Overload the identity machine lock into a GPU lease.** The daemon holds the
-  identity lock for its whole lifetime; releasing it to let a consumer take it
-  would let a *second daemon* start. Rejected - the GPU lease must be a distinct
-  lock, not an overload of the singleton authority.
-- **Named OS event (Windows `CreateEvent`).** Maps naturally to the boolean and
-  waits cross-process at zero CPU, but has no clean POSIX equivalent (named
-  semaphore semantics and cleanup differ), forcing two code paths. Rejected as the
-  cross-process mechanism; the in-process `Event` stays the intra-daemon primitive.
-- **NVIDIA MIG.** Hardware partitioning is enterprise/data-center only and
-  explicitly absent on consumer GeForce including the RTX 4080. Rejected - not
-  available on the hardware.
-- **NVIDIA CUDA MPS.** Linux-only (the workstation and GPU CI runner are
-  Windows-native) and provides spatial SM sharing with **no VRAM isolation** -
-  co-resident clients still OOM, the exact failure this feature prevents.
-  Rejected.
-- **Job schedulers (Slurm, Kubernetes device plugins, Ray).** The industrial
-  multi-tenant GPU answer, but each is a heavyweight cluster control plane grossly
-  disproportionate to one workstation with one GPU and a companion CLI tool.
-  Rejected as overkill.
+- **Keep the process-wide Event hold gate.** Rejected: it can be poisoned by token-local cancellation, retains admitted resources, and cannot truthfully attest VRAM release.
+- **Park every running stack until resume.** Rejected: parked jobs and searches retain capacity, leases, and model references needed for release; it violates the acknowledgement boundary.
+- **Stop or restart the daemon.** Rejected: quiesce must preserve the resident service, its storage ownership, and logical job identities.
+- **Service-owned resource-quiesce controller with cooperative unwind and GPU-residency release (chosen).** It closes admission, drains work, releases GPU residency, and exposes an explicit borrow-safe state.
+- **Reuse the service singleton lock as the borrower lease.** Rejected: releasing or sharing identity authority could admit a second service.
+- **Acquire borrower authority in the service or use only a PID.** Rejected: neither proves that the process which will use the GPU currently holds the OS lease; PID reuse and a server-owned acquisition permit an unrelated caller to resume or borrow.
+- **Add separate borrower lifecycle routes.** Rejected: the authenticated pause and resume routes are the one lifecycle envelope. An optional capability field preserves that contract without duplicating its acknowledgement semantics.
+- **Let unreachable service delegation fall back to local GPU work.** Rejected: an uncertain or live singleton is a contention hazard, not permission to allocate CUDA locally.
 
 ## Constraints
 
-- The gate primitive carries no torch import and must stay importable from the
-  spawn-worker chain and from search without pulling CUDA onto either. It lives
-  beside `RunControl` (in `job_control.py` or a sibling module), never behind
-  `_gpu.load_torch()`.
-- **Protected-aware, generalized to every checkpoint site.** The hold-gate wait is
-  skipped while a `protected()` span is active (a positive protected depth),
-  exactly like the existing unwind delivery defers there, and is honored only at
-  the next unprotected checkpoint. More broadly, any current or future checkpoint
-  site must keep the gate wait OUT of any `gpu_lock`, `protected()`, or
-  held-store-write span - today the streaming consumer already brackets its
-  checkpoints outside `gpu_lock`, and that placement must be preserved. Parking
-  inside any of those spans deadlocks the writer lock or serialises all tenants.
-- An absorbing shutdown or cancel request must always win over a hold, with no
-  lost-wakeup even when a `pause()` races a pending absorbing request: a quiesced
-  worker MUST NOT block forever. This is the load-bearing correctness point and is
-  met by the latch (see Implementation).
-- Phase 2's cross-process auto-quiesce and the `torch.cuda.empty_cache()` VRAM
-  release cannot be verified green without a live contended GPU: the resident
-  service holds several GiB and any GPU-live test co-schedules against it, the
-  exact 16 GiB OOM hazard. Phase 2 therefore requires a coordinated GPU
-  maintenance window and is sequenced after phase 1
-  (`2026-07-24-service-quiesce-research`).
-- Parent-feature stability: `RunControl`, the single GPU lock, and the machine OS
-  advisory lock are all shipped, hardened, and load-bearing today; quiesce is an
-  additive layer over stable parents, not new infrastructure.
+- The controller, routes, CLI, MCP client, TUI, and discovery paths stay torch-free. GPU release and rebuild route through the central GPU owner only after drain.
+- Cancellation and shutdown remain token-local, absorbing control. They may wake or unwind their own attempt but never alter global pause state.
+- Global pause preserves logical job identity and desired running intent. It may unwind a current attempt and requeue it after resume; it never claims instruction-pointer continuation.
+- The state `quiesced` is reachable only when admissions are closed, all pre-pause compute tickets are drained, managed index resources are released, and resident GPU components are unloaded and cache release has completed. Every other state is unsafe for a borrower.
+- A timeout or rebuild failure fails closed: admissions remain closed, the structured outcome says `safe_to_borrow_gpu: false`, and no adapter reports success.
+- `warming` remains an admission-closed controller state through GPU rebuild and durable same-ID job recovery preparation. Recovery preparation failure is the typed non-success outcome `resume_recovery_failed`; it does not create a fifth controller state, and the controller remains `warming` with admissions closed.
+- Resume recovery considers only active jobs in `paused` or `queued` whose desired state is `running`. It preserves desired `paused` and `cancelled` intent, persists recovery preparation before compute admission opens, and never changes logical job identity.
+- Resume recovery holds the job-manager lock only for scan, state mutation, and persistence; dispatch occurs after that lock is released. The registry transition condition serializes transition ownership only, and the GPU lock remains confined to GPU residency rebuild work; these locks are not nested across recovery or admission waits.
+- No service start, local fallback, or GPU-live test may silently allocate while a machine singleton is live, undiscoverable, pausing, warming, or otherwise unsafe. Intentional local GPU work requires a distinct machine-global borrower lease and a verified safe condition.
+- The existing loopback service token remains mandatory for every pause and resume request. A borrower capability is a second coordination factor, never a replacement for route authentication, and it must not appear in lifecycle snapshots, status, discovery, logs, errors, or tracebacks.
+- GPU pytest and CI never provision Qdrant, run a direct GPU-admission preflight, or start the resident service. The self-hosted GPU runner supplies a compatible resident service published through its original machine pointer, plus the pinned, manifest-verified Qdrant binary only when a selected test's fixture closure requires an isolated Qdrant child; test code may read and mirror that evidence, but a missing prerequisite is a tier refusal rather than an install instruction. A performance selection without that fixture is excluded. GPU ownership remains exclusively the borrower coordinator's concern.
 
 ## Implementation
 
-**Phase 1 (ship now, fully green GPU-free).**
+`ServiceRegistry` owns one `ServiceQuiesceController`, not a shared `QuiesceGate`. Its serialized state machine is `running`, `pausing`, `quiesced`, and `warming`, carrying an admission epoch, active compute-ticket count, drain evidence, timestamps, GPU-residency evidence, and optional borrower-lease identity.
 
-A small torch-free object (working name `QuiesceGate`) wraps a `threading.Event`
-with the convention set = running, clear = paused. It exposes `wait()` (blocks
-in-kernel at zero CPU while paused, wakes instantly on resume), `pause()`,
-`resume()`, and `is_paused()`. It lives beside `RunControl` so both indexers and
-search reach it without importing torch. The control token holds an optional
-reference to the gate so absorbing requests can latch it (below).
+Pause closes the current admission epoch, asks active managed index attempts to cooperatively unwind at safe checkpoints, rejects new search work with a retryable quiescing outcome, and waits boundedly for all pre-pause tickets and managed resources to drain. After the drain, the registry serializes with the GPU lock, detaches GPU dependencies from retained project slots without closing stores or Qdrant, releases the shared embedding and reranker objects, and releases allocator cache through the centralized GPU gate. Only then does the route return `quiesced` with `vram_released: true` and `safe_to_borrow_gpu: true`.
 
-`checkpoint()` consults the gate first, before evaluating the existing unwind
-signal, but **only when no `protected()` span is active**: while a protected span
-is open the gate wait is skipped and deferred to the next unprotected checkpoint,
-mirroring how the token already withholds unwind delivery inside a protected span.
-This keeps a hold from ever parking a worker mid-mutation under the writer lock.
+Resume enters `warming` and rebuilds the GPU stack while compute admission remains closed. Still in `warming`, the job manager performs an idempotent same-ID recovery-preparation scan over active `paused` and `queued` jobs whose desired state is `running`: eligible paused work is prepared as queued, already-queued eligible work is retained for retry convergence, and desired paused or cancelled work is untouched. The complete preparation result is persisted before the controller opens a new admission epoch. Only after that durable preparation succeeds does the controller transition to `running`; dispatch is scheduled after the job-manager lock is released.
 
-The absorbing-open latch is the load-bearing correctness mechanism. Setting any
-absorbing request on the token (`request_cancel()` or `request_shutdown()`) also
-latches the gate OPEN irreversibly: a latched-open gate's `wait()` returns
-immediately, and `pause()` and `clear()` become no-ops while an absorbing request
-is pending. This closes the lost-wakeup race: once shutdown is requested the gate
-cannot be re-cleared by a concurrent `pause()` (a racing `server pause`, or a
-phase-2 lease re-observation), so a woken worker always reaches the post-gate
-re-check of absorbing signals and raises the shutdown or cancel signal rather than
-re-parking. A worker resumed by shutdown proceeds straight into its unwind rather
-than continuing the attempt.
+If recovery preparation or its persistence fails, resume returns the typed non-success outcome `resume_recovery_failed`, leaves the controller in `warming` with admissions closed, and schedules no work. A later resume retries the same `paused`-plus-`queued`, desired-`running` scan so partial durable preparation converges without allocating a new logical job ID. This failure is an outcome within the existing four-state machine, not a fifth state.
 
-Search takes the GPU lock directly and does not thread `run_control`. Quiesce
-gates search at **admission**: a request waits on the gate before acquiring the
-GPU lock for encode or rerank. Search is multi-tenant (around concurrency 4), so
-admission gating blocks only new entrants; requests already past admission drain
-their GPU sections and no new request is admitted. The promptness bound is
-therefore the concurrency cap times one encode-plus-rerank each, not a single
-in-flight search - still sub-second, and no request already inside its GPU section
-is preempted (mid-kernel is never preemptible).
+The service route owns this contract. CLI pause/resume renders the route's one JSON envelope and exits zero only for the achieved terminal state. Health, service-state, jobs output, MCP service-state, and the TUI render the same controller block. The existing pressure block remains an independent advisory.
 
-`server pause` and `server resume` CLI verbs drive the gate and follow the
-structured-idempotent JSON envelope pattern the lifecycle verbs already use
-(`broker-facing-cli-outcomes-are-structured-and-idempotent`): exactly one envelope
-on every exit path, and an already-satisfied request (pause when already paused,
-resume when already running) is a success at exit 0 with an `already_*` status,
-never a non-zero fault. As with all operability surfaces the behaviour is
-service-domain owned and the CLI adapts to it (`service-domain-owns-operability`).
+A borrower uses a second, machine-global advisory lock beside the identity lock. Acquisition creates a private lease record containing the holder PID and a 32-byte cryptographically random, base64url opaque capability; the raw capability is held by the borrower and is valid only while that OS lock remains held, with no clock-based expiry. The borrower obtains and retains that lease before calling authenticated `POST /pause` with the optional JSON field `borrower_capability`, and calls authenticated `POST /resume` with the same field before releasing the lease. Calls without that optional field remain the ordinary operator pause/resume flow.
 
-**Phase 2 (defer; design partly open, needs a coordinated GPU maintenance window).**
+The body is either absent/an empty JSON object for the ordinary operator flow, or a JSON object whose only borrower field is `borrower_capability: string`; it is a nonempty URL-safe capability, not a PID or a lease identifier. The service verifies a borrower pause by observing both live contention on the borrower lock and an exact constant-time match between the supplied capability and the lease record. It records its private borrower binding only after the ordinary pause has reached the achieved, safe `quiesced` snapshot. While that binding exists, a resume without the matching capability, or a pause/resume carrying a different capability, is rejected without changing controller state; a matching successful resume clears the binding. The lifecycle heartbeat independently verifies the bound lease and, after OS release on borrower death, resumes only that borrower-bound quiescence. It never auto-resumes an unbound operator pause, and it retains bound quiescence if lease verification is unavailable. Lease/capability denials use the existing authenticated lifecycle envelope with `ok: false`, matching `status` and `error`, a message, `retryable: true`, and the unchanged canonical quiesce block: `invalid_borrower_capability` for a malformed body field, `borrower_lease_not_held` when no matching live lease exists, `borrower_capability_invalid` when a live lease does not match, `borrower_lease_unavailable` when the OS lease cannot be verified, `borrower_lease_required` for an unqualified resume of a bound quiescence, and `borrower_lease_mismatch` for a different capability against an existing binding. They reveal neither capability nor PID. The identity singleton lock is never released or repurposed.
 
-The crash-safe RELEASE mechanism is decided: a second OS advisory lock - the
-"quiesce lease" - beside the identity `service.lock`, distinct from it, held by the
-external CI or test actor for the duration of its GPU work. Process death
-auto-releases the OS lock, so no external actor's death can leave the lease held.
+S30 owns a frozen private `BorrowerServiceTarget`: the absolute original identity-lock path, absolute original discovery path, expected port, expected service PID, SHA-256 digest of the published service identity token, and one opaque `CapturedBorrowerLeaseAuthority`. S29 first issues a private `CapturedMachineLockWitness` through its no-argument pre-root capture; its registry alone retains the authoritative original lock and discovery paths plus the expected positive holder PID. Its nonconstructible typed `PreIsolationMachineLock` projects those paths and holder as read-only diagnostics beside the witness. S30 composes that observation with the shared pointer resolution as a typed `PreIsolationMachinePointer`, and `BorrowerServiceTarget` retains that typed evidence for post-lease validation. The target carries neither a raw borrower-anchor path nor the raw service token. Its non-secret paths, port, PID, and digest are only identity witnesses. The authority is a nonserializable, redacted in-process handle, not a service credential; S29 retains its original `gpu-borrower.lock` sibling path only in a private authority registry. The only secrets remain the ordinary fresh 32-byte borrower capability in its locked lease record and authenticated request body, and the raw service bearer held transiently after revalidation.
 
-The daemon-side OBSERVATION and wakeup of that lease is deliberately left as an
-open design question the plan must resolve, not settled here, because lazy
-checkpoint-time probing has two holes. First, an idle daemon reaches no checkpoint
-and runs no search, so it never observes a lease acquire and never frees its
-resident VRAM - and idle is the common case exactly when CI wants the GPU, so
-"idle is not contending" is false for VRAM. Second, a parked daemon has no running
-thread to notice the external actor releasing the OS lock, so automatic resume does
-not follow from checkpoint-time probing alone. The candidate observers -
-event-driven notification, a bounded timeout re-probe, or an OS-level cross-process
-wait - trade off against the codebase's "no free-running timer threads" preference
-and must be chosen in the plan. The honest interim answer for the idle case is
-phase-1 `server pause`: it is synchronous, an operator or CI pre-step invokes it
-directly, and it is the natural site to drive `torch.cuda.empty_cache()` once phase
-2 lands. On entering quiesce the daemon calls `empty_cache()` once behind the
-centralized `_gpu.load_torch()` gate, never inside the torch-free gate primitive or
-the worker checkpoint.
+S32 calls S30 capture after its ordinary environment setup but before `pytest_configure` registers the singleton root, and only from a ready, compatible, machine-pointer service whose lock is already contended. Because this phase intentionally has active pytest containment without a registered root, its capture reader is not a generic exception to the guarded configured-path reader. It is a private original-path observation that requires existing absolute identity and discovery paths, opens the identity anchor without creation, makes only a momentary nonblocking lock attempt, and never retains a lease or writes the lock, discovery, capability, or authority. It shares the normal machine-pointer validation core but fails capture on absence, unreadability, a free lock, or any PID disagreement; it grants no path selection or caller-supplied authority. The ordinary configured-path reader retains full containment enforcement. The service machine-lock owner record is a mandatory production witness for this path: its writer must durably replace the current positive PID and machine-lock acquisition must release and fail if that record cannot be written. A separate process must be able to recover that PID from a contended real lock. S30 requires that recovered holder PID to equal the fresh pointer and health PID; lock contention plus pointer or health alone is insufficient because it cannot exclude a stale pointer beside a foreign current holder. After all identity witnesses are checked, S30 asks S29 to mint the authority from the `CapturedMachineLockWitness`, never a raw path. S29 permits minting only while pytest containment is active but its root is not yet registered, derives the sole sibling path from its witness registry itself, and records it against that handle. After the root is registered, S29's captured acquisition accepts only the opaque authority, requires a matching unconsumed registry entry, consumes it before any claim, and tags the returned exact `GPUBorrowLease` for its matching release. Thus the authority is one-shot: a contested or faulted acquisition is consumed and fails closed, and no raw identity or borrower-anchor paths are accepted by the acquisition API. A forged, stale, serialized, reused, or post-registration-minted handle is rejected. A missing target refuses every selected GPU tier without starting a service. The ordinary explicit `--borrow-gpu` CLI path continues to enter S30 with no captured target and discovers its target after it has acquired the borrower lease.
 
-**Yield policy (both phases): service yields to ephemeral, priority by lifetime.**
-The long-lived pausable daemon stands down for the short-lived, time-bounded
-consumer (CI job, test run): the consumer signals intent, the daemon quiesces at
-the next unprotected checkpoint (or synchronously on `server pause`), releases
-reclaimable VRAM, the external work runs, the signal clears, and the daemon
-resumes.
+For the captured-target path, the authority registry and the narrowly bound private original-path observation are the only explicit pytest containment exceptions, not a general caller-supplied-path, bootstrap bypass, or environment-restoration escape hatch. S29 claims its privately stored sibling path only after the one-shot authority check and returns the ordinary `GPUBorrowLease` whose capability is newly generated and stored only in its locked lease record. The resident service receives no lease-path field and makes no client-directed path choice: its unchanged verifier derives the same sibling from its own original identity lock. Therefore its constant-time capability validation succeeds only when the borrower holds the captured service's exact anchor.
 
-The pause and resume behaviours are guards under `guard-tests-prove-they-can-fail`,
-three of which need both-direction proof. First, "a worker blocks when quiesced"
-must fail if the gate is stubbed open (worker proceeds) - the test must join the
-parked thread with a bounded timeout so a broken-open gate fails the assertion
-rather than hanging the suite. Second, "a worker resumes when released" must fail
-if release is broken (worker stays blocked). Third, "shutdown wins over a
-concurrent re-pause" - a `pause()` racing a pending shutdown must not re-park the
-worker - provable GPU-free by latching an absorbing request and racing a `pause()`,
-asserting the worker still unwinds. Each is proven red-then-green in one sequence
-and recorded in the execution record. The phase-2 crash-safety guard ("a dead
-actor releases the lease") is likewise a both-directions guard, provable GPU-free
-by killing a child that holds the lease and asserting the OS frees it.
+After that borrower OS lease is acquired, S30 calls typed discovery revalidation with its retained `PreIsolationMachinePointer` and expected PID, port, and token digest; that facade calls S29's typed witness revalidation, receives a fresh registry-projected `PreIsolationMachineLock`, and applies the shared pointer evaluator without accepting or trusting a raw target path. It must observe the expected holder on the still-contended identity lock, parse a fresh compatible discovery record with the same PID and port, match its token SHA-256 digest, and obtain matching health identity on that pinned port. Only then does revalidation return the current raw token as an ephemeral call-local value; the target itself never carries it. The minimal internal transport option accepts that value only through explicit typed `initial_bearer_token` and `refresh_bearer_token` parameters, attaches it to the first pause or resume request without consulting the isolated status file, and on a 401 invokes the supplied pinned-target revalidation callback for exactly one authenticated retry even when it returns the same token. A changed token digest is a changed identity and fails closed rather than refreshing. The ordinary status-file-first and health-refresh flow is unchanged when those parameters are absent. The captured flow must never first send a borrower capability unauthenticated, use raw header injection or a parallel HTTP client, or serialize/log either secret. Lease release uses that returned lease handle and the service continues its existing heartbeat recovery after lease loss. S32 owns the pre-isolation capture, isolated pytest paths, and no-lifespan coordinator tests; it neither rediscovers the target through those isolated paths nor restores global environment around test work. This preserves test storage isolation while preventing a captured stale or foreign service from authorizing GPU work.
+
+S32 decides the runner-Qdrant prerequisite after pytest collection and deselection with `any("required_host_provisioned_qdrant_source" in item.fixturenames for item in session.items)`. It reads and mirrors the runner binary and manifest only when that predicate is true. Thus the performance lane is excluded unless a selected performance item actually closes over that required isolated-child fixture; markers alone never impose the prerequisite.
+S31 makes `server preflight` a non-authorizing remote observation of one discovered service identity. It first requires a ready, fresh resolution and exact requested port, then derives compatibility only from that resolution's published `package_version`. Health is an ungated identity confirmation, not the compatibility authority: its PID, port, service token, and `package_version` must exactly match the discovery evidence, with token comparison performed in constant time. Only after that confirmation may preflight read authenticated service-state with the verified discovery token supplied as the explicit initial bearer; it never consults an ambient status-file credential, performs an unpinned refresh, or exposes a token. A claimed safe quiesce additionally requires finite non-null `pause_requested_at`, `drain_acknowledged_at`, and `quiesced_at` evidence; absence or invalidity is incomplete, never safe. A 401, incomplete state or capacity, stale, unknown, unreachable, version-skewed, or identity-mismatched response is a fail-closed observation refusal. Every success and refusal states that GPU authorization remains denied and a separate borrower lease remains required.
 
 ## Rationale
 
-`threading.Event.wait()` is the zero-CPU professional primitive: it parks on an
-internal `Condition`, releasing the GIL and the CPU with no polling, and wakes all
-waiters immediately on `set()` (`2026-07-24-service-quiesce-research`). It is the
-minimum machinery that satisfies the hard "no idle spin" requirement and is
-torch-free, so it can sit on the spawn-worker import chain and in search without
-violating the CUDA-isolation and centralized-torch-gate rules. Consulting it only
-at unprotected `checkpoint()` sites inherits the sub-second promptness bound the
-project already accepts for cancellation, at no new cost, and keeps the hold out of
-indivisible-mutation spans.
-
-The correctness subtlety a bare boolean gate hides is that "resume" and "an
-absorbing request is pending" are two conditions a woken worker must distinguish; a
-naive `Event` exposes a lost-wakeup when a `pause()` races a pending shutdown. A
-`threading.Condition` could wait on that disjunction directly, but the
-absorbing-open latch collapses it to a single boolean - an absorbing request opens
-the gate irreversibly and disables `pause()`/`clear()` while pending - which is
-strictly less machinery for the same guarantee. That is why Event-plus-latch is
-chosen over `Condition`.
-
-The second-OS-lock lease wins the crash-safe RELEASE question on the one criterion
-that is non-negotiable - a dead actor must never leave the daemon paused - because
-process death is the release, the same guarantee the identity machine lock already
-relies on; a heartbeat-expiry sentinel only lapses after a timeout and needs a
-renewal loop. It reuses the most already-hardened machinery (the machine lock's
-try-lock probe and machine-global anchoring) and, by being a *distinct* lock,
-avoids the fatal flaw of overloading the singleton identity lock (which would admit
-a second daemon). The daemon-side observation/wakeup that turns a held lease into an
-actual quiesce - and frees idle VRAM - is the genuinely open part, deferred to the
-plan. MIG, MPS, and cluster schedulers are all knocked out on the facts - MIG
-absent on the hardware, MPS Linux-only with no VRAM isolation, schedulers
-disproportionate - leaving the cooperative-checkpoint gate as the only fit for one
-Windows workstation with one 16 GiB GPU.
-
-Sequencing phase 1 ahead of phase 2 keeps a fully green GPU-free unit boundary: the
-gate, checkpoint and search-admission integration, the CLI envelopes, and the
-pause/resume/shutdown-race guards are all pure `threading` or OS code testable on
-any host, and they immediately solve daemon-internal contention and manual CI
-coordination (`server pause` as a CI pre-step, `server resume` as a post-step).
-Phase 2's VRAM release, cross-process auto-handshake, and idle-daemon wakeup are the
-only parts that need the live contended GPU or an unsettled observer design, so they
-defer without blocking the shippable value.
+Resource quiescence is the smallest truthful lifecycle contract: it preserves service and job identity while making the GPU handoff observable and safe. It applies the job-control acknowledgement rule to the daemon as a whole, keeps GPU serialization and protected-mutation discipline intact, and turns the existing singleton mechanism into a distinct borrower coordination channel without creating a second resident service. Explicit states and fail-closed outcomes prevent automation, tests, or local fallback from treating an unreachable or only partially drained daemon as available hardware.
 
 ## Consequences
 
-- **Phase 1 delivers now:** a zero-CPU global pause honoured at every unprotected
-  indexer checkpoint and at search admission, an operator or CI control surface
-  (`server pause` and `server resume`) with idempotent structured JSON envelopes,
-  and three both-direction guard tests - all green on any host, GPU or not. This
-  alone lets a human or a CI pre/post-step coordinate the GPU manually and stops the
-  daemon's own threads from contending during a borrow.
-- **Phase 2 defers, with a stated cost and an open question:** until the
-  cross-process lease plus its observer land, the handshake is manual - a failed CI
-  job that never runs its `server resume` post-step leaves the daemon paused, with
-  no automatic recovery - and the automatic idle-daemon case (free resident VRAM
-  when nothing is indexing) has no answer that lazy checkpoint probing can provide.
-  Phase 1 `server pause` is the honest interim: synchronous, and the site that will
-  drive `empty_cache()` once phase 2 lands.
-- **Promptness is bounded, not instant:** a busy daemon yields at its next
-  unprotected checkpoint or slice boundary (sub-second); search yields as in-flight
-  requests drain under the concurrency cap while new ones are held; an idle daemon
-  yields only on an explicit `server pause` until the phase-2 observer exists.
-  Mid-kernel work is never preempted. This matches existing cancellation latency and
-  is not a regression.
-- **New correctness surface to keep honest:** the checkpoint now consults a hold
-  gate and an unwind signal, protected-aware and latched. The invariant that
-  shutdown always wins over a hold - even against a racing re-pause - is load-bearing
-  and defended by the shutdown-race guard; the protected-awareness invariant is
-  defended by keeping the gate wait out of every `gpu_lock`, `protected()`, and
-  held-store-write span at every checkpoint site, present and future.
-- **Opens a general yield pathway:** the service-yields-to-ephemeral handshake and
-  the lease-bound quiesce lease are reusable beyond CI - any future ephemeral GPU
-  consumer on the box (a one-off benchmark, an interactive experiment) can borrow
-  the device through the same cooperative surface without a scheduler.
-- **Pitfall guarded by rule:** quiesce must remain a pause, never a stop or kill
-  (`storage-maintenance-is-lifecycle-inert`); the cross-process actor borrows the
-  GPU and the daemon stays alive throughout.
-
-## Codification candidate
-
-A rule candidate is warranted once phase 1 lands: **"the quiesce gate is torch-free,
-protected-aware, and checkpoint-consulted."** The constraint to codify, stated
-directly (not as a citation), is that the global pause primitive is pure `threading`
-with no torch import so it stays importable from spawn workers and search; that its
-wait is consulted only at unprotected checkpoints and at search admission and never
-inside a `gpu_lock`, `protected()` span, or held store write; and that any absorbing
-shutdown or cancel latches the gate open irreversibly so a quiesced worker can never
-block forever, even against a racing re-pause. This complements
-`gpu-consumer-single-thread`, `gpu-lock-wraps-forward-passes-only`, and
-`torch-loads-through-centralized-gpu-gate`.
+- Operators and automation receive an exact, idempotent answer about whether GPU borrowing is safe; `paused` is replaced by `quiesced` only after release.
+- Running index attempts may restart a convergence attempt on resume rather than preserve a Python stack, but they release resources truthfully and retain logical identity.
+- Resume can fail after GPU residency rebuild but before admission reopens when same-ID recovery preparation cannot be persisted. The service then remains safely closed in `warming`, reports `resume_recovery_failed`, and can retry without losing job identity or overriding operator pause or cancel intent.
+- Search requests during transition receive a retryable service outcome rather than holding model references or GPU admission.
+- GPU residency release/rebuild adds registry lifecycle complexity and requires bounded failure reporting, but does not close stores, stop the daemon, or change pressure policy.
+- Intentional local GPU runs become explicit, lease-protected operations. Uncertain service discovery and automatic local fallback become hard refusals.
+- Borrower coordination carries a lease-lifetime secret only in the borrower process, lease record, and authenticated request body. This adds strict no-logging/no-projection handling, but binds service acknowledgement and resume authority to current OS-level possession rather than a reusable process identifier.

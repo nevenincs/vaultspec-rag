@@ -1,4 +1,4 @@
-"""The test-tier vocabulary and the collection-time gate that enforces it.
+"""The test-tier vocabulary and the startup gates that enforce it.
 
 Every test declares which lane it belongs to. The fast lane is selected by
 EXCLUDING the slow tiers rather than by naming the fast one, so a test that
@@ -8,19 +8,30 @@ just as much: a module-level ``pytestmark`` is ADDED to a test's own decorator
 rather than overridden by it, so a blanket module default drags GPU tests into
 ``-m unit``.
 
-Both rules are enforced at collection time, from the root conftest, so they run
-on every pytest invocation rather than only where someone remembered a gate.
+The tier rules are enforced at collection time, from the root conftest, so they
+run on every pytest invocation rather than only where someone remembered a gate.
 The vocabulary lives here rather than in that conftest so the enforcement can be
 exercised by ordinary in-package tests.
+
+The second gate here refuses to distribute a GPU-bound selection across
+processes at all. It is checked before collection rather than during it, because
+the process that owns the ``-n`` decision is the only one that can refuse
+cleanly: under distribution the plugin collects in its workers and never calls
+the collection or run-loop hooks in the process the operator launched, while a
+worker that raises during its own collection is reported as an internal
+scheduling fault whose text never reaches the operator. So the gate reads the
+resolved distribution options and the marker expression, both of which are
+final before collection starts, and refuses there.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, TypeIs
 
 import pytest
 
 if TYPE_CHECKING:
+    import argparse
     from collections.abc import Iterator, Sequence
 
 __all__ = [
@@ -29,8 +40,11 @@ __all__ = [
     "SLOW_TIERS",
     "SUBPROCESS_GPU",
     "TIER_MARKERS",
+    "distributed_worker_count",
+    "enforce_serial_gpu_lane",
     "enforce_tiers",
-    "group_gpu_items",
+    "selectable_slow_tiers",
+    "selected_tiers",
     "tier_violations",
 ]
 
@@ -55,10 +69,9 @@ class TieredItem(Protocol):
     def iter_markers(self) -> Iterator[MarkLike]: ...
 
 
-class GroupableItem(TieredItem, Protocol):
-    """A collected item that can also be given a scheduling group."""
-
-    def add_marker(self, marker: pytest.MarkDecorator) -> None: ...
+def _is_object_list(value: object) -> TypeIs[list[object]]:
+    """Recognize an option list whose members this gate never inspects."""
+    return isinstance(value, list)
 
 
 #: Tiers whose tests require exclusive GPU access.
@@ -81,6 +94,19 @@ TIER_MARKERS = SLOW_TIERS | {FAST_TIER}
 def _marker_names(item: TieredItem) -> set[str]:
     """Return the marker names carried by *item*."""
     return {mark.name for mark in item.iter_markers()}
+
+
+def selected_tiers(items: Sequence[TieredItem]) -> set[str]:
+    """Return every tier declared across *items*, ignoring other markers.
+
+    Callers that must decide whether a run needs a device, a token, or the
+    machine's GPU ask this rather than re-deriving the marker intersection, so
+    one reading of the vocabulary serves all of them.
+    """
+    tiers: set[str] = set()
+    for item in items:
+        tiers |= _marker_names(item) & TIER_MARKERS
+    return tiers
 
 
 def tier_violations(items: Sequence[TieredItem]) -> tuple[list[str], list[str]]:
@@ -145,9 +171,102 @@ def enforce_tiers(items: Sequence[TieredItem]) -> None:
         raise pytest.UsageError(tier_failure_message(untiered, contradictory))
 
 
-def group_gpu_items(items: Sequence[GroupableItem]) -> None:
-    """Put every GPU-bound test in one xdist group so they never co-schedule."""
-    gpu_group = pytest.mark.xdist_group("gpu")
-    for item in items:
-        if _marker_names(item) & GPU_MARKERS:
-            item.add_marker(gpu_group)
+class _TierMatcher:
+    """Report one tier as present and every other identifier as absent.
+
+    Evaluating a marker expression against this answers the only question the
+    parallel ban asks: could a test carrying this one tier survive deselection?
+    Keyword arguments are accepted and ignored, so a parametrised marker
+    expression is read as naming its tier rather than rejected.
+    """
+
+    def __init__(self, tier: str) -> None:
+        self._tier = tier
+
+    def __call__(self, name: str, /, **_kwargs: str | int | bool | None) -> bool:
+        return name == self._tier
+
+
+def distributed_worker_count(option: argparse.Namespace) -> int:
+    """Return how many separate processes this session will distribute across.
+
+    Reads the resolved options rather than the command line: ``auto`` is already
+    an integer by this point, and a distribution mode on its own spawns nothing,
+    so the configured execution environments are the authority and the requested
+    count only covers reading them before they are expanded. Zero means this
+    process runs its own tests - which is what a distributed session's workers
+    report too, because a worker is told neither the count nor the mode.
+    """
+    requested: object = getattr(option, "numprocesses", None)
+    if isinstance(requested, int) and requested > 0:
+        return requested
+    environments: object = getattr(option, "tx", None)
+    if not _is_object_list(environments):
+        return 0
+    return len(environments)
+
+
+def selectable_slow_tiers(markexpr: str) -> list[str]:
+    """Return the slow tiers a marker expression can still select.
+
+    An empty expression selects the whole suite, so every slow tier remains
+    reachable. Otherwise the expression is compiled once and evaluated against
+    one tier at a time using the same evaluator that performs the deselection,
+    rather than a second reading of the same syntax. A malformed expression
+    excludes nothing that can be proven, so it is reported as selecting
+    everything; pytest rejects it on its own terms moments later.
+    """
+    from _pytest.mark.expression import Expression
+
+    tiers = sorted(SLOW_TIERS)
+    if not markexpr.strip():
+        return tiers
+    try:
+        expression = Expression.compile(markexpr)
+    except SyntaxError:
+        return tiers
+    return [tier for tier in tiers if expression.evaluate(_TierMatcher(tier))]
+
+
+def parallel_gpu_failure_message(
+    tiers: list[str], *, workers: int, markexpr: str
+) -> str:
+    """Compose the operator-facing explanation for a distributed GPU selection."""
+    selection = (
+        f"marker expression '{markexpr}'"
+        if markexpr.strip()
+        else "no marker expression, so the whole suite is selected"
+    )
+    exclusion = " or ".join(sorted(SLOW_TIERS))
+    return (
+        f"refusing to distribute this session across {workers} worker "
+        f"process(es): {selection}, which can still select the GPU-bound "
+        f"tier(s) {', '.join(tiers)}.\n\n"
+        "This machine has one GPU and every worker process loads its own model "
+        "stack onto it, so a distributed GPU selection exhausts device memory "
+        "and takes the host down with it. A scheduling group does not help: it "
+        "serialises execution inside one process while each worker's models "
+        "stay resident.\n\n"
+        "Run the GPU tiers serially, without -n or --dist, or keep the "
+        "distributed lane clear of them by excluding every slow tier: "
+        f'-m "not ({exclusion})".'
+    )
+
+
+def enforce_serial_gpu_lane(option: argparse.Namespace) -> None:
+    """Abort the session when it would distribute GPU tests across processes.
+
+    Raises:
+        pytest.UsageError: When a distributed session's selection can still
+            reach a slow tier.
+    """
+    workers = distributed_worker_count(option)
+    if workers <= 0:
+        return
+    markexpr = getattr(option, "markexpr", "")
+    markexpr = markexpr if isinstance(markexpr, str) else ""
+    tiers = selectable_slow_tiers(markexpr)
+    if tiers:
+        raise pytest.UsageError(
+            parallel_gpu_failure_message(tiers, workers=workers, markexpr=markexpr)
+        )

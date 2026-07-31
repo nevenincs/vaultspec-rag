@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
-from starlette.applications import Starlette
 from starlette.testclient import TestClient
-
-import vaultspec_rag.server as _m
 
 from ... import jobs as _jobs
 from ...job_models import JobSource
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 
 __all__ = [
     "_assert_route_control_conflicts",
@@ -55,16 +53,19 @@ def _routes_app(
     job_id = _jobs.record_start(JobSource.VAULT, "tool")
     _jobs.record_finish(job_id, result="+1 /0 -0 (5ms)")
 
-    prev_token = _m._SERVICE_TOKEN
-    _m._SERVICE_TOKEN = "test-token-jobs"
-
-    app_under_test = Starlette(routes=ROUTES)
+    app_under_test = create_http_app(
+        ServerRouteRuntime(
+            token="test-token-jobs",
+            registry=ServiceRegistry(),
+            port=8765,
+        ),
+        lifespan=None,
+    )
     client = TestClient(app_under_test)
     try:
         yield client, "test-token-jobs"
     finally:
         _jobs.reset()
-        _m._SERVICE_TOKEN = prev_token
         if prior_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:
@@ -95,7 +96,7 @@ def _create_route_job(
         payload["initiator"] = {"kind": "cli", "command": "test_create"}
     return cast(
         "httpx.Response",
-        client.post(  # pyright: ignore[reportUnknownMemberType]
+        client.post(
             "/jobs",
             headers=request_headers,
             json=payload,
@@ -117,8 +118,8 @@ def _assert_route_creation_contract(
         include_initiator=True,
     )
     assert created.status_code == 202, created.text
-    created_payload: dict[str, Any] = created.json()
-    job = cast("dict[str, Any]", created_payload["job"])
+    created_payload: dict[str, object] = created.json()
+    job = cast("dict[str, object]", created_payload["job"])
     job_id = str(job["id"])
     assert created.headers["location"] == f"/jobs/{job_id}"
     assert job["state"] == "paused"
@@ -164,19 +165,19 @@ def _assert_route_exact_id_contract(
     """Assert detail and every mutating route require the exact ID."""
     detail = cast(
         "httpx.Response",
-        client.get(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.get(f"/jobs/{job_id}", headers=headers),
     )
     assert detail.status_code == 200
     assert detail.json()["job"]["state"] == "paused"
     prefix = job_id[:8]
     prefix_detail = cast(
         "httpx.Response",
-        client.get(f"/jobs/{prefix}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.get(f"/jobs/{prefix}", headers=headers),
     )
     assert prefix_detail.status_code == 404
     prefix_desired = cast(
         "httpx.Response",
-        client.put(  # pyright: ignore[reportUnknownMemberType]
+        client.put(
             f"/jobs/{prefix}/desired-state",
             headers=headers,
             json={"state": "paused"},
@@ -185,12 +186,12 @@ def _assert_route_exact_id_contract(
     assert prefix_desired.status_code == 404
     prefix_retry = cast(
         "httpx.Response",
-        client.post(f"/jobs/{prefix}/retry", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.post(f"/jobs/{prefix}/retry", headers=headers),
     )
     assert prefix_retry.status_code == 404
     prefix_delete = cast(
         "httpx.Response",
-        client.delete(f"/jobs/{prefix}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.delete(f"/jobs/{prefix}", headers=headers),
     )
     assert prefix_delete.status_code == 404
 
@@ -203,7 +204,7 @@ def _assert_route_paused_filter(
     """Assert the canonical job appears in the controllable paused filter."""
     filtered = cast(
         "httpx.Response",
-        client.get(  # pyright: ignore[reportUnknownMemberType]
+        client.get(
             "/jobs",
             headers=headers,
             params={
@@ -225,7 +226,7 @@ def _assert_route_control_conflicts(
     """Assert force, stale revision, and active deletion conflicts."""
     stale_force = cast(
         "httpx.Response",
-        client.put(  # pyright: ignore[reportUnknownMemberType]
+        client.put(
             f"/jobs/{job_id}/desired-state",
             headers=headers,
             json={"state": "running", "mode": "force"},
@@ -235,7 +236,7 @@ def _assert_route_control_conflicts(
     assert stale_force.json()["code"] == "force_termination_unavailable"
     stale_revision = cast(
         "httpx.Response",
-        client.put(  # pyright: ignore[reportUnknownMemberType]
+        client.put(
             f"/jobs/{job_id}/desired-state",
             headers=headers,
             json={"state": "cancelled", "expected_revision": 999},
@@ -245,7 +246,7 @@ def _assert_route_control_conflicts(
     assert stale_revision.json()["code"] == "revision_conflict"
     active_delete = cast(
         "httpx.Response",
-        client.delete(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.delete(f"/jobs/{job_id}", headers=headers),
     )
     assert active_delete.status_code == 409
     assert active_delete.json()["code"] == "job_not_terminal"
@@ -260,7 +261,7 @@ def _cancel_route_job(
     """Cancel a route job and assert stale replay is idempotent."""
     cancelled = cast(
         "httpx.Response",
-        client.put(  # pyright: ignore[reportUnknownMemberType]
+        client.put(
             f"/jobs/{job_id}/desired-state",
             headers=headers,
             json={"state": "cancelled", "expected_revision": revision},
@@ -271,7 +272,7 @@ def _cancel_route_job(
     assert cancelled_job["state"] == "cancelled"
     replayed_cancel = cast(
         "httpx.Response",
-        client.put(  # pyright: ignore[reportUnknownMemberType]
+        client.put(
             f"/jobs/{job_id}/desired-state",
             headers=headers,
             json={"state": "cancelled", "expected_revision": revision},
@@ -295,19 +296,19 @@ def _retry_delete_route_job(
     get_job_manager().begin_shutdown()
     retried = cast(
         "httpx.Response",
-        client.post(f"/jobs/{job_id}/retry", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.post(f"/jobs/{job_id}/retry", headers=headers),
     )
     assert retried.status_code == 202
     assert retried.json()["job"]["parent_job_id"] == job_id
     assert retried.headers["location"].startswith("/jobs/")
     deleted = cast(
         "httpx.Response",
-        client.delete(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.delete(f"/jobs/{job_id}", headers=headers),
     )
     assert deleted.status_code == 200
     assert deleted.json()["code"] == "job_deleted"
     missing = cast(
         "httpx.Response",
-        client.get(f"/jobs/{job_id}", headers=headers),  # pyright: ignore[reportUnknownMemberType]
+        client.get(f"/jobs/{job_id}", headers=headers),
     )
     assert missing.status_code == 404

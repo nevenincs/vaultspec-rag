@@ -368,15 +368,19 @@ audit target='all':
 # have to be taught about it. No -x here: a repo-health recipe must report every
 # failure, not stop at the first one.
 #
-# "gpu" is the real-GPU CORRECTNESS tier, run on a CUDA host, as two
-# invocations: the serialized integration/quality/robustness/cuda tests share
-# the in-process gpu_lock, but subprocess_gpu tests spawn their own
-# model-loading process whose VRAM is outside that lock and must not
-# co-schedule with the first group on a 16 GB card. "perf" is a separate
-# quiet-machine-ONLY lane: the performance tests' wall-clock latency/footprint
-# assertions ARE the system under test, so a loaded machine fails them for
-# reasons unrelated to a regression - they are excluded from "gpu" and run
-# only on explicit `just test perf`, never as a correctness gate.
+# "gpu" is the real-GPU CORRECTNESS tier, run serially on a CUDA host through
+# one pytest invocation so the root-conftest coordinator owns the complete
+# acknowledged borrower lease. "perf" is a separate quiet-machine-ONLY lane:
+# its wall-clock latency/footprint assertions ARE the system under test, so a
+# loaded machine fails them for reasons unrelated to a regression. It is
+# excluded from "gpu" and runs only on explicit `just test perf`, never as a
+# correctness gate.
+#
+# GPU tiers require a self-hosted runner image with the pinned,
+# manifest-verified Qdrant binary used only by test-owned isolated children.
+# The coordinator verifies that prerequisite read-only and refuses a
+# missing binary; these recipes never provision Qdrant, preflight a GPU, or
+# start a service.
 #
 # Only "python" runs parallel. `-n auto` resolves to PHYSICAL cores when psutil
 # is importable, which it always is here (it is a runtime dependency), and
@@ -399,12 +403,13 @@ test target='all':
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
-      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "(integration or quality or robustness or cuda) and not subprocess_gpu" ; \
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } \
-      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "subprocess_gpu" ; \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "(integration or quality or robustness or subprocess_gpu or cuda) and not performance" ; \
       break \
     } \
-    "perf" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "performance" ; break } \
+    "perf" { \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "performance" ; \
+      break \
+    } \
     "all" { just test python ; break } \
     default { \
       Write-Host "unknown test target: {{target}}" -ForegroundColor Red ; \

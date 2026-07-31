@@ -17,14 +17,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from .._index_breadth import PUBLISHED_POINTS_KEY, parse_reserved_count
 from .._store_models import generation_code_collection, publish_generation_as_served
 from ._content_policy import ContentKind
 from ._drift_owner import CodeDriftOwner
 from ._route_migration import reconcile_generation_storage
-from ._run_checkpoint import CodeRunCheckpoint
+from ._run_checkpoint import CodeRunCheckpoint, CodeRunOpenRequest
 from ._run_ledger_models import (
     CommitUnitKind,
     FinalizationPhase,
@@ -58,6 +58,13 @@ class CodeGenerationBindings:
 
 @dataclass(frozen=True, slots=True)
 class CodeGenerationOpenRequest:
+    """All compatibility inputs for opening one code generation.
+
+    One grouped shape rather than a spread of keywords, so a field added
+    here is declared once and every call site is re-checked against its
+    real type.
+    """
+
     policy: ResolvedIndexPolicy
     operation: RunOperation
     clean: bool
@@ -137,17 +144,11 @@ class CodeGenerationLifecycle:
         self._drift_owner = None
 
     def open_checkpoint(
-        self,
-        request: CodeGenerationOpenRequest | None = None,
-        **legacy: object,
+        self, request: CodeGenerationOpenRequest, /
     ) -> CodeRunCheckpoint:
         """Open one compatible storage-confirmed code generation."""
         from ..config._settings import get_config
 
-        if request is None:
-            request = CodeGenerationOpenRequest(**cast("dict[str, Any]", legacy))
-        elif legacy:
-            raise TypeError("use either CodeGenerationOpenRequest or named inputs")
         config = get_config()
         model_identity = json.dumps(
             {
@@ -162,15 +163,17 @@ class CodeGenerationLifecycle:
 
         def _open(spec: CodeGenerationOpenRequest) -> CodeRunCheckpoint:
             return CodeRunCheckpoint.open(
-                data_root=self._data_root,
-                root_dir=self._root_dir,
-                policy=spec.policy,
-                run_policy=RunPolicy.from_config(run_control=spec.run_control),
-                operation=spec.operation,
-                clean=spec.clean,
-                model_identity=model_identity,
-                dense_dimensions=spec.dense_dimensions,
-                configuration=spec.configuration,
+                CodeRunOpenRequest(
+                    data_root=self._data_root,
+                    root_dir=self._root_dir,
+                    policy=spec.policy,
+                    run_policy=RunPolicy.from_config(run_control=spec.run_control),
+                    operation=spec.operation,
+                    clean=spec.clean,
+                    model_identity=model_identity,
+                    dense_dimensions=spec.dense_dimensions,
+                    configuration=spec.configuration,
+                )
             )
 
         checkpoint = _open(request)

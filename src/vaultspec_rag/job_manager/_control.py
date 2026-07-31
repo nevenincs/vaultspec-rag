@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from anyio.to_thread import run_sync as _run_in_thread
 
@@ -29,15 +29,26 @@ from ..job_models import (
     capabilities_for_state as _capabilities_for_state,
 )
 from ..logging_config import log_event
+from ..service_quiesce import QuiesceState
+from ._persistence import SnapshotTransition
+from .models import (
+    QuiescedDispatchClaim,
+    QuiescedResumePersistence,
+    QuiescedResumeResult,
+    QuiescedResumeStatus,
+)
 from .state import (
+    UNOWNED_RUNTIME,
+    JobDispatchBinding,
     JobManagerState,
-    JobRuntimeOwner,
     ManagedJob,
     ManagerStateBackup,
+    assign_runtime_owner,
 )
 
 if TYPE_CHECKING:
     from .. import job_persistence as _job_persistence
+    from .state import AttemptExit
 
 logger = logging.getLogger("vaultspec_rag.jobs")
 
@@ -46,6 +57,7 @@ logger = logging.getLogger("vaultspec_rag.jobs")
 #: is an answerable request and logs at WARNING.
 _INTERNAL_REJECTION_CODES = frozenset(
     {
+        "dispatch_loop_unresponsive",
         "dispatch_not_bound",
         "event_loop_required",
         "invalid_progress",
@@ -97,7 +109,7 @@ def _log_rejection(
 
 
 @dataclass(frozen=True, slots=True)
-class _RequestAttribution:
+class RequestAttribution:
     """Who asked for a rejected command, and which resource they named.
 
     Rejection logging needs both even when the target job does not exist or
@@ -112,7 +124,7 @@ class _RequestAttribution:
 @dataclass(frozen=True, slots=True)
 class AttemptTerminal:
     attempt: int
-    task: asyncio.Task[Any]
+    task: asyncio.Task[AttemptExit]
     state: JobState
     result: str | None = None
     error_kind: str | None = None
@@ -120,6 +132,277 @@ class AttemptTerminal:
 
 
 class JobManagerControl(JobManagerState):
+    def defer_unstarted_for_quiesce(self, job_id: str) -> JobOutcome:
+        """Retain queued logical work when quiesce closes its start boundary."""
+        command = "defer_unstarted_for_quiesce"
+        with self._lock:
+            backup = self._capture_state_locked()
+            managed = self._active.get(job_id)
+            if managed is None:
+                return self._error(
+                    command,
+                    "job_not_found",
+                    "The job was not found.",
+                )
+            if (
+                managed.snapshot.state is not JobState.QUEUED
+                or managed.snapshot.desired_state is not DesiredJobState.RUNNING
+                or managed.runtime.task is not None
+            ):
+                return self._error(
+                    command,
+                    "invalid_transition",
+                    "Only queued running work without a runtime can defer for quiesce.",
+                    managed,
+                )
+            now = time.time()
+            self._replace_snapshot_locked(
+                managed,
+                SnapshotTransition(
+                    state=JobState.PAUSED,
+                    desired_state=DesiredJobState.RUNNING,
+                    now=now,
+                    control_requested_at=now,
+                    control_acknowledged_at=now,
+                ),
+            )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return self._persistence_error(
+                    command,
+                    persistence_error,
+                    self._get_locked(job_id),
+                )
+            return JobOutcome(
+                command=command,
+                status=JobOutcomeStatus.OK,
+                code="quiesce_deferred_before_start",
+                message="The job was retained for service quiesce resume.",
+                job=self._snapshot_locked(managed),
+            )
+
+    def request_quiesce_attempts(self) -> tuple[str, ...]:
+        """Ask active attempts to unwind for a service-managed quiesce.
+
+        This adapts live attempts only. The service controller owns lifecycle
+        transitions and admission; the manager does not advance either.
+        """
+        with self._lock:
+            backup = self._capture_state_locked()
+            requested: list[str] = []
+            for job_id, managed in self._active.items():
+                if (
+                    managed.snapshot.state is not JobState.RUNNING
+                    or managed.runtime.task is None
+                    or managed.runtime.control is None
+                ):
+                    continue
+                now = time.time()
+                self._replace_snapshot_locked(
+                    managed,
+                    SnapshotTransition(
+                        state=JobState.PAUSING,
+                        desired_state=DesiredJobState.RUNNING,
+                        now=now,
+                        control_requested_at=now,
+                    ),
+                )
+                requested.append(job_id)
+            if not requested:
+                return ()
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return ()
+            for job_id in requested:
+                managed = self._active.get(job_id)
+                if managed is not None and managed.runtime.control is not None:
+                    managed.runtime.control.request_quiesce()
+            return tuple(requested)
+
+    def prepare_quiesced_resume(self) -> QuiescedResumeResult:
+        """Durably prepare same-ID recovery while warming keeps admission closed."""
+        if self._quiesce_controller.snapshot().state is not QuiesceState.WARMING:
+            raise RuntimeError("Quiesced recovery preparation requires warming state.")
+        with self._lock:
+            backup = self._capture_state_locked()
+            prepared: list[str] = []
+            now = time.time()
+            for job_id, managed in self._active.items():
+                snapshot = managed.snapshot
+                if (
+                    not snapshot.state.is_idle
+                    or snapshot.desired_state is not DesiredJobState.RUNNING
+                    or managed.runtime.task is not None
+                ):
+                    continue
+                if snapshot.state is JobState.PAUSED:
+                    self._queue_resumed_attempt_locked(managed, now=now)
+                prepared.append(job_id)
+            if not prepared:
+                return QuiescedResumeResult(
+                    status=QuiescedResumeStatus.NO_WORK,
+                    persistence=QuiescedResumePersistence.NOT_REQUIRED,
+                    job_ids=(),
+                )
+            persistence_error = self._persist_locked()
+            if persistence_error is not None:
+                if not persistence_error.published:
+                    self._restore_state_locked(backup)
+                return QuiescedResumeResult(
+                    status=(
+                        QuiescedResumeStatus.PERSISTENCE_PUBLISHED_NOT_DURABLE
+                        if persistence_error.published
+                        else QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED
+                    ),
+                    persistence=(
+                        QuiescedResumePersistence.PUBLISHED_NOT_DURABLE
+                        if persistence_error.published
+                        else QuiescedResumePersistence.UNPUBLISHED
+                    ),
+                    job_ids=tuple(prepared),
+                )
+            return QuiescedResumeResult(
+                status=QuiescedResumeStatus.PREPARED,
+                persistence=QuiescedResumePersistence.DURABLE,
+                job_ids=tuple(prepared),
+            )
+
+    def dispatch_prepared_quiesced_resume(
+        self,
+        prepared: QuiescedResumeResult,
+    ) -> tuple[str, ...]:
+        """Schedule durable recovery only after the controller opens admission."""
+        if (
+            prepared.status is not QuiescedResumeStatus.PREPARED
+            or self._quiesce_controller.snapshot().state is not QuiesceState.RUNNING
+        ):
+            return ()
+        return self._schedule_recoverable_quiesced_jobs(prepared.job_ids)
+
+    def recover_running_quiesced_resume(self) -> tuple[str, ...]:
+        """Schedule retained durable queued work during an already-running resume."""
+        if self._quiesce_controller.snapshot().state is not QuiesceState.RUNNING:
+            return ()
+        with self._lock:
+            queued_ids = tuple(self._active)
+        return self._schedule_recoverable_quiesced_jobs(queued_ids)
+
+    def _schedule_recoverable_quiesced_jobs(
+        self,
+        candidate_ids: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """Claim each exact durable recovery before its loop dispatches it."""
+        with self._lock:
+            claims = tuple(
+                claim
+                for job_id in candidate_ids
+                if (claim := self._claim_recoverable_quiesced_job_locked(job_id))
+                is not None
+            )
+        scheduled: list[str] = []
+        for claim in claims:
+            dispatched = self.dispatch(claim.job_id, _quiesced_claim=claim)
+            if dispatched.code == "attempt_started":
+                scheduled.append(claim.job_id)
+        return tuple(scheduled)
+
+    def _claim_recoverable_quiesced_job_locked(
+        self,
+        job_id: str,
+    ) -> QuiescedDispatchClaim | None:
+        managed = self._active.get(job_id)
+        binding = self._dispatchers.get(job_id)
+        if (
+            managed is None
+            or binding is None
+            or not self._accepting_dispatch
+            or managed.snapshot.state is not JobState.QUEUED
+            or managed.snapshot.desired_state is not DesiredJobState.RUNNING
+            or managed.runtime.task is not None
+        ):
+            return None
+        existing = self._pending_quiesced_dispatches.get(job_id)
+        if existing is not None:
+            if self._claim_matches_recoverable_job_locked(existing, managed, binding):
+                return None
+            self._pending_quiesced_dispatches.pop(job_id, None)
+        self._next_quiesced_dispatch_generation += 1
+        claim = QuiescedDispatchClaim(
+            job_id=job_id,
+            attempt=managed.snapshot.attempt.number,
+            binding_nonce=binding.nonce,
+            generation_nonce=self._next_quiesced_dispatch_generation,
+        )
+        self._pending_quiesced_dispatches[job_id] = claim
+        return claim
+
+    @staticmethod
+    def _claim_matches_recoverable_job_locked(
+        claim: QuiescedDispatchClaim,
+        managed: ManagedJob,
+        binding: JobDispatchBinding,
+    ) -> bool:
+        return (
+            managed.snapshot.id == claim.job_id
+            and managed.snapshot.attempt.number == claim.attempt
+            and managed.snapshot.state is JobState.QUEUED
+            and managed.snapshot.desired_state is DesiredJobState.RUNNING
+            and managed.runtime.task is None
+            and binding.nonce == claim.binding_nonce
+        )
+
+    def _claim_quiesced_dispatch_binding_locked(
+        self,
+        claim: QuiescedDispatchClaim,
+    ) -> JobDispatchBinding | None:
+        """Return a still-current claim binding or clear that exact stale claim."""
+        if self._pending_quiesced_dispatches.get(claim.job_id) != claim:
+            return None
+        managed = self._active.get(claim.job_id)
+        binding = self._dispatchers.get(claim.job_id)
+        if (
+            managed is None
+            or binding is None
+            or not self._claim_matches_recoverable_job_locked(claim, managed, binding)
+        ):
+            self._pending_quiesced_dispatches.pop(claim.job_id, None)
+            return None
+        return binding
+
+    def _consume_quiesced_dispatch_claim_locked(
+        self,
+        claim: QuiescedDispatchClaim,
+        managed: ManagedJob,
+        binding: JobDispatchBinding,
+    ) -> bool:
+        """Consume only the exact pending claim validated by canonical dispatch."""
+        if self._pending_quiesced_dispatches.get(claim.job_id) != claim:
+            return False
+        if not self._claim_matches_recoverable_job_locked(claim, managed, binding):
+            self._pending_quiesced_dispatches.pop(claim.job_id, None)
+            return False
+        self._pending_quiesced_dispatches.pop(claim.job_id, None)
+        return True
+
+    def _clear_quiesced_dispatch_claim_locked(
+        self,
+        claim: QuiescedDispatchClaim | None,
+    ) -> None:
+        """Clear an exact stale or refused claim without disturbing a newer one."""
+        if (
+            claim is not None
+            and self._pending_quiesced_dispatches.get(claim.job_id) == claim
+        ):
+            self._pending_quiesced_dispatches.pop(claim.job_id, None)
+
+    def _supersede_quiesced_dispatch_claim_locked(self, job_id: str) -> None:
+        """Discard recovery scheduling once another canonical dispatch owns it."""
+        self._pending_quiesced_dispatches.pop(job_id, None)
+
     def _resolve_control_target_locked(
         self,
         command: str,
@@ -139,7 +422,7 @@ class JobManagerControl(JobManagerState):
                 "force_termination_unavailable",
                 "Per-job force termination is unavailable for this runtime.",
                 target,
-                attribution=_RequestAttribution(job_id=job_id),
+                attribution=RequestAttribution(job_id=job_id),
             )
         if mode != "graceful":
             return None, self._error(
@@ -147,7 +430,7 @@ class JobManagerControl(JobManagerState):
                 "invalid_control_mode",
                 f"Unsupported control mode {mode!r}.",
                 target,
-                attribution=_RequestAttribution(job_id=job_id),
+                attribution=RequestAttribution(job_id=job_id),
             )
         if managed is None:
             return None, self._terminal_control_target_outcome(
@@ -187,7 +470,7 @@ class JobManagerControl(JobManagerState):
                 command,
                 "job_not_found",
                 "The job was not found.",
-                attribution=_RequestAttribution(job_id=job_id),
+                attribution=RequestAttribution(job_id=job_id),
             )
         if (
             terminal.snapshot.state is JobState.CANCELLED
@@ -266,6 +549,7 @@ class JobManagerControl(JobManagerState):
             if not persistence_error.published:
                 self._restore_state_locked(backup)
             else:
+                self._supersede_quiesced_dispatch_claim_locked(job_id)
                 resume_withdrawn = self._apply_control_signal_locked(
                     managed,
                     outcome.code,
@@ -386,6 +670,7 @@ class JobManagerControl(JobManagerState):
             )
             if outcome.status is JobOutcomeStatus.ERROR:
                 return outcome
+            self._supersede_quiesced_dispatch_claim_locked(job_id)
             dispatch_after_transition = (
                 managed.snapshot.state is JobState.QUEUED
                 and managed.snapshot.desired_state is DesiredJobState.RUNNING
@@ -395,31 +680,69 @@ class JobManagerControl(JobManagerState):
             self._schedule_dispatch(job_id)
         return outcome
 
-    def _schedule_dispatch(self, job_id: str) -> None:
-        """Dispatch now or hand execution back to the job's owning event loop."""
+    def _schedule_dispatch(
+        self,
+        job_id: str,
+        *,
+        quiesced_claim: QuiescedDispatchClaim | None = None,
+    ) -> bool:
+        """Dispatch now or hand one exact claim back to its owning event loop."""
         try:
             current_loop = asyncio.get_running_loop()
         except RuntimeError:
             current_loop = None
         with self._lock:
-            binding = self._dispatchers.get(job_id)
-            owner_loop = binding.loop if binding is not None else None
-        if owner_loop is None or owner_loop is current_loop:
-            if current_loop is not None:
-                self._dispatch_and_log(job_id)
-                return
-        elif owner_loop.is_running():
-            owner_loop.call_soon_threadsafe(self._dispatch_and_log, job_id)
-            return
-        if current_loop is None:
-            logger.error(
-                "could not schedule resumed job %s: no live event loop", job_id
+            binding = (
+                self._claim_quiesced_dispatch_binding_locked(quiesced_claim)
+                if quiesced_claim is not None
+                else self._dispatchers.get(job_id)
             )
-            return
-        logger.error("could not schedule resumed job %s: owner loop stopped", job_id)
+            if binding is None:
+                return False
+            owner_loop = binding.loop
+        if (
+            owner_loop is None
+            or owner_loop is current_loop
+            or not owner_loop.is_running()
+        ):
+            if current_loop is not None:
+                self._dispatch_and_log(job_id, quiesced_claim=quiesced_claim)
+                return True
+            with self._lock:
+                self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
+            if owner_loop is not None:
+                logger.error(
+                    "could not schedule resumed job %s: owner loop stopped", job_id
+                )
+            else:
+                logger.error(
+                    "could not schedule resumed job %s: no live event loop", job_id
+                )
+            return False
+        try:
+            owner_loop.call_soon_threadsafe(
+                partial(
+                    self._dispatch_and_log,
+                    job_id,
+                    quiesced_claim=quiesced_claim,
+                )
+            )
+        except RuntimeError:
+            with self._lock:
+                self._clear_quiesced_dispatch_claim_locked(quiesced_claim)
+            logger.error(
+                "could not schedule resumed job %s: owner loop stopped", job_id
+            )
+            return False
+        return True
 
-    def _dispatch_and_log(self, job_id: str) -> None:
-        dispatched = self.dispatch(job_id)
+    def _dispatch_and_log(
+        self,
+        job_id: str,
+        *,
+        quiesced_claim: QuiescedDispatchClaim | None = None,
+    ) -> None:
+        dispatched = self.dispatch(job_id, _quiesced_claim=quiesced_claim)
         if dispatched.status is JobOutcomeStatus.ERROR:
             logger.error(
                 "could not dispatch resumed job %s: %s",
@@ -432,7 +755,7 @@ class JobManagerControl(JobManagerState):
         job_id: str,
         *,
         attempt: int,
-        task: asyncio.Task[Any],
+        task: asyncio.Task[AttemptExit],
     ) -> JobOutcome:
         """Acknowledge safe attempt unwind without accepting stale callbacks."""
         command = "acknowledge_control"
@@ -475,22 +798,27 @@ class JobManagerControl(JobManagerState):
                 )
 
             now = time.time()
-            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            assign_runtime_owner(managed, UNOWNED_RUNTIME)
             if (
                 state is JobState.PAUSING
                 and managed.snapshot.desired_state is DesiredJobState.RUNNING
             ):
-                return self._complete_resumed_control_locked(
-                    command,
-                    managed,
-                    now,
+                if (
+                    self._quiesce_controller.snapshot().state
+                    is not QuiesceState.RUNNING
+                ):
+                    outcome = self._complete_quiesced_control_locked(
+                        command, managed, now
+                    )
+                else:
+                    outcome = self._complete_resumed_control_locked(
+                        command, managed, now
+                    )
+            else:
+                outcome = self._complete_control_acknowledgement_locked(
+                    command, managed, state, now
                 )
-            return self._complete_control_acknowledgement_locked(
-                command,
-                managed,
-                state,
-                now,
-            )
+            return outcome
 
     def _missing_acknowledgement_target_locked(
         self,
@@ -503,7 +831,7 @@ class JobManagerControl(JobManagerState):
                 command,
                 "job_not_found",
                 "The job was not found.",
-                attribution=_RequestAttribution(job_id=job_id),
+                attribution=RequestAttribution(job_id=job_id),
             )
         return JobOutcome(
             command=command,
@@ -535,6 +863,36 @@ class JobManagerControl(JobManagerState):
             job=self._snapshot_locked(managed),
         )
 
+    def _complete_quiesced_control_locked(
+        self,
+        command: str,
+        managed: ManagedJob,
+        now: float,
+    ) -> JobOutcome:
+        self._replace_snapshot_locked(
+            managed,
+            SnapshotTransition(
+                state=JobState.PAUSED,
+                desired_state=DesiredJobState.RUNNING,
+                now=now,
+                control_acknowledged_at=now,
+            ),
+        )
+        persistence_error = self._persist_locked()
+        if persistence_error is not None:
+            return self._persistence_error(
+                command,
+                persistence_error,
+                self._snapshot_locked(managed),
+            )
+        return JobOutcome(
+            command=command,
+            status=JobOutcomeStatus.OK,
+            code="quiesce_acknowledged",
+            message="The job released resources for service quiesce.",
+            job=self._snapshot_locked(managed),
+        )
+
     def _complete_control_acknowledgement_locked(
         self,
         command: str,
@@ -547,15 +905,17 @@ class JobManagerControl(JobManagerState):
         )
         self._replace_snapshot_locked(
             managed,
-            state=acknowledged_state,
-            desired_state=(
-                DesiredJobState.PAUSED
-                if acknowledged_state is JobState.PAUSED
-                else DesiredJobState.CANCELLED
+            SnapshotTransition(
+                state=acknowledged_state,
+                desired_state=(
+                    DesiredJobState.PAUSED
+                    if acknowledged_state is JobState.PAUSED
+                    else DesiredJobState.CANCELLED
+                ),
+                now=now,
+                control_acknowledged_at=now,
+                finished_at=now if acknowledged_state.is_terminal else None,
             ),
-            now=now,
-            control_acknowledged_at=now,
-            finished_at=now if acknowledged_state.is_terminal else None,
         )
         if acknowledged_state.is_terminal:
             self._archive_terminal_locked(managed)
@@ -599,7 +959,7 @@ class JobManagerControl(JobManagerState):
                     command,
                     "job_not_found",
                     "The job was not found.",
-                    attribution=_RequestAttribution(job_id=job_id),
+                    attribution=RequestAttribution(job_id=job_id),
                 )
             if (
                 managed.snapshot.attempt.number != terminal.attempt
@@ -614,20 +974,22 @@ class JobManagerControl(JobManagerState):
                 )
 
             now = time.time()
-            managed.runtime = JobRuntimeOwner(task=None, control=None)
+            assign_runtime_owner(managed, UNOWNED_RUNTIME)
             self._replace_snapshot_locked(
                 managed,
-                state=terminal.state,
-                desired_state=(
-                    DesiredJobState.CANCELLED
-                    if terminal.state is JobState.CANCELLED
-                    else managed.snapshot.desired_state
+                SnapshotTransition(
+                    state=terminal.state,
+                    desired_state=(
+                        DesiredJobState.CANCELLED
+                        if terminal.state is JobState.CANCELLED
+                        else managed.snapshot.desired_state
+                    ),
+                    now=now,
+                    finished_at=now,
+                    result=terminal.result,
+                    error_kind=terminal.error_kind,
+                    reuse=terminal.reuse,
                 ),
-                now=now,
-                finished_at=now,
-                result=terminal.result,
-                error_kind=terminal.error_kind,
-                reuse=terminal.reuse,
             )
             self._archive_terminal_locked(managed)
             if terminal.state is JobState.SUCCEEDED:
@@ -670,7 +1032,7 @@ class JobManagerControl(JobManagerState):
                     command,
                     "job_not_found",
                     "The job was not found.",
-                    attribution=_RequestAttribution(job_id=job_id),
+                    attribution=RequestAttribution(job_id=job_id),
                 )
             if (
                 managed.snapshot.state is not JobState.QUEUED
@@ -686,12 +1048,14 @@ class JobManagerControl(JobManagerState):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.FAILED,
-                desired_state=managed.snapshot.desired_state,
-                now=now,
-                finished_at=now,
-                result=result,
-                error_kind=classify_error_text(result),
+                SnapshotTransition(
+                    state=JobState.FAILED,
+                    desired_state=managed.snapshot.desired_state,
+                    now=now,
+                    finished_at=now,
+                    result=result,
+                    error_kind=classify_error_text(result),
+                ),
             )
             self._archive_terminal_locked(managed)
             persistence_error = self._persist_locked()
@@ -740,7 +1104,7 @@ class JobManagerControl(JobManagerState):
                         "job creation."
                     ),
                     parent,
-                    attribution=_RequestAttribution(initiator=initiator),
+                    attribution=RequestAttribution(initiator=initiator),
                 )
             if len(self._active) >= self._max_nonterminal:
                 return self._error(
@@ -751,7 +1115,7 @@ class JobManagerControl(JobManagerState):
                         f"capacity ({self._max_nonterminal})."
                     ),
                     parent,
-                    attribution=_RequestAttribution(initiator=initiator),
+                    attribution=RequestAttribution(initiator=initiator),
                 )
             equivalent = self._find_equivalent_active_locked(parent.snapshot.spec)
             if equivalent is not None:
@@ -795,7 +1159,7 @@ class JobManagerControl(JobManagerState):
             )
             managed = ManagedJob(
                 snapshot=retried,
-                runtime=JobRuntimeOwner(task=None, control=None),
+                runtime=UNOWNED_RUNTIME,
             )
             self._active[new_id] = managed
             persistence_error = self._persist_locked()
@@ -832,14 +1196,14 @@ class JobManagerControl(JobManagerState):
                 command,
                 "job_not_found",
                 "The job was not found.",
-                attribution=_RequestAttribution(job_id=job_id, initiator=initiator),
+                attribution=RequestAttribution(job_id=job_id, initiator=initiator),
             )
         return self._error(
             command,
             "job_not_terminal",
             "Only terminal jobs can be retried.",
             active,
-            attribution=_RequestAttribution(initiator=initiator),
+            attribution=RequestAttribution(initiator=initiator),
         )
 
     def _resolve_retry_ancestry_locked(
@@ -872,10 +1236,12 @@ class JobManagerControl(JobManagerState):
             stamp = finished_at if finished_at is not None else time.time()
             self._replace_snapshot_locked(
                 parent,
-                state=JobState.SUPERSEDED,
-                desired_state=parent.snapshot.desired_state,
-                now=stamp,
-                finished_at=stamp,
+                SnapshotTransition(
+                    state=JobState.SUPERSEDED,
+                    desired_state=parent.snapshot.desired_state,
+                    now=stamp,
+                    finished_at=stamp,
+                ),
             )
             log_event(
                 logger,
@@ -905,7 +1271,7 @@ class JobManagerControl(JobManagerState):
                     command,
                     "job_not_found",
                     "The job was not found.",
-                    attribution=_RequestAttribution(job_id=job_id),
+                    attribution=RequestAttribution(job_id=job_id),
                 )
             self._terminal.remove(terminal)
             self._forget_idempotency_locked(job_id)
@@ -936,11 +1302,13 @@ class JobManagerControl(JobManagerState):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.PAUSED,
-                desired_state=DesiredJobState.PAUSED,
-                now=now,
-                control_requested_at=now,
-                control_acknowledged_at=now,
+                SnapshotTransition(
+                    state=JobState.PAUSED,
+                    desired_state=DesiredJobState.PAUSED,
+                    now=now,
+                    control_requested_at=now,
+                    control_acknowledged_at=now,
+                ),
             )
             code = "job_paused"
             status = JobOutcomeStatus.OK
@@ -948,10 +1316,12 @@ class JobManagerControl(JobManagerState):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.PAUSING,
-                desired_state=DesiredJobState.PAUSED,
-                now=now,
-                control_requested_at=now,
+                SnapshotTransition(
+                    state=JobState.PAUSING,
+                    desired_state=DesiredJobState.PAUSED,
+                    now=now,
+                    control_requested_at=now,
+                ),
             )
             code = "pause_requested"
             status = JobOutcomeStatus.ACCEPTED
@@ -991,11 +1361,13 @@ class JobManagerControl(JobManagerState):
                 # and the finished attempt queues reconciliation.
                 self._replace_snapshot_locked(
                     managed,
-                    state=JobState.RUNNING,
-                    desired_state=DesiredJobState.RUNNING,
-                    now=now,
-                    control_requested_at=None,
-                    control_acknowledged_at=None,
+                    SnapshotTransition(
+                        state=JobState.RUNNING,
+                        desired_state=DesiredJobState.RUNNING,
+                        now=now,
+                        control_requested_at=None,
+                        control_acknowledged_at=None,
+                    ),
                 )
                 code = "pause_withdrawal_pending"
             else:
@@ -1005,9 +1377,11 @@ class JobManagerControl(JobManagerState):
                 # transient paused state.
                 self._replace_snapshot_locked(
                     managed,
-                    state=JobState.PAUSING,
-                    desired_state=DesiredJobState.RUNNING,
-                    now=now,
+                    SnapshotTransition(
+                        state=JobState.PAUSING,
+                        desired_state=DesiredJobState.RUNNING,
+                        now=now,
+                    ),
                 )
         else:
             return self._error(
@@ -1030,9 +1404,11 @@ class JobManagerControl(JobManagerState):
     ) -> _job_persistence.PersistenceWriteError | None:
         self._replace_snapshot_locked(
             managed,
-            state=JobState.PAUSING,
-            desired_state=DesiredJobState.RUNNING,
-            now=time.time(),
+            SnapshotTransition(
+                state=JobState.PAUSING,
+                desired_state=DesiredJobState.RUNNING,
+                now=time.time(),
+            ),
         )
         return self._persist_locked()
 
@@ -1045,18 +1421,20 @@ class JobManagerControl(JobManagerState):
         previous_attempt = managed.snapshot.attempt.number
         self._replace_snapshot_locked(
             managed,
-            state=JobState.QUEUED,
-            desired_state=DesiredJobState.RUNNING,
-            now=now,
-            attempt=JobAttempt(
-                number=previous_attempt + 1,
-                parent_job_id=managed.snapshot.attempt.parent_job_id,
-                resumed_from_attempt=previous_attempt,
-                resume_strategy=ResumeStrategy.RECONCILE,
+            SnapshotTransition(
+                state=JobState.QUEUED,
+                desired_state=DesiredJobState.RUNNING,
+                now=now,
+                attempt=JobAttempt(
+                    number=previous_attempt + 1,
+                    parent_job_id=managed.snapshot.attempt.parent_job_id,
+                    resumed_from_attempt=previous_attempt,
+                    resume_strategy=ResumeStrategy.RECONCILE,
+                ),
+                started_at=None,
+                control_requested_at=None,
+                control_acknowledged_at=None,
             ),
-            started_at=None,
-            control_requested_at=None,
-            control_acknowledged_at=None,
         )
 
     def _request_cancel_locked(
@@ -1066,15 +1444,17 @@ class JobManagerControl(JobManagerState):
         state: JobState,
     ) -> JobOutcome:
         now = time.time()
-        if state in {JobState.QUEUED, JobState.PAUSED}:
+        if state.is_idle:
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.CANCELLED,
-                desired_state=DesiredJobState.CANCELLED,
-                now=now,
-                control_requested_at=now,
-                control_acknowledged_at=now,
-                finished_at=now,
+                SnapshotTransition(
+                    state=JobState.CANCELLED,
+                    desired_state=DesiredJobState.CANCELLED,
+                    now=now,
+                    control_requested_at=now,
+                    control_acknowledged_at=now,
+                    finished_at=now,
+                ),
             )
             self._archive_terminal_locked(managed)
             status = JobOutcomeStatus.OK
@@ -1082,10 +1462,12 @@ class JobManagerControl(JobManagerState):
         elif state in {JobState.RUNNING, JobState.PAUSING}:
             self._replace_snapshot_locked(
                 managed,
-                state=JobState.CANCELLING,
-                desired_state=DesiredJobState.CANCELLED,
-                now=now,
-                control_requested_at=now,
+                SnapshotTransition(
+                    state=JobState.CANCELLING,
+                    desired_state=DesiredJobState.CANCELLED,
+                    now=now,
+                    control_requested_at=now,
+                ),
             )
             status = JobOutcomeStatus.ACCEPTED
             code = "cancellation_requested"
@@ -1138,7 +1520,7 @@ class JobManagerControl(JobManagerState):
         message: str,
         managed: ManagedJob | None = None,
         *,
-        attribution: _RequestAttribution | None = None,
+        attribution: RequestAttribution | None = None,
     ) -> JobOutcome:
         snapshot = self._snapshot_locked(managed) if managed is not None else None
         job_id = attribution.job_id if attribution is not None else None

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Annotated, NamedTuple, cast
 
 if TYPE_CHECKING:
     import pathlib
     from contextlib import AbstractContextManager
+    from types import ModuleType
 
     from .._public_index import DocumentScanResult
     from ..api import AllIndexOutcomes
@@ -39,6 +40,7 @@ from .._source_types import (
 from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
 from ..config._types import EnvVar
+from ..registry import get_registry
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import _try_http_reindex
 from ._app import (
@@ -51,6 +53,7 @@ from ._app import (
 from ._cli_format import _counted_unit
 from ._core import logger
 from ._gpu_errors import _handle_gpu_error
+from ._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
 from ._render import (
     _display_port_unreachable_error,
     _display_service_error,
@@ -219,7 +222,6 @@ class _ServiceDelegationRequest:
     index_type: PublicSourceType
     rebuild: bool
     target: pathlib.Path
-    allow_fallback: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,15 +523,49 @@ def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
                 )
         return True
 
-    if not request.allow_fallback:
-        _display_port_unreachable_error(
-            request.port,
-            command="indexing",
-            json_mode=request.json_mode,
-        )
-        raise typer.Exit(code=1)
+    _display_port_unreachable_error(
+        request.port,
+        command="indexing",
+        json_mode=request.json_mode,
+        local_fallback_available=False,
+    )
+    raise typer.Exit(code=1)
 
-    return False
+
+def _borrow_gpu_refusal(error: BorrowGPUError, *, json_mode: bool) -> None:
+    """Render one fail-closed borrower-coordination refusal."""
+    if json_mode:
+        _emit_json_error_and_exit("index", error.error, str(error), 1)
+    _plain(f"Error: {error}")
+    raise typer.Exit(code=1)
+
+
+def _borrow_gpu_required(*, json_mode: bool) -> None:
+    """Refuse local indexing unless the operator requested borrower authority."""
+    message = (
+        "No compatible running service is available for delegated indexing. "
+        "Start a compatible service, or explicitly rerun with --borrow-gpu."
+    )
+    if json_mode:
+        _emit_json_error_and_exit("index", "borrow_gpu_required", message, 1)
+    _plain(f"Error: {message}")
+    raise typer.Exit(code=1)
+
+
+def _try_borrowed_in_process_indexing(
+    request: _IndexRunRequest,
+    *,
+    requested_port: int | None,
+    no_preprocess: bool,
+) -> None:
+    """Run the existing local index path only under borrower coordination."""
+
+    def index_work() -> None:
+        if no_preprocess:
+            _apply_preprocess_off_env()
+        _try_in_process_indexing(request)
+
+    run_with_borrowed_gpu(requested_port=requested_port, work=index_work)
 
 
 def _print_service_domain_outcomes(raw_domains: object) -> bool:
@@ -560,7 +596,7 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
     "index",
     help=(
         "Build or update the vault, code, and extracted-document search indexes. "
-        "Uses the running service when available; otherwise runs locally."
+        "Uses the running service, or --borrow-gpu for explicit local GPU work."
     ),
 )
 def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option schema.
@@ -616,13 +652,13 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             help="Ad-hoc exclusion pattern (repeatable, gitignore syntax).",
         ),
     ] = None,
-    allow_fallback: Annotated[
+    borrow_gpu: Annotated[
         bool,
         typer.Option(
-            "--allow-fallback",
+            "--borrow-gpu",
             help=(
-                "If the selected service is not reachable, build the index "
-                "locally instead of stopping with an error."
+                "Acquire a borrower lease, pause a compatible running service, "
+                "then run this index command locally before resuming it."
             ),
         ),
     ] = False,
@@ -665,6 +701,18 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
     if rebuild:
         _validate_rebuild(ctx, json_mode)
 
+    request = _IndexRunRequest(source, rebuild, model, exclude, target, json_mode)
+    if borrow_gpu:
+        try:
+            _try_borrowed_in_process_indexing(
+                request,
+                requested_port=port,
+                no_preprocess=no_preprocess,
+            )
+        except BorrowGPUError as exc:
+            _borrow_gpu_refusal(exc, json_mode=json_mode)
+        return
+
     if port is None:
         service = resolve_data_plane_service()
         if service.reachable and not service.version.is_compatible:
@@ -679,9 +727,6 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             )
             raise typer.Exit(code=1)
         port = service.port
-        if port is not None:
-            # We detected a running service, so enable fallback automatically.
-            allow_fallback = True
 
     # A preprocess flag only shapes an in-process run. When a service will
     # handle this index (an explicit or auto-detected port), the daemon
@@ -698,19 +743,11 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             source,
             rebuild,
             target,
-            allow_fallback,
         )
     ):
         return
 
-    # In-process path: apply the forwarded preprocess mode to the env before
-    # indexing begins (the config property reads it live).
-    if no_preprocess:
-        _apply_preprocess_off_env()
-
-    _try_in_process_indexing(
-        _IndexRunRequest(source, rebuild, model, exclude, target, json_mode)
-    )
+    _borrow_gpu_required(json_mode=json_mode)
 
 
 def _try_in_process_indexing(request: _IndexRunRequest) -> None:
@@ -848,10 +885,10 @@ def _render_failed_index_rows(rows: list[dict[str, object]]) -> None:
 
 
 def _execute_source_indexing(
-    api: Any,
+    api: ModuleType,
     *,
     request: _IndexRunRequest,
-    reporter: Any,
+    reporter: ProgressReporter,
 ) -> tuple[
     IndexResult | None,
     IndexResult | None,
@@ -998,7 +1035,11 @@ def handle_clean(
     import vaultspec_rag
 
     try:
-        cleared_raw = vaultspec_rag.clean(target, clean_type=canonical_clean_type)
+        cleared_raw = vaultspec_rag.clean(
+            target,
+            clean_type=canonical_clean_type,
+            registry=get_registry(),
+        )
     except VaultStoreLockedError as exc:
         if json_mode:
             _emit_json_error_and_exit(

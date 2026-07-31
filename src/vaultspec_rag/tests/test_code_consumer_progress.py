@@ -32,7 +32,11 @@ from ..indexer._consumer_pipeline import (
     CodePipelineLimits,
     _WeightedConsumerRun,
 )
-from ..indexer._streaming import CodeFileSegment, WeightedCodeSlice
+from ..indexer._streaming import (
+    CodeFileSegment,
+    EncodeBucketReporter,
+    WeightedCodeSlice,
+)
 from ..job_models import JobSource
 from ..jobs import (
     JobProgressReporter,
@@ -364,6 +368,7 @@ class TestConsumerAdvancesProgress:
             oom_count: int,
         ) -> EncodeBucketProgress:
             return EncodeBucketProgress(
+                kind="dense",
                 items_done=items_done,
                 items_total=len(chunks),
                 bucket_items=bucket_items,
@@ -496,3 +501,48 @@ class TestConsumerAdvancesProgress:
         assert forward is not None
         assert forward["items"] == len(chunks)
         assert forward["slice_ordinal"] == 2
+
+    def test_sparse_retries_drain_beside_a_larger_dense_count(self) -> None:
+        """One slice's sparse retries reach the job record beside dense ones.
+
+        The dense and sparse encodes of a slice share one boundary adapter,
+        and each encode call's retry count restarts at zero.
+
+        Mutation check: draining retries through one shared counter instead
+        of one per encode kind - replacing ``progress.kind`` with a fixed
+        key in ``_EncodeBucketReporter._publish`` - makes this fail on the
+        ``oom_count == 3`` assertion below: the sparse series starts below
+        the dense total, so its retry reads as already reported and the
+        record stays at 2. Restoring the per-kind key returns it to green.
+        """
+        job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
+        report = EncodeBucketReporter(JobProgressReporter(job_id), 0, 4)
+
+        def _progress(
+            kind: str,
+            items_done: int,
+            oom_count: int,
+        ) -> EncodeBucketProgress:
+            return EncodeBucketProgress(
+                kind=kind,
+                items_done=items_done,
+                items_total=4,
+                bucket_items=2,
+                bucket_estimated_tokens=1000,
+                token_budget=2000,
+                oom_count=oom_count,
+            )
+
+        # The dense encode absorbs two retries...
+        report("before", _progress("dense", 0, 0))
+        report("before", _progress("dense", 0, 2))
+        report("after", _progress("dense", 4, 2))
+        # ...then the same slice's sparse encode absorbs one of its own,
+        # its running count restarting from zero.
+        report("before", _progress("sparse", 0, 0))
+        report("before", _progress("sparse", 0, 1))
+        report("after", _progress("sparse", 4, 1))
+
+        encode = telemetry_block(job_id, "encode")
+        assert encode is not None
+        assert encode["oom_count"] == 3

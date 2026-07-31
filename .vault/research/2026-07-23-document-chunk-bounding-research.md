@@ -115,7 +115,7 @@ research did not evaluate.
 
 ### The failing corpus emits one unit per PDF page
 
-The observed root routes `src/cadrumo/_data/corpus/**/*.pdf` through a
+The observed root routes a package-internal PDF corpus glob through a
 command-form hook. That extractor emits one `PreprocessUnit` per non-empty page,
 titled by page number (`dev/docs/preprocess/_pdf.py:155` in the consuming
 project). Its `split_units_by_budget` helper groups units across output sidecars

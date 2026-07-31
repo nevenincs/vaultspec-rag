@@ -28,20 +28,17 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
 import uvicorn
-from starlette.applications import Starlette
-from starlette.routing import Route
 from typer.testing import CliRunner
 
 import vaultspec_rag.mcp._admin_client as admin
-import vaultspec_rag.server as _m
 
 from ... import jobs as _jobs
 from ... import jobs as _managed_jobs
 from ...cli import app
 from ...config._settings import reset_config
 from ...config._types import EnvVar
-from ...server._lifespan import health_handler
-from ...server._routes import ROUTES
+from ...server import ServerRouteRuntime, create_http_app
+from ...service import ServiceRegistry
 from .._http_stubs import QuietHandler
 from .._ports import free_loopback_port
 
@@ -144,7 +141,6 @@ def _canonical_resilience_server(
     token = "canonical-resilience-token"
     prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
     prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)
-    prior_token = _m._SERVICE_TOKEN
     server: uvicorn.Server | None = None
     thread: threading.Thread | None = None
     stopped = True
@@ -154,7 +150,6 @@ def _canonical_resilience_server(
         reset_config()
         _managed_jobs.reset()
         _jobs.reset()
-        _m._SERVICE_TOKEN = token
         (status_dir / "service.json").write_text(
             json.dumps(
                 {
@@ -167,7 +162,14 @@ def _canonical_resilience_server(
         )
         server = uvicorn.Server(
             uvicorn.Config(
-                Starlette(routes=[Route("/health", health_handler), *ROUTES]),
+                create_http_app(
+                    ServerRouteRuntime(
+                        token=token,
+                        registry=ServiceRegistry(),
+                        port=port,
+                    ),
+                    lifespan=None,
+                ),
                 host="127.0.0.1",
                 port=port,
                 log_config=None,
@@ -190,7 +192,6 @@ def _canonical_resilience_server(
             stopped = not thread.is_alive()
         _managed_jobs.reset()
         _jobs.reset()
-        _m._SERVICE_TOKEN = prior_token
         if prior_status_dir is None:
             os.environ.pop(EnvVar.STATUS_DIR, None)
         else:
@@ -223,7 +224,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                     "project_root": "C:\\projects\\proj-a",
                 },
                 "runtime": {"pid": 123, "user": "operator"},
-                "resources": {"current": {"rss_mb": 10.0}},
+                "resources": {"current": {"rss_mib": 10.0}},
             },
             {
                 "id": "failjob1",
@@ -242,7 +243,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                     "project_root": "C:\\projects\\proj-b",
                 },
                 "runtime": {"pid": 124, "user": "operator"},
-                "resources": {"finished": {"rss_mb": 11.0}},
+                "resources": {"finished": {"rss_mib": 11.0}},
             },
             {
                 "id": "donejob1",
@@ -261,7 +262,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                     "project_root": "C:\\projects\\proj-c",
                 },
                 "runtime": {"pid": 125, "user": "operator"},
-                "resources": {"finished": {"rss_mb": 12.0}},
+                "resources": {"finished": {"rss_mib": 12.0}},
             },
         ],
         "total": 3,
@@ -325,8 +326,24 @@ def _assert_mcp_job_snapshot(
     job_id: str,
     project_root: Path,
 ) -> None:
-    """Assert the complete real MCP job envelope and caller identity."""
-    assert set(result) == {"jobs", "total", "returned", "summary", "filters"}
+    """Assert the complete real MCP job envelope and caller identity.
+
+    Exact on purpose: the envelope is a contract, and a subset check would stop
+    catching an unintended key forever. The tool answers from the same route as
+    the HTTP listing, so the machine-wide readings the listing carries are part
+    of what it returns.
+    """
+    assert set(result) == {
+        "jobs",
+        "total",
+        "returned",
+        "summary",
+        "filters",
+        "gpu",
+        "pressure",
+        "device_load",
+        "quiesce",
+    }
     jobs: list[Any] = result["jobs"]
     assert isinstance(jobs, list)
     assert jobs
@@ -353,7 +370,14 @@ def _assert_mcp_job_snapshot(
     assert entry["initiator"]["kind"] == "mcp"
     assert isinstance(entry["runtime"]["pid"], int)
     assert isinstance(entry["runtime"]["user"], str)
-    assert isinstance(entry["resources"]["started"]["rss_mb"], float)
+    assert isinstance(entry["resources"]["started"]["rss_mib"], float)
+    # The key set above is exact, so a new key has to arrive with a reader or
+    # it is a contract nobody checks. Quiesce rides the listing for the same
+    # reason gpu/pressure/device_load do: a header shows whether the card is
+    # admitting work without spending a second request to find out.
+    quiesce: dict[str, Any] = result["quiesce"]
+    assert quiesce["state"] == "running"
+    assert quiesce["admissions_open"] is True
 
 
 async def _assert_cli_job_attribution(

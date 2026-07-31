@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import asyncio
+    from types import EllipsisType
 
     from ..job_control import RunControlToken
     from ..job_models import (
@@ -15,6 +17,7 @@ if TYPE_CHECKING:
         ProcessResourceSnapshot,
     )
     from .manager import JobManager
+    from .state import AttemptExit
 
 
 MAX_RECORDS = 256
@@ -48,12 +51,63 @@ class JobShutdownResult:
         return self.resources_released and self.persistence_ok
 
 
+class QuiescedResumeStatus(StrEnum):
+    """Every terminal result of preparing same-ID quiesced recovery."""
+
+    PREPARED = "prepared"
+    NO_WORK = "no_work"
+    PERSISTENCE_UNPUBLISHED = "persistence_unpublished"
+    PERSISTENCE_PUBLISHED_NOT_DURABLE = "persistence_published_not_durable"
+
+
+class QuiescedResumePersistence(StrEnum):
+    """Whether recovery preparation reached durable job-state storage."""
+
+    NOT_REQUIRED = "not_required"
+    DURABLE = "durable"
+    UNPUBLISHED = "unpublished"
+    PUBLISHED_NOT_DURABLE = "published_not_durable"
+
+
+@dataclass(frozen=True, slots=True)
+class QuiescedResumeResult:
+    """Typed durable outcome for one controller warming transition."""
+
+    status: QuiescedResumeStatus
+    persistence: QuiescedResumePersistence
+    job_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        expected = {
+            QuiescedResumeStatus.PREPARED: QuiescedResumePersistence.DURABLE,
+            QuiescedResumeStatus.NO_WORK: QuiescedResumePersistence.NOT_REQUIRED,
+            QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED: (
+                QuiescedResumePersistence.UNPUBLISHED
+            ),
+            QuiescedResumeStatus.PERSISTENCE_PUBLISHED_NOT_DURABLE: (
+                QuiescedResumePersistence.PUBLISHED_NOT_DURABLE
+            ),
+        }[self.status]
+        if self.persistence is not expected:
+            raise ValueError("Recovery status and persistence evidence disagree.")
+
+
+@dataclass(frozen=True, slots=True)
+class QuiescedDispatchClaim:
+    """One in-memory right to dispatch a durable recovery attempt once."""
+
+    job_id: str
+    attempt: int
+    binding_nonce: int
+    generation_nonce: int
+
+
 @dataclass(frozen=True, slots=True)
 class ProgressUpdate:
     """One exact-attempt progress publication request."""
 
     attempt: int
-    task: asyncio.Task[Any]
+    task: asyncio.Task[AttemptExit]
     step: str
     completed: int = 0
     total: int | None = None
@@ -63,8 +117,8 @@ class ProgressUpdate:
 class ResourceUpdate:
     """One partial update to exact-attempt resource ownership."""
 
-    started: ProcessResourceSnapshot | object | None = ...
-    finished: ProcessResourceSnapshot | object | None = ...
+    started: ProcessResourceSnapshot | EllipsisType | None = ...
+    finished: ProcessResourceSnapshot | EllipsisType | None = ...
     index_capacity_held: bool | None = None
     project_lease_held: bool | None = None
     writer_lock_held: bool | None = None
@@ -80,7 +134,7 @@ class JobAttemptContext:
     manager: JobManager
     job_id: str
     attempt: int
-    task: asyncio.Task[Any]
+    task: asyncio.Task[AttemptExit]
     control: RunControlToken
 
     def update_progress(

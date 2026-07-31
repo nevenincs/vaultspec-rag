@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.config import (
     VaultSpecConfig as BaseConfig,
 )
-from vaultspec_core.config import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+from vaultspec_core.config import (
     get_config as get_base_config,
 )
 
@@ -340,19 +340,46 @@ class VaultSpecConfigWrapper:
         # Absolute admitted process ceilings. The per-run budget may freeze a
         # lower ceiling relative to its starting baseline. The allocator cap
         # preserves device headroom for concurrent search before model load.
-        "index_rss_ceiling_mb": 16384.0,
+        "index_rss_ceiling_mib": 16384.0,
         # CUDA ceiling override. ``0`` means auto-derive from the real device:
-        # total device memory minus ``index_cuda_headroom_mb``. A positive value
+        # total device memory minus ``index_cuda_headroom_mib``. A positive value
         # is an authoritative operator override that raises OR lowers the
         # effective ceiling, replacing the former one-way clamp against a fixed
         # 12 GiB profile constant that a 16 GiB card could never raise.
-        "index_cuda_ceiling_mb": 0.0,
+        "index_cuda_ceiling_mib": 0.0,
         # Memory reserved below the device total when the CUDA ceiling is
         # auto-derived: leaves room for the driver, concurrent search, and
         # allocator fragmentation. On a 16 GiB card this yields a ~14 GiB
         # indexing ceiling instead of the flat 12 GiB.
-        "index_cuda_headroom_mb": 2048.0,
+        "index_cuda_headroom_mib": 2048.0,
         "index_cuda_allocator_fraction": 0.8,
+        # Free device memory, in MiB, required before this process may load
+        # model stacks onto the GPU. Read once per process before the first
+        # load: below this figure the load is refused rather than allowed to
+        # starve the card and every other consumer on it. The ceilings above
+        # bound the work an already-resident process does; this one decides
+        # whether it becomes resident at all.
+        #
+        # The floor must cover the resident stack a load is about to create
+        # PLUS the largest legitimate demand that stack then places on top of
+        # its own residency. Sizing it to residency alone is the trap: on a card
+        # already holding one tenant, the free memory left over still clears
+        # such a floor, so a second stack is admitted - and two residencies plus
+        # one peak exceed the device, which is precisely the arrangement the
+        # gate exists to refuse.
+        #
+        # Zero, the default, means derive it from the CUDA demand the configured
+        # support profile declares - the same declaration the per-job ceiling is
+        # derived from. A shipped absolute would be a statement about one
+        # machine: sized to a large card it refuses every load on a smaller one,
+        # permanently, because free memory can never reach it; sized to a small
+        # one it under-protects a larger card, where two stacks still collide
+        # beneath the figure it names. The demand is a property of the models,
+        # so it is the workload that sets this and not the hardware.
+        #
+        # A positive value is an authoritative operator override in MiB, for a
+        # card whose owner knows it better than any derivation can.
+        "gpu_admission_floor_mib": 0,
         # Named profile definitions and corpus dimensions live in
         # ``index_profiles``; this selects the service default.
         "index_support_profile": "managed-service",
@@ -905,6 +932,114 @@ class VaultSpecConfigWrapper:
             return "default"
         return cast("PreprocessMode", configured)
 
+    # Declared types for every RAG setting ``__getattr__`` resolves below.
+    # A bare annotation creates no instance attribute - ``__getattr__`` is
+    # still the sole runtime source of every one of these values, unchanged -
+    # but it gives the type checker a declared member to resolve the read
+    # against, so `cfg.qdrant_port` types as ``int`` instead of ``Any``
+    # without a property method body per key. The type of every entry here
+    # is not a guess: it is exactly what ``_checked``/``_resolve_rag_default``
+    # already narrows the value to, via ``SETTING_BOUNDS`` (numeric and
+    # choice bounds) or the declared-bool defaults in ``_RAG_DEFAULTS``
+    # itself; a key with neither stays the type of its shipped default.
+    # Settings covered by an explicit ``@property`` above are intentionally
+    # absent - that property's own return annotation already types their
+    # reads, and a second declaration here would be a second, driftable
+    # source of truth for the same key.
+    qdrant_url: str | None
+    qdrant_api_key: str | None
+    qdrant_quantization: str | None
+    qdrant_server: bool
+    local_only: bool
+    qdrant_port: int
+    qdrant_binary: str | None
+    qdrant_storage_dir: str
+    storage_autoprune: bool
+    storage_autoprune_interval_minutes: float
+    storage_autoprune_grace_hours: float
+    storage_autoprune_grace_hours_data: float
+    storage_autoprune_archive_retention_days: float
+    storage_autoprune_archive_max_gb: float
+    storage_autoprune_max_per_cycle: int
+    storage_autoprune_ephemeral_idle_hours: float
+    integrity_auto_repair: bool
+    storage_reconcile: bool
+    storage_reconcile_max_per_cycle: int
+    storage_reconcile_budget_seconds: float
+    data_dir: str
+    qdrant_dir: str
+    index_metadata_file: str
+    code_index_metadata_file: str
+    status_dir: str
+    log_file: str
+    graph_ttl_seconds: float
+    embedding_batch_size: int
+    embedding_encode_batch_size: int
+    max_embed_chars: int
+    embedding_max_seq_length: int
+    index_chunk_workers: int
+    embedding_code_encode_batch_size: int
+    embedding_document_encode_batch_size: int
+    embedding_encode_token_budget: int
+    embedding_encode_chars_per_token: int
+    index_cache_flush_slices: int
+    vault_cache_flush_slices: int
+    document_cache_flush_slices: int
+    index_parallel_min_bytes: int
+    dense_backend: str
+    dense_onnx_file: str
+    embedding_model: str
+    embedding_dimension: int
+    sparse_enabled: bool
+    sparse_model: str
+    reranker_enabled: bool
+    reranker_model: str
+    reranker_batch_size: int
+    reranker_max_length: int
+    vault_chunk_chars: int
+    vault_intent_default: str
+    vault_intent_ranking_enabled: bool
+    vault_intent_type_cap: int
+    search_concurrency: int
+    index_job_concurrency: int
+    index_reuse_enabled: bool
+    mcp_port: int
+    log_level: str
+    service_idle_ttl_seconds: int
+    service_max_projects: int
+    service_search_timeout_seconds: float
+    service_admin_timeout_seconds: float
+    qdrant_ready_timeout_seconds: float
+    managed_log_max_bytes: int
+    managed_log_backup_count: int
+    job_max_nonterminal: int
+    job_shutdown_timeout_seconds: float
+    store_operation_timeout_seconds: float
+    store_write_retry_attempts: int
+    index_no_progress_timeout_seconds: float
+    watch_retry_jitter_fraction: float
+    watch_circuit_failure_threshold: int
+    index_rss_ceiling_mib: float
+    index_cuda_ceiling_mib: float
+    index_cuda_headroom_mib: float
+    index_cuda_allocator_fraction: float
+    gpu_admission_floor_mib: int
+    index_support_profile: str
+    watch_enabled: bool
+    watch_debounce_ms: int
+    watch_cooldown_s: float
+    preprocess_max_emitted_bytes: int
+    document_chunk_chars_per_token: int
+    html_strip: bool
+    code_noise_demote_penalty: float
+    dedup_locales_default: bool
+
+    # The one base-``VaultSpecConfig`` field the RAG package actually reads
+    # through ``get_config()`` (the rest of that dataclass's fields are
+    # never accessed off the wrapper). Declared for the same reason as the
+    # RAG keys above - ``__getattr__`` still does the delegating.
+    docs_dir: str
+
     def __getattr__(self, name: str) -> Any:
         """Return a config attribute, checking env overrides then defaults.
 
@@ -1034,6 +1169,27 @@ _orphaned_bounds = sorted(set(SETTING_BOUNDS) - set(_all_defaults))
 if _orphaned_bounds:
     raise RuntimeError(
         "bounds declared for unknown settings: " + ", ".join(_orphaned_bounds)
+    )
+
+# Every RAG setting must have a declared read type - either the class
+# annotation block above ``__getattr__`` or a shadowing ``@property`` -
+# so a read never silently regresses to ``Any``. Checked at import for the
+# same reason as the two checks above: the omission is invisible at every
+# other gate (ruff, ty, a green ``basedpyright`` run on the day the key was
+# added) and only shows up as a widening Any surface far from its cause.
+_declared_types = set(vars(VaultSpecConfigWrapper).get("__annotations__", {}))
+_declared_properties = {
+    name
+    for name, value in vars(VaultSpecConfigWrapper).items()
+    if isinstance(value, property)
+}
+_undeclared_settings = sorted(
+    set(_all_defaults) - _declared_types - _declared_properties
+)
+if _undeclared_settings:
+    raise RuntimeError(
+        "settings have no declared read type (add a class annotation or an "
+        "explicit @property): " + ", ".join(_undeclared_settings)
     )
 
 

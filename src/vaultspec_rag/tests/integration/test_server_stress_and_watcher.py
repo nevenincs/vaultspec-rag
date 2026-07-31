@@ -183,6 +183,7 @@ async def _start_watcher(root: Path, *, cooldown: float) -> None:
     assert (
         server._ensure_watcher(
             resolved,
+            get_registry(),
             debounce_ms=50,
             cooldown_s=cooldown,
         )
@@ -234,7 +235,10 @@ def _write_vault_document(path: Path, marker: str) -> str:
 
 
 def _load_watcher_state(path: Path) -> dict[str, object]:
-    parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    # json.loads returns Any regardless of the `object` annotation above it;
+    # cast at the extraction point instead so the isinstance narrowing below
+    # stays real.
+    parsed = cast("object", json.loads(path.read_text(encoding="utf-8")))
     assert isinstance(parsed, dict)
     return cast("dict[str, object]", parsed)
 
@@ -325,7 +329,8 @@ async def _wait_for_code_payload(
             with_vectors=False,
         )
         if any(
-            expected_content in str((record.payload or {}).get("content", ""))
+            expected_content
+            in str(cast("object", (record.payload or {}).get("content", "")))
             for record in records
         ):
             return
@@ -336,6 +341,8 @@ async def _wait_for_code_payload(
 def _assert_watcher_resources_released(
     snapshot: JobSnapshot,
     slot: ProjectSlot,
+    registry: ServiceRegistry,
+    root: Path,
 ) -> None:
     """Require canonical and physical watcher attempt ownership to be clear."""
     assert (
@@ -347,37 +354,45 @@ def _assert_watcher_resources_released(
         snapshot.resources.pipeline_active,
         slot.ref_count,
     ) == (False, False, False, False, False, False, 0)
-    assert slot.vault_indexer._writer_lock.acquire(blocking=False)
-    slot.vault_indexer._writer_lock.release()
+    with registry.compute_lease(root) as lease:
+        writer_lock = lease.runtime.vault_indexer._writer_lock
+        assert writer_lock.acquire(blocking=False)
+        writer_lock.release()
 
 
 async def _pause_blocked_watcher_attempt(
     manager: JobManager,
     root: Path,
     slot: ProjectSlot,
+    registry: ServiceRegistry,
     path: Path,
 ) -> tuple[JobSnapshot, str]:
     """Pause attempt one while it waits on the real writer lock."""
-    writer_lock = slot.vault_indexer._writer_lock
-    assert writer_lock.acquire(blocking=False)
-    try:
-        document_id = _write_vault_document(path, "pause-first-generation")
-        running = await _wait_for_watcher_job(
-            manager,
-            root,
-            _watcher_attempt_owns_runtime,
-            "watcher attempt did not acquire its managed resources",
-        )
-        assert (running.attempt.number, slot.ref_count) == (1, 1)
-        pause = manager.set_desired_state(running.id, DesiredJobState.PAUSED)
-        assert pause.job is not None
-        assert (pause.status, pause.job.state) == (
-            JobOutcomeStatus.ACCEPTED,
-            JobState.PAUSING,
-        )
-    finally:
-        writer_lock.release()
+    document_id: str | None = None
+    running: JobSnapshot | None = None
+    with registry.compute_lease(root) as lease:
+        writer_lock = lease.runtime.vault_indexer._writer_lock
+        assert writer_lock.acquire(blocking=False)
+        try:
+            document_id = _write_vault_document(path, "pause-first-generation")
+            running = await _wait_for_watcher_job(
+                manager,
+                root,
+                _watcher_attempt_owns_runtime,
+                "watcher attempt did not acquire its managed resources",
+            )
+            assert (running.attempt.number, slot.ref_count) == (1, 2)
+            pause = manager.set_desired_state(running.id, DesiredJobState.PAUSED)
+            assert pause.job is not None
+            assert (pause.status, pause.job.state) == (
+                JobOutcomeStatus.ACCEPTED,
+                JobState.PAUSING,
+            )
+        finally:
+            writer_lock.release()
 
+    assert running is not None
+    assert document_id is not None
     joined = await manager.wait_for_attempt(
         running.id,
         timeout_seconds=_WATCHER_WAIT_SECONDS,
@@ -389,7 +404,7 @@ async def _pause_blocked_watcher_attempt(
         JobState.PAUSED,
         DesiredJobState.PAUSED,
     )
-    _assert_watcher_resources_released(paused, slot)
+    _assert_watcher_resources_released(paused, slot, registry, root)
     assert slot.store.get_by_id(document_id) is None
     return paused, document_id
 
@@ -397,46 +412,47 @@ async def _pause_blocked_watcher_attempt(
 async def _resume_blocked_watcher_and_stop(
     manager: JobManager,
     root: Path,
-    slot: ProjectSlot,
+    registry: ServiceRegistry,
     job_id: str,
 ) -> JobSnapshot:
     """Prove explicit stop waits for a naturally completing resumed attempt."""
-    writer_lock = slot.vault_indexer._writer_lock
-    assert writer_lock.acquire(blocking=False)
     cleanup: asyncio.Task[bool] | None = None
-    try:
-        resume = manager.set_desired_state(job_id, DesiredJobState.RUNNING)
-        assert resume.status is JobOutcomeStatus.ACCEPTED
-        resumed = await _wait_for_watcher_job(
-            manager,
-            root,
-            lambda snapshot: all(
-                (
-                    snapshot.id == job_id,
-                    snapshot.attempt.number == 2,
-                    _watcher_attempt_owns_runtime(snapshot),
-                )
-            ),
-            "resumed watcher attempt did not reacquire resources",
-        )
-        assert (
-            resumed.attempt.resumed_from_attempt,
-            resumed.attempt.resume_strategy,
-        ) == (1, ResumeStrategy.RECONCILE)
+    with registry.compute_lease(root) as lease:
+        writer_lock = lease.runtime.vault_indexer._writer_lock
+        assert writer_lock.acquire(blocking=False)
+        try:
+            resume = manager.set_desired_state(job_id, DesiredJobState.RUNNING)
+            assert resume.status is JobOutcomeStatus.ACCEPTED
+            resumed = await _wait_for_watcher_job(
+                manager,
+                root,
+                lambda snapshot: all(
+                    (
+                        snapshot.id == job_id,
+                        snapshot.attempt.number == 2,
+                        _watcher_attempt_owns_runtime(snapshot),
+                    )
+                ),
+                "resumed watcher attempt did not reacquire resources",
+            )
+            assert (
+                resumed.attempt.resumed_from_attempt,
+                resumed.attempt.resume_strategy,
+            ) == (1, ResumeStrategy.RECONCILE)
 
-        cleanup = server._stop_watcher(root)
-        assert cleanup is not None
-        _assert_watcher_intake_disabled(root)
-        await asyncio.sleep(0.1)
-        assert not cleanup.done()
-        still_running = manager.get(job_id)
-        assert still_running is not None
-        assert (still_running.state, still_running.desired_state) == (
-            JobState.RUNNING,
-            DesiredJobState.RUNNING,
-        )
-    finally:
-        writer_lock.release()
+            cleanup = server._stop_watcher(root)
+            assert cleanup is not None
+            _assert_watcher_intake_disabled(root)
+            await asyncio.sleep(0.1)
+            assert not cleanup.done()
+            still_running = manager.get(job_id)
+            assert still_running is not None
+            assert (still_running.state, still_running.desired_state) == (
+                JobState.RUNNING,
+                DesiredJobState.RUNNING,
+            )
+        finally:
+            writer_lock.release()
 
     assert cleanup is not None
     assert await asyncio.wait_for(
@@ -456,30 +472,37 @@ async def _resume_blocked_watcher_and_stop(
 async def _cancel_blocked_watcher_attempt(
     manager: JobManager,
     root: Path,
-    slot: ProjectSlot,
+    registry: ServiceRegistry,
     path: Path,
 ) -> tuple[JobSnapshot, str, float]:
     """Cancel attempt one while it waits on the real writer lock."""
-    writer_lock = slot.vault_indexer._writer_lock
-    assert writer_lock.acquire(blocking=False)
-    try:
-        document_id = _write_vault_document(path, "cancel-first-generation")
-        running = await _wait_for_watcher_job(
-            manager,
-            root,
-            _watcher_attempt_owns_runtime,
-            "watcher attempt did not reach the real writer boundary",
-        )
-        requested_at = time.time()
-        cancel = manager.set_desired_state(running.id, DesiredJobState.CANCELLED)
-        assert cancel.job is not None
-        assert (cancel.status, cancel.job.state) == (
-            JobOutcomeStatus.ACCEPTED,
-            JobState.CANCELLING,
-        )
-    finally:
-        writer_lock.release()
+    document_id: str | None = None
+    requested_at: float | None = None
+    running: JobSnapshot | None = None
+    with registry.compute_lease(root) as lease:
+        writer_lock = lease.runtime.vault_indexer._writer_lock
+        assert writer_lock.acquire(blocking=False)
+        try:
+            document_id = _write_vault_document(path, "cancel-first-generation")
+            running = await _wait_for_watcher_job(
+                manager,
+                root,
+                _watcher_attempt_owns_runtime,
+                "watcher attempt did not reach the real writer boundary",
+            )
+            requested_at = time.time()
+            cancel = manager.set_desired_state(running.id, DesiredJobState.CANCELLED)
+            assert cancel.job is not None
+            assert (cancel.status, cancel.job.state) == (
+                JobOutcomeStatus.ACCEPTED,
+                JobState.CANCELLING,
+            )
+        finally:
+            writer_lock.release()
 
+    assert running is not None
+    assert requested_at is not None
+    assert document_id is not None
     joined = await manager.wait_for_attempt(
         running.id,
         timeout_seconds=_WATCHER_WAIT_SECONDS,
@@ -493,7 +516,8 @@ async def _cancel_blocked_watcher_attempt(
         cancelled.state,
         finished_at >= requested_at,
     ) == ("attempt_released", JobState.CANCELLED, True)
-    _assert_watcher_resources_released(cancelled, slot)
+    slot = registry.peek_project(root)
+    _assert_watcher_resources_released(cancelled, slot, registry, root)
     assert slot.store.get_by_id(document_id) is None
     assert root in server._watcher_tasks
     assert not server._watcher_tasks[root].done()
@@ -581,7 +605,7 @@ class TestLargeIndexSearchHeadroom:
         from concurrent.futures import ThreadPoolExecutor
 
         from ... import CodebaseIndexer, VaultSearcher
-        from ..._gpu import load_torch
+        from ...memory_probe import cuda_device_total_mib
 
         root = tmp_path / "large-index-search-headroom"
         spec = CorpusSpec(files=256, chunks_per_file=3)
@@ -644,16 +668,14 @@ class TestLargeIndexSearchHeadroom:
                 "no search completed while bounded indexing was still progressing"
             )
 
-            torch = load_torch()
-            total_cuda_mb = float(
-                torch.cuda.get_device_properties(0).total_memory / 1024**2
-            )
+            total_cuda_mib = cuda_device_total_mib()
+            assert total_cuda_mib is not None, "no CUDA device reported total memory"
             configured_fraction = float(get_config().index_cuda_allocator_fraction)
-            required_headroom_mb = total_cuda_mb * (1.0 - configured_fraction)
-            observed_headroom_mb = (
-                total_cuda_mb - measured.resources.peak_cuda_reserved_mb
+            required_headroom_mib = total_cuda_mib * (1.0 - configured_fraction)
+            observed_headroom_mib = (
+                total_cuda_mib - measured.resources.peak_cuda_reserved_mib
             )
-            retained_headroom = observed_headroom_mb >= required_headroom_mb - 128.0
+            retained_headroom = observed_headroom_mib >= required_headroom_mib - 128.0
             retain_benchmark_evidence(
                 "concurrent-search-headroom",
                 {
@@ -668,15 +690,15 @@ class TestLargeIndexSearchHeadroom:
                     "searches_completed_before_index": sum(
                         not finished for _count, finished in search_outcomes
                     ),
-                    "total_cuda_mb": total_cuda_mb,
+                    "total_cuda_mib": total_cuda_mib,
                     "configured_allocator_fraction": configured_fraction,
-                    "required_headroom_mb": required_headroom_mb,
-                    "observed_headroom_mb": observed_headroom_mb,
-                    "headroom_tolerance_mb": 128.0,
+                    "required_headroom_mib": required_headroom_mib,
+                    "observed_headroom_mib": observed_headroom_mib,
+                    "headroom_tolerance_mib": 128.0,
                     "checks": {"retained_reserved_headroom": retained_headroom},
                 },
             )
-            assert observed_headroom_mb >= required_headroom_mb - 128.0
+            assert observed_headroom_mib >= required_headroom_mib - 128.0
         finally:
             store.close()
 
@@ -716,15 +738,22 @@ async def test_watcher_detects_and_indexes_file(
     slot = registry.peek_project(tmp_path)
     store = slot.store
 
-    # Build the initial index so the table exists
-    slot.vault_indexer.full_index(reporter=NullProgressReporter())
+    # Build the initial index so the table exists.
+    with registry.compute_lease(tmp_path) as lease:
+        lease.runtime.vault_indexer.full_index(reporter=NullProgressReporter())
 
     # 3. Start through the real server watcher owner.
     await _start_watcher(tmp_path, cooldown=0.1)
 
     try:
         # Confirm we cannot find the new document yet
-        q_vec = embedding_model.encode_query("concurrency adversarial stress").tolist()
+        # numpy's `ndarray.tolist()` stub returns Any; `encode_query` is
+        # documented to return a dense 1D embedding, so the extracted list
+        # is genuinely `list[float]`.
+        q_vec = cast(
+            "list[float]",
+            embedding_model.encode_query("concurrency adversarial stress").tolist(),
+        )
         results = store.hybrid_search(
             HybridSearchRequest(
                 query_vector=q_vec,
@@ -792,12 +821,26 @@ def _build_watched_code_project(
     )
 
     slot = registry.peek_project(tmp_path)
-    slot.vault_indexer.full_index(reporter=NullProgressReporter())
-    slot.code_indexer.full_index(
-        reporter=NullProgressReporter(),
-        preflight=slot.code_indexer.preflight_content(),
-    )
+    with registry.compute_lease(tmp_path) as lease:
+        runtime = lease.runtime
+        runtime.vault_indexer.full_index(reporter=NullProgressReporter())
+        runtime.code_indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=runtime.code_indexer.preflight_content(),
+        )
     return slot, trigger, target
+
+
+def _code_chunk_ids(
+    registry: ServiceRegistry,
+    root: Path,
+    paths: set[str],
+) -> list[str]:
+    """Read real code-index metadata under an explicit compute lease."""
+    chunk_ids: list[str] = []
+    with registry.compute_lease(root) as lease:
+        chunk_ids = lease.runtime.code_indexer._get_chunk_ids_for_files(paths)
+    return chunk_ids
 
 
 @pytest.mark.asyncio
@@ -815,10 +858,9 @@ async def test_watcher_evicts_cooldown_suppressed_delete(
     """
     cooldown = 2.0
     registry, _manager = managed_watcher_runtime
-    slot, trigger, target = _build_watched_code_project(tmp_path, registry)
-    code_indexer = slot.code_indexer
+    _slot, trigger, target = _build_watched_code_project(tmp_path, registry)
     target_rel = str(target.relative_to(tmp_path)).replace("\\", "/")
-    assert code_indexer._get_chunk_ids_for_files({target_rel}), "target not indexed"
+    assert _code_chunk_ids(registry, tmp_path, {target_rel}), "target not indexed"
 
     await _start_watcher(tmp_path, cooldown=cooldown)
     try:
@@ -832,7 +874,7 @@ async def test_watcher_evicts_cooldown_suppressed_delete(
         # cooldown (2s) + idle tick (1s) + generous margin; no further FS events.
         for _ in range(120):  # up to 12s
             await asyncio.sleep(0.1)
-            if not code_indexer._get_chunk_ids_for_files({target_rel}):
+            if not _code_chunk_ids(registry, tmp_path, {target_rel}):
                 evicted = True
                 break
         assert evicted, "idle tick did not flush the cooldown-suppressed deletion"
@@ -853,8 +895,7 @@ async def test_watcher_idle_tick_does_not_bypass_cooldown(
     """
     cooldown = 6.0
     registry, _manager = managed_watcher_runtime
-    slot, trigger, target = _build_watched_code_project(tmp_path, registry)
-    code_indexer = slot.code_indexer
+    _slot, trigger, target = _build_watched_code_project(tmp_path, registry)
     target_rel = str(target.relative_to(tmp_path)).replace("\\", "/")
 
     await _start_watcher(tmp_path, cooldown=cooldown)
@@ -865,7 +906,7 @@ async def test_watcher_idle_tick_does_not_bypass_cooldown(
         # Several idle ticks fire in this window, but the cooldown (6s) is far
         # from elapsed, so the deletion must remain unreconciled.
         await asyncio.sleep(2.5)
-        assert code_indexer._get_chunk_ids_for_files({target_rel}), (
+        assert _code_chunk_ids(registry, tmp_path, {target_rel}), (
             "idle tick bypassed the cooldown and reindexed early"
         )
     finally:
@@ -889,6 +930,7 @@ async def test_watcher_pause_coalesces_and_explicit_stop_joins_cleanup(
         manager,
         root,
         slot,
+        registry,
         first_path,
     )
 
@@ -906,14 +948,14 @@ async def test_watcher_pause_coalesces_and_explicit_stop_joins_cleanup(
     succeeded = await _resume_blocked_watcher_and_stop(
         manager,
         root,
-        slot,
+        registry,
         paused.id,
     )
     assert (
         succeeded.attempt.number,
         succeeded.attempt.resumed_from_attempt,
     ) == (2, 1)
-    _assert_watcher_resources_released(succeeded, slot)
+    _assert_watcher_resources_released(succeeded, slot, registry, root)
     assert (
         slot.store.get_by_id(first_id) is not None,
         slot.store.get_by_id(second_id) is not None,
@@ -937,7 +979,7 @@ async def test_watcher_cancel_preserves_dirtiness_and_submits_replacement(
     cancelled, first_id, cancelled_finished_at = await _cancel_blocked_watcher_attempt(
         manager,
         root,
-        slot,
+        registry,
         first_path,
     )
 
@@ -959,7 +1001,7 @@ async def test_watcher_cancel_preserves_dirtiness_and_submits_replacement(
         cancelled.id,
         replacement.id,
     }
-    _assert_watcher_resources_released(replacement, slot)
+    _assert_watcher_resources_released(replacement, slot, registry, root)
     assert (
         slot.store.get_by_id(first_id) is not None,
         slot.store.get_by_id(second_id) is not None,
@@ -1128,7 +1170,7 @@ async def test_watcher_cancellation_releases_real_admitted_claim(
         )
         active_state = await _wait_for_watcher_state(
             state_path,
-            lambda state: isinstance(state.get("attempt_generation"), int),
+            lambda state: jobs.count(state.get("attempt_generation")) is not None,
             "watcher never durably admitted a convergence generation",
         )
         running = await _wait_for_watcher_job(

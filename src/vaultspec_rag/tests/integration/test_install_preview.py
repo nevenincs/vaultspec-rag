@@ -8,16 +8,16 @@ from contextvars import Context
 from pathlib import Path  # noqa: TC003
 
 import pytest
-from vaultspec_core.config.workspace import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.config.workspace import (
     resolve_workspace,
 )
-from vaultspec_core.core.enums import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.enums import (
     InstallMode,
 )
-from vaultspec_core.core.manifest import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.manifest import (
     write_manifest,
 )
-from vaultspec_core.core.types import (  # pyright: ignore[reportMissingTypeStubs]
+from vaultspec_core.core.types import (
     get_context,
     init_paths,
 )

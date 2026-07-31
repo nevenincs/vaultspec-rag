@@ -80,7 +80,25 @@ def create_kill_on_close_job(*, purpose: str) -> int | None:
         return None
     from ctypes import wintypes
 
-    kernel32 = ctypes.windll.kernel32
+    from ._process_probe import win_kernel32
+
+    # ``win_kernel32()`` returns the same process-global ``kernel32`` object
+    # every caller shares; declaring the Job Object signatures on it (rather
+    # than on a fresh ``ctypes.windll.kernel32`` reference) keeps every
+    # restype/argtype declaration for this DLL in one inventory. Left
+    # undeclared, ``CreateJobObjectW``'s return defaults to a 32-bit ``c_int``
+    # even though a ``HANDLE`` is pointer-sized - the exact truncation
+    # ``win_kernel32`` exists to prevent for ``OpenProcess``.
+    kernel32 = win_kernel32()
+    kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    )
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
 
     class _IoCounters(ctypes.Structure):
         _fields_ = [
@@ -148,7 +166,14 @@ def assign_process_to_job(
     """
     if sys.platform != "win32" or job is None:
         return False
-    if ctypes.windll.kernel32.AssignProcessToJobObject(job, process_handle):
+    from ctypes import wintypes
+
+    from ._process_probe import win_kernel32
+
+    kernel32 = win_kernel32()
+    kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    if kernel32.AssignProcessToJobObject(job, process_handle):
         return True
     logger.error(
         "AssignProcessToJobObject failed for %s pid %d; the kill-on-close "

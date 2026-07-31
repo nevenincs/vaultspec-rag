@@ -138,7 +138,7 @@ class TestBoundedGraphNudge:
         )
 
     def test_nudge_is_additive_and_bounded(self, tmp_path: Path):
-        from vaultspec_core.graph import (  # pyright: ignore[reportMissingTypeStubs]  # vaultspec_core ships no stubs
+        from vaultspec_core.graph import (
             VaultGraph,
         )
 

@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -36,7 +36,7 @@ def _spawn_marked_sleeper(marker: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen(argv, start_new_session=True)
 
 
-def _scan_for(marker: str) -> Mapping[str, Any] | None:
+def _scan_for(marker: str) -> Mapping[str, object] | None:
     """Return the scan entry whose command line carries *marker*.
 
     Reads ONLY ``cmdline`` while searching, which is the whole point: the

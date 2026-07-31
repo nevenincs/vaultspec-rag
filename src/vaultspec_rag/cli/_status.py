@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import typer
 
 from .._operator_commands import index_command, server_status_command
 from .._source_types import PublicSourceType
+from ..jobs import count
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, JsonMode, app
-from ._cli_format import _counted_unit, _format_mb
+from ._cli_format import _counted_unit, _format_mib
 from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
@@ -25,13 +26,16 @@ from ._status_labels import render_degradation
 
 
 def _status_counts(status: dict[str, object]) -> tuple[int, int, int | None]:
+    # A version-skewed daemon can publish these as something other than an
+    # int; count() reads a malformed field as "not measured" rather than
+    # raising out of the status command.
     vault_count = status.get("vault_documents", status.get("vault_count", 0))
     code_count = status.get("codebase_chunks", status.get("code_count", 0))
     document_count = status.get("document_chunks", status.get("document_count"))
     return (
-        int(cast("Any", vault_count)),
-        int(cast("Any", code_count)),
-        int(cast("Any", document_count)) if document_count is not None else None,
+        count(vault_count) or 0,
+        count(code_count) or 0,
+        count(document_count),
     )
 
 
@@ -197,18 +201,18 @@ def _render_status_text(
     service_port: int | None = None,
 ) -> None:
     cuda_available = bool(status["cuda"])
-    gpu_name = cast("Any", status["gpu_name"])
-    vram_mb = int(cast("Any", status["vram_mb"]))
+    gpu_name = status["gpu_name"]
+    vram_mib = count(status["vram_mib"]) or 0
     index_data_path = _human_index_data_location(
         status["storage_path"],
         service_port=service_port,
     )
     vault_count, code_count, document_count = _status_counts(status)
     device = (
-        # vram_mb is produced by bytes_to_mib, so it is mebibytes; rendering it
+        # vram_mib is produced by bytes_to_mib, so it is mebibytes; rendering it
         # as "MB" both mislabelled it and left the operator converting five
         # digits to work out whether a model fits.
-        f"GPU - {gpu_name} ({_format_mb(vram_mb)} VRAM)"
+        f"GPU - {gpu_name} ({_format_mib(vram_mib)} VRAM)"
         if cuda_available
         else "CPU only (no supported GPU detected)"
     )
@@ -231,7 +235,7 @@ def _render_status_text(
     for line in lines:
         _plain(line, soft_wrap=line.startswith(("Index data:", "Project:", "Address:")))
     if service_port is not None:
-        _plain(f"  vaultspec-rag server status --port {service_port}")
+        _plain(f"  {server_status_command(service_port)}")
     _print_next_action(next_action)
 
 
@@ -245,7 +249,7 @@ def _emit_status_json(
     data: dict[str, object] = {
         "cuda": bool(status["cuda"]),
         "gpu_name": status["gpu_name"],
-        "vram_mb": int(cast("Any", status["vram_mb"])),
+        "vram_mib": count(status["vram_mib"]) or 0,
         "storage_path": str(status["storage_path"]),
         "vault_documents": vault_count,
         "codebase_chunks": code_count,

@@ -51,7 +51,7 @@ class SearchResults(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    results: list[dict[str, Any]] = []
+    results: list[dict[str, object]] = []
     summary: str | None = None
 
 
@@ -112,6 +112,8 @@ def _search_envelope_or_raise(
             "invalid_service_response: The search service returned an invalid "
             "response; expected a JSON object envelope."
         )
+    # isinstance narrows the key/value types no further than dict[Unknown,
+    # Unknown]; the JSON object this daemon returns is always str-keyed.
     envelope = cast("dict[str, Any]", result)
     if envelope.get("ok") is not False:
         if not isinstance(envelope.get("results"), list):
@@ -505,18 +507,15 @@ async def get_index_status(
 ) -> dict[str, Any]:
     """Return count, policy, generation, and degraded-state service details."""
     port = _require_port()
+    args: dict[str, object] = {"project_root": _resolve_project_root(project_root)}
     result = await _delegate(
         partial(
             _try_http_admin,
             "get_service_state",
-            {"project_root": _resolve_project_root(project_root)},
+            args,
             port,
         )
     )
-    if result.get("ok") is False:
-        error = str(result.get("error") or "status_failed")
-        message = str(result.get("message") or "The status request failed.")
-        raise RuntimeError(f"{error}: {message}")
     return result
 
 

@@ -1,10 +1,8 @@
 """Service lifespan and the raw ``/health`` endpoint.
 
 Split out of the original ``server.py`` monolith. ``service_lifespan``
-reassigns the process-wide ``_start_time`` / ``_SERVICE_TOKEN`` on the
-package namespace so ``health_handler`` (and tests that rebind
-``_registry`` / ``_start_time``) observe the live values through the
-package alias.
+reassigns the process-wide start stamps while its app-scoped route runtime
+owns the service identity and registry used for HTTP discovery and health.
 """
 
 from __future__ import annotations
@@ -15,7 +13,6 @@ import logging
 import os
 import threading
 import time
-import uuid
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, cast
 
@@ -36,6 +33,7 @@ from ._lifecycle import (
     RunningClaimContendedError,
     _DiscoveryPublisher,
 )
+from ._runtime import get_app_runtime, get_request_runtime
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -47,7 +45,7 @@ if TYPE_CHECKING:
     from ..job_manager.models import JobShutdownResult
     from ..qdrant_runtime._constants import QdrantRuntimeState
     from ..qdrant_runtime._supervise import QdrantSupervisor
-    from ..service import ServiceHealth
+    from ..service import ServiceHealth, ServiceRegistry
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -125,8 +123,6 @@ def _stamp_qdrant_identity(
         raise RuntimeError(
             f"supervised Qdrant identity failed final publication validation: {reason}"
         )
-    if _m._service_port <= 0:
-        raise RuntimeError("service port is unavailable during Qdrant publication")
     publisher.publish_phase("warming")
 
 
@@ -263,7 +259,7 @@ def _exit_standalone_daemon(code: int) -> None:
 
 
 @asynccontextmanager
-async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
+async def service_lifespan(app: Starlette) -> AsyncGenerator[None]:
     """Eagerly load GPU models before accepting connections.
 
     Startup loads the shared ``EmbeddingModel`` with per-stage
@@ -273,21 +269,16 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
     discovery views, and releases the retained machine lease last.
 
     Args:
-        _app: The Starlette application instance (unused but
-            required by the lifespan protocol).
+        app: The Starlette application that owns this daemon generation.
 
     Yields:
         Control to the running application.
     """
+    runtime = get_app_runtime(app)
+    registry = runtime.registry
     _m._start_time = time.monotonic()
     _m._start_wall_time = time.time()
     _m._shutdown_recorded = False
-    # Generate the per-process identity token before the first
-    # heartbeat tick fires (which would otherwise persist an empty
-    # token into service.json). The token round-trips through
-    # /health for CLI-side identity verification (gh #124/#125).
-    _m._SERVICE_TOKEN = uuid.uuid4().hex
-
     from ..serviceclient._discovery import SERVICE_PHASE_RUNNING, SERVICE_PHASE_WARMING
 
     # Every startup step - INCLUDING the machine-singleton claim - runs under one
@@ -312,19 +303,19 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
         # spawning Qdrant. The authoritative, race-safe gate (the CLI pre-check
         # is advisory; this acquire wins or loses atomically).
         machine_lease = _claim_machine_singleton()
-        discovery = _DiscoveryPublisher(machine_lease)
+        discovery = _DiscoveryPublisher(runtime, machine_lease)
         # Register the owner cleanup retry before the first discovery write or
         # subordinate startup action, so a pre-yield failure can retain the lease
         # after a transient cleanup failure and retry while still owner.
         _m._install_daemon_shutdown_hooks(discovery)
 
         _stamp_service_phase(discovery, SERVICE_PHASE_WARMING)
-        periodic_tasks = await _start_components(discovery)
+        periodic_tasks = await _start_components(discovery, registry)
         from .. import jobs as _jobs_module
 
         manager = _jobs_module.get_job_manager()
         try:
-            await _start_job_manager(manager)
+            await _start_job_manager(manager, registry)
         except _CanonicalJobRestoreError:
             # ``abort_startup`` restored the untouched singleton to ``new``.
             # Do not pass it through normal shutdown, which would incorrectly
@@ -342,7 +333,7 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
             yield
         finally:
             cleanup_started = True
-            await _shutdown_components(periodic_tasks, manager, discovery)
+            await _shutdown_components(periodic_tasks, manager, discovery, registry)
             # Clean serving shutdown: every resource is released. Exit the
             # daemon now so a wedged periodic worker cannot hang the
             # interpreter-exit executor join. No-op off the standalone daemon.
@@ -388,6 +379,7 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
                 periodic_tasks,
                 manager,
                 discovery,
+                registry,
                 contention_yield=contention_yield,
             )
         # Startup/rollback failure with the teardown above complete: exit the
@@ -401,6 +393,7 @@ async def service_lifespan(_app: Starlette) -> AsyncGenerator[None]:
 
 async def _start_components(
     discovery: _DiscoveryPublisher,
+    registry: ServiceRegistry,
 ) -> list[asyncio.Task[None]]:
     """Run the pre-yield startup: qdrant, models, hooks, periodic tasks.
 
@@ -421,10 +414,10 @@ async def _start_components(
     hf_home = get_config().hf_cache_location
     logger.info("HF cache: %s", hf_home)
 
-    # The package-level registry is intentionally stable across supported
-    # in-process lifespan reuse. Reopen it only after its prior close_all()
-    # completed and proved that no model, slot, or root lock remains.
-    _m._registry.prepare_startup()
+    # The route runtime owns this registry for the daemon generation. Reopen it
+    # only after its prior close_all() completed and proved that no model, slot,
+    # or root lock remains.
+    registry.prepare_startup()
 
     # Qdrant server mode is the default backend: spawn the supervised
     # child BEFORE model load so a missing/broken binary fails startup
@@ -499,7 +492,7 @@ async def _start_components(
         await _run_in_thread(_reconcile_storage_manifest)
 
     # Wire watcher lifecycle into registry so close_project() stops watchers
-    _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
+    registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
 
     # Load models (raises RuntimeError if no CUDA via _check_rag_deps). This is
     # the longest cold-start stage - a first run downloads the weights - so the
@@ -516,12 +509,12 @@ async def _start_components(
     discovery.publish_phase(
         "warming", detail="loading models", done=0, total=model_total
     )
-    await _run_in_thread(_m._registry.load_model)
+    await _run_in_thread(registry.load_model)
     if reranker_enabled:
         discovery.publish_phase(
             "warming", detail="loading the reranker", done=2, total=model_total
         )
-        await _run_in_thread(_m._registry.get_reranker)
+        await _run_in_thread(registry.get_reranker)
     discovery.publish_phase(
         "warming", detail="models ready", done=model_total, total=model_total
     )
@@ -541,7 +534,10 @@ async def _start_components(
             interrupted,
         )
 
-    heartbeat_task = asyncio.create_task(_m._heartbeat_loop(discovery))
+    tasks = [
+        asyncio.create_task(_m._heartbeat_loop(discovery)),
+        asyncio.create_task(_borrower_lease_recovery_loop(registry)),
+    ]
     # First heartbeat right away so a freshly started service is
     # immediately distinguishable from a stale CLI-only write.
     try:
@@ -560,7 +556,6 @@ async def _start_components(
     # honoured without a restart either way). The loop itself delays one
     # full interval before the first cycle - a fresh daemon serves before
     # it sweeps.
-    tasks = [heartbeat_task]
     if get_config().effective_server_mode() and bool(get_config().storage_autoprune):
         tasks.append(asyncio.create_task(_m._maintenance_loop()))
     # Survey snapshot warmer: server-mode only, but deliberately NOT gated on
@@ -573,11 +568,42 @@ async def _start_components(
     return tasks
 
 
-async def _start_job_manager(manager: JobManager) -> None:
+async def _borrower_lease_recovery_loop(registry: ServiceRegistry) -> None:
+    """Use the service heartbeat cadence to recover a dead borrower binding."""
+    recovery_interval_seconds = 15
+
+    while True:
+        try:
+            await asyncio.sleep(recovery_interval_seconds)
+            await _borrower_lease_recovery_tick(registry)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log_event(
+                logger,
+                "service.lifecycle",
+                "borrower_lease_recovery_failed",
+                severity=logging.WARNING,
+                exc_info=True,
+            )
+
+
+async def _borrower_lease_recovery_tick(registry: ServiceRegistry) -> None:
+    """Run one torch-free borrower-loss check on the heartbeat worker path."""
+    await _run_in_thread(registry.resume_lost_borrower_lease)
+
+
+async def _start_job_manager(manager: JobManager, registry: ServiceRegistry) -> None:
     """Restore, rebind, and dispatch the one canonical service job manager."""
     from .. import jobs as _jobs_module
     from ..job_models import JobOutcomeStatus, JobState
 
+    # Adopt this service's loop before any restore can dispatch onto it, and
+    # before the first search can prove an index shrunken. Work admitted from
+    # a worker thread resolves its loop through here; without the adoption
+    # every such dispatch is rejected for want of a loop that is in fact
+    # running, one thread away.
+    manager.adopt_service_loop(asyncio.get_running_loop())
     restore_required = manager.prepare_startup()
     if restore_required:
         outcome = await _run_in_thread(manager.restore_persisted)
@@ -597,7 +623,7 @@ async def _start_job_manager(manager: JobManager) -> None:
                 f"{detail}; retained restored state requires bounded cleanup"
             )
     manager.complete_startup()
-    bound, dispatched = _jobs_module.restore_managed_jobs(registry=_m._registry)
+    bound, dispatched = _jobs_module.restore_managed_jobs(registry=registry)
     interrupted = sum(
         snapshot.state is JobState.INTERRUPTED for snapshot in manager.terminal()
     )
@@ -742,6 +768,7 @@ async def _shutdown_components(
     tasks: list[asyncio.Task[None]],
     manager: JobManager | None,
     discovery: _DiscoveryPublisher,
+    registry: ServiceRegistry,
     *,
     contention_yield: bool = False,
 ) -> None:
@@ -801,7 +828,7 @@ async def _shutdown_components(
     # Shutdown ordering: released watchers and manager workers BEFORE stores,
     # stores BEFORE the qdrant child, and the machine singleton last.
     try:
-        _m._registry.close_all()
+        registry.close_all()
     except BaseException as exc:
         # Preserve the primary store teardown failure, but still make one real
         # attempt to stop Qdrant. Ownership remains held whichever stop result
@@ -1018,6 +1045,11 @@ def _resilience_job_health(
     """Project the bounded latest-resilience health shape."""
     if record is None:
         return None
+    # "spec" is always a nested object: every job snapshot builds it as a
+    # literal dict, never omitted or null. "resilience" is only ever a dict
+    # here because the sole caller below filters candidates to
+    # ``isinstance(record.get("resilience"), dict)`` before this record can
+    # become the latest one passed in.
     return {
         "job_id": record.get("id"),
         "source": cast("dict[str, object]", record["spec"]).get("source"),
@@ -1160,7 +1192,7 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
     return jobs_health, degraded_reasons
 
 
-async def health_handler(_request: Request) -> object:
+async def health_handler(request: Request) -> object:
     """Return service health as JSON.
 
     Args:
@@ -1173,12 +1205,15 @@ async def health_handler(_request: Request) -> object:
     from starlette.responses import JSONResponse
 
     from .. import store_schema
+    from .._gpu_admission import device_load_reading
     from ..serviceclient._compat import (
         SERVICE_VERSION_FIELD,
         local_package_version,
     )
 
-    reg_health = _m._registry.health()
+    runtime = get_request_runtime(request)
+    reg_health = runtime.registry.health()
+    quiesce = runtime.registry.quiesce_snapshot().as_envelope()
     uptime = _uptime_seconds()
     from ..qdrant_runtime import _supervise
 
@@ -1199,16 +1234,19 @@ async def health_handler(_request: Request) -> object:
             "qdrant": qdrant_state.to_dict(),
             "pid": os.getpid(),
             "parent_pid": os.getppid(),
+            "port": runtime.port,
             **interpreter_fields(),
             "cuda": reg_health["cuda"],
             "models_loaded": reg_health["model_loaded"],
             "reranker_loaded": reg_health["reranker_loaded"],
             "project_count": reg_health["project_count"],
+            "quiesce": quiesce,
             # The structured signal behind the conformance degradation reason.
             # The CLI derives its remediation from this rather than parsing the
             # prose, so rewording the reason costs its pairing, never its
             # visibility.
             "nonconforming": reg_health.get("nonconforming") or [],
+            "device_load": device_load_reading(),
             "uptime_s": round(uptime, 2),
             "backend_capabilities": backend_capabilities_dict(),
             "degraded_reasons": degraded_reasons,
@@ -1227,6 +1265,6 @@ async def health_handler(_request: Request) -> object:
             # to service.json. The CLI compares the two to detect
             # PID-reuse and unrelated-HTTP-server-on-port collisions
             # (gh #124, #125).
-            "service_token": _m._SERVICE_TOKEN,
+            "service_token": runtime.token,
         },
     )

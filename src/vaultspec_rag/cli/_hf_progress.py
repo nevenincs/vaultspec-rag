@@ -219,7 +219,7 @@ def _reporting_tqdm_class(tracker: SnapshotProgress) -> type[Any] | None:
     class _ReportingTqdm(base):
         """A tqdm that reports through the tracker and draws nothing."""
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args: object, **kwargs: object) -> None:
             # Pointed at a throwaway buffer rather than a real stream: the
             # reporter owns the terminal, and a second writer would land
             # inside its live frame. ``disable`` is forced OFF because a
@@ -231,7 +231,7 @@ def _reporting_tqdm_class(tracker: SnapshotProgress) -> type[Any] | None:
             super().__init__(*args, **kwargs)  # pyright: ignore[reportUnknownMemberType]
             tracker.track(self)
 
-        def display(self, *args: Any, **kwargs: Any) -> bool:
+        def display(self, *args: object, **kwargs: object) -> bool:
             """Report instead of drawing.
 
             tqdm funnels every frame through this one method, so overriding it

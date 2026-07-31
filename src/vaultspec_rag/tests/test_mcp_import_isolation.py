@@ -78,15 +78,18 @@ def _relative_name_is_forbidden(node: ast.ImportFrom, file_pkg: str) -> bool:
 
     ``file_pkg`` is the dotted package path of the file being inspected
     (e.g. ``vaultspec_rag.mcp``).  A relative import ``from ..server import X``
-    has ``level=2`` and ``module="server"``; we walk up ``level`` segments from
-    ``file_pkg`` and then append the first segment of ``module`` to obtain the
-    resolved sub-module name.
+    has ``level=2`` and ``module="server"``; the first dot names ``file_pkg``
+    itself, so we walk up ``level - 1`` segments from it and append the first
+    segment of ``module`` to obtain the resolved sub-module name.
     """
     if node.level == 0 or node.module is None:
         return False
     pkg_parts = file_pkg.split(".")
-    # Walk up `level` segments (each dot climbs one package level).
-    climb = node.level
+    # One dot names the file's own package, so only the dots beyond the first
+    # climb. Treating every dot as a climb drops one segment too many, which
+    # resolved `from ..server import X` in `vaultspec_rag.mcp` to a bare
+    # `server` and let the most likely violation through unseen.
+    climb = node.level - 1
     if climb > len(pkg_parts):
         return False
     resolved_parts = pkg_parts[: len(pkg_parts) - climb]
@@ -189,3 +192,33 @@ def test_mcp_import_loads_no_heavy_ml_libs() -> None:
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source", "file_pkg", "forbidden"),
+    [
+        ("from ..server import _utils", "vaultspec_rag.mcp", True),
+        ("from ..registry import get_registry", "vaultspec_rag.mcp", True),
+        ("from ..server._utils import helper", "vaultspec_rag.mcp", True),
+        ("from ...server import _utils", "vaultspec_rag.mcp.sub", True),
+        ("from .._tools import build", "vaultspec_rag.mcp", False),
+        ("from . import _roots", "vaultspec_rag.mcp", False),
+        ("from ..search import Searcher", "vaultspec_rag.mcp", False),
+    ],
+)
+def test_the_relative_detector_answers_both_ways(
+    source: str, file_pkg: str, *, forbidden: bool
+) -> None:
+    """A dotted import resolves to the module the interpreter would load.
+
+    The true-positive rows are the point: a guard that only ever sees code
+    with no violation cannot distinguish a rule it enforces from one it
+    never reaches.  One leading dot names the file's own package, so a
+    two-dot import from directly under the package resolves to a sibling of
+    that package - the shape every module here would actually write.
+    """
+    node = ast.parse(source).body[0]
+    assert isinstance(node, ast.ImportFrom)
+
+    assert _relative_name_is_forbidden(node, file_pkg) is forbidden
