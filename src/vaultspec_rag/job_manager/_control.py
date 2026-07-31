@@ -46,6 +46,7 @@ logger = logging.getLogger("vaultspec_rag.jobs")
 #: is an answerable request and logs at WARNING.
 _INTERNAL_REJECTION_CODES = frozenset(
     {
+        "dispatch_loop_unresponsive",
         "dispatch_not_bound",
         "event_loop_required",
         "invalid_progress",

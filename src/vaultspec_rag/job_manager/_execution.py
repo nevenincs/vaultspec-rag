@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import threading
 import time
@@ -55,6 +56,14 @@ from .state import (
 )
 
 logger = logging.getLogger("vaultspec_rag.jobs")
+
+#: How long a loopless caller waits for the service loop to accept its
+#: dispatch. The handed-off work is bookkeeping under the manager lock plus
+#: one ``create_task``, so this is not a work budget - it is the point past
+#: which the loop is wedged and the service has larger problems than one
+#: repair. Generous on purpose: expiring early would report a failure for a
+#: dispatch the loop then goes on to perform.
+_LOOPLESS_DISPATCH_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,18 +161,70 @@ class JobManagerExecution(JobManagerState):
             control=RunControlToken(gate=self._quiesce_gate),
         )
 
+    def adopt_service_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Record the loop that owns managed execution for this service life."""
+        with self._lock:
+            self._service_loop = loop
+
     def dispatch(self, job_id: str) -> JobOutcome:
-        """Schedule one queued attempt and attach its exact task and control token."""
-        command = "dispatch"
+        """Schedule one queued attempt, from this thread's loop or the service's."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            return self._dispatch_from_loopless_thread(job_id)
+        return self._dispatch_on(job_id, loop)
+
+    def _dispatch_from_loopless_thread(self, job_id: str) -> JobOutcome:
+        """Hand a dispatch decided off the loop back to the service's own loop.
+
+        Job admission runs a policy preflight that scans the tree, so callers
+        deliberately decide to dispatch from a plain worker thread to keep
+        that scan off the serving path. Such a thread never has a running
+        loop of its own - not at any point in its life - so resolving one
+        here is the difference between a repair that runs and a job that is
+        admitted only to fail. A process that adopted no loop keeps the
+        original rejection: there, loopless really does mean no loop exists.
+        """
+        command = "dispatch"
+        with self._lock:
+            loop = self._service_loop
+        if loop is None or loop.is_closed() or not loop.is_running():
             return self._error(
                 command,
                 "event_loop_required",
                 "Managed dispatch requires a running event loop.",
             )
 
+        outcome: concurrent.futures.Future[JobOutcome] = concurrent.futures.Future()
+
+        def _dispatch_on_service_loop() -> None:
+            try:
+                outcome.set_result(self._dispatch_on(job_id, loop))
+            except BaseException as exc:
+                # Carried to the waiting caller rather than escaping into the
+                # loop's exception handler, where it would be logged and lost.
+                outcome.set_exception(exc)
+
+        try:
+            loop.call_soon_threadsafe(_dispatch_on_service_loop)
+        except RuntimeError:
+            # Closed between the liveness check above and the handoff.
+            return self._error(
+                command,
+                "event_loop_required",
+                "Managed dispatch requires a running event loop.",
+            )
+        try:
+            return outcome.result(timeout=_LOOPLESS_DISPATCH_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            return self._error(
+                command,
+                "dispatch_loop_unresponsive",
+                "The service event loop did not accept the dispatch in time.",
+            )
+
+    def _dispatch_on(self, job_id: str, loop: asyncio.AbstractEventLoop) -> JobOutcome:
+        """Admit and schedule one queued attempt on *loop*, which must be running."""
         with self._lock:
             admission = self._dispatch_admission_locked(job_id, loop)
             if isinstance(admission, JobOutcome):
