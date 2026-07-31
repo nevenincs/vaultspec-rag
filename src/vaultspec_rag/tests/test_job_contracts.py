@@ -6,9 +6,11 @@ import ast
 import inspect
 import json
 import math
+import os
 import subprocess
 import sys
 import textwrap
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -36,11 +38,13 @@ from ..job_models import (
     JobState,
     JobTimestamps,
     ProcessResourceSnapshot,
+    ResumeStrategy,
     capabilities_for_state,
 )
 from ..job_persistence import (
     IdempotencyBinding,
     PersistedManagerState,
+    PersistenceWriteError,
     load_persisted_state,
     save_persisted_state,
 )
@@ -550,6 +554,615 @@ class TestPersistedJobStateWriteSide:
         path.write_text(json.dumps(payload), encoding="utf-8")
         with pytest.raises(TypeError, match="resource rss_mib must be numeric"):
             load_persisted_state(path)
+
+
+_DESIRED_FOR_STATE: dict[JobState, DesiredJobState] = {
+    JobState.QUEUED: DesiredJobState.RUNNING,
+    JobState.RUNNING: DesiredJobState.RUNNING,
+    JobState.PAUSING: DesiredJobState.PAUSED,
+    JobState.PAUSED: DesiredJobState.PAUSED,
+    JobState.CANCELLING: DesiredJobState.CANCELLED,
+    JobState.CANCELLED: DesiredJobState.CANCELLED,
+    JobState.SUCCEEDED: DesiredJobState.RUNNING,
+    JobState.FAILED: DesiredJobState.RUNNING,
+    JobState.INTERRUPTED: DesiredJobState.RUNNING,
+    JobState.SUPERSEDED: DesiredJobState.RUNNING,
+}
+
+
+def _spec(
+    *,
+    source: JobSource = JobSource.CODE,
+    mode: JobMode = JobMode.INCREMENTAL,
+    project_root: str | None = None,
+) -> JobSpec:
+    return JobSpec(
+        operation=JobOperation.INDEX,
+        source=source,
+        project_root=project_root or str(Path(__file__).resolve().parent),
+        mode=mode,
+    )
+
+
+def _snapshot_in_state(
+    state: JobState,
+    *,
+    job_id: str = "job-1",
+    spec: JobSpec | None = None,
+) -> JobSnapshot:
+    """Return the leanest snapshot the manager could hold in *state*.
+
+    Every lifecycle invariant the loader enforces is satisfied structurally:
+    a live attempt carries a start, a terminal record carries a finish, and an
+    idle record holds no execution resource.
+    """
+    resolved = spec if spec is not None else _spec()
+    return JobSnapshot(
+        id=job_id,
+        revision=4,
+        spec=resolved,
+        state=state,
+        desired_state=_DESIRED_FOR_STATE[state],
+        capabilities=capabilities_for_state(resolved, state),
+        attempt=JobAttempt(number=1),
+        timestamps=JobTimestamps(
+            created_at=1000.0,
+            state_changed_at=1200.0,
+            started_at=None if state is JobState.QUEUED else 1500.0,
+            finished_at=2000.0 if state.is_terminal else None,
+        ),
+        progress=None,
+        result=None,
+        error_kind=None,
+        initiator=JobInitiator(kind="cli", command="index", project_root=None),
+        runtime=_runtime(),
+        resources=JobResourceSnapshot(started=None, finished=None),
+        resilience=None,
+    )
+
+
+def _fully_populated_snapshot() -> JobSnapshot:
+    """Return a terminal snapshot with every optional field carrying a value."""
+    spec = _spec(source=JobSource.VAULT, mode=JobMode.REBUILD)
+    return replace(
+        _snapshot_in_state(JobState.FAILED, spec=spec),
+        attempt=JobAttempt(
+            number=2,
+            parent_job_id="job-0",
+            resumed_from_attempt=1,
+            resume_strategy=ResumeStrategy.RECONCILE,
+        ),
+        timestamps=JobTimestamps(
+            created_at=1000.0,
+            state_changed_at=1200.0,
+            started_at=1500.0,
+            finished_at=2000.0,
+            control_requested_at=1600.0,
+            control_acknowledged_at=1700.0,
+            admission_acquired_at=1550.0,
+        ),
+        progress=JobProgress(
+            step="encoding", completed=7, total=7, last_updated=1900.0
+        ),
+        result="failed after retry",
+        error_kind="encode_error",
+        initiator=JobInitiator(kind="mcp", command="reindex", project_root="/srv/app"),
+        runtime=JobRuntimeSnapshot(
+            pid=4242,
+            parent_pid=1,
+            user="operator",
+            executable="python",
+            prefix="/opt/venv",
+            base_prefix="/usr",
+            virtual_env="/opt/venv",
+        ),
+        resources=JobResourceSnapshot(
+            started=_resources(rss_mib=101.5, cuda_allocated_mib=2.0),
+            finished=_resources(rss_mib=202.25, cuda_reserved_mib=8.0),
+        ),
+        resilience=IndexResilienceSnapshot(
+            generation_id="gen-9",
+            committed_units=41,
+            replayed_units=3,
+            checkpoint_compatible=True,
+            last_durable_progress_at=1850.0,
+            no_progress_timeout_seconds=900.0,
+            no_progress_remaining_seconds=0.0,
+            circuit_state="open",
+            next_retry_at=2400.0,
+            peak_rss_mib=303.0,
+            rss_ceiling_mib=4096.0,
+            peak_cuda_allocated_mib=12.5,
+            peak_cuda_reserved_mib=24.5,
+            cuda_ceiling_mib=8192.0,
+            support_profile="workstation",
+            terminal_outcome="fault",
+        ),
+        reuse={
+            "donors": 12,
+            "ratio": 0.5,
+            "label": "reuse ✓",
+            "enabled": True,
+            "absent": None,
+            "buckets": [1, 2, 3],
+            "nested": {"a": 1},
+        },
+        drift={"superseded": 4, "stale": 0},
+        gpu_lock_wait_seconds=1.25,
+    )
+
+
+def _round_trip_cases() -> list[tuple[str, JobSnapshot]]:
+    """Enumerate every snapshot shape the manager can legitimately produce."""
+    cases: list[tuple[str, JobSnapshot]] = [
+        (f"state {state.value}", _snapshot_in_state(state)) for state in JobState
+    ]
+    cases += [
+        (
+            f"spec {source.value}/{mode.value}",
+            _snapshot_in_state(JobState.RUNNING, spec=_spec(source=source, mode=mode)),
+        )
+        for source in (JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT)
+        for mode in JobMode
+    ]
+    cases.append(("every optional field present", _fully_populated_snapshot()))
+    cases.append(
+        (
+            "every optional field absent",
+            _snapshot_in_state(JobState.QUEUED),
+        )
+    )
+    cases.append(
+        (
+            "empty-string fields",
+            replace(
+                _snapshot_in_state(JobState.SUCCEEDED),
+                result="",
+                error_kind="",
+                initiator=JobInitiator(kind="cli", command="index", project_root=""),
+                runtime=replace(_runtime(), user="", virtual_env=""),
+                attempt=JobAttempt(number=1, parent_job_id=""),
+                resilience=IndexResilienceSnapshot(generation_id="", circuit_state=""),
+            ),
+        )
+    )
+    cases.append(
+        (
+            "unicode fields",
+            replace(
+                _snapshot_in_state(JobState.SUCCEEDED),
+                id="job-索引-🎉",
+                result="succeeded ✓ naïve 日本語",
+                initiator=JobInitiator(
+                    kind="cli", command="索引 --全部", project_root="/srv/naïve"
+                ),
+                runtime=replace(_runtime(), user="Ωmega"),
+                progress=JobProgress(
+                    step="分块", completed=1, total=2, last_updated=1100.0
+                ),
+            ),
+        )
+    )
+    cases.append(
+        (
+            "numeric boundaries",
+            replace(
+                _snapshot_in_state(JobState.SUCCEEDED),
+                timestamps=JobTimestamps(
+                    created_at=0.0,
+                    state_changed_at=0.0,
+                    started_at=5e-324,
+                    finished_at=1e308,
+                ),
+                progress=JobProgress(step="s", completed=0, total=0, last_updated=0.0),
+                resources=JobResourceSnapshot(
+                    started=_resources(rss_mib=0.0),
+                    finished=_resources(rss_mib=1e308),
+                ),
+                gpu_lock_wait_seconds=0.0,
+                resilience=IndexResilienceSnapshot(
+                    committed_units=0, replayed_units=2**53
+                ),
+            ),
+        )
+    )
+    cases.append(
+        (
+            "integer-valued clocks",
+            replace(
+                _snapshot_in_state(JobState.SUCCEEDED),
+                timestamps=JobTimestamps(
+                    created_at=cast("float", 1000),
+                    state_changed_at=cast("float", 1200),
+                    started_at=cast("float", 1500),
+                    finished_at=cast("float", 2000),
+                ),
+            ),
+        )
+    )
+    return cases
+
+
+_ROUND_TRIP_CASES = _round_trip_cases()
+
+
+def _generation(*jobs: JobSnapshot) -> PersistedManagerState:
+    return PersistedManagerState(jobs=jobs, bindings=())
+
+
+def _age(path: Path, seconds: float) -> None:
+    """Backdate *path* on the real filesystem, as an abandoned file would be."""
+    stamp = time.time() - seconds
+    os.utime(path, (stamp, stamp))
+
+
+def _temporaries(directory: Path) -> list[str]:
+    return sorted(p.name for p in directory.iterdir() if p.name.endswith(".tmp"))
+
+
+def _deeply_nested(depth: int) -> dict[str, object]:
+    root: dict[str, object] = {}
+    cursor = root
+    for _ in range(depth):
+        nested: dict[str, object] = {}
+        cursor["n"] = nested
+        cursor = nested
+    return root
+
+
+class TestPersistedJobStateRoundTrip:
+    """Anything the manager can hold must survive a write and read unchanged.
+
+    A field that serializes but does not load again strands its job history in
+    a file the next start refuses, one process removed from whatever produced
+    it. Enumerating the shapes here is what keeps that from being discovered
+    on an operator's machine.
+    """
+
+    @pytest.mark.parametrize(
+        "snapshot",
+        [snapshot for _, snapshot in _ROUND_TRIP_CASES],
+        ids=[name for name, _ in _ROUND_TRIP_CASES],
+    )
+    def test_a_snapshot_survives_the_write_and_read_unchanged(
+        self, tmp_path: Path, snapshot: JobSnapshot
+    ) -> None:
+        path = tmp_path / "jobs-state.json"
+        state = _generation(snapshot)
+        save_persisted_state(path, state)
+        assert load_persisted_state(path) == state
+
+    def test_a_whole_generation_of_distinct_jobs_survives_with_its_bindings(
+        self, tmp_path: Path
+    ) -> None:
+        # Nonterminal jobs must name distinct work, so each takes its own root.
+        running = _snapshot_in_state(
+            JobState.RUNNING,
+            job_id="job-running",
+            spec=_spec(source=JobSource.VAULT, project_root=str(tmp_path / "a")),
+        )
+        queued = _snapshot_in_state(
+            JobState.QUEUED,
+            job_id="job-queued",
+            spec=_spec(source=JobSource.DOCUMENT, project_root=str(tmp_path / "b")),
+        )
+        finished = _fully_populated_snapshot()
+        state = PersistedManagerState(
+            jobs=(running, queued, finished),
+            bindings=(
+                (
+                    "key-running",
+                    IdempotencyBinding(
+                        signature=(running.spec, running.initiator, False),
+                        job_id=running.id,
+                    ),
+                ),
+                (
+                    "键-unicode",
+                    IdempotencyBinding(
+                        signature=(queued.spec, queued.initiator, True),
+                        job_id=queued.id,
+                    ),
+                ),
+            ),
+        )
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, state)
+        assert load_persisted_state(path) == state
+
+    @pytest.mark.parametrize(
+        "state", list(JobState), ids=[state.value for state in JobState]
+    )
+    def test_discarded_capabilities_always_match_what_was_written(
+        self, tmp_path: Path, state: JobState
+    ) -> None:
+        # Capabilities are written but never read back - the loader derives
+        # them again. That is only safe while the derivation reproduces the
+        # written block exactly, so this asserts the identity rather than
+        # trusting it, for every state a record can be persisted in.
+        snapshot = _snapshot_in_state(state)
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, _generation(snapshot))
+        payload = cast(
+            "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
+        )
+        jobs = cast("list[dict[str, object]]", payload["jobs"])
+        written = cast("dict[str, bool]", jobs[0]["capabilities"])
+        loaded = load_persisted_state(path).jobs[0]
+        assert written == {
+            "pausable": loaded.capabilities.pausable,
+            "resumable": loaded.capabilities.resumable,
+            "cancellable": loaded.capabilities.cancellable,
+            "retryable": loaded.capabilities.retryable,
+            "deletable": loaded.capabilities.deletable,
+            "force_killable": loaded.capabilities.force_killable,
+        }
+        assert loaded.capabilities == snapshot.capabilities
+
+    def test_a_start_paused_record_from_an_older_writer_gains_its_request_stamp(
+        self, tmp_path: Path
+    ) -> None:
+        # The one deliberate asymmetry in the round trip. An older writer
+        # emitted a start-paused job with an acknowledgement and no request,
+        # which no current state machine can produce; loading repairs it. The
+        # result is intentionally NOT the snapshot that was written.
+        spec = _spec()
+        acknowledged = 1000.0
+        legacy = JobSnapshot(
+            id="job-legacy",
+            revision=1,
+            spec=spec,
+            state=JobState.PAUSED,
+            desired_state=DesiredJobState.PAUSED,
+            capabilities=capabilities_for_state(spec, JobState.PAUSED),
+            attempt=JobAttempt(number=1),
+            timestamps=JobTimestamps(
+                created_at=acknowledged,
+                state_changed_at=acknowledged,
+                control_acknowledged_at=acknowledged,
+            ),
+            progress=None,
+            result=None,
+            error_kind=None,
+            initiator=JobInitiator(kind="cli", command="index", project_root=None),
+            runtime=_runtime(),
+            resources=JobResourceSnapshot(started=None, finished=None),
+            resilience=None,
+        )
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, _generation(legacy))
+        loaded = load_persisted_state(path).jobs[0]
+        assert loaded.timestamps.control_requested_at == acknowledged
+        assert loaded == replace(
+            legacy,
+            timestamps=replace(legacy.timestamps, control_requested_at=acknowledged),
+        )
+
+
+class TestPersistedJobStateSchemaContract:
+    """What a build accepts must not narrow to the exact file it writes.
+
+    A reader pinned to one version turns every future layout change into an
+    operator losing their history, which is the failure this states, and
+    tests, the boundaries of.
+    """
+
+    def _written_payload(self, tmp_path: Path) -> tuple[Path, dict[str, object]]:
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, _generation(_snapshot_in_state(JobState.QUEUED)))
+        return path, cast(
+            "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
+        )
+
+    def _rewrite(self, path: Path, payload: dict[str, object]) -> None:
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_a_file_from_a_newer_build_is_refused_as_newer_not_as_damaged(
+        self, tmp_path: Path
+    ) -> None:
+        # Reading a layout this build does not know would turn a misread
+        # record into a wrong decision. The message must name the direction so
+        # an operator is not told their intact file was corrupt.
+        path, payload = self._written_payload(tmp_path)
+        payload["version"] = 2
+        self._rewrite(path, payload)
+        with pytest.raises(ValueError, match="written by a newer build"):
+            load_persisted_state(path)
+
+    def test_a_file_older_than_this_build_reads_is_refused_as_older(
+        self, tmp_path: Path
+    ) -> None:
+        path, payload = self._written_payload(tmp_path)
+        payload["version"] = 0
+        self._rewrite(path, payload)
+        with pytest.raises(ValueError, match="no longer readable"):
+            load_persisted_state(path)
+
+    def test_a_foreign_schema_is_refused_by_name(self, tmp_path: Path) -> None:
+        path, payload = self._written_payload(tmp_path)
+        payload["schema"] = "vaultspec.rag.something-else"
+        self._rewrite(path, payload)
+        with pytest.raises(ValueError, match="declares schema"):
+            load_persisted_state(path)
+
+    def test_a_non_integer_version_is_refused(self, tmp_path: Path) -> None:
+        path, payload = self._written_payload(tmp_path)
+        payload["version"] = "1"
+        self._rewrite(path, payload)
+        with pytest.raises(ValueError, match="version must be an integer"):
+            load_persisted_state(path)
+
+    def test_fields_a_newer_writer_added_are_ignored_rather_than_refused(
+        self, tmp_path: Path
+    ) -> None:
+        # Additive growth is what keeps the version from moving, so a file
+        # carrying unknown keys at every level must still load unchanged.
+        path, payload = self._written_payload(tmp_path)
+        expected = load_persisted_state(path)
+        payload["future_root_field"] = {"anything": True}
+        job = cast("list[dict[str, object]]", payload["jobs"])[0]
+        job["future_job_field"] = "ignored"
+        cast("dict[str, object]", job["spec"])["future_spec_field"] = 1
+        cast("dict[str, object]", job["runtime"])["future_runtime_field"] = None
+        cast("dict[str, object]", job["resources"])["future_resource_field"] = []
+        self._rewrite(path, payload)
+        assert load_persisted_state(path) == expected
+
+    def test_an_optional_field_a_newer_writer_added_defaults_when_absent(
+        self, tmp_path: Path
+    ) -> None:
+        # The other half of additive growth: a build that writes a field must
+        # still read a file written before that field existed.
+        path, payload = self._written_payload(tmp_path)
+        job = cast("list[dict[str, object]]", payload["jobs"])[0]
+        for optional in (
+            "resilience",
+            "reuse",
+            "drift",
+            "gpu_lock_wait_seconds",
+            "progress",
+            "parent_job_id",
+            "admission_acquired_at",
+        ):
+            del job[optional]
+        self._rewrite(path, payload)
+        loaded = load_persisted_state(path).jobs[0]
+        assert loaded.resilience is None
+        assert loaded.reuse is None
+        assert loaded.drift is None
+        assert loaded.gpu_lock_wait_seconds is None
+        assert loaded.progress is None
+        assert loaded.attempt.parent_job_id is None
+        assert loaded.timestamps.admission_acquired_at is None
+
+
+class TestPersistedJobStateLeavesNoDebris:
+    """A write that fails must leave the state directory as it found it.
+
+    Every temporary that outlives its write stays until an operator finds it,
+    because nothing else looks at that directory again.
+    """
+
+    def test_a_replace_the_filesystem_refuses_leaves_no_temporary(
+        self, tmp_path: Path
+    ) -> None:
+        # A real refusal, not a simulated one: a directory already occupies
+        # the target name, so the temporary is written and the replace cannot
+        # land. Nothing may survive that.
+        path = tmp_path / "jobs-state.json"
+        path.mkdir()
+        with pytest.raises(PersistenceWriteError) as raised:
+            save_persisted_state(path, _generation(_snapshot_in_state(JobState.QUEUED)))
+        assert raised.value.published is False
+        assert _temporaries(tmp_path) == []
+
+    def test_a_successful_write_leaves_no_temporary(self, tmp_path: Path) -> None:
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, _generation(_snapshot_in_state(JobState.QUEUED)))
+        assert _temporaries(tmp_path) == []
+
+    def test_a_payload_that_cannot_be_encoded_never_reaches_a_temporary(
+        self, tmp_path: Path
+    ) -> None:
+        # Serialization happens before the temporary is named, so a payload
+        # the encoder refuses cannot leave debris at all rather than leaving
+        # debris that gets cleaned up. This is NOT a cleanup guard: breaking
+        # the cleanup leaves it passing, which is the point.
+        snapshot = replace(
+            _snapshot_in_state(JobState.QUEUED), reuse=_deeply_nested(20_000)
+        )
+        path = tmp_path / "jobs-state.json"
+        with pytest.raises(PersistenceWriteError) as raised:
+            save_persisted_state(path, _generation(snapshot))
+        # A nesting depth past the encoder's limit raises RecursionError,
+        # which is neither an OSError nor a ValueError. Letting it out
+        # untranslated would break the one exception type every caller of this
+        # function handles.
+        assert raised.value.published is False
+        assert isinstance(raised.value.__cause__, RecursionError)
+        assert _temporaries(tmp_path) == []
+        assert not path.exists()
+
+
+class TestAbandonedTemporaryRecovery:
+    """Temporaries a killed process left behind are reclaimed, evidence is not.
+
+    Nothing in-process can clean up after a kill or a power loss, so the next
+    start is the only place these can go - and the only place a dead one can
+    be told apart from a write still running.
+    """
+
+    def _existing_state(self, tmp_path: Path) -> Path:
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, _generation(_snapshot_in_state(JobState.QUEUED)))
+        return path
+
+    def _abandoned(self, tmp_path: Path, name: str, *, age_hours: float) -> Path:
+        temporary = tmp_path / name
+        temporary.write_text('{"partial":', encoding="utf-8")
+        _age(temporary, age_hours * 3600)
+        return temporary
+
+    def test_a_temporary_left_by_a_killed_writer_is_reclaimed(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._existing_state(tmp_path)
+        abandoned = self._abandoned(
+            tmp_path, ".jobs-state.json." + "a" * 32 + ".tmp", age_hours=48
+        )
+        assert load_persisted_state(path).jobs[0].id == "job-1"
+        assert not abandoned.exists()
+
+    def test_reclaiming_survives_an_absent_state_file(self, tmp_path: Path) -> None:
+        # The kill that abandons a temporary can precede the first successful
+        # publication, so reclaiming cannot depend on the state file existing.
+        abandoned = self._abandoned(
+            tmp_path, ".jobs-state.json.deadbeef.tmp", age_hours=48
+        )
+        with pytest.raises(FileNotFoundError):
+            load_persisted_state(tmp_path / "jobs-state.json")
+        assert not abandoned.exists()
+
+    def test_a_temporary_still_inside_its_grace_window_is_spared(
+        self, tmp_path: Path
+    ) -> None:
+        # A concurrent writer's in-flight temporary looks exactly like an
+        # abandoned one apart from its age. Reclaiming it would delete a write
+        # that is about to land, so recency alone must save it.
+        path = self._existing_state(tmp_path)
+        live = self._abandoned(tmp_path, ".jobs-state.json.beefcafe.tmp", age_hours=0)
+        load_persisted_state(path)
+        assert live.exists()
+
+    def test_a_file_set_aside_as_evidence_is_never_reclaimed(
+        self, tmp_path: Path
+    ) -> None:
+        # Preserved evidence outlives every grace window by design. It is
+        # excluded because it carries neither the leading dot nor the suffix,
+        # not because it is unlikely to be matched - do not loosen either
+        # half of that test.
+        path = self._existing_state(tmp_path)
+        evidence = tmp_path / "jobs-state.json.invalid-20260101T000000Z"
+        evidence.write_text("{}", encoding="utf-8")
+        _age(evidence, 365 * 24 * 3600)
+        load_persisted_state(path)
+        assert evidence.exists()
+
+    def test_a_temporary_belonging_to_another_file_is_never_reclaimed(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._existing_state(tmp_path)
+        foreign = self._abandoned(
+            tmp_path, ".managed-jobs.json.0123456789ab.tmp", age_hours=48
+        )
+        load_persisted_state(path)
+        assert foreign.exists()
+
+    def test_the_state_file_itself_is_never_reclaimed(self, tmp_path: Path) -> None:
+        path = self._existing_state(tmp_path)
+        _age(path, 365 * 24 * 3600)
+        assert load_persisted_state(path).jobs[0].id == "job-1"
+        assert path.exists()
 
 
 # ---------------------------------------------------------------------------

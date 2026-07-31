@@ -1,16 +1,42 @@
-"""Versioned codec and atomic filesystem storage for canonical job state."""
+"""Versioned codec and atomic filesystem storage for canonical job state.
+
+How this file format is allowed to change
+-----------------------------------------
+
+The daemon writes this file itself on every lifecycle transition and reads it
+back on the next start, so a reader that refuses what an earlier writer emitted
+costs an operator their whole job history. Two properties keep a routine change
+from having that consequence:
+
+- **Growth is additive and does not move the version.** The reader takes only
+  the keys it knows and defaults every optional one, so a file carrying fields
+  a build has never heard of loads cleanly, and so does a file predating a
+  field that build now writes. Adding an optional field is therefore not a
+  format change at all, which is what keeps ``version`` from moving for
+  reasons that never justified it.
+- **``version`` is a supported range, not one number.** It moves only for a
+  re-layout no additive read can absorb, and :data:`_MINIMUM_READABLE_VERSION`
+  stays behind when it does, so the build that introduces a new layout still
+  reads every file written before it. A file numbered above what a build knows
+  is refused rather than read blind, because guessing at a layout that has
+  genuinely changed is how a misread record becomes a wrong decision.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import uuid
+import time
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 from . import _typed_fields
-from ._atomic_write import fsync_directory
+from ._atomic_write import (
+    JsonWriteOptions,
+    NotDurableError,
+    fsync_directory,
+    write_json_atomically,
+)
 from .job_models import (
     DesiredJobState,
     IndexResilienceSnapshot,
@@ -50,7 +76,20 @@ __all__ = [
 MAX_IDEMPOTENCY_KEY_LENGTH = 256
 
 _SCHEMA = "vaultspec.rag.jobs"
+
+#: The newest layout this build emits and can interpret.
 _VERSION = 1
+
+#: The oldest layout this build still reads. Raising ``_VERSION`` for a real
+#: re-layout must leave this behind, so the release that changes the layout
+#: still loads every file written before it.
+_MINIMUM_READABLE_VERSION = 1
+
+#: How long an unpublished temporary must have sat untouched before recovery
+#: reclaims it. A publication holds the write lock and completes in
+#: milliseconds, so a window this wide cannot reach a write still in flight -
+#: including one belonging to another process sharing the directory.
+_ORPHANED_TEMPORARY_GRACE_SECONDS = 24 * 60 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,35 +120,112 @@ class PersistenceWriteError(Exception):
 
 
 def load_persisted_state(path: Path) -> PersistedManagerState:
-    """Read and validate one complete persisted manager generation."""
+    """Read and validate one complete persisted manager generation.
+
+    Reclaims this writer's abandoned temporaries first, because a start is the
+    only moment at which one can be told apart from a write still in progress.
+    """
+    _reclaim_orphaned_temporaries(path)
     payload: object = json.loads(path.read_text(encoding="utf-8"))
     return _parse_persisted_manager_state(payload)
 
 
 def save_persisted_state(path: Path, state: PersistedManagerState) -> None:
-    """Atomically make one complete manager generation durable."""
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    """Atomically make one complete manager generation durable.
+
+    The write, its temporary's cleanup, and the Windows sharing-violation
+    ladder all belong to the shared atomic publisher. What stays here is the
+    translation into this layer's error vocabulary, and it turns on one
+    question only: did the replace land?
+
+    ``NotDurableError`` is the sole way that publisher reports a landed replace
+    it could not force to disk. The state IS published then, and only its
+    crash-durability is in doubt, so this reports ``published=True`` and the
+    caller does not roll back a write every reader can already see.
+
+    Every other failure means the bytes never became visible and the previous
+    generation is still the one on disk. Reporting those as published would
+    strand a caller's in-memory mutation with no rollback and no record on
+    disk, which is the opposite of what happened.
+    """
     try:
         payload = _persisted_manager_state_to_dict(state)
         _ensure_parent_directory(path.parent)
-        with temporary.open("w", encoding="utf-8", newline="\n") as stream:
-            json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        _atomic_replace(temporary, path)
-    except PersistenceWriteError:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            logger.debug("could not remove failed job-state temp file", exc_info=True)
-        raise
-    except (OSError, TypeError, ValueError) as exc:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            logger.debug("could not remove failed job-state temp file", exc_info=True)
+        write_json_atomically(
+            path,
+            payload,
+            JsonWriteOptions(sort_keys=True, durable=True),
+        )
+    except NotDurableError as exc:
+        raise PersistenceWriteError(str(exc), published=True) from exc
+    # RecursionError joins the serialization faults: a telemetry block nested
+    # past the encoder's limit is a payload this generation cannot be written
+    # from, and letting it escape untranslated would break the one exception
+    # type every caller of this function handles.
+    except (OSError, TypeError, ValueError, RecursionError) as exc:
         raise PersistenceWriteError(str(exc), published=False) from exc
+
+
+def _reclaim_orphaned_temporaries(path: Path) -> None:
+    """Delete this writer's temporaries that no publication ever consumed.
+
+    A temporary only survives its writer when the process died between
+    creating it and replacing the state file with it - a kill or a power loss,
+    where no cleanup of any kind gets to run. They accumulate for the life of
+    the installation otherwise, because nothing else ever looks at them.
+
+    Deleting one destroys nothing an operator can use, which is what separates
+    this from the state file itself: the state file is the only copy of the
+    history it holds, while a temporary by construction never became visible
+    to any reader and never superseded anything. Two conditions still gate it:
+
+    - **Positive identification, never a pattern sweep.** Only a sibling whose
+      name is this exact target's temporary form is a candidate. The state file
+      carries no leading dot, and a file set aside for diagnosis carries
+      neither the leading dot nor the suffix, so preserved evidence cannot be
+      named by this and is not merely unlikely to be.
+    - **A grace window read from the filesystem's own record.** The candidate's
+      last-modified time is a durable observation that survives restarts, so a
+      writer that is merely slow, or one in another process, keeps its
+      temporary. Anything a clock skew or a fresh timestamp makes ambiguous is
+      left alone, so a race can only spare a temporary, never take a live one.
+
+    Reclaiming is housekeeping, never a precondition for reading. Any failure
+    leaves the file for the next start rather than turning a startup into a
+    failure over a file nobody needs.
+    """
+    prefix = f".{path.name}."
+    now = time.time()
+    reclaimed = 0
+    try:
+        candidates = list(path.parent.iterdir())
+    except OSError:
+        logger.debug(
+            "could not scan for abandoned job-state temporaries", exc_info=True
+        )
+        return
+    for candidate in candidates:
+        name = candidate.name
+        if not name.startswith(prefix) or not name.endswith(".tmp"):
+            continue
+        try:
+            if not candidate.is_file():
+                continue
+            if now - candidate.stat().st_mtime < _ORPHANED_TEMPORARY_GRACE_SECONDS:
+                continue
+            candidate.unlink()
+        except OSError:
+            logger.debug(
+                "could not reclaim abandoned job-state temporary", exc_info=True
+            )
+            continue
+        reclaimed += 1
+    if reclaimed:
+        logger.info(
+            "reclaimed %d abandoned job-state temporary file(s) from %s",
+            reclaimed,
+            path.parent,
+        )
 
 
 def _persisted_manager_state_to_dict(
@@ -149,34 +265,6 @@ def _idempotency_binding_to_dict(
     }
 
 
-def _atomic_replace(source: Path, destination: Path) -> None:
-    """Durably publish one state file, in this layer's error vocabulary.
-
-    The replace itself, its Windows write-through, and the sharing-violation
-    ladder live in ``_atomic_write``. What stays here is the translation, and
-    it turns on one question only: did the replace land?
-
-    ``NotDurableError`` is the sole way that layer reports a landed replace it
-    could not force to disk. The state IS published then, and only its
-    crash-durability is in doubt, so this reports ``published=True`` and the
-    caller does not roll back a write every reader can already see.
-
-    Any other ``OSError`` means the replace itself failed and the previous
-    generation is still the one on disk, on every platform. Windows is not
-    special here: the write-through move publishes and syncs in one call, so a
-    failure leaves nothing behind. Reporting those as published would strand a
-    caller's in-memory mutation with no rollback and no record on disk, which
-    is the opposite of what happened. Letting them out lets the caller
-    classify them ``published=False``.
-    """
-    from ._atomic_write import NotDurableError, replace_durably
-
-    try:
-        replace_durably(source, destination)
-    except NotDurableError as exc:
-        raise PersistenceWriteError(str(exc), published=True) from exc
-
-
 def _ensure_parent_directory(directory: Path) -> None:
     missing: list[Path] = []
     cursor = directory
@@ -193,14 +281,7 @@ def _ensure_parent_directory(directory: Path) -> None:
 
 def _parse_persisted_manager_state(payload: object) -> PersistedManagerState:
     root = _required_mapping(payload, "job state")
-    version = root.get("version")
-    if (
-        root.get("schema") != _SCHEMA
-        or isinstance(version, bool)
-        or not isinstance(version, int)
-        or version != _VERSION
-    ):
-        raise ValueError("unsupported job-state schema or version")
+    _validate_schema_header(root)
     raw_jobs = _required_list(root.get("jobs"), "jobs")
     jobs = [
         _normalize_legacy_start_paused(_job_snapshot_from_dict(item))
@@ -238,6 +319,33 @@ def _parse_persisted_manager_state(payload: object) -> PersistedManagerState:
         )
     _validate_persisted_generation(jobs, bindings)
     return PersistedManagerState(jobs=tuple(jobs), bindings=tuple(bindings))
+
+
+def _validate_schema_header(root: dict[str, object]) -> None:
+    """Accept every layout this build reads, and name what it refuses and why.
+
+    One message for three unrelated conditions left an operator unable to tell
+    a file this build predates from one it cannot parse at all, so each states
+    the direction of the mismatch and the range that would have been read.
+    """
+    schema = root.get("schema")
+    if schema != _SCHEMA:
+        raise ValueError(
+            f"job state declares schema {schema!r}, but this build reads {_SCHEMA!r}"
+        )
+    version = root.get("version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError("job-state version must be an integer")
+    if version > _VERSION:
+        raise ValueError(
+            f"job-state version {version} was written by a newer build; this one "
+            f"reads versions {_MINIMUM_READABLE_VERSION} to {_VERSION}"
+        )
+    if version < _MINIMUM_READABLE_VERSION:
+        raise ValueError(
+            f"job-state version {version} is no longer readable; this build "
+            f"reads versions {_MINIMUM_READABLE_VERSION} to {_VERSION}"
+        )
 
 
 def _normalize_legacy_start_paused(job: JobSnapshot) -> JobSnapshot:
@@ -411,6 +519,12 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
         spec=spec,
         state=state,
         desired_state=desired_state,
+        # Capabilities are written - they belong to the one resource
+        # representation the served views also render - and deliberately not
+        # read. They are a total function of the specification and the state,
+        # both of which round-trip exactly, so deriving them again yields what
+        # the writer emitted. Reading them instead would let a file assert an
+        # action this build no longer supports.
         capabilities=capabilities_for_state(spec, state),
         attempt=JobAttempt(
             number=attempt_number,
