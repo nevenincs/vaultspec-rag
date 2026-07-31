@@ -11,13 +11,6 @@ related:
   - '[[2026-07-29-server-watch-observability-reference]]'
 ---
 
-
-
-
-
-
-
-
 # `server-watch-observability` plan
 
 Deliver one bounded server-watch console that shows indexing jobs, served searches, and
@@ -37,7 +30,6 @@ verification constraints for every Step.
 ### Phase `P01` - Server search activity ledger
 
 Add bounded service-domain truth for active and recent search requests, including exactly-once terminal accounting and authenticated reads.
-
 
 - [ ] `P01.S01` - Write compute-free regression coverage for active, retained, filtered, bounded, concurrent, and every terminal search outcome; `src/vaultspec_rag/tests/test_search_activity.py`.
 - [ ] `P01.S02` - Implement typed exactly-once search activity lifecycle and finite retention; `src/vaultspec_rag/server/_search_activity.py`.
