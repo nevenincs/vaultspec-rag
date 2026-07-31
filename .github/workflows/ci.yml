@@ -371,7 +371,21 @@ jobs:
 
   tests-macos:
     name: Tests (macOS, advisory)
-    if: github.event_name != 'pull_request'
+    # Releases and manual dispatch only - NOT every push to main, and this is
+    # about availability rather than cost. The macOS runner is a laptop under
+    # an AC-power policy: on battery it is deliberately booted out of the
+    # fleet, so it is absent for long stretches by design.
+    #
+    # `timeout-minutes` does not help here. It bounds how long a job may RUN;
+    # it does not bound time spent queued waiting for a runner. A job
+    # scheduled while the machine is on battery would therefore sit pending up
+    # to GitHub's 24h limit and then report `cancelled` - the exact signature
+    # of the label-with-no-runner bug this workflow was just cleaned of, and
+    # equally invisible.
+    #
+    # A release is a deliberate act, taken at a moment when the machine can be
+    # plugged in, which makes it the honest place to ask for a macOS verdict.
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     continue-on-error: true
     timeout-minutes: 60
     concurrency:
