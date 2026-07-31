@@ -356,7 +356,12 @@ def _validate_persisted_lifecycle(job: JobSnapshot) -> None:
         JobState.QUEUED: {DesiredJobState.RUNNING},
         JobState.RUNNING: {DesiredJobState.RUNNING},
         JobState.PAUSING: {DesiredJobState.PAUSED, DesiredJobState.RUNNING},
-        JobState.PAUSED: {DesiredJobState.PAUSED},
+        # Paused work may still want to run: a service quiesce parks queued and
+        # unwinding attempts as paused while their intent stays running, and
+        # that exact pair is how resume tells quiesce-parked work from work an
+        # operator paused deliberately. Refusing it here made the manager write
+        # a record its own loader rejected. Cancelled intent remains incoherent.
+        JobState.PAUSED: {DesiredJobState.PAUSED, DesiredJobState.RUNNING},
         JobState.CANCELLING: {DesiredJobState.CANCELLED},
         JobState.CANCELLED: {DesiredJobState.CANCELLED},
     }
