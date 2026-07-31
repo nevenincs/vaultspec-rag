@@ -92,6 +92,11 @@ _MINIMUM_READABLE_VERSION = 1
 _ORPHANED_TEMPORARY_GRACE_SECONDS = 24 * 60 * 60
 
 
+#: Stated once because the reader narrows this field and the producer is held
+#: to it; two spellings of one requirement is how the pair drifts apart.
+_START_PAUSED_REQUIREMENT = "idempotency start_paused must be boolean"
+
+
 @dataclass(frozen=True, slots=True)
 class IdempotencyBinding:
     """One durable request signature bound to its exact logical job."""
@@ -101,6 +106,13 @@ class IdempotencyBinding:
 
     def __post_init__(self) -> None:
         _required_str(self.job_id, "idempotency job_id")
+        # The reader checks this flag's type explicitly, so anything else
+        # written here is a binding that loads fine today and is refused on
+        # the next start, in another process. Refused at the producer instead.
+        _typed_fields.required_bool(
+            self.signature[2],
+            on_invalid=lambda: TypeError(_START_PAUSED_REQUIREMENT),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,9 +317,10 @@ def _parse_persisted_manager_state(payload: object) -> PersistedManagerState:
         job_id = _required_str(record.get("job_id"), "idempotency job_id")
         spec = _job_spec_from_dict(record.get("spec"))
         initiator = _job_initiator_from_dict(record.get("initiator"))
-        start_paused = record.get("start_paused")
-        if not isinstance(start_paused, bool):
-            raise TypeError("idempotency start_paused must be boolean")
+        start_paused = _typed_fields.required_bool(
+            record.get("start_paused"),
+            on_invalid=lambda: TypeError(_START_PAUSED_REQUIREMENT),
+        )
         bindings.append(
             (
                 key,
@@ -741,7 +754,12 @@ def _job_resilience_from_dict(value: object) -> IndexResilienceSnapshot | None:
 
 
 def _optional_telemetry_block(value: object, name: str) -> dict[str, object] | None:
-    """Read one optional run-telemetry block, absent on older persisted state."""
+    """Read one optional run-telemetry block, absent on older persisted state.
+
+    Narrows the block to its declared type only. What the values inside it may
+    be is the model's contract, enforced once at construction for the writer
+    and the reader alike, so this cannot refuse a shape the writer can emit.
+    """
     if value is None:
         return None
     return dict(_required_mapping(value, name))
