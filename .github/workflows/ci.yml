@@ -308,6 +308,107 @@ jobs:
       - name: Run tests
         run: just test python
 
+  # WINDOWS AND macOS UNIT TIERS.
+  #
+  # Both are ADVISORY (`continue-on-error`) and that is a deliberate, temporary
+  # state rather than a permanent exemption. Neither platform is green: the
+  # Linux tier passes, Windows fails a handful of source-scanning guards, and
+  # macOS fails on the order of a hundred tests that have never been triaged.
+  # Landing them as blocking would turn every release red on day one and the
+  # pressure would be to delete the jobs rather than fix the platform.
+  #
+  # So they report instead. The failures become visible and attributable, and
+  # each platform flips to blocking - by deleting its `continue-on-error` -
+  # once its count reaches zero. Ratchet down, never up; an advisory job that
+  # nobody ever promotes is just an expensive way to ignore a platform.
+  #
+  # Neither uses actions/setup-python. The GPU job below documents why: its
+  # MSI registry cleanup fails under a runner service account. uv fetches the
+  # interpreter named by UV_PYTHON instead, which is what the suite runs under
+  # anyway.
+  tests-windows:
+    name: Tests (Windows, advisory)
+    if: github.event_name != 'pull_request'
+    continue-on-error: true
+    timeout-minutes: 60
+    concurrency:
+      group: ci-tests-windows-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: [self-hosted, Windows, X64]
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Same pinned, checksum-verified download the GPU job uses: this
+      # runner's service account has no bash on PATH, so the marketplace
+      # action's shell is unavailable.
+      - name: Install just
+        shell: pwsh
+        run: |
+          $ver = "1.57.0"
+          $sha = "4c7391d17cb1d17b758b52004ee6411372b8a13ff37c3c9b9031625cb6026e09"
+          $zip = "$env:RUNNER_TEMP\just-$ver.zip"
+          $dest = "$env:RUNNER_TEMP\just-$ver"
+          $url = "https://github.com/casey/just/releases/download/$ver/just-$ver-x86_64-pc-windows-msvc.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $sha) { throw "just checksum mismatch: got $actual" }
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          Add-Content -Path $env:GITHUB_PATH -Value $dest
+
+      - name: Install dependencies
+        run: just deps sync
+
+      - name: Run tests
+        run: just test python
+
+  tests-macos:
+    name: Tests (macOS, advisory)
+    if: github.event_name != 'pull_request'
+    continue-on-error: true
+    timeout-minutes: 60
+    concurrency:
+      group: ci-tests-macos-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      # The runner's environment does not necessarily carry Homebrew's prefix:
+      # a non-login shell omits /opt/homebrew/bin, which is where uv lives, and
+      # pwsh sits under ~/.local/bin. Without this every recipe fails with
+      # "uv: command not found" on a machine where an interactive shell finds
+      # it perfectly well. `just` needs pwsh on POSIX too - the justfile's
+      # `windows-shell` is the override, not the rule.
+      - name: Put Homebrew and user binaries on PATH
+        run: |
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Install dependencies
+        run: just deps sync
+
+      - name: Run tests
+        run: just test python
+
   gpu-tests:
     name: GPU Tests
     # Generous relative to the other jobs because this tier is the ~40 minute
