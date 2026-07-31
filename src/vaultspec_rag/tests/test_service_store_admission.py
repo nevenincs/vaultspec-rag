@@ -475,7 +475,13 @@ class TestProjectAdmissionReservations:
             registry.close_all()
 
         assert len(failures) == 1
-        assert isinstance(failures[0], FileExistsError)
+        # Naming both errnos rather than the OSError base keeps the claim that
+        # the constructor died on the filesystem refusing a regular file as a
+        # root, not on our own RuntimeError from the shutdown path. Which of
+        # the two arrives is the platform's choice: Windows reports EEXIST for
+        # the directory it cannot create, POSIX reports ENOTDIR for the file it
+        # cannot descend into.
+        assert isinstance(failures[0], FileExistsError | NotADirectoryError)
         assert [slot.store.root_dir for slot in succeeding_slots] == [succeeding_root]
         with registry._lock:
             assert registry._project_admissions == set()

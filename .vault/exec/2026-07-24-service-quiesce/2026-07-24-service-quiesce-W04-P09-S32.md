@@ -9,6 +9,7 @@ step_id: 'S32'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
+
 # Repair GPU pytest coordination by capturing the opaque host-service authority before root registration, passing it unchanged through the guarded coordinator, and validating runner Qdrant only for selected fixture closures that require an isolated child
 
 ## Scope
