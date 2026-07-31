@@ -20,6 +20,12 @@ env:
 jobs:
   workflow-lint:
     name: Workflow Lint
+    # Every job carries an explicit ceiling. Without one the default is six
+    # hours, and a job that never gets a runner sits pending until GitHub's
+    # 24h queue timeout retires it as `cancelled` - a word that reads as
+    # "somebody stopped this" rather than "the fleet is down", so an outage
+    # stays invisible. A tight ceiling converts that silence into a failure.
+    timeout-minutes: 10
     concurrency:
       # github.job is empty in the concurrency context, so interpolating it
       # collapses every job onto one shared group and they cancel each other.
@@ -38,6 +44,7 @@ jobs:
 
   lint-and-type:
     name: Lint, Type, Config, Link, and Markdown Checks
+    timeout-minutes: 30
     concurrency:
       group: ci-lint-and-type-${{ github.ref }}
       cancel-in-progress: false
@@ -170,6 +177,7 @@ jobs:
 
   tests:
     name: Tests (py${{ matrix.python-version }})
+    timeout-minutes: 45
     concurrency:
       # The matrix leg is part of the group, so the two interpreters queue
       # independently. Without it both legs share one group and serialise.
@@ -226,6 +234,11 @@ jobs:
 
   gpu-tests:
     name: GPU Tests
+    # Generous relative to the other jobs because this tier is the ~40 minute
+    # long pole, but still finite: a wedged GPU test holds the only machine
+    # carrying the cuda label, so an unbounded hang blocks every future GPU
+    # run rather than just its own.
+    timeout-minutes: 90
     # Never cancel an in-progress GPU run: it is the long pole (~40 min) on a
     # single self-hosted GPU runner, so a superseding push already queues
     # behind it naturally (the runner label has exactly one machine). Scoping
@@ -306,6 +319,7 @@ jobs:
 
   vault-audit:
     name: Vault Audit
+    timeout-minutes: 15
     concurrency:
       group: ci-vault-audit-${{ github.ref }}
       cancel-in-progress: false
@@ -335,6 +349,7 @@ jobs:
 
   dependency-audit:
     name: Dependency Audit (uv audit)
+    timeout-minutes: 15
     concurrency:
       group: ci-dependency-audit-${{ github.ref }}
       cancel-in-progress: false
@@ -371,6 +386,7 @@ jobs:
   # are advice, and the burndown they feed is tracked separately.
   code-audit:
     name: Code Audit (advisory)
+    timeout-minutes: 20
     concurrency:
       group: ci-code-audit-${{ github.ref }}
       cancel-in-progress: false
