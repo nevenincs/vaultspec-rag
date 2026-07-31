@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import math
 import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+
+from . import _typed_fields
 
 __all__ = [
     "DesiredJobState",
@@ -174,6 +175,87 @@ class JobOutcomeStatus(StrEnum):
     ERROR = "error"
 
 
+def _rejection(name: str, requirement: str, *, optional: bool) -> ValueError:
+    return ValueError(f"{name} must be {requirement}{' or None' if optional else ''}")
+
+
+def _integer_requirement(minimum: int) -> str:
+    if minimum == 0:
+        return "a non-negative integer"
+    return f"an integer of at least {minimum}"
+
+
+def _number_requirement(minimum: float | None) -> str:
+    if minimum is None:
+        return "a finite number"
+    if minimum == 0:
+        return "a finite non-negative number"
+    return f"a finite number of at least {minimum}"
+
+
+def _require_int(
+    name: str, value: object, *, minimum: int, optional: bool = False
+) -> None:
+    if optional and value is None:
+        return
+    requirement = _integer_requirement(minimum)
+    _typed_fields.required_int(
+        value,
+        minimum=minimum,
+        on_invalid=lambda: _rejection(name, requirement, optional=optional),
+    )
+
+
+def _require_number(
+    name: str, value: object, *, minimum: float | None = None, optional: bool = False
+) -> None:
+    if optional and value is None:
+        return
+    requirement = _number_requirement(minimum)
+
+    def reject() -> ValueError:
+        return _rejection(name, requirement, optional=optional)
+
+    resolved = _typed_fields.required_float(
+        value, on_invalid=reject, on_not_finite=reject
+    )
+    if minimum is not None and resolved < minimum:
+        raise reject()
+
+
+def _require_str(
+    name: str, value: object, *, allow_empty: bool = False, optional: bool = False
+) -> None:
+    if optional and value is None:
+        return
+    requirement = "a string" if allow_empty else "a non-empty string"
+    _typed_fields.required_str(
+        value,
+        allow_empty=allow_empty,
+        on_invalid=lambda: _rejection(name, requirement, optional=optional),
+    )
+
+
+def _require_bool(name: str, value: object, *, optional: bool = False) -> None:
+    if optional and value is None:
+        return
+    _typed_fields.required_bool(
+        value,
+        on_invalid=lambda: _rejection(name, "a boolean", optional=optional),
+    )
+
+
+def _require_string_keyed_mapping(name: str, value: object) -> None:
+    if value is None:
+        return
+    _typed_fields.required_mapping(
+        value,
+        on_invalid=lambda: _rejection(
+            name, "a mapping with string keys", optional=True
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class JobSpec:
     """Immutable instructions for one logical job resource."""
@@ -183,6 +265,9 @@ class JobSpec:
     project_root: str | None
     mode: JobMode | None
 
+    def __post_init__(self) -> None:
+        _require_str("project_root", self.project_root, allow_empty=True, optional=True)
+
 
 @dataclass(frozen=True, slots=True)
 class JobInitiator:
@@ -191,6 +276,11 @@ class JobInitiator:
     kind: str
     command: str
     project_root: str | None
+
+    def __post_init__(self) -> None:
+        _require_str("kind", self.kind)
+        _require_str("command", self.command)
+        _require_str("project_root", self.project_root, allow_empty=True, optional=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,10 +305,13 @@ class JobAttempt:
     resume_strategy: ResumeStrategy | None = None
 
     def __post_init__(self) -> None:
-        if self.number < 1:
-            raise ValueError("job attempt number must be at least 1")
-        if self.resumed_from_attempt is not None and self.resumed_from_attempt < 1:
-            raise ValueError("resumed attempt number must be at least 1")
+        _require_int("number", self.number, minimum=1)
+        _require_int(
+            "resumed_from_attempt", self.resumed_from_attempt, minimum=1, optional=True
+        )
+        _require_str(
+            "parent_job_id", self.parent_job_id, allow_empty=True, optional=True
+        )
         if self.number == 1 and (
             self.resumed_from_attempt is not None or self.resume_strategy is not None
         ):
@@ -249,6 +342,21 @@ class JobTimestamps:
     control_acknowledged_at: float | None = None
     admission_acquired_at: float | None = None
 
+    def __post_init__(self) -> None:
+        _require_number("created_at", self.created_at)
+        _require_number("state_changed_at", self.state_changed_at)
+        _require_number("started_at", self.started_at, optional=True)
+        _require_number("finished_at", self.finished_at, optional=True)
+        _require_number(
+            "control_requested_at", self.control_requested_at, optional=True
+        )
+        _require_number(
+            "control_acknowledged_at", self.control_acknowledged_at, optional=True
+        )
+        _require_number(
+            "admission_acquired_at", self.admission_acquired_at, optional=True
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class JobProgress:
@@ -258,6 +366,14 @@ class JobProgress:
     completed: int
     total: int | None
     last_updated: float
+
+    def __post_init__(self) -> None:
+        _require_str("step", self.step)
+        _require_int("completed", self.completed, minimum=0)
+        _require_int("total", self.total, minimum=0, optional=True)
+        _require_number("last_updated", self.last_updated)
+        if self.total is not None and self.completed > self.total:
+            raise ValueError("completed must not exceed total")
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,14 +390,38 @@ class JobRuntimeSnapshot:
     task_active: bool = False
     worker_active: bool = False
 
+    def __post_init__(self) -> None:
+        _require_int("pid", self.pid, minimum=0)
+        _require_int("parent_pid", self.parent_pid, minimum=0)
+        _require_str("user", self.user, allow_empty=True)
+        _require_str("executable", self.executable, allow_empty=True)
+        _require_str("prefix", self.prefix, allow_empty=True)
+        _require_str("base_prefix", self.base_prefix, allow_empty=True)
+        _require_str("virtual_env", self.virtual_env, allow_empty=True, optional=True)
+        _require_bool("task_active", self.task_active)
+        _require_bool("worker_active", self.worker_active)
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessResourceSnapshot:
-    """Best-effort process memory readings at one lifecycle boundary."""
+    """Best-effort process memory readings at one lifecycle boundary.
+
+    Best-effort refers to how the readings are obtained, never to whether
+    they are present: a probe that cannot answer reports zero. A missing or
+    non-numeric reading is rejected here, at the boundary that produced it,
+    because these values outlive the process that took them. Accepting one
+    would place a record on disk that the loader must refuse, stranding the
+    failure in a later process with no way back to the producer.
+    """
 
     rss_mib: float
     cuda_allocated_mib: float
     cuda_reserved_mib: float
+
+    def __post_init__(self) -> None:
+        _require_number("rss_mib", self.rss_mib, minimum=0.0)
+        _require_number("cuda_allocated_mib", self.cuda_allocated_mib, minimum=0.0)
+        _require_number("cuda_reserved_mib", self.cuda_reserved_mib, minimum=0.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +434,12 @@ class JobResourceSnapshot:
     project_lease_held: bool = False
     writer_lock_held: bool = False
     pipeline_active: bool = False
+
+    def __post_init__(self) -> None:
+        _require_bool("index_capacity_held", self.index_capacity_held)
+        _require_bool("project_lease_held", self.project_lease_held)
+        _require_bool("writer_lock_held", self.writer_lock_held)
+        _require_bool("pipeline_active", self.pipeline_active)
 
     @property
     def holds_anything(self) -> bool:
@@ -334,29 +480,30 @@ class IndexResilienceSnapshot:
     terminal_outcome: str | None = None
 
     def __post_init__(self) -> None:
-        for name in ("committed_units", "replayed_units"):
-            value = getattr(self, name)
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise ValueError(f"{name} must be a non-negative integer")
-        for name in (
-            "last_durable_progress_at",
-            "no_progress_timeout_seconds",
-            "no_progress_remaining_seconds",
-            "next_retry_at",
-            "peak_rss_mib",
-            "rss_ceiling_mib",
-            "peak_cuda_allocated_mib",
-            "peak_cuda_reserved_mib",
-            "cuda_ceiling_mib",
+        _require_int("committed_units", self.committed_units, minimum=0)
+        _require_int("replayed_units", self.replayed_units, minimum=0)
+        for name, reading in (
+            ("last_durable_progress_at", self.last_durable_progress_at),
+            ("no_progress_timeout_seconds", self.no_progress_timeout_seconds),
+            ("no_progress_remaining_seconds", self.no_progress_remaining_seconds),
+            ("next_retry_at", self.next_retry_at),
+            ("peak_rss_mib", self.peak_rss_mib),
+            ("rss_ceiling_mib", self.rss_ceiling_mib),
+            ("peak_cuda_allocated_mib", self.peak_cuda_allocated_mib),
+            ("peak_cuda_reserved_mib", self.peak_cuda_reserved_mib),
+            ("cuda_ceiling_mib", self.cuda_ceiling_mib),
         ):
-            value = getattr(self, name)
-            if value is not None and (
-                not isinstance(value, (int, float))
-                or isinstance(value, bool)
-                or not math.isfinite(value)
-                or value < 0.0
-            ):
-                raise ValueError(f"{name} must be a finite non-negative number")
+            _require_number(name, reading, minimum=0.0, optional=True)
+        for name, label in (
+            ("generation_id", self.generation_id),
+            ("circuit_state", self.circuit_state),
+            ("support_profile", self.support_profile),
+            ("terminal_outcome", self.terminal_outcome),
+        ):
+            _require_str(name, label, allow_empty=True, optional=True)
+        _require_bool(
+            "checkpoint_compatible", self.checkpoint_compatible, optional=True
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,8 +546,18 @@ class JobSnapshot:
     gpu_lock_wait_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        if self.revision < 1:
-            raise ValueError("job revision must be at least 1")
+        _require_str("id", self.id)
+        _require_int("revision", self.revision, minimum=1)
+        _require_str("result", self.result, allow_empty=True, optional=True)
+        _require_str("error_kind", self.error_kind, allow_empty=True, optional=True)
+        _require_number(
+            "gpu_lock_wait_seconds",
+            self.gpu_lock_wait_seconds,
+            minimum=0.0,
+            optional=True,
+        )
+        _require_string_keyed_mapping("reuse", self.reuse)
+        _require_string_keyed_mapping("drift", self.drift)
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable JSON-ready resource representation."""
