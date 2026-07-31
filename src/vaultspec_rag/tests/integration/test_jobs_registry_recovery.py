@@ -1571,16 +1571,15 @@ class TestManagedJobPersistence:
                 "control_acknowledged_at",
                 "admission_acquired_at",
             ):
-                stamp = job.get(name)
-                if isinstance(stamp, int | float):
-                    job[name] = float(stamp) + seconds
+                stamp = _jobs.measurement(job.get(name))
+                if stamp is not None:
+                    job[name] = stamp + seconds
             progress = job.get("progress")
             if isinstance(progress, dict):
-                updated = cast("dict[str, object]", progress).get("last_updated")
-                if isinstance(updated, int | float):
-                    cast("dict[str, object]", progress)["last_updated"] = (
-                        float(updated) + seconds
-                    )
+                block = cast("dict[str, object]", progress)
+                updated = _jobs.measurement(block.get("last_updated"))
+                if updated is not None:
+                    block["last_updated"] = updated + seconds
         state_path.write_text(json.dumps(payload), encoding="utf-8")
 
     @pytest.mark.asyncio
