@@ -705,21 +705,34 @@ class TestServiceDaemonHelpers:
     def test_health_probe_non_json_response(self):
         """Health probe returns None when server sends non-JSON."""
 
+        body = b"not json at all"
+
         class _GarbageHandler(QuietHandler):
             def do_GET(self):
+                # The length header is what makes this a test of an unparseable
+                # answer rather than of an absent one: without it the client
+                # reads until the peer closes, so the probe times out and
+                # returns for that reason instead of on the body.
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(b"not json at all")
+                self.wfile.write(body)
 
         server = http.server.HTTPServer(("127.0.0.1", 0), _GarbageHandler)
         port = server.server_address[1]
-        t = threading.Thread(target=server.handle_request, daemon=True)
+        # Keep serving rather than handling one request: the probe opens a
+        # reachability connection before the request it actually reads, so a
+        # one-shot server answers the connection and leaves nothing to answer
+        # the GET - which times out and returns for a reason this test does
+        # not name.
+        t = threading.Thread(target=server.serve_forever, daemon=True)
         t.start()
         try:
             result = _try_http_health(port)
             assert result is None
         finally:
+            server.shutdown()
             server.server_close()
             t.join(timeout=5)
 

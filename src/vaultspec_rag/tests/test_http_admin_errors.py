@@ -672,7 +672,7 @@ class _UnhealthyHandler(QuietHandler):
 
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestHealthProbeContract:
-    """The health owner reports three outcomes and raises for none of them.
+    """The health owner reports four outcomes and raises for none of them.
 
     Callers branch on the returned value rather than catching, because several
     sit inside lifecycle verbs that must emit exactly one structured outcome on
@@ -714,6 +714,27 @@ class TestHealthProbeContract:
         from ..serviceclient._transport import _try_http_health
 
         assert _try_http_health(refused_port) is None
+
+    def test_timed_out_probe_is_distinguished_from_unreachable(self) -> None:
+        from ..serviceclient._transport import (
+            _try_http_health,
+            health_probe_timed_out,
+        )
+
+        server, port = _serve(_SlowHandler)
+        try:
+            result = _try_http_health(port, timeout=0.4)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        # Accepted but unanswered is presence without an answer, not absence.
+        # Proven able to fail: folding the timeout back into the unreachable
+        # sentinel returns None here and fails the not-None assertion; stamping
+        # it with a different discriminator fails the predicate assertion.
+        assert result is not None
+        assert health_probe_timed_out(result)
+        assert result["status"] == "error"
 
     def test_no_outcome_raises(self, refused_port: int) -> None:
         from ..serviceclient._transport import _try_http_health

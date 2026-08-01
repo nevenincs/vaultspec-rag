@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -386,6 +387,37 @@ def test_preflight_refuses_an_unreachable_discovered_service(
 
     assert result.exit_code == 1, result.output
     assert '"error": "service_unreachable"' in result.output
+    assert '"authorized": false' in result.output
+    assert '"lease_required": true' in result.output
+
+
+def test_preflight_reports_a_silent_discovered_service_as_timed_out(
+    isolated_status_dir: Path,
+) -> None:
+    """A held-but-silent port is presence without an answer, never absence."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(5)
+    port = listener.getsockname()[1]
+    previous = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
+    os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "0.4"
+    try:
+        _publish_discovery(isolated_status_dir, port=port)
+        result = runner.invoke(app, ["server", "preflight", "--json"])
+    finally:
+        if previous is None:
+            os.environ.pop("VAULTSPEC_RAG_ADMIN_TIMEOUT", None)
+        else:
+            os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = previous
+        listener.close()
+
+    assert result.exit_code == 1, result.output
+    # The kernel accepted the connection, so the service is demonstrably
+    # there; only the answer is missing. Proven able to fail: collapsing the
+    # probe timeout back into the unreachable sentinel emits
+    # service_unreachable here and fails the verdict assertion.
+    assert '"error": "service_health_timeout"' in result.output
+    assert '"error": "service_unreachable"' not in result.output
     assert '"authorized": false' in result.output
     assert '"lease_required": true' in result.output
 
