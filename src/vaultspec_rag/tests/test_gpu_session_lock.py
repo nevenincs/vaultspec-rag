@@ -29,6 +29,7 @@ from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_VERSION,
     _replace_service_status,
 )
+from ._child_signal import await_marker, child_stderr
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 from ._ports import free_loopback_port
 
@@ -40,19 +41,27 @@ pytestmark = [pytest.mark.unit]
 
 _SERVICE_TOKEN = "gpu-pytest-session-route-token"
 _PROCESS_TIMEOUT_SECONDS = 10.0
+
+# A nested pytest session costs one interpreter start, one plugin load, and
+# the repository conftest's configure hooks. Bounding that at the ten seconds
+# the other children in this file use would be a bound on normal cost rather
+# than on a hang, so it is stated separately and generously: it exists only to
+# stop a genuinely wedged session, and stays well inside pytest's own per-test
+# ceiling.
+_NESTED_PYTEST_TIMEOUT_SECONDS = 60.0
 _HOLDER_PROGRAM = """
 import sys
-from pathlib import Path
 
 from vaultspec_rag.gpu_borrow_lease import (
     acquire_gpu_borrow_lease,
     release_gpu_borrow_lease,
 )
+from vaultspec_rag.tests._child_signal import publish_marker
 
 lease = acquire_gpu_borrow_lease()
 if lease is None:
     raise RuntimeError("holder could not acquire the borrower lease")
-Path(sys.argv[1]).write_text("held", encoding="ascii")
+publish_marker(sys.argv[1], "held")
 try:
     sys.stdin.readline()
 finally:
@@ -154,42 +163,30 @@ def _production_routes(status_dir: Path) -> Generator[_ProductionRoutes]:
 def _borrower_holder(tmp_path: Path) -> Generator[subprocess.Popen[str]]:
     """Hold the production borrower lease in a real child process."""
     marker = tmp_path / "borrower-holder-ready"
-    process = subprocess.Popen(
-        [sys.executable, "-c", _HOLDER_PROGRAM, str(marker)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        # Wait for what the marker SAYS, not merely that it exists. The child
-        # reports through ``write_text``, which creates the file before it
-        # writes into it, so an existence check alone can return between the
-        # two and read the empty window - which fails this as ``'' == 'held'``
-        # long after the holder has actually taken the lease.
-        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
-        reported = ""
-        while reported != "held" and process.poll() is None:
-            assert time.monotonic() < deadline, "borrower holder did not start"
-            if marker.is_file():
-                reported = marker.read_text(encoding="ascii")
-            if reported != "held":
-                time.sleep(0.01)
-        assert reported == "held"
-        yield process
-    finally:
-        if process.poll() is None:
-            assert process.stdin is not None
-            process.stdin.close()
+    with child_stderr() as diagnostics:
+        process = subprocess.Popen(
+            [sys.executable, "-c", _HOLDER_PROGRAM, str(marker)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=diagnostics.sink,
+            text=True,
+        )
         try:
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
-        assert process.stderr is not None
-        stderr = process.stderr.read()
-        process.stderr.close()
-        assert process.returncode == 0, stderr
+            reported = await_marker(marker, process, timeout=_PROCESS_TIMEOUT_SECONDS)
+            assert reported == "held", (
+                f"borrower holder did not take the lease: {diagnostics.read()}"
+            )
+            yield process
+        finally:
+            if process.poll() is None:
+                assert process.stdin is not None
+                process.stdin.close()
+            try:
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            assert process.returncode == 0, diagnostics.read()
 
 
 def _assert_borrower_lease_released() -> None:
@@ -308,14 +305,33 @@ def test_selected_qdrant_fixture_refuses_without_provisioning_before_test_body(
     environment["VAULTSPEC_RAG_STATUS_DIR"] = str(host_status_dir)
     environment["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(host_storage_dir)
 
+    # A session given an absolute path collects a directory node for every
+    # ancestor of it inside the conftest cut-off, listing each entry by entry.
+    # The runner lives under the pytest temp tree, so those ancestors include
+    # the machine's shared temp directory: without the cut-off below the nested
+    # session spent about eight of its nine seconds enumerating tens of
+    # thousands of unrelated entries there, and aborted collection outright
+    # whenever another process removed one mid-scan. Cutting the search to the
+    # runner's own directory costs nothing here - the conftest this guard needs
+    # is loaded explicitly by name, and no other conftest sits between the
+    # runner and the root.
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "conftest", str(test_path), "-q"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "conftest",
+            f"--confcutdir={tmp_path}",
+            str(test_path),
+            "-q",
+        ],
         capture_output=True,
         check=False,
         cwd=os.getcwd(),
         env=environment,
         text=True,
-        timeout=_PROCESS_TIMEOUT_SECONDS,
+        timeout=_NESTED_PYTEST_TIMEOUT_SECONDS,
     )
 
     output = f"{result.stdout}\n{result.stderr}"

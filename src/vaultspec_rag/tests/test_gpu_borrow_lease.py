@@ -27,6 +27,7 @@ from ..gpu_borrow_lease import (
 from ..server import ServerRouteRuntime, create_http_app
 from ..server._lifespan import _borrower_lease_recovery_tick
 from ..service import ServiceRegistry
+from ._child_signal import await_marker, child_stderr
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -76,6 +77,7 @@ from vaultspec_rag.gpu_borrow_lease import (
     mint_captured_borrower_lease_authority,
     release_gpu_borrow_lease,
 )
+from vaultspec_rag.tests._child_signal import await_marker
 
 anchor = identity_lock_path.with_name("gpu-borrower.lock")
 
@@ -90,6 +92,7 @@ from vaultspec_rag._anchor_claim import (
     record_claim_owner,
     release_anchor_claim,
 )
+from vaultspec_rag.tests._child_signal import publish_marker
 
 identity = Path(sys.argv[1])
 ready = Path(sys.argv[2])
@@ -98,7 +101,7 @@ claim = claim_anchor(identity, pid_record=True, create_parent=True)
 assert claim.descriptor is not None, claim
 try:
     record_claim_owner(claim.descriptor)
-    ready.write_text(str(os.getpid()), encoding="ascii")
+    publish_marker(ready, str(os.getpid()))
     while not stop.exists():
         time.sleep(0.01)
 finally:
@@ -115,6 +118,10 @@ def probe() -> str:
 
 ready_path = root / "identity-holder-ready"
 stop_path = root / "identity-holder-stop"
+# The holder inherits this process's stderr rather than owning a pipe: the
+# test runs this scenario through ``subprocess.run``, which drains that
+# stream concurrently, so the holder can never block writing a traceback -
+# and its diagnostics land in the stderr the test already reports.
 holder = subprocess.Popen(
     [
         sys.executable,
@@ -124,18 +131,14 @@ holder = subprocess.Popen(
         str(ready_path),
         str(stop_path),
     ],
-    stderr=subprocess.PIPE,
+    stderr=sys.stderr,
     text=True,
 )
 try:
-    deadline = time.monotonic() + 10.0
-    while not ready_path.is_file() and holder.poll() is None:
-        if time.monotonic() >= deadline:
-            raise RuntimeError("captured identity holder did not start")
-        time.sleep(0.01)
-    if not ready_path.is_file():
-        raise RuntimeError("captured identity holder exited before readiness")
-    holder_pid = int(ready_path.read_text(encoding="ascii"))
+    reported = await_marker(ready_path, holder, timeout=10.0)
+    if reported is None:
+        raise RuntimeError("captured identity holder did not start")
+    holder_pid = int(reported)
     captured = capture_pre_isolation_machine_lock()
     if captured is None or captured.holder_pid != holder_pid:
         raise RuntimeError("pre-root machine capture did not recover its holder")
@@ -272,12 +275,11 @@ finally:
     except subprocess.TimeoutExpired:
         holder.kill()
         holder.wait(timeout=10.0)
-    if holder.stderr is None:
-        raise RuntimeError("captured identity holder had no diagnostic stream")
-    holder_stderr = holder.stderr.read()
-    holder.stderr.close()
     if holder.returncode != 0:
-        raise RuntimeError(holder_stderr)
+        raise RuntimeError(
+            f"captured identity holder exited {holder.returncode}; its traceback "
+            "is above on this stream"
+        )
 if revalidate_captured_machine_lock(witness) is not None:
     raise RuntimeError("stale machine witness revalidated after identity release")
 print(result, flush=True)
@@ -308,18 +310,18 @@ class _RouteResponse(Protocol):
 
 
 _HOLD_GPU_BORROW_LEASE = """
-from pathlib import Path
 import sys
 import time
 from vaultspec_rag.gpu_borrow_lease import (
     acquire_gpu_borrow_lease,
     release_gpu_borrow_lease,
 )
+from vaultspec_rag.tests._child_signal import publish_marker
 
 lease = acquire_gpu_borrow_lease()
 if lease is None:
     raise RuntimeError("child could not acquire the GPU borrower lease")
-Path(sys.argv[1]).write_text(lease.capability, encoding="ascii")
+publish_marker(sys.argv[1], lease.capability)
 try:
     time.sleep(120)
 finally:
@@ -371,38 +373,32 @@ def _borrower_process() -> Generator[BorrowerProcess]:
     with NamedTemporaryFile(delete=False) as marker_file:
         marker = Path(marker_file.name)
     marker.unlink()
-    process = subprocess.Popen(
-        [sys.executable, "-c", _HOLD_GPU_BORROW_LEASE, str(marker)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
-        while not marker.is_file() and process.poll() is None:
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
-        if not marker.is_file():
-            process.kill()
-            stderr = process.communicate(timeout=_PROCESS_TIMEOUT_SECONDS)[1]
-            raise AssertionError(
-                f"borrower child did not acquire the OS lease: {stderr}"
-            )
-        capability = marker.read_text(encoding="ascii")
-        yield BorrowerProcess(process, capability)
-    finally:
-        marker.unlink(missing_ok=True)
-        if process.poll() is None:
-            process.terminate()
+    with child_stderr() as diagnostics:
+        process = subprocess.Popen(
+            [sys.executable, "-c", _HOLD_GPU_BORROW_LEASE, str(marker)],
+            stdout=subprocess.DEVNULL,
+            stderr=diagnostics.sink,
+            text=True,
+        )
         try:
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
-        assert process.poll() is not None, "borrower child did not exit"
-        if process.stderr is not None:
-            process.stderr.close()
+            capability = await_marker(marker, process, timeout=_PROCESS_TIMEOUT_SECONDS)
+            if capability is None:
+                process.kill()
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                raise AssertionError(
+                    f"borrower child did not acquire the OS lease: {diagnostics.read()}"
+                )
+            yield BorrowerProcess(process, capability)
+        finally:
+            marker.unlink(missing_ok=True)
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            assert process.poll() is not None, "borrower child did not exit"
 
 
 @contextmanager

@@ -223,10 +223,23 @@ __STUB__
 
 
 class _Stub(QuietHandler):
+    # The request body has to be consumed before the reply is written. This
+    # handler speaks HTTP/1.0, so the connection closes as soon as the reply is
+    # out, and closing a socket that still holds unread inbound bytes makes
+    # Windows discard it with an RST instead of a FIN. That destroys a reply
+    # already on the wire, and the client surfaces it as WinError 10053 - a
+    # fault in this stub, reported against the transport under test.
+    def drain(self):
+        length = int(self.headers.get('Content-Length') or 0)
+        if length:
+            self.rfile.read(length)
+
     def do_GET(self):
+        self.drain()
         respond(self)
 
     def do_POST(self):
+        self.drain()
         respond(self)
 
 
