@@ -4,6 +4,7 @@ tags:
   - '#service-graph'
 date: '2026-04-02'
 modified: '2026-07-25'
+body_hash: 'sha256:8b52f6f0e6ef18884743625ac5465a42d140ce8382f2d01659bd706e4ca125f6'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-research]]'

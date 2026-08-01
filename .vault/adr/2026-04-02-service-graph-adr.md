@@ -4,6 +4,7 @@ tags:
   - '#service-graph'
 date: '2026-04-02'
 modified: '2026-07-27'
+body_hash: 'sha256:4613a34375b95ce7ef352386a0f2d3205d497a1325d862992784385d3184be73'
 related:
   - '[[2026-04-02-service-graph-research]]'
   - '[[2026-04-02-release-readiness-audit]]'

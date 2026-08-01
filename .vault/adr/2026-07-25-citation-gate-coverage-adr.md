@@ -4,6 +4,7 @@ tags:
   - '#citation-gate-coverage'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:e639deb82ebbc77e0b696a598bcbfca4ec365cf8758352ebd72919d90d95d4c3'
 related:
   - "[[2026-07-25-citation-gate-coverage-research]]"
 ---

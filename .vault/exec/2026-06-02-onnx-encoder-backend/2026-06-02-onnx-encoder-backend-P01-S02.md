@@ -4,6 +4,7 @@ tags:
   - '#onnx-encoder-backend'
 date: '2026-06-02'
 modified: '2026-06-30'
+body_hash: 'sha256:9e93cb2448356a796c71e6b5a75e6d7a41b95c878d9de0b2febc697ee49bd3e7'
 step_id: 'S02'
 related:
   - "[[2026-06-02-onnx-encoder-backend-plan]]"

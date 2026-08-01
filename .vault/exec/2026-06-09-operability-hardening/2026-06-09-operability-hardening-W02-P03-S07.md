@@ -5,6 +5,7 @@ tags:
   - '#operability-hardening'
 date: '2026-06-09'
 modified: '2026-07-27'
+body_hash: 'sha256:affb567ddbbdb0b9a4245f1796f7cacda8d6239e59104eff8d5c06457f7b786c'
 related:
   - '[[2026-06-09-operability-hardening-plan]]'
 ---

@@ -4,6 +4,7 @@ tags:
   - '#storage-autoprune-safety'
 date: '2026-07-14'
 modified: '2026-07-14'
+body_hash: 'sha256:242ef87bc8ac1618ccd4ebcf136cc29f686f930b2d29f4aa29d5c512e91e7d9f'
 related:
   - "[[2026-07-14-storage-autoprune-safety-plan]]"
 ---

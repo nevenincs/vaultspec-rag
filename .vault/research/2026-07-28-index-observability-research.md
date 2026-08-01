@@ -5,6 +5,7 @@ tags:
 date: '2026-07-28'
 modified: '2026-07-28'
 body_schema: 'body-v1'
+body_hash: 'sha256:995c369835f349c20edb3553c0bb9b2f3c5122e08739868a92752ebc8dd7f302'
 related:
   - "[[2026-07-28-convergence-cost-research]]"
 ---

@@ -4,6 +4,7 @@ tags:
   - '#preprocess-hooks'
 date: '2026-06-11'
 modified: '2026-06-30'
+body_hash: 'sha256:a4ceefadd06fa48134138bb21d02b03bcdb59d0f57a87628a105a30bfd565d05'
 step_id: 'S07'
 related:
   - "[[2026-06-10-preprocess-hooks-plan]]"

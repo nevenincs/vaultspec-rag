@@ -4,6 +4,7 @@ tags:
   - '#mcp-optional-dependency'
 date: '2026-06-30'
 modified: '2026-06-30'
+body_hash: 'sha256:d9a8661d16625f1bf7cbd321ad857f61bc51403a7b42bdfa88ff96799f5223cd'
 step_id: 'S04'
 related:
   - "[[2026-06-30-mcp-optional-dependency-plan]]"

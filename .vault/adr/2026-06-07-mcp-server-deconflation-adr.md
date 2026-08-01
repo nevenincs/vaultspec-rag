@@ -7,6 +7,7 @@ related:
   - "[[2026-06-07-mcp-server-deconflation-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
 modified: '2026-07-27'
+body_hash: 'sha256:08873fe7b1a99fb98048dc6a31c0e714bdaea879b7e88de6aea248cb1e4c6c8a'
 ---
 
 # `mcp-server-deconflation` adr: `MCP and Server Deconflation` | (**status:** `superseded`)

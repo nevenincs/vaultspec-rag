@@ -4,6 +4,7 @@ tags:
   - '#storage-conformance'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:2e8c03742385ad8ed555a24d7e9045f259cc23244c3eed2c1cfdbcae400cc69d'
 related:
   - "[[2026-06-26-storage-schema-contract-adr]]"
   - "[[2026-07-24-worktree-index-reuse-adr]]"

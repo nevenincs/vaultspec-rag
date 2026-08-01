@@ -4,6 +4,7 @@ tags:
   - '#machine-discovery-recovery'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:9fd5f7fce6f1ef0c7c11790ef18b45b2b6c8770619ab44181cbb76d173ca438e'
 related:
   - "[[2026-07-21-machine-discovery-recovery-reference]]"
   - "[[2026-06-11-service-status-convergence-adr]]"

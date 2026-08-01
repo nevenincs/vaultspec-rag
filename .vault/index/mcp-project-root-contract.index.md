@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:e3edd687481e2fbf2caa10687a546be138a72084ff2607dbaf241d5f3b444563'
 related:
   - '[[2026-07-25-mcp-project-root-contract-S01]]'
   - '[[2026-07-25-mcp-project-root-contract-S02]]'

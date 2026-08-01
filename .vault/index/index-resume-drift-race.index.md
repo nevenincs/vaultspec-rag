@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:1708b49e0cff25dc3efa50e7f8995732a4103e64ea061ba89da891da813e87c5'
 related:
   - '[[2026-07-25-index-resume-drift-race-W01-P01-S01]]'
   - '[[2026-07-25-index-resume-drift-race-W01-P01-S02]]'

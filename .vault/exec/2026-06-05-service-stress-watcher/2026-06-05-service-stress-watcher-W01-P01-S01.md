@@ -4,6 +4,7 @@ tags:
   - '#service-stress-watcher'
 date: '2026-06-06'
 modified: '2026-07-27'
+body_hash: 'sha256:1fcde9104eca87023bdeb79becd10bfb4e774aaa427b4965c46c717048dea929'
 step_id: 'S01'
 related:
   - '[[2026-06-05-service-stress-watcher-plan]]'

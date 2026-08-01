@@ -4,6 +4,7 @@ tags:
   - '#preprocess-sandbox'
 date: '2026-07-13'
 modified: '2026-07-13'
+body_hash: 'sha256:3f6f1b62e1319699c5f93c5a6daa4e10d499e2184335667a8a39236cc05d22ae'
 step_id: 'S05'
 related:
   - "[[2026-07-13-preprocess-sandbox-plan]]"

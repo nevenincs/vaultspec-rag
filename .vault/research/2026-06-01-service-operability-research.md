@@ -4,6 +4,7 @@ tags:
   - '#service-operability'
 date: '2026-06-01'
 modified: '2026-07-27'
+body_hash: 'sha256:9184ec25c60a4d16f2116aab7d8201c8e1e8c3ece6d5be3eeab641fa9af4b75a'
 related:
   - "[[2026-05-31-server-mcp-route-adr]]"
   - "[[2026-05-31-service-token-identity-adr]]"

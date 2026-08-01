@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:467ea78c51fd285b0b511da946b1ef91e3c2dcbf0b3d3ce2cf8f1b3544e1b1cd'
 ---
 
 # Round 12 Audit -- config.py and __init__.py

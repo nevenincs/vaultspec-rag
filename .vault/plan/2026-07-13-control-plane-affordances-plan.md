@@ -4,6 +4,7 @@ tags:
   - '#control-plane-affordances'
 date: '2026-07-13'
 modified: '2026-07-27'
+body_hash: 'sha256:b68105b36d63d69ffa8bfd37ea5bcf54ca93f5ad4c568bfee800417adfec5032'
 tier: L2
 related:
   - '[[2026-07-13-control-plane-affordances-adr]]'

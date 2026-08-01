@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:a9e89c9de614bf6479b6b8e568a64e4751ace408402452e9f21693580f20ffc2'
 related:
   - '[[2026-06-07-sparse-search-latency-adr]]'
   - '[[2026-06-07-sparse-search-latency-research]]'

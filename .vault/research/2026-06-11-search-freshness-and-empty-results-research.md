@@ -4,6 +4,7 @@ tags:
   - '#search-freshness-and-empty-results'
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:cd9cfeff86e42d240bc8a8c62c7542f534d2d0872689f7654665af7287d05e6c'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'

@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-08'
 modified: '2026-07-27'
+body_hash: 'sha256:f2b37ea740fc1e3199b468796aa476b083459f33a5b021e18ea4ba2fefd8ccba'
 ---
 
 # Audit: mcp_server.py, config.py, watcher.py — Round 28

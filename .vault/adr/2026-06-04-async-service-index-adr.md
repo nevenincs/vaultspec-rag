@@ -4,6 +4,7 @@ tags:
   - '#async-service-index'
 date: '2026-06-04'
 modified: '2026-07-27'
+body_hash: 'sha256:0c17dbfaba3ba154e2bd1cb2430220ee10c72761dd4bd51811887ad8f629e05c'
 related:
   - "[[2026-06-04-async-service-index-research]]"
 ---

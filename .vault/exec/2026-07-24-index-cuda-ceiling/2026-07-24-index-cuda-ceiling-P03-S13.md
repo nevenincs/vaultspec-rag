@@ -4,6 +4,7 @@ tags:
   - '#index-cuda-ceiling'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:7bf8b812c74b1dba8787ef4365939b8c188c7f7cc589ae95b343e427f075b28b'
 step_id: 'S13'
 related:
   - "[[2026-07-24-index-cuda-ceiling-plan]]"

@@ -4,6 +4,7 @@ tags:
   - '#index-progress-bars'
 date: '2026-04-12'
 modified: '2026-07-27'
+body_hash: 'sha256:0fd544ced23690322f19a0077524f93d1afe7ddf7bf3bfa6098b0a38195365a7'
 related:
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
 ---

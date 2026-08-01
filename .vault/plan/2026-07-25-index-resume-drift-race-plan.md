@@ -4,6 +4,7 @@ tags:
   - '#index-resume-drift-race'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:7a9982bfe6e122a14feb7ff96ff68e0568291f0a593f943e1407bce013fc4a93'
 tier: L3
 related:
   - '[[2026-07-25-index-resume-drift-race-adr]]'

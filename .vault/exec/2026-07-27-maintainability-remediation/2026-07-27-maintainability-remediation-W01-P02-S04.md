@@ -4,6 +4,7 @@ tags:
   - '#maintainability-remediation'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:8ece89247701c272348482615012c00802e23962c43e62d14f0706ed9259b708'
 step_id: 'S04'
 related:
   - "[[2026-07-27-maintainability-remediation-plan]]"

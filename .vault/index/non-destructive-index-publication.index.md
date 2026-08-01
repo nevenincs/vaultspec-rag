@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:726a29efeacc6da986ee77201e76d8bac35b4410fb3ae019673d0448b594ea7c'
 related:
   - '[[2026-07-25-non-destructive-index-publication-P01-S01]]'
   - '[[2026-07-25-non-destructive-index-publication-P01-S02]]'

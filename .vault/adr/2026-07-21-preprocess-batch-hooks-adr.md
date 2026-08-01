@@ -4,6 +4,7 @@ tags:
   - '#preprocess-batch-hooks'
 date: '2026-07-21'
 modified: '2026-07-21'
+body_hash: 'sha256:a17ae8abc2b8679b6cbfd8ae1f7a3b8dba7e2abebe64402dc5cf1e3c99c18008'
 related:
   - "[[2026-07-21-preprocess-batch-hooks-research]]"
 ---

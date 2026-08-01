@@ -4,6 +4,7 @@ tags:
   - '#code-document-index-boundary'
 date: '2026-07-22'
 modified: '2026-07-22'
+body_hash: 'sha256:5b67b0d762317125fb464b61728e090f777a40403b752da786d995e8139a93a1'
 related:
   - "[[2026-07-22-code-document-index-boundary-plan]]"
 ---

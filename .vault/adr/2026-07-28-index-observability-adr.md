@@ -5,6 +5,7 @@ tags:
 date: '2026-07-28'
 modified: '2026-07-28'
 body_schema: 'body-v1'
+body_hash: 'sha256:ddea1216f5cd0ff6ef1e17b20ef5d1ab2817c4447499e2d7c08478eee37ffcc6'
 related:
   - "[[2026-07-28-index-observability-research]]"
 ---

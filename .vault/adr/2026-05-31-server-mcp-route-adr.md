@@ -7,6 +7,7 @@ related:
   - "[[2026-05-31-server-mcp-route-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
 modified: '2026-07-27'
+body_hash: 'sha256:1b35e89f6ee8791e344020013c7ac7b6bb8067fd8eddb755f7e8a32737297f37'
 ---
 
 # `server-mcp-route` adr: `asgi path-rewrite middleware to skip starlette mount redirect` | (**status:** `superseded`)

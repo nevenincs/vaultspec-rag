@@ -4,6 +4,7 @@ tags:
   - '#qdrant-performance'
 date: '2026-06-05'
 modified: '2026-07-27'
+body_hash: 'sha256:ce78053a61d8afbea5c568ceef965817cdae022a6a477dfde6fc7d0b98c8e9ab'
 tier: L3
 related:
   - '[[2026-06-05-qdrant-performance-adr]]'

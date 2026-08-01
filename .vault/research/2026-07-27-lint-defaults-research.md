@@ -4,6 +4,7 @@ tags:
   - '#lint-defaults'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:4eb4f7d499f45a0924658fa896bd0c67c31db2f007ae44704ec20eab7d2538c0'
 related:
   - "[[2026-07-27-lint-defaults-ruff-complexity-reference]]"
 ---

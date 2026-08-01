@@ -4,6 +4,7 @@ tags:
   - '#search-index-availability'
 date: '2026-07-21'
 modified: '2026-07-22'
+body_hash: 'sha256:ea0259b26d72e213076ba2b4722cd23353f820048d502f9b9a23370e73b5cad5'
 tier: L3
 related:
   - '[[2026-07-21-search-index-availability-adr]]'

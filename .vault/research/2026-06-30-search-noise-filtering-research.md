@@ -4,6 +4,7 @@ tags:
   - '#search-noise-filtering'
 date: '2026-06-30'
 modified: '2026-07-27'
+body_hash: 'sha256:7e42362f8f7fe75cff7995ecbab6b7be7be1029f0515b3930ee7390d676ba1b0'
 related:
   - '[[2026-05-28-cli-search-filters-adr]]'
   - '[[2026-05-30-cli-path-glob-research]]'

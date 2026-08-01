@@ -4,6 +4,7 @@ tags:
   - '#cli-startup-feedback'
 date: '2026-07-23'
 modified: '2026-07-23'
+body_hash: 'sha256:7ad10454d630249d79d8e79a81924523661ca7951396ff4fd9f0d5e017070b21'
 step_id: 'S04'
 related:
   - "[[2026-07-23-cli-startup-feedback-plan]]"

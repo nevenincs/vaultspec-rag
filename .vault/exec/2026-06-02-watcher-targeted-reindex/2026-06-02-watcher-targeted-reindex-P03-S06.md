@@ -4,6 +4,7 @@ tags:
   - '#watcher-targeted-reindex'
 date: '2026-06-18'
 modified: '2026-06-18'
+body_hash: 'sha256:4a5b407a6e4f81c01e3f6e217b711b0ccc769f1514041edce85bd15be7be85be'
 step_id: 'S06'
 related:
   - "[[2026-06-02-watcher-targeted-reindex-plan]]"

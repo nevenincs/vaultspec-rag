@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:f7f5ced1df4e4c5a6356d0ca9bfcb0277ef83c301df162e511ec0ef0c90eca33'
 ---
 
 # Round 22b Audit -- store.py, embeddings.py

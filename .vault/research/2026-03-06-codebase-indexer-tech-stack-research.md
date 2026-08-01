@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-06'
 modified: '2026-07-27'
+body_hash: 'sha256:f91a6ab73537c361b820e943b51013bc22fc1b2229c093afa7733930af565d53'
 ---
 
 # Research: CodebaseIndexer Tech Stack â€” 2026 GPU-First

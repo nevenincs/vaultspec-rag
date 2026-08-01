@@ -4,6 +4,7 @@ tags:
   - '#control-plane-affordances'
 date: '2026-07-13'
 modified: '2026-07-13'
+body_hash: 'sha256:150c13ca6da8359247508d5abba726e4ec120c8b4a6147936778a61f359b1328'
 related:
   - "[[2026-07-13-control-plane-affordances-research]]"
   - "[[2026-06-18-storage-lifecycle-adr]]"

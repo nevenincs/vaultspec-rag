@@ -4,6 +4,7 @@ tags:
   - '#index-gpu-pipeline'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:1654056bbbf7add6109bbc461bf49252bc910ccabe88206acf571069124255f3'
 tier: L2
 related:
   - '[[2026-06-02-index-gpu-pipeline-adr]]'

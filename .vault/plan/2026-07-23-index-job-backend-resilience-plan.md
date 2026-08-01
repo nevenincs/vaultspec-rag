@@ -4,6 +4,7 @@ tags:
   - '#index-job-backend-resilience'
 date: '2026-07-23'
 modified: '2026-07-27'
+body_hash: 'sha256:41db018edf9bc1021c68c462f261230563d8212d8185348633bf52b53df33b82'
 tier: L1
 related:
   - '[[2026-07-23-index-job-backend-resilience-adr]]'

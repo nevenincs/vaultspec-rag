@@ -4,6 +4,7 @@ tags:
   - '#code-document-index-boundary'
 date: '2026-07-21'
 modified: '2026-07-22'
+body_hash: 'sha256:3ebed0e425303d7dfc68f82ffabde656962f4ff5a131a8aed44d874753773ac0'
 related:
   - "[[2026-07-21-code-document-index-boundary-research]]"
   - "[[2026-06-10-preprocess-hooks-adr]]"

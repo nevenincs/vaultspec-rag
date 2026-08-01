@@ -4,6 +4,7 @@ tags:
   - '#index-perf-hardening'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:45a66ceaee3f574477307d516c04b34406416de4aeb44dd5fc662714a6d08125'
 related:
   - "[[2026-03-06-codebase-indexer-tech-stack-research]]"
 ---

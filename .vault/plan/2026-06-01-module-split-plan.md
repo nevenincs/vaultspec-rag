@@ -4,6 +4,7 @@ tags:
   - '#module-split'
 date: '2026-06-01'
 modified: '2026-07-27'
+body_hash: 'sha256:481eee70e81af4def5451cedef50beb4062c5259eae4c756ba4bf1d9f01fb52b'
 tier: L2
 related:
   - '[[2026-06-01-module-split-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#cli-backend-parity'
 date: '2026-05-28'
 modified: '2026-07-25'
+body_hash: 'sha256:6537491e0ca82728b4cbc2619478f0d4ba44662eb842983082e855e3aad6cba4'
 related:
   - '[[2026-05-28-cli-backend-parity-adr]]'
   - '[[2026-05-28-cli-backend-parity-research]]'

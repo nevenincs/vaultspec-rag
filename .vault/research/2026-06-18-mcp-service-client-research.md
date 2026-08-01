@@ -4,6 +4,7 @@ tags:
   - '#mcp-service-client'
 date: '2026-06-18'
 modified: '2026-07-27'
+body_hash: 'sha256:7d69e16bdbafd96469e2209c86b972732c001895ee80ed890e24e9238c892d9f'
 related:
   - "[[2026-06-07-mcp-server-deconflation-adr]]"
   - "[[2026-06-05-cli-mcp-decoupling-adr]]"

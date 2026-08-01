@@ -4,6 +4,7 @@ tags:
   - '#cli-json-output'
 date: '2026-05-30'
 modified: '2026-07-27'
+body_hash: 'sha256:91676db940cd75178c1c957b88c4aeaaa8ba130d599b38e3c8e507e7f8eb38c8'
 related:
   - '[[2026-05-30-cli-json-output-research]]'
 ---

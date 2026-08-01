@@ -4,6 +4,7 @@ tags:
   - '#mcp-conformance'
 date: '2026-06-30'
 modified: '2026-07-27'
+body_hash: 'sha256:abf6cc80ba96a4e006e87cffcb4f76d37b27c1d3c2bf4e762ed21aed963362db'
 tier: L2
 related:
   - '[[2026-06-30-mcp-conformance-adr]]'

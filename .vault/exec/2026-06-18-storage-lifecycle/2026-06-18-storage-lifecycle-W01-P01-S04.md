@@ -4,6 +4,7 @@ tags:
   - '#storage-lifecycle'
 date: '2026-06-25'
 modified: '2026-06-25'
+body_hash: 'sha256:520632d93d071ee6be2447b89846131584c760a21d9425ba924ca543751b88ae'
 step_id: 'S04'
 related:
   - "[[2026-06-18-storage-lifecycle-plan]]"

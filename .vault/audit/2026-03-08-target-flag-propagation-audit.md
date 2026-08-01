@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-08'
 modified: '2026-07-27'
+body_hash: 'sha256:a6e551176dce8b396f2370a327bf63f94b31d35e3d1819c7a740223592e88667'
 ---
 
 # Audit: --target Flag Propagation Through CLI Stack

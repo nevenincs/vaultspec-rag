@@ -4,6 +4,7 @@ tags:
   - '#service-release-compatibility'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:8116538efc02c6f5e1aa3d30d18ba62470ee389802f2418b33e469f57518f5a5'
 related:
   - "[[2026-07-25-service-release-compatibility-adr]]"
   - "[[2026-07-25-service-release-compatibility-plan]]"

@@ -4,6 +4,7 @@ tags:
   - '#index-gpu-pipeline'
 date: '2026-06-02'
 modified: '2026-06-30'
+body_hash: 'sha256:f22445b83d33b8d92fb9d9a57efb3fd23c850420a3b707e339cf6d76c289472b'
 step_id: 'S02'
 related:
   - "[[2026-06-02-index-gpu-pipeline-plan]]"

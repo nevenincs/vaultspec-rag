@@ -4,6 +4,7 @@ tags:
   - '#cli-index-default'
 date: '2026-05-30'
 modified: '2026-07-25'
+body_hash: 'sha256:d4378222acc08965f87613caa831a33963b05e9763736437fc30b0650c4bc6c6'
 related:
   - '[[2026-05-30-cli-index-default-adr]]'
   - '[[2026-05-30-cli-index-default-research]]'

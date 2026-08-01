@@ -4,6 +4,7 @@ tags:
   - '#service-jobs-operability'
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:68fd0a106425d96465b88361675ef645f0d0355280da11c151b2ee01de9f34eb'
 related:
   - '[[2026-06-11-service-jobs-operability-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'

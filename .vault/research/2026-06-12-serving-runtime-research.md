@@ -4,6 +4,7 @@ tags:
   - '#serving-runtime'
 date: '2026-06-12'
 modified: '2026-07-27'
+body_hash: 'sha256:2f227cf772faf4c0f02a0220f179330ca995a55ff28183e2460822b71e022991'
 related:
   - "[[2026-06-12-service-concurrency-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"

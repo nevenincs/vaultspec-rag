@@ -11,6 +11,7 @@ related:
 supersedes:
   - '2026-07-13-preprocess-sandbox-adr'
 modified: '2026-07-27'
+body_hash: 'sha256:d8c026f6a6c6372a4768087ce92f6ec97a4321e6d604f066375755df9bd405b8'
 ---
 
 # `preprocess-sandbox-removal` adr: `Direct hook execution replaces OS containment: performance is the mandate` | (**status:** `accepted`)

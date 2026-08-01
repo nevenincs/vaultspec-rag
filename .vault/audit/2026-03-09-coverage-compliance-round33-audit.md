@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-09'
 modified: '2026-07-27'
+body_hash: 'sha256:d7089d8a16001927ae35ec3f81e594c29edff1f3835e455dd92f6ad90f587afc'
 ---
 
 # Round 33: Integration Test Coverage Gap & Compliance Audit

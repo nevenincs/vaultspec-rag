@@ -4,6 +4,7 @@ tags:
   - '#control-plane-affordances'
 date: '2026-07-13'
 modified: '2026-07-13'
+body_hash: 'sha256:fc9642970725720341c42c68bc7cdf5279bc35cd99b54229f56a8e739e272e7d'
 related:
   - "[[2026-07-13-control-plane-affordances-plan]]"
 ---

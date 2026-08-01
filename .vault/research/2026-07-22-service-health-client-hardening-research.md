@@ -4,6 +4,7 @@ tags:
   - '#service-health-client-hardening'
 date: '2026-07-22'
 modified: '2026-07-22'
+body_hash: 'sha256:9a767386deb7b5a0cbceeb7ace8760abfaf7efe31de9a1e057b5afc328669dfb'
 related:
   - "[[2026-07-22-codebase-dedup-centralization-audit]]"
 ---

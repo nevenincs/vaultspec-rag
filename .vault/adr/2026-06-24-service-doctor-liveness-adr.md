@@ -4,6 +4,7 @@ tags:
   - '#service-doctor-liveness'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:c657c9690233127459f440589b771f3c9feb0441f76dd897888b1f973e75dae7'
 related:
   - "[[2026-06-24-service-doctor-liveness-research]]"
 ---

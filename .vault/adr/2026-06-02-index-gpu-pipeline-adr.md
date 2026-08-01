@@ -4,6 +4,7 @@ tags:
   - '#index-gpu-pipeline'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:299a685b584a9c7ba6de3c873dd8df6aee389fc56b503308c5d0dcd0ee32c454'
 related:
   - "[[2026-06-02-index-gpu-pipeline-research]]"
   - "[[2026-06-02-index-perf-hardening-adr]]"

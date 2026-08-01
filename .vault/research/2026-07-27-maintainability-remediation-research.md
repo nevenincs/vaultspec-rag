@@ -4,6 +4,7 @@ tags:
   - '#maintainability-remediation'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:083145a375a6570d323808ea59287fd4cd97886f945af2ae8f5fde94346a5645'
 related:
   - "[[2026-07-27-module-split-production-length-gate-research]]"
   - "[[2026-07-27-module-split-production-package-seams-reference]]"

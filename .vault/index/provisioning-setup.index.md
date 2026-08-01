@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:ddb81bab51826718a8328f69e39b47888b0c10ed4ec8f6dc513aca0f61f123dd'
 related:
   - '[[2026-06-13-provisioning-setup-adr]]'
   - '[[2026-07-27-provisioning-setup-grounding-research]]'

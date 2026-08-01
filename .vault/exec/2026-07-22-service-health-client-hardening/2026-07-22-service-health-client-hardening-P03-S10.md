@@ -4,6 +4,7 @@ tags:
   - '#service-health-client-hardening'
 date: '2026-07-22'
 modified: '2026-07-23'
+body_hash: 'sha256:afaa0800004cf6bc1cb9aa17e414fcce6f003cacdbf1f2b782ab99288958922c'
 step_id: 'S10'
 related:
   - "[[2026-07-22-service-health-client-hardening-plan]]"

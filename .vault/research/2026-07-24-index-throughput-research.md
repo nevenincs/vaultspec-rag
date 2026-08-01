@@ -4,6 +4,7 @@ tags:
   - '#index-throughput'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:d9cc524977dcab36bea1088d1bd4fc904652ba946cc92fd46b55e935d6c50f6c'
 related:
   - "[[2026-07-24-index-cuda-ceiling-research]]"
   - "[[2026-07-24-worktree-index-reuse-adr]]"

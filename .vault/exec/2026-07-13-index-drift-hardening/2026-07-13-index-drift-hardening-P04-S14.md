@@ -4,6 +4,7 @@ tags:
   - '#index-drift-hardening'
 date: '2026-07-13'
 modified: '2026-07-13'
+body_hash: 'sha256:5bb46d857e3bee93673760afa8071b42e777c448385409cdb5ef24cc4fa23b3f'
 step_id: 'S14'
 related:
   - "[[2026-07-13-index-drift-hardening-plan]]"

@@ -4,6 +4,7 @@ tags:
   - '#vault-index-perf-memory'
 date: '2026-04-12'
 modified: '2026-07-27'
+body_hash: 'sha256:bb1f646084e36c433e220f4b90abe86018bcecdc79132226c72c64c4f3ae981d'
 related:
   - '[[2026-03-06-indexer-pipeline-audit]]'
 ---

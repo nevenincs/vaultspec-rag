@@ -5,6 +5,7 @@ tags:
 date: '2026-07-29'
 modified: '2026-07-29'
 body_schema: 'body-v1'
+body_hash: 'sha256:bcfe2df199d01f140f801a9bfcdedf8897021af3dd55ab21889752fcbbe75fc8'
 related:
   - '[[2026-07-29-server-watch-observability-reference]]'
   - '[[2026-07-27-jobs-tui-adr]]'

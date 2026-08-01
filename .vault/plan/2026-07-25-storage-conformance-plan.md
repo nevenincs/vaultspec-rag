@@ -4,6 +4,7 @@ tags:
   - '#storage-conformance'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:d7cac2c76dd5ba7005da1614113df1eb007ec00d7d7ff06ca49e25ae296384b2'
 tier: L2
 related:
   - '[[2026-07-25-storage-conformance-adr]]'

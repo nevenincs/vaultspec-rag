@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:2a815781f87476cbd42adf471f65c038b23da052e7c9f503d7d025d133bde515'
 related:
   - '[[2026-07-25-index-lifecycle-consolidation-S01]]'
   - '[[2026-07-25-index-lifecycle-consolidation-S02]]'

@@ -4,6 +4,7 @@ tags:
   - '#operator-feedback-hardening'
 date: '2026-07-24'
 modified: '2026-07-27'
+body_hash: 'sha256:cac113ce82760264a4d1db0ef91143696fa0cfdd43b28b3cc3dd1201b97f3c17'
 tier: L2
 related:
   - '[[2026-07-24-operator-feedback-hardening-adr]]'

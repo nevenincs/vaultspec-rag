@@ -4,6 +4,7 @@ tags:
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
 modified: '2026-07-22'
+body_hash: 'sha256:080efbfb1282d569d3a742dddc96c88017c13ff0eadc4024ee5ae69947610112'
 step_id: 'S08'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-plan]]"

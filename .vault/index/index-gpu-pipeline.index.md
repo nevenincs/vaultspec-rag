@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:4118bf2f158b6eaaa829ad8423bc1cfd3f1cefb108f21361089eced85836cad0'
 related:
   - '[[2026-06-02-index-gpu-pipeline-P01-S01]]'
   - '[[2026-06-02-index-gpu-pipeline-P01-S02]]'

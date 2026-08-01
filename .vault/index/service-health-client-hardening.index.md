@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:0ef79ff4cdbe0cc2467ed5a9cf69220b8c14769de7173514eb1b2d383c7892bb'
 related:
   - '[[2026-07-22-service-health-client-hardening-P01-S01]]'
   - '[[2026-07-22-service-health-client-hardening-P01-S02]]'

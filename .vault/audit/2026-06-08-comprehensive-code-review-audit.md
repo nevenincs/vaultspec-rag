@@ -4,6 +4,7 @@ tags:
   - '#comprehensive-code-review'
 date: '2026-06-08'
 modified: '2026-07-27'
+body_hash: 'sha256:f6b45646ee449c1bfa15250ad7b09e8c2bdc73657384bf7baced3a8eb97ad503'
 related:
   - '[[2026-06-01-module-split-adr]]'
 ---

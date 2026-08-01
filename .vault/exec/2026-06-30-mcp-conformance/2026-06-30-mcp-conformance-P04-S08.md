@@ -4,6 +4,7 @@ tags:
   - '#mcp-conformance'
 date: '2026-06-30'
 modified: '2026-06-30'
+body_hash: 'sha256:c80d3803b28ac1f3147d50eb5f49a234a453b8ffbc173ef545a2b4ef5f984939'
 step_id: 'S08'
 related:
   - "[[2026-06-30-mcp-conformance-plan]]"

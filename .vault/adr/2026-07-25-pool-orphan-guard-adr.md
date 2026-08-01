@@ -4,6 +4,7 @@ tags:
   - '#pool-orphan-guard'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:65850494e06a89b5731b6f7020a381e36f09b80fd019ece13137ec639464576b'
 related:
   - "[[2026-06-02-index-perf-hardening-adr]]"
   - "[[2026-06-02-rag-index-performance-adr]]"

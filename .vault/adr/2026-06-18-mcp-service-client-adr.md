@@ -12,6 +12,7 @@ supersedes:
   - '2026-06-07-mcp-server-deconflation-adr'
   - '2026-06-10-install-mcp-dependency-fix-adr'
 modified: '2026-07-27'
+body_hash: 'sha256:38eb1b351dc7a6ce9f5ea4fa07ae5ca712fff5963c52bee7f5d64c5352915e4d'
 ---
 
 # `mcp-service-client` adr: `MCP backend reframed as a thin service client` | (**status:** `accepted`)

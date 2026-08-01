@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:2e390617c3b16ced6625f8dc6d8d9e90af6b2b743e31da25ef9854cb72e4b59a'
 ---
 
 # Continuous Research Loop Findings â€” 2026-03-07

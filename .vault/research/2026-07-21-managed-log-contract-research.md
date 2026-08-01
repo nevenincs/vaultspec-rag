@@ -4,6 +4,7 @@ tags:
   - '#managed-log-contract'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:0af6a932970a15ff57583ff7b8f209fdc21b4feeaa712d5e922f48836a2e7da0'
 related:
   - "[[2026-07-21-managed-log-contract-reference]]"
   - "[[2026-04-12-store-eviction-log-rotation-research]]"

@@ -4,6 +4,7 @@ tags:
   - '#index-resume-drift-race'
 date: '2026-07-25'
 modified: '2026-07-26'
+body_hash: 'sha256:a02da61ab792eb01bfbacdc57a47f8bedcca608dafd9c29b52ab69cc73d0264c'
 step_id: 'S04'
 related:
   - "[[2026-07-25-index-resume-drift-race-plan]]"

@@ -4,6 +4,7 @@ tags:
   - '#cli-argv-expansion'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:3673b9b273314331304800c9c685f02449c313f837ecfbd365e5fa8b72f6cea7'
 tier: L1
 related:
   - '[[2026-07-25-cli-argv-expansion-adr]]'

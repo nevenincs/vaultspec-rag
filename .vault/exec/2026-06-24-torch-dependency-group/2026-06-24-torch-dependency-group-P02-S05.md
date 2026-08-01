@@ -4,6 +4,7 @@ tags:
   - '#torch-dependency-group'
 date: '2026-06-24'
 modified: '2026-06-24'
+body_hash: 'sha256:10f635cae5557d71711919424b5e40fa8e725eb9f0533c424f1a4e9dd8de7e2a'
 step_id: 'S05'
 related:
   - "[[2026-06-24-torch-dependency-group-plan]]"

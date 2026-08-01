@@ -4,6 +4,7 @@ tags:
   - '#code-document-index-boundary'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:78a147ac2cbafb8984f18329584ee08df1e251ecbf04bd27b08f3f0db0ab34d7'
 related:
   - "[[2026-06-10-preprocess-hooks-adr]]"
   - "[[2026-06-11-preprocess-hooks-audit]]"

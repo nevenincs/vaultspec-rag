@@ -4,6 +4,7 @@ tags:
   - '#server-first-default'
 date: '2026-06-13'
 modified: '2026-06-13'
+body_hash: 'sha256:34c183f967b968f957fe47756f493b8c22ea525d3ab558b04fbfd3c5e39ca2d3'
 step_id: 'S13'
 related:
   - "[[2026-06-13-server-first-default-plan]]"

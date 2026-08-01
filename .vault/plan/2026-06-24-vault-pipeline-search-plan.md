@@ -4,6 +4,7 @@ tags:
   - '#vault-pipeline-search'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:54a8fb370e73a490b369e1be050982f16f2f327af780ce76579a05a89e84a46c'
 tier: L3
 related:
   - '[[2026-06-24-vault-pipeline-search-adr]]'

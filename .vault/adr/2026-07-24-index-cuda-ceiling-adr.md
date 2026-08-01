@@ -4,6 +4,7 @@ tags:
   - '#index-cuda-ceiling'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:a7a19499fbcf4298ae9884a5eb14863503f40c4920043bd18c57293cafb0bff8'
 related:
   - "[[2026-07-24-index-cuda-ceiling-research]]"
   - "[[2026-07-23-document-chunk-bounding-adr]]"

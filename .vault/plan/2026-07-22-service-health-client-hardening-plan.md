@@ -4,6 +4,7 @@ tags:
   - '#service-health-client-hardening'
 date: '2026-07-22'
 modified: '2026-07-27'
+body_hash: 'sha256:93761765bb58275f24002c6bdfb574ff3a628beef3a75a5f5d7b939ef2acc10b'
 tier: L2
 related:
   - '[[2026-07-22-service-health-client-hardening-adr]]'

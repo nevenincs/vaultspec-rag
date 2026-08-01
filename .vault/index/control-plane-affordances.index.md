@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:b59df9081ff14f5c1db1c8182fd0b1fc665e068c5b45cc018231fad08e6d1324'
 related:
   - '[[2026-07-13-control-plane-affordances-P01-S01]]'
   - '[[2026-07-13-control-plane-affordances-P01-S02]]'

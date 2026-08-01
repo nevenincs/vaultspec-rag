@@ -4,6 +4,7 @@ tags:
   - '#rag-index-performance'
 date: '2026-06-02'
 modified: '2026-06-30'
+body_hash: 'sha256:b2f591501986d0c885db9f2190aaa190bec5ee1b005636b321db7895c3cae085'
 step_id: 'S01'
 related:
   - "[[2026-06-02-rag-index-performance-plan]]"

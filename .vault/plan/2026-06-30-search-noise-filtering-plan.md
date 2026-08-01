@@ -4,6 +4,7 @@ tags:
   - '#search-noise-filtering'
 date: '2026-06-30'
 modified: '2026-07-27'
+body_hash: 'sha256:b5a56f7aa449ed0844f0f6f0601ad6bee545a8a5fcb77b708f50e0e58425c215'
 tier: L2
 related:
   - '[[2026-06-30-search-noise-filtering-adr]]'

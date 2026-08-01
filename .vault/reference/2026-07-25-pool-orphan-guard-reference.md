@@ -4,6 +4,7 @@ tags:
   - '#pool-orphan-guard'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:6544d619f7366a7d7c6e2ff6e799cfd82d664c071b543c3dd57f5f7dbb437ac9'
 related: []
 ---
 

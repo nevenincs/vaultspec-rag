@@ -4,6 +4,7 @@ tags:
   - '#stdio-watchdog-convergence'
 date: '2026-07-17'
 modified: '2026-07-17'
+body_hash: 'sha256:6e161b3cd3f675bfb09825e106daf001412302a32523ad970b667b2253b33cd3'
 step_id: 'S04'
 related:
   - "[[2026-07-17-stdio-watchdog-convergence-plan]]"

@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-06'
 modified: '2026-07-27'
+body_hash: 'sha256:28f13ac7f881a5d1b838786d639f63c8bf086f67494b505de927307141b788e4'
 ---
 
 # GPU Vector Search Deep Dive

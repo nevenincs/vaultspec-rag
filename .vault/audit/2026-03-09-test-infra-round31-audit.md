@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-09'
 modified: '2026-07-27'
+body_hash: 'sha256:4d1432d9cb1f90628eaaf6a32833a8a7cfb4ae86c7206bd37b76753516b5bd98'
 ---
 
 # Round 31: Test Infrastructure & Integration Gap Analysis (2026-03-09)

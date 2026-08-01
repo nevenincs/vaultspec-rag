@@ -4,6 +4,7 @@ tags:
   - '#cli-startup-feedback'
 date: '2026-07-23'
 modified: '2026-07-23'
+body_hash: 'sha256:d2ed1554696241a011be880859c8f66cb039c8145687536e3178bb8a2104b874'
 related:
   - "[[2026-04-12-index-progress-bars-adr]]"
   - "[[2026-06-01-service-operability-adr]]"

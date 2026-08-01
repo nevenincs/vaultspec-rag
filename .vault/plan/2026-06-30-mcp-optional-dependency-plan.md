@@ -4,6 +4,7 @@ tags:
   - '#mcp-optional-dependency'
 date: '2026-06-30'
 modified: '2026-07-27'
+body_hash: 'sha256:56dfb7978f41f116f1145ebfbb503ced81aa331eeb7395151de0b6c99bd7f82a'
 tier: L1
 related:
   - '[[2026-06-30-mcp-optional-dependency-adr]]'

@@ -8,6 +8,7 @@ related:
 supersedes:
   - '2026-07-27-active-corpus-conformance-adr'
 modified: '2026-07-27'
+body_hash: 'sha256:ed8d97ce86d745803c5682254dd8e2b4baab7405e028a16d0f64fa91c33edc91'
 ---
 
 # `body-schema-provenance` adr: `Validate documents against immutable schema contracts` | (**status:** `accepted`)

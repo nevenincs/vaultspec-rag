@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-09'
 modified: '2026-07-27'
+body_hash: 'sha256:9847d56160c977b9ba28694055a45edcdd751f5a506ffdba650c0d1f2518fb9f'
 ---
 
 # Performance Audit — Round 33 (2026-03-09)

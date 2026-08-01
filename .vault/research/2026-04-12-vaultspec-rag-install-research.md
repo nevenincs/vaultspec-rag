@@ -4,6 +4,7 @@ tags:
   - '#install-command'
 date: '2026-04-12'
 modified: '2026-07-27'
+body_hash: 'sha256:de15d3a8fe23cf966219a71aeafc9a5e4982e1f9b3eda0982ee094fd3fb220a6'
 related:
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
   - '[[2026-04-12-vaultspec-rag-install-adr]]'

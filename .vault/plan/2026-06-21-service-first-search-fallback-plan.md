@@ -4,6 +4,7 @@ tags:
   - '#service-first-search-fallback'
 date: '2026-06-21'
 modified: '2026-07-27'
+body_hash: 'sha256:10af6cac217ebf4b31922ec9d74d83a54e823eac25ed77b7810aaa0db55dab16'
 tier: L1
 related:
   - '[[2026-06-21-service-first-search-fallback-adr]]'

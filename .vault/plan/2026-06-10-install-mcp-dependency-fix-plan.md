@@ -4,6 +4,7 @@ tags:
   - '#install-mcp-dependency-fix'
 date: '2026-06-10'
 modified: '2026-07-27'
+body_hash: 'sha256:828793cadda2d974383e2b1832e2fdbeb00dc27a18c9a844f6e652cfd7534bea'
 tier: L1
 related:
   - '[[2026-06-10-install-mcp-dependency-fix-adr]]'

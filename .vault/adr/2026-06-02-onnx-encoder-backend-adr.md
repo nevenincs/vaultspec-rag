@@ -4,6 +4,7 @@ tags:
   - '#onnx-encoder-backend'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:4518f27fd7fd52c14587824e48de92f3576eca6af79b612af06e8cd2b53e1444'
 related:
   - "[[2026-06-02-onnx-encoder-backend-research]]"
 ---

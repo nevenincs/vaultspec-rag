@@ -4,6 +4,7 @@ tags:
   - '#qdrant-store-resilience'
 date: '2026-06-30'
 modified: '2026-06-30'
+body_hash: 'sha256:4d782df4849d189a1fc282d3d36d690a28b6b323d4c96b141f3cf93aba0e3306'
 related:
   - "[[2026-06-30-qdrant-store-resilience-adr]]"
 ---

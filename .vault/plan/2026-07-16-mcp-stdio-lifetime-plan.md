@@ -4,6 +4,7 @@ tags:
   - '#mcp-stdio-lifetime'
 date: '2026-07-16'
 modified: '2026-07-27'
+body_hash: 'sha256:7f5925c1f9c44571c5275046667968c4972c8a5c24617b36d3db7c3ad9c4447c'
 tier: L2
 related:
   - '[[2026-07-16-mcp-stdio-lifetime-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#ci-self-hosted-gpu-runner'
 date: '2026-07-23'
 modified: '2026-07-23'
+body_hash: 'sha256:43756f034ce01ea0a0e9032cd2b7edf0122a2dd4856203308dd0c03582709326'
 related:
   - "[[2026-07-23-ci-self-hosted-gpu-runner-research]]"
 ---

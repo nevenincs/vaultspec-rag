@@ -5,6 +5,7 @@ tags:
 date: '2026-07-28'
 modified: '2026-07-28'
 body_schema: 'body-v1'
+body_hash: 'sha256:21e0bc29c11830d530c3b8209757024da6d68b3a46aa2225b641a597b16ca76a'
 related:
   - "[[2026-07-17-stdio-watchdog-convergence-adr]]"
   - "[[2026-07-16-mcp-stdio-lifetime-adr]]"

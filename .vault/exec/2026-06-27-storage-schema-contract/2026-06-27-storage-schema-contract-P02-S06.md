@@ -4,6 +4,7 @@ tags:
   - '#storage-schema-contract'
 date: '2026-06-27'
 modified: '2026-07-03'
+body_hash: 'sha256:b5160517bb4dda3f1b12b59a4e0ccc44e5343b7f47ca235acb0142819f655147'
 step_id: 'S06'
 related:
   - "[[2026-06-27-storage-schema-contract-plan]]"

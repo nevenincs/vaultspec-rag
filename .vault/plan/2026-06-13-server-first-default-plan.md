@@ -4,6 +4,7 @@ tags:
   - '#server-first-default'
 date: '2026-06-13'
 modified: '2026-07-27'
+body_hash: 'sha256:788daa1f92966f778381f1b18335fba33ee922b2a88d5431104667164b2b0629'
 tier: L3
 related:
   - '[[2026-06-13-server-first-default-adr]]'

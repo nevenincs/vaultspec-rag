@@ -4,6 +4,7 @@ tags:
   - '#index-completeness-guard'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:149c7a15fcbf0178a9965369135e5c2842562a2b5e8dedc80060cc9f137be486'
 related:
   - "[[2026-07-25-index-completeness-guard-plan]]"
   - "[[2026-07-25-index-completeness-guard-adr]]"

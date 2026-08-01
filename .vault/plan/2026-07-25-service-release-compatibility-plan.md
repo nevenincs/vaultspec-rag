@@ -4,6 +4,7 @@ tags:
   - '#service-release-compatibility'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:5ecd31149186107b9f3b798abd0d485b0e4af350ebe79423e0b8fd312db09a3e'
 tier: L2
 related:
   - '[[2026-07-25-service-release-compatibility-adr]]'

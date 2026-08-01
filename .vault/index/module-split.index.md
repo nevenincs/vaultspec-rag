@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:ce2aaf727163fee8f64c29e77130dc2b4164a4735295a08fc0596786112fb5fe'
 related:
   - '[[2026-06-01-module-split-P07-S07]]'
   - '[[2026-06-01-module-split-P08-S08]]'

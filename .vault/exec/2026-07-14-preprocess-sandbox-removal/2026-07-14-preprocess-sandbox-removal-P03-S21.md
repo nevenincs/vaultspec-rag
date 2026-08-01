@@ -4,6 +4,7 @@ tags:
   - '#preprocess-sandbox-removal'
 date: '2026-07-14'
 modified: '2026-07-22'
+body_hash: 'sha256:fbae27094856c14ea05e94f6882ee05abb24747807772a46feefbd834fc367d1'
 step_id: 'S21'
 related:
   - "[[2026-07-14-preprocess-sandbox-removal-plan]]"

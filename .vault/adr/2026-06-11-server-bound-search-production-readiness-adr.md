@@ -4,6 +4,7 @@ tags:
   - '#server-bound-search-production-readiness'
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:5ac240de2015970e5638720d1a7c85dd0f93387209a101ce95356cb23134479a'
 related:
   - '[[2026-06-11-server-bound-search-production-readiness-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'

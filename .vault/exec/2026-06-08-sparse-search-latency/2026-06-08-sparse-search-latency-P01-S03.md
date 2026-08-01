@@ -4,6 +4,7 @@ tags:
   - '#sparse-search-latency'
 date: '2026-06-08'
 modified: '2026-06-30'
+body_hash: 'sha256:8aa74ba1702cdc22627d4af63c536deabf20addcbd63d087fe808e97c1a75be4'
 step_id: 'S03'
 related:
   - '[[2026-06-08-sparse-search-latency-plan]]'

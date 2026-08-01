@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:218db8ee85ab344b8c310d41b35f456a87a3259e5e82d0f0729c15fe47055da0'
 related:
   - '[[2026-06-02-onnx-encoder-backend-P01-S01]]'
   - '[[2026-06-02-onnx-encoder-backend-P01-S02]]'

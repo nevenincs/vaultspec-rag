@@ -4,6 +4,7 @@ tags:
   - '#service-lifecycle'
 date: '2026-05-30'
 modified: '2026-07-25'
+body_hash: 'sha256:e6596e4158353eaad75a20af9e26839d8dae4e20ec43f557bff7ae4677336c62'
 related:
   - '[[2026-05-30-service-lifecycle-adr]]'
   - '[[2026-05-30-service-lifecycle-research]]'

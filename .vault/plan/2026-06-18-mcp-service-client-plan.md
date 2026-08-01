@@ -4,6 +4,7 @@ tags:
   - '#mcp-service-client'
 date: '2026-06-18'
 modified: '2026-07-27'
+body_hash: 'sha256:fb137bd9438a590c96ed2bc919086fd72479297b1e14bac3d6309104f9504004'
 tier: L2
 related:
   - '[[2026-06-18-mcp-service-client-adr]]'

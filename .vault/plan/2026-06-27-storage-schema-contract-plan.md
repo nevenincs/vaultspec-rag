@@ -4,6 +4,7 @@ tags:
   - '#storage-schema-contract'
 date: '2026-06-27'
 modified: '2026-07-27'
+body_hash: 'sha256:9da06011b7c4dc2169ca77a9a7cad0e2564bbdad44904aec208dcfc7d99bfaa5'
 tier: L2
 related:
   - '[[2026-06-26-storage-schema-contract-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#non-destructive-index-publication'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:939ea2d6babf85e316c3a001ec57b776502e3eebf4cce78883d03f9c5e1de8c3'
 related:
   - "[[2026-07-25-index-completeness-guard-adr]]"
   - "[[2026-07-25-index-completeness-guard-audit]]"

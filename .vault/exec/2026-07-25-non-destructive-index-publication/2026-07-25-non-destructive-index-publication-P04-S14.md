@@ -4,6 +4,7 @@ tags:
   - '#non-destructive-index-publication'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:31e0e0c09cdc4936a5d29b34ae6e5f8e24808414802a5ec193cbc6027545490f'
 step_id: 'S14'
 related:
   - "[[2026-07-25-non-destructive-index-publication-plan]]"

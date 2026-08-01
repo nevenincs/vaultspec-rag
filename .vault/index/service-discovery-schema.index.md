@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:65254e97baf66e4ae58445dc01b69050c7f406f3d592056f152fd0462ebea956'
 related:
   - '[[2026-06-24-service-discovery-schema-P01-S01]]'
   - '[[2026-06-24-service-discovery-schema-P01-S02]]'

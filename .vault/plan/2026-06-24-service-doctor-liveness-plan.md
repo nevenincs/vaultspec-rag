@@ -4,6 +4,7 @@ tags:
   - '#service-doctor-liveness'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:5cb925c3cf608afe42ffcfba7de8d4e9d0a43ad311053342023fbaba2de37b9e'
 tier: L3
 related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'

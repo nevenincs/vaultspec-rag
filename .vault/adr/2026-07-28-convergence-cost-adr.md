@@ -5,6 +5,7 @@ tags:
 date: '2026-07-28'
 modified: '2026-07-28'
 body_schema: 'body-v1'
+body_hash: 'sha256:eef04db534ac29b07d02b7210664f8e12555fa8ea4d02aa652363857af32de76'
 related:
   - "[[2026-03-07-blake2b-file-hashing-adr]]"
   - '[[2026-07-28-convergence-cost-research]]'

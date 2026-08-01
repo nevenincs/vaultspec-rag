@@ -5,6 +5,7 @@ tags:
 date: '2026-07-29'
 modified: '2026-07-29'
 body_schema: 'body-v1'
+body_hash: 'sha256:73b12f4c993fb429d60dc5a40540600995b708fd182ef4b2180ef0e465987664'
 related:
   - '[[2026-07-27-jobs-tui-adr]]'
   - '[[2026-07-21-managed-log-contract-adr]]'

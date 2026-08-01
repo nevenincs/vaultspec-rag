@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-09'
 modified: '2026-07-27'
+body_hash: 'sha256:97e9aa7eed2f3827ea2e6f24d29b6bfc5a080b57170f880b03f3bd711095b9d5'
 ---
 
 # Round 36: Graph/Embedding Domain Audit (2026-03-09)

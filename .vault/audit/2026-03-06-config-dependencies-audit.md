@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-06'
 modified: '2026-07-27'
+body_hash: 'sha256:28896be1402cf8441d80ec1e363ba6a04de0196e4f34e3d93ff33e7b034a10a6'
 ---
 
 # Audit: Config and Dependencies

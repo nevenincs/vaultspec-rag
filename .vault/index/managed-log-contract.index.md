@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:7a36a39cce624afc1988133ef4388977c0d518083293bffea6fa414cf3c2a546'
 related:
   - '[[2026-07-21-managed-log-contract-W01-P01-S01]]'
   - '[[2026-07-21-managed-log-contract-W01-P01-S02]]'

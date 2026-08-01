@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-08'
 modified: '2026-07-27'
+body_hash: 'sha256:1f5fb010a9e9b6b560911a2b0d6f9db2c38b5b97fe18529f83de333578f1fbc6'
 ---
 
 # Round 24 Audit: Watcher, CLI Fast-Path, MCP Client

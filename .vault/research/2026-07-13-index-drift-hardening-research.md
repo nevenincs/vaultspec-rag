@@ -4,6 +4,7 @@ tags:
   - '#index-drift-hardening'
 date: '2026-07-13'
 modified: '2026-07-27'
+body_hash: 'sha256:4d8bcc6e9ef6a809d567f1ac4abedae8753b2ca0bc5adda71a767a58a502d956'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-06-02-watcher-targeted-reindex-adr]]'

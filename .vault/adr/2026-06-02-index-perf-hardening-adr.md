@@ -4,6 +4,7 @@ tags:
   - '#index-perf-hardening'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:ec7d23ac7103c1c6fe46a9b87963894ecb8aa1b1654de2c3fd4140d128de8d65'
 related:
   - "[[2026-06-02-index-perf-hardening-research]]"
 ---

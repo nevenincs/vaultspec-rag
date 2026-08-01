@@ -4,6 +4,7 @@ tags:
   - '#worktree-index-reuse'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:1c871a650d28ff6196574cddfe6a2bb16036ac169985b4242d9deb0efc334ebd'
 step_id: 'S05'
 related:
   - "[[2026-07-24-worktree-index-reuse-plan]]"

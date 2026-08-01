@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:f16f34c5c96a49d3456507d50362b09f4fa79c12d94bafd3f3231078fb0d1ec9'
 related:
   - '[[2026-06-04-async-service-index-W01-P01-S01]]'
   - '[[2026-06-04-async-service-index-W01-P01-S02]]'

@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:089b6cc70e95a3e6ff9b12c26ad71d03e1b8fddfbff3b6514ab3099994554bac'
 ---
 
 # ADR Test Coverage Audit — 2026-03-07

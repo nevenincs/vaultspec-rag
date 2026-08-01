@@ -4,6 +4,7 @@ tags:
   - '#service-discovery-schema'
 date: '2026-06-24'
 modified: '2026-06-24'
+body_hash: 'sha256:4674cd908856c04660f9fa4fa010b7b18c82f8519e73c87b79a4294043c937e9'
 step_id: 'S04'
 related:
   - "[[2026-06-24-service-discovery-schema-plan]]"

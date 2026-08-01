@@ -4,6 +4,7 @@ tags:
   - '#test-and-paths'
 date: '2026-04-04'
 modified: '2026-07-27'
+body_hash: 'sha256:8f02d76d205bf32dc43ebe6f3b9cbfc6e24a68fa853629aaa7602fea9f2b6a22'
 related:
   - '[[2026-04-04-test-and-paths-plan]]'
 ---

@@ -4,6 +4,7 @@ tags:
   - '#machine-discovery-recovery'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:bb0de4d3bd239cfd30eb596946da9ba88eb5027c97fd5bf43d128c57627738a6'
 tier: L3
 related:
   - '[[2026-07-21-machine-discovery-recovery-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:c3cbefd56815750a21acb31b60fd6fe83ca11a5f926b482bac50a907bfb37a9c'
 ---
 
 # api.py and ADR Regression Tests Audit

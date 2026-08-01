@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:04b68283443eff05d11459742394746499df7637d72576217120767a1bac1e27'
 related:
   - '[[2026-07-27-maintainability-remediation-W01-P01-S01]]'
   - '[[2026-07-27-maintainability-remediation-W01-P01-S02]]'

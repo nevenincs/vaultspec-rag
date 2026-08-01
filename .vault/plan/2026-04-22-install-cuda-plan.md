@@ -4,6 +4,7 @@ tags:
   - '#install-cuda'
 date: 2026-04-22
 modified: '2026-07-27'
+body_hash: 'sha256:37af6265a5172c30b670c903dfc9335ae998662235c35adcb41c4c3be84b368a'
 related:
   - '[[2026-04-22-install-cuda-adr]]'
   - '[[2026-04-22-install-cuda-research]]'

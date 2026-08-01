@@ -4,6 +4,7 @@ tags:
   - '#security-hardening'
 date: 2026-04-04
 modified: '2026-07-27'
+body_hash: 'sha256:e27066774ec5f2c4d3dfd604d79c9170d2df21c621e6ad7c0316acf277a51dd5'
 related:
   - '[[2026-04-04-security-hardening-research]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'

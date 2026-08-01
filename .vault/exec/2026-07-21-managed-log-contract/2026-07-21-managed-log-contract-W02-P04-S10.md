@@ -4,6 +4,7 @@ tags:
   - '#managed-log-contract'
 date: '2026-07-21'
 modified: '2026-07-21'
+body_hash: 'sha256:71cd24b687adfd581bcaf41d993634900a75061acf06a1e0b90df5fc61608996'
 step_id: 'S10'
 related:
   - "[[2026-07-21-managed-log-contract-plan]]"

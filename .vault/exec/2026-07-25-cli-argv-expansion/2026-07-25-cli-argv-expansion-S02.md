@@ -4,6 +4,7 @@ tags:
   - '#cli-argv-expansion'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:55bc79287b5369e5129e1d2e059f4db8314285a4a570e1b08eff6c5e4ca75792'
 step_id: 'S02'
 related:
   - "[[2026-07-25-cli-argv-expansion-plan]]"

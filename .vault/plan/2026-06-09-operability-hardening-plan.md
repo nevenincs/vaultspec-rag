@@ -4,6 +4,7 @@ tags:
   - '#operability-hardening'
 date: '2026-06-09'
 modified: '2026-07-27'
+body_hash: 'sha256:df6bfbf324024ad7ab55381d316aa24a176b2b0f6f8bb4017443d7d517267723'
 tier: L3
 related:
   - '[[2026-06-09-operability-hardening-adr]]'

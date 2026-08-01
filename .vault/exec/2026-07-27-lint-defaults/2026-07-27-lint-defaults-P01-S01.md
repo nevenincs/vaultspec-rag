@@ -4,6 +4,7 @@ tags:
   - '#lint-defaults'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:2b78c357d636b4af852dc6b10189a2e236732b89a8265dc00e9a676b3f21f1e2'
 step_id: 'S01'
 related:
   - "[[2026-07-27-lint-defaults-plan]]"

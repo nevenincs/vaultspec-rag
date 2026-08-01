@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:149193cddf44d235ff1fee968753fc33a356f567a989a275fd31076641f2e3ae'
 related:
   - '[[2026-07-24-vault-true-incremental-adr]]'
   - '[[2026-07-25-vault-true-incremental-P01-S01]]'

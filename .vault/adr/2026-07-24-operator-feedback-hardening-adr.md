@@ -4,6 +4,7 @@ tags:
   - '#operator-feedback-hardening'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:26b778bd9d1e6e8130fa876bfd57182cd2bd38fa30e1c7bd429c6ebd9d3c9e37'
 related:
   - "[[2026-07-23-cli-startup-feedback-adr]]"
   - '[[2026-07-24-operator-feedback-hardening-audit]]'

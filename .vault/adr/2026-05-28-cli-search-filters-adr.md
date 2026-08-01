@@ -4,6 +4,7 @@ tags:
   - '#cli-search-filters'
 date: '2026-05-28'
 modified: '2026-07-27'
+body_hash: 'sha256:48aa189da4da0dc4b5c2a7fe9eeb40800a4629ed98cebfc6ea8034ea7995fcec'
 related:
   - '[[2026-05-28-cli-search-filters-plan]]'
   - '[[2026-05-28-cli-search-filters-research]]'

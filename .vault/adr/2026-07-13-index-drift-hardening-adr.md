@@ -4,6 +4,7 @@ tags:
   - '#index-drift-hardening'
 date: '2026-07-13'
 modified: '2026-07-13'
+body_hash: 'sha256:50a02bf50d7cceddbefdcf068a042be7019ed658b8e96fd9ab37484223915f84'
 related:
   - '[[2026-07-13-index-drift-hardening-research]]'
   - '[[2026-04-04-vaultragignore-adr]]'

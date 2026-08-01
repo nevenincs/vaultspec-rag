@@ -4,6 +4,7 @@ tags:
   - '#maintainability-remediation'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:931e89564dfb76237036b0ea62852efacc50e05d8b82eddf55577549abf5f1b8'
 tier: L3
 related:
   - '[[2026-06-01-module-split-adr]]'

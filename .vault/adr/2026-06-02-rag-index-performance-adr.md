@@ -4,6 +4,7 @@ tags:
   - '#rag-index-performance'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:611d22bf05c42e07bce7fe60d517810708f5d5ced8974cf54f162d6de8c7b867'
 related:
   - "[[2026-06-02-rag-index-performance-research]]"
 ---

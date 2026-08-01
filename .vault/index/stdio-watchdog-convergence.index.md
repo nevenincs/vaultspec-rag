@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:73ebcb8c506467c015ff2f3a361b44014c863ac059a940ff9cf0d5c76b9fc561'
 related:
   - '[[2026-07-17-stdio-watchdog-convergence-P01-S01]]'
   - '[[2026-07-17-stdio-watchdog-convergence-P01-S02]]'

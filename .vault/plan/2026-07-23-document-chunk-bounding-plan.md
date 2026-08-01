@@ -4,6 +4,7 @@ tags:
   - '#document-chunk-bounding'
 date: '2026-07-23'
 modified: '2026-07-24'
+body_hash: 'sha256:a669c00523de2946eb5604e250bd2ce8fdacb4130e00942b70825a1563680ca1'
 tier: L2
 related:
   - '[[2026-07-23-document-chunk-bounding-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#mcp-search-scope'
 date: '2026-06-30'
 modified: '2026-07-27'
+body_hash: 'sha256:fe5dc5901991b2afb25c2182cfa21610b5216cf507ca8197dded4107da2349ab'
 related:
   - "[[2026-06-30-mcp-conformance-research]]"
   - "[[2026-06-30-mcp-conformance-reference]]"

@@ -4,6 +4,7 @@ tags:
   - '#index-observability'
 date: '2026-07-28'
 modified: '2026-07-30'
+body_hash: 'sha256:52d4ec641bfa69f25443362c2a1836898e12565429af1559840d162175215da7'
 tier: L2
 related:
   - '[[2026-07-28-index-observability-adr]]'

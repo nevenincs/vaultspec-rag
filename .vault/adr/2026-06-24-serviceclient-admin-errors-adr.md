@@ -4,6 +4,7 @@ tags:
   - '#serviceclient-admin-errors'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:0fe563e2f3ee1ec24b66d7f89a18acab031347d2a22cf99fea2f4a6b5ca450f2'
 related:
   - "[[2026-06-24-serviceclient-admin-errors-research]]"
 ---

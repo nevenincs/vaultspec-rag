@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-08'
 modified: '2026-07-27'
+body_hash: 'sha256:26ed795a19bce2f85a6b703cf5b904332e884da4c437a9df7413eb7432c5f00c'
 ---
 
 # Qdrant Hybrid Search Patterns (Verified)

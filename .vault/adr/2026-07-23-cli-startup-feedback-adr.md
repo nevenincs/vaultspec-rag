@@ -4,6 +4,7 @@ tags:
   - '#cli-startup-feedback'
 date: '2026-07-23'
 modified: '2026-07-23'
+body_hash: 'sha256:00aad1d0802c95fc23e9898537e485aa5c68bca1d5d3ca888e8f6161862389c1'
 related:
   - "[[2026-07-23-cli-startup-feedback-research]]"
 ---

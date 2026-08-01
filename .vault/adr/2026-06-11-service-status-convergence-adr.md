@@ -4,6 +4,7 @@ tags:
   - '#service-status-convergence'
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:9a7345badd24ebacd3ce7ab9003b540e7d13687ff07f90ff7f3f935f27789bd8'
 related:
   - '[[2026-06-11-service-status-convergence-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'

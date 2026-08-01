@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:d256d6e4caaa39c88a6383853bb0d5c6bdae6e296ddc0aa1609739146433ef91'
 ---
 
 # Round 21 Audit -- search.py, cli.py, mcp_server.py

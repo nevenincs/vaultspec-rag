@@ -7,6 +7,7 @@ related:
   - "[[2026-06-05-cli-mcp-decoupling-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
 modified: '2026-07-27'
+body_hash: 'sha256:a759f6228c4acb5c169b2c065c37e5f2b5430f222a06904cc86c1d5e429b3290'
 ---
 
 # `cli-mcp-decoupling` adr: `decoupled interface layers and unified backend facade` | (**status:** `superseded`)

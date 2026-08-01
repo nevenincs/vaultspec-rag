@@ -4,6 +4,7 @@ tags:
   - '#control-plane-affordances'
 date: '2026-07-13'
 modified: '2026-07-13'
+body_hash: 'sha256:f8d97018cf930f796dcf6e4005e4e07bbc8e0a604d40990dfaa29a85e1312a95'
 related:
   - '[[2026-06-18-storage-lifecycle-adr]]'
   - '[[2026-06-27-rag-broker-affordances-adr]]'

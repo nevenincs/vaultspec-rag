@@ -4,6 +4,7 @@ tags:
   - '#mcp-service-client'
 date: '2026-06-18'
 modified: '2026-06-30'
+body_hash: 'sha256:aa0931780003762fd3a8c25e30a3980c6052766e93fbb5f63023af4573e16930'
 step_id: 'S17'
 related:
   - "[[2026-06-18-mcp-service-client-plan]]"

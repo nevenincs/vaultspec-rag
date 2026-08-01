@@ -5,6 +5,7 @@ tags:
 date: '2026-07-28'
 modified: '2026-07-28'
 body_schema: 'body-v1'
+body_hash: 'sha256:18951ecafbde5cb4f6b2d9613d440ee160ae0b1d8d514806afb73dce4019717c'
 related:
   - "[[2026-07-28-pressure-management-research]]"
 ---

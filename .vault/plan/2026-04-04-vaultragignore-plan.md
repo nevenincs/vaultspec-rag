@@ -4,6 +4,7 @@ tags:
   - '#vaultragignore'
 date: '2026-04-04'
 modified: '2026-07-27'
+body_hash: 'sha256:9ac58034b354a216f86b33b7947b77ddf6665355ef28b54f66bfc1a7477656b2'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-04-04-vaultragignore-research]]'

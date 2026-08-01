@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:711897b2756407cfb85053297697fe1b4f886beb510f570aeec39e3b04a01778'
 related:
   - '[[2026-05-31-service-token-identity-adr]]'
   - '[[2026-05-31-service-token-identity-plan]]'

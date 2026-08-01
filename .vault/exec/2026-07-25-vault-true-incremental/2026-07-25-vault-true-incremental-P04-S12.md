@@ -5,6 +5,7 @@ tags:
 date: '2026-07-29'
 modified: '2026-07-29'
 body_schema: 'body-v1'
+body_hash: 'sha256:d86ddcf79ddf5c100140070dc86c973e9821262d38fb5c05e9bce1361261aa75'
 step_id: 'S12'
 related:
   - "[[2026-07-25-vault-true-incremental-plan]]"

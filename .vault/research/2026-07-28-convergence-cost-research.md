@@ -5,6 +5,7 @@ tags:
 date: '2026-07-28'
 modified: '2026-07-28'
 body_schema: 'body-v1'
+body_hash: 'sha256:ae8618d4a7110db60896abde7355949e5b714874ee11fe99d3fd89232df3816e'
 related:
   - "[[2026-03-07-blake2b-file-hashing-adr]]"
 ---

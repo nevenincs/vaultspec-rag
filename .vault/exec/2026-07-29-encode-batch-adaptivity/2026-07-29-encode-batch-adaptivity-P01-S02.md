@@ -5,6 +5,7 @@ tags:
 date: '2026-07-29'
 modified: '2026-07-29'
 body_schema: 'body-v1'
+body_hash: 'sha256:533333ccdf4a19b80350062ecab68536194b5b13ae6ba2fd4f9bf3d41b4d10f8'
 step_id: 'S02'
 related:
   - "[[2026-07-29-encode-batch-adaptivity-plan]]"

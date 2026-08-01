@@ -4,6 +4,7 @@ tags:
   - '#mcp-launch-hygiene'
 date: '2026-07-17'
 modified: '2026-07-17'
+body_hash: 'sha256:cf97e15ca2394c1228cb58f6a8616b009c1335dd7ed245052f2192dda3d12b10'
 step_id: 'S04'
 related:
   - "[[2026-07-17-mcp-launch-hygiene-plan]]"
