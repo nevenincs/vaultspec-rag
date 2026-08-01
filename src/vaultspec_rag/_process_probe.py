@@ -266,19 +266,27 @@ def pid_image_path(pid: int) -> str | None:
 
 
 def pid_cmdline(pid: int) -> str | None:
-    """Return *pid*'s command line, or ``None`` when it cannot be read.
+    """Return *pid*'s space-joined command line, or ``None`` when unreadable.
 
-    POSIX-only in practice: Windows has no equivalent world-readable view, and
-    every Windows caller wants the image path instead. ``None`` means unknown,
-    never "no match".
+    Reads through psutil - the same mechanism the process-table scan already
+    uses for argv - so every platform answers. A direct ``/proc`` read covers
+    Linux alone: macOS and the BSDs ship no procfs, so it reported every live
+    pid there as unreadable, and a caller treating that as trustable identity
+    adopted whatever process had recycled the pid. ``None`` means unknown,
+    never "no match": the process is gone, or belongs to a user this process
+    cannot inspect. An empty string is a real answer (a zombie's argv), not
+    unknown.
     """
-    if pid <= 0 or sys.platform == "win32":
+    if pid <= 0:
         return None
+    import psutil
+
     try:
-        return Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
-    except (OSError, ValueError) as exc:
+        arguments = psutil.Process(pid).cmdline()
+    except psutil.Error as exc:
         logger.debug("cmdline unreadable for pid %d: %s", pid, exc)
         return None
+    return " ".join(arguments)
 
 
 def pid_image_matches(pid: int, needle: str, *, timeout: float | None = None) -> bool:
