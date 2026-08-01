@@ -5,7 +5,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
-body_hash: 'sha256:1adad9e2f5bd5f5008aa771c0f2ac3cfb744a0e0eb394a6e7246291f20934c29'
+body_hash: 'sha256:0572f807a5e8bc3d3cf79a7f4d73db0f3332008a20905a01c80c800921de530e'
 related:
   - '[[2026-07-31-issue-triage-research]]'
   - '[[2026-07-29-gpu-admission-gate-adr]]'
@@ -177,8 +177,7 @@ within `DEGRADED_THRESHOLD_SECONDS` of a starved forward.
 **Probes to status.** The status ladder splits the terminal heartbeat branch:
 `heartbeat_stale` with pid alive, identity token confirmed, and port accepting
 classifies as a degraded starved state - a label in the mould of "degraded
-(starved: heartbeat stale, process alive and answering)" - instead of `crashed
-(heartbeat stale)`. The crashed labels survive for the cases that earn them:
+(starved: heartbeat stale, process alive and answering)" - instead of `crashed (heartbeat stale)`. The crashed labels survive for the cases that earn them:
 pid dead, PID reused, port silent, probe unanswered. The verdict envelope
 carries the evidence quadruple plus the newest running-job forward age, so the
 operator line names the cause, not just the state.

@@ -8,6 +8,9 @@ body_hash: 'sha256:10a776e64ab51e08bdc84660469170c1ad689844bdb335157efa2edb658f6
 tier: L2
 related:
   - '[[2026-07-31-issue-triage-research]]'
+  - '[[2026-07-25-non-destructive-index-publication-adr]]'
+  - '[[2026-07-21-storage-prealloc-reclaim-adr]]'
+  - '[[2026-07-25-index-resume-drift-race-adr]]'
 ---
 
 # `issue-triage` plan

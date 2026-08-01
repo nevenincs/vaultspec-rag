@@ -194,6 +194,17 @@ def _summarise(records: list[dict[str, object]]) -> dict[str, object]:
     return tally
 
 
+def _hold(gate: threading.Event | None) -> None:
+    """Block a served request until the test releases *gate*.
+
+    Bounded on the same deadline every wait in this file fails at, so a test
+    that never reaches its release - because an assertion above it failed -
+    leaves no server thread parked behind the session that ended.
+    """
+    if gate is not None:
+        gate.wait(_HANDOFF_TIMEOUT)
+
+
 class _JobService:
     """A real loopback service holding the job state it publishes.
 
@@ -208,6 +219,17 @@ class _JobService:
         self.jobs: list[dict[str, object]] = []
         self.control_delay = 0.0
         self.fetch_delay = 0.0
+        # When set, a control - or a jobs read - is held until the test
+        # releases it. A transient the interface paints for the length of a
+        # delay is a race the test loses on a loaded machine: delivering the
+        # keystroke pumps the event loop for as long as the box makes it, and
+        # measurably outruns a several-hundred-millisecond delay, so the stage
+        # is over before the first frame the test is able to read. Held on an
+        # event instead, the stage ends on the observation that proves it, and
+        # the ordering the assertion claims is the ordering the service
+        # enforces rather than one the schedule happened to allow.
+        self.control_gate: threading.Event | None = None
+        self.fetch_gate: threading.Event | None = None
         # When set, ``/logs`` answers with these lines verbatim instead of the
         # per-job placeholder, so a test can serve the service's real log
         # dialects - including adversarial content - through the real route.
@@ -278,12 +300,17 @@ class _JobService:
                     self._answer(_log_payload(service, query))
                     return
                 time.sleep(service.fetch_delay)
+                _hold(service.fetch_gate)
                 self._answer(_jobs_payload(service, query))
 
             def _mutate(self, method: str) -> None:
                 path, _query = self._record(method)
                 state = _requested_state(self)
                 time.sleep(service.control_delay)
+                # Held before the lock, so the reads the interface keeps
+                # issuing while a control is outstanding are answered rather
+                # than queued behind it.
+                _hold(service.control_gate)
                 segments = path.strip("/").split("/")
                 job_id = urllib.parse.unquote(segments[1]) if len(segments) > 1 else ""
                 suffix = segments[2] if len(segments) > 2 else ""
@@ -359,6 +386,12 @@ class _JobService:
             self.search_recent = list(recent)
 
     def close(self) -> None:
+        # A test that failed before its release left a request held. Freeing
+        # them here costs a teardown nothing and keeps a failing assertion from
+        # also spending the hold's whole bound.
+        for gate in (self.control_gate, self.fetch_gate):
+            if gate is not None:
+                gate.set()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=_HANDOFF_TIMEOUT)
@@ -1334,6 +1367,14 @@ class TestActionOutcomes:
         is not a generic failure - it says the view is addressing something
         that no longer exists. It must read as that, and the list must be
         corrected, never surfaced as a raw error.
+
+        The wait is on the whole sentence the assertion needs, not on a phrase
+        inside it. A fragment is already satisfied by the toast, which is
+        narrow enough to wrap the sentence across two lines; the unwrapped copy
+        is the header's, and the header picks the outcome up on its next beat.
+        Waiting on the fragment therefore returns a frame that can carry only
+        the wrapped copy, and the assertion fails on a sentence that is on the
+        screen and about to be on it whole.
         """
         app = _app(control_service, [_finished_job("job00000")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
@@ -1341,7 +1382,11 @@ class TestActionOutcomes:
             # Removed behind the interface's back.
             control_service.set_jobs([])
             app.action_job_delete()
-            painted = await _await_painted(pilot, app, "no longer on the service")
+            painted = await _await_painted(
+                pilot,
+                app,
+                "delete: job00000 is no longer on the service - list refreshed.",
+            )
             await _settle(pilot)
             corrected = _screen_text(app)
 
@@ -1463,20 +1508,38 @@ class TestDurableRequestState:
         ends: they press a key, a toast flashes for under a second, and the row
         reads exactly as it did before. Asserting only the final state would
         pass against a view that showed nothing until it was over.
+
+        Each intermediate stage is held open by the observation that ends it,
+        never by a delay. The service cannot answer the control until the
+        requested row has been read, and cannot answer the confirming poll
+        until the sent row has been read, so the sequence this asserts is the
+        one the service enforced rather than one the machine happened to allow.
+
+        Proven able to fail: marking the keystroke ``sent`` rather than
+        ``requested`` in ``_mark_pending`` - the view collapsing the two stages
+        into the one it can prove - paints no requested row at all and fails on
+        the "pause requested" needle by name; restored, it passes. The repaint
+        in ``_mark_pending`` is not what this one holds: a running row is
+        repainted by the frame tick regardless, and the sibling test over a
+        finished row is what pins that.
         """
-        control_service.control_delay = 0.4
+        answered = threading.Event()
+        confirming_poll = threading.Event()
+        control_service.control_gate = answered
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
             await _settle(pilot)
-            # The service now answers reads slowly, so the window in which the
-            # request is accepted but unconfirmed is observable rather than
-            # theoretical.
-            control_service.fetch_delay = 0.5
+            # From here the only read left is the one the answered control
+            # triggers, so holding reads holds exactly the window in which the
+            # request is accepted but unconfirmed.
+            control_service.fetch_gate = confirming_poll
 
             await pilot.press("p")
             requested = await _await_painted(pilot, app, "pause requested")
+            answered.set()
             sent = await _await_painted(pilot, app, "pause sent")
+            confirming_poll.set()
             confirmed = await _await_painted(pilot, app, "→ paused")
 
         assert "pause requested" in requested, (

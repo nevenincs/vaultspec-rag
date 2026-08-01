@@ -5,7 +5,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
-body_hash: 'sha256:e42d916c7a34890cadd7becf1aa2dd6f73ddd0c83276977e8c1433b9912159a3'
+body_hash: 'sha256:4a3b483ee905d7fd8b6ec5a60b89fe4065ba292c6036ed3fa26d5215bbd8924c'
 related: []
 ---
 
@@ -42,27 +42,27 @@ PR 325's trailer read `Closes #307, #309, #310, #311, #312, #314`. GitHub binds 
 
 **Blocking / severity first**
 
-| Issue | State | Next action |
-| --- | --- | --- |
+| Issue   | State                                                                                                                                                                        | Next action                                                                                                                                   |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | **274** | Architecture. The non-destructive index publication ADR is **proposed, unapproved**; 16/17 steps landed, `S14` open honestly (decision implemented, zero production callers) | Needs approval before anything moves. Then S14 wiring: registry lease accessor, collection-granular delete, pointer resolved at decision time |
-| **268** | Item 1 **landed** (`code_file_breadth_shortfall` + tri-state integrity + auto-repair in `fabd2c67`); items 2-3 open | Item 2 (result-diversity signal) is scoped and independently shippable - cheapest real win here. Item 3 is 274 section 1 |
-| **262** | Diagnosed, undesigned. Remedy cannot live where the collision is detected (I/O inside a SQLite transaction) | Wants an ADR: which layer owns detection/remedy, retry-in-run vs defer-to-next-generation |
+| **268** | Item 1 **landed** (`code_file_breadth_shortfall` + tri-state integrity + auto-repair in `fabd2c67`); items 2-3 open                                                          | Item 2 (result-diversity signal) is scoped and independently shippable - cheapest real win here. Item 3 is 274 section 1                      |
+| **262** | Diagnosed, undesigned. Remedy cannot live where the collision is detected (I/O inside a SQLite transaction)                                                                  | Wants an ADR: which layer owns detection/remedy, retry-in-run vs defer-to-next-generation                                                     |
 
 **Mechanical, unblocked - good parallel work**
 
-| Issue | Next action |
-| --- | --- |
-| **313** | Route 3 sites through `measurement`. Note `_format_mb` to `_format_mib` rename; and `nan` renders as `'0s'`/`'less than 1 second'` rather than raising - quieter than the crash and worth fixing in the same pass |
-| **283** | One-line packaging call: exclude `tests` or state the intent beside the `builtins/` note. CI does not depend on the shipped copy |
-| **289** | 2.0 GB to 319 MB already (a `gc`), but 22 `acceptance-search-index-*` dirs remain under `.git/` and **no producer exists anywhere in the tree**. Likely orphans from a removed harness - verify, then remove |
+| Issue   | Next action                                                                                                                                                                                                                               |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **313** | Route 3 sites through `measurement`. Note `_format_mb` to `_format_mib` rename; and `nan` renders as `'0s'`/`'less than 1 second'` rather than raising - quieter than the crash and worth fixing in the same pass                         |
+| **283** | One-line packaging call: exclude `tests` or state the intent beside the `builtins/` note. CI does not depend on the shipped copy                                                                                                          |
+| **289** | 2.0 GB to 319 MB already (a `gc`), but 22 `acceptance-search-index-*` dirs remain under `.git/` and **no producer exists anywhere in the tree**. Likely orphans from a removed harness - verify, then remove                              |
 | **290** | Half fixed (interpreter verification + `UV_PYTHON` declared). Remaining: patch-pin `.python-version`, derive CI from it (`"3.13"` still literal at `.github/workflows/ci.yml:52,:320,:349,:385`). **Natural rider on the PR 327 re-land** |
 
 **Deferred by design**
 
-| Issue | Why it stays open |
-| --- | --- |
-| **306** | Decision-needed, not a defect. Median is the decided statistic; changing it amends the ADR and wants production telemetry first |
-| **275** | 71 to 48 sites. Author's own correction: **0 confirmed mechanical** remain. Blocked on 5 named design calls (cold module state, service token, constructor-arg assertions, `sys.platform`, GPU thresholds) |
+| Issue         | Why it stays open                                                                                                                                                                                                                            |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **306**       | Decision-needed, not a defect. Median is the decided statistic; changing it amends the ADR and wants production telemetry first                                                                                                              |
+| **275**       | 71 to 48 sites. Author's own correction: **0 confirmed mechanical** remain. Blocked on 5 named design calls (cold module state, service token, constructor-arg assertions, `sys.platform`, GPU thresholds)                                   |
 | **281 / 308** | PR 325 shipped the machine-wide admission gate and marked both `Refs`, not `Closes` - deliberately. 308's observability direction (couple liveness to the encode path) is untouched and is the part that made the incident take hours to see |
 
 Two suggested but not done, since they are new work rather than triage: file an issue for the PR 327 re-land so it is not lost behind a green "merged" badge, and drop `Closes` trailers one-per-line going forward.
