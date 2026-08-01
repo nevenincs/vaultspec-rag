@@ -385,13 +385,23 @@ try:
         fd = 1 if index % 2 == 0 else 2
         payload = f"raw-only-{index:04d}-".encode() + (b"x" * 48) + b"\n"
         os.write(fd, payload)
+    # Rotation renames service.log.1 onto service.log.2 on every rollover,
+    # so no single generation exists continuously while writing continues.
+    # Latch the first observation instead of re-reading it: a name a
+    # rollover is free to move cannot be sampled twice and still mean the
+    # same thing. The union is the stable form - the shift publishes .2 in
+    # the same atomic replace that removes .1, so once rotation has started
+    # one of the two is always present.
+    rotated = False
     deadline = time.monotonic() + 5.0
-    while (
-        time.monotonic() < deadline
-        and not log_path.with_name("service.log.1").exists()
-    ):
-        time.sleep(0.01)
-    if not log_path.with_name("service.log.1").exists():
+    while time.monotonic() < deadline and not rotated:
+        rotated = any(
+            log_path.with_name(f"service.log.{generation}").exists()
+            for generation in (1, 2)
+        )
+        if not rotated:
+            time.sleep(0.01)
+    if not rotated:
         os._exit(72)
     os.write(1, b"__FINAL_RAW_STDOUT_MARKER__\n")
     os.write(2, b"__FINAL_RAW_STDERR_MARKER__\n")
