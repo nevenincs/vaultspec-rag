@@ -4,6 +4,7 @@ tags:
   - '#adr-plan-coverage-triage'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:9b392a4693b83076b0d9b26c5f34f4de1d511072b862d97535c71cd6c528a126'
 related:
   - "[[2026-07-25-index-drift-circuit-accounting-adr]]"
   - "[[2026-07-25-document-index-drift-parity-adr]]"

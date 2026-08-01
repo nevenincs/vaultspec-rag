@@ -4,6 +4,7 @@ tags:
   - '#rag-index-performance'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:85924ea0c18d695d61163424c4322747a982fcfbdde6a7433bfb355f40e584f0'
 tier: L2
 related:
   - '[[2026-06-02-rag-index-performance-adr]]'

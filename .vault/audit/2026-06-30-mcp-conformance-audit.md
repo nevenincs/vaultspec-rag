@@ -4,6 +4,7 @@ tags:
   - '#mcp-conformance'
 date: '2026-06-30'
 modified: '2026-06-30'
+body_hash: 'sha256:da54f0856bb96634bde8e04c93b8b1e56b6f38ee16295e267342a6d4f6ec6e26'
 related:
   - "[[2026-06-30-mcp-conformance-adr]]"
   - "[[2026-06-30-mcp-search-scope-adr]]"

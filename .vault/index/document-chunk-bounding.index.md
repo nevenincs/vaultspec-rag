@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:d8970143f856279b4f7fccfd36b67f2ddda856ba09b369c334bc190633740b44'
 related:
   - '[[2026-07-23-document-chunk-bounding-P01-S01]]'
   - '[[2026-07-23-document-chunk-bounding-P01-S02]]'

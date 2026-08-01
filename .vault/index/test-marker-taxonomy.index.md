@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:e770fa6a1380c70b91892c8125b558b1e332587e998ac70a7e072340fce967d2'
 related:
   - '[[2026-07-22-test-marker-taxonomy-audit]]'
 ---

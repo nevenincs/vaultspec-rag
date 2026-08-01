@@ -4,6 +4,7 @@ tags:
   - '#service-discovery-schema'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:27c87182d8e8c49d10db1b3d5ceb272e19e5a6625ba19d8e1e59a777ac518c97'
 tier: L2
 related:
   - '[[2026-06-24-service-discovery-schema-adr]]'

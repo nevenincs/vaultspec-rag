@@ -4,6 +4,7 @@ tags:
   - '#mcp-search-scope'
 date: '2026-07-22'
 modified: '2026-07-22'
+body_hash: 'sha256:179c7195f794412100cca9c881c21d4b43266a5dbaa3c48116f3afa1cf266e94'
 related:
   - "[[2026-06-30-mcp-search-scope-adr]]"
   - "[[2026-07-21-code-document-index-boundary-adr]]"

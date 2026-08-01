@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:388d1ab9366cdb5d94f48fbfc05cd512ed0ac09422d67f0c4f234e4de82cb3cb'
 related:
   - '[[2026-06-27-rag-broker-affordances-P01-S01]]'
   - '[[2026-06-27-rag-broker-affordances-P01-S02]]'

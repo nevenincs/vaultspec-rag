@@ -4,6 +4,7 @@ tags:
   - '#cli-service-operability-hardening'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:e3bb2ae7b5d573fe455add4b1fd65111423f1da1b69be3bc33421a7cd1ad4200'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-code-review-audit]]'
   - '[[2026-07-27-cli-service-operability-hardening-grounding-research]]'

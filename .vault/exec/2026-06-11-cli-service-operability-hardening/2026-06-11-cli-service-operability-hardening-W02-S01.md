@@ -2,6 +2,7 @@
 tags: ['#exec', '#cli-service-operability-hardening']
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:cf743f56d5148dcf76a25dd11dfac0dbda34aa326ff67f70b8ea77cb6772d257'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-service-jobs-operability-adr]]'

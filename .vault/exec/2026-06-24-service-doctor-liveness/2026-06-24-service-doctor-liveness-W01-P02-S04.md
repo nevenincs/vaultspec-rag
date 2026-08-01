@@ -4,6 +4,7 @@ tags:
   - '#service-doctor-liveness'
 date: '2026-06-24'
 modified: '2026-06-24'
+body_hash: 'sha256:2a56008a76659798c0075d7e05157d3b72082c1e2829d8470ebe1a828370ef88'
 step_id: 'S04'
 related:
   - "[[2026-06-24-service-doctor-liveness-plan]]"

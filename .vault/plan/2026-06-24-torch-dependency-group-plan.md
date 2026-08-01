@@ -4,6 +4,7 @@ tags:
   - '#torch-dependency-group'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:e2c655f4bb68b3e84e93aedba57ad38a19d7514b6c69182f441a0940cea8246b'
 tier: L2
 related:
   - '[[2026-06-24-torch-dependency-group-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#jobs-tui'
 date: '2026-07-27'
 modified: '2026-07-28'
+body_hash: 'sha256:f7248647af2ef68b4db6d7ad380a61358eb3f7eed84cdba43e720a1bfb45872a'
 related:
   - "[[2026-07-27-jobs-tui-research]]"
   - "[[2026-06-11-service-jobs-operability-adr]]"

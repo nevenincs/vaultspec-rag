@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:6959be502180054cd32d7e32c44d5bb20a66ee4473ea20f704417fee3ec7dadf'
 related:
   - '[[2026-06-18-mcp-service-client-P01-S01]]'
   - '[[2026-06-18-mcp-service-client-P01-S02]]'

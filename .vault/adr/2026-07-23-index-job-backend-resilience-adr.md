@@ -4,6 +4,7 @@ tags:
   - '#index-job-backend-resilience'
 date: '2026-07-23'
 modified: '2026-07-23'
+body_hash: 'sha256:d911ca8ec69df7664100e437911d1ec9705805ee0f3eb3d74749cc462db07e0a'
 related:
   - "[[2026-07-23-index-job-backend-resilience-research]]"
   - '[[2026-06-30-qdrant-store-resilience-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#module-split'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:8d8e4f5a5f014bc714fdf9856b064b97f56500c45b3f6586b066be9dfe4bf8da'
 related:
   - "[[2026-06-01-module-split-research]]"
   - "[[2026-07-25-index-resume-drift-race-research]]"

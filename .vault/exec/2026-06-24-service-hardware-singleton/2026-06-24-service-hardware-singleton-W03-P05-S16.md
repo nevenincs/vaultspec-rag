@@ -4,6 +4,7 @@ tags:
   - '#service-hardware-singleton'
 date: '2026-06-24'
 modified: '2026-06-24'
+body_hash: 'sha256:8bc758da07847bbd93f8761ad1f78c0eda5b7486382004d5cdfc8bc37dac7a35'
 step_id: 'S16'
 related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"

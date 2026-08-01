@@ -4,6 +4,7 @@ tags:
   - '#machine-discovery-recovery'
 date: '2026-07-22'
 modified: '2026-07-22'
+body_hash: 'sha256:8e156546f0d0af274a798593a78a97c34746d4f31ce8a059612e9f29c03760d2'
 related:
   - "[[2026-07-21-machine-discovery-recovery-plan]]"
 ---

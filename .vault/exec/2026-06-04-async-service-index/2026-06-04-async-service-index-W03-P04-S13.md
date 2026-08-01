@@ -4,6 +4,7 @@ tags:
   - '#async-service-index'
 date: '2026-06-04'
 modified: '2026-07-27'
+body_hash: 'sha256:d75d5711e0b9ac11922c1b6b010cb86d0fe73951f370a253123c4bea104a56d1'
 step_id: 'S13'
 related:
   - "[[2026-06-04-async-service-index-plan]]"

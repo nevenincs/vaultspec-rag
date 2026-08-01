@@ -4,6 +4,7 @@ tags:
   - '#archive-restore-contract'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:8ca27db1a7a5341f551503446f4c9f4c7ae622288cf0dc632fda76a2bc6a21de'
 related:
   - '[[2026-07-25-archive-restore-contract-archive-path-reference]]'
   - '[[2026-07-14-storage-autoprune-safety-adr]]'

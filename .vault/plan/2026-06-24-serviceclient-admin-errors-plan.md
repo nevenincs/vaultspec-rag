@@ -4,6 +4,7 @@ tags:
   - '#serviceclient-admin-errors'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:d3294a980a17f7fa9bffca3489982a122dc087095af98058e33c98675975fb1f'
 tier: L1
 related:
   - '[[2026-06-24-serviceclient-admin-errors-adr]]'

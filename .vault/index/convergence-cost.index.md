@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:de3abb1f736069a759c3c7861689fba9fbed110e1495af89190d7fd02106524a'
 related:
   - '[[2026-07-28-convergence-cost-P01-S01]]'
   - '[[2026-07-28-convergence-cost-P01-S02]]'

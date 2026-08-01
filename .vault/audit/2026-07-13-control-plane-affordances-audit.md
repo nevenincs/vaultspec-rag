@@ -9,6 +9,7 @@ related:
 promoted_to:
   - 'rule:broker-facing-cli-outcomes-are-structured-and-idempotent'
 modified: '2026-07-14'
+body_hash: 'sha256:4e01135ae39ff8da6c4eab2b7e4f5cb6063c01795dfb155cfe576af1c13a6bb6'
 ---
 
 # `control-plane-affordances` audit: `execution review of the survey root lookup and stop --json`

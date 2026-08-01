@@ -4,6 +4,7 @@ tags:
   - '#service-token-identity'
 date: '2026-05-31'
 modified: '2026-07-25'
+body_hash: 'sha256:b15a491af7860cf16259830336d908031dd2585d1ca7d2ee140b361c641b5070'
 related:
   - '[[2026-05-31-service-token-identity-adr]]'
   - '[[2026-05-31-service-token-identity-research]]'

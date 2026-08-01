@@ -4,6 +4,7 @@ tags:
   - '#citation-gate-coverage'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:a8d422c8272c62c7686da42fded2c06ebf0e9b10c08f6c6c0aea8f542b1c3741'
 tier: L1
 related:
   - '[[2026-07-25-citation-gate-coverage-adr]]'

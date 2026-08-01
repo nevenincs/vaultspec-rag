@@ -4,6 +4,7 @@ tags:
   - '#non-destructive-index-publication'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:2f10b07a229e27c4eeeeacbadd22f0eede1e725e37e3c5764d4e6c4e941cde47'
 tier: L2
 related:
   - '[[2026-07-25-non-destructive-index-publication-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#search-index-availability'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:dad966fab0131f2a7d1a8ee7c0b25fa36316dde5ddd1107429e7354582025fa7'
 related:
   - "[[2026-06-11-search-freshness-and-empty-results-adr]]"
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"

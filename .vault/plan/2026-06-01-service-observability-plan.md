@@ -4,6 +4,7 @@ tags:
   - '#service-observability'
 date: '2026-06-01'
 modified: '2026-06-30'
+body_hash: 'sha256:763ea6a01cbb03d53eb93077ffb552f9236bdc35f6558bd6a2edb44d56e655d7'
 tier: L2
 related:
   - '[[2026-06-01-service-observability-adr]]'

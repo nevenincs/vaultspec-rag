@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:8ab579bd6dc4e91c1dac7ecfa67159ad9c6b8900edf1c998cacf0ee31837a18b'
 related:
   - '[[2026-07-23-cli-startup-feedback-S01]]'
   - '[[2026-07-23-cli-startup-feedback-S02]]'

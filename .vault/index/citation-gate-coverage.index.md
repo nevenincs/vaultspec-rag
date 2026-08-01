@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:de3cdd7b2ed06437107678db4be70a2430e754d2c5275d59c83237b8a4dbd85f'
 related:
   - '[[2026-07-25-citation-gate-coverage-S01]]'
   - '[[2026-07-25-citation-gate-coverage-S02]]'

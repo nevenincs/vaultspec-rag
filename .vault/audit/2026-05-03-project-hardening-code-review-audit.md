@@ -4,6 +4,7 @@ tags:
   - '#project-hardening'
 date: '2026-05-03'
 modified: '2026-07-27'
+body_hash: 'sha256:a8312d7799c1b37c0f82eade802ffc32d2c8373d2625f8bdc8b21ae8558334a2'
 related: []
 ---
 

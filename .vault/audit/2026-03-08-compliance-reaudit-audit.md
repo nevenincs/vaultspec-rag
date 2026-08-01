@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-08'
 modified: '2026-07-27'
+body_hash: 'sha256:3ef131df7517be686569afb3568837f62be98fecd55f11e6842382b4d4074da4'
 ---
 
 # Test Mandate Compliance Re-audit — 2026-03-08 (Post-Task #19, #41, #42)

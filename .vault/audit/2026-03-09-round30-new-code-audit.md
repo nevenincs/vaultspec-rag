@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-09'
 modified: '2026-07-27'
+body_hash: 'sha256:07c0a18bb8990c40e8ce2018f4b67a6b560457175ab4a0c17cbb92c9193585ef'
 ---
 
 # Round 30: New Code Correctness Audit + ADR Regression Test Coverage

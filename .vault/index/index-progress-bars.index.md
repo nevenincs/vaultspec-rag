@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:688f161124b27cbb09a87e4cf398bde62771728b869f55d793feed6ba4649075'
 related:
   - '[[2026-04-12-index-progress-bars-adr]]'
   - '[[2026-04-12-index-progress-bars-audit]]'

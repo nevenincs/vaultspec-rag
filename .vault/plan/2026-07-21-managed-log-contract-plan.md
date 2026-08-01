@@ -4,6 +4,7 @@ tags:
   - '#managed-log-contract'
 date: '2026-07-21'
 modified: '2026-07-22'
+body_hash: 'sha256:b882021baf38994ee7f2d7e3bf146ca2b8dcdfee325ae38002d652c3cb180615'
 tier: L3
 related:
   - '[[2026-07-21-managed-log-contract-adr]]'

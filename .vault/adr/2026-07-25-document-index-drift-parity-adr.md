@@ -4,6 +4,7 @@ tags:
   - '#document-index-drift-parity'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:03497c152298c71da8ba239eb885e9a328247e69108128f80e07b0ab528bf022'
 related:
   - "[[2026-07-25-index-resume-drift-race-adr]]"
   - "[[2026-07-25-index-resume-drift-race-research]]"

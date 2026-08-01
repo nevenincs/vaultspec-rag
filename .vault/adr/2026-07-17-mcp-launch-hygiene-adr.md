@@ -4,6 +4,7 @@ tags:
   - '#mcp-launch-hygiene'
 date: '2026-07-17'
 modified: '2026-07-27'
+body_hash: 'sha256:1da92ed5559ed308be9046043290494c4293772ad1f3a4bb7a4fb3d687f5c5bf'
 related:
   - "[[2026-07-17-mcp-launch-hygiene-research]]"
   - '[[2026-07-17-mcp-launch-hygiene-audit]]'

@@ -4,6 +4,7 @@ tags:
   - '#index-drift-hardening'
 date: '2026-07-13'
 modified: '2026-07-27'
+body_hash: 'sha256:055abaf8980782e902b18ddb6b0ddeb177064fa4dec6a7a0d508405a2f97c073'
 tier: L2
 related:
   - '[[2026-07-13-index-drift-hardening-adr]]'

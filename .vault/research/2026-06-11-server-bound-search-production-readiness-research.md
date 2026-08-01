@@ -4,6 +4,7 @@ tags:
   - '#server-bound-search-production-readiness'
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:50ec1f3d7e5f6d6eee22eb9da465bedf0ebde3a4a7296a1ad74520c74a16f234'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'

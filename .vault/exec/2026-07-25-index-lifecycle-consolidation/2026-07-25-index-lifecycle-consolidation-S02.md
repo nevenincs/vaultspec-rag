@@ -4,6 +4,7 @@ tags:
   - '#index-lifecycle-consolidation'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:e572d03b4514a893bfcdb2abeab03d5273b762fbdd53bc27e13e856db98cf10b'
 step_id: 'S02'
 related:
   - "[[2026-07-25-index-lifecycle-consolidation-plan]]"

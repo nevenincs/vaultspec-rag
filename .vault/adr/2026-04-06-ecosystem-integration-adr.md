@@ -4,6 +4,7 @@ tags:
   - '#ecosystem-integration'
 date: '2026-04-06'
 modified: '2026-07-27'
+body_hash: 'sha256:43a84e16df34fdc8798e147224818c4ec9eaaafc324591c7bcba3ffe64a4f493'
 related:
   - '[[2026-04-06-ecosystem-integration-research]]'
   - '[[2026-04-06-ecosystem-integration-plan]]'

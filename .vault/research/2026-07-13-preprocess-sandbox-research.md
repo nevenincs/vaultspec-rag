@@ -4,6 +4,7 @@ tags:
   - '#preprocess-sandbox'
 date: '2026-07-13'
 modified: '2026-07-27'
+body_hash: 'sha256:702dfd867f6252d3417c0e40a99724f9ae330593073c6cd3a7d254efa7a881be'
 related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
   - '[[2026-06-10-preprocess-hooks-adr]]'

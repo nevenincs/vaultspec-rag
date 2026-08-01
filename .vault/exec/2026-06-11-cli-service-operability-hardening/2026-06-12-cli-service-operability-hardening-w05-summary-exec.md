@@ -4,6 +4,7 @@ tags:
   - '#cli-service-operability-hardening'
 date: '2026-06-12'
 modified: '2026-07-27'
+body_hash: 'sha256:9a2ba1156623f333fbf7b7ee65e17280037fae2226e134af12f67d57484e9d9a'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'

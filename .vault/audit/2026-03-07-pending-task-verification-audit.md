@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:4813d88537be0074d23091b937fd9df8dd8e5eef2e9caa43dd7aa969a0cdc10d'
 ---
 
 # Pending Task Verification — 2026-03-07

@@ -4,6 +4,7 @@ tags:
   - '#index-perf-hardening'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:87de0499b1b0caa843f582c6af55ccaca8c2d223d5efb85c7f1204f79ebce872'
 tier: L2
 related:
   - '[[2026-06-02-index-perf-hardening-adr]]'

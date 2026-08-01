@@ -4,6 +4,7 @@ tags:
   - '#mcp-launch-hygiene'
 date: '2026-07-17'
 modified: '2026-07-27'
+body_hash: 'sha256:516e4234818e697f322255d142ab6f71f0ae6ff9bf894ec8834f5a521dcce14e'
 tier: L1
 related:
   - '[[2026-07-17-mcp-launch-hygiene-adr]]'

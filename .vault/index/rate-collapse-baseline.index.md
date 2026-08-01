@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:f542b9921afa6b205d2a336a0a6e89cca254dc57f4a0687a7ccaf931da482793'
 related:
   - '[[2026-07-31-rate-collapse-baseline-adr]]'
 ---

@@ -4,6 +4,7 @@ tags:
   - '#module-split'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:aaa46a62e274bbee6e83173832384202551d683fd4114c062aeebfad4b55ef08'
 related:
   - "[[2026-06-01-module-split-adr]]"
   - "[[2026-07-25-index-resume-drift-race-adr]]"

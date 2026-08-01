@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:406515ef5b19b21020f6dc83dfe02fd55fbae1f5d2797105796215eac75e32f2'
 related:
   - '[[2026-05-30-cli-json-output-adr]]'
   - '[[2026-05-30-cli-json-output-plan]]'

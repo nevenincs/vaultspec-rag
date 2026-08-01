@@ -4,6 +4,7 @@ tags:
   - '#convergence-cost'
 date: '2026-07-28'
 modified: '2026-07-28'
+body_hash: 'sha256:fdd926cfa2dcd2392455cf3909573fa3d6a17ae28b788a6706d3714501efcda6'
 tier: L2
 related:
   - '[[2026-07-28-convergence-cost-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#rag-broker-affordances'
 date: '2026-06-27'
 modified: '2026-06-30'
+body_hash: 'sha256:9326528284be3bc2d222c8e7d6162d156479ccfc1290e69ffe3230d1b85d1bd9'
 step_id: 'S05'
 related:
   - "[[2026-06-27-rag-broker-affordances-plan]]"

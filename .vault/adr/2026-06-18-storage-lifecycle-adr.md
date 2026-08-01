@@ -4,6 +4,7 @@ tags:
   - '#storage-lifecycle'
 date: '2026-06-18'
 modified: '2026-07-27'
+body_hash: 'sha256:3e4f98b0bf67d2d2bce2e3358e7d07c4de6dae323e5bea3534d495f2b3300d09'
 related:
   - "[[2026-06-18-storage-lifecycle-research]]"
   - "[[2026-06-13-server-first-default-adr]]"

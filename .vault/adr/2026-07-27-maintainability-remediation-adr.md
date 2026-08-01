@@ -4,6 +4,7 @@ tags:
   - '#maintainability-remediation'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:5f5b0ae42d11262b61cf75121f5d25dd797e9b3a10def8b3b93aa46bf55161ec'
 related:
   - "[[2026-07-27-maintainability-remediation-research]]"
   - "[[2026-07-27-maintainability-remediation-radon-module-ownership-reference]]"

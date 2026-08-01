@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:826329c2a15b65e0af2162d59cb73a790fdc3db511bdba1c163b70804dba976d'
 related:
   - '[[2026-06-11-service-jobs-operability-adr]]'
   - '[[2026-06-11-service-jobs-operability-research]]'

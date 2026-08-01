@@ -4,6 +4,7 @@ tags:
   - '#codebase-hygiene-sweep'
 date: '2026-05-31'
 modified: '2026-07-27'
+body_hash: 'sha256:6855741cc8af479debb67db3b407f909562f8551fc4c15c406ecda4a4e5de38a'
 related:
   - '[[2026-05-31-codebase-hygiene-sweep-research]]'
 ---

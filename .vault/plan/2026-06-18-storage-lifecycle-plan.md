@@ -4,6 +4,7 @@ tags:
   - '#storage-lifecycle'
 date: '2026-06-18'
 modified: '2026-07-27'
+body_hash: 'sha256:e4396146d654bc71469ebfe9614e647c3008e4c3e02125ae33e2042b011e17d0'
 tier: L3
 related:
   - '[[2026-06-18-storage-lifecycle-adr]]'

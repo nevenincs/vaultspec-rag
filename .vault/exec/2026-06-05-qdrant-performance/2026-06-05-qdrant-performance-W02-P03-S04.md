@@ -4,6 +4,7 @@ tags:
   - '#qdrant-performance'
 date: '2026-06-06'
 modified: '2026-07-27'
+body_hash: 'sha256:d5c6f7ecdaccd59b10ba579befe2e63ec1687d5fab49210a19441a9c3979048e'
 step_id: 'S04'
 related:
   - '[[2026-06-05-qdrant-performance-plan]]'

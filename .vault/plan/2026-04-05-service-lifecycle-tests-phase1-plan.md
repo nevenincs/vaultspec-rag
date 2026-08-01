@@ -4,6 +4,7 @@ tags:
   - '#service-lifecycle-tests'
 date: '2026-04-05'
 modified: '2026-07-25'
+body_hash: 'sha256:ca65573bce95e679a8144060d073bc792c6353d46beddc93f92253add96001af'
 related:
   - '[[2026-04-05-service-lifecycle-tests-adr]]'
   - '[[2026-04-05-service-lifecycle-tests-research]]'

@@ -4,6 +4,7 @@ tags:
   - '#win-shutdown-log'
 date: '2026-05-31'
 modified: '2026-07-27'
+body_hash: 'sha256:9689ed2eb6e48b9eaf5d2a86334e3567aa6438074fc901aa87f1a7f278a35663'
 related:
   - '[[2026-05-31-win-shutdown-log-research]]'
 ---

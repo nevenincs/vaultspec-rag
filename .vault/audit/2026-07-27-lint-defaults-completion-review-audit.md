@@ -4,6 +4,7 @@ tags:
   - '#lint-defaults'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:c0e7376f8c2d8e8c071b59c20bc23eb40e1b0cc043a137848126cfe10f87b319'
 related:
   - "[[2026-07-27-lint-defaults-adr]]"
   - "[[2026-07-27-lint-defaults-plan]]"

@@ -5,6 +5,7 @@ tags:
 date: '2026-06-11'
 tier: L3
 modified: '2026-07-27'
+body_hash: 'sha256:be5780afbb6d77888631df41b00792e211dc7d2c12ccfa48653597e0e05030f8'
 related:
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
   - '[[2026-06-11-service-status-convergence-adr]]'

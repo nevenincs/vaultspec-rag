@@ -5,6 +5,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:1adad9e2f5bd5f5008aa771c0f2ac3cfb744a0e0eb394a6e7246291f20934c29'
 related:
   - '[[2026-07-31-issue-triage-research]]'
   - '[[2026-07-29-gpu-admission-gate-adr]]'

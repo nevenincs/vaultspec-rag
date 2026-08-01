@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:6d9c97e1cb5711c782886d23e027ebe9ee06b230ead2567a966db654274a0a8e'
 related:
   - '[[2026-04-12-vault-index-perf-memory-audit]]'
 ---

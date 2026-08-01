@@ -4,6 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:a1af50490c4294e1d2c4ce37f3cb2cc348c748191363b340810e1f4a24be8588'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'

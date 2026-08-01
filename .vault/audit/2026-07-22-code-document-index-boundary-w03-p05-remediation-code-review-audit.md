@@ -4,6 +4,7 @@ tags:
   - '#code-document-index-boundary'
 date: '2026-07-22'
 modified: '2026-07-22'
+body_hash: 'sha256:c7d780d9a573421780e40d3dc1cac24a85a2f43f7b1f5e2d07dc5e4dc5725a75'
 related:
   - "[[2026-07-22-code-document-index-boundary-plan]]"
   - "[[2026-07-22-code-document-index-boundary-w03-p05-preprocess-fidelity-audit]]"

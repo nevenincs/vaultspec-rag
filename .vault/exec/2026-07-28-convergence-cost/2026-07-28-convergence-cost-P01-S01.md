@@ -5,6 +5,7 @@ tags:
 date: '2026-07-28'
 modified: '2026-07-28'
 body_schema: 'body-v1'
+body_hash: 'sha256:36214099bb75938002423d80d51669252302a7ef28007650b6cd498b5bfbb059'
 step_id: 'S01'
 related:
   - "[[2026-07-28-convergence-cost-plan]]"

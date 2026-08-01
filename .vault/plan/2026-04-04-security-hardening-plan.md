@@ -4,6 +4,7 @@ tags:
   - '#security-hardening'
 date: 2026-04-04
 modified: '2026-07-27'
+body_hash: 'sha256:af28b0b1831286bce5d054322475e39f26e4a374afdd9d7b2e5993dab8ebfa19'
 related:
   - '[[2026-04-04-security-hardening-adr]]'
   - '[[2026-04-04-security-hardening-research]]'

@@ -4,6 +4,7 @@ tags:
   - '#service-jobs-operability'
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:c78260410d8f03c69c0299d199ae46f469d6655fabb855668e402b8d387856e4'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'

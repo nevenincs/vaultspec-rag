@@ -4,6 +4,7 @@ tags:
   - '#cli-tree-overhaul'
 date: '2026-06-07'
 modified: '2026-07-27'
+body_hash: 'sha256:1ce561f26c72dd5a43245a46561d31812ca6b00ab5772f185ebfa3a9a24a8ed2'
 step_id: S57
 related:
   - '[[2026-06-06-cli-tree-overhaul-plan]]'

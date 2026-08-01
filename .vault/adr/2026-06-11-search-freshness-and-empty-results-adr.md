@@ -4,6 +4,7 @@ tags:
   - '#search-freshness-and-empty-results'
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:7616d7c247f48b6e656e4d2007e068b3bcae4caaaa326959b3cec6e59f881cf6'
 related:
   - '[[2026-06-11-search-freshness-and-empty-results-research]]'
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'

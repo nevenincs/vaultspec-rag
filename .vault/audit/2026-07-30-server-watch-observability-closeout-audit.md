@@ -5,6 +5,7 @@ tags:
 date: '2026-07-30'
 modified: '2026-07-30'
 body_schema: 'body-v1'
+body_hash: 'sha256:8b0d66432eaea44d1f125f430df7410566e1babf3580d25d03d393472fcad43e'
 related:
   - "[[2026-07-29-server-watch-observability-plan]]"
 ---

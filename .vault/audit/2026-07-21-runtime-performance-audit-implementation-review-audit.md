@@ -4,6 +4,7 @@ tags:
   - '#runtime-performance-audit'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:a339939e8993f4fc60e3fc813a009b258dee41539490e775deadc3d86041556d'
 related:
   - "[[2026-07-21-large-index-resilience-plan]]"
 ---

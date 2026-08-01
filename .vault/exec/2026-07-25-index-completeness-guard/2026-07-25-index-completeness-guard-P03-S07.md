@@ -4,6 +4,7 @@ tags:
   - '#index-completeness-guard'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:78b1175b2805a88025ccfe6a0b374d43b783a42ec52c6ed8946c32f4918d9b8a'
 step_id: 'S07'
 related:
   - "[[2026-07-25-index-completeness-guard-plan]]"

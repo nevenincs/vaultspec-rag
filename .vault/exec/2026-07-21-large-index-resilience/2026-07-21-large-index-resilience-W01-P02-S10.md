@@ -4,6 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-22'
 modified: '2026-07-22'
+body_hash: 'sha256:556d45fae285499673836538a007a5ec99f308765bf1f44fce54c9e2f8f1b4f4'
 step_id: 'S10'
 related:
   - '[[2026-07-21-large-index-resilience-plan]]'

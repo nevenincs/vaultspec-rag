@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:f23fe9dc275b9f4552083d60fcec82eef300e5a36eab66985914cd95ce371058'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---

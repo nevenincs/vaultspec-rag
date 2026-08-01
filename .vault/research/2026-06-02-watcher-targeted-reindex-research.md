@@ -4,6 +4,7 @@ tags:
   - '#watcher-targeted-reindex'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:4f30c01a552fc05c435b86fd8110ba397dd4ab63b5540bc507bb101b465c3ca6'
 related: []
 ---
 

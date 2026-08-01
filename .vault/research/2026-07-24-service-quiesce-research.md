@@ -4,6 +4,7 @@ tags:
   - '#service-quiesce'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:f808cfb966f29c864d3bc7ee5008c673bc07a2228811c70885eeabd9b82ba067'
 related:
   - "[[2026-07-23-ci-self-hosted-gpu-runner-adr]]"
   - "[[2026-06-12-service-concurrency-adr]]"

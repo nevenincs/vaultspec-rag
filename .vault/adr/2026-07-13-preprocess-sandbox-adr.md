@@ -10,6 +10,7 @@ related:
   - "[[2026-06-19-destructive-ops-security-audit]]"
 superseded_by: '2026-07-14-preprocess-sandbox-removal-adr'
 modified: '2026-07-21'
+body_hash: 'sha256:40763c9f415049c9c7b154d1610f29816aa5824c3fd1328ee33a73ee6ae900f8'
 ---
 
 # `preprocess-sandbox` adr: `OS-sandboxed hooks replace consent as the server boundary` | (**status:** `superseded`)

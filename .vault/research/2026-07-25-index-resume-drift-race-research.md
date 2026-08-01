@@ -4,6 +4,7 @@ tags:
   - '#index-resume-drift-race'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:65cf37aa236d6c70d49a01d6233c6d0109708de889861424abc6e045c94638ff'
 related:
   - "[[2026-07-21-large-index-resilience-adr]]"
   - "[[2026-07-23-chunk-id-uniqueness-adr]]"

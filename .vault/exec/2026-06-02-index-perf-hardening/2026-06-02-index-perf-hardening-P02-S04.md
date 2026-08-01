@@ -4,6 +4,7 @@ tags:
   - '#index-perf-hardening'
 date: '2026-06-02'
 modified: '2026-06-30'
+body_hash: 'sha256:6acd052eea4ab462dbc553715858fb5f6d0cd9550df8e485adf42353b7e1c96f'
 step_id: 'S04'
 related:
   - "[[2026-06-02-index-perf-hardening-plan]]"

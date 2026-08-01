@@ -4,6 +4,7 @@ tags:
   - '#rag-broker-affordances'
 date: '2026-06-27'
 modified: '2026-07-27'
+body_hash: 'sha256:169fd93cb81230e03f42804a7cc374fb5790e16bf2db28377c924fa3f12e771c'
 tier: L2
 related:
   - '[[2026-06-27-rag-broker-affordances-adr]]'

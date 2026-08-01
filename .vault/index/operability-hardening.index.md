@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:9b89038813a578262f644ec3a522191af99da45fefbdd277aa454270e2029100'
 related:
   - '[[2026-06-09-operability-hardening-W01-P01-S01]]'
   - '[[2026-06-09-operability-hardening-W01-P01-S02]]'

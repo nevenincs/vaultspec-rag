@@ -4,6 +4,7 @@ tags:
   - '#encode-batch-adaptivity'
 date: '2026-07-29'
 modified: '2026-07-29'
+body_hash: 'sha256:93295b9aee85bb3697068886d3458b46f91e7e05d87aaba2c4a50b739668ffdf'
 tier: L2
 related:
   - '[[2026-07-29-encode-batch-adaptivity-adr]]'

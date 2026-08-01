@@ -4,6 +4,7 @@ tags:
   - '#storage-lifecycle'
 date: '2026-06-18'
 modified: '2026-07-27'
+body_hash: 'sha256:40831249af17d7d0b838c5e78b50eb79d649b5f01159a0bec53cca81682b3552'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
   - '[[2026-06-12-qdrant-server-provisioning-adr]]'

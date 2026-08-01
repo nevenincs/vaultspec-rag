@@ -4,6 +4,7 @@ tags:
   - '#onnx-encoder-backend'
 date: '2026-06-02'
 modified: '2026-07-27'
+body_hash: 'sha256:95b215563d2a13ed8e2803e3b534bb8a82aed81bd12d98be2e5e6571f13b70f6'
 related:
   - "[[2026-06-02-rag-index-performance-research]]"
 ---

@@ -4,6 +4,7 @@ tags:
   - '#service-quiesce'
 date: '2026-07-24'
 modified: '2026-07-31'
+body_hash: 'sha256:e26930dd3734714078839d1b6d7bf85367b146edc61422382bb0e6194b57a489'
 related:
   - '[[2026-07-24-service-quiesce-research]]'
   - '[[2026-06-12-service-concurrency-adr]]'

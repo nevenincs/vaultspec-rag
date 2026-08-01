@@ -4,6 +4,7 @@ tags:
   - '#service-hardware-singleton'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:0ce5bb75197d1119c6acf5bead08df062d14e4d290eb8da7e8851b6406f49ed2'
 tier: L3
 related:
   - '[[2026-06-24-service-hardware-singleton-adr]]'
