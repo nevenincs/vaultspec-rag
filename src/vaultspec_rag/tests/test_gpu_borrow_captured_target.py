@@ -6,12 +6,12 @@ import contextlib
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
+from ._child_signal import await_marker, child_stderr
 from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
@@ -49,6 +49,7 @@ from vaultspec_rag.serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
 )
+from vaultspec_rag.tests._child_signal import publish_marker
 
 _MACHINE_LOCK_OWNER_PROBE = '''
 import json
@@ -152,7 +153,7 @@ try:
             "stale_after_s": HEARTBEAT_STALENESS_SECONDS,
         },
     )
-    ready_path.write_text(str(lease.path), encoding="utf-8")
+    publish_marker(ready_path, str(lease.path))
     while not stop_path.exists():
         time.sleep(0.01)
 finally:
@@ -299,42 +300,41 @@ def _captured_resident_routes(
     ready_path.unlink(missing_ok=True)
     stop_path.unlink(missing_ok=True)
     port = free_loopback_port()
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            _RESIDENT_ROUTE_HOST,
-            str(port),
-            str(ready_path),
-            str(stop_path),
-            str(trace_path),
-            "1" if reject_first_pause else "0",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
-        while not ready_path.is_file() and process.poll() is None:
-            assert time.monotonic() < deadline, "resident route host did not start"
-            time.sleep(0.01)
-        host_lock_path = Path(ready_path.read_text(encoding="utf-8"))
-        assert host_lock_path.is_absolute()
-        assert host_lock_path.is_absolute()
-        yield host_lock_path
-    finally:
-        if process.poll() is None:
-            stop_path.write_text("stop", encoding="ascii")
+    with child_stderr() as diagnostics:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _RESIDENT_ROUTE_HOST,
+                str(port),
+                str(ready_path),
+                str(stop_path),
+                str(trace_path),
+                "1" if reject_first_pause else "0",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=diagnostics.sink,
+            text=True,
+        )
         try:
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
-        assert process.stderr is not None
-        stderr = process.stderr.read()
-        process.stderr.close()
-        assert process.returncode == 0, stderr
+            reported = await_marker(
+                ready_path, process, timeout=_PROCESS_TIMEOUT_SECONDS
+            )
+            assert reported is not None, (
+                f"resident route host did not start: {diagnostics.read()}"
+            )
+            host_lock_path = Path(reported)
+            assert host_lock_path.is_absolute()
+            yield host_lock_path
+        finally:
+            if process.poll() is None:
+                stop_path.write_text("stop", encoding="ascii")
+            try:
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            assert process.returncode == 0, diagnostics.read()
 
 
 def _run_captured_target_proof(

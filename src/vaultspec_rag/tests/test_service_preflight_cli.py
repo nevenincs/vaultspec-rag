@@ -27,6 +27,7 @@ from ..serviceclient._discovery import (
     _replace_service_status,
 )
 from ..serviceclient._transport import _try_http_admin
+from ._child_signal import await_marker, child_stderr
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 from ._ports import free_loopback_port
 
@@ -90,6 +91,7 @@ from vaultspec_rag.serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
 )
+from vaultspec_rag.tests._child_signal import publish_marker
 
 port = int(sys.argv[1])
 ready_path = Path(sys.argv[2])
@@ -130,7 +132,7 @@ try:
             "stale_after_s": HEARTBEAT_STALENESS_SECONDS,
         },
     )
-    ready_path.write_text("ready", encoding="ascii")
+    publish_marker(ready_path, "ready")
     while not stop_path.exists():
         time.sleep(0.01)
 finally:
@@ -159,40 +161,37 @@ def _machine_pointer_service(
     environment["PYTHONPATH"] = (
         source_root if not inherited_path else source_root + os.pathsep + inherited_path
     )
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            _MACHINE_POINTER_ROUTE_HOST,
-            str(port),
-            str(ready_path),
-            str(stop_path),
-        ],
-        cwd=server_root or Path.cwd(),
-        env=environment,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
-        while not ready_path.is_file() and process.poll() is None:
-            assert time.monotonic() < deadline, "machine route host did not start"
-            time.sleep(0.01)
-        assert ready_path.is_file(), "machine route host did not publish discovery"
-        yield port
-    finally:
-        if process.poll() is None:
-            stop_path.write_text("stop", encoding="ascii")
+    with child_stderr() as diagnostics:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _MACHINE_POINTER_ROUTE_HOST,
+                str(port),
+                str(ready_path),
+                str(stop_path),
+            ],
+            cwd=server_root or Path.cwd(),
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=diagnostics.sink,
+            text=True,
+        )
         try:
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
-        assert process.stderr is not None
-        stderr = process.stderr.read()
-        process.stderr.close()
-        assert process.returncode == 0, stderr
+            ready = await_marker(ready_path, process, timeout=_PROCESS_TIMEOUT_SECONDS)
+            assert ready == "ready", (
+                f"machine route host did not publish discovery: {diagnostics.read()}"
+            )
+            yield port
+        finally:
+            if process.poll() is None:
+                stop_path.write_text("stop", encoding="ascii")
+            try:
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            assert process.returncode == 0, diagnostics.read()
 
 
 @contextlib.contextmanager

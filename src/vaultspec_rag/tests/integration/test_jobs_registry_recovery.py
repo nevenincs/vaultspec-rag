@@ -653,16 +653,31 @@ class TestManagedJobPersistence:
         def read_state() -> None:
             while not stopped.is_set():
                 try:
-                    payload = json.loads(state_path.read_text(encoding="utf-8"))
-                    observed_versions.append(cast("int", payload["version"]))
-                    time.sleep(0.0005)
-                except PermissionError:
-                    # Windows can briefly deny a reader while os.replace owns
-                    # the directory entry; that is not a partial-file read.
+                    raw = state_path.read_bytes()
+                except OSError:
+                    # Windows swings the directory entry across in a window in
+                    # which the destination name is either denied or briefly
+                    # absent, and a replace under contention is observably a
+                    # delete-then-rename rather than one indivisible step. Both
+                    # outcomes fail at OPEN time with no bytes in hand, so
+                    # neither is an observation of the file's content - which is
+                    # the whole of what atomic publication promises. The entry
+                    # is back on a later poll, which the closing read asserts.
                     continue
+                # Bytes in hand, so nothing past here may fail: a torn or
+                # interleaved generation arrives as a decode error and a
+                # foreign layout as an unexpected version. Both are the
+                # partial-state defect this exists to catch, and keeping the
+                # parse outside the tolerated block is what stops a broad
+                # handler from ever swallowing one.
+                try:
+                    payload = json.loads(raw.decode("utf-8"))
+                    observed_versions.append(cast("int", payload["version"]))
                 except Exception as exc:
                     failures.append(exc)
                     stopped.set()
+                    return
+                time.sleep(0.0005)
 
         reader = threading.Thread(target=read_state)
         reader.start()
@@ -691,6 +706,13 @@ class TestManagedJobPersistence:
         assert observed_versions
         assert set(observed_versions) == {1}
         assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
+        # Tolerating an open failure above would otherwise hide a replace that
+        # destroyed the entry and never restored it: a reader spinning on a
+        # permanently absent file records no observation at all. The published
+        # generation has to be there, whole, once the writing has stopped.
+        settled = json.loads(state_path.read_text(encoding="utf-8"))
+        assert settled["version"] == 1
+        assert settled["jobs"][0]["id"] == created.job.id
 
     def test_invalid_state_quarantines_without_partial_restore(
         self,
