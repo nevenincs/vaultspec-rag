@@ -980,6 +980,45 @@ def _deeply_nested(depth: int) -> dict[str, object]:
     return root
 
 
+def _nested_past_the_encoders_limit() -> dict[str, object]:
+    """Nest to a depth this interpreter's encoder is observed to refuse.
+
+    The depth is probed rather than written down, because the ceiling is not a
+    portable constant. One interpreter enforces a fixed recursion counter and
+    refuses the same payload whatever stack it runs on; a later one derives the
+    ceiling from the running thread's stack budget, so an identical block is
+    refused on a one-megabyte stack and encoded on an eight-megabyte one. A
+    hard-coded depth therefore states a precondition that silently stops being
+    true, and the guard below passes its assertion by never reaching it.
+
+    Probing the encoder that is about to run the assertion states the
+    precondition truthfully instead. It errs safe in both directions: the real
+    payload nests this block deeper still, inside the surrounding generation,
+    and an interpreter that refused nothing fails here by name rather than
+    leaving the guard vacuous.
+    """
+    depth = 1_024
+    while depth <= 1_048_576:
+        block = _deeply_nested(depth)
+        try:
+            json.dumps(block)
+        except RecursionError:
+            return block
+        depth *= 2
+    raise AssertionError("the encoder accepted every probed nesting depth")
+
+
+def _self_referential() -> dict[str, object]:
+    """A telemetry block no interpreter's encoder can ever write.
+
+    Refused for what it is rather than for how deep it is, so unlike nesting it
+    carries no dependence on a stack budget or a recursion counter.
+    """
+    inner: dict[str, object] = {}
+    inner["self"] = inner
+    return {"cycle": inner}
+
+
 class TestPersistedJobStateRoundTrip:
     """Anything the manager can hold must survive a write and read unchanged.
 
@@ -1400,25 +1439,37 @@ class TestPersistedJobStateLeavesNoDebris:
         save_persisted_state(path, _generation(_snapshot_in_state(JobState.QUEUED)))
         assert _temporaries(tmp_path) == []
 
+    @pytest.mark.parametrize(
+        ("build_block", "cause"),
+        [
+            # Two refusals, because the encoder has two of them and each
+            # translates through a different arm. Nesting past the encoder's
+            # ceiling raises RecursionError, which is neither an OSError nor a
+            # ValueError; a cycle raises ValueError. Letting either out
+            # untranslated would break the one exception type every caller of
+            # this function handles.
+            pytest.param(_self_referential, ValueError, id="a-cycle"),
+            pytest.param(
+                _nested_past_the_encoders_limit, RecursionError, id="past-the-ceiling"
+            ),
+        ],
+    )
     def test_a_payload_that_cannot_be_encoded_never_reaches_a_temporary(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        build_block: Callable[[], dict[str, object]],
+        cause: type[Exception],
     ) -> None:
         # Serialization happens before the temporary is named, so a payload
         # the encoder refuses cannot leave debris at all rather than leaving
         # debris that gets cleaned up. This is NOT a cleanup guard: breaking
         # the cleanup leaves it passing, which is the point.
-        snapshot = replace(
-            _snapshot_in_state(JobState.QUEUED), reuse=_deeply_nested(20_000)
-        )
+        snapshot = replace(_snapshot_in_state(JobState.QUEUED), reuse=build_block())
         path = tmp_path / "jobs-state.json"
         with pytest.raises(PersistenceWriteError) as raised:
             save_persisted_state(path, _generation(snapshot))
-        # A nesting depth past the encoder's limit raises RecursionError,
-        # which is neither an OSError nor a ValueError. Letting it out
-        # untranslated would break the one exception type every caller of this
-        # function handles.
         assert raised.value.published is False
-        assert isinstance(raised.value.__cause__, RecursionError)
+        assert isinstance(raised.value.__cause__, cause)
         assert _temporaries(tmp_path) == []
         assert not path.exists()
 

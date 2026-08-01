@@ -178,6 +178,42 @@ def _wait_for_state(manager: JobManager, job_id: str, state: JobState) -> JobSna
     )
 
 
+def _wait_for_reopened_admission(
+    registry: ServiceRegistry,
+    *,
+    expected_epoch: int,
+) -> None:
+    """Wait for the controller to reopen admission at exactly *expected_epoch*.
+
+    Reopening is what the durable record happens BEFORE, so it cannot be read
+    as though the two were simultaneous. Publishing a generation makes it
+    visible to a reader at the rename and only then forces the rename itself to
+    disk, and that trailing sync is a real device round trip on the platforms
+    that need it. A reader polling the state file can therefore hold the new
+    record in its hands while the writer is still inside the publication that
+    precedes reopening, and an instantaneous read of the controller fails for
+    that reason alone - more often the stronger the durability guarantee gets.
+
+    Waiting concedes nothing the ordering rests on. The state and the epoch are
+    still exact, a controller that never reopens still fails, and the direction
+    of the ordering is carried by the assertion that no runner had started when
+    the durable record was first observed.
+    """
+    deadline = time.monotonic() + _WAIT_SECONDS
+    while True:
+        snapshot = registry.quiesce_snapshot()
+        if snapshot.state is QuiesceState.RUNNING:
+            assert snapshot.admission_epoch == expected_epoch
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                "the controller did not reopen admission after durable "
+                f"recovery; controller={snapshot.state.value}; "
+                f"epoch={snapshot.admission_epoch}; expected={expected_epoch}"
+            )
+        time.sleep(0.01)
+
+
 def _assert_running_after_durable_preparation(
     state_path: Path,
     job_id: str,
@@ -193,9 +229,7 @@ def _assert_running_after_durable_preparation(
         runner_started=runner_started,
         registry=registry,
     )
-    running = registry.quiesce_snapshot()
-    assert running.state is QuiesceState.RUNNING
-    assert running.admission_epoch == expected_epoch
+    _wait_for_reopened_admission(registry, expected_epoch=expected_epoch)
     assert durable.id == job_id
     return durable
 
