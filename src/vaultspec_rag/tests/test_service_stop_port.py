@@ -21,7 +21,7 @@ import psutil
 import pytest
 from typer.testing import CliRunner
 
-from .._machine_lock import machine_lock_live_holder
+from .._machine_lock import probe_machine_lock
 from ..cli import app
 from ..cli._service_status import _write_service_status
 from ..cli._service_stop import (
@@ -293,7 +293,7 @@ def _spawn_lock_holding_daemon(port: int) -> subprocess.Popen[bytes]:
 
     Models the singleton in the no-pointer recovery scenario the reap must
     tolerate: the resident daemon holds the machine-lock lease (so it is the
-    reap's ``machine_lock_live_holder`` anchor) but wrote no service-status
+    reap's ``probe_machine_lock`` anchor) but wrote no service-status
     pointer, so the lock anchor is the ONLY thing sparing it. The lease-acquire
     runs in the worker the shim spawns, so the worker's pid is recorded in the
     lock file and the trailing witness argv keeps the whole pair enumerable.
@@ -324,7 +324,7 @@ def _spawn_lock_holding_daemon(port: int) -> subprocess.Popen[bytes]:
 def _wait_for_lock_holder(candidates: set[int]) -> int:
     """Wait until the machine lock is held by a pid in *candidates*; return it."""
     for _ in range(100):
-        holder = machine_lock_live_holder()
+        holder = probe_machine_lock().holder_pid
         if holder in candidates:
             return holder
         time.sleep(0.1)
@@ -459,7 +459,7 @@ class TestOrphanReapSafety:
     ) -> None:
         # The no-pointer recovery scenario the ADR targets: the singleton holds
         # the machine lock but published NO service-status pointer, so the lock
-        # anchor is the only thing sparing it. Proves machine_lock_live_holder
+        # anchor is the only thing sparing it. Proves probe_machine_lock
         # feeds the reap's anchor set, distinct from the pointer-anchored cases.
         monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "status"))
         monkeypatch.setenv(

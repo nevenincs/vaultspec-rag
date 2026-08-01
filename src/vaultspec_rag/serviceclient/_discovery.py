@@ -91,6 +91,11 @@ DISCOVERY_REASON_PROBE_FAILED = "probe_failed"
 #: The schema document has always instructed consumers to pin on the pair and
 #: refuse a file they do not understand; this is that refusal.
 DISCOVERY_REASON_POINTER_INCOMPATIBLE = "pointer_incompatible"
+#: The OS lock is held but its owner record could not be read, so no pointer
+#: can be correlated with the live holder. Distinct from absence - something
+#: owns the singleton - and from every pointer reason, because the pointer may
+#: be blameless when the lock record is what cannot be named.
+DISCOVERY_REASON_HOLDER_UNNAMED = "holder_unnamed"
 
 #: Which view supplied the resolved address.
 DISCOVERY_SOURCE_MACHINE_POINTER = "machine_pointer"
@@ -98,6 +103,7 @@ DISCOVERY_SOURCE_STATUS_FILE = "status_file"
 DISCOVERY_SOURCE_NONE = "none"
 
 __all__ = [
+    "DISCOVERY_REASON_HOLDER_UNNAMED",
     "DISCOVERY_REASON_POINTER_FOREIGN",
     "DISCOVERY_REASON_POINTER_INCOMPATIBLE",
     "DISCOVERY_REASON_POINTER_INVALID",
@@ -485,7 +491,11 @@ class MachineResolution:
             )
         if self.state == DISCOVERY_STATE_ABSENT:
             return "no machine singleton is held"
-        parts = [f"live holder pid {self.holder_pid}"]
+        parts = [
+            f"live holder pid {self.holder_pid}"
+            if self.holder_pid > 0
+            else "live holder with an unreadable owner record"
+        ]
         if self.pointer_pid is not None:
             parts.append(f"pointer pid {self.pointer_pid}")
         if self.heartbeat_age_s is not None:
@@ -534,10 +544,10 @@ def resolve_machine_service() -> MachineResolution:
     The status file is consulted only when no holder exists at all, which is the
     pre-pointer compatibility case.
     """
-    from .._machine_lock import machine_lock_live_holder, read_machine_discovery
+    from .._machine_lock import probe_machine_lock, read_machine_discovery
 
     try:
-        holder = machine_lock_live_holder()
+        probe = probe_machine_lock()
     except Exception as exc:
         # Broad except: discovery must never block the command path. A probe
         # that cannot run is reported as such rather than silently becoming
@@ -549,8 +559,19 @@ def resolve_machine_service() -> MachineResolution:
             reason=DISCOVERY_REASON_PROBE_FAILED,
         )
 
-    if holder <= 0:
+    if not probe.held:
         return _status_file_resolution()
+    holder = probe.holder_pid
+    if holder <= 0:
+        # A held lock whose owner record cannot be read is a live holder,
+        # never absence: the status-file fallback is legal only without one,
+        # and evaluating the pointer against an unknown pid would misread a
+        # possibly-correct pointer as foreign.
+        return MachineResolution(
+            state=DISCOVERY_STATE_DEGRADED,
+            source=DISCOVERY_SOURCE_MACHINE_POINTER,
+            reason=DISCOVERY_REASON_HOLDER_UNNAMED,
+        )
 
     try:
         payload = read_machine_discovery()

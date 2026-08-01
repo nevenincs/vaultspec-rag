@@ -19,7 +19,7 @@ import pytest
 
 from ..._machine_lock import (
     acquire_machine_lock,
-    machine_lock_live_holder,
+    probe_machine_lock,
 )
 from ...config._settings import reset_config
 from ...config._types import EnvVar
@@ -137,14 +137,14 @@ class TestInjectedHolderNeverYieldsCompetitor:
             acquired, holder = acquire_machine_lock()
             assert acquired is False
             assert holder == holder_pid
-            assert machine_lock_live_holder() == holder_pid
+            assert probe_machine_lock().holder_pid == holder_pid
         finally:
             evidence = foreign_holder.stop()
         # The real holder releases first while the launcher is deliberately
         # still alive; only then may cleanup let the launcher exit.
         assert evidence.lock_released is True
         assert evidence.launcher_alive_at_release is True
-        assert machine_lock_live_holder() == 0
+        assert not probe_machine_lock().held
 
 
 class TestUnhealthyOrCorruptHolderRefusedWithCause:
