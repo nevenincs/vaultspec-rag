@@ -7,6 +7,7 @@ related:
   - "[[2026-06-10-install-mcp-dependency-fix-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
 modified: '2026-07-27'
+body_hash: 'sha256:0ea42c43cc00354f7ca8721a054c73aef2bb530ce5876142ae53683559a1d1ba'
 ---
 
 # `install-mcp-dependency-fix` adr: `declare mcp as a core dependency; reject pywin32 dll shim` | (**status:** `superseded`)

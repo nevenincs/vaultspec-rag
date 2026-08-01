@@ -4,6 +4,7 @@ tags:
   - '#mcp-service-client'
 date: '2026-06-18'
 modified: '2026-06-30'
+body_hash: 'sha256:80e54ae8b366ac6516dec3b991c5e9bcd6a8cbd92e6556493fb6c8e2511c2320'
 related:
   - "[[2026-06-18-mcp-service-client-plan]]"
   - "[[2026-06-18-mcp-service-client-adr]]"

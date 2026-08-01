@@ -4,6 +4,7 @@ tags:
   - '#service-job-control'
 date: '2026-07-21'
 modified: '2026-07-21'
+body_hash: 'sha256:24e5ede7d30af74a9d2437e4f6ecae7c702024a3e86cd5140071f24c756e2cd9'
 related:
   - "[[2026-07-21-service-job-control-research]]"
   - "[[2026-07-21-service-job-control-reference]]"

@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:b5818f0fef9ffe78237af1dc9f56ca33645bbbe1289646d5494b3e50b8056e31'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-W00-S01]]'
   - '[[2026-06-11-cli-service-operability-hardening-W01-S01]]'

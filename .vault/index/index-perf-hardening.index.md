@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:7cb040da62abfd35ca85021bebb7a48603b2c898706bae18657808dffde99082'
 related:
   - '[[2026-06-02-index-perf-hardening-P01-S01]]'
   - '[[2026-06-02-index-perf-hardening-P01-S02]]'

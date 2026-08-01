@@ -4,6 +4,7 @@ tags:
   - '#mcp-search-scope'
 date: '2026-07-22'
 modified: '2026-07-22'
+body_hash: 'sha256:8b94d53a7e71a4a61973778fcdfe1a877916e9ddc7ae9d40749f6066e5aa00b4'
 related:
   - "[[2026-06-30-mcp-search-scope-adr]]"
   - "[[2026-07-22-mcp-search-scope-surface-drift-audit]]"

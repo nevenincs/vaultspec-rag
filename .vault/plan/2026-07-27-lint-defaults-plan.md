@@ -4,6 +4,7 @@ tags:
   - '#lint-defaults'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:ca1f7893f70898b73a8888f2a11f210ff5b3d8826c85484046843acaedb81712'
 tier: L2
 related:
   - '[[2026-07-27-lint-defaults-adr]]'

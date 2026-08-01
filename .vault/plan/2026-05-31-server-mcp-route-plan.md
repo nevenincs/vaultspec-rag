@@ -4,6 +4,7 @@ tags:
   - '#server-mcp-route'
 date: '2026-05-31'
 modified: '2026-07-27'
+body_hash: 'sha256:4975fc251f6204b573745dfec9bbc669ea57a83b64ffc2cb4b3b95efc95e2dfa'
 related:
   - '[[2026-05-31-server-mcp-route-adr]]'
   - '[[2026-05-31-server-mcp-route-research]]'

@@ -4,6 +4,7 @@ tags:
   - '#serviceclient-admin-errors'
 date: '2026-06-24'
 modified: '2026-06-24'
+body_hash: 'sha256:436cc3c6ff6261e91797ab72c9fa1698630ad88eee2b41a5e152bf450e584289'
 step_id: 'S02'
 related:
   - "[[2026-06-24-serviceclient-admin-errors-plan]]"

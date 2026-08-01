@@ -4,6 +4,7 @@ tags:
   - '#vault-pipeline-search'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:683ae8fc008e6ab1d45dc194707954e7610bd48b9fc37bb36d76c5fc8e328cbd'
 step_id: 'S04'
 related:
   - "[[2026-06-24-vault-pipeline-search-plan]]"

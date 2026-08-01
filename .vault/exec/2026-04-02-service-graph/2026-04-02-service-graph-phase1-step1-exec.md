@@ -4,6 +4,7 @@ tags:
   - '#service-graph'
 date: '2026-04-02'
 modified: '2026-07-27'
+body_hash: 'sha256:d1c366d14bef194f44f70636b4f1aede908038f759a63d4c831c0927895cc34e'
 related:
   - '[[2026-04-02-service-graph-phase1-plan]]'
 ---

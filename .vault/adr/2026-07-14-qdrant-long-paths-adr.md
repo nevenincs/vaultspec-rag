@@ -4,6 +4,7 @@ tags:
   - '#qdrant-long-paths'
 date: '2026-07-14'
 modified: '2026-07-27'
+body_hash: 'sha256:162c6fe66e89ab750571f2448cc43a2b85c515b7b8bd444469e1f30eded1199a'
 related:
   - "[[2026-07-13-control-plane-affordances-audit]]"
   - "[[2026-07-13-storage-autoprune-safety-research]]"

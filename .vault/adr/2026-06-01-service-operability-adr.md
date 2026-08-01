@@ -4,6 +4,7 @@ tags:
   - '#service-operability'
 date: '2026-06-01'
 modified: '2026-07-27'
+body_hash: 'sha256:98f73240eed14bb53e955be93c6f01ec10d957db7b2fca76acfac754f348cd84'
 related:
   - "[[2026-06-01-service-operability-research]]"
   - "[[2026-05-28-cli-backend-parity-adr]]"

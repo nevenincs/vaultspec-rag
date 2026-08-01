@@ -4,6 +4,7 @@ tags:
   - '#storage-namespace-hygiene'
 date: '2026-07-14'
 modified: '2026-07-14'
+body_hash: 'sha256:2638e88b14a5c6e2df90208b98d487590a79946df4850a1ff26c43ca33e19020'
 related:
   - '[[2026-06-18-storage-lifecycle-adr]]'
   - '[[2026-07-13-control-plane-affordances-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#service-job-control'
 date: '2026-07-21'
 modified: '2026-07-21'
+body_hash: 'sha256:20f3667817dfb91b5d508b7bdc3763496fb87adf6dcad36d79fb55e77e1992ce'
 related:
   - "[[2026-06-04-async-service-index-adr]]"
   - "[[2026-06-11-service-jobs-operability-adr]]"

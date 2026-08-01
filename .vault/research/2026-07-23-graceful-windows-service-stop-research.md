@@ -4,6 +4,7 @@ tags:
   - '#graceful-windows-service-stop'
 date: '2026-07-23'
 modified: '2026-07-23'
+body_hash: 'sha256:9d63e3c977f73a3695050b1fbcf4a46fafbe5aeae84a1e9bea380e21ff0ab269'
 related: []
 ---
 

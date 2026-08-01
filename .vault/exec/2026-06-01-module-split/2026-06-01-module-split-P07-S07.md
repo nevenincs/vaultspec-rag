@@ -4,6 +4,7 @@ tags:
   - '#module-split'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:67d5f688eb90783e92909022dee773e927822670868bd33530982a19bd83ae71'
 step_id: 'S07'
 related:
   - "[[2026-06-01-module-split-plan]]"

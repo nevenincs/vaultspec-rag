@@ -4,6 +4,7 @@ tags:
   - '#rag-broker-affordances'
 date: '2026-06-27'
 modified: '2026-07-27'
+body_hash: 'sha256:05b558fb30d608a5fb0713ceb44251d964e555a81ef2f39c644b2e380b03f57f'
 related:
   - "[[2026-06-27-rag-broker-affordances-research]]"
 ---

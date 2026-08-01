@@ -4,6 +4,7 @@ tags:
   - '#test-marker-taxonomy'
 date: '2026-07-22'
 modified: '2026-07-22'
+body_hash: 'sha256:1a9c83d5a09780c71250bbc58111662207be22ce63a0815b49fda3c706fcf738'
 related:
   - "[[2026-07-22-code-document-index-boundary-plan]]"
 ---

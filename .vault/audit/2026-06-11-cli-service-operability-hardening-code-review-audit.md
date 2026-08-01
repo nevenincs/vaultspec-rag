@@ -2,6 +2,7 @@
 tags: ['#audit', '#cli-service-operability-hardening']
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:59d5251a62b0fb326e7bd1733a06faacdf1d9242f2f3013544cc9c29cb054af2'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-service-status-convergence-adr]]'

@@ -4,6 +4,7 @@ tags:
   - '#preprocess-hooks'
 date: '2026-06-10'
 modified: '2026-07-27'
+body_hash: 'sha256:be6f0fdc4b0031fb6c411258aba629591fdabf6491db6fcc0fca159472beb653'
 tier: L3
 related:
   - '[[2026-06-10-preprocess-hooks-adr]]'

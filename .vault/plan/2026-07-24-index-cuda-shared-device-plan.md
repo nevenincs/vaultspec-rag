@@ -4,6 +4,7 @@ tags:
   - '#index-cuda-shared-device'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:241c8fb7219d06be7367cac4a8be6bd8d26fd6134e87c2b592f5fa3974190fc8'
 tier: L2
 related:
   - '[[2026-07-24-index-cuda-shared-device-adr]]'

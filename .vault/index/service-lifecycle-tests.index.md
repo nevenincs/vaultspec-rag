@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:4da7f4a4e746dec461881e27a570c3558914455ddcd182ca46a2305007848d3b'
 related:
   - '[[2026-04-05-service-lifecycle-tests-adr]]'
   - '[[2026-04-05-service-lifecycle-tests-audit]]'

@@ -4,6 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:7d8232aaa8581f40b35f6b313eaac369987ef284c071db6afc66f47ece93d6e7'
 related:
   - "[[2026-06-02-index-gpu-pipeline-adr]]"
   - "[[2026-06-02-index-perf-hardening-adr]]"

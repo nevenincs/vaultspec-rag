@@ -4,6 +4,7 @@ tags:
   - '#storage-conformance'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:bb1aca68e091ca2765e11d2ba2cb0dc32c68cb0ea24fdc2e324cfde9e6708278'
 related:
   - "[[2026-07-25-storage-conformance-plan]]"
 ---

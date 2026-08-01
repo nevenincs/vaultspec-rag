@@ -4,6 +4,7 @@ tags:
   - '#server-watch-observability'
 date: '2026-07-29'
 modified: '2026-07-30'
+body_hash: 'sha256:0cb22737c5abb19be886a7484f4db08ced75d6e2f76b132288f18d7251aa5f12'
 tier: L2
 related:
   - '[[2026-07-29-server-watch-observability-adr]]'

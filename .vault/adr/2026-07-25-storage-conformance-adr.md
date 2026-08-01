@@ -4,6 +4,7 @@ tags:
   - '#storage-conformance'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:fdc874a4aa97be2fb287d1db315926b8b873f6747bb8c8db262e95f46e9c808a'
 related:
   - "[[2026-07-25-storage-conformance-research]]"
   - "[[2026-06-26-storage-schema-contract-adr]]"

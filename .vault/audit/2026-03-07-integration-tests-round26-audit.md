@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:1cb4f4bbb2b98748264b91844aaa388692616cdd2ae68beb671f733c95b295d2'
 ---
 
 # Round 26 Audit -- Integration Tests Coverage

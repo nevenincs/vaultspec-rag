@@ -4,6 +4,7 @@ tags:
   - '#index-drift-circuit-accounting'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:8f2c45f15ef96fe2b480d825eefa49d29754f9717682b9a5003f7e4269688506'
 related:
   - "[[2026-07-25-index-drift-circuit-accounting-adr]]"
 ---

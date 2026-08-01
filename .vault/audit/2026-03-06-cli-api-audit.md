@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-06'
 modified: '2026-07-27'
+body_hash: 'sha256:f764571d1d66b3950bcb265e1539fe721ebd6293de20ae30d587c65394307b39'
 ---
 
 # Audit: CLI and API Facade

@@ -4,6 +4,7 @@ tags:
   - '#operator-feedback-hardening'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:9e5204916e998fa6b9ebfc10422d4e086203822e3099b53eeffb69ce669c7531'
 step_id: 'S03'
 related:
   - "[[2026-07-24-operator-feedback-hardening-plan]]"

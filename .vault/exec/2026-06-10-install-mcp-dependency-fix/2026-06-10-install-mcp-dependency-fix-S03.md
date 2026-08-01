@@ -4,6 +4,7 @@ tags:
   - '#install-mcp-dependency-fix'
 date: '2026-06-10'
 modified: '2026-06-30'
+body_hash: 'sha256:7dcb9ea5726a838a615065f4f63b85ecaa397eadfaea7b0e932e48eea68093e6'
 step_id: 'S03'
 related:
   - "[[2026-06-10-install-mcp-dependency-fix-plan]]"

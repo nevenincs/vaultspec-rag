@@ -5,6 +5,7 @@ tags:
 date: '2026-07-28'
 modified: '2026-07-28'
 body_schema: 'body-v1'
+body_hash: 'sha256:73f9cc92c7e6d9c7d28323adb802a68990459f2584859eb77ca2744527b8260f'
 related:
   - "[[2026-07-28-worktree-dedup-research]]"
 ---

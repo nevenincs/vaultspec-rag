@@ -4,6 +4,7 @@ tags:
   - '#service-lifecycle-tests'
 date: '2026-04-05'
 modified: '2026-07-27'
+body_hash: 'sha256:a225dbbe482a52c7fe211dc685d60545eef9c34eafdb0a077117c4506e3468af'
 related:
   - '[[2026-04-02-service-graph-code-review-audit]]'
 ---

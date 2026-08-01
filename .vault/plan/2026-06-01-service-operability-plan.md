@@ -4,6 +4,7 @@ tags:
   - '#service-operability'
 date: '2026-06-01'
 modified: '2026-06-30'
+body_hash: 'sha256:375b537239885a97876f39fd760cae448c06f13354d87c4d96ac88374229f844'
 tier: L2
 related:
   - '[[2026-06-01-service-operability-adr]]'

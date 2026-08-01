@@ -4,6 +4,7 @@ tags:
   - '#document-chunk-bounding'
 date: '2026-07-23'
 modified: '2026-07-27'
+body_hash: 'sha256:f899b9ed2f608c1ea16d7494322fbc7e7a1755fe76330cf9c38c032d8a292fe0'
 step_id: 'S04'
 related:
   - "[[2026-07-23-document-chunk-bounding-plan]]"

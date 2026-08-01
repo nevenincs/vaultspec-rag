@@ -4,6 +4,7 @@ tags:
   - '#citation-gate-coverage'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:c386b3d2df1a05072ff9fb6108e367b520df1aebce52358d5173d22553e16ff3'
 step_id: 'S01'
 related:
   - "[[2026-07-25-citation-gate-coverage-plan]]"

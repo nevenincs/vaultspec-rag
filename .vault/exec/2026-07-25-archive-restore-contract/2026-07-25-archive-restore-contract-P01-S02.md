@@ -4,6 +4,7 @@ tags:
   - '#archive-restore-contract'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:5034e57d15afb127f64a0f22184a3f23781d6b5ad9a67beae761b7eadefefd5b'
 step_id: 'S02'
 related:
   - "[[2026-07-25-archive-restore-contract-plan]]"

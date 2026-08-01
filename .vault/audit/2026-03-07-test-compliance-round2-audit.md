@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:26da881cd709ce0d26a00d9fdb6b8b2fb74857f4584629a9172ffcac13f95dc5'
 ---
 
 # Test Compliance Audit Round 2

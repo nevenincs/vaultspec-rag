@@ -4,6 +4,7 @@ tags:
   - '#search-index-availability'
 date: '2026-07-21'
 modified: '2026-07-22'
+body_hash: 'sha256:6a56e1442e251a55073d5e2a766ad90a57cba0ade904045aac17ddab1e80f796'
 related:
   - "[[2026-07-21-search-index-availability-adr]]"
   - "[[2026-07-21-search-index-availability-plan]]"

@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-09'
 modified: '2026-07-27'
+body_hash: 'sha256:a6207907b6d9a3a801591fd720e59c2c51150088b767a818f57c6d9d5d6f2ba1'
 ---
 
 # Research Topic 21: Qwen3 Embedding Task Prefixes â€” Deep Verification

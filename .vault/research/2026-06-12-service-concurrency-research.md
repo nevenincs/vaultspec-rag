@@ -4,6 +4,7 @@ tags:
   - '#service-concurrency'
 date: '2026-06-12'
 modified: '2026-07-27'
+body_hash: 'sha256:d9a1a1adda8642d365557231981b6d8627b05c4c496f27916e5d06f72103b072'
 related:
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
   - "[[2026-04-02-service-graph-adr]]"

@@ -5,6 +5,7 @@ tags:
 date: '2026-07-29'
 modified: '2026-07-29'
 body_schema: 'body-v1'
+body_hash: 'sha256:a5ced809aed0eb55b8f12325fd3318f2b93a37962a7135c0a78a65ecd9165625'
 related:
   - "[[2026-07-29-encode-batch-adaptivity-plan]]"
   - "[[2026-07-29-encode-batch-adaptivity-adr]]"

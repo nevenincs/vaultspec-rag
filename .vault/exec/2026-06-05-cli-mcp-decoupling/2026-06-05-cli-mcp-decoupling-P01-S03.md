@@ -4,6 +4,7 @@ tags:
   - '#cli-mcp-decoupling'
 date: '2026-06-05'
 modified: '2026-07-27'
+body_hash: 'sha256:3cfca2328a53cf380a832cf7a785b00874af27c951208746bee9721d4a41b223'
 step_id: 'S03'
 related:
   - "[[2026-06-05-cli-mcp-decoupling-plan]]"

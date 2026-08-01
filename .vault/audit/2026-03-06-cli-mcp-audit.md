@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-06'
 modified: '2026-07-27'
+body_hash: 'sha256:a5f650f17664bb7e9fca6b92748fa9a8793d1bb69f454004c8967dc32397d060'
 ---
 
 # CLI and MCP Server Audit Report

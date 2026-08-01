@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-06'
 modified: '2026-07-27'
+body_hash: 'sha256:0566d737ace6ef1e6af0392c8fe3b5ab32f792f1ea3f1c7bf5f0b335b30c8ba8'
 ---
 
 # Audit: Indexer Pipeline

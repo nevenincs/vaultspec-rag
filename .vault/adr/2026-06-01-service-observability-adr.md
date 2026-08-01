@@ -4,6 +4,7 @@ tags:
   - '#service-observability'
 date: '2026-06-01'
 modified: '2026-07-27'
+body_hash: 'sha256:12978262b9ec43f313722d7692090fc21d0ab5a994a2b086bf7d15ae458d03dc'
 related:
   - "[[2026-06-01-service-observability-research]]"
   - "[[2026-06-01-service-operability-adr]]"

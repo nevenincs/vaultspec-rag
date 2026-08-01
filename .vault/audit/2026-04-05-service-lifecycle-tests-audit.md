@@ -4,6 +4,7 @@ tags:
   - '#service-lifecycle-tests'
 date: '2026-04-05'
 modified: '2026-07-27'
+body_hash: 'sha256:e852ef52170f3d15f4f6bea77752c0d65f08044ea2c847a3acb6c10dd18f92db'
 related:
   - '[[2026-04-05-service-lifecycle-tests-phase1-plan]]'
   - '[[2026-04-05-service-lifecycle-tests-adr]]'

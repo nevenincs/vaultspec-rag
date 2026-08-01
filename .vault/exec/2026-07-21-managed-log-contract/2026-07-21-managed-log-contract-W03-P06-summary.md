@@ -4,6 +4,7 @@ tags:
   - '#managed-log-contract'
 date: '2026-07-21'
 modified: '2026-07-21'
+body_hash: 'sha256:9ee16f5a5409a52f817872cf7e6841055f1d45f5ca625fb39259a20e3a5b6479'
 related:
   - "[[2026-07-21-managed-log-contract-plan]]"
 ---

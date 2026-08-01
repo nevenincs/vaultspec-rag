@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:6d90b734410a5c50809f55eca4d2824b05180fa2d63167157b2192cfe7019916'
 related:
   - '[[2026-07-22-code-stands-alone-boundary-plan]]'
   - '[[2026-07-23-code-stands-alone-boundary-adr]]'

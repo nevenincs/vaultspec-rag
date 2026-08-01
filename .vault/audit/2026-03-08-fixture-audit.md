@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-08'
 modified: '2026-07-27'
+body_hash: 'sha256:f96086f99857219fb3620ab3d1f2f8483e1f3f9f2a08133c9f685540f4ba0eca'
 ---
 
 # Audit Report: Integration Test Fixture Scoping & Isolation

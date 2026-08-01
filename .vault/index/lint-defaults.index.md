@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:e6b9fb557d13001c6fa1219b8be436031c0c81a6b9a81bf27ed0fac1aefb79dd'
 related:
   - '[[2026-07-27-lint-defaults-P01-S01]]'
   - '[[2026-07-27-lint-defaults-P01-S03]]'

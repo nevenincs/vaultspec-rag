@@ -4,6 +4,7 @@ tags:
   - '#body-schema-provenance'
 date: '2026-07-27'
 modified: '2026-07-27'
+body_hash: 'sha256:aade89c6e23d6b1fd6d46ab59e96170eb22502dca35646ecee9cb334edebefd8'
 tier: L2
 related:
   - '[[2026-07-27-body-schema-provenance-adr]]'

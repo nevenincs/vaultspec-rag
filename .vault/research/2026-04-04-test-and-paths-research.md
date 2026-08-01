@@ -4,6 +4,7 @@ tags:
   - '#test-and-paths'
 date: '2026-04-04'
 modified: '2026-07-27'
+body_hash: 'sha256:c239f51cd8d8f24df9114d2b608ab3df8f3f0201b8656c98b4f6941e233a95b5'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'

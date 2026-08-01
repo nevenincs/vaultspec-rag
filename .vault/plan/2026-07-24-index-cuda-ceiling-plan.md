@@ -4,6 +4,7 @@ tags:
   - '#index-cuda-ceiling'
 date: '2026-07-24'
 modified: '2026-07-24'
+body_hash: 'sha256:ad98d24e1913835725e1c4f9f7aa0e865e68ce61de0f2d96cc9b27733a779488'
 tier: L2
 related:
   - '[[2026-07-24-index-cuda-ceiling-adr]]'

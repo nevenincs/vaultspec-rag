@@ -10,6 +10,7 @@ promoted_to:
   - 'rule:storage-maintenance-is-lifecycle-inert'
   - 'rule:automated-destruction-requires-time-confirmed-danglingness'
 modified: '2026-07-14'
+body_hash: 'sha256:6b317233eb8ada6eddd62c6ea8a3f6448f48f29ac29de811567db24d979196af'
 ---
 
 # `storage-autoprune-safety` audit: `execution review of the scheduled auto-prune and attribution`

@@ -4,6 +4,7 @@ tags:
   - '#cli-startup-feedback'
 date: '2026-07-23'
 modified: '2026-07-24'
+body_hash: 'sha256:57457004e632ac466d81838863ca8f03d0152c71bf17e3fffb350f47b5aa9baa'
 tier: L1
 related:
   - '[[2026-07-23-cli-startup-feedback-adr]]'

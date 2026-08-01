@@ -4,6 +4,7 @@ tags:
   - '#service-discovery-schema'
 date: '2026-06-24'
 modified: '2026-07-27'
+body_hash: 'sha256:d001efc63ae18488cc9977b2f0498091bcdf026d1471d191fb280f435149f3c3'
 related: []
 ---
 

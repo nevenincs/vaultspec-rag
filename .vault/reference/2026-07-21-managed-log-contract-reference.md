@@ -4,6 +4,7 @@ tags:
   - '#managed-log-contract'
 date: '2026-07-21'
 modified: '2026-07-21'
+body_hash: 'sha256:05361139cd46e303157986165cf9a409b1bfb01a1e843fa5f46b9f6ab8465a05'
 related:
   - "[[2026-04-12-store-eviction-log-rotation-adr]]"
   - "[[2026-06-24-service-hardware-singleton-adr]]"

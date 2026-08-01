@@ -7,6 +7,7 @@ related:
   - "[[2026-07-27-active-corpus-conformance-research]]"
 superseded_by: '2026-07-27-body-schema-provenance-adr'
 modified: '2026-07-27'
+body_hash: 'sha256:74862900ea04c131bfa478343174e3c4d689b3d9a48544c661db5accee355e34'
 ---
 
 # `active-corpus-conformance` adr: `Archive non-conforming active vault documents` | (**status:** `superseded`)

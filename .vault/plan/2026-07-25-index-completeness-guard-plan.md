@@ -4,6 +4,7 @@ tags:
   - '#index-completeness-guard'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:54eb824c3ce5489ebe2c57ef5e0e8e91a594621d29f38baf8e140ca32c820ee6'
 tier: L2
 related:
   - '[[2026-07-25-index-completeness-guard-adr]]'

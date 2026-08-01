@@ -4,6 +4,7 @@ tags:
   - '#index-lifecycle-consolidation'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:4382a8186670ebc444a53fe28ad2432e3221efaff25c257ae09ecc519f6d8258'
 related:
   - "[[2026-07-25-document-index-drift-parity-adr]]"
   - "[[2026-07-21-code-document-index-boundary-adr]]"

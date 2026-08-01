@@ -5,6 +5,7 @@ tags:
 date: '2026-07-29'
 modified: '2026-07-29'
 body_schema: 'body-v1'
+body_hash: 'sha256:05d53073d5c903651e99da76f8fa8ad81640e29bad46de4e898d20d764d97887'
 related:
   - "[[2026-07-24-index-throughput-adr]]"
   - "[[2026-07-24-index-cuda-ceiling-adr]]"

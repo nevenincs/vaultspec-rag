@@ -4,6 +4,7 @@ tags:
   - '#async-service-index'
 date: '2026-06-04'
 modified: '2026-07-27'
+body_hash: 'sha256:25b28d664e93ba80f12dbcbda12f3f92e0336f1b20e25fcb22ebd6a07e918c63'
 tier: L3
 related:
   - '[[2026-06-04-async-service-index-adr]]'

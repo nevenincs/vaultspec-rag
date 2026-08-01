@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-06'
 modified: '2026-07-27'
+body_hash: 'sha256:bc14739c33eb178ae1335131c582d087952da67cc1fabca88de05872db6abc04'
 ---
 
 # Audit: Embeddings GPU Pivot

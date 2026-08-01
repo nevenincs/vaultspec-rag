@@ -4,6 +4,7 @@ tags:
   - '#preprocess-sandbox-removal'
 date: '2026-07-14'
 modified: '2026-07-27'
+body_hash: 'sha256:04cc7e5c64f1a5ac7abc33a727ce3c5fc9625c88eb845539f0028b242d7667a5'
 tier: L2
 related:
   - '[[2026-07-14-preprocess-sandbox-removal-adr]]'

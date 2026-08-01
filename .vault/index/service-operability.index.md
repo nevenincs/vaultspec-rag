@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:ad0347359cc052f209fd0cdfbf1824026a11c045a555532fd48fb447a931723e'
 related:
   - '[[2026-06-01-service-operability-adr]]'
   - '[[2026-06-01-service-operability-plan]]'

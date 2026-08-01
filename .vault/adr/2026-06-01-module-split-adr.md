@@ -4,6 +4,7 @@ tags:
   - '#module-split'
 date: '2026-06-01'
 modified: '2026-07-27'
+body_hash: 'sha256:625ada11ee9b2d3410c5b3387d1425bc151e93631ee19a8c3fdf5d4ce50cac40'
 related:
   - "[[2026-06-01-module-split-research]]"
   - "[[2026-06-01-module-split-audit]]"

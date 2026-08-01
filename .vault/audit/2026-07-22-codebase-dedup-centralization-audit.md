@@ -4,6 +4,7 @@ tags:
   - '#codebase-dedup-centralization'
 date: '2026-07-22'
 modified: '2026-07-23'
+body_hash: 'sha256:a2bc6ceead5dcdd9919aba5e589beb9e1470d60ada9f7ec15bece2feba07465f'
 related:
   - "[[2026-07-21-code-document-index-boundary-adr]]"
   - "[[2026-07-22-code-document-index-boundary-plan]]"

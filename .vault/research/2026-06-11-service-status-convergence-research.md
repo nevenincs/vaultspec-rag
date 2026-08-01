@@ -4,6 +4,7 @@ tags:
   - '#service-status-convergence'
 date: '2026-06-11'
 modified: '2026-07-27'
+body_hash: 'sha256:2108f7d0b83253f04d0c053c71bab8f4377ccd238089963d7aebce3174ed10d4'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'

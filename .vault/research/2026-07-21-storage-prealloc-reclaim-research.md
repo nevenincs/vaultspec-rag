@@ -4,6 +4,7 @@ tags:
   - '#storage-prealloc-reclaim'
 date: '2026-07-21'
 modified: '2026-07-27'
+body_hash: 'sha256:34e14123b48445e1fb96c9ac18bb1f6a90f0a142451790c0b3899f1c8b5c59ba'
 related:
   - "[[2026-07-21-index-backpressure-storage-hygiene-adr]]"
   - "[[2026-07-14-storage-autoprune-safety-adr]]"

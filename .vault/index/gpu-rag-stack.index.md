@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:5064b0c4582ff8097f5a3097f0201b5d002977dfdc8866d2d17f209b8ae7b2a0'
 related:
   - '[[2026-03-06-cli-api-audit]]'
   - '[[2026-03-06-cli-mcp-audit]]'

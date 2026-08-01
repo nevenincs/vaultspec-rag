@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-08'
 modified: '2026-07-27'
+body_hash: 'sha256:36c3787ec688b8a2abef3aafb253557a8055169ebe4403d1c720487fd237e25c'
 ---
 
 # Round 29: Cross-Module Integration Audit

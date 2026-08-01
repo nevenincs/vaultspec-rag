@@ -4,6 +4,7 @@ tags:
   - '#mcp-project-root-contract'
 date: '2026-07-25'
 modified: '2026-07-25'
+body_hash: 'sha256:72da6987ce39f6f1337f5ef46b54c0560d4edd3e885327ef62634533f9118f3b'
 related: []
 ---
 

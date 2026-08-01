@@ -4,6 +4,7 @@ tags:
   - '#code-stands-alone-boundary'
 date: '2026-07-22'
 modified: '2026-07-27'
+body_hash: 'sha256:92e2cc33639a5ce67f326a1f3b0f700632aaa2f9ea71940b3a45f37735796220'
 tier: L1
 related:
   - '[[2026-07-22-codebase-dedup-centralization-audit]]'

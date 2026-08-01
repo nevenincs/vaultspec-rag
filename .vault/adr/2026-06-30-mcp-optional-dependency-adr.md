@@ -4,6 +4,7 @@ tags:
   - '#mcp-optional-dependency'
 date: '2026-06-30'
 modified: '2026-06-30'
+body_hash: 'sha256:940cd3a7e7d99db545745f304348b6f2a7d7fcf1bb984ac92193267dff271e6a'
 related:
   - "[[2026-06-30-mcp-optional-dependency-research]]"
 ---

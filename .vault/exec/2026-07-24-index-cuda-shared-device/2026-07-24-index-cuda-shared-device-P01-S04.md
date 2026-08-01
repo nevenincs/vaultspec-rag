@@ -4,6 +4,7 @@ tags:
   - '#index-cuda-shared-device'
 date: '2026-07-24'
 modified: '2026-07-27'
+body_hash: 'sha256:7fc01e2e54c5c82e755408a07f4806e087fbcf6f0d270778ee20d8f72a921f00'
 step_id: 'S04'
 related:
   - "[[2026-07-24-index-cuda-shared-device-plan]]"

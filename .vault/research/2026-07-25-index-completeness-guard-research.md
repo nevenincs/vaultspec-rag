@@ -4,6 +4,7 @@ tags:
   - '#index-completeness-guard'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:1b9a5242352d917cbfc6dceac3f7571f496389cdca99dd2973a3e5ecf40c17f3'
 related:
   - "[[2026-07-25-index-resume-drift-race-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"

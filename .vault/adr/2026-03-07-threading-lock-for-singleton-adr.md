@@ -4,6 +4,7 @@ tags:
   - '#gpu-rag-stack'
 date: '2026-03-07'
 modified: '2026-07-27'
+body_hash: 'sha256:c0e879f750ef36b7c5ee959b9d8ee6f3c93f4ed2e8f892799496ac286b425c12'
 related:
   - '[[2026-03-07-mcp-sync-tools-adr]]'
   - '[[2026-03-08-fastmcp-lifespan-research]]'

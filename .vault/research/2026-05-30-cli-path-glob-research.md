@@ -4,6 +4,7 @@ tags:
   - '#cli-path-glob'
 date: '2026-05-30'
 modified: '2026-07-27'
+body_hash: 'sha256:73e5d6b62f51be69ae8bfbb1a8897a3f8d460b0f2859e6d085dbf61b1ddb9531'
 related: []
 ---
 

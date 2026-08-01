@@ -4,6 +4,7 @@ tags:
   - '#index-lifecycle-consolidation'
 date: '2026-07-25'
 modified: '2026-07-27'
+body_hash: 'sha256:d30f5972af2cedc90d13cc43d13f2648a55ae9f7456c3e10a17e3dd6692844f8'
 tier: L1
 related:
   - '[[2026-07-25-index-lifecycle-consolidation-adr]]'

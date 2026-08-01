@@ -6,6 +6,7 @@ tags:
 date: '2026-07-31'
 modified: '2026-07-31'
 body_schema: 'body-v1'
+body_hash: 'sha256:b88489f58b6f040febcf2086d5842418c3be378608aa569df3e4010fdba01844'
 related:
   - '[[2026-07-29-encode-batch-adaptivity-P01-S01]]'
   - '[[2026-07-29-encode-batch-adaptivity-P01-S02]]'

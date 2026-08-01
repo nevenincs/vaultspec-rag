@@ -4,6 +4,7 @@ tags:
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
 modified: '2026-07-27'
+body_hash: 'sha256:a1fc8aca7abebeb18a8ac41d63f8646398cba9d8efa8067468826f4c76ce7ac2'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-05-service-lifecycle-tests-adr]]'

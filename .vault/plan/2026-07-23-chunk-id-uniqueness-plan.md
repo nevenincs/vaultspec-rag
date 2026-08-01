@@ -4,6 +4,7 @@ tags:
   - '#chunk-id-uniqueness'
 date: '2026-07-23'
 modified: '2026-07-27'
+body_hash: 'sha256:d3ddbd9d6c87197f55e94a7f20c98d059fa5407610af99c52cb298f2f96cb325'
 tier: L1
 related:
   - '[[2026-07-23-chunk-id-uniqueness-adr]]'
