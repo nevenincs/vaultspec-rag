@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import math
 import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import cast
+
+from . import _typed_fields
 
 __all__ = [
     "DesiredJobState",
@@ -174,6 +176,152 @@ class JobOutcomeStatus(StrEnum):
     ERROR = "error"
 
 
+def _rejection(name: str, requirement: str, *, optional: bool) -> ValueError:
+    return ValueError(f"{name} must be {requirement}{' or None' if optional else ''}")
+
+
+def _integer_requirement(minimum: int) -> str:
+    if minimum == 0:
+        return "a non-negative integer"
+    return f"an integer of at least {minimum}"
+
+
+def _number_requirement(minimum: float | None) -> str:
+    if minimum is None:
+        return "a finite number"
+    if minimum == 0:
+        return "a finite non-negative number"
+    return f"a finite number of at least {minimum}"
+
+
+def _require_int(
+    name: str, value: object, *, minimum: int, optional: bool = False
+) -> None:
+    if optional and value is None:
+        return
+    requirement = _integer_requirement(minimum)
+    _typed_fields.required_int(
+        value,
+        minimum=minimum,
+        on_invalid=lambda: _rejection(name, requirement, optional=optional),
+    )
+
+
+def _require_number(
+    name: str, value: object, *, minimum: float | None = None, optional: bool = False
+) -> None:
+    if optional and value is None:
+        return
+    requirement = _number_requirement(minimum)
+
+    def reject() -> ValueError:
+        return _rejection(name, requirement, optional=optional)
+
+    resolved = _typed_fields.required_float(
+        value, on_invalid=reject, on_not_finite=reject
+    )
+    if minimum is not None and resolved < minimum:
+        raise reject()
+
+
+def _require_str(
+    name: str, value: object, *, allow_empty: bool = False, optional: bool = False
+) -> None:
+    if optional and value is None:
+        return
+    requirement = "a string" if allow_empty else "a non-empty string"
+    _typed_fields.required_str(
+        value,
+        allow_empty=allow_empty,
+        on_invalid=lambda: _rejection(name, requirement, optional=optional),
+    )
+
+
+def _require_bool(name: str, value: object, *, optional: bool = False) -> None:
+    if optional and value is None:
+        return
+    _typed_fields.required_bool(
+        value,
+        on_invalid=lambda: _rejection(name, "a boolean", optional=optional),
+    )
+
+
+#: What a telemetry value may be, quoted by the refusal so a producer reading
+#: the traceback learns the whole rule rather than only which value broke it.
+_JSON_VALUE_REQUIREMENT = (
+    "a JSON value: null, a boolean, a number, a string, an array, "
+    "or an object with string keys"
+)
+
+_OBJECT_REQUIREMENT = "an object with string keys"
+
+
+def _require_json_telemetry_block(name: str, value: object) -> None:
+    """Refuse a telemetry block a write and read back would not return intact.
+
+    These blocks are free-form by intent - a run publishes whatever it measured
+    - but they are persisted as JSON, and JSON has a value space. Outside it
+    the round trip does not fail, it substitutes: a tuple returns a list, a
+    non-string key returns a string, and a non-finite number cannot be encoded
+    at all, so one decorative value makes a whole generation unwritable.
+    Either way the damage is found a process removed from whatever produced it.
+    Constraining the value space at construction puts the refusal in the
+    producing traceback instead, naming the exact path that broke it.
+
+    This cannot cost a start. The set admitted here is every value ``json.loads``
+    can return from a file this writer produced: the single JSON writer refuses
+    non-finite numbers, so a persisted block holds only null, booleans, numbers,
+    strings, arrays and string-keyed objects - which is the whole of what passes
+    below. The check therefore fires only on a value still in memory, never on
+    one read back off disk, and every file already written still loads.
+
+    Walked iteratively, so nesting deep enough to exhaust the encoder is still
+    reported by the encoder as an unwritable payload rather than here as an
+    unconstructable one. Containers already visited are not re-entered, which
+    bounds the walk over a shared or self-referential structure; a genuinely
+    circular one is refused by the encoder, since no walk can make it JSON.
+    """
+    if value is None:
+        return
+    block = _typed_fields.required_mapping(
+        value,
+        on_invalid=lambda: _rejection(name, _OBJECT_REQUIREMENT, optional=True),
+    )
+    pending: list[tuple[str, object]] = [
+        (f"{name}[{key!r}]", item) for key, item in block.items()
+    ]
+    seen: set[int] = {id(block)}
+    while pending:
+        path, current = pending.pop()
+        if current is None or isinstance(current, bool | int | str):
+            continue
+        if isinstance(current, float):
+            # Reuses the number contract every other persisted float is held
+            # to, so "finite" means one thing across the whole record.
+            _require_number(path, current)
+            continue
+        if isinstance(current, dict):
+            nested = cast("dict[object, object]", current)
+            if id(nested) in seen:
+                continue
+            seen.add(id(nested))
+            for key, item in nested.items():
+                if not isinstance(key, str):
+                    raise _rejection(path, _OBJECT_REQUIREMENT, optional=False)
+                pending.append((f"{path}[{key!r}]", item))
+            continue
+        if isinstance(current, list):
+            items = cast("list[object]", current)
+            if id(items) in seen:
+                continue
+            seen.add(id(items))
+            pending.extend(
+                (f"{path}[{index}]", item) for index, item in enumerate(items)
+            )
+            continue
+        raise _rejection(path, _JSON_VALUE_REQUIREMENT, optional=False)
+
+
 @dataclass(frozen=True, slots=True)
 class JobSpec:
     """Immutable instructions for one logical job resource."""
@@ -183,6 +331,9 @@ class JobSpec:
     project_root: str | None
     mode: JobMode | None
 
+    def __post_init__(self) -> None:
+        _require_str("project_root", self.project_root, allow_empty=True, optional=True)
+
 
 @dataclass(frozen=True, slots=True)
 class JobInitiator:
@@ -191,6 +342,11 @@ class JobInitiator:
     kind: str
     command: str
     project_root: str | None
+
+    def __post_init__(self) -> None:
+        _require_str("kind", self.kind)
+        _require_str("command", self.command)
+        _require_str("project_root", self.project_root, allow_empty=True, optional=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,10 +371,13 @@ class JobAttempt:
     resume_strategy: ResumeStrategy | None = None
 
     def __post_init__(self) -> None:
-        if self.number < 1:
-            raise ValueError("job attempt number must be at least 1")
-        if self.resumed_from_attempt is not None and self.resumed_from_attempt < 1:
-            raise ValueError("resumed attempt number must be at least 1")
+        _require_int("number", self.number, minimum=1)
+        _require_int(
+            "resumed_from_attempt", self.resumed_from_attempt, minimum=1, optional=True
+        )
+        _require_str(
+            "parent_job_id", self.parent_job_id, allow_empty=True, optional=True
+        )
         if self.number == 1 and (
             self.resumed_from_attempt is not None or self.resume_strategy is not None
         ):
@@ -249,6 +408,21 @@ class JobTimestamps:
     control_acknowledged_at: float | None = None
     admission_acquired_at: float | None = None
 
+    def __post_init__(self) -> None:
+        _require_number("created_at", self.created_at)
+        _require_number("state_changed_at", self.state_changed_at)
+        _require_number("started_at", self.started_at, optional=True)
+        _require_number("finished_at", self.finished_at, optional=True)
+        _require_number(
+            "control_requested_at", self.control_requested_at, optional=True
+        )
+        _require_number(
+            "control_acknowledged_at", self.control_acknowledged_at, optional=True
+        )
+        _require_number(
+            "admission_acquired_at", self.admission_acquired_at, optional=True
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class JobProgress:
@@ -258,6 +432,14 @@ class JobProgress:
     completed: int
     total: int | None
     last_updated: float
+
+    def __post_init__(self) -> None:
+        _require_str("step", self.step)
+        _require_int("completed", self.completed, minimum=0)
+        _require_int("total", self.total, minimum=0, optional=True)
+        _require_number("last_updated", self.last_updated)
+        if self.total is not None and self.completed > self.total:
+            raise ValueError("completed must not exceed total")
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,14 +456,38 @@ class JobRuntimeSnapshot:
     task_active: bool = False
     worker_active: bool = False
 
+    def __post_init__(self) -> None:
+        _require_int("pid", self.pid, minimum=0)
+        _require_int("parent_pid", self.parent_pid, minimum=0)
+        _require_str("user", self.user, allow_empty=True)
+        _require_str("executable", self.executable, allow_empty=True)
+        _require_str("prefix", self.prefix, allow_empty=True)
+        _require_str("base_prefix", self.base_prefix, allow_empty=True)
+        _require_str("virtual_env", self.virtual_env, allow_empty=True, optional=True)
+        _require_bool("task_active", self.task_active)
+        _require_bool("worker_active", self.worker_active)
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessResourceSnapshot:
-    """Best-effort process memory readings at one lifecycle boundary."""
+    """Best-effort process memory readings at one lifecycle boundary.
+
+    Best-effort refers to how the readings are obtained, never to whether
+    they are present: a probe that cannot answer reports zero. A missing or
+    non-numeric reading is rejected here, at the boundary that produced it,
+    because these values outlive the process that took them. Accepting one
+    would place a record on disk that the loader must refuse, stranding the
+    failure in a later process with no way back to the producer.
+    """
 
     rss_mib: float
     cuda_allocated_mib: float
     cuda_reserved_mib: float
+
+    def __post_init__(self) -> None:
+        _require_number("rss_mib", self.rss_mib, minimum=0.0)
+        _require_number("cuda_allocated_mib", self.cuda_allocated_mib, minimum=0.0)
+        _require_number("cuda_reserved_mib", self.cuda_reserved_mib, minimum=0.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +500,12 @@ class JobResourceSnapshot:
     project_lease_held: bool = False
     writer_lock_held: bool = False
     pipeline_active: bool = False
+
+    def __post_init__(self) -> None:
+        _require_bool("index_capacity_held", self.index_capacity_held)
+        _require_bool("project_lease_held", self.project_lease_held)
+        _require_bool("writer_lock_held", self.writer_lock_held)
+        _require_bool("pipeline_active", self.pipeline_active)
 
     @property
     def holds_anything(self) -> bool:
@@ -334,29 +546,30 @@ class IndexResilienceSnapshot:
     terminal_outcome: str | None = None
 
     def __post_init__(self) -> None:
-        for name in ("committed_units", "replayed_units"):
-            value = getattr(self, name)
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise ValueError(f"{name} must be a non-negative integer")
-        for name in (
-            "last_durable_progress_at",
-            "no_progress_timeout_seconds",
-            "no_progress_remaining_seconds",
-            "next_retry_at",
-            "peak_rss_mib",
-            "rss_ceiling_mib",
-            "peak_cuda_allocated_mib",
-            "peak_cuda_reserved_mib",
-            "cuda_ceiling_mib",
+        _require_int("committed_units", self.committed_units, minimum=0)
+        _require_int("replayed_units", self.replayed_units, minimum=0)
+        for name, reading in (
+            ("last_durable_progress_at", self.last_durable_progress_at),
+            ("no_progress_timeout_seconds", self.no_progress_timeout_seconds),
+            ("no_progress_remaining_seconds", self.no_progress_remaining_seconds),
+            ("next_retry_at", self.next_retry_at),
+            ("peak_rss_mib", self.peak_rss_mib),
+            ("rss_ceiling_mib", self.rss_ceiling_mib),
+            ("peak_cuda_allocated_mib", self.peak_cuda_allocated_mib),
+            ("peak_cuda_reserved_mib", self.peak_cuda_reserved_mib),
+            ("cuda_ceiling_mib", self.cuda_ceiling_mib),
         ):
-            value = getattr(self, name)
-            if value is not None and (
-                not isinstance(value, (int, float))
-                or isinstance(value, bool)
-                or not math.isfinite(value)
-                or value < 0.0
-            ):
-                raise ValueError(f"{name} must be a finite non-negative number")
+            _require_number(name, reading, minimum=0.0, optional=True)
+        for name, label in (
+            ("generation_id", self.generation_id),
+            ("circuit_state", self.circuit_state),
+            ("support_profile", self.support_profile),
+            ("terminal_outcome", self.terminal_outcome),
+        ):
+            _require_str(name, label, allow_empty=True, optional=True)
+        _require_bool(
+            "checkpoint_compatible", self.checkpoint_compatible, optional=True
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,14 +595,16 @@ class JobSnapshot:
     #: result, or ``None`` when reuse was disabled or the attempt never
     #: reached the encode pipeline. Carried on the canonical resource so
     #: the served job view reports it; the legacy activity record is
-    #: shadowed by this snapshot for every manager-owned job.
+    #: shadowed by this snapshot for every manager-owned job. Which counters a
+    #: run reports is open; what they may hold is not - see
+    #: :func:`_require_json_telemetry_block`.
     reuse: dict[str, object] | None = None
     #: Source-drift telemetry from the finished attempt: how many paths moved
     #: while the run was recording them and had to be superseded, and any left
     #: stale for the next generation. Carried here because a run that
     #: remediates drift succeeds, so the circuit breaker - which counts faults
     #: only - is deliberately blind to it, and this is where drift volume
-    #: becomes visible instead.
+    #: becomes visible instead. Holds the same value space as :attr:`reuse`.
     drift: dict[str, object] | None = None
     #: Seconds the finished (or in-flight, at last publication) attempt
     #: spent waiting to acquire the process GPU lock, accumulated across
@@ -399,8 +614,18 @@ class JobSnapshot:
     gpu_lock_wait_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        if self.revision < 1:
-            raise ValueError("job revision must be at least 1")
+        _require_str("id", self.id)
+        _require_int("revision", self.revision, minimum=1)
+        _require_str("result", self.result, allow_empty=True, optional=True)
+        _require_str("error_kind", self.error_kind, allow_empty=True, optional=True)
+        _require_number(
+            "gpu_lock_wait_seconds",
+            self.gpu_lock_wait_seconds,
+            minimum=0.0,
+            optional=True,
+        )
+        _require_json_telemetry_block("reuse", self.reuse)
+        _require_json_telemetry_block("drift", self.drift)
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable JSON-ready resource representation."""
