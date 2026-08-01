@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -18,6 +20,7 @@ from ... import jobs as _jobs
 from ...job_control import RunControlToken
 from ...job_manager._control import AttemptTerminal
 from ...job_manager.manager import JobManager
+from ...job_manager.models import ResourceUpdate
 from ...job_models import (
     DesiredJobState,
     JobInitiator,
@@ -28,8 +31,10 @@ from ...job_models import (
     JobSpec,
     JobState,
 )
+from ...server._lifespan import _start_job_manager
 from ...server._routes import _service_job_snapshot
 from ...server._routes_jobs import _job_with_liveness
+from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
 from .._job_manager_transition_helpers import pending_attempt
 
@@ -687,12 +692,13 @@ class TestManagedJobPersistence:
         assert set(observed_versions) == {1}
         assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
 
-    def test_invalid_state_does_not_partially_restore(self, tmp_path: Path) -> None:
+    def test_invalid_state_quarantines_without_partial_restore(
+        self,
+        tmp_path: Path,
+    ) -> None:
         state_path = tmp_path / "managed-jobs.json"
-        state_path.write_text(
-            '{"schema":"vaultspec.rag.jobs","version":1,"jobs":[',
-            encoding="utf-8",
-        )
+        truncated = '{"schema":"vaultspec.rag.jobs","version":1,"jobs":['
+        state_path.write_text(truncated, encoding="utf-8")
         manager = JobManager(
             quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
@@ -701,8 +707,14 @@ class TestManagedJobPersistence:
 
         outcome = manager.restore_persisted()
 
-        assert outcome.code == "job_state_invalid"
+        assert outcome.status is JobOutcomeStatus.OK
+        assert outcome.code == "job_state_quarantined"
         assert manager.list_jobs() == []
+        assert not state_path.exists()
+        quarantined = list(tmp_path.glob("managed-jobs.json.invalid-*"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_text(encoding="utf-8") == truncated
+        assert str(quarantined[0]) in outcome.message
 
     def test_failed_persistence_rolls_back_reversible_intent(
         self,
@@ -813,7 +825,7 @@ class TestManagedJobPersistence:
             with pytest.raises(asyncio.CancelledError):
                 await task
 
-    def test_structurally_valid_inconsistent_state_is_rejected(
+    def test_structurally_valid_inconsistent_state_is_quarantined_unapplied(
         self,
         tmp_path: Path,
     ) -> None:
@@ -840,7 +852,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert inconsistent.restore_persisted().code == "job_state_invalid"
+        assert inconsistent.restore_persisted().code == "job_state_quarantined"
         assert inconsistent.list_jobs() == []
 
         payload["jobs"][0]["desired_state"] = "running"
@@ -851,7 +863,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert dangling.restore_persisted().code == "job_state_invalid"
+        assert dangling.restore_persisted().code == "job_state_quarantined"
         assert dangling.list_jobs() == []
 
         payload["idempotency"][0]["job_id"] = payload["jobs"][0]["id"]
@@ -863,7 +875,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert unstarted.restore_persisted().code == "job_state_invalid"
+        assert unstarted.restore_persisted().code == "job_state_quarantined"
         assert unstarted.list_jobs() == []
 
         payload["jobs"][0]["state"] = "queued"
@@ -874,7 +886,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert unlinked_resume.restore_persisted().code == "job_state_invalid"
+        assert unlinked_resume.restore_persisted().code == "job_state_quarantined"
         assert unlinked_resume.list_jobs() == []
 
         payload["jobs"][0]["attempt"] = 1
@@ -886,8 +898,12 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert false_first_resume.restore_persisted().code == "job_state_invalid"
+        assert false_first_resume.restore_persisted().code == "job_state_quarantined"
         assert false_first_resume.list_jobs() == []
+        # Five same-named quarantines in rapid succession must land as five
+        # distinct siblings; losing one means a later quarantine replaced
+        # earlier evidence.
+        assert len(list(tmp_path.glob("managed-jobs.json.invalid-*"))) == 5
 
     def test_version_and_timestamp_invariants_are_strict(
         self,
@@ -919,7 +935,7 @@ class TestManagedJobPersistence:
                 max_nonterminal=1,
                 state_path=state_path,
             )
-            assert invalid.restore_persisted().code == "job_state_invalid"
+            assert invalid.restore_persisted().code == "job_state_quarantined"
             assert invalid.list_jobs() == []
 
         payload["version"] = 1
@@ -931,7 +947,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert unrequested_ack.restore_persisted().code == "job_state_invalid"
+        assert unrequested_ack.restore_persisted().code == "job_state_quarantined"
         assert unrequested_ack.list_jobs() == []
 
         job["control_acknowledged_at"] = None
@@ -945,7 +961,7 @@ class TestManagedJobPersistence:
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert impossible_finish.restore_persisted().code == "job_state_invalid"
+        assert impossible_finish.restore_persisted().code == "job_state_quarantined"
         assert impossible_finish.list_jobs() == []
 
     def test_legacy_v1_start_paused_round_trip_has_control_request_lineage(
@@ -1044,3 +1060,665 @@ class TestManagedJobPersistence:
             for task in tasks:
                 with pytest.raises(asyncio.CancelledError):
                     await task
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("isolated_status_dir")
+    async def test_null_resource_reading_quarantines_and_startup_proceeds(
+        self,
+        _clean_jobs: None,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A null resource reading must cost the history, never the daemon.
+
+        The state file records job history - observability data - while the
+        index itself lives in vector storage. A daemon refusing to start over
+        one non-numeric field in its own shutdown artifact is a total outage
+        the operator cannot self-service, so service startup must quarantine
+        the file byte-for-byte, log the loss loudly, and come up with an
+        empty registry.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        seeded = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        created = seeded.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
+        )
+        assert created.job is not None
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        payload["jobs"][0]["resources"]["started"] = {
+            "rss_mib": None,
+            "cuda_allocated_mib": 0.0,
+            "cuda_reserved_mib": 0.0,
+        }
+        corrupted = json.dumps(payload)
+        state_path.write_text(corrupted, encoding="utf-8")
+
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        with caplog.at_level(logging.ERROR, logger="vaultspec_rag.jobs"):
+            await _start_job_manager(manager, ServiceRegistry())
+
+        assert manager.list_jobs() == []
+        assert not state_path.exists()
+        quarantined = list(tmp_path.glob("managed-jobs.json.invalid-*"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_text(encoding="utf-8") == corrupted
+        assert "state_quarantined" in caplog.text
+        assert "resource rss_mib must be numeric" in caplog.text
+
+    def test_unreadable_state_path_still_fails_restore(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """An unreadable state path is an environment fault, not a bad file.
+
+        A directory squatting on the state path makes the read itself fail
+        before any content is seen. Quarantining there would dress a
+        filesystem fault up as corrupt history and let the daemon continue
+        into the same fault on its next persist, so restore must keep
+        reporting an error and move nothing.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        state_path.mkdir()
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+
+        outcome = manager.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.ERROR
+        assert outcome.code == "job_state_unreadable"
+        assert state_path.is_dir()
+        assert list(tmp_path.glob("managed-jobs.json.invalid-*")) == []
+        assert manager.list_jobs() == []
+
+    def test_quarantine_obstacle_fails_restore_with_evidence_kept(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A blocked quarantine keeps the failure loud and the evidence put.
+
+        With a non-file obstacle at the candidate destination the rename
+        cannot preserve the invalid file; continuing anyway would leave the
+        corrupt file in place for the first persist to overwrite. Restore
+        must fail on the quarantine branch with the original file untouched.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        state_path.write_text("not json", encoding="utf-8")
+        # A directory obstacle at every candidate the clock could pick makes
+        # the rename fail instead of being stepped around.
+        now = int(time.time())
+        for offset in range(-1, 6):
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now + offset))
+            (tmp_path / f"managed-jobs.json.invalid-{stamp}").mkdir()
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+
+        outcome = manager.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.ERROR
+        assert outcome.code == "job_state_quarantine_failed"
+        assert state_path.read_text(encoding="utf-8") == "not json"
+        assert manager.list_jobs() == []
+
+    def _seed_one_queued_job(self, tmp_path: Path, state_path: Path) -> None:
+        seeded = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        created = seeded.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
+        )
+        assert created.job is not None
+
+    def _write_state_from_a_newer_build(self, state_path: Path) -> tuple[str, int]:
+        """Bump a real written generation past this build's readable range."""
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        declared = int(cast("int", payload["version"])) + 1
+        payload["version"] = declared
+        newer = json.dumps(payload)
+        state_path.write_text(newer, encoding="utf-8")
+        return newer, declared
+
+    def test_state_from_a_newer_build_is_preserved_not_reported_as_invalid(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An intact file this build predates must not be diagnosed as damage.
+
+        A downgrade is the only way a reader meets state numbered above what
+        it reads. The bytes are well-formed and every record in them is real
+        history a newer build would load, so the diagnosis has to name the
+        version mismatch, the name left on disk has to state the file's
+        provenance, and neither may call the content invalid or the history
+        lost. Startup still proceeds with an empty registry.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        self._seed_one_queued_job(tmp_path, state_path)
+        newer, declared = self._write_state_from_a_newer_build(state_path)
+
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag.jobs"):
+            outcome = manager.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.OK
+        assert outcome.code == "job_state_from_newer_build"
+        assert manager.list_jobs() == []
+        assert not state_path.exists()
+
+        preserved = list(tmp_path.glob("managed-jobs.json.from-newer-build-*"))
+        assert len(preserved) == 1
+        assert preserved[0].read_text(encoding="utf-8") == newer
+        assert list(tmp_path.glob("managed-jobs.json.invalid-*")) == []
+
+        assert str(preserved[0]) in outcome.message
+        assert f"version {declared}" in outcome.message
+        assert re.search(r"reads versions \d+ to \d+", outcome.message) is not None
+        # The defect being fixed was a correct file reported as damaged. These
+        # are the exact words that misreported it; neither may come back.
+        assert "invalid" not in outcome.message.lower()
+        assert "lost" not in outcome.message.lower()
+
+        assert "event=state_from_newer_build" in caplog.text
+        assert f"declared_version={declared}" in caplog.text
+        assert "event=state_quarantined" not in caplog.text
+
+    def test_a_preserved_newer_build_file_is_never_reclaimed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Temporary reclamation must not be able to name preserved evidence.
+
+        The name is taken from production rather than written out here, so a
+        later change to the set-aside suffix is checked against the reaper
+        instead of against a literal that would keep passing. Reaping this
+        file would destroy the only copy of an operator's history - strictly
+        worse than the misdiagnosis this preservation exists to correct.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        self._seed_one_queued_job(tmp_path, state_path)
+        self._write_state_from_a_newer_build(state_path)
+        downgraded = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        assert downgraded.restore_persisted().code == "job_state_from_newer_build"
+        preserved = next(tmp_path.glob("managed-jobs.json.from-newer-build-*"))
+        # Far beyond any grace window a reclaimable temporary would need.
+        aged = time.time() - 365 * 24 * 3600
+        os.utime(preserved, (aged, aged))
+
+        self._seed_one_queued_job(tmp_path, state_path)
+        revived = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+
+        assert revived.restore_persisted().code == "job_state_restored"
+        assert preserved.exists()
+
+    def test_a_blocked_preservation_fails_restore_without_calling_it_invalid(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A state directory that cannot take the move aborts the start.
+
+        Continuing would leave the newer file in place for the first lifecycle
+        transition to overwrite, which is the one outcome preservation exists
+        to prevent. The failure carries its own code so it is not read as a
+        verdict on content that is in fact intact.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        self._seed_one_queued_job(tmp_path, state_path)
+        newer, _declared = self._write_state_from_a_newer_build(state_path)
+        # A directory obstacle at every candidate the clock could pick makes
+        # the rename fail instead of being stepped around.
+        now = int(time.time())
+        for offset in range(-1, 6):
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now + offset))
+            (tmp_path / f"managed-jobs.json.from-newer-build-{stamp}").mkdir()
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+
+        outcome = manager.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.ERROR
+        assert outcome.code == "job_state_preserve_failed"
+        assert state_path.read_text(encoding="utf-8") == newer
+        assert manager.list_jobs() == []
+
+    def test_lowered_capacity_admits_restored_work_and_refuses_new(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A capacity cut below recorded work must not cost the daemon its start.
+
+        The bound governs admission of new jobs, so a valid file holding more
+        queued work than the lowered setting is real intent, not corruption:
+        restoring it must succeed and keep every ID. Refusing to start would
+        repeat identically on every retry with no way back but hand-editing
+        state, and dropping the excess would silently evict controllable work.
+        The bound still has to bite on new creation, which is what drains the
+        overflow, so both halves are asserted together.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        roots = [tmp_path / f"project-{index}" for index in range(3)]
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=3,
+            state_path=state_path,
+        )
+        recorded: list[str] = []
+        for root in roots:
+            created = manager.create(
+                JobSpec(
+                    JobOperation.INDEX,
+                    JobSource.VAULT,
+                    str(root),
+                    JobMode.INCREMENTAL,
+                ),
+                JobInitiator("watcher", "watcher_vault_index", str(root)),
+            )
+            assert created.job is not None
+            recorded.append(created.job.id)
+
+        restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            state_path=state_path,
+        )
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag.jobs"):
+            outcome = restarted.restore_persisted()
+
+        assert outcome.status is JobOutcomeStatus.OK
+        assert outcome.code == "job_state_restored"
+        assert sorted(job.id for job in restarted.active()) == sorted(recorded)
+        assert all(job.state is JobState.QUEUED for job in restarted.active())
+        assert "event=restored_over_capacity" in caplog.text
+        assert "restored_nonterminal=3" in caplog.text
+        assert "configured_capacity=1" in caplog.text
+
+        refused = restarted.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path / "project-new"),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
+        )
+        assert refused.status is JobOutcomeStatus.ERROR
+        assert refused.code == "job_capacity_exceeded"
+
+    def test_over_capacity_restore_keeps_every_live_replay_binding(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A job that survived restore keeps the key that names it.
+
+        The replay-binding ceiling is derived from the retention bounds, so
+        restoring more nonterminal jobs than the current bound allows would
+        evict against a number smaller than the jobs actually retained. The
+        binding dropped that way belongs to a job that is still live and
+        still addressable, and the caller replaying its key would be told
+        equivalent work exists instead of that its own request was replayed -
+        a different answer to the same question, and a duplicate submission
+        for anything that keys retries on it.
+
+        Both halves matter: the binding survives, and the replay still
+        resolves through it.
+        """
+        state_path = tmp_path / "managed-jobs.json"
+        first = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=3,
+            max_terminal_history=1,
+            state_path=state_path,
+        )
+        for index in range(3):
+            created = first.create(
+                JobSpec(
+                    JobOperation.INDEX,
+                    JobSource.CODE,
+                    str(tmp_path / f"project-{index}"),
+                    JobMode.REBUILD,
+                ),
+                JobInitiator("test", "replay_binding", None),
+                idempotency_key=f"key-{index}",
+            )
+            assert created.job is not None
+
+        # The lowered bound makes the configured ceiling (bound + history)
+        # smaller than the three jobs the file legitimately carries.
+        restarted = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=1,
+            max_terminal_history=1,
+            state_path=state_path,
+        )
+        assert restarted.restore_persisted().code == "job_state_restored"
+        assert len(restarted.active()) == 3
+
+        for index in range(3):
+            replayed = restarted.create(
+                JobSpec(
+                    JobOperation.INDEX,
+                    JobSource.CODE,
+                    str(tmp_path / f"project-{index}"),
+                    JobMode.REBUILD,
+                ),
+                JobInitiator("test", "replay_binding", None),
+                idempotency_key=f"key-{index}",
+            )
+            assert replayed.code == "idempotency_replayed", (
+                f"key-{index} lost its binding: {replayed.code}"
+            )
+
+    @pytest.mark.parametrize(
+        "sequence",
+        [
+            "created",
+            "start_paused",
+            "paused",
+            "quiesce_deferred",
+            "cancelled",
+            "resumed",
+            "failed_unstarted",
+            "retried",
+            "deleted",
+            "idempotent",
+        ],
+    )
+    def test_every_persisted_transition_reloads(
+        self,
+        tmp_path: Path,
+        sequence: str,
+    ) -> None:
+        """What the manager writes, the loader must accept.
+
+        The loader enforces relational rules over a whole generation -
+        timestamp ordering, terminal state against the finish clock, observed
+        against desired state, attempt lineage - that no single frozen record
+        can check on its own. A transition that persists a combination those
+        rules reject does not fail when it is written; it fails one boot
+        later, in another process, with the write long gone. Driving each
+        supported transition and reading the real file back through the real
+        loader is what turns that into an immediate failure here.
+        """
+        from ...job_persistence import load_persisted_state
+
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=4,
+            state_path=state_path,
+        )
+
+        def admit(
+            name: str,
+            *,
+            start_paused: bool = False,
+            idempotency_key: str | None = None,
+        ) -> str:
+            created = manager.create(
+                JobSpec(
+                    JobOperation.INDEX,
+                    JobSource.CODE,
+                    str(tmp_path / name),
+                    JobMode.REBUILD,
+                ),
+                JobInitiator("test", "transition_reload", None),
+                start_paused=start_paused,
+                idempotency_key=idempotency_key,
+            )
+            assert created.job is not None
+            return created.job.id
+
+        if sequence == "created":
+            admit("a")
+        elif sequence == "start_paused":
+            admit("a", start_paused=True)
+        elif sequence == "paused":
+            manager.set_desired_state(admit("a"), DesiredJobState.PAUSED)
+        elif sequence == "quiesce_deferred":
+            # Work parked by a quiesce is persisted paused while still wanting
+            # to run, and the resume pass selects on exactly that pair. A
+            # loader refusing it rejects the daemon's own shutdown artifact.
+            assert (
+                manager.defer_unstarted_for_quiesce(admit("a")).code
+                == "quiesce_deferred_before_start"
+            )
+        elif sequence == "cancelled":
+            manager.set_desired_state(admit("a"), DesiredJobState.CANCELLED)
+        elif sequence == "resumed":
+            manager.set_desired_state(
+                admit("a", start_paused=True), DesiredJobState.RUNNING
+            )
+        elif sequence == "failed_unstarted":
+            manager.fail_unstarted(admit("a"), result="no runtime")
+        elif sequence == "retried":
+            job_id = admit("a")
+            manager.fail_unstarted(job_id, result="no runtime")
+            assert manager.retry(job_id).code == "job_retry_created"
+        elif sequence == "deleted":
+            job_id = admit("a")
+            manager.fail_unstarted(job_id, result="no runtime")
+            assert manager.delete(job_id).code == "job_deleted"
+        else:
+            admit("a", idempotency_key="replay-key")
+
+        # The real file the daemon would find on its next start, read by the
+        # real loader that start would use.
+        assert state_path.is_file()
+        load_persisted_state(state_path)
+
+    @staticmethod
+    def _rewind_the_wall_clock_under(state_path: Path, *, seconds: float) -> None:
+        """Age the persisted stamps into the reader's future by ``seconds``.
+
+        A wall clock that steps backwards leaves exactly this behind: a file
+        the previous service life wrote while the clock was ahead of where it
+        is now. Every stamp moves together, so the record stays internally
+        consistent and loads cleanly - the damage appears only once this life
+        stamps a new revision onto it from the corrected clock. Shifting the
+        file rather than the machine's clock keeps the step confined to one
+        temporary directory.
+        """
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        for job in cast("list[dict[str, object]]", payload["jobs"]):
+            for name in (
+                "created_at",
+                "state_changed_at",
+                "started_at",
+                "finished_at",
+                "control_requested_at",
+                "control_acknowledged_at",
+                "admission_acquired_at",
+            ):
+                stamp = _jobs.measurement(job.get(name))
+                if stamp is not None:
+                    job[name] = stamp + seconds
+            progress = job.get("progress")
+            if isinstance(progress, dict):
+                block = cast("dict[str, object]", progress)
+                updated = _jobs.measurement(block.get("last_updated"))
+                if updated is not None:
+                    block["last_updated"] = updated + seconds
+        state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_a_backwards_clock_step_never_persists_an_unreadable_record(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Recovery must not manufacture the file the next start refuses.
+
+        Wall-clock time is not monotonic: a corrective sync, a restored
+        virtual-machine snapshot or a container resync can move it backwards
+        between two transitions of one job. Restore is the sharpest case,
+        because it stamps a fresh interrupt onto stamps a previous service
+        life wrote - so a step between those two lives makes the recovery
+        write a record whose finish predates its own creation, and the start
+        after that refuses the whole file and drops every job's history.
+
+        No clock is manipulated here and no time source is injected. The step
+        is carried by the only thing that outlives it, the file the previous
+        life left behind, which is also how a real one reaches this code.
+        """
+        from ...job_persistence import load_persisted_state
+
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("cli", "server job create", str(tmp_path)),
+        )
+        assert created.job is not None
+        owner_task = asyncio.create_task(pending_attempt())
+        try:
+            assert (
+                manager.start_attempt(
+                    created.job.id,
+                    task=owner_task,
+                    control=RunControlToken(),
+                ).code
+                == "attempt_started"
+            )
+            self._rewind_the_wall_clock_under(state_path, seconds=3600.0)
+            # The previous life's file is intact: the step damages nothing
+            # already written, which is what makes the damage this test is
+            # about attributable to the revision restore stamps onto it.
+            assert len(load_persisted_state(state_path).jobs) == 1
+
+            restarted = JobManager(
+                quiesce_controller=ServiceQuiesceController(),
+                max_nonterminal=2,
+                state_path=state_path,
+            )
+            assert restarted.restore_persisted().code == "job_state_restored"
+            interrupted = restarted.get(created.job.id)
+            assert interrupted is not None
+            assert interrupted.state is JobState.INTERRUPTED
+            stamps = interrupted.timestamps
+            assert stamps.finished_at is not None
+            # Removing the floor in `ordered_stamp` puts the interrupt's raw
+            # `time.time()` an hour behind creation and fails these two.
+            assert stamps.state_changed_at >= stamps.created_at
+            assert stamps.finished_at >= stamps.created_at
+
+            # The record the next start actually reads, through the loader
+            # that start uses. Unfloored, this raises "state change predates
+            # creation" and the whole history is quarantined away.
+            reloaded = load_persisted_state(state_path)
+            assert len(reloaded.jobs) == 1
+        finally:
+            owner_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await owner_task
+
+    @pytest.mark.asyncio
+    async def test_a_backwards_clock_step_never_persists_an_early_admission(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The admission clock is stamped outside the transition funnel.
+
+        Admission is recorded as a resource fact rather than a state change,
+        so it reaches the record by its own path and needs the same floor.
+        Its caller reads the wall clock and passes the reading on unchanged,
+        which is where the reading a stepped-back clock produces is supplied
+        here.
+        """
+        from ...job_persistence import load_persisted_state
+
+        state_path = tmp_path / "managed-jobs.json"
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=state_path,
+        )
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                str(tmp_path),
+                JobMode.INCREMENTAL,
+            ),
+            JobInitiator("http", "POST /jobs", str(tmp_path)),
+        )
+        assert created.job is not None
+        owner_task = asyncio.create_task(pending_attempt())
+        try:
+            started = manager.start_attempt(
+                created.job.id,
+                task=owner_task,
+                control=RunControlToken(),
+            )
+            assert started.job is not None
+            assert manager.update_execution_resources(
+                created.job.id,
+                task=owner_task,
+                update=ResourceUpdate(
+                    index_capacity_held=True,
+                    admission_acquired_at=started.job.timestamps.created_at - 3600.0,
+                ),
+            )
+            admitted = manager.get(created.job.id)
+            assert admitted is not None
+            admission = admitted.timestamps.admission_acquired_at
+            assert admission is not None
+            # Removing the floor stores the raw reading and fails this.
+            assert admission >= admitted.timestamps.created_at
+
+            # Unfloored, the next start reads "admission_acquired_at predates
+            # creation" and quarantines the file.
+            assert len(load_persisted_state(state_path).jobs) == 1
+        finally:
+            owner_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await owner_task
