@@ -542,9 +542,7 @@ def _try_http_health(
             # "nothing is there" about a port that demonstrably holds a
             # listener, so it is reported as its own structured outcome, the
             # way the admin path already reports its timeouts.
-            logger.debug(
-                "health probe on port=%d timed out after %.3fs", port, timeout
-            )
+            logger.debug("health probe on port=%d timed out after %.3fs", port, timeout)
             return {
                 "status": "error",
                 "error": _HEALTH_PROBE_TIMEOUT_ERROR,
