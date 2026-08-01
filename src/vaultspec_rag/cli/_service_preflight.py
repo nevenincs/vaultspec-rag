@@ -20,7 +20,12 @@ from .._timestamps import age_seconds
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS, QuiesceState
 from ..serviceclient._compat import SERVICE_VERSION_FIELD, classify_service_version
 from ..serviceclient._discovery import MachineResolution, resolve_machine_service
-from ..serviceclient._transport import _try_http_admin, _try_http_health
+from ..serviceclient._transport import (
+    _get_admin_timeout,
+    _try_http_admin,
+    _try_http_health,
+    health_probe_timed_out,
+)
 from ._app import JsonMode, PortOption, server_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain, address_line
 
@@ -325,13 +330,30 @@ def service_preflight(port: PortOption = None, json_mode: JsonMode = False) -> N
             data=_observation_data(port=resolved_port, version=version_data),
         )
 
-    health = _try_http_health(resolved_port)
+    # The health read here is one of this verb's two evidence reads over the
+    # same wire, so it shares the authenticated read's operator-governed
+    # bound. The probe's shorter default belongs to readiness polls, where a
+    # fast "not up yet" answer is the point; here it turned a busy service
+    # into a false "unreachable" verdict.
+    health = _try_http_health(resolved_port, timeout=_get_admin_timeout())
     if health is None:
         _fail(
             json_mode=json_mode,
             error="service_unreachable",
             message=f"The discovered service on port {resolved_port} is unreachable.",
             data=_observation_data(port=resolved_port),
+        )
+    if health_probe_timed_out(health):
+        # An unanswered probe is not absence: the connection was accepted, so
+        # something holds the port and simply did not answer within the bound.
+        _fail(
+            json_mode=json_mode,
+            error="service_health_timeout",
+            message=(
+                f"The discovered service on port {resolved_port} accepted a "
+                "connection but did not answer the health probe in time."
+            ),
+            data=_observation_data(port=resolved_port, version=version_data),
         )
     service_token = resolution.service_token
     if not _health_matches_discovery(

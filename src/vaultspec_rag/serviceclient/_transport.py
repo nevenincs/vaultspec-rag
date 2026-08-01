@@ -42,6 +42,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
+    Final,
     Literal,
     NoReturn,
     Protocol,
@@ -80,6 +81,7 @@ __all__ = [
     "MAX_SERVICE_RESPONSE_BYTES",
     "ServiceUnavailableError",
     "_do_http_call",
+    "_get_admin_timeout",
     "_get_search_timeout",
     "_is_connection_refused",
     "_logs_route_path",
@@ -97,6 +99,7 @@ __all__ = [
     "_try_http_search",
     "_try_http_set_job_desired_state",
     "_try_http_vault_document",
+    "health_probe_timed_out",
     "resolve_service_port",
 ]
 
@@ -124,6 +127,10 @@ DEFAULT_ADMIN_TIMEOUT_SECONDS: float = _default_seconds("service_admin_timeout_s
 #: Bound for the health probe. Matches the command-line probe it replaces, so
 #: repointed call sites wait exactly as long as they did before.
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 5.0
+#: The ``error`` discriminator :func:`_try_http_health` stamps on a probe that
+#: was accepted but not answered within its bound. One declaration, read only
+#: through :func:`health_probe_timed_out`, so no caller re-spells the string.
+_HEALTH_PROBE_TIMEOUT_ERROR: Final[str] = "health_probe_timeout"
 MAX_SERVICE_RESPONSE_BYTES = 8 * 1024 * 1024
 
 type ReindexType = PublicSourceType | str
@@ -488,8 +495,11 @@ def _try_http_health(
     Returns:
         The parsed body when the service answers; a structured mapping carrying
         ``status`` ``"error"`` and the ``http_code`` when it answers unhealthily
-        (the service is up, so this is not the same as unreachable); or ``None``
-        when it cannot be reached at all. Never raises.
+        (the service is up, so this is not the same as unreachable); a
+        structured mapping recognised by :func:`health_probe_timed_out` when a
+        connection was accepted but no answer arrived within *timeout* (there
+        is something on the port, so this too is not the same as unreachable);
+        or ``None`` when nothing accepted a connection at all. Never raises.
     """
     if (
         connect_timeout is not None
@@ -525,12 +535,37 @@ def _try_http_health(
         # a caller must be able to tell a sick daemon from an absent one.
         return {"status": "error", "http_code": exc.code}
     except Exception as exc:
-        # Connection refused, timeout, a refused redirect, or a body that is not
-        # JSON all mean "no usable answer". The breadth is deliberate because
+        if _is_timeout(exc):
+            # A timeout is not absence: something accepted the connection (or
+            # at least never refused it) and simply did not answer within the
+            # bound. Folding it into the unreachable sentinel would claim
+            # "nothing is there" about a port that demonstrably holds a
+            # listener, so it is reported as its own structured outcome, the
+            # way the admin path already reports its timeouts.
+            logger.debug(
+                "health probe on port=%d timed out after %.3fs", port, timeout
+            )
+            return {
+                "status": "error",
+                "error": _HEALTH_PROBE_TIMEOUT_ERROR,
+                "timeout_seconds": timeout,
+            }
+        # Connection refused, a refused redirect, or a body that is not JSON
+        # all mean "nothing usable is there". The breadth is deliberate because
         # urllib raises many distinct classes here; the debug log keeps the
         # swallow observable rather than silent.
         logger.debug("health probe failed for port=%d: %s", port, exc, exc_info=True)
         return None
+
+
+def health_probe_timed_out(health: dict[str, object] | None) -> bool:
+    """Whether a health-probe result is the accepted-but-unanswered timeout.
+
+    The one place the timeout discriminator is compared, so every adapter
+    renders the same condition from the same test instead of re-spelling the
+    string.
+    """
+    return health is not None and health.get("error") == _HEALTH_PROBE_TIMEOUT_ERROR
 
 
 def _fetch_health_token(port: int, timeout: float | None = None) -> str:
