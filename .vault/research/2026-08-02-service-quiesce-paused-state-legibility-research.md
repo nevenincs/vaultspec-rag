@@ -197,8 +197,7 @@ degrade legibly on an older CLI.
 `quiesce` block carrying `state`, `admission_epoch`, and `safe_to_borrow_gpu`. The CLI
 forwards a fixed six-key allowlist — `db_path`, `backend_capabilities`, `diagnostics`,
 `port`, `timeout_seconds`, `remediation` (`src/vaultspec_rag/cli/_render.py:189-200`) — so
-both are silently dropped. Observed output was `{"ok": false, "command": "search", "error":
-"quiesce_admission_closed", "message": "..."}` and nothing further, at exit 1.
+both are silently dropped. Observed output was `{"ok": false, "command": "search", "error": "quiesce_admission_closed", "message": "..."}` and nothing further, at exit 1.
 
 The retryability is contractual: `.vault/adr/2026-07-24-service-quiesce-adr.md:92` records
 that search requests during transition receive a retryable outcome. It reaches the HTTP
