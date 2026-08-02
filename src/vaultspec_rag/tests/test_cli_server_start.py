@@ -12,9 +12,13 @@ from __future__ import annotations
 import json
 import os
 import socket
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from ..cli import app
 from ..cli._process import _build_service_child_env, _ServiceChildEnvRequest
@@ -287,3 +291,35 @@ class TestStartReorderAndGuards:
             assert env["data"]["holder_pid"] == os.getpid()
         finally:
             release_machine_lock()
+
+    @pytest.mark.usefixtures("isolated_singleton_dirs")
+    def test_an_unnamed_machine_lock_holder_still_refuses_start(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A held lock with an unreadable owner record still owns the machine.
+
+        The OS lock is the authority; a probe that cannot name the holder used
+        to answer pid 0, which read as a free machine and let the start
+        proceed to a spawn that must then lose the singleton race. Mutation:
+        gating the machine guard on a positive holder pid instead of on the
+        held lock returns without raising and fails the expected-exception
+        assertion here.
+        """
+        import typer
+
+        from ..cli._service_start import _guard_start_preconditions
+        from ._unnamed_lock_holder import unnamed_machine_lock_holder
+
+        free = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+        free.close()
+        with unnamed_machine_lock_holder(tmp_path):
+            with pytest.raises(typer.Exit):
+                _guard_start_preconditions(port, True)
+            env = json.loads(capsys.readouterr().out)
+            assert env["ok"] is False
+            assert env["error"] == "machine_owned"
+            assert env["data"]["holder_pid"] == 0

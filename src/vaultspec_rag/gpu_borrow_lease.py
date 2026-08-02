@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import hmac
-import json
 import os
 import secrets
 import threading
@@ -17,7 +16,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, NoReturn, SupportsIndex, TypeGuard
 
-from ._anchor_claim import claim_anchor, release_anchor_claim
+from ._anchor_claim import (
+    claim_anchor,
+    publish_anchor_record,
+    read_anchor_record,
+    release_anchor_claim,
+)
 from ._machine_lock import (
     CapturedMachineLockWitness,
     consume_captured_machine_lock_for_borrower_authority,
@@ -42,6 +46,13 @@ __all__ = [
 
 _GPU_BORROW_LEASE_FILENAME = "gpu-borrower.lock"
 _CAPABILITY_BYTES = 32
+
+# Every private lease record occupies exactly this many bytes on disk, padded
+# with spaces that JSON ignores; the constant width is what keeps an in-place
+# republication from ever exposing an empty or partial record to a concurrent
+# verifier. Sized with ample headroom over the largest possible payload: a
+# 64-bit pid and a 43-character encoded capability come to under 90 bytes.
+_LEASE_RECORD_WIDTH = 128
 
 
 class BorrowerLeaseStatus(StrEnum):
@@ -209,7 +220,11 @@ def _acquire_gpu_borrow_lease_at(
             return None
         capability = _new_capability()
         try:
-            _write_private_record(claim.descriptor, capability)
+            publish_anchor_record(
+                claim.descriptor,
+                {"pid": os.getpid(), "capability": capability},
+                width=_LEASE_RECORD_WIDTH,
+            )
         except BaseException:
             release_anchor_claim(claim.descriptor, pid_record=True)
             raise
@@ -277,21 +292,9 @@ def _new_capability() -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def _write_private_record(descriptor: int, capability: str) -> None:
-    """Write the locked borrower's private process record while it owns the fd."""
-    payload = json.dumps({"pid": os.getpid(), "capability": capability}).encode("utf-8")
-    os.ftruncate(descriptor, 0)
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    os.write(descriptor, payload)
-    os.fsync(descriptor)
-
-
 def _read_recorded_capability(path: Path) -> str | None:
     """Read a valid private lease record without projecting its contents."""
-    try:
-        parsed: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
-        return None
+    parsed = read_anchor_record(path)
     if not _is_json_object(parsed):
         return None
     match parsed:

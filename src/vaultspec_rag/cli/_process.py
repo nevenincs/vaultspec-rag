@@ -126,9 +126,11 @@ def _is_our_service(
     Fallback identity check (no port/token supplied, or
     token-absent in the response): on Windows uses
     ``QueryFullProcessImageNameW`` via ctypes to verify the process
-    executable contains ``"python"``; on Unix inspects
-    ``/proc/{pid}/cmdline`` for the module name; falls back to basic
-    PID liveness when verification is unavailable.
+    executable contains ``"python"``; on Unix inspects the process
+    command line for the module name. An identity that cannot be
+    read is never adopted: every caller uses a positive answer to
+    attach to a pid or terminate it, and a recycled pid whose owner
+    this process cannot inspect must not qualify for either.
 
     Args:
         pid: Process ID to verify.
@@ -175,13 +177,22 @@ def _is_our_service(
     if sys.platform == "win32":
         image = pid_image_path(pid)
         if image is None:
-            return True  # can't query → fall back to PID-alive trust
+            # `pid_image_path` logged why it could not read. Unknown is
+            # never adopted as ours: a pid this process cannot inspect may
+            # be anything, and a positive answer here authorises attaching
+            # to it or killing it.
+            logger.debug(
+                "executable image unreadable for pid=%d; identity unconfirmed",
+                pid,
+            )
+            return False
         return "python" in image.lower()
     cmdline = pid_cmdline(pid)
     if cmdline is None:
-        # Non-procfs systems (BSD, macOS without /proc) - fall back to
-        # PID-alive trust. `pid_cmdline` logged why it could not read.
-        return True
+        # `pid_cmdline` logged why it could not read. Same rule: an
+        # unreadable identity is unconfirmed, never trusted on liveness.
+        logger.debug("cmdline unreadable for pid=%d; identity unconfirmed", pid)
+        return False
     return "vaultspec_rag" in cmdline
 
 

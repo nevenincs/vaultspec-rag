@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import http.server
 import json
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, cast
@@ -591,6 +592,72 @@ class TestServiceDaemonHelpers:
     def test_is_our_service_dead_pid(self):
         """A dead PID should return False."""
         assert _is_our_service(99999999) is False
+
+    def test_is_our_service_rejects_a_live_foreign_process(self):
+        """A live pid carrying no daemon witness is never adopted as ours.
+
+        The pid is real and alive for the whole check, so a positive answer
+        here would authorise attaching to or terminating a process that is
+        not the daemon - the recycled-pid adoption this check exists to
+        refuse. The child is deliberately not a Python interpreter, because
+        the Windows fallback keys on the interpreter image.
+        """
+        import subprocess
+
+        argv = (
+            ["ping", "-n", "60", "127.0.0.1"]
+            if sys.platform == "win32"
+            else ["sleep", "60"]
+        )
+        child = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            assert _is_our_service(child.pid) is False
+        finally:
+            child.kill()
+            child.wait(timeout=10)
+
+    def test_pid_cmdline_reads_a_live_child_argv_on_every_platform(self):
+        """The command-line witness is readable wherever the daemon can run.
+
+        The previous probe parsed procfs directly, so every non-Linux POSIX
+        host answered unknown and the identity fallback had nothing to read.
+        The probe must recover a distinctive token from a real child's argv
+        on whichever platform this suite runs.
+        """
+        import subprocess
+
+        from .._process_probe import pid_cmdline
+
+        token = "cmdline-witness-e5b1"
+        child = subprocess.Popen(
+            [sys.executable, "-c", f"# {token}\nimport time; time.sleep(60)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            cmdline = pid_cmdline(child.pid)
+            assert cmdline is not None
+            assert token in cmdline
+        finally:
+            child.kill()
+            child.wait(timeout=10)
+
+    def test_is_our_service_never_adopts_an_uninspectable_live_pid(self):
+        """A live pid whose identity cannot be read is unconfirmed, not ours.
+
+        Windows pid 4 is the kernel's System process: alive on every boot,
+        image unreadable from user mode by design. POSIX pid 1 is init or
+        launchd: alive on every boot, owned by root, and never this package.
+        Neither is ever the daemon, so a True here is the confident answer
+        derived from an unconfirmable observation this check must not give.
+        """
+        target = 4 if sys.platform == "win32" else 1
+        assert _is_our_service(target) is False
 
     def test_is_our_service_zero(self):
         """PID 0 should return False."""

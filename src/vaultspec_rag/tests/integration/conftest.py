@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from ._frozen_corpus_evidence import FrozenCorpusEvidence
 
 from ..._machine_lock import (
-    machine_lock_live_holder,
     machine_lock_path,
+    probe_machine_lock,
     release_machine_lock,
 )
 from ...config._settings import get_config, reset_config
@@ -290,11 +290,11 @@ def isolated_lock(tmp_path: Path) -> Generator[Path]:
         try:
             release_machine_lock()
             path = machine_lock_path()
-            live_holder = machine_lock_live_holder()
-            if live_holder != 0:
+            live = probe_machine_lock()
+            if live.held:
                 msg = (
                     "refusing to unlink test-owned machine lock while its real "
-                    f"holder {live_holder} is still alive"
+                    f"holder {live.holder_pid} is still alive"
                 )
                 raise AssertionError(msg)
             path.unlink(missing_ok=True)
