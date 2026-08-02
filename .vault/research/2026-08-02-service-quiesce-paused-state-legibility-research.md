@@ -5,7 +5,7 @@ tags:
 date: '2026-08-02'
 modified: '2026-08-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:7341a21153e8c2b273a590259795996bf00fc88f7087ec9f3c3fa732710d9e0a'
+body_hash: 'sha256:33b646f0b99f5b671551e88fe6fc021db5176aa41f89d25f29fbd03445d89a96'
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-research]]'
@@ -84,38 +84,54 @@ explained.
 
 The binding itself is not the defect. It exists to stop an operator resuming underneath a
 live borrower and rebuilding GPU residency while another process is using the card, which
-is the fail-closed property the whole feature was built for. Refusing to bind a pause the
-borrower did not initiate would return that hazard, because the borrower would then proceed
-against a service the operator can resume at will. The open question is narrower: what the
-operator is owed while bound. The candidates are publishing a non-secret bound indicator so
-every surface can say the hold is not theirs to release, publishing an expected-release or
-held-since signal so the wait is bounded in the operator's understanding rather than only
-in fact, capping the bound hold and auto-releasing past the cap, and refusing an operator
-pause outright while a borrower could bind so the two never interleave. They are not
-exclusive, and their costs differ sharply.
+is the fail-closed property the whole feature was built for. So the question is not whether
+to bind but which pauses a borrower may take ownership of, and what the operator is owed
+when it has.
 
-### Adding a snapshot field is a fail-closed breaking change across versions
+Declining to bind a pause the borrower did not initiate is only safe if the borrower also
+declines to borrow. An unbound borrower proceeding against a service the operator can
+resume at will is the original hazard restored. Paired with a refusal it is coherent and
+fail-closed: the borrower is turned away and waits for the operator rather than taking the
+pause from them. Its cost is real and worth stating plainly — the GPU is genuinely free
+during an operator pause, `safe_to_borrow_gpu` reports true, and a borrower that could have
+used it safely is refused anyway because ownership of that pause is not available. The
+operator's ability to undo is bought with some borrower throughput.
 
-Publishing anything new on the controller snapshot is not a free addition. Three consumers
-validate the block against `QUIESCE_ENVELOPE_FIELDS`, which each compiles from its own
-build (`src/vaultspec_rag/service_quiesce.py:180`): the borrower safety gate compares the
-field set for exact equality (`src/vaultspec_rag/cli/_gpu_lease.py:451`), the TUI does the
-same (`src/vaultspec_rag/cli/_jobs_tui.py:145`), and preflight requires an exact field
-count (`src/vaultspec_rag/cli/_service_preflight.py:84`).
+The other candidates are weaker. Capping a bound hold and auto-releasing past the cap
+reopens admission while the borrower may still hold the card, which contradicts the property
+the binding enforces; an operator force-release verb has the same defect with a human
+pressing it. Publishing a non-secret bound indicator carries no such conflict and is
+required by any of them, because a surface that cannot name the holder cannot explain the
+wait. A held-since or expected-release signal is additive to it.
 
-A version skew in either direction therefore fails the block, not just a field. The
-consequence is heaviest on the borrower path: a mismatched set makes the safe-snapshot
-check fail, which refuses GPU borrowing outright rather than degrading. That is correct
-fail-closed behaviour and it is also the exact scenario a bound-indicator field would
-create between adjacent releases. The module's own docstring
-(`src/vaultspec_rag/service_quiesce.py:183-185`) anticipates this: a copy of the name set
-away from the controller turns any added field into a silent rendering failure.
+### A new snapshot field costs a TUI rendering degradation, not borrower safety
 
-The project already carries a release-compatibility mechanism that could refuse a skewed
-pair at discovery before the envelope check is reached, which is one way to land the field.
-The alternative — relaxing the validators to tolerate a superset — weakens the
-reject-a-foreign-block property the borrower gate depends on. Which of the two the field
-rides on is for the decision; that it needs one is not optional.
+Publishing anything new on the controller snapshot is not free, but it is affordable.
+Three consumers validate the block against `QUIESCE_ENVELOPE_FIELDS`, which each compiles
+from its own build (`src/vaultspec_rag/service_quiesce.py:180`): the borrower safety gate
+compares the field set for exact equality (`src/vaultspec_rag/cli/_gpu_lease.py:451`), the
+TUI does the same (`src/vaultspec_rag/cli/_jobs_tui.py:145`), and preflight requires an
+exact field count (`src/vaultspec_rag/cli/_service_preflight.py:84`).
+
+A version skew in either direction therefore fails the whole block, not just the unknown
+field. The module's own docstring (`src/vaultspec_rag/service_quiesce.py:183-185`)
+anticipates it: a copy of the name set away from the controller turns any added field into
+a silent rendering failure.
+
+The cost is nonetheless smaller than that implies, because release compatibility is exact
+version equality — `is_compatible` is true only in the match state
+(`src/vaultspec_rag/serviceclient/_compat.py:99-101`), which is why a `0.4.0` client is
+refused by a `0.4.1` service. The two safety-critical consumers are already behind that
+gate: the borrower resolves compatibility before it may pause
+(`src/vaultspec_rag/cli/_gpu_lease.py:229-234`) and preflight derives compatibility from the
+published version before reading state (`.vault/adr/2026-07-24-service-quiesce-adr.md:81`).
+A mismatched field set is therefore unreachable on those paths — a skewed pair is refused
+earlier, with a clearer error.
+
+That leaves the TUI, which renders the block without a hard version gate and would degrade
+to its `quiesce unavailable` row against a skewed daemon. So a new snapshot field costs one
+release-boundary rendering degradation in the TUI, not a borrower-safety regression, and it
+does not require relaxing the exact-set validators.
 
 ### The mandate already exists and the plan never carried it to the CLI
 
@@ -305,7 +321,8 @@ surface whose most important sentence — what to do about the pause — is stil
 - `src/vaultspec_rag/service_quiesce.py:146`, `:180`, `:367-371`, `:486-490`
 - `src/vaultspec_rag/cli/_status_labels.py:111-126`, `:157-170`, `:261`, `:418-423`
 - `src/vaultspec_rag/cli/_render.py:189-200`
-- `src/vaultspec_rag/cli/_gpu_lease.py:29`, `:150-154`, `:451`
+- `src/vaultspec_rag/cli/_gpu_lease.py:29`, `:150-154`, `:229-234`, `:451`
+- `src/vaultspec_rag/serviceclient/_compat.py:99-101`
 - `src/vaultspec_rag/cli/_jobs_tui.py:145`
 - `src/vaultspec_rag/cli/_service_preflight.py:84`
 - `src/vaultspec_rag/service_quiesce.py:183-185`
