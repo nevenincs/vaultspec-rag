@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#server-watch-observability'
 date: '2026-07-30'
-modified: '2026-07-30'
+modified: '2026-08-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:8b0d66432eaea44d1f125f430df7410566e1babf3580d25d03d393472fcad43e'
+body_hash: 'sha256:63e362b383045e2990b20a9e4d0d1e5e7481ac88fbb6be149b3c03218d543ce4'
 related:
   - "[[2026-07-29-server-watch-observability-plan]]"
 ---
