@@ -150,7 +150,10 @@ def run_with_borrowed_gpu(
     if lease is None:
         raise BorrowGPUError(
             _LEASE_UNAVAILABLE,
-            "Another process already holds the GPU borrower lease.",
+            "Another process already holds the GPU borrower lease, so the "
+            "service is most likely paused for it. The lease is released when "
+            "that work finishes; retry then. Holder identity is deliberately "
+            "not published.",
         )
 
     pause_attempted = False
@@ -464,8 +467,10 @@ def _is_exact_quiesce_snapshot(value: object) -> TypeGuard[dict[str, object]]:
         value["warming_started_at"],
     )
     failure_reason = value["failure_reason"]
+    borrower_bound = value["borrower_bound"]
     return (
-        isinstance(state, str)
+        isinstance(borrower_bound, bool)
+        and isinstance(state, str)
         and state in {item.value for item in QuiesceState}
         and type(epoch) is int
         and epoch >= 0
