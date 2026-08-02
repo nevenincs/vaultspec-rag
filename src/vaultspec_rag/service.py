@@ -1570,10 +1570,20 @@ class ServiceRegistry:
         carried on a transition result: a route that rendered the controller's
         own snapshot would report an unowned hold on exactly the responses where
         ownership is the thing being reported.
+
+        The binding is read without ``self._lock`` deliberately.  That lock is
+        held across model construction, and the watcher reads a snapshot on its
+        intake path, so acquiring it here would let a model load stall watcher
+        handoff.  Reading one attribute is atomic, and the answer is a
+        point-in-time observation either way: the controller half of this
+        snapshot was already taken at a different instant.  The security-
+        relevant comparison in :meth:`borrower_capability_is_bound` still takes
+        the lock, because deciding who may act is not an observation.
         """
-        with self._lock:
-            bound = self._borrower_capability is not None
-        return replace(snapshot, borrower_bound=bound)
+        return replace(
+            snapshot,
+            borrower_bound=self._borrower_capability is not None,
+        )
 
     def validate_borrower_lifecycle_request(
         self,
