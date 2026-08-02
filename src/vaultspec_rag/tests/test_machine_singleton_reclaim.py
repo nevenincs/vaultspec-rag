@@ -12,6 +12,7 @@ for real in a child process and reclaimed for real.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -19,13 +20,15 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+import typer
 
-from .._machine_lock import machine_lock_live_holder
+from .._machine_lock import probe_machine_lock
 from ..cli._service_stop import (
     _reclaim_machine_singleton,
 )
 from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ._unnamed_lock_holder import unnamed_machine_lock_holder
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -104,15 +107,15 @@ def test_reclaim_terminates_a_wedged_machine_holder(isolated_storage: Path) -> N
         # machine lock alone and terminate it. (We assert via the lock, not
         # proc.pid: the venv launcher shim's pid can differ from the python
         # process that actually acquired the lock.)
-        reclaimed = _reclaim_machine_singleton()
+        reclaimed = _reclaim_machine_singleton(False)
         assert reclaimed is not None, "no machine holder was reclaimed"
 
         # The singleton lock is now free - the wedged holder was terminated.
         for _ in range(50):
-            if machine_lock_live_holder() == 0:
+            if not probe_machine_lock().held:
                 break
             time.sleep(0.1)
-        assert machine_lock_live_holder() == 0, "machine lock still held after reclaim"
+        assert not probe_machine_lock().held, "machine lock still held after reclaim"
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -122,4 +125,37 @@ def test_reclaim_terminates_a_wedged_machine_holder(isolated_storage: Path) -> N
 @pytest.mark.usefixtures("isolated_storage")
 def test_reclaim_returns_none_when_no_holder() -> None:
     """With no lock holder, reclaim is a no-op returning ``None``."""
-    assert _reclaim_machine_singleton() is None
+    assert _reclaim_machine_singleton(False) is None
+
+
+def test_probe_reports_a_held_unnameable_lock_as_held(isolated_storage: Path) -> None:
+    """A held lock whose owner record cannot be read is held, never free.
+
+    The OS lock is the authority: something owns the machine even when its
+    published record is garbage, and reporting that as free is what lets a
+    caller spawn a second resident service or report the running one stopped.
+    Mutation: collapsing the contended-but-unnameable observation back into
+    the not-held result fails the ``held is True`` assertion here, while the
+    free case stays pinned by ``test_reclaim_returns_none_when_no_holder``.
+    """
+    with unnamed_machine_lock_holder(isolated_storage):
+        probe = probe_machine_lock()
+        assert probe.held is True, "a held machine lock was reported free"
+        assert probe.holder_pid == 0
+
+
+def test_reclaim_refuses_a_held_lock_it_cannot_name(
+    isolated_storage: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Reclaim over an unnameable holder is a distinct failure, not a no-op.
+
+    Returning ``None`` here would let the stop verb report "not running" over
+    a machine something demonstrably owns. Mutation: treating the unnamed
+    holder as no holder skips the raise and fails on the expected exception.
+    """
+    with unnamed_machine_lock_holder(isolated_storage):
+        with pytest.raises(typer.Exit):
+            _reclaim_machine_singleton(True)
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["error"] == "machine_holder_unnamed"

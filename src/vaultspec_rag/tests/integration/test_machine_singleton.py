@@ -21,7 +21,7 @@ from ..._machine_lock import (
     acquire_machine_lock_lease,
     delete_machine_discovery,
     machine_discovery_path,
-    machine_lock_live_holder,
+    probe_machine_lock,
     publish_machine_discovery,
     release_machine_lock,
     release_machine_lock_lease,
@@ -84,16 +84,16 @@ class TestMachineLock:
             assert acquired is False
             assert holder == holder_pid
             # The advisory-lock probe agrees the holder is live.
-            assert machine_lock_live_holder() == holder_pid
+            assert probe_machine_lock().holder_pid == holder_pid
             # Reproduce the Windows launcher/holder split: awaiting the
             # launcher is not evidence that the actual lock holder exited.
             foreign_holder.terminate_launcher()
-            assert machine_lock_live_holder() == holder_pid
+            assert probe_machine_lock().holder_pid == holder_pid
         finally:
             evidence = foreign_holder.stop()
         assert evidence.lock_released is True
         assert evidence.launcher_alive_at_release is False
-        assert machine_lock_live_holder() == 0
+        assert not probe_machine_lock().held
 
     def test_dead_holder_lock_is_acquirable(self, isolated_lock: Path) -> None:
         # A lock file left by a dead holder carries no OS lock (the OS released
@@ -126,12 +126,12 @@ class TestMachineLock:
             assert isolated_lock.exists()
             assert foreign_holder.launcher_pid != holder_pid
             release_machine_lock()  # we are not the holder
-            assert machine_lock_live_holder() == holder_pid
+            assert probe_machine_lock().holder_pid == holder_pid
         finally:
             evidence = foreign_holder.stop()
         assert evidence.lock_released is True
         assert evidence.launcher_alive_at_release is True
-        assert machine_lock_live_holder() == 0
+        assert not probe_machine_lock().held
 
     def test_pointer_mutation_requires_retained_owner_lease(
         self, isolated_lock: Path
@@ -219,7 +219,7 @@ class TestLosingDaemonBoundary:
 
         incumbent = spawn_foreign_machine_lock_holder(storage)
         try:
-            assert machine_lock_live_holder() == incumbent.holder_pid
+            assert probe_machine_lock().holder_pid == incumbent.holder_pid
             assert not pointer.exists()
 
             env = dict(os.environ)
@@ -300,9 +300,9 @@ class TestLosingDaemonBoundary:
             )
 
             # The incumbent still owns the singleton, untouched.
-            assert machine_lock_live_holder() == incumbent.holder_pid
+            assert probe_machine_lock().holder_pid == incumbent.holder_pid
         finally:
             evidence = incumbent.stop()
         assert evidence.lock_released is True
-        assert machine_lock_live_holder() == 0
+        assert not probe_machine_lock().held
         assert isolated_lock.exists()
