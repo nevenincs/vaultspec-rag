@@ -28,6 +28,7 @@ from .._machine_lock import (
 from .._runtime_identity import interpreter_fields
 from ..capabilities import backend_capabilities_dict
 from ..logging_config import log_event
+from ..service_quiesce import QuiesceState
 from ._lifecycle import (
     _QDRANT_CLIENT_OP_TIMEOUT_SECONDS,
     RunningClaimContendedError,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from ..qdrant_runtime._constants import QdrantRuntimeState
     from ..qdrant_runtime._supervise import QdrantSupervisor
     from ..service import ServiceHealth, ServiceRegistry
+    from ..service_quiesce import QuiesceSnapshot
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -909,19 +911,39 @@ async def _shutdown_components(
         )
 
 
+def _initial_health_verdict(reg_health: ServiceHealth, *, held: bool) -> str:
+    """Choose the verdict before infrastructure degradation is folded in.
+
+    A held service is neither ready nor broken, so it gets its own answer rather
+    than the closest of three that do not fit it.
+    """
+    if held:
+        return "paused"
+    if reg_health["model_loaded"]:
+        return "ready"
+    return "degraded" if _m._start_time > 0 else "error"
+
+
 def _service_health_status(
     reg_health: ServiceHealth,
     qdrant_state: QdrantRuntimeState,
+    quiesce: QuiesceSnapshot,
 ) -> tuple[str, list[str]]:
-    """Resolve service readiness and its infrastructure degradation reasons."""
-    if reg_health["model_loaded"]:
-        status = "ready"
-    elif _m._start_time > 0:
-        status = "degraded"
-    else:
-        status = "error"
+    """Resolve service readiness and its infrastructure degradation reasons.
+
+    A held service is reported as held rather than as broken.  Pause releases
+    resident GPU components on purpose, so inferring the verdict from model
+    residency alone reported the pause's own success criterion as a fault and
+    sent operators to a repair command for a service with nothing wrong with it.
+    The controller is asked first, and its answer wins: ``ready``, ``degraded``
+    and ``error`` all describe a service that is trying to serve, which a
+    deliberately held one is not.
+    """
+    held = quiesce.state is not QuiesceState.RUNNING
+    status = _initial_health_verdict(reg_health, held=held)
     degraded_reasons: list[str] = []
-    if not reg_health["model_loaded"]:
+    # Absent models are a fault only when nobody asked for them to be absent.
+    if not reg_health["model_loaded"] and not held:
         degraded_reasons.append("embedding models are not loaded")
     if qdrant_state.mode == "server" and not qdrant_state.alive:
         degraded_reasons.append("the configured vector service is not live")
@@ -1213,12 +1235,17 @@ async def health_handler(request: Request) -> object:
 
     runtime = get_request_runtime(request)
     reg_health = runtime.registry.health()
-    quiesce = runtime.registry.quiesce_snapshot().as_envelope()
+    quiesce_snapshot = runtime.registry.quiesce_snapshot()
+    quiesce = quiesce_snapshot.as_envelope()
     uptime = _uptime_seconds()
     from ..qdrant_runtime import _supervise
 
     qdrant_state = _supervise.runtime_state()
-    status, degraded_reasons = _service_health_status(reg_health, qdrant_state)
+    status, degraded_reasons = _service_health_status(
+        reg_health,
+        qdrant_state,
+        quiesce_snapshot,
+    )
     jobs_health, jobs_degraded_reasons = _jobs_health()
     degraded_reasons.extend(jobs_degraded_reasons)
 

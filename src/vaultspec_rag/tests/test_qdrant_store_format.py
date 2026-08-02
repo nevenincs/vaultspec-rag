@@ -49,6 +49,7 @@ from ..server._lifespan import (
 )
 from ..store_schema import CONFORMING, NONCONFORMING, UNVERIFIABLE
 from ._ports import free_loopback_port
+from ._quiesce_helpers import running_quiesce_snapshot
 from .conftest import managed_env
 
 if TYPE_CHECKING:
@@ -416,7 +417,9 @@ class TestQuarantineReachesHealth:
 
     def test_clean_store_stays_ready(self) -> None:
         status, reasons = _service_health_status(
-            self._health(), self._server_qdrant([])
+            self._health(),
+            self._server_qdrant([]),
+            running_quiesce_snapshot(),
         )
         assert status == "ready"
         assert reasons == []
@@ -432,6 +435,7 @@ class TestQuarantineReachesHealth:
         status, reasons = _service_health_status(
             self._health(),
             self._server_qdrant(["r0abc_vault_docs.20260725T101500Z"]),
+            running_quiesce_snapshot(),
         )
 
         assert status == "degraded"
@@ -448,6 +452,7 @@ class TestQuarantineReachesHealth:
         status, reasons = _service_health_status(
             self._health(),
             self._server_qdrant(["r0abc_vault_docs.20260725T101500Z"]),
+            running_quiesce_snapshot(),
         )
         payload: dict[str, object] = {
             "status": status,
@@ -479,7 +484,9 @@ class TestQuarantineReachesHealth:
             port=6333,
             extra={"quarantined": ["r0abc_vault_docs.20260725T101500Z"]},
         )
-        status, reasons = _service_health_status(self._health(), qdrant)
+        status, reasons = _service_health_status(
+            self._health(), qdrant, running_quiesce_snapshot()
+        )
         payload: dict[str, object] = {
             "status": status,
             "degraded_reasons": reasons,
@@ -645,7 +652,9 @@ class TestMigrationReachesHealth:
 
     def test_unmigrated_store_stays_ready(self) -> None:
         status, reasons = _service_health_status(
-            self._health(), self._server_qdrant("")
+            self._health(),
+            self._server_qdrant(""),
+            running_quiesce_snapshot(),
         )
 
         assert status == "ready"
@@ -661,7 +670,9 @@ class TestMigrationReachesHealth:
         attempting to go back.
         """
         status, reasons = _service_health_status(
-            self._health(), self._server_qdrant("1.15.4")
+            self._health(),
+            self._server_qdrant("1.15.4"),
+            running_quiesce_snapshot(),
         )
 
         assert status == "degraded"
@@ -675,7 +686,9 @@ class TestMigrationReachesHealth:
         not tell which binary to reinstall to read the store as it was.
         """
         _, reasons = _service_health_status(
-            self._health(), self._server_qdrant("1.15.4")
+            self._health(),
+            self._server_qdrant("1.15.4"),
+            running_quiesce_snapshot(),
         )
         migration = [r for r in reasons if "carried across" in r]
 
@@ -692,7 +705,9 @@ class TestMigrationReachesHealth:
         - the parts that are actually lost.
         """
         status, reasons = _service_health_status(
-            self._health(), self._server_qdrant("1.15.4")
+            self._health(),
+            self._server_qdrant("1.15.4"),
+            running_quiesce_snapshot(),
         )
         payload: dict[str, object] = {
             "status": status,
@@ -725,7 +740,9 @@ class TestMigrationReachesHealth:
                 "migrated_from": "1.15.4",
             },
         )
-        status, reasons = _service_health_status(self._health(), qdrant)
+        status, reasons = _service_health_status(
+            self._health(), qdrant, running_quiesce_snapshot()
+        )
         payload: dict[str, object] = {
             "status": status,
             "degraded_reasons": reasons,
