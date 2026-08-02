@@ -4,7 +4,7 @@ tags:
   - '#service-quiesce'
 date: '2026-07-24'
 modified: '2026-08-02'
-body_hash: 'sha256:c99962002052d59f32f55642d3ae141be4485bb4214f176a0ee30215e6493075'
+body_hash: 'sha256:8e055051e810f6782021f012d0e8599ebcfdb46e57870e1b1d2e89fb2e52dc80'
 related:
   - '[[2026-07-24-service-quiesce-research]]'
   - '[[2026-06-12-service-concurrency-adr]]'
@@ -60,6 +60,9 @@ The shipped hold gate can report pause before compute drains or resident GPU mem
 - The controller publishes whether a quiescence is borrower-bound as a non-secret boolean witness. It states that a hold exists and nothing about who holds it, so it is neither the capability nor the PID and remains inside the secrecy constraint above.
 - `safe_to_borrow_gpu` continues to describe the device, not availability of ownership. It may report true on a quiescence no borrower is permitted to bind, and no surface may read it as permission to borrow.
 - Every lifecycle refusal carries a human-readable sentence in its message distinct from its error code. A message that repeats the code is not a message.
+- A deliberate quiescence is never reported as a degradation. While the controller is not `running`, the health verdict names that state rather than inferring one from model residency, and GPU residency the controller itself released is not a degradation reason.
+- An operator surface reporting service condition names the hold and the work it holds. Work held by a pause is not idle, and a surface that omits the hold while reporting its side effects is contradicting the controller rather than rendering it.
+- Remediation offered against a hold is remediation that can end it, selected by the bound witness. Where no operator action can end the hold, none is offered; a command that cannot resolve the condition is worse than silence.
 - GPU pytest and CI never provision Qdrant, run a direct GPU-admission preflight, or start the resident service. The self-hosted GPU runner supplies a compatible resident service published through its original machine pointer, plus the pinned, manifest-verified Qdrant binary only when a selected test's fixture closure requires an isolated Qdrant child; test code may read and mirror that evidence, but a missing prerequisite is a tier refusal rather than an install instruction. A performance selection without that fixture is excluded. GPU ownership remains exclusively the borrower coordinator's concern.
 
 ## Implementation
@@ -73,6 +76,8 @@ Resume enters `warming` and rebuilds the GPU stack while compute admission remai
 If recovery preparation or its persistence fails, resume returns the typed non-success outcome `resume_recovery_failed`, leaves the controller in `warming` with admissions closed, and schedules no work. A later resume retries the same `paused`-plus-`queued`, desired-`running` scan so partial durable preparation converges without allocating a new logical job ID. This failure is an outcome within the existing four-state machine, not a fifth state.
 
 The service route owns this contract. CLI pause/resume renders the route's one JSON envelope and exits zero only for the achieved terminal state. Health, service-state, jobs output, MCP service-state, and the TUI render the same controller block. The existing pressure block remains an independent advisory.
+
+Rendering that block is necessary and not sufficient, because a surface can carry it and still contradict it in the lines an operator actually reads. The health verdict therefore gains a state expressing deliberate quiescence, distinct from ready, degraded, and error; released residency stops being a degradation reason while the controller owns that release; and the condition rows that report readiness and busyness read the controller before describing either. Held work is reported as held rather than folded into an idle count. The next action offered against a hold is chosen by the bound witness: resume for a hold the operator owns, and for a bound hold a statement that it will clear when the borrower releases, with no command that would only be refused. Release of the field set stays exact-version-gated, so the canonical vocabulary is compared only between matching builds.
 
 A borrower uses a second, machine-global advisory lock beside the identity lock. Acquisition creates a private lease record containing the holder PID and a 32-byte cryptographically random, base64url opaque capability; the raw capability is held by the borrower and is valid only while that OS lock remains held, with no clock-based expiry. The borrower obtains and retains that lease before calling authenticated `POST /pause` with the optional JSON field `borrower_capability`, and calls authenticated `POST /resume` with the same field before releasing the lease. Calls without that optional field remain the ordinary operator pause/resume flow.
 
@@ -105,4 +110,5 @@ Resource quiescence is the smallest truthful lifecycle contract: it preserves se
 - An operator pause stays releasable by the operator who requested it. The device may sit idle during one even though it is safe to borrow, because a borrower arriving mid-pause is refused rather than given ownership. Borrower throughput pays for the operator keeping their undo.
 - A borrower that must run during an operator pause has no supported path other than waiting for that operator to resume. No handoff verb exists; adding one is a later decision, not an implied part of this one.
 - A bound quiescence remains releasable only by its borrower or by lease loss, and nothing here bounds how long that takes. The change makes the wait explicable, not shorter.
+- A paused service stops reading as a broken one. The cost is a new health state that every consumer of the verdict must branch on, including the start path and the jobs view, and a verdict that is no longer a three-value enum.
 - The published snapshot gains a field, so a client and daemon at different releases disagree on the canonical field set. Exact-version release compatibility already refuses that pair on the borrower and preflight paths before the set is validated; the jobs view, which renders without a hard version gate, degrades to its controller-unavailable row for the duration of a mixed-release window.
