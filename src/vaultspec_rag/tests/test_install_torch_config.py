@@ -863,6 +863,53 @@ class TestErrorBranches:
             if path.is_file()
         } == before
 
+    def test_install_succeeds_when_temp_dir_is_reached_through_a_symlink(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A symlinked temp root must not abort the topology preflight.
+
+        The provider-path projection is built under the system temp
+        directory and handed to Core, which resolves the workspace root it
+        is given. Translating those resolved paths back against an
+        unresolved projection prefix raises, aborting install before any
+        torch, MCP-extra, or provisioning work and leaving every report
+        action at its ``skipped`` default. macOS has this shape by
+        default: ``TMPDIR`` lives under ``/var``, a symlink to
+        ``/private/var``. Reproduced here by pointing the temp directory
+        at a symlink on any platform.
+        """
+        real_tmp = tmp_path / "real-tmp"
+        real_tmp.mkdir()
+        linked_tmp = tmp_path / "linked-tmp"
+        try:
+            linked_tmp.symlink_to(real_tmp, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            # Windows needs Developer Mode or admin to create a symlink at
+            # all, so the condition under test cannot be constructed.
+            pytest.skip(f"cannot create a directory symlink here: {exc}")
+        assert linked_tmp.resolve() != linked_tmp
+
+        for variable in ("TMPDIR", "TEMP", "TMP"):
+            monkeypatch.setenv(variable, str(linked_tmp))
+        monkeypatch.setattr("tempfile.tempdir", None)
+
+        ws = tmp_path / "consumer"
+        ws.mkdir()
+        (ws / "pyproject.toml").write_text(PROJECT_ONLY, encoding="utf-8", newline="")
+
+        report = install_run(path=ws, assume_yes=True, provision=False)
+
+        # Mutating an unresolved-prefix regression back in flips these to
+        # "skipped" and populates mcp_errors with a preflight failure.
+        assert report.torch_config_action == "applied"
+        assert not report.mcp_sync_failed
+        assert not any(
+            "required MCP topology preflight failed" in item
+            for item in report.mcp_errors
+        )
+        state = _inspect.detect_state(ws / "pyproject.toml")
+        assert state == TorchConfigState.CANONICAL
+
 
 class TestSyncSilentDrop:
     """INSTALL-04 regression: ``--sync`` without an applied patch must
