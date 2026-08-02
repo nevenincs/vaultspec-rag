@@ -5,7 +5,7 @@ tags:
 date: '2026-08-02'
 modified: '2026-08-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:dfebc55aaf6d646ac8f8a9e9d65bac363d4c61d2f616dbf6337404b49a050fff'
+body_hash: 'sha256:da61c75bfbd8d0d2ae0cf1c2995cbebc8e3add35ab850abdb87675d5be8b1558'
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-research]]'
@@ -44,6 +44,22 @@ already-quiesced service returns `ALREADY_QUIESCED` with `achieved: true`
 calling pause on a service an operator already quiesced, so the binding is recorded at
 `src/vaultspec_rag/server/_routes.py:1254`. The borrower never needed to cause the pause
 to own it.
+
+Reproduced against the live service on `vaultspec-rag@0.4.1` on 2026-08-02, driving the
+production borrower APIs from the service's own interpreter. An operator pause carrying no
+capability reached `quiesced` at `admission_epoch: 11`. A borrower then acquired the
+machine lease and called pause on that already-quiesced service, receiving `ok: true` with
+`status: already_quiesced` — a call that changed no state and yet took ownership of it. The
+operator's own unqualified resume was then refused with `ok: false`,
+`status: borrower_lease_required`, `retryable: true`, and the controller still reporting
+`state: quiesced`. Only the borrower-qualified resume restored the service, at
+`admission_epoch: 12`. The capture is real, and it is reachable through documented public
+routes with no misuse.
+
+That refusal envelope carries its own legibility defect: `message` is the literal string
+`borrower_lease_required`, a repeat of the error code rather than a sentence. Any surface
+that renders `message` shows an operator a bare token for the one condition they most need
+explained.
 
 From that point the operator has no lever. An unqualified resume is refused at the route
 before the controller is reached (`src/vaultspec_rag/server/_routes.py:1265-1271`, with the
@@ -223,12 +239,14 @@ movement is exactly the trade-off the ADR must weigh rather than research.
 
 ### Not investigated
 
-The borrower-capture sequence was established by reading the binding path and the
-transition codes, not by reproducing it against a live borrower. The paused-surface
-captures were taken live; the capture hazard was not. Reproducing it needs a second process
-holding the borrower lease across an operator pause, which was out of scope for a
-read-only investigation on a shared machine. That reproduction is the first thing to do
-before acting on the hazard, and it is what would confirm the refusal path end to end.
+The heartbeat recovery path was not forced. The reproduction restored the service through
+the borrower-qualified resume rather than by releasing the lease and waiting, because the
+former cannot be refused by a process holding the capability and the latter would have left
+search closed machine-wide for an unbounded interval. Recovery after borrower death or
+release is therefore still evidenced only by the accepted record
+(`.vault/adr/2026-07-24-service-quiesce-adr.md:70`) and the reported incident, not by
+observation here. How long that recovery takes, and whether it is bounded at all, is the
+open measurement.
 
 MCP tool-level rendering was not observed: the connected client is `0.4.0` against a
 `0.4.1` service, and the version-compatibility refusal masks the paused-state response.
@@ -269,3 +287,4 @@ surface whose most important sentence — what to do about the pause — is stil
 - `src/vaultspec_rag/cli/_jobs_tui.py:36`, `:137-141`, `:2106`, `:2110-2132`
 - `src/vaultspec_rag/cli/_service_start.py:396`
 - Live capture of `vaultspec-rag server status` and `vaultspec-rag search`, `vaultspec-rag@0.4.1`, 2026-08-02, controller `admission_epoch: 9`
+- Live reproduction of borrower capture against `vaultspec-rag@0.4.1`, 2026-08-02, controller `admission_epoch: 11` through `12`
