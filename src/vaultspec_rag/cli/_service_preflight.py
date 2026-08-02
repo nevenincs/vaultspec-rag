@@ -81,6 +81,7 @@ def _strict_quiesce(value: object) -> dict[str, object] | None:
             "quiesced_at": (int() | float() | None) as quiesced_at,
             "warming_started_at": (int() | float() | None) as warming_started_at,
             "failure_reason": (str() | None) as failure_reason,
+            "borrower_bound": bool(),
         } if _has_expected_mapping_size(value, len(QUIESCE_ENVELOPE_FIELDS)):
             timestamps = (
                 pause_requested_at,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import secrets
 import subprocess
@@ -413,6 +414,24 @@ def _borrower_routes() -> Generator[BorrowerRoutes]:
         yield BorrowerRoutes(client, registry)
 
 
+def _assert_bound_witness(response: _RouteResponse, *, bound: bool) -> None:
+    """Assert the published ownership witness on one lifecycle envelope."""
+    match _response_payload(response):
+        case {"quiesce": {"borrower_bound": bool() as witness}}:
+            assert witness is bound
+        case payload:
+            pytest.fail(f"envelope carried no ownership witness: {payload!r}")
+
+
+def _assert_achieved_state(response: _RouteResponse, state: str) -> None:
+    """Assert one achieved lifecycle transition reached *state*."""
+    match _response_payload(response):
+        case {"ok": True, "quiesce": {"state": str() as reached}}:
+            assert reached == state
+        case payload:
+            pytest.fail(f"unexpected achieved envelope: {payload!r}")
+
+
 def _response_payload(response: _RouteResponse) -> object:
     """Read one successful HTTP response as an opaque JSON value."""
     assert response.status_code == 200
@@ -454,7 +473,13 @@ def _assert_borrower_refusal(
         }:
             assert status == reason
             assert error == reason
-            assert message == reason
+            # The code names the condition for a machine; the message has to
+            # explain it to a person. Asserting only "not the code" would pass
+            # for a single word, so require prose: several words, ending in a
+            # full stop, and never the bare token an operator cannot act on.
+            assert message != reason
+            assert message.endswith(".")
+            assert len(message.split()) >= 5
             assert quiesce_state == state
         case payload:
             pytest.fail(f"unexpected borrower refusal envelope: {payload!r}")
@@ -735,3 +760,92 @@ def test_valid_capability_without_a_live_lease_is_refused(tmp_path: Path) -> Non
             "borrower_lease_not_held",
             state="running",
         )
+
+
+def test_a_borrower_cannot_take_ownership_of_an_operator_held_pause(
+    tmp_path: Path,
+) -> None:
+    """An operator keeps the undo for the pause they asked for.
+
+    This is the reproduction that failed before ownership was bound to the
+    request that produced the state: the borrower's pause changed nothing, was
+    answered as already-quiesced, and inherited the hold anyway, after which the
+    operator's own resume was refused until the borrower exited.
+    """
+    with (
+        _isolated_borrower_anchor(tmp_path),
+        _borrower_process() as borrower,
+        _borrower_routes() as routes,
+    ):
+        operator_pause = routes.client.post("/pause", headers=_HEADERS, json={})
+        _assert_pause_success(operator_pause)
+        _assert_bound_witness(operator_pause, bound=False)
+
+        stolen = routes.client.post(
+            "/pause",
+            headers=_HEADERS,
+            json={"borrower_capability": borrower.capability},
+        )
+        _assert_borrower_refusal(stolen, "borrower_pause_not_owned", state="quiesced")
+        _assert_bound_witness(stolen, bound=False)
+
+        # The refusal changed no state, so the operator's own resume still works.
+        operator_resume = routes.client.post("/resume", headers=_HEADERS, json={})
+        _assert_achieved_state(operator_resume, "running")
+
+
+def test_a_borrower_repeating_its_own_pause_stays_idempotent(tmp_path: Path) -> None:
+    """Retry after a lost response must not read as an attempted takeover.
+
+    The ownership rule refuses a pause that only observed an existing hold, and
+    a borrower retrying its own call is exactly that shape. It is allowed
+    because the binding it would be granted is the one it already holds.
+    """
+    with (
+        _isolated_borrower_anchor(tmp_path),
+        _borrower_process() as borrower,
+        _borrower_routes() as routes,
+    ):
+        first = routes.client.post(
+            "/pause",
+            headers=_HEADERS,
+            json={"borrower_capability": borrower.capability},
+        )
+        _assert_pause_success(first)
+        _assert_bound_witness(first, bound=True)
+
+        retry = routes.client.post(
+            "/pause",
+            headers=_HEADERS,
+            json={"borrower_capability": borrower.capability},
+        )
+        _assert_achieved_state(retry, "quiesced")
+        _assert_bound_witness(retry, bound=True)
+
+
+def test_the_bound_witness_names_a_hold_without_naming_its_holder(
+    tmp_path: Path,
+) -> None:
+    """The witness says a hold is owned, never by whom, and clears on release."""
+    with (
+        _isolated_borrower_anchor(tmp_path),
+        _borrower_process() as borrower,
+        _borrower_routes() as routes,
+    ):
+        paused = routes.client.post(
+            "/pause",
+            headers=_HEADERS,
+            json={"borrower_capability": borrower.capability},
+        )
+        _assert_bound_witness(paused, bound=True)
+        serialised = json.dumps(_response_payload(paused))
+        assert borrower.capability not in serialised
+        assert "pid" not in serialised
+
+        released = routes.client.post(
+            "/resume",
+            headers=_HEADERS,
+            json={"borrower_capability": borrower.capability},
+        )
+        _assert_achieved_state(released, "running")
+        _assert_bound_witness(released, bound=False)

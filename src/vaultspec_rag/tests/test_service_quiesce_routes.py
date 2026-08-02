@@ -23,7 +23,11 @@ from ..job_models import (
 )
 from ..server import ServerRouteRuntime, create_http_app
 from ..service import ServiceRegistry
-from ..service_quiesce import QuiesceState, QuiesceTransition
+from ..service_quiesce import (
+    QUIESCE_ENVELOPE_FIELDS,
+    QuiesceState,
+    QuiesceTransition,
+)
 from ._job_roots import _TEST_PROJECT_ROOT
 from ._quiesce_helpers import QUIESCE_THREAD_TIMEOUT, wait_for_quiesce_state
 
@@ -35,20 +39,13 @@ pytestmark = [pytest.mark.unit]
 
 _TOKEN = "quiesce-route-token"
 _HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
-_ENVELOPE_KEYS = {
-    "state",
-    "admission_epoch",
-    "admissions_open",
-    "active_compute_tickets",
-    "drain_complete",
-    "vram_released",
-    "safe_to_borrow_gpu",
-    "pause_requested_at",
-    "drain_acknowledged_at",
-    "quiesced_at",
-    "warming_started_at",
-    "failure_reason",
-}
+#: The canonical controller vocabulary, derived rather than restated.
+#: Three copies of this literal used to sit in three test modules, which
+#: is the duplication the controller module warns about: a field added to
+#: the snapshot turned into three unrelated failures that each looked
+#: like a projection bug. The literal names are pinned once, in the
+#: controller's own contract test.
+_ENVELOPE_KEYS = QUIESCE_ENVELOPE_FIELDS
 
 
 class QuiesceRoutes(NamedTuple):

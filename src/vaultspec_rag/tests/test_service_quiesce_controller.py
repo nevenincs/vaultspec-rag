@@ -8,6 +8,7 @@ from typing import get_args
 import pytest
 
 from ..service_quiesce import (
+    QUIESCE_ENVELOPE_FIELDS,
     QuiesceAdmissionClosedError,
     QuiesceState,
     QuiesceTransition,
@@ -316,3 +317,34 @@ def test_every_accepted_terminal_failure_code_has_a_failure_target() -> None:
 def test_import_time_pin_accepts_the_shipped_vocabulary() -> None:
     """The import-time drift guard passes against the shipped enum."""
     _pin_terminal_failure_codes()
+
+
+def test_published_vocabulary_is_pinned_by_name() -> None:
+    """Pin the controller's published field names, once, for the whole tree.
+
+    The projection tests derive their expectation from this same constant so a
+    new field does not read as three unrelated bugs. That derivation cannot see
+    a field being renamed or dropped, because the expectation moves with it.
+    This is the one place the names are written down, so it is the one place
+    that notices.
+    """
+    assert (
+        frozenset(
+            {
+                "state",
+                "admission_epoch",
+                "admissions_open",
+                "active_compute_tickets",
+                "drain_complete",
+                "vram_released",
+                "safe_to_borrow_gpu",
+                "pause_requested_at",
+                "drain_acknowledged_at",
+                "quiesced_at",
+                "warming_started_at",
+                "failure_reason",
+                "borrower_bound",
+            },
+        )
+        == QUIESCE_ENVELOPE_FIELDS
+    )
