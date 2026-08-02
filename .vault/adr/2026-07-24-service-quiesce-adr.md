@@ -14,6 +14,7 @@ related:
   - '[[2026-07-28-pressure-management-adr]]'
   - '[[2026-08-02-service-quiesce-paused-state-legibility-research]]'
 ---
+
 # `service-quiesce` adr: `Acknowledged global resource quiescence` | (**status:** `accepted`)
 
 ## Problem Statement
