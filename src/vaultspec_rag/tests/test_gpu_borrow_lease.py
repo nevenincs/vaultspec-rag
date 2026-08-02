@@ -21,8 +21,10 @@ from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..gpu_borrow_lease import (
     BorrowerLeaseStatus,
+    _read_recorded_capability,
     acquire_gpu_borrow_lease,
     borrower_lease_status,
+    gpu_borrow_lease_path,
     release_gpu_borrow_lease,
 )
 from ..server import ServerRouteRuntime, create_http_app
@@ -849,3 +851,142 @@ def test_the_bound_witness_names_a_hold_without_naming_its_holder(
         )
         _assert_achieved_state(released, "running")
         _assert_bound_witness(released, bound=False)
+
+
+# Verifications taken against a holder that is republishing its private lease
+# record. The truncate-then-write order this guards against leaves the anchor
+# empty for a slice of every publication, so a few hundred samples put several
+# hits inside a reverted build and none inside a correct one.
+_LEASE_RACE_SAMPLES = 400
+
+_REPUBLISH_LEASE_RECORD = """
+import os
+import sys
+from pathlib import Path
+
+from vaultspec_rag._anchor_claim import (
+    claim_anchor,
+    publish_anchor_record,
+    release_anchor_claim,
+)
+from vaultspec_rag.gpu_borrow_lease import _LEASE_RECORD_WIDTH, _new_capability
+from vaultspec_rag.tests._child_signal import publish_marker
+
+anchor = Path(sys.argv[1])
+marker = sys.argv[2]
+stop = Path(sys.argv[3])
+claim = claim_anchor(anchor, pid_record=True, create_parent=True)
+assert claim.descriptor is not None, claim
+record = {"pid": os.getpid(), "capability": _new_capability()}
+try:
+    publish_anchor_record(claim.descriptor, record, width=_LEASE_RECORD_WIDTH)
+    publish_marker(marker, str(record["capability"]))
+    while not stop.exists():
+        publish_anchor_record(claim.descriptor, record, width=_LEASE_RECORD_WIDTH)
+finally:
+    release_anchor_claim(claim.descriptor, pid_record=True)
+"""
+
+
+def test_republished_lease_record_is_never_verified_invalid(tmp_path: Path) -> None:
+    """A holder replacing its private record never reads as capability-invalid.
+
+    The record is published in place - the OS lock making the lease
+    authoritative is bound to the anchor file, so it cannot be swapped in by
+    rename - which makes write order the whole guarantee. Mutation: restoring
+    a truncate-then-write order in the shared record publication empties the
+    anchor between the two calls, and this assertion fires with a non-zero
+    count of held-lease-read-as-invalid verifications.
+    """
+    with _isolated_borrower_anchor(tmp_path):
+        anchor = gpu_borrow_lease_path()
+        marker = tmp_path / "republish-ready"
+        stop = tmp_path / "republish-stop"
+        with child_stderr() as diagnostics:
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    _REPUBLISH_LEASE_RECORD,
+                    str(anchor),
+                    str(marker),
+                    str(stop),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=diagnostics.sink,
+                text=True,
+            )
+            try:
+                capability = await_marker(
+                    marker, process, timeout=_PROCESS_TIMEOUT_SECONDS
+                )
+                assert capability is not None, (
+                    f"republishing lease holder did not start: {diagnostics.read()}"
+                )
+                # A fixed sample COUNT, not a fixed duration: the count carries
+                # the statistical power, and a loaded machine must not quietly
+                # reduce it to a handful of reads that prove nothing.
+                torn = 0
+                samples = 0
+                deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
+                while samples < _LEASE_RACE_SAMPLES:
+                    assert time.monotonic() < deadline, (
+                        f"only reached {samples} samples"
+                    )
+                    status = borrower_lease_status(capability)
+                    samples += 1
+                    if status is not BorrowerLeaseStatus.HELD:
+                        torn += 1
+                assert torn == 0, (
+                    f"{torn} of {samples} verifications of a held lease could "
+                    "not read its capability while the holder republished its "
+                    "record"
+                )
+            finally:
+                stop.write_text("stop", encoding="ascii")
+                try:
+                    process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                assert process.returncode == 0, diagnostics.read()
+
+
+def test_unpadded_lease_record_from_an_earlier_build_is_still_read(
+    tmp_path: Path,
+) -> None:
+    """The compact record an earlier build wrote still yields its capability.
+
+    Builds that predate the fixed-width frame wrote the same two-key JSON
+    object without padding, so the reader must recover it unchanged. Mutation:
+    requiring the padded width, or parsing anything but the leading JSON
+    document, loses this record and fails the equality below.
+    """
+    capability = _unrelated_capability()
+    record_path = tmp_path / "gpu-borrower.lock"
+    record_path.write_text(
+        json.dumps({"pid": 12345, "capability": capability}),
+        encoding="utf-8",
+    )
+
+    assert _read_recorded_capability(record_path) == capability
+
+
+def test_published_lease_record_stays_readable_as_plain_json(
+    tmp_path: Path,
+) -> None:
+    """The frame a build with no knowledge of the padding still parses whole.
+
+    Earlier readers parse the entire file as one JSON document, so the fixed
+    width must be carried as trailing whitespace inside that same document.
+    Mutation: padding with anything JSON does not ignore, or appending the
+    width outside the object, fails this parse.
+    """
+    with _isolated_borrower_anchor(tmp_path):
+        lease = acquire_gpu_borrow_lease()
+        assert lease is not None
+        try:
+            parsed = json.loads(gpu_borrow_lease_path().read_text(encoding="utf-8"))
+            assert parsed == {"pid": os.getpid(), "capability": lease.capability}
+        finally:
+            release_gpu_borrow_lease(lease)

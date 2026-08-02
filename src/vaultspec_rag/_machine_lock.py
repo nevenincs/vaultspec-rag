@@ -43,14 +43,15 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CapturedMachineLockWitness",
     "MachineLockLease",
+    "MachineLockProbe",
     "PreIsolationMachineLock",
     "acquire_machine_lock",
     "acquire_machine_lock_lease",
     "capture_pre_isolation_machine_lock",
     "delete_machine_discovery",
     "machine_discovery_path",
-    "machine_lock_live_holder",
     "machine_lock_path",
+    "probe_machine_lock",
     "publish_machine_discovery",
     "read_machine_discovery",
     "release_machine_lock",
@@ -438,13 +439,31 @@ def consume_captured_machine_lock_for_borrower_authority(
     return record.identity_lock_path.with_name("gpu-borrower.lock")
 
 
-def machine_lock_live_holder() -> int:
-    """Return the pid of a *live* lock holder, or 0 when free/stale.
+@dataclass(frozen=True, slots=True)
+class MachineLockProbe:
+    """One side-effect-free observation of the machine service lock.
 
-    A fast, side-effect-free pre-flight for ``server start``: probes the OS lock
-    (acquire-then-immediately-release) without disturbing a real holder. A
-    non-zero result means a resident service is already running on this machine
-    and a second must not be spawned.
+    ``held`` carries the OS lock's own answer and is the only authority: a
+    held lock is a resident service whether or not it can be named. A
+    positive ``holder_pid`` names the owner the holder published; 0 with
+    ``held`` True means the lock is held but its owner record could not be
+    read - a distinct, degraded fact, never evidence that the lock is free.
+    A free lock is always ``held=False`` with ``holder_pid`` 0.
+    """
+
+    held: bool
+    holder_pid: int
+
+
+def probe_machine_lock() -> MachineLockProbe:
+    """Observe whether a *live* holder owns the machine lock, and name it.
+
+    A fast, side-effect-free pre-flight for ``server start`` and the stop
+    verbs: probes the OS lock (acquire-then-immediately-release) without
+    disturbing a real holder. A held result means a resident service is
+    already running on this machine and a second must not be spawned; the
+    published pid is evidence for the operator message, not the authority,
+    so a holder whose record cannot be read is still reported held.
     """
     path = machine_lock_path()
     from ._test_isolation import enforce_pytest_managed_singleton_containment
@@ -457,9 +476,9 @@ def machine_lock_live_holder() -> int:
         retained = _held_leases.get(str(path))
         if retained is not None:
             _require_active_lease(retained, operation="probe the machine lock")
-            return retained.pid
+            return MachineLockProbe(held=True, holder_pid=retained.pid)
     if not path.exists():
-        return 0
+        return MachineLockProbe(held=False, holder_pid=0)
     from ._anchor_claim import claim_anchor, release_anchor_claim
 
     # No owner pid is recorded here: this probe answers a question and must
@@ -473,9 +492,9 @@ def machine_lock_live_holder() -> int:
         # the caller it may spawn a second resident service.
         if isinstance(claim.fault, ImportError):
             raise claim.fault
-        return 0
+        return MachineLockProbe(held=False, holder_pid=0)
     if claim.descriptor is None:
-        return claim.holder_pid
+        return MachineLockProbe(held=True, holder_pid=claim.holder_pid)
     # Nobody holds it (free, or a dead holder the OS already released).
     release_anchor_claim(claim.descriptor, pid_record=True)
-    return 0
+    return MachineLockProbe(held=False, holder_pid=0)

@@ -56,6 +56,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 __all__ = [
@@ -64,6 +65,8 @@ __all__ = [
     "claim_anchor",
     "observe_existing_anchor",
     "probe_existing_anchor_holder",
+    "publish_anchor_record",
+    "read_anchor_record",
     "record_claim_owner",
     "release_anchor_claim",
 ]
@@ -125,27 +128,44 @@ class AnchorClaim:
     fault: Exception | None
 
 
-def _read_owner_record(anchor: Path) -> int:
-    """Return the positive pid published in *anchor*, or 0 for no valid record.
+def read_anchor_record(anchor: Path) -> object | None:
+    """Return the leading JSON document published in *anchor*, or ``None``.
 
     Parses the leading JSON document and ignores whatever follows it, so
     neither the pad a fixed-width record carries nor a tail left by a longer
-    foreign body can turn a perfectly good record into no record at all. A
-    boolean is rejected rather than admitted as the integer it subclasses.
+    foreign body can turn a perfectly good record into no record at all.
+
+    A ZERO-LENGTH anchor is waited out to a bound rather than read as no
+    record, because it is not evidence of no owner: a holder creates the
+    anchor and locks it before it can publish anything, so an empty file under
+    a refused lock is a record in flight. Reading that as "nobody owns this"
+    is precisely what lets a live holder be reported as absent. A body that is
+    present but unparseable gets no wait - no writer is going to turn it into
+    a record - and neither does an anchor nobody holds.
     """
+    deadline = time.monotonic() + _OWNER_RECORD_WAIT_SECONDS
+    while True:
+        try:
+            settled = anchor.stat().st_size != 0
+        except OSError:
+            return None
+        # Emptiness decides whether to wait, and it is checked BEFORE the read
+        # rather than after it. Reading first and judging emptiness afterwards
+        # mistakes the publication landing between the two for a settled body
+        # that will never carry a record, and gives up on the very record it
+        # was waiting for.
+        if settled or time.monotonic() >= deadline:
+            break
+        time.sleep(_OWNER_RECORD_POLL_SECONDS)
     try:
         body = anchor.read_text(encoding="utf-8")
     except (OSError, ValueError):
-        return 0
+        return None
     try:
         recorded, _ = json.JSONDecoder().raw_decode(body.lstrip())
     except ValueError:
-        return 0
-    match recorded:
-        case {"pid": int() as pid} if type(pid) is int and pid > 0:
-            return pid
-        case _:
-            return 0
+        return None
+    return recorded
 
 
 def _recorded_owner(anchor: Path) -> int:
@@ -153,28 +173,14 @@ def _recorded_owner(anchor: Path) -> int:
 
     Informational, for a refusal message only; the OS lock is the authority, so
     a non-JSON or pid-less record costs a refused caller the pid it would have
-    named and nothing more. A ZERO-LENGTH anchor is the one exception, because
-    it is not evidence of no owner: a holder creates the anchor and locks it
-    before it can publish anything, so an empty file under a refused lock is a
-    record in flight. Reading that as "nobody owns this" is precisely what lets
-    a live singleton be reported as absent, so it is waited out to a bound
-    instead. A body that is present but unparseable gets no wait - no writer is
-    going to turn it into a record - and neither does an anchor nobody holds.
+    named and nothing more. A boolean is rejected rather than admitted as the
+    integer it subclasses.
     """
-    deadline = time.monotonic() + _OWNER_RECORD_WAIT_SECONDS
-    while True:
-        try:
-            settled = anchor.stat().st_size != 0
-        except OSError:
+    match read_anchor_record(anchor):
+        case {"pid": int() as pid} if type(pid) is int and pid > 0:
+            return pid
+        case _:
             return 0
-        # Emptiness decides whether to wait, and it is checked BEFORE the read
-        # rather than after it. Reading first and judging emptiness afterwards
-        # mistakes the publication landing between the two for a settled body
-        # that will never carry a record, and gives up on the very record it
-        # was waiting for.
-        if settled or time.monotonic() >= deadline:
-            return _read_owner_record(anchor)
-        time.sleep(_OWNER_RECORD_POLL_SECONDS)
 
 
 def claim_anchor(
@@ -330,6 +336,44 @@ def probe_existing_anchor_holder(
     return None
 
 
+def publish_anchor_record(
+    descriptor: int,
+    record: Mapping[str, object],
+    *,
+    width: int = _OWNER_RECORD_WIDTH,
+) -> None:
+    """Durably replace a held anchor's record in place, never leaving it empty.
+
+    The record is published IN PLACE because the OS lock making the anchor
+    authoritative is bound to this file: a write-temp-and-rename would destroy
+    the very claim the record describes. Order is the whole guarantee here.
+    The complete fixed-width frame goes down first, so from the instant that
+    write returns the anchor begins with a readable record and never passes
+    through a state a concurrent reader could read as unowned. Only then is a
+    longer foreign body cut back, and because every record written to one
+    anchor shares its *width* that truncation can never be what removes the
+    record's own tail.
+
+    *width* must therefore be constant per anchor file. The pad is trailing
+    spaces inside the file after the same JSON document the record has always
+    been, so a reader that simply parses the whole file still recovers it.
+    """
+    payload = json.dumps(dict(record), separators=(",", ":")).encode("utf-8")
+    if len(payload) > width:
+        raise OSError("the anchor record exceeds its fixed width")
+    frame = payload.ljust(width, b" ")
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    written = os.write(descriptor, frame)
+    if written != len(frame):
+        raise OSError("could not write the complete anchor record")
+    os.ftruncate(descriptor, len(frame))
+    os.fsync(descriptor)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    recorded: object = json.loads(os.read(descriptor, len(frame)))
+    if recorded != dict(record):
+        raise OSError("could not read back the anchor record")
+
+
 def record_claim_owner(descriptor: int) -> None:
     """Durably replace a held pid-record anchor's current owner witness.
 
@@ -341,26 +385,7 @@ def record_claim_owner(descriptor: int) -> None:
     pid = os.getpid()
     if pid <= 0:
         raise OSError("the current process has no positive PID to record")
-    payload = json.dumps({"pid": pid}, separators=(",", ":")).encode("utf-8")
-    if len(payload) > _OWNER_RECORD_WIDTH:
-        raise OSError("the anchor owner PID record exceeds its fixed width")
-    frame = payload.ljust(_OWNER_RECORD_WIDTH, b" ")
-    # Order is the whole guarantee here. The complete record goes down first,
-    # so from the instant this write returns the anchor begins with a readable
-    # owner and never passes through a state a contender could read as
-    # unowned. Only then is a longer foreign body cut back, and because every
-    # record is the same width that truncation can never be what removes the
-    # record's own tail.
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    written = os.write(descriptor, frame)
-    if written != len(frame):
-        raise OSError("could not write the complete anchor owner PID record")
-    os.ftruncate(descriptor, len(frame))
-    os.fsync(descriptor)
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    recorded: object = json.loads(os.read(descriptor, len(frame)))
-    if recorded != {"pid": pid}:
-        raise OSError("could not read back the anchor owner PID record")
+    publish_anchor_record(descriptor, {"pid": pid})
 
 
 def release_anchor_claim(descriptor: int, *, pid_record: bool = False) -> None:

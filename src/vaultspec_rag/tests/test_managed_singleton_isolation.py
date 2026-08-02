@@ -21,8 +21,8 @@ from .._machine_lock import (
     MachineLockLease,
     acquire_machine_lock,
     delete_machine_discovery,
-    machine_lock_live_holder,
     machine_lock_path,
+    probe_machine_lock,
     publish_machine_discovery,
     release_machine_lock,
 )
@@ -263,7 +263,7 @@ def test_in_test_path_changes_cannot_redirect_singleton_writers() -> None:
             with pytest.raises(ManagedSingletonIsolationError):
                 acquire_machine_lock()
             with pytest.raises(ManagedSingletonIsolationError):
-                machine_lock_live_holder()
+                probe_machine_lock()
             with pytest.raises(ManagedSingletonIsolationError):
                 release_machine_lock()
             with pytest.raises(ManagedSingletonIsolationError):
@@ -305,7 +305,7 @@ def test_each_configured_anchor_fails_closed_independently(
             ),
             pytest.raises(ManagedSingletonIsolationError),
         ):
-            machine_lock_live_holder()
+            probe_machine_lock()
 
         assert list(trap.iterdir()) == []
 
