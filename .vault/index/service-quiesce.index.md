@@ -6,7 +6,7 @@ tags:
 date: '2026-08-02'
 modified: '2026-08-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:a21068e172833214b2fdc7856695b8b3a7e8ac7532a5e4a1f3c6c2302f16678c'
+body_hash: 'sha256:b7f3a75b2f006b784dd2794b8c6cd494aedeace1df3b04faac7c552a4cc7db02'
 related:
   - '[[2026-07-24-service-quiesce-P01-S01]]'
   - '[[2026-07-24-service-quiesce-P01-S02]]'
@@ -53,6 +53,7 @@ related:
   - '[[2026-07-31-service-quiesce-s31-identity-binding-directive-audit]]'
   - '[[2026-07-31-service-quiesce-w04-s29-s33-final-acceptance-audit]]'
   - '[[2026-08-02-service-quiesce-paused-state-legibility-research]]'
+  - '[[2026-08-02-service-quiesce-plan]]'
 ---
 
 # `service-quiesce` feature index
@@ -115,6 +116,7 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 ### plan
 
 - `2026-07-24-service-quiesce-plan` - `service-quiesce` plan
+- `2026-08-02-service-quiesce-plan` - `service-quiesce` plan
 
 ### research
 
