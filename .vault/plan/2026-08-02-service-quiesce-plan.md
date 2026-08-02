@@ -4,7 +4,7 @@ tags:
   - '#service-quiesce'
 date: '2026-08-02'
 modified: '2026-08-02'
-body_hash: 'sha256:1f3c631e5013d733cc7e167f1a9e00a6b7fd6f3e1b4e166edde16a0befcfa65d'
+body_hash: 'sha256:54aafd171825c7a3239e184dba027e605db4bc7278e63a2b9b44ba63dc4c725b'
 tier: L2
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
@@ -43,21 +43,21 @@ version of it.
 
 Bind a quiescence to the request that produced it, and publish a non-secret boolean saying a hold is bound without saying by whom. Ownership is the load-bearing change; the witness is what lets every later surface explain the hold.
 
-- [ ] `P01.S01` - Add the non-secret borrower_bound field to the controller snapshot and its envelope; `src/vaultspec_rag/service_quiesce.py`.
-- [ ] `P01.S02` - Stamp the binding onto every externally-visible snapshot through one registry helper; `src/vaultspec_rag/service.py`.
-- [ ] `P01.S03` - Bind only a borrower-driven transition and refuse an observed unbound quiescence; `src/vaultspec_rag/server/_routes.py`.
-- [ ] `P01.S04` - Give every lifecycle refusal a sentence distinct from its error code; `src/vaultspec_rag/server/_routes.py`.
-- [ ] `P01.S05` - Accept the new field in the borrower safe-snapshot gate and name the pause in its lease refusal; `src/vaultspec_rag/cli/_gpu_lease.py`.
-- [ ] `P01.S06` - Accept the new field in the preflight snapshot match; `src/vaultspec_rag/cli/_service_preflight.py`.
+- [x] `P01.S01` - Add the non-secret borrower_bound field to the controller snapshot and its envelope; `src/vaultspec_rag/service_quiesce.py`.
+- [x] `P01.S02` - Stamp the binding onto every externally-visible snapshot through one registry helper; `src/vaultspec_rag/service.py`.
+- [x] `P01.S03` - Bind only a borrower-driven transition and refuse an observed unbound quiescence; `src/vaultspec_rag/server/_routes.py`.
+- [x] `P01.S04` - Give every lifecycle refusal a sentence distinct from its error code; `src/vaultspec_rag/server/_routes.py`.
+- [x] `P01.S05` - Accept the new field in the borrower safe-snapshot gate and name the pause in its lease refusal; `src/vaultspec_rag/cli/_gpu_lease.py`.
+- [x] `P01.S06` - Accept the new field in the preflight snapshot match; `src/vaultspec_rag/cli/_service_preflight.py`.
 
 ### Phase `P02` - Operator surfaces stop contradicting the controller
 
 Make the health verdict, the status rows, and the structured failure envelopes report the hold the controller already knows about, and offer only remediation that can end it.
 
-- [ ] `P02.S07` - Report a deliberate quiescence as its own health state rather than a degradation; `src/vaultspec_rag/server/_lifespan.py`.
-- [ ] `P02.S08` - Name the hold and the work it holds in the status condition labels; `src/vaultspec_rag/cli/_status_labels.py`.
-- [ ] `P02.S09` - Select the hold remediation from the bound witness and offer none when nothing ends it; `src/vaultspec_rag/cli/_status_render.py`.
-- [ ] `P02.S10` - Forward service-published failure fields minus the keys the entry point owns; `src/vaultspec_rag/cli/_render.py`.
+- [x] `P02.S07` - Report a deliberate quiescence as its own health state rather than a degradation; `src/vaultspec_rag/server/_lifespan.py`.
+- [x] `P02.S08` - Name the hold and the work it holds in the status condition labels; `src/vaultspec_rag/cli/_status_labels.py`.
+- [x] `P02.S09` - Select the hold remediation from the bound witness and offer none when nothing ends it; `src/vaultspec_rag/cli/_status_render.py`.
+- [x] `P02.S10` - Forward service-published failure fields minus the keys the entry point owns; `src/vaultspec_rag/cli/_render.py`.
 
 ## Parallelization
 
