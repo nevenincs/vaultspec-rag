@@ -27,6 +27,7 @@ from .._machine_lock import (
 from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..serviceclient._discovery import (
+    DISCOVERY_REASON_HOLDER_UNNAMED,
     DISCOVERY_REASON_POINTER_FOREIGN,
     DISCOVERY_REASON_POINTER_INVALID,
     DISCOVERY_REASON_POINTER_MISSING,
@@ -41,6 +42,7 @@ from ..serviceclient._discovery import (
     _status_file,
     resolve_machine_service,
 )
+from ._unnamed_lock_holder import unnamed_machine_lock_holder
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -327,6 +329,31 @@ class TestTypedMachineResolution:
         assert resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER
         assert _default_service_port() is None
         assert not resolution.is_ready
+
+    def test_unnamed_live_holder_is_degraded_and_never_the_status_fallback(
+        self, isolated_machine_dir: Path
+    ) -> None:
+        """A held lock with an unreadable owner record is a live holder.
+
+        The status file below would resolve READY through the legacy fallback
+        if the unnameable holder were read as no holder - which is exactly
+        what the old zero return did. Something owns the singleton, so the
+        honest verdict is degraded with its own reason: not absence, not a
+        pointer accusation, and never an address the owner did not publish.
+        """
+        _status_file().write_text(
+            json.dumps({"pid": 4242, "port": 9788, "service_token": "legacy"}),
+            encoding="utf-8",
+        )
+        with unnamed_machine_lock_holder(isolated_machine_dir):
+            resolution = resolve_machine_service()
+
+            assert resolution.state == DISCOVERY_STATE_DEGRADED
+            assert resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER
+            assert resolution.reason == DISCOVERY_REASON_HOLDER_UNNAMED
+            assert resolution.holder_pid == 0
+            assert not resolution.is_ready
+            assert _default_service_port() is None
 
     def test_evidence_names_the_disagreement(self) -> None:
         """Degraded evidence carries the reason and both identities."""

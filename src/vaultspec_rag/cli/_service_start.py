@@ -602,19 +602,31 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
             port=port,
         )
 
-    from .._machine_lock import machine_lock_live_holder
+    from .._machine_lock import probe_machine_lock
 
-    machine_holder = machine_lock_live_holder()
-    if machine_holder:
+    machine_probe = probe_machine_lock()
+    if machine_probe.held:
+        machine_holder = machine_probe.holder_pid
         warming = _service_phase(read_service_status()) == SERVICE_PHASE_WARMING
-        owner_line = (
-            f"A vaultspec-rag service already owns this machine "
-            f"(pid {machine_holder}) and is warming up (loading models); "
-            "it will serve shortly."
-            if warming
-            else f"A vaultspec-rag service already owns this machine "
-            f"(pid {machine_holder})."
-        )
+        if machine_holder <= 0:
+            # Held but unnameable: the OS lock is the authority, so this is a
+            # resident service whose owner record could not be read - never a
+            # free machine that may spawn a second daemon.
+            owner_line = (
+                "A process owns this machine's resident-service lock but its "
+                "owner record could not be read."
+            )
+        elif warming:
+            owner_line = (
+                f"A vaultspec-rag service already owns this machine "
+                f"(pid {machine_holder}) and is warming up (loading models); "
+                "it will serve shortly."
+            )
+        else:
+            owner_line = (
+                f"A vaultspec-rag service already owns this machine "
+                f"(pid {machine_holder})."
+            )
         raise _fail_start(
             json_mode,
             error="machine_owned",

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
 
-from ..._machine_lock import machine_lock_live_holder
+from ..._machine_lock import probe_machine_lock
 
 _STARTUP_TIMEOUT = 10.0
 _SHUTDOWN_TIMEOUT = 10.0
@@ -144,13 +144,13 @@ def _wait_for_lock_release(expected_pid: int, *, timeout: float) -> None:
     deadline = time.monotonic() + timeout
     poll_gate = threading.Event()
     while True:
-        live_holder = machine_lock_live_holder()
-        if live_holder == 0:
+        probe = probe_machine_lock()
+        if not probe.held:
             return
-        if live_holder != expected_pid:
+        if probe.holder_pid != expected_pid:
             msg = (
                 "isolated machine lock changed holder during cleanup: "
-                f"expected {expected_pid}, observed {live_holder}"
+                f"expected {expected_pid}, observed {probe.holder_pid}"
             )
             raise AssertionError(msg)
         if time.monotonic() >= deadline:
@@ -164,13 +164,13 @@ def _wait_for_lock_release(expected_pid: int, *, timeout: float) -> None:
 
 def _terminate_confirmed_holder(holder_pid: int, *, timeout: float) -> None:
     """Terminate only the PID still proven to own this isolated OS lock."""
-    live_holder = machine_lock_live_holder()
-    if live_holder == 0:
+    probe = probe_machine_lock()
+    if not probe.held:
         return
-    if live_holder != holder_pid:
+    if probe.holder_pid != holder_pid:
         msg = (
             "refusing to terminate an unexpected machine-lock holder: "
-            f"expected {holder_pid}, observed {live_holder}"
+            f"expected {holder_pid}, observed {probe.holder_pid}"
         )
         raise AssertionError(msg)
     with contextlib.suppress(ProcessLookupError):
@@ -223,9 +223,9 @@ def _abort_failed_start(
     with contextlib.suppress(OSError):
         holder_stop.write_text("stop\n", encoding="utf-8")
     try:
-        live_holder = machine_lock_live_holder()
-        if live_holder != 0:
-            _terminate_confirmed_holder(live_holder, timeout=_SHUTDOWN_TIMEOUT)
+        probe = probe_machine_lock()
+        if probe.held:
+            _terminate_confirmed_holder(probe.holder_pid, timeout=_SHUTDOWN_TIMEOUT)
     except (OSError, AssertionError) as exc:
         holder_error = exc
     finally:
@@ -255,11 +255,11 @@ def spawn_foreign_machine_lock_holder(
     launcher_stop = control_dir / "launcher.stop"
     holder_stop.unlink(missing_ok=True)
     launcher_stop.unlink(missing_ok=True)
-    preexisting_holder = machine_lock_live_holder()
-    if preexisting_holder != 0:
+    preexisting = probe_machine_lock()
+    if preexisting.held:
         msg = (
             "refusing to spawn a test holder over an existing isolated lock holder "
-            f"{preexisting_holder}"
+            f"{preexisting.holder_pid}"
         )
         raise AssertionError(msg)
     launcher = subprocess.Popen(

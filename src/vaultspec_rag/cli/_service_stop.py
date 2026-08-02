@@ -72,7 +72,9 @@ _STOP_TERMINATION_BUDGET_SECONDS = 45.0
 _STOP_CONNECT_TIMEOUT_SECONDS = 1.0
 
 
-def _reclaim_machine_singleton() -> tuple[int, _cli.TerminationResult] | None:
+def _reclaim_machine_singleton(
+    json_mode: bool,
+) -> tuple[int, _cli.TerminationResult] | None:
     """Reclaim a resident machine-lock holder that has no discoverable status file.
 
     The machine singleton lock is vaultspec-rag-exclusive and machine-scoped, so
@@ -91,16 +93,34 @@ def _reclaim_machine_singleton() -> tuple[int, _cli.TerminationResult] | None:
     operator into the same start-fails-on-a-held-port dead end the status-file
     path used to produce. The ``_is_our_service`` executable check guards
     against terminating an unrelated process after pid reuse.
-    """
-    from .._machine_lock import machine_lock_live_holder
 
-    holder = machine_lock_live_holder()
-    if (
-        holder
-        and holder != os.getpid()
-        and pid_alive(holder)
-        and _is_our_service(holder)
-    ):
+    A lock that is held but whose owner record cannot be read is a distinct
+    failure, not a no-op: something owns the machine, this verb has no pid to
+    terminate, and reporting "not running" over it is exactly the false
+    stopped verdict the lock probe exists to prevent.
+
+    Raises:
+        typer.Exit: When the lock is held but its owner could not be named.
+    """
+    from .._machine_lock import probe_machine_lock
+
+    probe = probe_machine_lock()
+    if not probe.held:
+        return None
+    holder = probe.holder_pid
+    if holder <= 0:
+        raise _fail_stop(
+            json_mode,
+            error="machine_holder_unnamed",
+            message="Service stop skipped",
+            human_lines=(
+                "The machine's resident-service lock is held, but its owner "
+                "record could not be read, so there is no process to stop.",
+                "The service was left as it is; nothing was reported stopped.",
+            ),
+            next_actions=(server_status_command(verbose=True),),
+        )
+    if holder != os.getpid() and pid_alive(holder) and _is_our_service(holder):
         return holder, _terminate_and_confirm(holder)
     return None
 
@@ -636,7 +656,7 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     orphan. The port scope spares isolated-config and foreign-worktree daemons.
     An orphan that will not die is a non-zero fault, never a silent success.
     """
-    from .._machine_lock import machine_lock_live_holder
+    from .._machine_lock import probe_machine_lock
 
     try:
         matched = _orphan_daemon_pids(port)
@@ -659,7 +679,26 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
             port=port,
             detail=str(exc),
         ) from exc
-    lock_holder = machine_lock_live_holder()
+    lock_probe = probe_machine_lock()
+    if lock_probe.held and lock_probe.holder_pid <= 0:
+        # The must-never-kill anchor set cannot be built: something owns the
+        # machine lock, and without its pid the live singleton could match
+        # the reap scope. Refusing loses nothing an orphan reap exists to
+        # clear, exactly as the unconfirmed-port-holder refusal below.
+        raise _fail_stop(
+            json_mode,
+            error="machine_holder_unnamed",
+            message="Orphan reap refused: the machine lock holder is unnamed",
+            human_lines=(
+                "The machine's resident-service lock is held, but its owner "
+                "record could not be read, so the live service cannot be "
+                "told apart from an orphan.",
+                "No daemon was reaped.",
+            ),
+            next_actions=(server_status_command(port, verbose=True),),
+            port=port,
+        )
+    lock_holder = lock_probe.holder_pid
     status = read_service_status()
     pointer_pid = 0
     if status is not None:
@@ -829,7 +868,7 @@ def service_stop(
         # resident service even when it left no discovery file here, and
         # reclaiming it is the documented recovery for a wedged/undiscoverable
         # singleton that would otherwise deadlock `server start`.
-        reclaimed = _reclaim_machine_singleton()
+        reclaimed = _reclaim_machine_singleton(json_mode)
         if reclaimed is not None:
             holder, result = reclaimed
             if result.alive:

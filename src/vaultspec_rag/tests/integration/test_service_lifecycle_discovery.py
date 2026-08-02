@@ -52,7 +52,7 @@ def test_reconcile_rejects_live_legacy_status_without_singleton_owner(
     tmp_path: Path,
 ) -> None:
     """A reachable legacy record cannot stand in for singleton ownership."""
-    from ..._machine_lock import machine_lock_live_holder
+    from ..._machine_lock import probe_machine_lock
 
     with (
         _service_env(tmp_path),
@@ -62,7 +62,7 @@ def test_reconcile_rejects_live_legacy_status_without_singleton_owner(
             token,
         ),
     ):
-        assert machine_lock_live_holder() == 0
+        assert not probe_machine_lock().held
         _status_file().write_text(
             json.dumps({"pid": pid, "port": port, "service_token": token}),
             encoding="utf-8",
@@ -91,7 +91,7 @@ def test_reconcile_rejects_machine_pointer_with_incomplete_identity(
     """A live holder cannot converge until every pointer identity field exists."""
     from datetime import UTC, datetime
 
-    from ..._machine_lock import machine_discovery_path, machine_lock_live_holder
+    from ..._machine_lock import machine_discovery_path, probe_machine_lock
 
     with (
         _service_env(tmp_path),
@@ -101,7 +101,7 @@ def test_reconcile_rejects_machine_pointer_with_incomplete_identity(
             token,
         ),
     ):
-        assert machine_lock_live_holder() == pid
+        assert probe_machine_lock().holder_pid == pid
         pointer = {
             "pid": pid,
             "port": port,
