@@ -859,6 +859,21 @@ def test_the_bound_witness_names_a_hold_without_naming_its_holder(
 # hits inside a reverted build and none inside a correct one.
 _LEASE_RACE_SAMPLES = 400
 
+# The floor below which the sample carries too little power to stand as
+# evidence. A reverted build reads a torn record on the order of one sample in
+# seventy, so this many samples still fail it with probability well above 0.9,
+# while a correct build passes at any count. Sampling stops at the floor only
+# when the budget below runs out first, which takes a machine several times
+# slower than an already-contended runner.
+_LEASE_RACE_MIN_SAMPLES = 200
+
+# Wall-clock ceiling on the sampling loop. It exists to stop a wedged reader,
+# NOT to pace the evidence: the sample count carries the statistical power, so
+# a slow machine is given the time to reach it rather than being failed for
+# arriving late. Sized well clear of the rate a contended runner sustains, so
+# reaching it at all means something is wrong beyond ordinary contention.
+_LEASE_RACE_BUDGET_SECONDS = 120.0
+
 _REPUBLISH_LEASE_RECORD = """
 import os
 import sys
@@ -923,20 +938,29 @@ def test_republished_lease_record_is_never_verified_invalid(tmp_path: Path) -> N
                 assert capability is not None, (
                     f"republishing lease holder did not start: {diagnostics.read()}"
                 )
-                # A fixed sample COUNT, not a fixed duration: the count carries
-                # the statistical power, and a loaded machine must not quietly
-                # reduce it to a handful of reads that prove nothing.
+                # The claim under test is a ratio - no republication is ever
+                # read as invalid - so the assertion is on the torn count, and
+                # a machine that samples slowly is given longer rather than
+                # failed for its speed. Asserting the sample count itself made
+                # this guard cry wolf on a contended runner, which costs more
+                # than the samples it was protecting: a guard that fails for
+                # reasons unrelated to its property trains its readers to
+                # re-run it. The floor keeps the sample honest without making
+                # throughput the thing being proved.
                 torn = 0
                 samples = 0
-                deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
-                while samples < _LEASE_RACE_SAMPLES:
-                    assert time.monotonic() < deadline, (
-                        f"only reached {samples} samples"
-                    )
+                deadline = time.monotonic() + _LEASE_RACE_BUDGET_SECONDS
+                while samples < _LEASE_RACE_SAMPLES and time.monotonic() < deadline:
                     status = borrower_lease_status(capability)
                     samples += 1
                     if status is not BorrowerLeaseStatus.HELD:
                         torn += 1
+                assert samples >= _LEASE_RACE_MIN_SAMPLES, (
+                    f"only reached {samples} samples in "
+                    f"{_LEASE_RACE_BUDGET_SECONDS:g}s, too few to stand as "
+                    "evidence that a republished record is never read as "
+                    "invalid"
+                )
                 assert torn == 0, (
                     f"{torn} of {samples} verifications of a held lease could "
                     "not read its capability while the holder republished its "

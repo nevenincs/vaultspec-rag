@@ -35,7 +35,11 @@ from ..serviceclient._discovery import (
     resolve_machine_service,
     revalidate_captured_machine_pointer,
 )
-from ..serviceclient._transport import _try_http_admin, _try_http_health
+from ..serviceclient._transport import (
+    _get_admin_timeout,
+    _try_http_admin,
+    _try_http_health,
+)
 
 __all__ = [
     "BorrowGPUError",
@@ -99,7 +103,7 @@ def capture_borrower_service_target() -> BorrowerServiceTarget | None:
         return None
     if (
         _matching_health_identity(
-            _try_http_health(port),
+            _read_health_evidence(port),
             service_pid=service_pid,
             port=port,
             token_sha256=_token_sha256(service_token),
@@ -344,7 +348,7 @@ def _revalidate_captured_target(target: BorrowerServiceTarget) -> str | None:
     discovery_token = resolution.service_token
     if not discovery_token:
         return None
-    health = _try_http_health(target.port)
+    health = _read_health_evidence(target.port)
     return _matching_health_token(health, target)
 
 
@@ -390,6 +394,23 @@ def _matching_health_token(
         port=target.port,
         token_sha256=target.token_sha256,
     )
+
+
+def _read_health_evidence(port: int) -> dict[str, object] | None:
+    """Read ``/health`` as identity evidence, on the operator-governed bound.
+
+    Every borrower identity check reads health to PROVE which service holds
+    the port, which is a different question from the readiness poll the
+    probe's short default bound is shaped for. There a fast "not up yet" is
+    the point; here an unanswered probe is indistinguishable from a service
+    whose pid, port or token disagree, and the caller refuses either way. So
+    the short bound turns a merely busy service into a false "this is not the
+    service I captured" - and a service busy enough to answer slowly is
+    exactly the one a borrower most needs to coordinate with. Evidence reads
+    therefore take the same operator-governed bound the rest of this client's
+    evidence reads take.
+    """
+    return _try_http_health(port, timeout=_get_admin_timeout())
 
 
 def _matching_health_identity(
