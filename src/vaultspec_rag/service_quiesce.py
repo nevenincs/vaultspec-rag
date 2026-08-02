@@ -158,6 +158,12 @@ class QuiesceSnapshot:
     quiesced_at: float | None
     warming_started_at: float | None
     failure_reason: str | None
+    #: Whether a borrower currently owns this quiescence. The controller cannot
+    #: know that on its own - the binding lives on the registry - so it defaults
+    #: false here and the registry stamps the true value onto every snapshot it
+    #: publishes. A default-false field on an internal snapshot is therefore not
+    #: evidence of an unbound hold; only a registry-published one is.
+    borrower_bound: bool = False
 
     def as_envelope(self) -> dict[str, object]:
         """Render the whole observation as one adapter-agnostic payload."""
@@ -174,6 +180,7 @@ class QuiesceSnapshot:
             "quiesced_at": self.quiesced_at,
             "warming_started_at": self.warming_started_at,
             "failure_reason": self.failure_reason,
+            "borrower_bound": self.borrower_bound,
         }
 
 

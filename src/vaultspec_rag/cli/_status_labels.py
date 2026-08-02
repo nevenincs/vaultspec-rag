@@ -36,6 +36,7 @@ __all__ = [
     "_format_started_label",
     "_format_status_duration",
     "_get_token_label",
+    "_held_by_borrower",
     "_last_failure_job_id",
     "_last_failure_label",
     "_model_ready_label",
@@ -45,6 +46,7 @@ __all__ = [
     "_status_busy_label",
     "_status_env_label",
     "_status_health_label",
+    "_status_is_held",
     "_status_jobs_label",
     "_status_queue_label",
     "_status_uptime_label",
@@ -122,8 +124,41 @@ def _status_health_label(
             return "ready for requests"
         if status == "starting":
             return "starting up"
+        if status == "paused":
+            return _held_requests_label(health)
         return status.replace("_", " ")
     return "not reachable" if port_listening else "not available"
+
+
+def _held_requests_label(health: dict[str, object]) -> str:
+    """Describe a deliberate hold, and say whose it is to release.
+
+    Ownership is the part an operator acts on: their own pause ends when they
+    resume it, and a borrower's does not end on any command they can run. The
+    witness says a hold is owned without saying by whom, which is exactly enough
+    to choose between those two sentences.
+    """
+    match health.get("quiesce"):
+        case {"borrower_bound": True}:
+            return "paused for a GPU borrower; not resumable until it finishes"
+        case _:
+            return "paused; not serving requests"
+
+
+def _held_by_borrower(health: dict[str, object] | None) -> bool:
+    """Return whether a reported hold is owned by a GPU borrower."""
+    if not isinstance(health, dict):
+        return False
+    match health.get("quiesce"):
+        case {"borrower_bound": bool() as bound}:
+            return bound
+        case _:
+            return False
+
+
+def _status_is_held(health: dict[str, object] | None) -> bool:
+    """Return whether the service reports itself deliberately held."""
+    return isinstance(health, dict) and health.get("status") == "paused"
 
 
 class _JobCounts(NamedTuple):
@@ -154,11 +189,23 @@ def _job_counts(jobs: dict[str, object] | None) -> _JobCounts | None:
     )
 
 
+def _held_job_total(jobs: dict[str, object] | None) -> int:
+    """Count the jobs a hold is keeping from running."""
+    count = _job_phase_counts(jobs).get("paused")
+    return count if isinstance(count, int) else 0
+
+
 def _status_busy_label(jobs: dict[str, object] | None) -> str:
     counts = _job_counts(jobs)
     if counts is None:
         return NOT_REPORTED
     if counts.running <= 0:
+        # Work stopped by a pause is not work the service does not have. Held
+        # jobs report neither running nor queued, so reading only those two
+        # counts rendered a service holding real work as "idle".
+        held = _held_job_total(jobs)
+        if held > 0:
+            return f"{_counted_unit(held, 'job')} held by the pause"
         return "idle"
     # Nothing active while jobs are running means every one of them is queued
     # behind the writer, which is a wait rather than work in progress.
