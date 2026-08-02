@@ -60,6 +60,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "a specific reading and a raised exception from it - neither "
         "reachable through a real device on a CPU-only runner",
     ),
+    "test_install_torch_config.py": (
+        1,
+        "drives a real install under a symlinked system temp root - the shape "
+        "macOS has by default, where TMPDIR lives under a symlink - and the "
+        "temp module caches its answer in a module attribute that pytest's own "
+        "tmp_path populates before the test runs, so the documented "
+        "environment override cannot take effect until that cache is cleared; "
+        "the install itself runs for real and nothing about its behaviour is "
+        "replaced",
+    ),
     "test_jobs_device_load.py": (
         5,
         "asserts the jobs-listing cache's call count and its handling of a "

@@ -427,6 +427,13 @@ def _provider_paths(root: Path) -> tuple[set[Path], set[Path], set[Path]]:
         projection = Path(raw) / "workspace"
         (projection / WORKSPACE_DIR).mkdir(parents=True)
         context = Context().run(init_paths, projection)
+        # Core resolves the workspace root it is handed, so every projected
+        # path comes back with symlinks already collapsed. Translate against
+        # the resolved projection root: comparing a resolved path to an
+        # unresolved prefix raises wherever the temp directory is reached
+        # through a symlink, which is the default shape on macOS, where
+        # ``/var`` (and so ``TMPDIR``) is a symlink to ``/private/var``.
+        projection = projection.resolve()
 
         files: set[Path] = set()
         containers: set[Path] = set()
