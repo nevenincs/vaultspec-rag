@@ -5,7 +5,7 @@ tags:
 date: '2026-08-02'
 modified: '2026-08-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:da61c75bfbd8d0d2ae0cf1c2995cbebc8e3add35ab850abdb87675d5be8b1558'
+body_hash: 'sha256:30ce26a0e6ca84c5a465b628f7254a5589c78dff2b480ec744aad227e4163dc7'
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-research]]'
@@ -56,11 +56,6 @@ operator's own unqualified resume was then refused with `ok: false`,
 `admission_epoch: 12`. The capture is real, and it is reachable through documented public
 routes with no misuse.
 
-That refusal envelope carries its own legibility defect: `message` is the literal string
-`borrower_lease_required`, a repeat of the error code rather than a sentence. Any surface
-that renders `message` shows an operator a bare token for the one condition they most need
-explained.
-
 From that point the operator has no lever. An unqualified resume is refused at the route
 before the controller is reached (`src/vaultspec_rag/server/_routes.py:1265-1271`, with the
 refusal set at `.vault/adr/2026-07-24-service-quiesce-adr.md:70`). `abort_pause` is not an
@@ -81,6 +76,11 @@ run's duration.
 The code still assumes otherwise. `src/vaultspec_rag/service.py:609-612` documents resume
 as "the single operator-facing way back to `running`", which stops being true the moment a
 binding exists.
+
+The refusal envelope carries its own legibility defect: `message` is the literal string
+`borrower_lease_required`, a repeat of the error code rather than a sentence. Any surface
+that renders `message` shows an operator a bare token for the one condition they most need
+explained.
 
 The binding itself is not the defect. It exists to stop an operator resuming underneath a
 live borrower and rebuilding GPU residency while another process is using the card, which
