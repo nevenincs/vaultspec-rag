@@ -5,7 +5,7 @@ tags:
 date: '2026-08-02'
 modified: '2026-08-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:30ce26a0e6ca84c5a465b628f7254a5589c78dff2b480ec744aad227e4163dc7'
+body_hash: 'sha256:7341a21153e8c2b273a590259795996bf00fc88f7087ec9f3c3fa732710d9e0a'
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-research]]'
@@ -93,6 +93,29 @@ held-since signal so the wait is bounded in the operator's understanding rather 
 in fact, capping the bound hold and auto-releasing past the cap, and refusing an operator
 pause outright while a borrower could bind so the two never interleave. They are not
 exclusive, and their costs differ sharply.
+
+### Adding a snapshot field is a fail-closed breaking change across versions
+
+Publishing anything new on the controller snapshot is not a free addition. Three consumers
+validate the block against `QUIESCE_ENVELOPE_FIELDS`, which each compiles from its own
+build (`src/vaultspec_rag/service_quiesce.py:180`): the borrower safety gate compares the
+field set for exact equality (`src/vaultspec_rag/cli/_gpu_lease.py:451`), the TUI does the
+same (`src/vaultspec_rag/cli/_jobs_tui.py:145`), and preflight requires an exact field
+count (`src/vaultspec_rag/cli/_service_preflight.py:84`).
+
+A version skew in either direction therefore fails the block, not just a field. The
+consequence is heaviest on the borrower path: a mismatched set makes the safe-snapshot
+check fail, which refuses GPU borrowing outright rather than degrading. That is correct
+fail-closed behaviour and it is also the exact scenario a bound-indicator field would
+create between adjacent releases. The module's own docstring
+(`src/vaultspec_rag/service_quiesce.py:183-185`) anticipates this: a copy of the name set
+away from the controller turns any added field into a silent rendering failure.
+
+The project already carries a release-compatibility mechanism that could refuse a skewed
+pair at discovery before the envelope check is reached, which is one way to land the field.
+The alternative — relaxing the validators to tolerate a superset — weakens the
+reject-a-foreign-block property the borrower gate depends on. Which of the two the field
+rides on is for the decision; that it needs one is not optional.
 
 ### The mandate already exists and the plan never carried it to the CLI
 
@@ -282,7 +305,10 @@ surface whose most important sentence — what to do about the pause — is stil
 - `src/vaultspec_rag/service_quiesce.py:146`, `:180`, `:367-371`, `:486-490`
 - `src/vaultspec_rag/cli/_status_labels.py:111-126`, `:157-170`, `:261`, `:418-423`
 - `src/vaultspec_rag/cli/_render.py:189-200`
-- `src/vaultspec_rag/cli/_gpu_lease.py:29`, `:150-154`
+- `src/vaultspec_rag/cli/_gpu_lease.py:29`, `:150-154`, `:451`
+- `src/vaultspec_rag/cli/_jobs_tui.py:145`
+- `src/vaultspec_rag/cli/_service_preflight.py:84`
+- `src/vaultspec_rag/service_quiesce.py:183-185`
 - `src/vaultspec_rag/cli/_index.py:568`
 - `src/vaultspec_rag/cli/_jobs_tui.py:36`, `:137-141`, `:2106`, `:2110-2132`
 - `src/vaultspec_rag/cli/_service_start.py:396`
