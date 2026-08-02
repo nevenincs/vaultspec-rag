@@ -3,10 +3,10 @@ generated: true
 tags:
   - '#index'
   - '#service-quiesce'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-02'
+modified: '2026-08-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:8747a53563ab501fb828cf6015ad7352f48d1244fb6a4a1df7106d5134dc5cb2'
+body_hash: 'sha256:b7f3a75b2f006b784dd2794b8c6cd494aedeace1df3b04faac7c552a4cc7db02'
 related:
   - '[[2026-07-24-service-quiesce-P01-S01]]'
   - '[[2026-07-24-service-quiesce-P01-S02]]'
@@ -52,6 +52,8 @@ related:
   - '[[2026-07-30-service-quiesce-w03-acceptance-audit]]'
   - '[[2026-07-31-service-quiesce-s31-identity-binding-directive-audit]]'
   - '[[2026-07-31-service-quiesce-w04-s29-s33-final-acceptance-audit]]'
+  - '[[2026-08-02-service-quiesce-paused-state-legibility-research]]'
+  - '[[2026-08-02-service-quiesce-plan]]'
 ---
 
 # `service-quiesce` feature index
@@ -114,7 +116,9 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 ### plan
 
 - `2026-07-24-service-quiesce-plan` - `service-quiesce` plan
+- `2026-08-02-service-quiesce-plan` - `service-quiesce` plan
 
 ### research
 
 - `2026-07-24-service-quiesce-research` - `service-quiesce` research: `Cooperative contention-aware GPU quiesce for the resident service`
+- `2026-08-02-service-quiesce-paused-state-legibility-research` - `service-quiesce` research: `paused state legibility`

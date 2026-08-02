@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#service-quiesce'
 date: '2026-07-30'
-modified: '2026-07-30'
+modified: '2026-08-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:2dbb3c6bd1b7f70cf5d17b8274826f5a92890c533fbe164cb7720f2a2c5e6452'
+body_hash: 'sha256:f7d29a7443c5ce2e7bbe678f088597cb264aa4f040189a3a487c6fd234e5ed6b'
 related:
   - "[[2026-07-24-service-quiesce-adr]]"
   - "[[2026-07-24-service-quiesce-plan]]"

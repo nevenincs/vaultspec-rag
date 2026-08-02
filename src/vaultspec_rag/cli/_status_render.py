@@ -84,6 +84,7 @@ from ._status_labels import (
     _format_started_label,
     _format_status_duration,
     _get_token_label,
+    _held_by_borrower,
     _last_failure_label,
     _model_ready_label,
     _network_label,
@@ -92,6 +93,7 @@ from ._status_labels import (
     _status_busy_label,
     _status_env_label,
     _status_health_label,
+    _status_is_held,
     _status_jobs_label,
     _status_queue_label,
     _status_uptime_label,
@@ -703,12 +705,27 @@ def _status_next_action(
         return f"{server_status_command(port)}  (models loading; retry shortly)"
     if state != "running":
         return f"vaultspec-rag server logs --limit 80{port_arg}"
+    if _status_is_held(health):
+        return _held_next_action(health, port=port)
     return _running_service_next_action(
         health,
         jobs,
         findings or [],
         port=port,
     )
+
+
+def _held_next_action(health: dict[str, object] | None, *, port: int | None) -> str:
+    """Offer the command that ends this hold, or none when none does.
+
+    A borrower-owned hold ends when that borrower releases its lease and not on
+    anything the operator can type. Printing resume there would send them to a
+    verb whose only possible answer is a refusal naming a lease they cannot
+    inspect, so the row stays empty and the condition line does the explaining.
+    """
+    if _held_by_borrower(health):
+        return ""
+    return f"vaultspec-rag server resume{port_option(port)}"
 
 
 def _running_service_next_action(

@@ -13,7 +13,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal, cast
 
 import typer
 
@@ -169,6 +169,17 @@ def _format_local_index_busy_message(action: str) -> str:
     )
 
 
+#: The keys this entry point authors on the envelope it emits. Everything else
+#: the service published is forwarded.
+#:
+#: This is deliberately an exclusion rather than an allowlist. An allowlist
+#: drops by default, so each field the service learned to send was discarded
+#: until someone remembered to widen the list - which is how a service that had
+#: explicitly said a failure was retryable reached operators as a bare error,
+#: and how the controller block travelled to the CLI boundary and stopped.
+_ENTRY_POINT_OWNED_ERROR_KEYS: Final = frozenset({"ok", "command", "error", "message"})
+
+
 def _display_service_error(
     payload: dict[str, object],
     *,
@@ -186,18 +197,11 @@ def _display_service_error(
     error = str(payload.get("error", "service_error"))
     message = str(payload.get("message", "Search service returned an error."))
     if json_mode:
-        extra: dict[str, object] = {}
-        for key in (
-            "db_path",
-            "backend_capabilities",
-            "diagnostics",
-            "port",
-            "timeout_seconds",
-            "remediation",
-        ):
-            value = payload.get(key)
-            if value is not None:
-                extra[key] = value
+        extra: dict[str, object] = {
+            key: value
+            for key, value in payload.items()
+            if key not in _ENTRY_POINT_OWNED_ERROR_KEYS and value is not None
+        }
         _emit_json_error_and_exit(
             command,
             error,
@@ -212,6 +216,11 @@ def _display_service_error(
     db_path = payload.get("db_path")
     if db_path:
         _plain(f"Index data: {db_path}")
+    # A service that called its own failure transient has told the caller what
+    # to do next. Dropping that leaves an operator deciding between waiting and
+    # escalating with the one fact that answers it removed.
+    if payload.get("retryable") is True:
+        _plain("This is temporary; the same request should succeed on retry.")
     _display_service_diagnostic_summary(payload.get("diagnostics"))
     remediation = payload.get("remediation")
     if isinstance(remediation, list) and remediation:

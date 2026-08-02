@@ -28,6 +28,7 @@ from ..cli._service_start import _daemon_is_serving
 from ..qdrant_runtime._constants import QdrantRuntimeState
 from ..server._lifespan import _service_health_status
 from ..service import ServiceHealth
+from ._quiesce_helpers import running_quiesce_snapshot
 
 pytestmark = [pytest.mark.unit]
 
@@ -108,7 +109,9 @@ def test_the_cli_serves_exactly_when_the_service_reports_no_infrastructure_fault
     half the CLI claims to reproduce.
     """
     reg_health = _registry_health(model_loaded=model_loaded)
-    _, infrastructure_reasons = _service_health_status(reg_health, qdrant_state)
+    _, infrastructure_reasons = _service_health_status(
+        reg_health, qdrant_state, running_quiesce_snapshot()
+    )
     payload = _health_payload(reg_health, qdrant_state)
 
     service_sees_a_fault = bool(infrastructure_reasons)
@@ -132,7 +135,9 @@ def test_a_job_history_fault_is_not_an_infrastructure_fault() -> None:
     """
     reg_health = _registry_health(model_loaded=True)
     state = QdrantRuntimeState(mode="server", alive=True)
-    _, infrastructure_reasons = _service_health_status(reg_health, state)
+    _, infrastructure_reasons = _service_health_status(
+        reg_health, state, running_quiesce_snapshot()
+    )
     assert infrastructure_reasons == []
 
     payload = _health_payload(reg_health, state)

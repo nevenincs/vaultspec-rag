@@ -34,7 +34,7 @@ import logging
 import time
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, TypeGuard, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -57,6 +57,7 @@ from ..logging_config import (
 from ..service import RegistryFullError
 from ..service_quiesce import (
     QuiesceState,
+    QuiesceTransitionCode,
     ServiceQuiesceTransitionConflictError,
     ServiceQuiesceTransitionWaitTimeoutError,
 )
@@ -1118,6 +1119,7 @@ def _quiesce_envelope(
     achieved: bool,
     status: str,
     snapshot: QuiesceSnapshot,
+    registry: ServiceRegistry,
     message: str | None = None,
 ) -> JSONResponse:
     """Emit the one quiesce envelope, on the achieved and failed exits alike.
@@ -1130,7 +1132,13 @@ def _quiesce_envelope(
     achieved/failed distinction lives in the body - a broker pausing
     speculatively must be able to tell a refused lifecycle request from a
     gateway that never reached the service.
+
+    Ownership is stamped here rather than at each caller because a transition
+    result carries the controller's own snapshot, which cannot know who owns the
+    hold it describes.  Stamping once at the single exit means a refusal that
+    exists precisely to talk about ownership cannot report none.
     """
+    snapshot = registry.published_quiesce_snapshot(snapshot)
     log_event(
         logger,
         "service.quiesce",
@@ -1157,6 +1165,51 @@ def _quiesce_envelope(
         )
         payload["retryable"] = True
     return JSONResponse(payload)
+
+
+#: One sentence per borrower refusal, keyed by its structured code.  The code
+#: names the condition for a machine; these say what happened and what the
+#: caller may do next, which is the part an operator needs.  None of them names
+#: a capability, a PID, or any other holder identity.
+_BORROWER_REFUSAL_MESSAGES: Final = {
+    "invalid_borrower_capability": (
+        "The request body did not carry a single well-formed borrower "
+        "capability, so it was not treated as a borrower request."
+    ),
+    "borrower_lease_not_held": (
+        "No live borrower lease matches this capability, so borrower "
+        "coordination cannot be established. Acquire the lease first."
+    ),
+    "borrower_capability_invalid": (
+        "The supplied borrower capability does not match the live lease."
+    ),
+    "borrower_lease_unavailable": (
+        "The borrower lease could not be verified, so this request was refused "
+        "rather than assumed safe. Retry once the lease is observable."
+    ),
+    "borrower_lease_required": (
+        "This pause is held by a GPU borrower and only that borrower can "
+        "release it. It clears on its own when the borrower finishes or exits; "
+        "no operator command ends it sooner."
+    ),
+    "borrower_lease_mismatch": (
+        "A different borrower already holds this pause, so this capability "
+        "cannot act on it."
+    ),
+    "borrower_pause_not_owned": (
+        "The service was already paused by someone else when this borrower "
+        "asked to pause it, so borrower ownership was not granted and the GPU "
+        "must not be used. Wait for that pause to be released, then retry."
+    ),
+}
+
+
+def _borrower_refusal_message(code: str) -> str:
+    """Return the operator-facing sentence for one borrower refusal code."""
+    return _BORROWER_REFUSAL_MESSAGES.get(
+        code,
+        f"The borrower lifecycle request was refused: {code}.",
+    )
 
 
 def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
@@ -1218,7 +1271,8 @@ async def _borrower_lifecycle_authorization(
                 achieved=False,
                 status=capability_error,
                 snapshot=registry.quiesce_snapshot(),
-                message=capability_error,
+                registry=registry,
+                message=_borrower_refusal_message(capability_error),
             ),
         )
     lease_error = registry.validate_borrower_lifecycle_request(
@@ -1232,7 +1286,8 @@ async def _borrower_lifecycle_authorization(
                 achieved=False,
                 status=lease_error,
                 snapshot=registry.quiesce_snapshot(),
-                message=lease_error,
+                registry=registry,
+                message=_borrower_refusal_message(lease_error),
             ),
         )
     return (capability, None)
@@ -1243,16 +1298,28 @@ def _post_pause_binding_error(
     capability: str | None,
     transition: QuiesceTransition,
 ) -> str | None:
-    """Bind a still-live borrower after safe quiescence, or name its refusal."""
+    """Bind a still-live borrower after safe quiescence, or name its refusal.
+
+    Ownership follows the request that produced the state.  An already-quiesced
+    outcome is an observation, not a pause: honouring it as a claim let a
+    borrower inherit an operator's hold and leave that operator unable to
+    release their own service for as long as the borrower ran.  A borrower
+    repeating its own pause is the one case that still binds on an observation,
+    because the binding it would be granted is the one it already holds, and
+    refusing that would break retry after a lost response.
+    """
     if capability is None or not transition.achieved:
         return None
     lease_error = registry.validate_borrower_lifecycle_request(capability, pause=True)
     if lease_error is not None:
         return lease_error
-    if (
-        transition.snapshot.state is not QuiesceState.QUIESCED
-        or not registry.bind_borrower_capability(capability)
+    if transition.snapshot.state is not QuiesceState.QUIESCED:
+        return "borrower_lease_mismatch"
+    if transition.code is QuiesceTransitionCode.ALREADY_QUIESCED and not (
+        registry.borrower_capability_is_bound(capability)
     ):
+        return "borrower_pause_not_owned"
+    if not registry.bind_borrower_capability(capability):
         return "borrower_lease_mismatch"
     return None
 
@@ -1284,6 +1351,7 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
             achieved=False,
             status=exc.code,
             snapshot=exc.snapshot,
+            registry=registry,
             message=str(exc),
         )
     except Exception as exc:
@@ -1291,6 +1359,7 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
             achieved=False,
             status="quiesce_transition_failed",
             snapshot=registry.quiesce_snapshot(),
+            registry=registry,
             message=f"{exc.__class__.__name__}: {exc}",
         )
     binding_error = _post_pause_binding_error(
@@ -1303,7 +1372,8 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
             achieved=False,
             status=binding_error,
             snapshot=transition.snapshot,
-            message=binding_error,
+            registry=registry,
+            message=_borrower_refusal_message(binding_error),
         )
     if not pause and capability is not None and transition.achieved:
         registry.clear_borrower_capability_after_resume(capability)
@@ -1311,6 +1381,7 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
         achieved=transition.achieved,
         status=transition.code.value,
         snapshot=transition.snapshot,
+        registry=registry,
     )
 
 

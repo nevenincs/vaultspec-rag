@@ -18,6 +18,7 @@ import pytest
 from ..cli._status_labels import CONFORMANCE_FAMILY, MODELS_FAMILY, degradation_findings
 from ..qdrant_runtime._constants import QdrantRuntimeState
 from ..server._lifespan import _service_health_status
+from ._quiesce_helpers import held_quiesce_snapshot, running_quiesce_snapshot
 
 if TYPE_CHECKING:
     from ..service import ServiceHealth
@@ -46,7 +47,9 @@ def _local_qdrant() -> QdrantRuntimeState:
 
 class TestHealthAuthorsTheVerdict:
     def test_conforming_service_is_ready_with_no_reasons(self) -> None:
-        status, reasons = _service_health_status(_health(), _local_qdrant())
+        status, reasons = _service_health_status(
+            _health(), _local_qdrant(), running_quiesce_snapshot()
+        )
         assert status == "ready"
         assert reasons == []
 
@@ -59,7 +62,9 @@ class TestHealthAuthorsTheVerdict:
         is the failure this feature exists to remove.
         """
         status, reasons = _service_health_status(
-            _health(nonconforming=["/proj:vault_docs"]), _local_qdrant()
+            _health(nonconforming=["/proj:vault_docs"]),
+            _local_qdrant(),
+            running_quiesce_snapshot(),
         )
 
         assert status == "degraded"
@@ -68,7 +73,9 @@ class TestHealthAuthorsTheVerdict:
     def test_reason_names_the_affected_collection(self) -> None:
         """An operator must be able to tell which index to rebuild."""
         _, reasons = _service_health_status(
-            _health(nonconforming=["/proj:codebase_docs"]), _local_qdrant()
+            _health(nonconforming=["/proj:codebase_docs"]),
+            _local_qdrant(),
+            running_quiesce_snapshot(),
         )
         assert any("codebase_docs" in reason for reason in reasons)
 
@@ -95,6 +102,7 @@ class TestRemediationPairing:
         status, reasons = _service_health_status(
             _health(model_loaded=False, nonconforming=["/proj:vault_docs"]),
             _local_qdrant(),
+            running_quiesce_snapshot(),
         )
 
         findings = degradation_findings(
@@ -129,6 +137,7 @@ class TestRemediationPairing:
         status, reasons = _service_health_status(
             _health(model_loaded=False, nonconforming=["/proj:vault_docs"]),
             _local_qdrant(),
+            running_quiesce_snapshot(),
         )
 
         findings = degradation_findings(
@@ -156,3 +165,47 @@ class TestRemediationPairing:
             }
         )
         assert all(f.family != CONFORMANCE_FAMILY for f in findings)
+
+
+class TestHeldServiceIsNotBroken:
+    """A deliberate pause must not be reported as a fault to repair."""
+
+    def test_a_held_service_reports_paused_not_degraded(self) -> None:
+        """Pause unloads the models on purpose, so their absence is not a fault.
+
+        Before ownership and the held verdict landed, this returned "degraded"
+        with "embedding models are not loaded" and sent operators to
+        `server doctor`, which cannot resolve a pause.
+        """
+        status, reasons = _service_health_status(
+            _health(model_loaded=False),
+            _local_qdrant(),
+            held_quiesce_snapshot(),
+        )
+
+        assert status == "paused"
+        assert reasons == []
+
+    def test_real_degradation_still_surfaces_while_held(self) -> None:
+        """Holding the service hides the pause's own effects, nothing else."""
+        status, reasons = _service_health_status(
+            _health(model_loaded=False, nonconforming=["/proj:vault_docs"]),
+            _local_qdrant(),
+            held_quiesce_snapshot(),
+        )
+
+        assert status == "paused"
+        assert any("different embedding model" in reason for reason in reasons)
+
+    def test_absent_models_are_still_a_fault_when_nothing_asked_for_them(
+        self,
+    ) -> None:
+        """The suppression is scoped to a hold, not to missing models."""
+        status, reasons = _service_health_status(
+            _health(model_loaded=False),
+            _local_qdrant(),
+            running_quiesce_snapshot(),
+        )
+
+        assert status != "paused"
+        assert any("embedding models are not loaded" in reason for reason in reasons)
