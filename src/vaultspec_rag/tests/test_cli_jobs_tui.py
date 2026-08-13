@@ -2323,19 +2323,19 @@ class TestPillShape:
     def test_a_pill_is_capped_in_its_own_fill_colour(self) -> None:
         from rich.text import Text
 
-        from ..cli._jobs_tui_cells import _append_pill
-        from ..cli._jobs_tui_constants import _PILL_CAP_LEFT, _PILL_CAP_RIGHT
+        from ..cli._jobs_tui_cells import append_pill
+        from ..cli._jobs_tui_constants import PILL_CAP_LEFT, PILL_CAP_RIGHT
 
         line = Text()
-        _append_pill(line, "> 2 running", self._FILL, unicode_ok=True)
+        append_pill(line, "> 2 running", self._FILL, unicode_ok=True)
         spans = [(line.plain[s.start : s.end], str(s.style)) for s in line.spans]
 
         background, foreground = self._FILL
-        assert spans[0] == (_PILL_CAP_LEFT, background), (
+        assert spans[0] == (PILL_CAP_LEFT, background), (
             "the left cap's foreground is the pill's background, so the "
             "half-circle completes the fill"
         )
-        assert spans[-1] == (_PILL_CAP_RIGHT, background)
+        assert spans[-1] == (PILL_CAP_RIGHT, background)
         # Interior spaces are non-breaking, so the pill wraps as one unit.
         assert spans[1] == (
             "> 2 running".replace(" ", "\u2800"),
@@ -2351,16 +2351,16 @@ class TestPillShape:
         """
         from rich.text import Text
 
-        from ..cli._jobs_tui_cells import _append_pill
-        from ..cli._jobs_tui_constants import _PILL_CAP_LEFT, _PILL_CAP_RIGHT
+        from ..cli._jobs_tui_cells import append_pill
+        from ..cli._jobs_tui_constants import PILL_CAP_LEFT, PILL_CAP_RIGHT
 
         line = Text()
-        _append_pill(line, "> 2 running", self._FILL, unicode_ok=False)
+        append_pill(line, "> 2 running", self._FILL, unicode_ok=False)
 
-        assert _PILL_CAP_LEFT not in line.plain, (
+        assert PILL_CAP_LEFT not in line.plain, (
             "an ASCII console must never be sent the cap glyphs"
         )
-        assert _PILL_CAP_RIGHT not in line.plain
+        assert PILL_CAP_RIGHT not in line.plain
         assert "[" not in line.plain and "]" not in line.plain, (
             "the degradation is padding, not brackets"
         )
@@ -2728,7 +2728,7 @@ class TestOlderServiceCompatibility:
         while they still carry ``desired_state: running``. Painting an arrow
         there promises a transition on work that is already over.
 
-        Proven able to fail: dropping the terminal-state test in ``_state_cell``
+        Proven able to fail: dropping the terminal-state test in ``state_cell``
         renders the arrow and fails the assertion below by name; restored, it
         passes.
         """
@@ -2819,7 +2819,7 @@ class TestRemainingTimeOnTheRow:
         stops an operator refreshing forever waiting for a dash to change.
 
         Proven able to fail: collapsing the published-null branch of
-        ``_time_cell`` into the dash - the rendering before this change -
+        ``time_cell`` into the dash - the rendering before this change -
         never paints the marker and fails on the assertion below by name;
         restored, it passes.
         """
@@ -2838,7 +2838,7 @@ class TestRemainingTimeOnTheRow:
     ) -> None:
         """Absent stays a different answer from null on the row itself.
 
-        Proven able to fail: making ``_time_cell`` treat an absent key the
+        Proven able to fail: making ``time_cell`` treat an absent key the
         same as a published null paints the marker on every row of an older
         daemon and fails on the not-painted assertion below by name;
         restored, it passes and the header note carries the version gap.
@@ -3098,14 +3098,14 @@ class TestRedactedSearchActivity:
 
     def test_a_redacted_record_is_accepted(self) -> None:
         """Mutation: requiring ``query`` again fails this on the returned error."""
-        from ..cli._jobs_tui_payload import _search_activity_records_error
+        from ..cli._jobs_tui_payload import search_activity_records_error
 
         redacted: dict[str, object] = {
             "request_id": "r-1",
             "state": "active",
             "query_redacted": True,
         }
-        assert _search_activity_records_error([redacted], []) is None
+        assert search_activity_records_error([redacted], []) is None
 
     def test_a_record_carrying_neither_query_nor_redaction_is_rejected(self) -> None:
         """Silence about the text is not the same as a declared redaction.
@@ -3113,14 +3113,14 @@ class TestRedactedSearchActivity:
         A record that simply lost the field must still fail: the check is that
         exactly one of the two is present, not that the strict one was relaxed.
         """
-        from ..cli._jobs_tui_payload import _search_activity_records_error
+        from ..cli._jobs_tui_payload import search_activity_records_error
 
         silent: dict[str, object] = {"request_id": "r-2", "state": "active"}
-        assert _search_activity_records_error([silent], []) is not None
+        assert search_activity_records_error([silent], []) is not None
 
     def test_a_record_claiming_both_is_rejected(self) -> None:
         """Disclosed and redacted at once describes no service state."""
-        from ..cli._jobs_tui_payload import _search_activity_records_error
+        from ..cli._jobs_tui_payload import search_activity_records_error
 
         both: dict[str, object] = {
             "request_id": "r-3",
@@ -3128,13 +3128,13 @@ class TestRedactedSearchActivity:
             "query": "vector search",
             "query_redacted": True,
         }
-        assert _search_activity_records_error([both], []) is not None
+        assert search_activity_records_error([both], []) is not None
 
     def test_the_cell_says_redacted_rather_than_unavailable(self) -> None:
         """An operator must not go looking for a fault that is not there."""
-        from ..cli._jobs_tui import _search_query_cell
+        from ..cli._jobs_tui import search_query_cell
 
-        rendered = _search_query_cell({"query_redacted": True}, 40).plain
+        rendered = search_query_cell({"query_redacted": True}, 40).plain
         assert "redacted" in rendered
         assert "unavailable" not in rendered
 
