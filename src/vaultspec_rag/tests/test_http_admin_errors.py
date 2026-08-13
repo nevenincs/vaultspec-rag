@@ -716,10 +716,7 @@ class TestHealthProbeContract:
         assert _try_http_health(refused_port) is None
 
     def test_timed_out_probe_is_distinguished_from_unreachable(self) -> None:
-        from ..serviceclient._transport import (
-            _try_http_health,
-            health_probe_timed_out,
-        )
+        from ..serviceclient._transport import _try_http_health, health_probe_timed_out
 
         server, port = _serve(_SlowHandler)
         try:

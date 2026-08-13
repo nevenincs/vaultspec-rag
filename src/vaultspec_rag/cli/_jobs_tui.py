@@ -29,9 +29,7 @@ from textual.worker import WorkerState
 
 from .._job_values import count, measurement
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
-from ..serviceclient._transport import (
-    _try_http_admin,
-)
+from ..serviceclient._transport import _try_http_admin
 from ._jobs_tui_cells import (
     PaintContext,
     Pending,
