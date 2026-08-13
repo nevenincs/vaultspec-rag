@@ -6,7 +6,7 @@ tags:
 date: '2026-08-13'
 modified: '2026-08-13'
 body_schema: 'body-v1'
-body_hash: 'sha256:a88bb8e1162602a3162b79ad31aca9f0bf39e8cb5b3a1a8643ef484efa410af8'
+body_hash: 'sha256:6c9bb57eca308011402874408f8b716459b2e4b7aa05e33439dcecc5f28c7dfe'
 related:
   - '[[2026-07-21-large-index-resilience-W01-P01-S01]]'
   - '[[2026-07-21-large-index-resilience-W01-P01-S02]]'
@@ -92,6 +92,7 @@ related:
   - '[[2026-07-21-large-index-resilience-W06-P20-S74]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-S75]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-S76]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S77]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-summary]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
@@ -224,6 +225,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W06-P20-S74` - Guard both halves - the gate against collected items, and the runner's two selections structurally
 - `2026-07-21-large-index-resilience-W06-P20-S75` - Restore a clean type gate: declare the refused-envelope literal and drop suppressions that no longer suppress anything
 - `2026-07-21-large-index-resilience-W06-P20-S76` - Repoint every subprocess test off the resident tier it inherited, and make declaring both a collection-time violation
+- `2026-07-21-large-index-resilience-W06-P20-S77` - Make a refused quiesce transition name that admission is closed, and give the pause drain a budget longer than one encode slice
 - `2026-07-21-large-index-resilience-W06-P20-summary` - `large-index-resilience` `W06.P20` summary
 
 ### plan
