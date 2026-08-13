@@ -62,7 +62,7 @@ def _sync_items(value: object) -> list[list[str]]:
     for item in cast("list[object]", value):
         if not isinstance(item, tuple):
             continue
-        parts = cast("tuple[object, ...]", item)  # ty: ignore[redundant-cast]
+        parts = cast("tuple[object, ...]", item)
         if len(parts) != 2:
             continue
         path, action = parts
