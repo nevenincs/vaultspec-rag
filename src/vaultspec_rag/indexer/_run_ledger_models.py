@@ -40,10 +40,12 @@ __all__ = [
     "column_text",
     "fetch_all",
     "fetch_one",
+    "in_ledger_transaction",
     "index_run_ledger_path",
     "ledger_connection",
     "ledger_transaction",
     "open_ledger_connection",
+    "raise_if_lock_contention",
     "with_contention_retry",
 ]
 
@@ -77,10 +79,15 @@ def fetch_all[T](
 
 #: How long a caller waits for a lock a peer already holds. ``sqlite3.connect``
 #: takes this as the busy budget directly, so it is set once at open rather than
-#: repeated as a PRAGMA. It is generous because the thing being waited on is
-#: another indexing thread's short commit, and delaying a caller is always
-#: cheaper than failing a generation that holds storage-confirmed work.
-LEDGER_BUSY_TIMEOUT_SECONDS: Final = 30.0
+#: repeated as a PRAGMA.
+#:
+#: Sized against the replay budget rather than in isolation. Each replay attempt
+#: can spend this whole budget before raising, so the worst case is roughly
+#: attempts x timeout - and that total has to stay under the deadline at which a
+#: job without a progress tick is called degraded. Generous enough to absorb a
+#: peer's commit, small enough that exhausting every attempt does not itself
+#: read as a stall.
+LEDGER_BUSY_TIMEOUT_SECONDS: Final = 10.0
 
 
 def open_ledger_connection(path: Path) -> sqlite3.Connection:
@@ -104,21 +111,42 @@ def open_ledger_connection(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(path, timeout=LEDGER_BUSY_TIMEOUT_SECONDS)
     try:
         connection.row_factory = sqlite3.Row
-        mode_row: sqlite3.Row | None = fetch_one(
-            connection, "PRAGMA journal_mode = WAL"
-        )
-        mode = column_text(mode_row, 0).lower() if mode_row is not None else "none"
+        mode = _request_write_ahead_logging(connection)
         if mode != "wal":
             raise RunLedgerConcurrencyError(
                 f"run ledger {path} reports journal mode {mode!r} after requesting "
-                "write-ahead logging; concurrent indexing cannot be made safe on "
-                "this filesystem"
+                "write-ahead logging; this filesystem cannot support concurrent "
+                "indexing safely - a network-mounted data root is the usual cause"
             )
         connection.execute("PRAGMA foreign_keys = ON")
     except BaseException:
         connection.close()
         raise
     return connection
+
+
+def _request_write_ahead_logging(connection: sqlite3.Connection) -> str:
+    """Switch the file to write-ahead logging and return the resulting mode.
+
+    Converting away from a rollback journal needs a moment with no other
+    connection on the file, so a peer's read can make the first attempt report
+    the old mode back rather than the requested one. That is transient and
+    self-clearing, so it is retried briefly before being judged: treating the
+    first contended answer as the filesystem's verdict would permanently fail a
+    root over a condition that lasts milliseconds.
+
+    A lock error raised outright is left to propagate. The callers translate it
+    into transient contention, which is what it is.
+    """
+    mode = ""
+    for attempt in range(_JOURNAL_MODE_ATTEMPTS):
+        row: sqlite3.Row | None = fetch_one(connection, "PRAGMA journal_mode = WAL")
+        mode = column_text(row, 0).lower() if row is not None else "none"
+        if mode == "wal":
+            return mode
+        if attempt < _JOURNAL_MODE_ATTEMPTS - 1:
+            time.sleep(_JOURNAL_MODE_RETRY_SECONDS)
+    return mode
 
 
 @contextmanager
@@ -166,6 +194,25 @@ LEDGER_CONTENTION_ATTEMPTS: Final = 4
 #: transient one this retry is for.
 _CONTENTION_BACKOFF_SECONDS: Final = (0.1, 0.25, 0.5)
 
+#: Attempts to convert the journal mode before believing the answer, and the
+#: pause between them. Short: what blocks the conversion is another connection
+#: being open at that instant, not sustained load.
+_JOURNAL_MODE_ATTEMPTS: Final = 3
+_JOURNAL_MODE_RETRY_SECONDS: Final = 0.05
+
+
+def raise_if_lock_contention(exc: sqlite3.OperationalError, *, path: Path) -> None:
+    """Re-raise *exc* as transient contention, or return for a real fault.
+
+    Exists because the durable-state layer's own error vocabulary would
+    otherwise swallow the distinction. ``sqlite3.OperationalError`` subclasses
+    ``DatabaseError``, so a handler written to turn database errors into
+    corruption catches a held lock too, and reports a condition that clears in
+    milliseconds as damaged durable state the caller cannot recover from.
+    """
+    if "locked" in str(exc).lower():
+        raise RunLedgerContentionError(f"run ledger {path} is locked: {exc}") from exc
+
 
 def with_contention_retry[T](operation: Callable[[], T], *, path: Path) -> T:
     """Run an idempotent ledger write, replaying it while a peer holds the lock.
@@ -196,6 +243,30 @@ def with_contention_retry[T](operation: Callable[[], T], *, path: Path) -> T:
         f"run ledger {path} stayed locked across "
         f"{LEDGER_CONTENTION_ATTEMPTS} attempts: {last}"
     ) from last
+
+
+def in_ledger_transaction[T](
+    path: Path,
+    body: Callable[[sqlite3.Connection], T],
+) -> T:
+    """Run *body* in one transaction, replaying the whole thing on contention.
+
+    The composition of the two helpers above, for the write paths that need
+    both. A contended transaction rolls back whole and these bodies have no
+    effect outside it, so replaying one either lands the work or observes it
+    already landed.
+
+    Acquisition is not separately retried. The busy budget on the connection
+    already waits out a peer before ``BEGIN IMMEDIATE`` reports failure, so a
+    retry loop there would multiply against this one and turn a contended write
+    into a wait long enough to read as a stalled job.
+    """
+
+    def attempt() -> T:
+        with ledger_transaction(path) as connection:
+            return body(connection)
+
+    return with_contention_retry(attempt, path=path)
 
 
 def column_text(row: sqlite3.Row, key: int | str) -> str:
