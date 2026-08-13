@@ -435,3 +435,28 @@ class TestAnUnachievedTransitionNamesItsConsequence:
 
         assert "left the service in 'quiesced'" in message
         assert "the service is '" not in message
+
+
+class TestThePauseDrainBudgetFitsItsCaller:
+    """The route's drain wait has to outlast a slice and fit the admin budget.
+
+    It was five seconds against encode slices that run longer than that under
+    load, so pausing a busy service failed by construction: the wait expired,
+    the transition was abandoned mid-way with admission closed, and only a
+    retry arriving after the work had drained on its own ever succeeded.
+    """
+
+    def test_the_budget_outlasts_a_slice_and_leaves_the_caller_room(self) -> None:
+        """Mutation it catches: restoring a wait shorter than one slice.
+
+        Both bounds are asserted because each failure mode is silent in a
+        different way. Too short and every pause of a busy service refuses;
+        too long and the caller's admin timeout fires first, so the operator
+        gets a transport timeout with no envelope, no status, and no remedy -
+        strictly less than the refusal it replaced.
+        """
+        from ..server._routes import _PAUSE_DRAIN_TIMEOUT_SECONDS
+        from ..serviceclient._transport import DEFAULT_ADMIN_TIMEOUT_SECONDS
+
+        assert _PAUSE_DRAIN_TIMEOUT_SECONDS > 10.0
+        assert _PAUSE_DRAIN_TIMEOUT_SECONDS < DEFAULT_ADMIN_TIMEOUT_SECONDS

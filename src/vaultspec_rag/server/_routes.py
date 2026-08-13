@@ -1212,6 +1212,21 @@ def _borrower_refusal_message(code: str) -> str:
     )
 
 
+#: How long the pause route waits for compute admitted before the pause to
+#: finish. Sized to sit inside the caller's shipped 30-second admin budget with
+#: room for the rest of the request, so a drain that does not finish still
+#: comes back as a refusal the operator can read, rather than as a client-side
+#: timeout carrying no envelope and no remedy. Not derived from that budget:
+#: it is the shipped default rather than the effective one, so an install that
+#: lowers it would not be tracked anyway.
+#:
+#: It was five seconds, shorter than one encode slice under load. A pause of a
+#: busy service therefore failed by construction, leaving admission closed each
+#: time, and succeeded only on a retry that happened to arrive after the work
+#: had drained on its own.
+_PAUSE_DRAIN_TIMEOUT_SECONDS: Final = 20.0
+
+
 def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
     """Describe an unachieved transition from the controller's own evidence.
 
@@ -1355,7 +1370,10 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
     try:
         if pause:
             transition = await _run_in_thread(
-                partial(registry.quiesce_resources, timeout_seconds=5.0),
+                partial(
+                    registry.quiesce_resources,
+                    timeout_seconds=_PAUSE_DRAIN_TIMEOUT_SECONDS,
+                ),
             )
         else:
             transition = await _run_in_thread(registry.resume_resources)
