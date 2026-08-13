@@ -39,7 +39,15 @@ pytestmark = [pytest.mark.unit]
 
 _TOKEN = "gpu-borrow-lease-test-token"
 _HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
-_PROCESS_TIMEOUT_SECONDS = 10.0
+# Lifetime bound for the helper processes below, not a bound on any behaviour
+# they are asserting. Each one pays for a fresh interpreter and the import of
+# the client package before it reaches its first statement, and on a contended
+# machine that fixed cost alone has been measured well into the tens of
+# seconds - larger than the whole budget a tighter bound would allow. A bound
+# under that does not catch a wedged child sooner; it fails a correct one for
+# the machine's speed. The child's own assertions are what prove the
+# behaviour, so this only has to be clear of the startup cost.
+_PROCESS_TIMEOUT_SECONDS = 120.0
 
 _CAPTURED_AUTHORITY_SCENARIO = """
 import os
@@ -859,12 +867,14 @@ def test_the_bound_witness_names_a_hold_without_naming_its_holder(
 # hits inside a reverted build and none inside a correct one.
 _LEASE_RACE_SAMPLES = 400
 
-# The floor below which the sample carries too little power to stand as
-# evidence. A reverted build reads a torn record on the order of one sample in
-# seventy, so this many samples still fail it with probability well above 0.9,
-# while a correct build passes at any count. Sampling stops at the floor only
-# when the budget below runs out first, which takes a machine several times
-# slower than an already-contended runner.
+# The floor below which the sample is too small to stand as evidence at all.
+# The target count above is what carries the power - a reverted build tears
+# roughly one read in a hundred and change, which the full sample catches the
+# large majority of the time and a fraction of it would not - so this is a
+# vacuity guard, not the detection threshold. It should never bind: reaching
+# it means the budget below expired, which takes a machine several times
+# slower than an already-contended runner, and the failure then says so
+# rather than reporting a tear that was never observed.
 _LEASE_RACE_MIN_SAMPLES = 200
 
 # Wall-clock ceiling on the sampling loop. It exists to stop a wedged reader,
