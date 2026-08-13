@@ -280,6 +280,26 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     enforce_tiers(items)
 
 
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Refuse a selection holding both device tiers at once.
+
+    Judged here rather than beside the tier gate above because the two hooks
+    need opposite halves of collection: that one has to see every collected
+    test, before a marker expression removes the ones declaring nothing, while
+    this one has to see only what will actually run. Two tiers both present in
+    the suite are not a fault; the two of them in one session's selection are.
+    So the check waits until the selection is final, which is what this hook
+    means.
+
+    Raises:
+        pytest.UsageError: When the selection holds subprocess-tier and
+            resident-tier tests at once.
+    """
+    from vaultspec_rag.tests._tier_gate import enforce_device_tier_isolation
+
+    enforce_device_tier_isolation(session.items)
+
+
 def pytest_runtestloop(session: pytest.Session) -> bool | None:
     """Run every selected GPU tier inside one acknowledged borrower lease.
 
