@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#code-document-index-boundary'
 date: '2026-07-22'
-modified: '2026-07-27'
-body_hash: 'sha256:31b475d20ebd185b9719c98897da7c8e7f9de6fe663f20653438e443432ff505'
+modified: '2026-08-13'
+body_hash: 'sha256:f0ee782f48d9b6530b3a8fb932e8f19f225e142c2fe451f4f212da4a64fad3c5'
 tier: L3
 related:
   - '[[2026-07-21-code-document-index-boundary-adr]]'

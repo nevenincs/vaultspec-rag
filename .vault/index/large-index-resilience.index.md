@@ -6,7 +6,7 @@ tags:
 date: '2026-08-13'
 modified: '2026-08-13'
 body_schema: 'body-v1'
-body_hash: 'sha256:431de06bf7a32c3c98582400ce188fed717633833cb4c672da723a3b1f14233d'
+body_hash: 'sha256:2de136f5e92e5f9bcdf7a48aea8d21f289efb586919ce9ec8cc139426da93fe3'
 related:
   - '[[2026-07-21-large-index-resilience-W01-P01-S01]]'
   - '[[2026-07-21-large-index-resilience-W01-P01-S02]]'
@@ -70,6 +70,7 @@ related:
   - '[[2026-07-21-large-index-resilience-W04-P13-S46]]'
   - '[[2026-07-21-large-index-resilience-W04-P13-S47]]'
   - '[[2026-07-21-large-index-resilience-W05-P14-S48]]'
+  - '[[2026-07-21-large-index-resilience-W05-P14-S49]]'
   - '[[2026-07-21-large-index-resilience-W06-P16-S60]]'
   - '[[2026-07-21-large-index-resilience-W06-P16-S61]]'
   - '[[2026-07-21-large-index-resilience-W06-P16-S62]]'
@@ -102,6 +103,7 @@ related:
   - '[[2026-07-22-large-index-resilience-run-checkpoint-audit]]'
   - '[[2026-07-22-large-index-resilience-run-ledger-audit]]'
   - '[[2026-07-23-large-index-resilience-closing-review-audit]]'
+  - '[[2026-08-13-large-index-resilience-ledger-concurrency-audit]]'
 ---
 
 # `large-index-resilience` feature index
@@ -128,6 +130,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-22-large-index-resilience-run-checkpoint-audit` - `large-index-resilience` audit: `run checkpoint bridge`
 - `2026-07-22-large-index-resilience-run-ledger-audit` - `large-index-resilience` audit: `run ledger`
 - `2026-07-23-large-index-resilience-closing-review-audit` - `large-index-resilience` audit: `independent closing review — passed with two follow-ups`
+- `2026-08-13-large-index-resilience-ledger-concurrency-audit` - `large-index-resilience` audit: `ledger concurrency`
 
 ### exec
 
@@ -193,6 +196,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W04-P13-S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses
 - `2026-07-21-large-index-resilience-W05-P14-S48` - Run focused indexer, watcher, storage-write, jobs, profile, restart, and GPU integration suites
 - `2026-07-21-large-index-resilience-W04-P13-S47` - Complete the 250872-chunk incident floor on the declared default managed-service profile
+- `2026-07-21-large-index-resilience-W05-P14-S49` - Run the complete project test suite without skips or expected failures
 - `2026-07-21-large-index-resilience-W06-P16-S60` - Open every run-ledger connection in write-ahead logging mode and prove the mode persists across reopen
 - `2026-07-21-large-index-resilience-W06-P16-S61` - Apply the same connection contract to the route-migration journal
 - `2026-07-21-large-index-resilience-W06-P16-S62` - Move full-database integrity verification off the per-run open path onto an explicit maintenance and recovery entry point
