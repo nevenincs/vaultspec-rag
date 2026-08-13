@@ -299,10 +299,8 @@ def measure_document_workload(root: Path) -> DocumentWorkloadMeasurement:
         DocumentChunkingOptions,
         chunk_document_and_hash_file,
     )
-    from ...indexer._streaming import (
-        DocumentSliceStreamRequest,
-        iter_weighted_document_slices,
-    )
+    from ...indexer._slicing import iter_weighted_document_slices
+    from ...indexer._streaming_types import DocumentSliceStreamRequest
 
     resolved = root.resolve()
     # Measurement only exercises preflight, support-limit, and preprocess-

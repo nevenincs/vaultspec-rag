@@ -21,6 +21,7 @@ from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from pathlib import Path
+
 from ..jobs import index_job_status, reset, snapshot
 from ._job_manager_transition_helpers import pending_attempt
 from ._jobs_restore_helpers import job_recorded_by_a_now_dead_process

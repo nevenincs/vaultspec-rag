@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._resolved_policy import ResolvedIndexPolicy
-    from ._streaming import CodeFileSegment
+    from ._streaming_types import CodeFileSegment
 
 __all__ = [
     "CodeRunCheckpoint",

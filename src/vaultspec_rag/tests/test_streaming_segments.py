@@ -21,16 +21,20 @@ from ..indexer._chunk_producer import (
 )
 from ..indexer._consumer_pipeline import CodeConsumerPipeline
 from ..indexer._run_policy import DurableProgressKind, RunPolicy
-from ..indexer._streaming import (
-    CodeFileSegment,
-    CodeFileSegmentRequest,
-    WeightedCodeSlice,
-    _dense_vector_to_list,
-    _release_vector_fields,
-    _transfer_to_cpu,
+from ..indexer._slicing import (
     estimate_code_chunk_bytes,
     iter_code_file_segments,
     iter_weighted_code_slices,
+)
+from ..indexer._streaming import (
+    _dense_vector_to_list,
+    _release_vector_fields,
+    _transfer_to_cpu,
+)
+from ..indexer._streaming_types import (
+    CodeFileSegment,
+    CodeFileSegmentRequest,
+    WeightedCodeSlice,
 )
 
 if TYPE_CHECKING:
@@ -411,10 +415,12 @@ def test_explicit_stream_limits_do_not_resolve_global_configuration() -> None:
     env["VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS"] = "0"
     script = """
 from vaultspec_rag._store_models import CodeChunk  # absolute-import-ok
-from vaultspec_rag.indexer._streaming import (  # absolute-import-ok
-    CodeFileSegmentRequest,
+from vaultspec_rag.indexer._slicing import (  # absolute-import-ok
     iter_code_file_segments,
     iter_weighted_code_slices,
+)
+from vaultspec_rag.indexer._streaming_types import (  # absolute-import-ok
+    CodeFileSegmentRequest,
 )
 
 chunk = CodeChunk(

@@ -12,20 +12,32 @@ import queue
 import time
 from dataclasses import dataclass
 from functools import partial
-from itertools import chain, pairwise
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from ..job_control import NO_RUN_CONTROL
+from ._slicing import (
+    code_embed_text,
+    document_embed_text,
+)
+from ._streaming_types import (
+    CodebaseStreamRequest,
+    CodeSliceRequest,
+    CpuTransferable,
+    DenseRowIterable,
+    DocumentSliceRequest,
+    ListConvertible,
+    SparseVectorLike,
+    VaultStreamRequest,
+)
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Callable, Iterable, Iterator, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     from .._store_models import (
         CodeChunk,
         DocumentChunk,
         VaultChunk,
-        VaultDocument,
     )
     from .._store_writes import StoreWritePolicy
     from ..embeddings import EmbeddingModel, EncodeBucketProgress
@@ -38,29 +50,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "CodeFileSegment",
-    "CodeFileSegmentRequest",
-    "CodeSliceRequest",
-    "CodebaseStreamRequest",
-    "DocumentSliceRequest",
-    "DocumentSliceStreamRequest",
     "EncodeBucketReporter",
     "StoreWriteTask",
     "UnsettledStoreWriterError",
-    "VaultStreamRequest",
-    "WeightedCodeSlice",
-    "WeightedDocumentSlice",
     "_SliceWriter",
     "_release_cuda_cache",
     "_stream_encode_and_upsert_codebase",
     "_stream_encode_and_upsert_vault",
     "encode_and_upsert_code_slice",
     "encode_and_upsert_document_slice",
-    "estimate_code_chunk_bytes",
-    "estimate_document_chunk_bytes",
-    "iter_code_file_segments",
-    "iter_weighted_code_slices",
-    "iter_weighted_document_slices",
     "report_forward_entry",
     "report_forward_exit",
 ]
@@ -78,251 +76,6 @@ _WRITER_SHUTDOWN_TIMEOUT_S = 300.0
 
 # Conservative 64-bit CPython lifetime estimates. A dense element exists once
 # in the float32 encode output and once as a Python float/list slot while the
-# store point is built. A sparse entry exists as native index/value data plus
-# two Python list entries. The fixed allowance covers the dataclass, payload
-# mapping, Qdrant model, and the small containers joining those objects.
-_DENSE_ELEMENT_LIFETIME_BYTES = 4 + 8 + 24
-_SPARSE_ENTRY_LIFETIME_BYTES = 8 + 4 + (2 * 8) + 28 + 24
-_POINT_FIXED_OVERHEAD_BYTES = 1024
-_DEFAULT_SPARSE_DIMENSION = 30_522
-
-
-@dataclass(frozen=True, slots=True)
-class _CodeSegmentLimits:
-    """Resolved memory and chunk limits for one segment stream."""
-
-    max_chunks: int
-    max_bytes: int
-    dense_dimension: int
-    sparse_enabled: bool
-    sparse_dimension: int
-
-
-@dataclass(frozen=True, slots=True)
-class VaultStreamRequest:
-    docs: list[VaultDocument]
-    slice_size: int
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    reporter: ProgressReporter
-    ingest_wait: bool = True
-    run_control: RunControl = NO_RUN_CONTROL
-    reuse: DonorReuseContext | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class DocumentSliceRequest:
-    chunks: list[DocumentChunk]
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    release_cache: bool = True
-    encode_batch_size: int | None = None
-    write_policy: StoreWritePolicy | None = None
-    on_storage_confirmed: Callable[[], None] | None = None
-    after_forward: Callable[[str], None] | None = None
-    on_cuda_oom: Callable[[BaseException], None] | None = None
-    run_control: RunControl = NO_RUN_CONTROL
-    reuse: DonorReuseContext | None = None
-    writer: _SliceWriter | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class DocumentSliceStreamRequest:
-    chunks: Iterable[DocumentChunk]
-    max_chunks: int | None = None
-    max_bytes: int | None = None
-    dense_dimension: int | None = None
-    sparse_enabled: bool | None = None
-    sparse_dimension: int | None = None
-    run_control: RunControl = NO_RUN_CONTROL
-
-
-@dataclass(frozen=True, slots=True)
-class CodeFileSegmentRequest:
-    chunks: Iterable[CodeChunk]
-    max_chunks: int | None = None
-    max_bytes: int | None = None
-    dense_dimension: int | None = None
-    sparse_enabled: bool | None = None
-    sparse_dimension: int | None = None
-    run_control: RunControl = NO_RUN_CONTROL
-
-
-@dataclass(frozen=True, slots=True)
-class CodeSliceRequest:
-    chunks: list[CodeChunk]
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    release_cache: bool = True
-    encode_batch_size: int | None = None
-    write_policy: StoreWritePolicy | None = None
-    ingest_wait: bool = True
-    on_storage_confirmed: Callable[[], None] | None = None
-    before_forward: Callable[[str], None] | None = None
-    after_forward: Callable[[str], None] | None = None
-    on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
-    on_cuda_oom: Callable[[BaseException], None] | None = None
-    run_control: RunControl = NO_RUN_CONTROL
-    reuse: DonorReuseContext | None = None
-    collection: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class CodebaseStreamRequest:
-    chunks: list[CodeChunk]
-    slice_size: int
-    model: EmbeddingModel
-    store: VaultStore
-    gpu_lock: threading.Lock | None
-    reporter: ProgressReporter
-    run_control: RunControl = NO_RUN_CONTROL
-    reuse: DonorReuseContext | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class WeightedDocumentSlice:
-    """One document slice with an exact conservative retained-byte weight."""
-
-    chunks: tuple[DocumentChunk, ...]
-    estimated_bytes: int
-
-    def __post_init__(self) -> None:
-        if not self.chunks:
-            raise ValueError("document slices must contain at least one chunk")
-        if self.estimated_bytes <= 0:
-            raise ValueError("document slice weight must be positive")
-
-
-def _validate_segment_transition(
-    previous: CodeFileSegment,
-    current: CodeFileSegment,
-) -> None:
-    """Validate one deterministic file/ordinal transition."""
-    if previous.path == current.path:
-        if previous.is_file_end or current.ordinal != previous.ordinal + 1:
-            raise ValueError(
-                "same-file segments must be contiguous and cannot follow "
-                "a file-end marker"
-            )
-    elif not previous.is_file_end or current.ordinal != 0:
-        raise ValueError(
-            "a new file in one weighted stream must follow a file-end marker "
-            "and begin at ordinal zero"
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CodeFileSegment:
-    """One ordered, weighted, file-local code indexing unit.
-
-    ``ordinal`` is zero-based within the file and ``is_file_end`` marks the
-    only segment after which a later ledger may declare that file complete.
-    The tuple owns only references to the bounded active chunks; callers must
-    discard the segment after its confirmed store mutation.
-    """
-
-    path: str
-    ordinal: int
-    chunks: tuple[CodeChunk, ...]
-    estimated_bytes: int
-    is_file_end: bool
-
-    def __post_init__(self) -> None:
-        """Reject malformed durable-unit boundaries at construction time."""
-        if isinstance(self.ordinal, bool) or self.ordinal < 0:
-            raise ValueError(
-                f"segment ordinal must be a non-negative integer, got {self.ordinal!r}"
-            )
-        if not self.chunks:
-            raise ValueError("code file segments must contain at least one chunk")
-        if isinstance(self.estimated_bytes, bool) or self.estimated_bytes <= 0:
-            raise ValueError(
-                "segment estimated_bytes must be a positive integer, "
-                f"got {self.estimated_bytes!r}"
-            )
-        mismatched = next(
-            (chunk.path for chunk in self.chunks if chunk.path != self.path),
-            None,
-        )
-        if mismatched is not None:
-            raise ValueError(
-                "code file segment cannot cross file boundaries: "
-                f"expected {self.path!r}, got {mismatched!r}"
-            )
-
-
-@dataclass(frozen=True, slots=True)
-class WeightedCodeSlice:
-    """One bounded encode/upsert slice retaining its file-unit boundaries."""
-
-    segments: tuple[CodeFileSegment, ...]
-    chunks: tuple[CodeChunk, ...]
-    estimated_bytes: int
-
-    def __post_init__(self) -> None:
-        """Keep segment order, chunk ownership, and byte weight exact."""
-        if not self.segments:
-            raise ValueError("weighted code slices must contain at least one segment")
-        if not self.chunks:
-            raise ValueError("weighted code slices must contain at least one chunk")
-        if isinstance(self.estimated_bytes, bool) or self.estimated_bytes <= 0:
-            raise ValueError(
-                "slice estimated_bytes must be a positive integer, "
-                f"got {self.estimated_bytes!r}"
-            )
-
-        flattened = tuple(
-            chunk for segment in self.segments for chunk in segment.chunks
-        )
-        if len(flattened) != len(self.chunks) or any(
-            actual is not expected
-            for actual, expected in zip(flattened, self.chunks, strict=True)
-        ):
-            raise ValueError(
-                "weighted code slice chunks must exactly flatten its ordered segments"
-            )
-        segment_bytes = sum(segment.estimated_bytes for segment in self.segments)
-        if segment_bytes != self.estimated_bytes:
-            raise ValueError(
-                "weighted code slice byte total does not match its segments: "
-                f"expected {segment_bytes}, got {self.estimated_bytes}"
-            )
-
-        for previous, current in pairwise(self.segments):
-            _validate_segment_transition(previous, current)
-
-
-@runtime_checkable
-class _CpuTransferable(Protocol):
-    """Structural protocol for accelerator-backed array/tensor results."""
-
-    def cpu(self) -> object: ...
-
-
-@runtime_checkable
-class _ListConvertible(Protocol):
-    """Structural protocol shared by NumPy rows and Torch tensors."""
-
-    def tolist(self) -> object: ...
-
-
-@runtime_checkable
-class _DenseRowIterable(Protocol):
-    """Structural protocol for dense result batches."""
-
-    def __iter__(self) -> Iterator[object]: ...
-
-
-class _SparseVectorLike(Protocol):
-    """Sparse row shape consumed by store-ready chunk fields."""
-
-    indices: list[int]
-    values: list[float]
-
-
 def _release_cuda_cache() -> None:
     """Return unused CUDA caching-allocator blocks to the driver.
 
@@ -349,14 +102,14 @@ def _transfer_to_cpu(value: object) -> object:
     check keeps both forms lazy without adding an eager Torch import to this
     module.
     """
-    if isinstance(value, _CpuTransferable):
+    if isinstance(value, CpuTransferable):
         return value.cpu()
     return value
 
 
 def _dense_rows(value: object) -> Iterable[object]:
     """Validate and expose rows from a CPU dense-embedding result."""
-    if not isinstance(value, _DenseRowIterable):
+    if not isinstance(value, DenseRowIterable):
         msg = f"dense encoder returned a non-iterable result: {type(value).__name__}"
         raise TypeError(msg)
     return value
@@ -367,7 +120,7 @@ def _dense_vector_to_list(value: object) -> list[float]:
     cpu_value = _transfer_to_cpu(value)
     if isinstance(cpu_value, list):
         return cast("list[float]", cpu_value)
-    if not isinstance(cpu_value, _ListConvertible):
+    if not isinstance(cpu_value, ListConvertible):
         msg = (
             "dense encoder row cannot be converted to a list: "
             f"{type(cpu_value).__name__}"
@@ -393,7 +146,7 @@ def _release_vector_fields(
 def _populate_vector_fields(
     chunks: Sequence[CodeChunk | DocumentChunk | VaultChunk],
     dense_cpu: object,
-    sparse: Iterable[_SparseVectorLike | None],
+    sparse: Iterable[SparseVectorLike | None],
 ) -> None:
     """Attach already-CPU dense and sparse rows to one bounded chunk slice."""
     for chunk, vec, sparse_row in zip(
@@ -500,7 +253,7 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
     encode_started = time.perf_counter()
     dense_device: object | None = None
     dense_cpu: object | None = None
-    sparse: Iterable[_SparseVectorLike | None] | None = None
+    sparse: Iterable[SparseVectorLike | None] | None = None
     try:
         _notify_forward_boundary(request.before_forward, "dense")
         # The model brackets each planned encode bucket's forward with its
@@ -1048,41 +801,6 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
 #: header is what lets a query match a chunk through its location rather
 #: than only its body, so code and document inputs drifting apart in format
 #: makes their scores quietly less comparable, and nothing fails.
-_EMBED_CONTEXT_SEPARATOR = " :: "
-_EMBED_HEADER_SEPARATOR = "\n"
-
-
-def _embed_text(context: list[str], content: str) -> str:
-    """Compose one embedding input: locational header, then raw content."""
-    return _EMBED_CONTEXT_SEPARATOR.join(context) + _EMBED_HEADER_SEPARATOR + content
-
-
-def _code_embed_text(chunk: CodeChunk) -> str:
-    """Build the embedding input for a code chunk.
-
-    Prepends a one-line locational header (project-relative path plus
-    enclosing class/function when known) so queries can match a chunk
-    through its location and naming context, not just its body. The
-    stored payload keeps the raw chunk content; only the embedding
-    input carries the header.
-    """
-    parts = [chunk.path]
-    if chunk.class_name:
-        parts.append(chunk.class_name)
-    if chunk.function_name:
-        parts.append(chunk.function_name)
-    return _embed_text(parts, chunk.content)
-
-
-def _document_embed_text(chunk: DocumentChunk) -> str:
-    """Build document embedding input without altering the stored payload."""
-    payload = chunk.payload
-    context = [payload.source_path]
-    if payload.title:
-        context.append(payload.title)
-    if payload.section:
-        context.append(payload.section)
-    return _embed_text(context, payload.content)
 
 
 def encode_and_upsert_document_slice(request: DocumentSliceRequest) -> None:
@@ -1105,7 +823,7 @@ def encode_and_upsert_document_slice(request: DocumentSliceRequest) -> None:
         _encode_slice_vector_fields(
             _VectorEncodeRequest(
                 chunks=request.chunks,
-                slice_texts=[_document_embed_text(chunk) for chunk in request.chunks],
+                slice_texts=[document_embed_text(chunk) for chunk in request.chunks],
                 model=request.model,
                 gpu_lock=request.gpu_lock,
                 sparse_enabled=bool(get_config().sparse_enabled),
@@ -1161,493 +879,6 @@ def _write_document_slice(
         on_storage_confirmed()
 
 
-def _utf8_size(value: str | None) -> int:
-    """Return the encoded size of an optional payload string."""
-    return len(value.encode("utf-8")) if value is not None else 0
-
-
-def _validate_estimator_dimensions(
-    *,
-    dense_dimension: int,
-    sparse_enabled: bool,
-    sparse_dimension: int,
-) -> None:
-    """Reject dimensions no chunk estimator can weigh."""
-    if dense_dimension <= 0:
-        raise ValueError(
-            f"dense_dimension must be a positive integer, got {dense_dimension}"
-        )
-    if sparse_enabled and (isinstance(sparse_dimension, bool) or sparse_dimension <= 0):
-        raise ValueError(
-            f"sparse_dimension must be a positive integer, got {sparse_dimension}"
-        )
-
-
-def _dense_lifetime_bytes(dense_dimension: int, vector_length: int) -> int:
-    """Return the dense bytes reserved for one point."""
-    return max(dense_dimension, vector_length) * _DENSE_ELEMENT_LIFETIME_BYTES
-
-
-def _sparse_lifetime_bytes(
-    sparse_dimension: int, index_count: int, value_count: int
-) -> int:
-    """Return the sparse bytes reserved for one point.
-
-    SPLADE applies ReLU and pooling across its vocabulary without a production
-    top-k. Any output dimension can therefore survive as a nonzero entry, so an
-    unpopulated chunk still reserves the loaded model's full output dimension
-    and a populated one uses whichever count is larger. Runtime memory probes
-    remain the authority for allocator overhead.
-    """
-    return (
-        max(sparse_dimension, index_count, value_count) * _SPARSE_ENTRY_LIFETIME_BYTES
-    )
-
-
-def estimate_code_chunk_bytes(
-    chunk: CodeChunk,
-    *,
-    dense_dimension: int,
-    sparse_enabled: bool,
-    sparse_dimension: int = _DEFAULT_SPARSE_DIMENSION,
-) -> int:
-    """Estimate the peak retained bytes attributable to one code chunk.
-
-    The estimate deliberately counts concurrent representations rather than
-    serialized payload size alone: source content, embedding input, payload
-    strings, the float32 dense batch, the temporary Python dense vector, and
-    sparse native/Python entries. Before sparse encoding, the loaded sparse
-    model's full output dimension is reserved; populated chunks use whichever
-    count is larger. The hard RSS/CUDA probes remain the authority for native-
-    model variance. This weight drives both file segmentation here and the
-    weighted queue introduced by the following orchestration steps.
-    """
-    _validate_estimator_dimensions(
-        dense_dimension=dense_dimension,
-        sparse_enabled=sparse_enabled,
-        sparse_dimension=sparse_dimension,
-    )
-
-    source_bytes = _utf8_size(chunk.content)
-    embed_bytes = _utf8_size(_code_embed_text(chunk))
-    payload_bytes = sum(
-        _utf8_size(value)
-        for value in (
-            chunk.id,
-            chunk.path,
-            chunk.language,
-            chunk.content,
-            chunk.node_type,
-            chunk.function_name,
-            chunk.class_name,
-            chunk.source_path,
-            chunk.preprocessor_id,
-            chunk.anchor,
-            chunk.locator_kind,
-            chunk.locator_value_str,
-            chunk.locator_end_str,
-        )
-    )
-
-    dense_bytes = _dense_lifetime_bytes(dense_dimension, len(chunk.vector))
-
-    sparse_bytes = 0
-    if sparse_enabled:
-        sparse_bytes = _sparse_lifetime_bytes(
-            sparse_dimension,
-            len(chunk.sparse_indices),
-            len(chunk.sparse_values),
-        )
-
-    return (
-        _POINT_FIXED_OVERHEAD_BYTES
-        + source_bytes
-        + embed_bytes
-        + payload_bytes
-        + dense_bytes
-        + sparse_bytes
-    )
-
-
-def estimate_document_chunk_bytes(
-    chunk: DocumentChunk,
-    *,
-    dense_dimension: int,
-    sparse_enabled: bool,
-    sparse_dimension: int = _DEFAULT_SPARSE_DIMENSION,
-) -> int:
-    """Estimate retained source, payload, dense, and sparse document bytes."""
-    _validate_estimator_dimensions(
-        dense_dimension=dense_dimension,
-        sparse_enabled=sparse_enabled,
-        sparse_dimension=sparse_dimension,
-    )
-    payload = chunk.payload
-    locator = payload.locator
-    payload_bytes = sum(
-        _utf8_size(value)
-        for value in (
-            chunk.id,
-            payload.source_path,
-            payload.content_fingerprint,
-            payload.content,
-            payload.title,
-            payload.section,
-            payload.anchor,
-            locator.kind if locator is not None else None,
-            str(locator.value) if locator is not None else None,
-            (
-                str(locator.end)
-                if locator is not None and locator.end is not None
-                else None
-            ),
-            payload.document_metadata.canonical_json,
-            payload.unit_metadata.canonical_json,
-            payload.extractor_id,
-            payload.extractor_version,
-        )
-    )
-    dense_bytes = _dense_lifetime_bytes(dense_dimension, len(chunk.vector))
-    sparse_bytes = 0
-    if sparse_enabled:
-        sparse_bytes = _sparse_lifetime_bytes(
-            sparse_dimension,
-            len(chunk.sparse_indices),
-            len(chunk.sparse_values),
-        )
-    return (
-        _POINT_FIXED_OVERHEAD_BYTES
-        + _utf8_size(payload.content)
-        + _utf8_size(_document_embed_text(chunk))
-        + payload_bytes
-        + dense_bytes
-        + sparse_bytes
-    )
-
-
-def iter_weighted_document_slices(
-    request: DocumentSliceStreamRequest,
-) -> Iterator[WeightedDocumentSlice]:
-    """Yield document slices within the configured queue count and byte caps."""
-    from ..config._settings import get_config
-
-    cfg = get_config()
-    chunk_limit = _positive_limit(
-        "max_chunks",
-        int(cfg.index_queue_max_chunks)
-        if request.max_chunks is None
-        else request.max_chunks,
-    )
-    byte_limit = _positive_limit(
-        "max_bytes",
-        int(cfg.index_queue_max_bytes)
-        if request.max_bytes is None
-        else request.max_bytes,
-    )
-    dimension = _positive_limit(
-        "dense_dimension",
-        int(cfg.embedding_dimension)
-        if request.dense_dimension is None
-        else request.dense_dimension,
-    )
-    include_sparse = (
-        bool(cfg.sparse_enabled)
-        if request.sparse_enabled is None
-        else request.sparse_enabled
-    )
-    sparse_output_dimension = (
-        _DEFAULT_SPARSE_DIMENSION
-        if request.sparse_dimension is None
-        else request.sparse_dimension
-    )
-    if include_sparse:
-        sparse_output_dimension = _positive_limit(
-            "sparse_dimension", sparse_output_dimension
-        )
-
-    selected: list[DocumentChunk] = []
-    selected_bytes = 0
-    for chunk in request.chunks:
-        request.run_control.checkpoint()
-        weight = estimate_document_chunk_bytes(
-            chunk,
-            dense_dimension=dimension,
-            sparse_enabled=include_sparse,
-            sparse_dimension=sparse_output_dimension,
-        )
-        if weight > byte_limit:
-            raise ValueError(
-                f"document chunk {chunk.id!r} estimated at {weight} bytes exceeds "
-                f"the queue ceiling {byte_limit}"
-            )
-        if selected and (
-            len(selected) >= chunk_limit or selected_bytes + weight > byte_limit
-        ):
-            yield WeightedDocumentSlice(tuple(selected), selected_bytes)
-            selected.clear()
-            selected_bytes = 0
-            request.run_control.checkpoint()
-        selected.append(chunk)
-        selected_bytes += weight
-    if selected:
-        yield WeightedDocumentSlice(tuple(selected), selected_bytes)
-    request.run_control.checkpoint()
-
-
-def _positive_limit(name: str, value: int) -> int:
-    """Validate one positive integer resource limit."""
-    if isinstance(value, bool) or value <= 0:
-        raise ValueError(f"{name} must be a positive integer, got {value!r}")
-    return value
-
-
-def _selected_int(value: int | None, configured: Callable[[], int]) -> int:
-    """Choose an explicit integer without evaluating its configured default."""
-    return configured() if value is None else value
-
-
-def _resolve_code_segment_limits(
-    *,
-    max_chunks: int | None,
-    max_bytes: int | None,
-    dense_dimension: int | None,
-    sparse_enabled: bool | None,
-    sparse_dimension: int | None,
-) -> _CodeSegmentLimits:
-    """Resolve and validate one file-segment policy."""
-    from ..config._settings import get_config
-
-    chunk_limit = _selected_int(
-        max_chunks,
-        lambda: int(get_config().index_segment_max_chunks),
-    )
-    byte_limit = _selected_int(
-        max_bytes,
-        lambda: int(get_config().index_segment_max_bytes),
-    )
-    dimension = _selected_int(
-        dense_dimension,
-        lambda: int(get_config().embedding_dimension),
-    )
-    include_sparse = (
-        bool(get_config().sparse_enabled) if sparse_enabled is None else sparse_enabled
-    )
-    sparse_output_dimension = (
-        _DEFAULT_SPARSE_DIMENSION if sparse_dimension is None else sparse_dimension
-    )
-    if include_sparse:
-        sparse_output_dimension = _positive_limit(
-            "sparse_dimension",
-            sparse_output_dimension,
-        )
-    return _CodeSegmentLimits(
-        max_chunks=_positive_limit(
-            "max_chunks",
-            chunk_limit,
-        ),
-        max_bytes=_positive_limit(
-            "max_bytes",
-            byte_limit,
-        ),
-        dense_dimension=_positive_limit(
-            "dense_dimension",
-            dimension,
-        ),
-        sparse_enabled=include_sparse,
-        sparse_dimension=sparse_output_dimension,
-    )
-
-
-def _file_chunk_weight(
-    chunk: CodeChunk,
-    *,
-    path: str,
-    limits: _CodeSegmentLimits,
-) -> int:
-    """Validate one file-local chunk and return its bounded weight."""
-    if chunk.path != path:
-        raise ValueError(
-            "one segment stream cannot cross file boundaries: "
-            f"expected {path!r}, got {chunk.path!r}"
-        )
-    chunk_bytes = estimate_code_chunk_bytes(
-        chunk,
-        dense_dimension=limits.dense_dimension,
-        sparse_enabled=limits.sparse_enabled,
-        sparse_dimension=limits.sparse_dimension,
-    )
-    if chunk_bytes > limits.max_bytes:
-        raise ValueError(
-            f"code chunk {chunk.id!r} estimated at {chunk_bytes} bytes "
-            f"exceeds index_segment_max_bytes={limits.max_bytes}"
-        )
-    return chunk_bytes
-
-
-def _segment_would_overflow(
-    *,
-    chunk_count: int,
-    segment_bytes: int,
-    next_chunk_bytes: int,
-    limits: _CodeSegmentLimits,
-) -> bool:
-    """Return whether the next chunk requires a new file segment."""
-    return (
-        chunk_count >= limits.max_chunks
-        or segment_bytes + next_chunk_bytes > limits.max_bytes
-    )
-
-
-def iter_code_file_segments(
-    request: CodeFileSegmentRequest,
-) -> Iterator[CodeFileSegment]:
-    """Yield ordered file-local segments within configured chunk/byte bounds.
-
-    ``chunks`` must contain one file in its original chunk order. No segment
-    crosses that file boundary, and the final yielded segment alone carries
-    ``is_file_end=True`` for later storage-confirmed ledger completion. A
-    single overweight chunk is rejected because silently admitting it would
-    make the configured memory ceiling non-enforceable.
-    """
-    request.run_control.checkpoint()
-    limits = _resolve_code_segment_limits(
-        max_chunks=request.max_chunks,
-        max_bytes=request.max_bytes,
-        dense_dimension=request.dense_dimension,
-        sparse_enabled=request.sparse_enabled,
-        sparse_dimension=request.sparse_dimension,
-    )
-    chunk_iterator = iter(request.chunks)
-    first_chunk = next(chunk_iterator, None)
-    if first_chunk is None:
-        return
-
-    path = first_chunk.path
-    ordinal = 0
-    segment_chunks: list[CodeChunk] = []
-    segment_bytes = 0
-
-    for chunk in chain((first_chunk,), chunk_iterator):
-        request.run_control.checkpoint()
-        chunk_bytes = _file_chunk_weight(
-            chunk,
-            path=path,
-            limits=limits,
-        )
-        if segment_chunks and _segment_would_overflow(
-            chunk_count=len(segment_chunks),
-            segment_bytes=segment_bytes,
-            next_chunk_bytes=chunk_bytes,
-            limits=limits,
-        ):
-            yield CodeFileSegment(
-                path=path,
-                ordinal=ordinal,
-                chunks=tuple(segment_chunks),
-                estimated_bytes=segment_bytes,
-                is_file_end=False,
-            )
-            request.run_control.checkpoint()
-            ordinal += 1
-            segment_chunks.clear()
-            segment_bytes = 0
-
-        segment_chunks.append(chunk)
-        segment_bytes += chunk_bytes
-        request.run_control.checkpoint()
-
-    request.run_control.checkpoint()
-    yield CodeFileSegment(
-        path=path,
-        ordinal=ordinal,
-        chunks=tuple(segment_chunks),
-        estimated_bytes=segment_bytes,
-        is_file_end=True,
-    )
-    request.run_control.checkpoint()
-
-
-def iter_weighted_code_slices(
-    segments: Iterable[CodeFileSegment],
-    *,
-    max_chunks: int | None = None,
-    max_bytes: int | None = None,
-    run_control: RunControl = NO_RUN_CONTROL,
-) -> Iterator[WeightedCodeSlice]:
-    """Pack ordered file segments into bounded encode/upsert slices.
-
-    Segment objects are never split or reordered, so later checkpoint code can
-    record every file-local unit covered by one confirmed store mutation. Small
-    files may share an encode slice, retaining batching throughput without
-    losing their resumability boundaries.
-    """
-    from ..config._settings import get_config
-
-    run_control.checkpoint()
-    configured_chunks = _selected_int(
-        max_chunks,
-        lambda: int(get_config().index_queue_max_chunks),
-    )
-    configured_bytes = _selected_int(
-        max_bytes,
-        lambda: int(get_config().index_queue_max_bytes),
-    )
-    chunk_limit = _positive_limit(
-        "max_chunks",
-        configured_chunks,
-    )
-    byte_limit = _positive_limit(
-        "max_bytes",
-        configured_bytes,
-    )
-
-    slice_segments: list[CodeFileSegment] = []
-    slice_chunks: list[CodeChunk] = []
-    slice_bytes = 0
-    previous_segment: CodeFileSegment | None = None
-
-    for segment in segments:
-        run_control.checkpoint()
-        if previous_segment is not None:
-            _validate_segment_transition(previous_segment, segment)
-        previous_segment = segment
-        segment_chunk_count = len(segment.chunks)
-        if segment_chunk_count > chunk_limit or segment.estimated_bytes > byte_limit:
-            raise ValueError(
-                f"code file segment {segment.path!r}#{segment.ordinal} exceeds "
-                f"slice bounds: chunks={segment_chunk_count}/{chunk_limit}, "
-                f"bytes={segment.estimated_bytes}/{byte_limit}"
-            )
-
-        if slice_segments and (
-            len(slice_chunks) + segment_chunk_count > chunk_limit
-            or slice_bytes + segment.estimated_bytes > byte_limit
-        ):
-            yield WeightedCodeSlice(
-                segments=tuple(slice_segments),
-                chunks=tuple(slice_chunks),
-                estimated_bytes=slice_bytes,
-            )
-            run_control.checkpoint()
-            slice_segments.clear()
-            slice_chunks.clear()
-            slice_bytes = 0
-
-        slice_segments.append(segment)
-        slice_chunks.extend(segment.chunks)
-        slice_bytes += segment.estimated_bytes
-        run_control.checkpoint()
-
-    if slice_segments:
-        run_control.checkpoint()
-        yield WeightedCodeSlice(
-            segments=tuple(slice_segments),
-            chunks=tuple(slice_chunks),
-            estimated_bytes=slice_bytes,
-        )
-        run_control.checkpoint()
-
-
 def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
     """Encode dense + sparse vectors for one slice of code chunks and upsert it.
 
@@ -1688,7 +919,7 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
         _encode_slice_vector_fields(
             _VectorEncodeRequest(
                 chunks=request.chunks,
-                slice_texts=[_code_embed_text(chunk) for chunk in request.chunks],
+                slice_texts=[code_embed_text(chunk) for chunk in request.chunks],
                 model=request.model,
                 gpu_lock=request.gpu_lock,
                 sparse_enabled=bool(cfg.sparse_enabled),
