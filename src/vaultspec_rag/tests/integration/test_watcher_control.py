@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 from ._helpers import _make_root
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.subprocess_gpu]
 
 
 @pytest.fixture
@@ -37,7 +37,6 @@ def _clean_watchers(  # pyright: ignore[reportUnusedFunction]
     reset_config()
 
 
-@pytest.mark.subprocess_gpu
 @pytest.mark.usefixtures("live_service_with_watch")
 async def test_start_then_stop_watcher(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
@@ -58,7 +57,6 @@ async def test_start_then_stop_watcher(tmp_path: Path) -> None:
     assert state2["running"] is False
 
 
-@pytest.mark.subprocess_gpu
 @pytest.mark.usefixtures("live_service_with_watch")
 async def test_reconfigure_queues_the_restart_and_records_new_values(
     tmp_path: Path,
@@ -99,7 +97,6 @@ async def test_reconfigure_queues_the_restart_and_records_new_values(
     assert result["cooldown_s"] == 2
 
 
-@pytest.mark.subprocess_gpu
 async def test_start_watcher_disabled_is_pull_only(
     tmp_path: Path,
     request: pytest.FixtureRequest,

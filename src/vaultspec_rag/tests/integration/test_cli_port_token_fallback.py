@@ -28,14 +28,13 @@ from ._helpers import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.subprocess_gpu]
 
 # Local-only keeps the test focused on the HTTP auth path: token gating is
 # backend-independent, so there is no need to provision the Qdrant server.
 _LOCAL_ONLY = {"VAULTSPEC_RAG_LOCAL_ONLY": "1"}
 
 
-@pytest.mark.subprocess_gpu
 def test_jobs_via_port_authenticates_via_health_when_status_token_absent(
     tmp_path: Path,
 ) -> None:
@@ -66,7 +65,6 @@ def test_jobs_via_port_authenticates_via_health_when_status_token_absent(
             _wait_for_exit(pid)
 
 
-@pytest.mark.subprocess_gpu
 def test_jobs_via_port_refreshes_stale_status_token_from_health(
     tmp_path: Path,
 ) -> None:

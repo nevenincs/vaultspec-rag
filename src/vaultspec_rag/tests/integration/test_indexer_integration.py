@@ -31,9 +31,6 @@ if TYPE_CHECKING:
     from ..conftest import RagComponentsWithManifest
 
 
-pytestmark = [pytest.mark.integration]
-
-
 def _configure_cpu_code_index(
     dimension: int,
     **overrides: object,
@@ -116,6 +113,7 @@ def _wait_for_document_write_lock(indexer: object, *, timeout: float = 10.0) -> 
 class TestVaultIndexer:
     """Tests for the indexing pipeline with real vault data."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_full_index_counts(self, rag_components: RagComponentsWithManifest) -> None:
         result = rag_components["index_result"]
@@ -124,6 +122,7 @@ class TestVaultIndexer:
         assert result.duration_ms >= 0
         assert result.device == "cuda"
 
+    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_index_matches_store_count(
         self, rag_components: RagComponentsWithManifest
@@ -132,6 +131,7 @@ class TestVaultIndexer:
         store = rag_components["store"]
         assert result.total == store.count()
 
+    @pytest.mark.integration
     @pytest.mark.timeout(300)
     def test_incremental_index_no_changes(
         self, rag_components_full: RagComponentsWithManifest
@@ -153,6 +153,7 @@ class TestVaultIndexer:
 class TestLargeCodeIndexHighWater:
     """Real-CUDA N/two-N evidence for bounded production retention."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(180)
     def test_small_file_segments_share_one_real_encode_and_store_slice(
         self,
@@ -182,6 +183,7 @@ class TestLargeCodeIndexHighWater:
         finally:
             store.close()
 
+    @pytest.mark.integration
     @pytest.mark.performance
     @pytest.mark.timeout(900)
     def test_rss_and_cuda_high_water_remain_bounded_as_corpus_doubles(
@@ -296,6 +298,7 @@ class TestLargeCodeIndexHighWater:
 class TestCodeIndexMemoryCeilings:
     """Production code indexing terminates cleanly at admitted memory limits."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(30)
     def test_low_rss_ceiling_returns_typed_outcome_and_releases_pipeline(
         self,
@@ -339,6 +342,7 @@ class TestCodeIndexMemoryCeilings:
             assert store.count_code() == 0
             _assert_code_pipeline_released(indexer)
 
+    @pytest.mark.integration
     @pytest.mark.cuda
     @pytest.mark.timeout(60)
     def test_low_cuda_ceiling_returns_typed_outcome_and_releases_pipeline(
@@ -432,6 +436,7 @@ class TestCodeIndexMemoryCeilings:
 class TestCodeIndexBlockedStoreDeadline:
     """A blocked real local write cannot retain the index writer authority."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(30)
     def test_blocked_store_consumer_releases_queue_and_writer_at_deadline(
         self,
@@ -510,6 +515,7 @@ class TestCodeIndexBlockedStoreDeadline:
 class TestDocumentIndexMemoryAndWriteDeadline:
     """Document indexing enforces the same memory and write-liveness account."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(30)
     def test_document_memory_budget_projects_real_peaks_and_effective_ceilings(
         self,
@@ -559,6 +565,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
             assert resilience.rss_ceiling_mib == snapshot.rss_ceiling_mib
             assert resilience.support_profile == get_config().index_support_profile
 
+    @pytest.mark.integration
     @pytest.mark.timeout(30)
     def test_low_document_rss_ceiling_is_typed_and_canonical(
         self,
@@ -604,6 +611,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
             assert resilience.terminal_outcome == "failed"
             assert store.count_document() == 0
 
+    @pytest.mark.integration
     @pytest.mark.timeout(30)
     def test_blocked_document_write_polls_cancel_and_releases_writer(
         self,
@@ -659,6 +667,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
             assert indexer._writer_lock.acquire(blocking=False)
             indexer._writer_lock.release()
 
+    @pytest.mark.integration
     @pytest.mark.timeout(30)
     def test_blocked_document_write_expires_at_no_progress_deadline(
         self,
@@ -717,6 +726,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
 class TestDocumentPreparation:
     """Tests for individual document preparation."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_prepare_real_document(
         self, rag_components: RagComponentsWithManifest
@@ -738,6 +748,7 @@ class TestDocumentPreparation:
         assert doc.doc_type in ("adr", "audit", "exec", "plan", "reference", "research")
         assert doc.content
 
+    @pytest.mark.integration
     @pytest.mark.timeout(300)
     def test_prepare_all_documents(
         self, rag_components: RagComponentsWithManifest
@@ -772,6 +783,7 @@ class TestDocumentPreparation:
 class TestIndexEdgeCases:
     """Edge cases for indexing operations."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(300)
     def test_double_full_index_idempotent(
         self, rag_components_full: RagComponentsWithManifest
@@ -791,6 +803,7 @@ class TestIndexEdgeCases:
         )
         assert result.total == second_count
 
+    @pytest.mark.integration
     @pytest.mark.timeout(300)
     def test_incremental_after_full_stable(
         self, rag_components_full: RagComponentsWithManifest
@@ -803,6 +816,7 @@ class TestIndexEdgeCases:
         assert result.removed == 0, f"Expected 0 removed, got {result.removed}"
         assert result.total == rag_components_full["index_result"].total
 
+    @pytest.mark.integration
     @pytest.mark.timeout(300)
     def test_full_index_clean_on_empty_corpus_purges_all(
         self,
@@ -847,6 +861,7 @@ class TestIndexEdgeCases:
         finally:
             store.close()
 
+    @pytest.mark.integration
     @pytest.mark.timeout(300)
     def test_all_synthetic_docs_have_frontmatter(
         self, rag_components: RagComponentsWithManifest
@@ -869,6 +884,7 @@ class TestIndexEdgeCases:
 class TestIncrementalModifyAndDelete:
     """R26-M4: incremental_index detects modified and deleted vault files."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(300)
     def test_incremental_detects_modified_file(
         self, rag_components_full: RagComponentsWithManifest
@@ -901,6 +917,7 @@ class TestIncrementalModifyAndDelete:
             # Re-index to restore metadata
             indexer.incremental_index(reporter=NullProgressReporter())
 
+    @pytest.mark.integration
     @pytest.mark.timeout(300)
     def test_incremental_detects_deleted_file(
         self, rag_components_full: RagComponentsWithManifest
@@ -1008,6 +1025,7 @@ def _cancel_after_first_code_slice(store: object, token: object) -> None:
     raise AssertionError("the code run never published a slice to cancel")
 
 
+@pytest.mark.integration
 @pytest.mark.timeout(600)
 def test_a_resumed_code_run_over_a_moving_tree_completes(
     cpu_code_embedding_model: EmbeddingModel,
