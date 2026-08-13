@@ -4,7 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-08-13'
-body_hash: 'sha256:71e15c4a1866aef60d83a00a4ea840ffd0c526ce28a5a18ef142e1bb8cb746c3'
+body_hash: 'sha256:ccab2922c7201dfee61af349bfe2ea6d1dc8e1905295f3f01ba568721a576451'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -179,7 +179,7 @@ Run the complete resilience, concurrency, restart, and operability verification 
 Run focused and full suites across indexing, watcher, storage, jobs, restart, and concurrency.
 
 - [x] `W05.P14.S48` - Run focused indexer, watcher, storage-write, jobs, profile, restart, and GPU integration suites; `src/vaultspec_rag/tests`.
-- [ ] `W05.P14.S49` - Run the complete project test suite without skips or expected failures; `pyproject.toml`.
+- [x] `W05.P14.S49` - Run the complete project test suite without skips or expected failures; `pyproject.toml`.
 - [x] `W05.P14.S50` - Run pre-commit lint, formatting, type, and policy checks over the completed change; `.pre-commit-config.yaml`.
 
 ### Phase `W05.P15` - architecture and safety audit

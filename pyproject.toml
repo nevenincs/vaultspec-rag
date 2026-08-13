@@ -23,7 +23,11 @@ dependencies = [
   "transformers>=4.51",
   "huggingface-hub>=1.24.0",
   "numpy>=2.5.1",
-  "qdrant-client>=1.16.0",
+  # Capped to the minor line of the pinned Qdrant server. The server pin
+  # carries reviewed per-platform SHA256 digests, so it is the side that
+  # cannot move without review; raising this cap is a deliberate act that
+  # pairs with minting those digests, never a resolver side effect.
+  "qdrant-client>=1.16.0,<1.19",
   "pydantic>=2.12.5",
   "rich>=14.3.2",
   "vaultspec-core>=0.1.45",
