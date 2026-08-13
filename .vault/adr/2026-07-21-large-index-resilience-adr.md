@@ -4,7 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-08-13'
-body_hash: 'sha256:99d317f2cc8c02065a8b89e66367956845f6b033bd1358e09c1dabb58c1abc79'
+body_hash: 'sha256:800055fdcaa894bac239c4f17c900800da535a1345b0a49cbb12df50b396cb1c'
 related:
   - "[[2026-07-21-large-index-resilience-research]]"
   - "[[2026-07-21-large-index-resilience-reference]]"
@@ -284,31 +284,46 @@ corpus floor because the incident input is within the capability already promise
 
 - Interrupted and failed runs resume from storage-confirmed work, replaying at most one
   unrecorded unit instead of restarting from zero.
+
 - Full and incremental memory become functions of unit, queue, and model bounds rather than
   corpus size.
+
 - Watcher failures no longer create immediate retry loops; convergence intent survives behind
   an observable circuit.
+
 - Long progressing jobs remain valid while jobs without durable progress terminate.
+
 - Operators receive one checkpoint, retry, circuit, memory, and admission account everywhere.
+
 - Sparse CPU transfer, SQLite transactions, sampling, and per-unit ledger writes add overhead
   in exchange for bounded memory and recoverability.
+
 - SQLite adds a schema and compaction lifecycle. Corrupt ledgers become explicit
   non-resumable states and never authorize skipping work.
+
 - Modified files may briefly expose old and new IDs together; recovery converges without a
   gap where neither exists.
+
 - Clean rebuilds can retain long control latency and remain visibly incomplete after safety
   failure. Shadow publication is the path to shorten that interval.
+
 - Process-wide CUDA enforcement also constrains search, so profiles reserve search headroom
   and validation covers concurrent search plus indexing.
+
 - Lower-resource machines may reject the default profile explicitly even when corpus counts
   fit; the outcome describes missing resources rather than unsupported corpus.
+
 - Benchmark-derived ceilings above the required floor remain operational data. Reducing the
   floor requires a superseding ADR.
 
 - The ledger's per-root file is shared by every content kind, so its concurrency mode is load-bearing rather than incidental: a rollback journal reintroduces a cross-kind global write lock that the constraints forbid.
+
 - Write-ahead logging adds a sidecar journal and a checkpointing lifecycle beside the ledger, and the managed per-root index-data area must tolerate both.
+
 - Ledger integrity verification moves off the hot open path, so corruption is detected at an explicit maintenance or recovery entry point rather than on every run open.
+
 - Contention becomes an observable retry rather than a failed generation, so operators see slower convergence under load instead of discarded storage-confirmed work.
 
 - Durable-state components gain concurrency tests that run real overlapping work against real database files, which are slower and more intricate than the single-threaded tests they join, and are the only tests that can observe this defect class.
+
 - Existing ledger tests that assert only single-threaded behaviour are strengthened or removed rather than counted as coverage of a concurrent component.
