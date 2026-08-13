@@ -4,7 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-08-13'
-body_hash: 'sha256:44f220b206a38f1457e8927a80ad0fb4228565c2684031dbe8c7c39e10369b11'
+body_hash: 'sha256:d0e48097d7ef84d2e271386648a6726657282103126d4f5258801ecbcc2a3d9c'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -234,6 +234,7 @@ Close the residual defects the ledger-concurrency review surfaced but did not ow
 - [x] `W06.P20.S75` - Restore a clean type gate: declare the refused-envelope literal and drop suppressions that no longer suppress anything; `src/vaultspec_rag/tests/test_gpu_borrow_lease.py, src/vaultspec_rag/indexer/_resolved_policy.py, src/vaultspec_rag/commands/_models.py`.
 - [x] `W06.P20.S76` - Repoint every subprocess test off the resident tier it inherited, and make declaring both a collection-time violation; `src/vaultspec_rag/tests/integration/, src/vaultspec_rag/tests/_tier_gate.py, src/vaultspec_rag/tests/test_marker_discipline.py`.
 - [x] `W06.P20.S77` - Make a refused quiesce transition name that admission is closed, and give the pause drain a budget longer than one encode slice; `src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/tests/test_service_quiesce_routes.py`.
+- [x] `W06.P20.S78` - Audit the start verb's exit paths against the lifecycle envelope contract and rebuild the collection the pin move stranded; `src/vaultspec_rag/cli/_service_start.py, src/vaultspec_rag/cli/_service_lifecycle.py`.
 
 ## Parallelization
 

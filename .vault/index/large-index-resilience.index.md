@@ -6,7 +6,7 @@ tags:
 date: '2026-08-13'
 modified: '2026-08-13'
 body_schema: 'body-v1'
-body_hash: 'sha256:6c9bb57eca308011402874408f8b716459b2e4b7aa05e33439dcecc5f28c7dfe'
+body_hash: 'sha256:aa6e013f875213166a927943068f549f4fa23fcbdfce57d1a40b142f0f074dab'
 related:
   - '[[2026-07-21-large-index-resilience-W01-P01-S01]]'
   - '[[2026-07-21-large-index-resilience-W01-P01-S02]]'
@@ -93,6 +93,7 @@ related:
   - '[[2026-07-21-large-index-resilience-W06-P20-S75]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-S76]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-S77]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S78]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-summary]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
@@ -226,6 +227,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W06-P20-S75` - Restore a clean type gate: declare the refused-envelope literal and drop suppressions that no longer suppress anything
 - `2026-07-21-large-index-resilience-W06-P20-S76` - Repoint every subprocess test off the resident tier it inherited, and make declaring both a collection-time violation
 - `2026-07-21-large-index-resilience-W06-P20-S77` - Make a refused quiesce transition name that admission is closed, and give the pause drain a budget longer than one encode slice
+- `2026-07-21-large-index-resilience-W06-P20-S78` - Audit the start verb's exit paths against the lifecycle envelope contract and rebuild the collection the pin move stranded
 - `2026-07-21-large-index-resilience-W06-P20-summary` - `large-index-resilience` `W06.P20` summary
 
 ### plan
