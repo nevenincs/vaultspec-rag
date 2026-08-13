@@ -21,10 +21,10 @@ from .._source_types import PublicSourceType, SourceTypeParseError, parse_source
 from .._store_locks import VaultStoreLockedError
 from ..api import CodebaseSearchRequest, VaultSearchRequest
 from ..serviceclient._compat import resolve_data_plane_service
-from ..serviceclient._transport import (
-    _get_search_timeout,
-    _try_http_search,
+from ..serviceclient._search_transport import (
     document_search_filters,
+    get_search_timeout,
+    try_http_search,
 )
 from ._app import (
     CLIState,
@@ -1313,7 +1313,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             port = service.port
 
     if port is not None:
-        service_results = _try_http_search(
+        service_results = try_http_search(
             query,
             search_type.value,
             max_results,
@@ -1365,7 +1365,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
     # A local mandate is present; run the in-process search under a wall-clock
     # deadline so a degraded local store or wedged model load cannot hang while
     # holding the index lock.
-    deadline = _get_search_timeout(timeout)
+    deadline = get_search_timeout(timeout)
     with _local_search_deadline(deadline, json_mode=json_mode):
         envelope: dict[str, object] = {}
         try:

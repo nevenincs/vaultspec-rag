@@ -28,7 +28,10 @@ from ..server._routes_search import (
     _search_response_status,
 )
 from ..service import RegistryFullError, ServiceRegistry
-from ..serviceclient._transport import _search_response_envelope, _try_http_search
+from ..serviceclient._search_transport import (
+    _search_response_envelope,
+    try_http_search,
+)
 
 if TYPE_CHECKING:
     from .._source_types import IndexSource
@@ -37,7 +40,7 @@ pytestmark = [pytest.mark.unit]
 
 
 def _http_search(port: int) -> dict[str, object] | None:
-    return _try_http_search("response contract", "vault", 3, port, "")
+    return try_http_search("response contract", "vault", 3, port, "")
 
 
 def test_valid_search_envelope_is_unchanged() -> None:

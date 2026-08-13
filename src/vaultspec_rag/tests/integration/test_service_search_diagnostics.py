@@ -23,11 +23,8 @@ from mcp.types import CallToolResult, TextContent
 from ...job_manager.manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...service_quiesce import ServiceQuiesceController
-from ...serviceclient._transport import (
-    _do_http_call,
-    _timeout_diagnostics,
-    _try_http_search,
-)
+from ...serviceclient._search_transport import _timeout_diagnostics, try_http_search
+from ...serviceclient._transport import _do_http_call
 from .._ports import free_loopback_port
 from ..corpus import build_synthetic_vault
 from .conftest import _live_service_context
@@ -531,7 +528,7 @@ def _shared_search_after_concurrent_admission(
         label=label,
     )
     try:
-        result = _try_http_search(
+        result = try_http_search(
             query,
             "vault",
             5,
@@ -1290,7 +1287,7 @@ def test_empty_service_search_reports_missing_index(
     root = tmp_path / "empty-project"
     (root / ".vault").mkdir(parents=True)
 
-    result = _try_http_search(
+    result = try_http_search(
         "nothing should match this empty workspace",
         "vault",
         3,
@@ -1474,7 +1471,7 @@ def test_service_search_short_timeout_reports_operational_diagnostics(
     root = tmp_path / "timeout-project"
     (root / ".vault").mkdir(parents=True)
 
-    result = _try_http_search(
+    result = try_http_search(
         "this request intentionally has an unrealistically short timeout",
         "vault",
         3,

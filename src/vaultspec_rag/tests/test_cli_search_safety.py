@@ -442,11 +442,11 @@ class TestSearchSafetyContract:
         Proven able to fail: raising the timeout above the server's sleep lets
         the request complete and the error is no longer http_search_timeout.
         """
-        from ..serviceclient._transport import _try_http_search
+        from ..serviceclient._search_transport import try_http_search
 
         server, thread = _slow_search_contract_server()
         try:
-            res = _try_http_search(
+            res = try_http_search(
                 query="test",
                 search_type="vault",
                 top_k=5,

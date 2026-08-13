@@ -22,11 +22,8 @@ from ..cli._service_status import _write_service_status, read_service_status
 from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
 from ..serviceclient._compat import DataPlaneService, classify_service_version
-from ..serviceclient._transport import (
-    DEFAULT_SEARCH_TIMEOUT_SECONDS,
-    _get_search_timeout,
-    _try_http_search,
-)
+from ..serviceclient._search_transport import get_search_timeout, try_http_search
+from ..serviceclient._transport import DEFAULT_SEARCH_TIMEOUT_SECONDS
 from ..torch_config._constants import TorchConfigAction
 from ._http_stubs import QuietHandler
 
@@ -1049,7 +1046,6 @@ __all__ = [
     "_empty_search_contract_server",
     "_expected_code_search_request",
     "_find_free_port",
-    "_get_search_timeout",
     "_help_option_descriptions",
     "_hold_local_index_lock",
     "_invoke_search_contract",
@@ -1074,14 +1070,15 @@ __all__ = [
     "_status_contract_health_payload",
     "_status_contract_jobs_payload",
     "_status_contract_server",
-    "_try_http_search",
     "_write_service_status",
     "app",
+    "get_search_timeout",
     "read_service_status",
     "reset_base_config",
     "reset_rag_config",
     "runner",
     "search_records",
+    "try_http_search",
 ]
 
 

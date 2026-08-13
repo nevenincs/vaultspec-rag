@@ -395,7 +395,7 @@ def _build_rule(
     extractor_version = _resolve_extractor_version(rule_map, order)
     on_error = _resolve_on_error(rule_map, reject)
     priority = _resolve_priority(rule_map, reject)
-    timeout_s = _resolve_timeout(rule_map, reject)
+    timeout_s = resolve_timeout(rule_map, reject)
     batch = _resolve_batch(rule_map, command, entry_point, reject)
     path_independent = _resolve_path_independent(rule_map, reject)
     max_source_bytes = _resolve_max_source_bytes(rule_map, reject)
@@ -628,7 +628,7 @@ def _resolve_priority(
     return priority_raw
 
 
-def _resolve_timeout(
+def resolve_timeout(
     rule_map: dict[str, object],
     reject: Callable[[str], _RuleRejectedError],
 ) -> float:
