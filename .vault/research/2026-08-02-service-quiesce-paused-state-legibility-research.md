@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#service-quiesce'
 date: '2026-08-02'
-modified: '2026-08-02'
+modified: '2026-08-13'
 body_schema: 'body-v1'
-body_hash: 'sha256:33b646f0b99f5b671551e88fe6fc021db5176aa41f89d25f29fbd03445d89a96'
+body_hash: 'sha256:8d6f36b7663877afb198cdaf1164de55c300707b3f853128df62d4ed8232bec8'
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-research]]'

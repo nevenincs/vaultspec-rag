@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.subprocess_gpu]
 
 
 # -- helpers -----------------------------------------------------------------
@@ -191,7 +191,6 @@ def _wait_ref_released(port: int, root: Path, timeout: float = 15.0) -> None:
 # -- tests -------------------------------------------------------------------
 
 
-@pytest.mark.subprocess_gpu
 def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
     """A project quiescent past the idle TTL is evicted on the next admission."""
     # First-index cold-start and collection setup can take more than 10 seconds
@@ -242,7 +241,6 @@ def test_idle_ttl_evicts_quiescent_slots(tmp_path: Path) -> None:
             _wait_for_exit(pid)
 
 
-@pytest.mark.subprocess_gpu
 def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
     """Admitting a new slot at the cap evicts the least-recently-accessed."""
     overrides = {
@@ -294,7 +292,6 @@ def test_lru_cap_evicts_oldest(tmp_path: Path) -> None:
             _wait_for_exit(pid)
 
 
-@pytest.mark.subprocess_gpu
 def test_log_rotation_creates_backups(tmp_path: Path) -> None:
     """A small max_bytes drives multiple rotations and bounded backup count."""
     overrides = {
@@ -349,7 +346,6 @@ def test_log_rotation_creates_backups(tmp_path: Path) -> None:
             _wait_for_exit(pid)
 
 
-@pytest.mark.subprocess_gpu
 def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
     """New log records after rollover land in the active file, not the backup."""
     overrides = {
@@ -427,7 +423,6 @@ def test_log_rotation_post_rollover_writes_to_active(tmp_path: Path) -> None:
             _wait_for_exit(pid)
 
 
-@pytest.mark.subprocess_gpu
 def test_close_all_drains_busy_slots(tmp_path: Path) -> None:
     """Service stop completes within 5s drain + 2s grace even under load."""
     overrides = {

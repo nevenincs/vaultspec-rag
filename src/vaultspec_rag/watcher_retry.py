@@ -899,6 +899,12 @@ def _classify_failure(error: BaseException) -> tuple[JobErrorKind, bool]:
     retryable = kind in {
         JobErrorKind.TIMEOUT,
         JobErrorKind.UNAVAILABLE,
+        # Contention on the shared per-root ledger clears when the peer run
+        # finishes its transaction. Treating it as non-retryable opens the
+        # circuit on the first occurrence and pauses automatic indexing for a
+        # condition that resolves itself, which is the outcome classifying it
+        # separately exists to avoid.
+        JobErrorKind.LEDGER_CONTENDED,
     }
     return kind, retryable
 

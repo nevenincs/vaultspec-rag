@@ -24,7 +24,7 @@ from ...storage_manifest import load_manifest, record_root, update_orphan_stamps
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration, pytest.mark.subprocess_gpu]
+pytestmark = [pytest.mark.subprocess_gpu]
 
 # Seconds-scale cadence so the test observes several cycles quickly.
 _INTERVAL_MINUTES = "0.05"

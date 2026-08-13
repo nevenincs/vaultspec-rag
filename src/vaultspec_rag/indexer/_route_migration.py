@@ -6,7 +6,6 @@ import hashlib
 import itertools
 import json
 import logging
-import sqlite3
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -15,10 +14,15 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .. import store_schema
 from ._content_policy import ContentKind
-from ._run_ledger_models import index_run_ledger_path
+from ._run_ledger_models import (
+    index_run_ledger_path,
+    ledger_connection,
+    ledger_transaction,
+)
 from ._run_ledger_runtime import RunLedger
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Iterator
 
     from qdrant_client.conversions.common_types import PointId
@@ -89,7 +93,7 @@ class RouteMigrationJournal:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS route_migrations (
@@ -125,9 +129,9 @@ class RouteMigrationJournal:
             destination_generation_id,
             point_ids,
         )
-        with self._connect() as connection:
-            # sqlite3's cursor typing cannot see the row_factory set in
-            # _connect(), so every fetch is genuinely Any at the stub
+        with ledger_transaction(self.path) as connection:
+            # sqlite3's cursor typing cannot see the row_factory the shared
+            # opener sets, so every fetch is genuinely Any at the stub
             # boundary; cast to the row_factory's real runtime type here.
             existing = cast(
                 "sqlite3.Row | None",
@@ -172,7 +176,7 @@ class RouteMigrationJournal:
 
     def mark_origin_deleted(self, migration_id: str) -> RouteMigration:
         """Commit origin deletion after the idempotent store call returns."""
-        with self._connect() as connection:
+        with ledger_transaction(self.path) as connection:
             connection.execute(
                 """
                 UPDATE route_migrations
@@ -200,7 +204,7 @@ class RouteMigrationJournal:
         """Yield destination-confirmed cleanup obligations row by row."""
         last_key: tuple[float, str] | None = None
         while True:
-            with self._connect() as connection:
+            with ledger_connection(self.path) as connection:
                 if last_key is None:
                     rows = cast(
                         "list[sqlite3.Row]",
@@ -243,12 +247,6 @@ class RouteMigrationJournal:
                 cast("float", last["updated_at"]),
                 str(cast("object", last["migration_id"])),
             )
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
 
 
 @dataclass(frozen=True, slots=True)

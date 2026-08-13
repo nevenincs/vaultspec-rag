@@ -24,7 +24,7 @@ from ...serviceclient._transport import _do_http_call, _try_http_admin
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.integration, pytest.mark.subprocess_gpu]
+pytestmark = [pytest.mark.subprocess_gpu]
 
 
 def _survey_root_call(

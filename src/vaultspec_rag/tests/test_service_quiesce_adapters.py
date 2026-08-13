@@ -305,7 +305,7 @@ async def _paint_quiesce_jobs_tui(
             strip.text.replace("\u2800", " ")
             for strip in app.screen._compositor.render_strips()
         )
-        return app._quiesce, painted, app._last_error
+        return app._signals.quiesce, painted, app._last_error
 
 
 @pytest.mark.asyncio

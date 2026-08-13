@@ -15,11 +15,12 @@ from ._run_ledger_models import (
     RunLedgerStateError,
     RunTerminalState,
     fetch_one,
+    ledger_transaction,
 )
 
 if TYPE_CHECKING:
     import sqlite3
-    from contextlib import AbstractContextManager
+    from pathlib import Path
     from typing import TypedDict
 
     from ._run_ledger_models import GenerationRow, RunGeneration
@@ -32,8 +33,7 @@ if TYPE_CHECKING:
 
 class RunLedgerFinalizationMethods:
     if TYPE_CHECKING:
-
-        def _transaction(self) -> AbstractContextManager[sqlite3.Connection]: ...
+        path: Path
 
         @staticmethod
         def _require_mutable_generation(
@@ -56,7 +56,7 @@ class RunLedgerFinalizationMethods:
                 "only compact() may commit the compacted finalization phase"
             )
         now = time.time()
-        with self._transaction() as connection:
+        with ledger_transaction(self.path) as connection:
             row = self._require_mutable_generation(connection, generation_id)
             current = FinalizationPhase(row["finalization_phase"])
             if phase is current:
@@ -204,7 +204,7 @@ class RunLedgerFinalizationMethods:
         if detail is not None and not detail.strip():
             raise ValueError("detail must not be empty")
         now = time.time()
-        with self._transaction() as connection:
+        with ledger_transaction(self.path) as connection:
             row: GenerationRow | None = fetch_one(
                 connection,
                 "SELECT * FROM generations WHERE generation_id = ?",
@@ -270,7 +270,7 @@ class RunLedgerFinalizationMethods:
         The keep must be the newest published generation of its collection;
         compacting an older one is refused.
         """
-        with self._transaction() as connection:
+        with ledger_transaction(self.path) as connection:
             keep: GenerationRow | None = fetch_one(
                 connection,
                 "SELECT * FROM generations WHERE generation_id = ?",

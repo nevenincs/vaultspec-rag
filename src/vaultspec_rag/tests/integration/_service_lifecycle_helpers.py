@@ -34,6 +34,7 @@ from ...cli._service_status import (
 )
 from ...config._types import EnvVar
 from ...jobs import count
+from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from .._model_setup import (
     model_setup_timeout_seconds,
 )
@@ -151,7 +152,7 @@ def _assert_published_qdrant_identity(
     port: int,
     qdrant_pid: int,
     qdrant_port: int,
-    version: str = "1.18.2",
+    version: str = QDRANT_SERVER_VERSION,
 ) -> dict[str, object]:
     """Assert a published status carries a complete managed-child witness.
 

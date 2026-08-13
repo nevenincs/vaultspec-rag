@@ -35,7 +35,11 @@ from ..serviceclient._discovery import (
     resolve_machine_service,
     revalidate_captured_machine_pointer,
 )
-from ..serviceclient._transport import _try_http_admin, _try_http_health
+from ..serviceclient._transport import (
+    _get_admin_timeout,
+    _try_http_admin,
+    _try_http_health,
+)
 
 __all__ = [
     "BorrowGPUError",
@@ -52,6 +56,7 @@ _PAUSE_UNACKNOWLEDGED: Final = "borrow_gpu_pause_unacknowledged"
 _SAFE_SNAPSHOT_MISSING: Final = "borrow_gpu_safe_snapshot_missing"
 _RESUME_UNACKNOWLEDGED: Final = "borrow_gpu_resume_unacknowledged"
 _SERVICE_TARGET_CHANGED: Final = "borrow_gpu_service_target_changed"
+_QUIESCE_CONTRACT_MISMATCH: Final = "borrow_gpu_quiesce_contract_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +104,7 @@ def capture_borrower_service_target() -> BorrowerServiceTarget | None:
         return None
     if (
         _matching_health_identity(
-            _try_http_health(port),
+            _read_health_evidence(port),
             service_pid=service_pid,
             port=port,
             token_sha256=_token_sha256(service_token),
@@ -267,10 +272,11 @@ def _require_acknowledged_pause(
             "The captured service target no longer matches the original machine "
             "service.",
         )
+    _reject_unrecognised_quiesce(result, verb="pause")
     if not _acknowledged_transition(result, QuiesceState.QUIESCED):
         raise BorrowGPUError(
             _PAUSE_UNACKNOWLEDGED,
-            "The service did not acknowledge borrower pause.",
+            _pause_refusal_message(result),
         )
     if result is None or not _is_exact_safe_quiesce(result.get("quiesce")):
         raise BorrowGPUError(
@@ -293,7 +299,81 @@ def _resume_is_acknowledged(
         target=target,
         before_request=lambda: None,
     )
+    if target_verified:
+        _reject_unrecognised_quiesce(result, verb="resume")
     return target_verified and _acknowledged_transition(result, QuiesceState.RUNNING)
+
+
+def _pause_refusal_message(result: dict[str, object] | None) -> str:
+    """Explain a refused borrower pause using the envelope it came back with.
+
+    "The service did not acknowledge borrower pause" is true of every refusal
+    and therefore useless for the common one. A service still working cannot
+    hand over the device yet, and that reads identically to a service that will
+    never hand it over - so the operator is left with no way to tell "wait" from
+    "something is wrong". The envelope already says which it is.
+    """
+    quiesce = result.get("quiesce") if result is not None else None
+    if _is_exact_quiesce_snapshot(quiesce):
+        tickets = quiesce["active_compute_tickets"]
+        if isinstance(tickets, int) and tickets > 0:
+            return (
+                f"The service is still running {tickets} compute "
+                f"{'ticket' if tickets == 1 else 'tickets'} and cannot hand over "
+                "the device yet. This clears on its own once that work drains; "
+                "retry the borrow, or wait for the service to report idle."
+            )
+        if quiesce["state"] != QuiesceState.QUIESCED.value:
+            return (
+                "The service did not reach a quiesced state for the borrower "
+                f"(state: {quiesce['state']!r})."
+            )
+        return (
+            "The service reached a quiesced state but did not acknowledge the "
+            "borrower's pause."
+        )
+    return "The service did not acknowledge borrower pause."
+
+
+def _reject_unrecognised_quiesce(
+    result: dict[str, object] | None,
+    *,
+    verb: str,
+) -> None:
+    """Raise when the envelope came from a service on a different contract.
+
+    The transition checks compare the envelope's field set exactly, which is
+    right - a partial snapshot must never read as a safe handoff. But an exact
+    comparison cannot tell a service that refused the transition from one that
+    performed it and described the result in a vocabulary this build does not
+    know. Both arrive as "not acknowledged", and the operator is sent to look
+    at quiescence when the actual condition is two builds of the same service
+    disagreeing about the envelope.
+
+    Separating them costs nothing and is the difference between a message that
+    names the fix and one that hides it: the transition may well have
+    succeeded, so the remedy is to align the builds, not to debug a pause.
+    """
+    if result is None:
+        return
+    quiesce = result.get("quiesce")
+    if not _is_json_object(quiesce):
+        return
+    unknown = frozenset(quiesce) - QUIESCE_ENVELOPE_FIELDS
+    absent = QUIESCE_ENVELOPE_FIELDS - frozenset(quiesce)
+    if not unknown and not absent:
+        return
+    raise BorrowGPUError(
+        _QUIESCE_CONTRACT_MISMATCH,
+        (
+            f"The service described the {verb} with a quiesce envelope this "
+            "build does not recognise, so the outcome cannot be verified even "
+            "though the call itself succeeded. The service and this client are "
+            "different builds; run them from the same install. "
+            f"(unexpected fields: {sorted(unknown) or 'none'}; "
+            f"missing fields: {sorted(absent) or 'none'})"
+        ),
+    )
 
 
 def _try_borrower_lifecycle_call(
@@ -344,7 +424,7 @@ def _revalidate_captured_target(target: BorrowerServiceTarget) -> str | None:
     discovery_token = resolution.service_token
     if not discovery_token:
         return None
-    health = _try_http_health(target.port)
+    health = _read_health_evidence(target.port)
     return _matching_health_token(health, target)
 
 
@@ -390,6 +470,23 @@ def _matching_health_token(
         port=target.port,
         token_sha256=target.token_sha256,
     )
+
+
+def _read_health_evidence(port: int) -> dict[str, object] | None:
+    """Read ``/health`` as identity evidence, on the operator-governed bound.
+
+    Every borrower identity check reads health to PROVE which service holds
+    the port, which is a different question from the readiness poll the
+    probe's short default bound is shaped for. There a fast "not up yet" is
+    the point; here an unanswered probe is indistinguishable from a service
+    whose pid, port or token disagree, and the caller refuses either way. So
+    the short bound turns a merely busy service into a false "this is not the
+    service I captured" - and a service busy enough to answer slowly is
+    exactly the one a borrower most needs to coordinate with. Evidence reads
+    therefore take the same operator-governed bound the rest of this client's
+    evidence reads take.
+    """
+    return _try_http_health(port, timeout=_get_admin_timeout())
 
 
 def _matching_health_identity(

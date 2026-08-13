@@ -45,9 +45,8 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
-pytestmark = [pytest.mark.integration]
 
-
+@pytest.mark.integration
 def test_reconcile_rejects_live_legacy_status_without_singleton_owner(
     tmp_path: Path,
 ) -> None:
@@ -83,6 +82,7 @@ def test_reconcile_rejects_live_legacy_status_without_singleton_owner(
         assert pid_alive(pid)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("missing_field", ["pid", "service_token"])
 def test_reconcile_rejects_machine_pointer_with_incomplete_identity(
     tmp_path: Path,
@@ -130,7 +130,6 @@ def test_reconcile_rejects_machine_pointer_with_incomplete_identity(
         assert pid_alive(pid)
 
 
-@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
     request: pytest.FixtureRequest,
@@ -206,7 +205,6 @@ def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
         assert both_status["service_token"] == both_pointer["service_token"]
 
 
-@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
     request: pytest.FixtureRequest,
@@ -254,7 +252,6 @@ def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
         _assert_discovery_absent((status_path, pointer_path), held_for=20.0)
 
 
-@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_reconcile_recovers_discovery_without_touching_the_daemon(
     request: pytest.FixtureRequest,
@@ -362,6 +359,7 @@ _FORCED_DAEMON_EXIT_WITNESS = "Forcing daemon process exit after bounded shutdow
 _LOSING_DAEMON_EXIT_BOUND_SECONDS = 180.0
 
 
+@pytest.mark.integration
 @pytest.mark.timeout(300)
 def test_race_losing_daemon_self_exits(tmp_path: Path) -> None:
     """A daemon that loses the machine-singleton claim forces its own exit.

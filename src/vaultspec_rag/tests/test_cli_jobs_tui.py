@@ -729,12 +729,12 @@ class TestRenderedRows:
         narrow = _app(control_service, [_job("abc123def456")])
         async with narrow.run_test(size=(120, 24), notifications=True) as pilot:
             await _ready(pilot, narrow)
-            narrow_cells = narrow._bar_cells
+            narrow_cells = narrow._layout.bar_cells
 
         wide = _app(control_service, [_job("abc123def456")])
         async with wide.run_test(size=(260, 24), notifications=True) as pilot:
             await _ready(pilot, wide)
-            wide_cells = wide._bar_cells
+            wide_cells = wide._layout.bar_cells
 
         assert wide_cells > narrow_cells, (
             "a wider terminal must give the bar more room, not the same room"
@@ -2300,7 +2300,7 @@ class TestServiceIdentity:
             await _await_painted_when(
                 pilot,
                 app,
-                lambda _text: app._service_version_checked,
+                lambda _text: app._version.checked,
                 "the daemon's identity answer",
             )
             await asyncio.sleep(_SPINNER_INTERVAL)
@@ -2572,11 +2572,11 @@ def _unpainted(app: ServerWatchApp) -> list[str]:
         missing.append("no job list has been applied")
     elif table.row_count != len(app._jobs):
         missing.append(f"{table.row_count} rows painted for {len(app._jobs)} jobs")
-    if app._bar_cells <= 0:
+    if app._layout.bar_cells <= 0:
         missing.append("the columns have not been divided")
-    elif app._divided_width != table.size.width:
+    elif app._layout.divided_width != table.size.width:
         missing.append(
-            f"the division is for width {app._divided_width}, "
+            f"the division is for width {app._layout.divided_width}, "
             f"the table is {table.size.width}"
         )
     # A row must be selected too. Every control acts on the selection, so a test
@@ -2616,7 +2616,7 @@ async def _settled_paint(pilot: typing.Any, app: ServerWatchApp) -> None:
             return
         width = table.only_one(DataTable).size.width
         now = time.monotonic()
-        if app._divided_width != width:
+        if app._layout.divided_width != width:
             matched_at = None
         elif matched_at is None or matched_width != width:
             matched_at, matched_width = now, width

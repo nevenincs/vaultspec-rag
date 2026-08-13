@@ -24,7 +24,9 @@ import pytest
 
 from ._tier_gate import (
     SLOW_TIERS,
+    coscheduled_device_tiers,
     distributed_worker_count,
+    enforce_device_tier_isolation,
     enforce_serial_gpu_lane,
     enforce_tiers,
     selectable_slow_tiers,
@@ -66,7 +68,7 @@ class TestTierClassification:
         from ``tier_violations``. Every unmarked test would then be accepted and
         would run in the fast lane on hardware that cannot satisfy it.
         """
-        untiered, contradictory = tier_violations([_FakeItem("t.py::test_nothing")])
+        untiered, contradictory, _ = tier_violations([_FakeItem("t.py::test_nothing")])
 
         assert untiered == ["t.py::test_nothing"]
         assert contradictory == []
@@ -79,7 +81,7 @@ class TestTierClassification:
         test belongs to, and accepting them would let an unclassified test pass
         merely because it declared a timeout.
         """
-        untiered, _ = tier_violations(
+        untiered, _, _ = tier_violations(
             [_FakeItem("t.py::test_slow", "timeout", "xdist_group")]
         )
 
@@ -99,7 +101,7 @@ class TestTierClassification:
     )
     def test_each_declared_tier_satisfies_the_gate(self, tier: str) -> None:
         """Every registered tier must be accepted, or the gate blocks real work."""
-        untiered, contradictory = tier_violations([_FakeItem("t.py::test_x", tier)])
+        untiered, contradictory, _ = tier_violations([_FakeItem("t.py::test_x", tier)])
 
         assert untiered == []
         assert contradictory == []
@@ -112,25 +114,45 @@ class TestTierClassification:
         would then silently add ``unit`` to GPU tests in that module, and
         ``-m unit`` would schedule them on a machine with no device.
         """
-        _, contradictory = tier_violations(
+        _, contradictory, _ = tier_violations(
             [_FakeItem("t.py::test_gpu", "unit", "integration")]
         )
 
         assert contradictory == ["t.py::test_gpu"]
 
-    def test_two_slow_tiers_together_are_allowed(self) -> None:
-        """integration+subprocess_gpu is a real, intended combination.
+    def test_two_device_tiers_together_are_reported(self) -> None:
+        """The pairing this suite carried for a long time, now refused.
 
-        Mutation it catches: rejecting any test carrying more than one tier.
-        That would fail the existing GPU suite, which deliberately pairs
-        ``integration`` with ``subprocess_gpu`` and with ``quality``.
+        It was read as intended and was not: a test that spawns a service
+        loading its own models belongs to the subprocess tier alone, and the
+        resident tier came from a module default it never asked for. The
+        result was that ``-m integration`` selected 67 subprocess tests, which
+        one card cannot run.
+
+        Mutation it catches: dropping the ``SUBPROCESS_GPU in names and names &
+        GPU_MARKERS`` branch. The declarations would drift back one module at a
+        time, and nothing would say so until a lane wedged.
         """
-        untiered, contradictory = tier_violations(
+        _, _, both_devices = tier_violations(
             [_FakeItem("t.py::test_gpu", "integration", "subprocess_gpu")]
+        )
+
+        assert both_devices == ["t.py::test_gpu"]
+
+    def test_two_resident_tiers_together_are_allowed(self) -> None:
+        """Resident tiers still combine; they share one process and one model.
+
+        Mutation it catches: widening the device-tier branch to any two slow
+        tiers. ``integration`` with ``quality`` is a real pairing in this
+        suite, and refusing it would fail collection outright.
+        """
+        untiered, contradictory, both_devices = tier_violations(
+            [_FakeItem("t.py::test_gpu", "integration", "quality")]
         )
 
         assert untiered == []
         assert contradictory == []
+        assert both_devices == []
 
 
 class TestGateRefusesTheRun:
@@ -351,3 +373,84 @@ class TestSelectableSlowTiers:
         expression error pytest raises on its own moments later.
         """
         assert selectable_slow_tiers("cuda and or") == sorted(SLOW_TIERS)
+
+
+class TestDeviceTierIsolation:
+    """One selection must not hold both device tiers at once.
+
+    The constraint was written beside the marker and enforced nowhere, so the
+    project's own GPU recipe selected both in one expression. What that
+    produces is not an out-of-memory error but a spawned service that never
+    becomes healthy - surfacing as a health-poll timeout in an unrelated test,
+    late in a long lane, naming nothing about memory.
+
+    Judged on collected items rather than on the marker expression, because the
+    expression cannot answer it: a subprocess test usually inherits a module
+    default naming a resident tier, so ``-m integration`` selects it while a
+    per-tier probe of that expression reports the subprocess tier unreachable.
+    """
+
+    def test_a_selection_holding_both_tiers_is_refused(self) -> None:
+        """The whole point: the combination that wedges the lane must not run.
+
+        Mutation it catches: requiring only one side in
+        ``enforce_device_tier_isolation`` - say ``if subprocess_ids:`` - which
+        would refuse the correctly split subprocess lane and let the mixed
+        selection through, exactly inverting the gate.
+        """
+        items = [
+            _FakeItem("t.py::test_spawns", "integration", "subprocess_gpu"),
+            _FakeItem("t.py::test_resident", "integration"),
+        ]
+
+        with pytest.raises(pytest.UsageError) as refusal:
+            enforce_device_tier_isolation(items)
+
+        assert "1 subprocess_gpu test(s)" in str(refusal.value)
+        assert "t.py::test_spawns" in str(refusal.value)
+        assert "t.py::test_resident" in str(refusal.value)
+
+    def test_each_lane_on_its_own_runs(self) -> None:
+        """Both correctly split selections have to survive the gate.
+
+        Mutation it catches: treating a test that declares both marks as
+        belonging to the resident side. The subprocess lane carries exactly
+        those tests, so it would then refuse itself and no split could pass.
+        """
+        subprocess_lane = [
+            _FakeItem("t.py::test_spawns", "integration", "subprocess_gpu"),
+            _FakeItem("t.py::test_spawns_too", "subprocess_gpu"),
+        ]
+        resident_lane = [
+            _FakeItem("t.py::test_resident", "integration"),
+            _FakeItem("t.py::test_quality", "quality"),
+        ]
+
+        enforce_device_tier_isolation(subprocess_lane)
+        enforce_device_tier_isolation(resident_lane)
+
+    def test_the_performance_lane_is_not_refused_for_a_tier_it_never_selects(
+        self,
+    ) -> None:
+        """A tier with no subprocess tests must not be judged as if it had them.
+
+        Mutation it catches: modelling the hazard from the marker expression
+        instead of the selection. Every resident tier could in principle carry
+        a subprocess test, so an expression-based gate refuses ``-m
+        performance`` to protect it from tests that selection never holds.
+        """
+        enforce_device_tier_isolation(
+            [_FakeItem("t.py::test_throughput", "performance")]
+        )
+
+    def test_the_fast_lane_is_not_a_device_tier(self) -> None:
+        """Unit tests load nothing, so they cannot be the resident side."""
+        subprocess_ids, resident_ids = coscheduled_device_tiers(
+            [
+                _FakeItem("t.py::test_spawns", "subprocess_gpu"),
+                _FakeItem("t.py::test_pure", "unit"),
+            ]
+        )
+
+        assert subprocess_ids == ["t.py::test_spawns"]
+        assert resident_ids == []

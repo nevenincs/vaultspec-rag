@@ -1212,13 +1212,44 @@ def _borrower_refusal_message(code: str) -> str:
     )
 
 
+#: How long the pause route waits for compute admitted before the pause to
+#: finish. Sized to sit inside the caller's shipped 30-second admin budget with
+#: room for the rest of the request, so a drain that does not finish still
+#: comes back as a refusal the operator can read, rather than as a client-side
+#: timeout carrying no envelope and no remedy. Not derived from that budget:
+#: it is the shipped default rather than the effective one, so an install that
+#: lowers it would not be tracked anyway.
+#:
+#: It was five seconds, shorter than one encode slice under load. A pause of a
+#: busy service therefore failed by construction, leaving admission closed each
+#: time, and succeeded only on a retry that happened to arrive after the work
+#: had drained on its own.
+_PAUSE_DRAIN_TIMEOUT_SECONDS: Final = 20.0
+
+
 def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
-    """Describe an unachieved transition from the controller's own evidence."""
+    """Describe an unachieved transition from the controller's own evidence.
+
+    An unachieved transition can leave admission closed, and that is the part
+    an operator has to act on: the service then refuses every search and index
+    update, and nothing reopens it on its own, because the transition is owned
+    by the caller that started it. Reporting only which transition failed left
+    a service silently serving nothing while its status said the pause had
+    merely timed out.
+    """
     failure_reason = snapshot.failure_reason
-    held = f"the service is {snapshot.state.value!r}"
-    if failure_reason is not None:
-        return f"Quiesce transition {status!r} left {held}: {failure_reason}."
-    return f"Quiesce transition {status!r} left {held}."
+    detail = "" if failure_reason is None else f": {failure_reason}"
+    outcome = (
+        f"Quiesce transition {status!r} left the service in "
+        f"{snapshot.state.value!r}{detail}."
+    )
+    if snapshot.admissions_open:
+        return outcome
+    return (
+        f"{outcome} Admission stays closed in this state, so searches and index "
+        "updates are refused until the transition finishes; retry pause to "
+        "complete it, or resume to release it."
+    )
 
 
 async def _borrower_capability_from_request(
@@ -1339,7 +1370,10 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
     try:
         if pause:
             transition = await _run_in_thread(
-                partial(registry.quiesce_resources, timeout_seconds=5.0),
+                partial(
+                    registry.quiesce_resources,
+                    timeout_seconds=_PAUSE_DRAIN_TIMEOUT_SECONDS,
+                ),
             )
         else:
             transition = await _run_in_thread(registry.resume_resources)

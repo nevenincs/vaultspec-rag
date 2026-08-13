@@ -6,9 +6,7 @@ import json
 import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from ._content_policy import ContentKind
 from ._file_state import FileState, FileStateKind, validate_rel_path
@@ -33,12 +31,14 @@ from ._run_ledger_models import (
     RunOperation,
     RunSignature,
     RunTerminalState,
+    column_int,
+    column_text,
     fetch_all,
     fetch_one,
+    ledger_connection,
+    ledger_transaction,
+    raise_if_lock_contention,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
 
 __all__ = ["RunLedger"]
 
@@ -54,19 +54,60 @@ class RunLedger(
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with self._connect() as connection:
+            with ledger_connection(self.path) as connection:
                 self._initialize(connection)
                 self._verify_schema(connection)
-                self._verify_integrity(connection)
+        except sqlite3.OperationalError as exc:
+            # A held lock is not damage. It reaches here because opening
+            # converts the journal mode and schema-migrates, both of which a
+            # peer's transaction can block. Reporting that as corrupt durable
+            # state would be a lie the caller cannot recover from, where the
+            # truth is a condition that clears on its own.
+            raise_if_lock_contention(exc, path=self.path)
+            raise RunLedgerCorruptionError(
+                f"cannot open run ledger {self.path}: {exc}"
+            ) from exc
         except sqlite3.DatabaseError as exc:
             raise RunLedgerCorruptionError(
                 f"cannot open run ledger {self.path}: {exc}"
             ) from exc
 
+    def verify_integrity(self) -> None:
+        """Scan the whole ledger and raise when SQLite reports damage.
+
+        Deliberately not on the open path. This reads every page in the file,
+        so its cost tracks total ledger size across every content kind sharing
+        the root - and it holds a read lock for that whole time. Run per open,
+        it turned each new run into a scan of every other source's history, and
+        grew worst exactly where resilience matters most.
+
+        Schema and page-level damage still surfaces without it: opening the
+        ledger reads ``sqlite_master`` and the schema contract, and SQLite
+        raises on a malformed image as soon as a query touches it. This is the
+        deeper check, for recovery and maintenance to call deliberately.
+        """
+        try:
+            with ledger_connection(self.path) as connection:
+                rows: list[sqlite3.Row] = fetch_all(connection, "PRAGMA quick_check")
+        except sqlite3.OperationalError as exc:
+            # This runs on the resume path, on a generation that already holds
+            # storage-confirmed work. Calling a held lock corruption here would
+            # discard exactly the work this verification exists to protect.
+            raise_if_lock_contention(exc, path=self.path)
+            raise RunLedgerCorruptionError(
+                f"cannot verify run ledger {self.path}: {exc}"
+            ) from exc
+        except sqlite3.DatabaseError as exc:
+            raise RunLedgerCorruptionError(
+                f"cannot verify run ledger {self.path}: {exc}"
+            ) from exc
+        if [column_text(row, 0) for row in rows] != ["ok"]:
+            raise RunLedgerCorruptionError("run ledger failed SQLite quick_check")
+
     def start_generation(self, signature: RunSignature) -> RunGeneration:
         """Resume one compatible active generation or invalidate and replace it."""
         now = time.time()
-        with self._transaction() as connection:
+        with ledger_transaction(self.path) as connection:
             active: GenerationRow | None = fetch_one(
                 connection,
                 """
@@ -270,7 +311,7 @@ class RunLedger(
 
     def generation(self, generation_id: str) -> RunGeneration:
         """Return one generation or raise for an unknown identifier."""
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             row: GenerationRow | None = fetch_one(
                 connection,
                 "SELECT * FROM generations WHERE generation_id = ?",
@@ -292,7 +333,7 @@ class RunLedger(
         if collection_identity is not None:
             collection_clause = " AND collection_identity = ?"
             parameters = (*parameters, collection_identity)
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             row: GenerationRow | None = fetch_one(
                 connection,
                 f"""
@@ -320,7 +361,7 @@ class RunLedger(
         failures do not certify stored ownership and cannot mask that evidence.
         """
         validate_rel_path(rel_path)
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             row: FileStateRow | None = fetch_one(
                 connection,
                 """
@@ -346,30 +387,10 @@ class RunLedger(
             )
         return file_state_from_row(row) if row is not None else None
 
-    @contextmanager
-    def _transaction(self) -> Generator[sqlite3.Connection]:
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            yield connection
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
-
     def _initialize(self, connection: sqlite3.Connection) -> None:
         version_row: sqlite3.Row | None = fetch_one(connection, "PRAGMA user_version")
         assert version_row is not None
-        version = _column_int(version_row, 0)
+        version = column_int(version_row, 0)
         if version not in (0, SCHEMA_VERSION):
             raise RunLedgerCompatibilityError(
                 "run ledger schema "
@@ -466,7 +487,7 @@ class RunLedger(
         info_rows: list[sqlite3.Row] = fetch_all(
             connection, "PRAGMA table_info(generations)"
         )
-        columns = {_column_text(row, "name") for row in info_rows}
+        columns = {column_text(row, "name") for row in info_rows}
         if "consecutive_failures" not in columns:
             connection.execute(
                 """
@@ -476,16 +497,11 @@ class RunLedger(
             )
         connection.commit()
 
-    def _verify_integrity(self, connection: sqlite3.Connection) -> None:
-        rows: list[sqlite3.Row] = fetch_all(connection, "PRAGMA quick_check")
-        if [_column_text(row, 0) for row in rows] != ["ok"]:
-            raise RunLedgerCorruptionError("run ledger failed SQLite quick_check")
-
     def _verify_schema(self, connection: sqlite3.Connection) -> None:
         table_rows: list[sqlite3.Row] = fetch_all(
             connection, "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
-        tables = {_column_text(row, "name") for row in table_rows}
+        tables = {column_text(row, "name") for row in table_rows}
         missing_tables = set(REQUIRED_SCHEMA) - tables
         if missing_tables:
             raise RunLedgerCompatibilityError(
@@ -496,7 +512,7 @@ class RunLedger(
             info_rows: list[sqlite3.Row] = fetch_all(
                 connection, f"PRAGMA table_info({table})"
             )
-            columns = {_column_text(row, "name") for row in info_rows}
+            columns = {column_text(row, "name") for row in info_rows}
             missing_columns = required_columns - columns
             if missing_columns:
                 raise RunLedgerCompatibilityError(
@@ -551,32 +567,6 @@ class RunLedger(
             terminal_detail=terminal_detail,
             parent_generation_id=parent_generation_id,
         )
-
-
-def _column_text(row: sqlite3.Row, key: int | str) -> str:
-    """Return one SQLite result column as text, narrowed from the driver's Any.
-
-    ``sqlite3.Row.__getitem__`` is typed ``Any`` - the driver cannot know a
-    query's column affinity ahead of running it. Every PRAGMA and
-    schema-introspection read in this module goes through this (or
-    :func:`_column_int`) rather than trusting a bare ``str()``/``int()``
-    conversion of that ``Any``, which would silently accept a value that
-    merely stringifies instead of proving the driver returned text.
-    """
-    value = row[key]
-    if not isinstance(value, str):
-        raise RunLedgerCorruptionError(f"run ledger result column {key!r} was not text")
-    return value
-
-
-def _column_int(row: sqlite3.Row, key: int | str) -> int:
-    """Return one SQLite result column as an integer, narrowed from Any."""
-    value = row[key]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise RunLedgerCorruptionError(
-            f"run ledger result column {key!r} was not an integer"
-        )
-    return value
 
 
 def _typed_field[T](payload: dict[str, object], key: str, expected_type: type[T]) -> T:
