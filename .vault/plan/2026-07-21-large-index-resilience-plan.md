@@ -4,7 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-08-13'
-body_hash: 'sha256:198c41b1bedebbe44f5fd824d7535b93cc0440083b6f82d138e21946f734b5d6'
+body_hash: 'sha256:0c1af93aacd5d0ccf76b3c58b35fdc0542205970534db1d0944243868cea5166'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -232,6 +232,7 @@ Close the residual defects the ledger-concurrency review surfaced but did not ow
 - [x] `W06.P20.S73` - Refuse a collected selection holding both device tiers, judged on items rather than on the marker expression; `conftest.py, src/vaultspec_rag/tests/_tier_gate.py`.
 - [x] `W06.P20.S74` - Guard both halves - the gate against collected items, and the runner's two selections structurally; `src/vaultspec_rag/tests/test_marker_discipline.py, src/vaultspec_rag/tests/test_adr_regression.py`.
 - [x] `W06.P20.S75` - Restore a clean type gate: declare the refused-envelope literal and drop suppressions that no longer suppress anything; `src/vaultspec_rag/tests/test_gpu_borrow_lease.py, src/vaultspec_rag/indexer/_resolved_policy.py, src/vaultspec_rag/commands/_models.py`.
+- [x] `W06.P20.S76` - Repoint every subprocess test off the resident tier it inherited, and make declaring both a collection-time violation; `src/vaultspec_rag/tests/integration/, src/vaultspec_rag/tests/_tier_gate.py, src/vaultspec_rag/tests/test_marker_discipline.py`.
 
 ## Parallelization
 
