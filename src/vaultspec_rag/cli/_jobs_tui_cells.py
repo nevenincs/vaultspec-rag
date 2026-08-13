@@ -19,11 +19,11 @@ from ..jobs import count, mapping, measurement, text
 from ..search._outcomes import FAILED_ACTIVITY_OUTCOMES
 from ._cli_format import compact_duration
 from ._jobs_tui_constants import (
-    _ESTIMATE_KEY,
-    _PILL_CAP_LEFT,
-    _PILL_CAP_RIGHT,
-    _PILL_JOINER,
-    _TERMINAL_STATES,
+    ESTIMATE_KEY,
+    PILL_CAP_LEFT,
+    PILL_CAP_RIGHT,
+    PILL_JOINER,
+    TERMINAL_STATES,
 )
 from ._jobs_tui_palette import tone_style
 from ._service_jobs_presentation import (
@@ -40,12 +40,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-def _widest_line(line: Text) -> int:
+def widest_line(line: Text) -> int:
     """The widest row of a possibly multi-row header, in cells."""
     return max(cell_len(part) for part in line.plain.split("\n"))
 
 
-def _append_pill(
+def append_pill(
     line: Text,
     content: str,
     fill: tuple[str, str],
@@ -61,20 +61,20 @@ def _append_pill(
     """
     background, foreground = fill
     if unicode_ok:
-        line.append(_PILL_CAP_LEFT, style=background)
+        line.append(PILL_CAP_LEFT, style=background)
         line.append(
-            content.replace(" ", _PILL_JOINER),
+            content.replace(" ", PILL_JOINER),
             style=f"{foreground} on {background}",
         )
-        line.append(_PILL_CAP_RIGHT, style=background)
+        line.append(PILL_CAP_RIGHT, style=background)
         return
     line.append(f" {content} ", style=f"{foreground} on {background}")
 
 
 # The service-condition pill's vocabulary, worst-last, and its tones.
 # ``reachable`` is what an older daemon that stamps no verdicts can claim.
-_CONDITION_ORDER = ("healthy", "degraded", "stalled")
-_CONDITION_TONES: dict[str, tuple[str, bool]] = {
+CONDITION_ORDER = ("healthy", "degraded", "stalled")
+CONDITION_TONES: dict[str, tuple[str, bool]] = {
     "healthy": ("good", False),
     "degraded": ("attention", False),
     "stalled": ("bad", True),
@@ -97,7 +97,7 @@ _STATE_TONES: dict[str, tuple[str, bool]] = {
 }
 
 
-def _find_record(
+def find_record(
     records: list[dict[str, object]],
     identity: Callable[[dict[str, object]], str],
     identifier: str,
@@ -115,21 +115,21 @@ def _find_record(
     return None
 
 
-def _job_id(job: dict[str, object]) -> str:
+def job_id_of(job: dict[str, object]) -> str:
     """Return the id the job publishes; empty means it cannot be addressed."""
     return text(job.get("id"))
 
 
-def _short_id(job: dict[str, object]) -> str:
-    return _job_id(job)[:8] or "unknown"
+def short_id(job: dict[str, object]) -> str:
+    return job_id_of(job)[:8] or "unknown"
 
 
-def _search_id(search: dict[str, object]) -> str:
+def search_id(search: dict[str, object]) -> str:
     """Return the request id the served search publishes, or empty."""
     return text(search.get("request_id"))
 
 
-def _search_text(value: object, *, fallback: str = "—") -> str:
+def search_text(value: object, *, fallback: str = "—") -> str:
     """Return one printable line from an authenticated activity field."""
     if not isinstance(value, str) or not value:
         return fallback
@@ -143,7 +143,7 @@ def _search_text(value: object, *, fallback: str = "—") -> str:
     )
 
 
-def _capability(job: dict[str, object], flag: str) -> bool:
+def capability_flag(job: dict[str, object], flag: str) -> bool:
     """Report whether *job* may take the action *flag* names.
 
     Only a published ``false`` denies. Absent is unknown, and unknown keeps
@@ -193,7 +193,7 @@ def _two_line(
     return text
 
 
-def _row_animates(job: dict[str, object]) -> bool:
+def row_animates(job: dict[str, object]) -> bool:
     """Report whether this row's work is actually moving.
 
     A glyph that turns for every record whose phase reads ``running`` turns for
@@ -208,7 +208,7 @@ def _row_animates(job: dict[str, object]) -> bool:
     )
 
 
-class _Pending(NamedTuple):
+class Pending(NamedTuple):
     """One control the operator issued, and how far it has got.
 
     The row carries this until the service's own payload settles it. A toast
@@ -232,7 +232,7 @@ class _Pending(NamedTuple):
     settled_after: int
 
 
-class _Tombstone(NamedTuple):
+class Tombstone(NamedTuple):
     """A deleted row, and where it sat before it went."""
 
     job: dict[str, object]
@@ -254,17 +254,17 @@ _PENDING_LINES: dict[str, tuple[str, str, bool, bool]] = {
 }
 
 
-class _PaintContext(NamedTuple):
+class PaintContext(NamedTuple):
     """Per-repaint paint state every row cell shares: frame and tones."""
 
     frame: str
     tones: dict[str, str]
 
 
-def _state_cell(
+def state_cell(
     job: dict[str, object],
-    paint: _PaintContext,
-    pending: _Pending | None,
+    paint: PaintContext,
+    pending: Pending | None,
     cells: int,
     *,
     deleted: bool = False,
@@ -272,7 +272,7 @@ def _state_cell(
     """Render the state cell: phase, a live glyph, and any pending request."""
     tones = paint.tones
     label = phase_label(job)
-    glyph = f"{paint.frame} " if _row_animates(job) else "  "
+    glyph = f"{paint.frame} " if row_animates(job) else "  "
     if deleted:
         # The row the operator acted on, held on screen long enough to be seen
         # leaving. Without this the freed slot is backfilled from the
@@ -302,7 +302,7 @@ def _state_cell(
         # an interrupted job still reads ``desired_state: running`` - and
         # painting an arrow there advertises a transition that will never
         # happen, on work that is already over.
-        and str(state) not in _TERMINAL_STATES
+        and str(state) not in TERMINAL_STATES
     ):
         second = f" → {desired}"
         second_style = tone_style(tones, "attention", italic=True)
@@ -318,12 +318,12 @@ def _state_cell(
     )
 
 
-def _job_cell(job: dict[str, object], cells: int) -> Text:
+def job_cell(job: dict[str, object], cells: int) -> Text:
     initiator = job.get("initiator")
     kind = ""
     if isinstance(initiator, dict):
         kind = str(cast("dict[str, object]", initiator).get("kind") or "")
-    subtitle = f"{_short_id(job)} · {kind}" if kind else _short_id(job)
+    subtitle = f"{short_id(job)} · {kind}" if kind else short_id(job)
     return _two_line(operation_label(job), subtitle, cells, top_style="bold")
 
 
@@ -340,14 +340,14 @@ def _elide_left(value: str, cells: int) -> str:
     return "…" + value[-(cells - 1) :]
 
 
-def _path_cell(job: dict[str, object], cells: int) -> Text:
+def path_cell(job: dict[str, object], cells: int) -> Text:
     """Render the project and its root, tail-first when the root is long."""
     root = project_root(job)
     shown = _elide_left(root, cells) if root else "path not reported"
     return _two_line(project_label(job), shown, cells)
 
 
-def _progress_cell(
+def progress_cell(
     job: dict[str, object],
     cells: int,
     bar_cells: int,
@@ -373,13 +373,13 @@ def _progress_cell(
     return _two_line(detail, bar, cells)
 
 
-def _time_cell(
+def time_cell(
     job: dict[str, object],
     cells: int,
     *,
     ticked: float | None = None,
 ) -> Text:
-    remaining = measurement(job.get(_ESTIMATE_KEY))
+    remaining = measurement(job.get(ESTIMATE_KEY))
     if remaining is not None:
         shown = ticked if ticked is not None else remaining
         # Ceiling, not truncation: the countdown must never read below the
@@ -387,7 +387,7 @@ def _time_cell(
         # rendering already strips any precision the estimate lacks.
         estimate = f"~{compact_duration(math.ceil(shown))} left"
     elif (
-        _ESTIMATE_KEY in job
+        ESTIMATE_KEY in job
         and str(job.get("phase", "")) == "running"
         and not job_is_waiting(job)
     ):
@@ -402,12 +402,12 @@ def _time_cell(
     return _two_line(compact_duration(job.get("runtime_seconds")), estimate, cells)
 
 
-def _search_state_cell(
+def search_state_cell(
     search: dict[str, object], cells: int, tones: dict[str, str]
 ) -> Text:
     """Render lifecycle state and terminal outcome without result bodies."""
-    state = _search_text(search.get("state"), fallback="unknown")
-    outcome = _search_text(search.get("outcome"), fallback="serving")
+    state = search_text(search.get("state"), fallback="unknown")
+    outcome = search_text(search.get("outcome"), fallback="serving")
     tone = "good" if state == "active" else "muted"
     if outcome in FAILED_ACTIVITY_OUTCOMES:
         tone = "bad"
@@ -419,12 +419,12 @@ def _search_state_cell(
     )
 
 
-def _search_request_cell(search: dict[str, object], cells: int) -> Text:
+def search_request_cell(search: dict[str, object], cells: int) -> Text:
     """Render stable request identity with type, root, and requested depth."""
-    request_id = _search_id(search) or "unknown"
-    source = _search_text(search.get("source"), fallback="source unavailable")
-    search_type = _search_text(search.get("type"), fallback="type unavailable")
-    root = _search_text(search.get("root"), fallback="root unavailable")
+    request_id = search_id(search) or "unknown"
+    source = search_text(search.get("source"), fallback="source unavailable")
+    search_type = search_text(search.get("type"), fallback="type unavailable")
+    root = search_text(search.get("root"), fallback="root unavailable")
     top_k = count(search.get("top_k"))
     depth = str(top_k) if top_k is not None else "—"
     return _two_line(
@@ -434,7 +434,7 @@ def _search_request_cell(search: dict[str, object], cells: int) -> Text:
     )
 
 
-def _search_query_cell(search: dict[str, object], cells: int) -> Text:
+def search_query_cell(search: dict[str, object], cells: int) -> Text:
     """Render authenticated in-memory query text, never a result payload.
 
     A redacted record is shown as redacted rather than as missing: the
@@ -446,13 +446,13 @@ def _search_query_cell(search: dict[str, object], cells: int) -> Text:
         if search.get("query_redacted") is True
         else "query unavailable"
     )
-    query = _search_text(search.get("query"), fallback=fallback)
-    availability = _search_text(search.get("availability_cause"), fallback="")
-    error = _search_text(search.get("error_message"), fallback="")
+    query = search_text(search.get("query"), fallback=fallback)
+    availability = search_text(search.get("availability_cause"), fallback="")
+    error = search_text(search.get("error_message"), fallback="")
     return _two_line(query, availability or error, cells, top_style="bold")
 
 
-def _search_time_cell(search: dict[str, object], cells: int) -> Text:
+def search_time_cell(search: dict[str, object], cells: int) -> Text:
     """Render duration, status, and result count from the activity record."""
     total = measurement(search.get("total_seconds"))
     duration = compact_duration(total) if total is not None else "in progress"
@@ -481,21 +481,21 @@ def _search_reading_text(
     return "—" if reading is None else str(reading)
 
 
-def _search_identity_line(search: dict[str, object]) -> str:
+def search_identity_line(search: dict[str, object]) -> str:
     """Name the request, its lane, the corpus it read, and its asked-for depth."""
-    source = _search_text(search.get("source"), fallback="source unavailable")
-    search_type = _search_text(search.get("type"), fallback="type unavailable")
-    root = _search_text(search.get("root"), fallback="root unavailable")
+    source = search_text(search.get("source"), fallback="source unavailable")
+    search_type = search_text(search.get("type"), fallback="type unavailable")
+    root = search_text(search.get("root"), fallback="root unavailable")
     return (
-        f"{_search_id(search)} · source {source} · type {search_type}"
+        f"{search_id(search)} · source {source} · type {search_type}"
         f" · root {root}"
         f" · top_k {_search_reading_text(search.get('top_k'), count)}"
     )
 
 
-def _search_outcome_line(search: dict[str, object]) -> str:
+def search_outcome_line(search: dict[str, object]) -> str:
     """Report lifecycle state, verdict, transport status, and result volume."""
-    outcome = _search_text(search.get("outcome"), fallback="in progress")
+    outcome = search_text(search.get("outcome"), fallback="in progress")
     total = measurement(search.get("total_seconds"))
     total_text = compact_duration(total) if total is not None else "—"
     return (
@@ -506,14 +506,14 @@ def _search_outcome_line(search: dict[str, object]) -> str:
     )
 
 
-def _search_clock_line(search: dict[str, object]) -> str:
+def search_clock_line(search: dict[str, object]) -> str:
     """Report the wall-clock bounds the service stamped on the request."""
     started = _search_reading_text(search.get("started_at"), measurement)
     finished = _search_reading_text(search.get("finished_at"), measurement)
     return f"started {started} · finished {finished}"
 
 
-def _search_timings_line(search: dict[str, object]) -> str:
+def search_timings_line(search: dict[str, object]) -> str:
     """Break the request down by stage, empty where the service timed none."""
     timings = [
         (str(name), measurement(value))
@@ -527,11 +527,11 @@ def _search_timings_line(search: dict[str, object]) -> str:
     return f"timings {' · '.join(values)}" if values else ""
 
 
-def _search_failure_line(search: dict[str, object]) -> str:
+def search_failure_line(search: dict[str, object]) -> str:
     """Name why a request degraded or failed, empty where it did neither."""
-    availability = _search_text(search.get("availability_cause"), fallback="")
-    error_code = _search_text(search.get("error_code"), fallback="")
-    error_message = _search_text(search.get("error_message"), fallback="")
+    availability = search_text(search.get("availability_cause"), fallback="")
+    error_code = search_text(search.get("error_code"), fallback="")
+    error_message = search_text(search.get("error_message"), fallback="")
     if not (availability or error_code or error_message):
         return ""
     return (

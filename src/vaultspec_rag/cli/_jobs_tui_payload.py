@@ -12,18 +12,18 @@ from typing import TYPE_CHECKING, cast
 
 from ..jobs import count, mapping
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS
-from ._jobs_tui_cells import _search_id
+from ._jobs_tui_cells import search_id
 from ._jobs_tui_constants import (
-    _GONE_CODES,
-    _PLAIN_ACTIONS,
-    _STATE_ACTIONS,
+    GONE_CODES,
+    PLAIN_ACTIONS,
+    STATE_ACTIONS,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-def _canonical_quiesce_block(raw: object) -> object | None:
+def canonical_quiesce_block(raw: object) -> object | None:
     """Accept only the complete controller-owned quiesce vocabulary.
 
     The TUI is an observer: it neither repairs an incomplete block nor derives
@@ -36,7 +36,7 @@ def _canonical_quiesce_block(raw: object) -> object | None:
     return block
 
 
-def _fetch_error(result: dict[str, object] | None) -> str | None:
+def fetch_error_text(result: dict[str, object] | None) -> str | None:
     """Return why a fetch cannot be believed, or ``None`` when it can.
 
     The transport does not raise on a service that answers badly: a timeout
@@ -60,7 +60,7 @@ def _fetch_error(result: dict[str, object] | None) -> str | None:
     return None
 
 
-def _search_activity_error(result: dict[str, object] | None) -> str | None:
+def search_activity_error(result: dict[str, object] | None) -> str | None:
     """Return why an activity response cannot be rendered truthfully."""
     if result is None:
         return "served-search activity unavailable: service not reachable"
@@ -90,12 +90,12 @@ def _search_activity_payload_error(result: dict[str, object]) -> str | None:
     for name in ("active", "recent", "total"):
         if count(cast("dict[str, object]", counts).get(name)) is None:
             return "served-search activity unavailable: invalid counts"
-    return _search_activity_records_error(
+    return search_activity_records_error(
         cast("list[object]", active), cast("list[object]", recent)
     )
 
 
-def _search_activity_records_error(
+def search_activity_records_error(
     active: list[object], recent: list[object]
 ) -> str | None:
     """Validate record identity, lane, and query privacy invariants."""
@@ -105,7 +105,7 @@ def _search_activity_records_error(
             if not isinstance(record, dict):
                 return "served-search activity unavailable: invalid record"
             entry = cast("dict[str, object]", record)
-            request_id = _search_id(entry)
+            request_id = search_id(entry)
             # A record carries either the query or the service's own redaction
             # signal, never neither and never both. Requiring the text outright
             # made a supported service mode read as a broken service: the
@@ -125,10 +125,10 @@ def _search_activity_records_error(
     return None
 
 
-def _search_records(raw: object, state: str) -> list[dict[str, object]]:
+def search_records(raw: object, state: str) -> list[dict[str, object]]:
     """Narrow a validated activity lane to production records.
 
-    Callers only reach here once ``_search_activity_error`` has returned
+    Callers only reach here once ``search_activity_error`` has returned
     None, which means ``_search_activity_payload_error`` already confirmed
     *raw* is a list.
     """
@@ -140,23 +140,23 @@ def _search_records(raw: object, state: str) -> list[dict[str, object]]:
     ]
 
 
-def _is_gone(result: dict[str, object]) -> bool:
+def is_gone(result: dict[str, object]) -> bool:
     """Report whether the service says the job the control named is absent."""
     return any(
-        isinstance(value, str) and value in _GONE_CODES
+        isinstance(value, str) and value in GONE_CODES
         for value in (result.get("code"), result.get("error"))
     )
 
 
-def _action_capability(action: str) -> str | None:
+def action_capability(action: str) -> str | None:
     """Map a binding action name to the capability flag that permits it."""
     name = action.removeprefix("job_")
-    if name in _STATE_ACTIONS:
-        return _STATE_ACTIONS[name][0]
-    return _PLAIN_ACTIONS.get(name)
+    if name in STATE_ACTIONS:
+        return STATE_ACTIONS[name][0]
+    return PLAIN_ACTIONS.get(name)
 
 
-def _log_lines(result: dict[str, object]) -> Iterable[str]:
+def log_lines(result: dict[str, object]) -> Iterable[str]:
     """Yield raw log lines from a managed-log payload, group order preserved."""
     groups = result.get("groups")
     if not isinstance(groups, list):

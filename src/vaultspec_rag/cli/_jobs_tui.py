@@ -29,79 +29,67 @@ from textual.worker import WorkerState
 
 from ..jobs import count, measurement
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
-from ..service_quiesce import QuiesceState
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_delete_job,
     _try_http_retry_job,
     _try_http_set_job_desired_state,
 )
-from ._cli_format import compact_duration
 from ._jobs_tui_cells import (
-    _CONDITION_ORDER,
-    _CONDITION_TONES,
-    _append_pill,
-    _capability,
-    _find_record,
-    _job_cell,
-    _job_id,
-    _PaintContext,
-    _path_cell,
-    _Pending,
-    _progress_cell,
-    _row_animates,
-    _search_clock_line,
-    _search_failure_line,
-    _search_id,
-    _search_identity_line,
-    _search_outcome_line,
-    _search_query_cell,
-    _search_request_cell,
-    _search_state_cell,
-    _search_text,
-    _search_time_cell,
-    _search_timings_line,
-    _short_id,
-    _state_cell,
-    _time_cell,
-    _Tombstone,
-    _widest_line,
+    PaintContext,
+    Pending,
+    Tombstone,
+    capability_flag,
+    find_record,
+    job_cell,
+    job_id_of,
+    path_cell,
+    progress_cell,
+    row_animates,
+    search_clock_line,
+    search_failure_line,
+    search_id,
+    search_identity_line,
+    search_outcome_line,
+    search_query_cell,
+    search_request_cell,
+    search_state_cell,
+    search_text,
+    search_time_cell,
+    search_timings_line,
+    state_cell,
+    time_cell,
 )
 from ._jobs_tui_constants import (
-    _ACTION_KEYS,
-    _ACTION_REASONS,
-    _COLUMN_WEIGHTS,
-    _ESTIMATE_KEY,
-    _GROUP_SEPARATORS,
-    _HEALTH_PILLS,
-    _LOG_CLOSED_REASON,
-    _MIN_COLUMN_CELLS,
-    _OTHER_PILL_GLYPHS,
-    _SEARCH_ACTIVITY_LIMIT,
-    _SEARCH_COLUMN_WEIGHTS,
-    _SPLIT_MIN_CELLS,
-    _STATE_ACTIONS,
-    _STATE_PILLS,
-    _SUMMARY_BUCKETS,
+    ACTION_KEYS,
+    ACTION_REASONS,
+    COLUMN_WEIGHTS,
+    ESTIMATE_KEY,
+    LOG_CLOSED_REASON,
+    MIN_COLUMN_CELLS,
+    SEARCH_ACTIVITY_LIMIT,
+    SEARCH_COLUMN_WEIGHTS,
+    SPLIT_MIN_CELLS,
+    STATE_ACTIONS,
 )
+from ._jobs_tui_header import HeaderRenderingMixin
 from ._jobs_tui_log import JobsLogView
 from ._jobs_tui_managed_logs import ManagedLogTankView
 from ._jobs_tui_palette import (
     DARK_THEME_NAME,
     LIGHT_THEME_NAME,
     build_themes,
-    pill_fill,
     semantic_tones,
     tone_style,
 )
 from ._jobs_tui_payload import (
-    _action_capability,
-    _canonical_quiesce_block,
-    _fetch_error,
-    _is_gone,
-    _log_lines,
-    _search_activity_error,
-    _search_records,
+    action_capability,
+    canonical_quiesce_block,
+    fetch_error_text,
+    is_gone,
+    log_lines,
+    search_activity_error,
+    search_records,
 )
 from ._jobs_tui_state import (
     LaneStamps,
@@ -115,10 +103,6 @@ from ._jobs_tui_status import (
     ServiceStatusBar,
     ServiceStatusHeader,
     fetch_service_status,
-)
-from ._service_jobs_presentation import (
-    degradation_evidence_lines,
-    degradation_verdict,
 )
 from ._service_jobs_query import job_revision
 
@@ -200,7 +184,7 @@ class _LogPane(Vertical):
     ALLOW_MAXIMIZE: ClassVar[bool | None] = True
 
 
-class ServerWatchApp(App[None]):
+class ServerWatchApp(HeaderRenderingMixin, App[None]):
     """The canonical live server watch for indexing and served searches."""
 
     # Every size here is relative: fractional shares for the panes, content
@@ -277,7 +261,7 @@ class ServerWatchApp(App[None]):
     # restating a narrower type here is an invalid override.
     HORIZONTAL_BREAKPOINTS = [  # noqa: RUF012
         (0, "-narrow"),
-        (_SPLIT_MIN_CELLS, "-wide"),
+        (SPLIT_MIN_CELLS, "-wide"),
     ]
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -327,9 +311,9 @@ class ServerWatchApp(App[None]):
         self._version = ServiceVersion()
         self._signals = MachineSignals()
         self._layout = LayoutMetrics()
-        self._pending: dict[str, _Pending] = {}
+        self._pending: dict[str, Pending] = {}
         # Rows the operator deleted, held briefly so the deletion is seen.
-        self._tombstones: dict[str, _Tombstone] = {}
+        self._tombstones: dict[str, Tombstone] = {}
         # How many jobs the service holds behind the page this view fetches.
         # Without it a deletion is invisible: the next refresh backfills the
         # freed slot from the remainder and the list looks untouched.
@@ -477,7 +461,7 @@ class ServerWatchApp(App[None]):
         table = self._table()
         if table is None:
             return False
-        padding = table.cell_padding * 2 * len(_COLUMN_WEIGHTS)
+        padding = table.cell_padding * 2 * len(COLUMN_WEIGHTS)
         # The scrollable content region, not the outer size: the pane's
         # border and any scrollbar come out of the cells the columns can
         # actually paint into, and dividing the outer width lays the last
@@ -488,14 +472,12 @@ class ServerWatchApp(App[None]):
         if available <= 0 or table.size.width == self._layout.divided_width:
             return False
         self._layout.divided_width = table.size.width
-        total_weight = sum(_COLUMN_WEIGHTS.values())
-        for key, weight in _COLUMN_WEIGHTS.items():
+        total_weight = sum(COLUMN_WEIGHTS.values())
+        for key, weight in COLUMN_WEIGHTS.items():
             column = table.columns.get(ColumnKey(key))
             if column is None:
                 continue
-            column.width = max(
-                _MIN_COLUMN_CELLS, int(available * weight / total_weight)
-            )
+            column.width = max(MIN_COLUMN_CELLS, int(available * weight / total_weight))
             column.auto_width = False
             self._layout.column_cells[key] = column.width
         # The bar shares its cell with a trailing " 100%", so it takes what
@@ -570,17 +552,17 @@ class ServerWatchApp(App[None]):
         table = self._search_table()
         if table is None:
             return False
-        padding = table.cell_padding * 2 * len(_SEARCH_COLUMN_WEIGHTS)
+        padding = table.cell_padding * 2 * len(SEARCH_COLUMN_WEIGHTS)
         available = table.scrollable_content_region.width - padding
         if available <= 0:
             return False
-        total_weight = sum(_SEARCH_COLUMN_WEIGHTS.values())
+        total_weight = sum(SEARCH_COLUMN_WEIGHTS.values())
         changed = False
-        for key, weight in _SEARCH_COLUMN_WEIGHTS.items():
+        for key, weight in SEARCH_COLUMN_WEIGHTS.items():
             column = table.columns.get(ColumnKey(key))
             if column is None:
                 continue
-            width = max(_MIN_COLUMN_CELLS, int(available * weight / total_weight))
+            width = max(MIN_COLUMN_CELLS, int(available * weight / total_weight))
             if column.width != width:
                 changed = True
             column.width = width
@@ -622,7 +604,7 @@ class ServerWatchApp(App[None]):
         )
 
     def _animating(self) -> bool:
-        return self._busy() or any(_row_animates(job) for job in self._jobs)
+        return self._busy() or any(row_animates(job) for job in self._jobs)
 
     def _header_glyph(self) -> str:
         return _SPINNER_FRAMES[self._frame] if self._busy() else _SETTLED_GLYPH
@@ -643,14 +625,14 @@ class ServerWatchApp(App[None]):
         table = self._table()
         if table is None:
             return
-        paint = _PaintContext(_SPINNER_FRAMES[self._frame], semantic_tones(self.theme))
+        paint = PaintContext(_SPINNER_FRAMES[self._frame], semantic_tones(self.theme))
         for job in self._jobs:
-            job_id = _job_id(job)
-            if _row_animates(job) and job_id in table.rows:
+            job_id = job_id_of(job)
+            if row_animates(job) and job_id in table.rows:
                 table.update_cell(
                     job_id,
                     "state",
-                    _state_cell(
+                    state_cell(
                         job, paint, self._pending.get(job_id), self._cells("state")
                     ),
                 )
@@ -660,7 +642,7 @@ class ServerWatchApp(App[None]):
                 table.update_cell(
                     job_id,
                     "time",
-                    _time_cell(
+                    time_cell(
                         job, self._cells("time"), ticked=self._ticked_remaining(job)
                     ),
                 )
@@ -686,7 +668,7 @@ class ServerWatchApp(App[None]):
         """Read active and recent served searches through the admin boundary."""
         result = _try_http_admin(
             "get_search_activity",
-            {"limit": _SEARCH_ACTIVITY_LIMIT},
+            {"limit": SEARCH_ACTIVITY_LIMIT},
             self._port,
         )
         self.call_from_thread(self._apply_search_activity, result, generation)
@@ -699,19 +681,19 @@ class ServerWatchApp(App[None]):
         """Apply a newer authenticated search projection without touching jobs."""
         if not self._search.stamps.accept(generation):
             return
-        error = _search_activity_error(result)
+        error = search_activity_error(result)
         if error is not None:
             self._search.error = error
             self._render_search_title()
             self._render_summary()
             return
-        # _search_activity_error returns non-None whenever result is None, so
+        # search_activity_error returns non-None whenever result is None, so
         # reaching here means result is the dict.
         payload = cast("dict[str, object]", result)
-        active = _search_records(payload.get("active"), "active")
-        recent = _search_records(payload.get("recent"), "terminal")
+        active = search_records(payload.get("active"), "active")
+        recent = search_records(payload.get("recent"), "terminal")
         self._search.records = active + recent
-        # _search_activity_error (via _search_activity_payload_error) already
+        # search_activity_error (via _search_activity_payload_error) already
         # confirmed "counts" is a dict before returning None.
         counts = cast("dict[str, object]", payload["counts"])
         self._search.counts = {
@@ -808,7 +790,7 @@ class ServerWatchApp(App[None]):
             # A slower fetch that the newest applied one already superseded.
             # Its payload predates what is on screen.
             return
-        error = _fetch_error(result)
+        error = fetch_error_text(result)
         if error is not None:
             # The rows already on screen are the last thing the service is
             # known to have said, so they stay; what changes is that the view
@@ -819,7 +801,7 @@ class ServerWatchApp(App[None]):
             self._last_error = error
             self._render_summary()
             return
-        # _fetch_error returns non-None whenever result is None, so reaching
+        # fetch_error_text returns non-None whenever result is None, so reaching
         # here means result is the dict.
         payload = cast("dict[str, object]", result)
         raw_jobs = payload.get("jobs")
@@ -831,13 +813,13 @@ class ServerWatchApp(App[None]):
             if isinstance(job, dict)
             # A record with no id cannot be addressed, and two of them collide
             # on the table's row key and take the interface down.
-            and _job_id(cast("dict[str, object]", job))
+            and job_id_of(cast("dict[str, object]", job))
         ]
         self._last_error = None
         self._last_refresh = time.time()
         # A service that publishes the key for no job at all predates the
         # estimate. Saying so once beats every row reading as unmeasurable.
-        self._service_estimates = not jobs or any(_ESTIMATE_KEY in job for job in jobs)
+        self._service_estimates = not jobs or any(ESTIMATE_KEY in job for job in jobs)
         self._record_estimates(jobs)
         self._jobs = jobs
         self._total = count(payload.get("total"))
@@ -854,7 +836,7 @@ class ServerWatchApp(App[None]):
             else None
         )
         self._signals.quiesce_reported = "quiesce" in payload
-        self._signals.quiesce = _canonical_quiesce_block(payload.get("quiesce"))
+        self._signals.quiesce = canonical_quiesce_block(payload.get("quiesce"))
         self._reconcile_pending(generation, previous)
         self._layout_columns()
         self._render_rows()
@@ -873,9 +855,9 @@ class ServerWatchApp(App[None]):
         now = time.monotonic()
         estimates: dict[str, tuple[float, float]] = {}
         for job in jobs:
-            value = measurement(job.get(_ESTIMATE_KEY))
+            value = measurement(job.get(ESTIMATE_KEY))
             if value is not None:
-                estimates[_job_id(job)] = (value, now)
+                estimates[job_id_of(job)] = (value, now)
         self._estimates = estimates
 
     def _ticked_remaining(self, job: dict[str, object]) -> float | None:
@@ -887,8 +869,8 @@ class ServerWatchApp(App[None]):
         Gated on the row actually moving - ticking a countdown over stalled
         or waiting work would claim motion the view has no evidence for.
         """
-        entry = self._estimates.get(_job_id(job))
-        if entry is None or not _row_animates(job):
+        entry = self._estimates.get(job_id_of(job))
+        if entry is None or not row_animates(job):
             return None
         remaining, stamped_at = entry
         return max(0.0, remaining - (time.monotonic() - stamped_at))
@@ -911,7 +893,7 @@ class ServerWatchApp(App[None]):
         issues another control there or the job leaves the list, because a
         refusal that expires on a timer is one the operator never sees.
         """
-        by_id = {_job_id(job): job for job in self._jobs}
+        by_id = {job_id_of(job): job for job in self._jobs}
         for job_id, marker in list(self._pending.items()):
             if marker.outcome != "sent":
                 # In flight, or an answered failure being held for reading.
@@ -934,8 +916,8 @@ class ServerWatchApp(App[None]):
     def _entomb(self, job_id: str, previous: list[dict[str, object]]) -> None:
         """Hold a deleted row on screen, where it was, long enough to see."""
         for index, job in enumerate(previous):
-            if _job_id(job) == job_id:
-                self._tombstones[job_id] = _Tombstone(
+            if job_id_of(job) == job_id:
+                self._tombstones[job_id] = Tombstone(
                     job, index, time.monotonic() + _TOMBSTONE_SECONDS
                 )
                 return
@@ -961,7 +943,7 @@ class ServerWatchApp(App[None]):
             return
         frame = _SPINNER_FRAMES[self._frame]
         rows = self._visible_rows()
-        wanted = [_job_id(job) for job, _deleted in rows]
+        wanted = [job_id_of(job) for job, _deleted in rows]
         if [key.value for key in table.rows] != wanted:
             self._rebuild_rows(table, rows, wanted, frame)
         else:
@@ -1007,20 +989,20 @@ class ServerWatchApp(App[None]):
         *,
         deleted: bool = False,
     ) -> None:
-        job_id = _job_id(job)
+        job_id = job_id_of(job)
         tones = semantic_tones(self.theme)
         table.add_row(
-            _state_cell(
+            state_cell(
                 job,
-                _PaintContext(frame, tones),
+                PaintContext(frame, tones),
                 self._pending.get(job_id),
                 self._cells("state"),
                 deleted=deleted,
             ),
-            _job_cell(job, self._cells("job")),
-            _path_cell(job, self._cells("path")),
-            _progress_cell(job, self._cells("progress"), self._layout.bar_cells, tones),
-            _time_cell(job, self._cells("time"), ticked=self._ticked_remaining(job)),
+            job_cell(job, self._cells("job")),
+            path_cell(job, self._cells("path")),
+            progress_cell(job, self._cells("progress"), self._layout.bar_cells, tones),
+            time_cell(job, self._cells("time"), ticked=self._ticked_remaining(job)),
             height=2,
             key=job_id,
         )
@@ -1033,22 +1015,22 @@ class ServerWatchApp(App[None]):
         *,
         deleted: bool = False,
     ) -> None:
-        job_id = _job_id(job)
+        job_id = job_id_of(job)
         tones = semantic_tones(self.theme)
         cells = {
-            "state": _state_cell(
+            "state": state_cell(
                 job,
-                _PaintContext(frame, tones),
+                PaintContext(frame, tones),
                 self._pending.get(job_id),
                 self._cells("state"),
                 deleted=deleted,
             ),
-            "job": _job_cell(job, self._cells("job")),
-            "path": _path_cell(job, self._cells("path")),
-            "progress": _progress_cell(
+            "job": job_cell(job, self._cells("job")),
+            "path": path_cell(job, self._cells("path")),
+            "progress": progress_cell(
                 job, self._cells("progress"), self._layout.bar_cells, tones
             ),
-            "time": _time_cell(
+            "time": time_cell(
                 job, self._cells("time"), ticked=self._ticked_remaining(job)
             ),
         }
@@ -1060,7 +1042,7 @@ class ServerWatchApp(App[None]):
         table = self._search_table()
         if table is None:
             return
-        wanted = [_search_id(search) for search in self._search.records]
+        wanted = [search_id(search) for search in self._search.records]
         if [key.value for key in table.rows] != wanted:
             previous = self.selected_search_id
             cursor = table.cursor_row
@@ -1084,12 +1066,12 @@ class ServerWatchApp(App[None]):
     ) -> None:
         tones = semantic_tones(self.theme)
         table.add_row(
-            _search_state_cell(search, self._search_cells("state"), tones),
-            _search_request_cell(search, self._search_cells("request")),
-            _search_query_cell(search, self._search_cells("query")),
-            _search_time_cell(search, self._search_cells("time")),
+            search_state_cell(search, self._search_cells("state"), tones),
+            search_request_cell(search, self._search_cells("request")),
+            search_query_cell(search, self._search_cells("query")),
+            search_time_cell(search, self._search_cells("time")),
             height=2,
-            key=_search_id(search),
+            key=search_id(search),
         )
 
     def _update_search_row(
@@ -1097,13 +1079,13 @@ class ServerWatchApp(App[None]):
     ) -> None:
         tones = semantic_tones(self.theme)
         cells = {
-            "state": _search_state_cell(search, self._search_cells("state"), tones),
-            "request": _search_request_cell(search, self._search_cells("request")),
-            "query": _search_query_cell(search, self._search_cells("query")),
-            "time": _search_time_cell(search, self._search_cells("time")),
+            "state": search_state_cell(search, self._search_cells("state"), tones),
+            "request": search_request_cell(search, self._search_cells("request")),
+            "query": search_query_cell(search, self._search_cells("query")),
+            "time": search_time_cell(search, self._search_cells("time")),
         }
         for column, value in cells.items():
-            table.update_cell(_search_id(search), column, value)
+            table.update_cell(search_id(search), column, value)
 
     def _sync_search_selection(self, table: DataTable[Text]) -> None:
         if table.row_count == 0:
@@ -1115,7 +1097,7 @@ class ServerWatchApp(App[None]):
 
     def selected_search(self) -> dict[str, object] | None:
         """Return the currently selected served-search activity record."""
-        return _find_record(self._search.records, _search_id, self.selected_search_id)
+        return find_record(self._search.records, search_id, self.selected_search_id)
 
     def watch_selected_search_id(self, _request_id: str) -> None:
         self._render_search_detail()
@@ -1156,15 +1138,15 @@ class ServerWatchApp(App[None]):
         if search is None:
             found.only_one(Static).update("No served search selected.")
             return
-        query = _search_text(search.get("query"), fallback="query unavailable")
+        query = search_text(search.get("query"), fallback="query unavailable")
         detail = Text(f"query: {query}")
-        detail.append(f"\n{_search_identity_line(search)}", style="dim")
-        detail.append(f"\n{_search_outcome_line(search)}", style="dim")
-        detail.append(f"\n{_search_clock_line(search)}", style="dim")
-        timings = _search_timings_line(search)
+        detail.append(f"\n{search_identity_line(search)}", style="dim")
+        detail.append(f"\n{search_outcome_line(search)}", style="dim")
+        detail.append(f"\n{search_clock_line(search)}", style="dim")
+        timings = search_timings_line(search)
         if timings:
             detail.append(f"\n{timings}", style="dim")
-        failure = _search_failure_line(search)
+        failure = search_failure_line(search)
         if failure:
             detail.append(
                 f"\n{failure}",
@@ -1185,477 +1167,6 @@ class ServerWatchApp(App[None]):
         job_id = list(table.rows.keys())[row].value or ""
         if job_id != self.selected_id:
             self.selected_id = job_id
-
-    def _header_counts(self) -> list[tuple[str, int]]:
-        """Count what the service holds, not what fits on the page.
-
-        The service tallies every record matching the filter; the page is at
-        most twenty of them. Re-tallying the page produces numbers that
-        describe neither the list nor the service and that do not move when
-        anything outside the page changes - so a deletion from a
-        two-hundred-record history shows nowhere at all.
-
-        The residue is named rather than dropped. Counters that quietly omit
-        every state they have no bucket for sum to nothing in particular, and
-        an operator cannot tell a missing state from a zero one.
-        """
-        summary = self._summary
-        if isinstance(summary, dict):
-            counted = cast("dict[str, object]", summary)
-            counts = [
-                (label, count(counted.get(key)) or 0) for label, key in _SUMMARY_BUCKETS
-            ]
-            tallied = sum(tally for _label, tally in counts)
-            scope = self._total if self._total is not None else tallied
-        else:
-            states = [str(job.get("state", "")) for job in self._jobs]
-            counts = [(label, states.count(key)) for label, key in _SUMMARY_BUCKETS]
-            scope = len(self._jobs)
-        other = scope - sum(tally for _label, tally in counts)
-        if other > 0:
-            counts.append(("other", other))
-        return counts
-
-    def _unicode_glyphs(self) -> bool:
-        """Whether the console's encoding can carry the pill glyphs."""
-        encoding = str(getattr(self.console, "encoding", "") or "")
-        return "utf" in encoding.lower()
-
-    def _append_separator(self, line: Text, *, unicode_ok: bool) -> None:
-        """A dim divider, so each header group reads as its own cell run."""
-        glyph, fallback = _GROUP_SEPARATORS
-        line.append("  ")
-        line.append(glyph if unicode_ok else fallback, style="dim")
-        line.append(" ")
-
-    def _append_state_pills(
-        self,
-        line: Text,
-        fills: dict[str, tuple[str, str]],
-        *,
-        labelled: bool,
-        unicode_ok: bool,
-    ) -> None:
-        """One pill per state bucket: glyph, count, and (wide) its label.
-
-        A pill with work in it wears its token's solid fill; an empty one
-        wears the muted fill so colour always means signal.
-        """
-        for key, tally in self._header_counts():
-            spec = _STATE_PILLS.get(key)
-            if spec is None:
-                # The residue bucket, in the same anatomy as its neighbours.
-                glyph, fallback = _OTHER_PILL_GLYPHS
-                label, tone = key, "muted"
-            else:
-                glyph, fallback, label, tone, _bold = spec
-            content = f"{glyph if unicode_ok else fallback} {tally}"
-            if labelled:
-                content += f" {label}"
-            # One cell of air: the caps already separate pill from pill.
-            line.append(" ")
-            _append_pill(
-                line,
-                content,
-                fills[tone if tally else "muted"],
-                unicode_ok=unicode_ok,
-            )
-
-    def _append_health_pills(
-        self,
-        line: Text,
-        fills: dict[str, tuple[str, str]],
-        *,
-        labelled: bool,
-        unicode_ok: bool,
-        lead_separator: bool = True,
-    ) -> None:
-        """The service's job-health tallies, in their own group."""
-        summary = self._summary
-        if not isinstance(summary, dict):
-            return
-        counted = cast("dict[str, object]", summary)
-        present = [spec for spec in _HEALTH_PILLS if spec[0] in counted]
-        if not present:
-            # A daemon older than the tally; absent is not zero.
-            return
-        if lead_separator:
-            self._append_separator(line, unicode_ok=unicode_ok)
-        for index, (key, glyph, fallback, label, tone, _bold) in enumerate(present):
-            tally = count(counted.get(key)) or 0
-            content = f"{glyph if unicode_ok else fallback} {tally}"
-            if labelled:
-                content += f" {label}"
-            if index:
-                line.append(" ")
-            _append_pill(
-                line,
-                content,
-                fills[tone if tally else "muted"],
-                unicode_ok=unicode_ok,
-            )
-
-    def _append_search_activity(self, line: Text, tones: dict[str, str]) -> None:
-        """Keep served-search lane counts visible even when narrow hides its table."""
-        self._append_separator(line, unicode_ok=self._unicode_glyphs())
-        if self._search.error is not None:
-            line.append("search unavailable", style=tone_style(tones, "bad", bold=True))
-            return
-        if self._search.last_refresh is None:
-            line.append("search loading", style="dim")
-            return
-        active = self._search.counts.get("active", 0)
-        recent = self._search.counts.get("recent", 0)
-        line.append(
-            f"search {active} active · {recent} recent",
-            style=tone_style(tones, "good", bold=active > 0),
-        )
-
-    def _service_condition(self) -> str:
-        """The service's condition verdict for the header pill.
-
-        Reachability first, then the worst active degradation verdict the
-        service has stamped - taken from the service's own tally where the
-        summary carries one, from the stamped records on the page otherwise.
-        Nothing is computed here; the service is the authority on both.
-        """
-        if self._last_error is not None:
-            return "unreachable"
-        summary = self._summary
-        if isinstance(summary, dict):
-            counted = cast("dict[str, object]", summary)
-            if "stalled" in counted or "degraded" in counted:
-                if count(counted.get("stalled")):
-                    return "stalled"
-                if count(counted.get("degraded")):
-                    return "degraded"
-                return "healthy"
-        stamped = [
-            verdict
-            for verdict in (degradation_verdict(job) for job in self._jobs)
-            if isinstance(verdict, str) and verdict in _CONDITION_ORDER
-        ]
-        if not stamped:
-            # An older daemon stamps no verdicts; reachable is all it claims.
-            return "reachable"
-        return max(stamped, key=_CONDITION_ORDER.index)
-
-    def _gpu_cell(self) -> tuple[str, str, bool]:
-        """The GPU pressure cell as (text, tone, bold), honest about absence.
-
-        Never fake numbers: a daemon that does not send the block renders as
-        a muted dash, and one that probed an unmeasurable host as ``n/a``.
-        The tone shift at high pressure is presentation only; any verdict
-        about what the pressure means stays with the service.
-        """
-        if not self._signals.gpu_reported:
-            return "gpu —", "muted", False
-        gpu = self._signals.gpu or {}
-        utilization = measurement(gpu.get("utilization_percent"))
-        used = measurement(gpu.get("memory_used_mib"))
-        total = measurement(gpu.get("memory_total_mib"))
-        parts: list[str] = []
-        pressure = 0.0
-        if utilization is not None:
-            parts.append(f"{utilization:.0f}%")
-            pressure = max(pressure, utilization / 100.0)
-        if used is not None and total is not None and total > 0:
-            parts.append(f"{used / 1024:.1f}/{total / 1024:.1f}G")
-            pressure = max(pressure, used / total)
-        if not parts:
-            return "gpu n/a", "muted", False
-        if pressure >= 0.9:
-            return f"gpu {' '.join(parts)}", "bad", True
-        if pressure >= 0.75:
-            return f"gpu {' '.join(parts)}", "attention", False
-        return f"gpu {' '.join(parts)}", "good", False
-
-    def _pressure_cell(self) -> tuple[str, str] | None:
-        """The machine pressure pill as (text, tone), or nothing to show.
-
-        Three answers, the same three the plain feed gives, so the two
-        surfaces can never disagree: a daemon that sends no tier says
-        nothing, a nominal tier is the healthy steady state and says
-        nothing either, and any other tier is a verdict an operator must
-        see. Silence is not a claim of health - the condition and GPU cells
-        still report - and it keeps the steady-state header at the width it
-        already had, so a pill nobody needs never costs a label somebody
-        does. The tier is rendered verbatim: a tier this build has no tone
-        for is still shown, because a newer daemon naming a worse state
-        must never be swallowed.
-        """
-        tier = (self._signals.pressure or {}).get("tier")
-        if not isinstance(tier, str) or tier in ("", "nominal"):
-            return None
-        return f"pressure {tier}", "bad" if tier == "critical" else "attention"
-
-    def _quiesce_cell(self) -> tuple[str, str] | None:
-        """The controller-evidence pill as (text, tone), or nothing to show.
-
-        Only service-reported evidence is rendered, never authority: this
-        client repairs no block it was sent and derives no permission from
-        one. What it does decide is whether the evidence is news, on the same
-        rule the pressure pill keeps. A daemon that reports no controller
-        block has made no observation, and a controller that is running, is
-        holding its VRAM and has admitted no borrower is the steady state an
-        operator already assumes; neither earns a cell, because a pill nobody
-        needs never costs a label somebody does. Silence here is never a
-        claim of safety - it is only the absence of a claim - and the detail
-        row states the controller's whole answer on every render, absent,
-        foreign or canonical alike, so nothing is lost by staying quiet.
-
-        Everything else is news, and news is never shed and never abbreviated.
-        A block this build cannot read is a contradiction between a daemon
-        that owns a controller and a report nothing may be trusted from, so
-        it is the loud tone rather than the muted one. Any other state, any
-        released VRAM and any admitted borrower is exactly the window in
-        which an operator needs all three facts at once.
-        """
-        if not self._signals.quiesce_reported:
-            return None
-        match self._signals.quiesce:
-            case {
-                "state": str(state),
-                "vram_released": bool(vram_released),
-                "safe_to_borrow_gpu": bool(safe_to_borrow_gpu),
-            }:
-                if (
-                    state == QuiesceState.RUNNING
-                    and not vram_released
-                    and not safe_to_borrow_gpu
-                ):
-                    return None
-                vram = "released" if vram_released else "held"
-                safety = "safe" if safe_to_borrow_gpu else "unsafe"
-                tone = "good" if safe_to_borrow_gpu else "attention"
-                return f"quiesce {state} · vram {vram} · borrower safety {safety}", tone
-            case _:
-                return "quiesce unavailable", "bad"
-
-    def _append_quiesce_detail(self, line: Text, tones: dict[str, str]) -> None:
-        """State the controller's whole answer on its own unbounded row.
-
-        The header pill is a summary that speaks only when the controller has
-        news; this row is where the answer is readable whatever it is, so it
-        is the one that carries an absence the pill does not paint. Both ways
-        an answer can go missing read as ``quiesce unavailable`` and differ
-        only in the reason given, because they leave an operator in the same
-        position and one condition must not wear two names.
-        """
-        if self._signals.quiesce is not None:
-            line.append("\nquiesce details: ", style="dim")
-            line.append(str(self._signals.quiesce), style="dim")
-        elif self._signals.quiesce_reported:
-            line.append(
-                "\nquiesce unavailable: invalid service response",
-                style=tone_style(tones, "bad", bold=True),
-            )
-        else:
-            line.append(
-                "\nquiesce unavailable: no controller evidence reported",
-                style="dim",
-            )
-
-    def _compose_header_line(
-        self,
-        tones: dict[str, str],
-        *,
-        state_labels: bool,
-        health_labels: bool,
-        split_before_service: bool = False,
-        split_before_health: bool = False,
-    ) -> Text:
-        """Build the header row: grouped pills, condition, GPU, page count.
-
-        The groups - state pills, health tallies, service condition, GPU, the
-        exception cells, and the page count - are divided by dim separators so
-        the row reads as cells rather than one cramped run. Labels are a width
-        decision made by the caller; the condition and GPU cells are never
-        dropped, and neither is an exception cell on the occasions it has
-        something to report at all.
-        ``split_before_service`` is the last width fallback: the row breaks
-        deliberately at the service-group boundary instead of wherever the
-        wrapper would land - never through the middle of a pill.
-        """
-        unicode_ok = self._unicode_glyphs()
-        # The leading cell is identity: which daemon, at which release, on
-        # which port. Identity is not signal, so it carries no semantic
-        # tone - the version is the connected daemon's own report, and an
-        # answering daemon that predates the field reads as unknown rather
-        # than being filled from the local package.
-        line = Text(f"{self._header_glyph()} vaultspec-rag", style="bold")
-        if self._version.value:
-            line.append(f" {self._version.value}")
-        elif self._version.checked:
-            line.append(" v?", style=tone_style(tones, "muted"))
-        line.append(" · ", style="dim")
-        line.append(f"port {self._port}", style="bold")
-        fills = pill_fill(self.theme)
-        self._append_state_pills(
-            line, fills, labelled=state_labels, unicode_ok=unicode_ok
-        )
-        if split_before_health:
-            line.append("\n")
-        self._append_health_pills(
-            line,
-            fills,
-            labelled=health_labels,
-            unicode_ok=unicode_ok,
-            lead_separator=not split_before_health,
-        )
-        if self._watch_mode == "server":
-            self._append_search_activity(line, tones)
-        if split_before_service:
-            line.append("\n")
-        else:
-            self._append_separator(line, unicode_ok=unicode_ok)
-        verdict = self._service_condition()
-        condition_tone, _bold = _CONDITION_TONES[verdict]
-        _append_pill(
-            line,
-            f"{'●' if unicode_ok else '*'} svc {verdict}",
-            fills[condition_tone],
-            unicode_ok=unicode_ok,
-        )
-        self._append_separator(line, unicode_ok=unicode_ok)
-        quiesce_cell = self._quiesce_cell()
-        if quiesce_cell is not None:
-            quiesce_text, quiesce_tone = quiesce_cell
-            _append_pill(
-                line,
-                quiesce_text,
-                fills[quiesce_tone],
-                unicode_ok=unicode_ok,
-            )
-            self._append_separator(line, unicode_ok=unicode_ok)
-        gpu_text, gpu_tone, _gpu_bold = self._gpu_cell()
-        _append_pill(line, gpu_text, fills[gpu_tone], unicode_ok=unicode_ok)
-        pressure_cell = self._pressure_cell()
-        if pressure_cell is not None:
-            pressure_text, pressure_tone = pressure_cell
-            self._append_separator(line, unicode_ok=unicode_ok)
-            _append_pill(
-                line, pressure_text, fills[pressure_tone], unicode_ok=unicode_ok
-            )
-        self._append_separator(line, unicode_ok=unicode_ok)
-        shown = len(self._jobs)
-        if self._total is None:
-            line.append(f"showing {shown}")
-        else:
-            # A page onto a longer list is marked, because every count above
-            # is a count of the page rather than of the service's work - and
-            # because it is the only place a deletion shows when the freed
-            # slot is immediately backfilled from the remainder.
-            line.append(
-                f"showing {shown} of {self._total}",
-                style=tone_style(tones, "attention", bold=True)
-                if self._total > shown
-                else "",
-            )
-        return line
-
-    def _summary_width(self) -> int:
-        """The header bar's content width, or zero before its first layout."""
-        found = self.query("#summary")
-        if not found:
-            return 0
-        return found.only_one(Static).content_size.width
-
-    def _render_summary(self) -> None:
-        tones = semantic_tones(self.theme)
-        width = self._summary_width()
-        # Widest fitting form wins: labels leave the state pills first, then
-        # the health tallies. Counts, the condition and the GPU cell are
-        # never shed, and neither are the quiesce and pressure pills on the
-        # occasions they are painted at all - a cell that only speaks when it
-        # has news has already paid for the width it takes, and shedding it
-        # would hide the very thing it was painted to say; past the narrowest
-        # form the bar wraps.
-        line = self._compose_header_line(tones, state_labels=True, health_labels=True)
-        if 0 < width < _widest_line(line):
-            line = self._compose_header_line(
-                tones, state_labels=False, health_labels=True
-            )
-        if 0 < width < _widest_line(line):
-            line = self._compose_header_line(
-                tones, state_labels=False, health_labels=False
-            )
-        if 0 < width < _widest_line(line):
-            # Narrower than even the unlabelled row: break it deliberately
-            # at the service-group boundary, never through a pill.
-            line = self._compose_header_line(
-                tones,
-                state_labels=False,
-                health_labels=False,
-                split_before_service=True,
-            )
-        if 0 < width < _widest_line(line):
-            # Still too narrow: the health group takes its own row too, so
-            # every row of the header holds whole groups of whole pills.
-            line = self._compose_header_line(
-                tones,
-                state_labels=False,
-                health_labels=False,
-                split_before_service=True,
-                split_before_health=True,
-            )
-        # The age of the data is reported whether or not the last fetch
-        # failed - it is exactly when the service stops answering that an
-        # operator needs to know how old what they are reading is. Suppressing
-        # it on the error branch leaves stale rows on screen with nothing
-        # saying they are stale.
-        if self._last_refresh is None:
-            line.append("\nloading", style="dim")
-        else:
-            stamp = time.strftime("%H:%M:%S", time.localtime(self._last_refresh))
-            age = time.time() - self._last_refresh
-            line.append(f"\nrefreshed {stamp}", style="dim")
-            if age > max(5.0, self._interval * 3):
-                line.append(
-                    f" ({compact_duration(age)} ago)",
-                    style=tone_style(tones, "attention", bold=True),
-                )
-        if self._last_error is not None:
-            line.append(
-                f"  ·  {self._last_error}",
-                style=tone_style(tones, "bad", bold=True),
-            )
-        if not self._service_estimates:
-            # Said once in the header rather than implied by every row's
-            # empty estimate, which reads as unmeasurable work instead of
-            # an older daemon.
-            line.append("  ·  this service does not report time estimates", style="dim")
-        if self._last_outcome is not None:
-            text, token = self._last_outcome
-            line.append(f"\n{text}", style=tone_style(tones, token, bold=True))
-        self._append_selected_degradation(line, tones)
-        self._append_quiesce_detail(line, tones)
-        summary = self.query("#summary")
-        if summary:
-            summary.only_one(Static).update(line)
-
-    def _append_selected_degradation(self, line: Text, tones: dict[str, str]) -> None:
-        """Show the selected job's unhealthy verdict and evidence in the header.
-
-        The verdict and every finding come verbatim from the service payload
-        through the same presentation helpers the CLI detail view renders -
-        the header is the one place this view has room for whole sentences,
-        and the row's own progress cell already carries the short form.
-        """
-        job = self.selected_job()
-        if job is None:
-            return
-        verdict = degradation_verdict(job)
-        if verdict is None or verdict == "healthy":
-            return
-        line.append(
-            f"\n{_short_id(job)} {verdict}", style=tone_style(tones, "bad", bold=True)
-        )
-        evidence = "  ·  ".join(degradation_evidence_lines(job))
-        if evidence:
-            line.append(f"  ·  {evidence}", style=tone_style(tones, "bad"))
-
-    # -- selection and logs -------------------------------------------------
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         # A highlight that named a removed row is superseded rather than
@@ -1696,7 +1207,7 @@ class ServerWatchApp(App[None]):
         log = self._log_view()
         if log is None:
             return
-        log.show_lines(_log_lines(result))
+        log.show_lines(log_lines(result))
         # The window just changed, so what the noise filter hides and where
         # the errors sit changed with it - both the title's indicator and the
         # error-jump keys in the footer have to follow.
@@ -1774,7 +1285,7 @@ class ServerWatchApp(App[None]):
 
     def selected_job(self) -> dict[str, object] | None:
         """Return the currently selected indexing-job record."""
-        return _find_record(self._jobs, _job_id, self.selected_id)
+        return find_record(self._jobs, job_id_of, self.selected_id)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Disable a row action the selected job does not permit.
@@ -1789,13 +1300,13 @@ class ServerWatchApp(App[None]):
             return True
         if action.startswith("log_"):
             return self._check_log_action(action)
-        flag = _action_capability(action)
+        flag = action_capability(action)
         if flag is None:
             return True
         if not self._job_action_context_available():
             return None
         job = self.selected_job()
-        if job is None or not _capability(job, flag):
+        if job is None or not capability_flag(job, flag):
             return None
         return True
 
@@ -1847,7 +1358,7 @@ class ServerWatchApp(App[None]):
         runs only once the binding declined the key, so a permitted action is
         untouched.
         """
-        action = _ACTION_KEYS.get(event.key)
+        action = ACTION_KEYS.get(event.key)
         if action is None or self.check_action(action, ()) is True:
             return
         event.stop()
@@ -1858,18 +1369,18 @@ class ServerWatchApp(App[None]):
         """Say why *action* is unavailable, in the operator's terms."""
         if action.startswith("log_"):
             if not self._log_visible():
-                return _LOG_CLOSED_REASON
-            return _ACTION_REASONS.get(
+                return LOG_CLOSED_REASON
+            return ACTION_REASONS.get(
                 action, "The log cannot take that action right now."
             )
         if (
-            _action_capability(action) is not None
+            action_capability(action) is not None
             and not self._job_action_context_available()
         ):
             return "Select an indexing job before sending a job action."
         if self.selected_job() is None:
             return "No job is selected."
-        return _ACTION_REASONS.get(action, "This job cannot take that action.")
+        return ACTION_REASONS.get(action, "This job cannot take that action.")
 
     def action_toggle_theme(self) -> None:
         """Flip between the dark and light variants of the one palette."""
@@ -2035,10 +1546,10 @@ class ServerWatchApp(App[None]):
         if revision is None:
             self.notify("The service reported no revision for this job.")
             return
-        flag, desired = _STATE_ACTIONS[action]
+        flag, desired = STATE_ACTIONS[action]
         del flag
         self._mark_pending(job, action, expected=desired.value)
-        self._send_state(_job_id(job), desired, revision, action)
+        self._send_state(job_id_of(job), desired, revision, action)
 
     @work(thread=True, group=_CONTROL_GROUP)
     def _send_state(
@@ -2087,7 +1598,7 @@ class ServerWatchApp(App[None]):
         job = self._actionable(action)
         if job is not None:
             self._mark_pending(job, action)
-            send(_job_id(job))
+            send(job_id_of(job))
 
     def _actionable(self, action: str) -> dict[str, object] | None:
         """Return the selected job when it permits *action*, else ``None``.
@@ -2101,12 +1612,12 @@ class ServerWatchApp(App[None]):
         a refused request that says nothing is indistinguishable from one that
         was sent and lost.
         """
-        flag = _action_capability(f"job_{action}")
+        flag = action_capability(f"job_{action}")
         if not self._job_action_context_available():
             self.notify(self._refusal(f"job_{action}"), severity="warning")
             return None
         job = self.selected_job()
-        if job is None or flag is None or not _capability(job, flag):
+        if job is None or flag is None or not capability_flag(job, flag):
             self.notify(self._refusal(f"job_{action}"), severity="warning")
             return None
         return job
@@ -2123,7 +1634,7 @@ class ServerWatchApp(App[None]):
         the two is the whole window in which an operator decides whether
         anything is wired up at all.
         """
-        self._pending[_job_id(job)] = _Pending(
+        self._pending[job_id_of(job)] = Pending(
             action, expected, "requested", "", self._job_stamps.issued
         )
         self._render_rows()
@@ -2139,7 +1650,7 @@ class ServerWatchApp(App[None]):
             self._settle(
                 job_id, "refused", f"{action} failed: the service is not reachable."
             )
-        elif _is_gone(result):
+        elif is_gone(result):
             # Not a generic failure: the view was addressing a job the service
             # has dropped. The answer is a corrected list and a plain sentence,
             # never a raw error.
@@ -2171,7 +1682,7 @@ class ServerWatchApp(App[None]):
     def _settle(self, job_id: str, outcome: str, detail: str) -> None:
         """Record where a control got to, on the row and in the header."""
         marker = self._pending.get(job_id)
-        self._pending[job_id] = _Pending(
+        self._pending[job_id] = Pending(
             marker.action if marker is not None else "control",
             marker.expected if marker is not None else None,
             outcome,
