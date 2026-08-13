@@ -4,7 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-08-13'
-body_hash: 'sha256:ccab2922c7201dfee61af349bfe2ea6d1dc8e1905295f3f01ba568721a576451'
+body_hash: 'sha256:198c41b1bedebbe44f5fd824d7535b93cc0440083b6f82d138e21946f734b5d6'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -223,6 +223,15 @@ Rework ledger tests that assert only single-threaded behaviour and raise the fix
 - [x] `W06.P19.S69` - Rework the ledger suite's single-threaded stand-ins and remove assertions that cannot observe contention; `src/vaultspec_rag/tests/test_index_run_ledger.py`.
 - [x] `W06.P19.S70` - Raise ledger fixtures to a size that reaches the contention window, reusing the canonical corpus fixtures; `src/vaultspec_rag/tests/corpus.py`.
 - [x] `W06.P19.S71` - Guard at source level that the ledger connection helpers cannot ship without the concurrency contract; `src/vaultspec_rag/tests/test_adr_regression.py`.
+
+### Phase `W06.P20` - device tier isolation and gate hygiene
+
+Close the residual defects the ledger-concurrency review surfaced but did not own: the two GPU tiers sharing one card, and a type gate reporting noise on every run.
+
+- [x] `W06.P20.S72` - Split the GPU runner into two sequential selections so the subprocess tier never shares a card with a resident-model tier; `justfile`.
+- [x] `W06.P20.S73` - Refuse a collected selection holding both device tiers, judged on items rather than on the marker expression; `conftest.py, src/vaultspec_rag/tests/_tier_gate.py`.
+- [x] `W06.P20.S74` - Guard both halves - the gate against collected items, and the runner's two selections structurally; `src/vaultspec_rag/tests/test_marker_discipline.py, src/vaultspec_rag/tests/test_adr_regression.py`.
+- [x] `W06.P20.S75` - Restore a clean type gate: declare the refused-envelope literal and drop suppressions that no longer suppress anything; `src/vaultspec_rag/tests/test_gpu_borrow_lease.py, src/vaultspec_rag/indexer/_resolved_policy.py, src/vaultspec_rag/commands/_models.py`.
 
 ## Parallelization
 
