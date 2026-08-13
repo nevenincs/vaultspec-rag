@@ -43,6 +43,7 @@ __all__ = [
     "coscheduled_device_tiers",
     "coscheduled_gpu_failure_message",
     "distributed_worker_count",
+    "enforce_device_tier_isolation",
     "enforce_serial_gpu_lane",
     "enforce_tiers",
     "selectable_slow_tiers",
@@ -211,12 +212,9 @@ def distributed_worker_count(option: argparse.Namespace) -> int:
 def selectable_slow_tiers(markexpr: str) -> list[str]:
     """Return the slow tiers a marker expression can still select.
 
-    An empty expression selects the whole suite, so every slow tier remains
-    reachable. Otherwise the expression is compiled once and evaluated against
-    one tier at a time using the same evaluator that performs the deselection,
-    rather than a second reading of the same syntax. A malformed expression
-    excludes nothing that can be proven, so it is reported as selecting
-    everything; pytest rejects it on its own terms moments later.
+    Evaluated with the same evaluator that performs the deselection, rather
+    than a second reading of the same syntax. An unrestricted expression leaves
+    every slow tier reachable.
     """
     from _pytest.mark.expression import Expression
 
@@ -255,37 +253,71 @@ def parallel_gpu_failure_message(
     )
 
 
-def coscheduled_device_tiers(markexpr: str) -> list[str]:
-    """Return the GPU tiers a selection would co-schedule with subprocess GPU.
+def coscheduled_device_tiers(
+    items: Sequence[TieredItem],
+) -> tuple[list[str], list[str]]:
+    """Split *items* into the subprocess tier and the resident-model tier.
 
-    Empty when the expression cannot reach ``subprocess_gpu``, or reaches no
-    resident-model tier alongside it.
+    Read off what was actually selected rather than modelled from the marker
+    expression, because the expression cannot answer it. Most subprocess tests
+    inherit a module default naming a resident tier too, so probing one tier at
+    a time reports no hazard for the selections that have one, and probing
+    every combination that could exist reports a hazard for selections whose
+    combinations do not - which would refuse the performance lane to protect it
+    from tests it never selects.
+
+    A test declaring both belongs to the subprocess side: what it does is spawn
+    a service that loads its own models, and the second declaration is a
+    module default it never asked for.
+
+    Returns:
+        ``(subprocess_ids, resident_ids)`` - the selected node ids on each
+        side. The hazard is both being non-empty.
     """
-    selectable = set(selectable_slow_tiers(markexpr))
-    if SUBPROCESS_GPU not in selectable:
-        return []
-    return sorted(selectable & GPU_MARKERS)
+    subprocess_ids: list[str] = []
+    resident_ids: list[str] = []
+    for item in items:
+        names = _marker_names(item)
+        if SUBPROCESS_GPU in names:
+            subprocess_ids.append(item.nodeid)
+        elif names & GPU_MARKERS:
+            resident_ids.append(item.nodeid)
+    return subprocess_ids, resident_ids
 
 
-def coscheduled_gpu_failure_message(tiers: list[str], *, markexpr: str) -> str:
+def coscheduled_gpu_failure_message(
+    subprocess_ids: list[str], resident_ids: list[str]
+) -> str:
     """Compose the operator-facing explanation for a co-scheduled GPU selection."""
-    selection = (
-        f"marker expression '{markexpr}'"
-        if markexpr.strip()
-        else "no marker expression, so the whole suite is selected"
-    )
-    named = ", ".join(tiers)
+    exclusion = " or ".join(sorted(GPU_MARKERS))
     return (
-        f"This session uses {selection}, which selects {SUBPROCESS_GPU} tests "
-        f"alongside {named}. Those cannot share a device: the lane holds its "
-        "models resident while each subprocess test spawns a service that loads "
-        "its own, and the combined footprint exceeds the card. The symptom is "
-        "not an out-of-memory error but a spawned service that never becomes "
-        "healthy, surfacing as an unrelated-looking timeout late in the run.\n"
-        f"Run them as two sequential selections instead, e.g. "
-        f"-m '({' or '.join(tiers)}) and not {SUBPROCESS_GPU}' followed by "
+        f"refusing this selection: it runs {len(subprocess_ids)} {SUBPROCESS_GPU} "
+        f"test(s) alongside {len(resident_ids)} that hold a model resident.\n\n"
+        f"Subprocess tier, first few:\n{_listing(subprocess_ids[:3])}\n"
+        f"Resident tier, first few:\n{_listing(resident_ids[:3])}\n\n"
+        "Those cannot share a device: the resident tier keeps its models loaded "
+        "while each subprocess test spawns a service that loads its own, and the "
+        "combined footprint exceeds the card. The symptom is not an "
+        "out-of-memory error but a spawned service that never becomes healthy, "
+        "surfacing as an unrelated-looking timeout late in a long run.\n\n"
+        "Run them as two sequential selections instead: "
+        f"-m '({exclusion}) and not {SUBPROCESS_GPU}' followed by "
         f"-m {SUBPROCESS_GPU}."
     )
+
+
+def enforce_device_tier_isolation(items: Sequence[TieredItem]) -> None:
+    """Abort the session when one selection reaches both device tiers.
+
+    Raises:
+        pytest.UsageError: When the selection holds subprocess-tier and
+            resident-tier tests at once.
+    """
+    subprocess_ids, resident_ids = coscheduled_device_tiers(items)
+    if subprocess_ids and resident_ids:
+        raise pytest.UsageError(
+            coscheduled_gpu_failure_message(subprocess_ids, resident_ids)
+        )
 
 
 def enforce_serial_gpu_lane(option: argparse.Namespace) -> None:

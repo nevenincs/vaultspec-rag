@@ -717,56 +717,53 @@ class TestLedgerConcurrencyContract:
 
 
 class TestDeviceTierIsolation:
-    """Subprocess-GPU tests must not share a device with a resident-model tier.
+    """The GPU runner must schedule the two device tiers separately.
 
-    The constraint was written beside the marker and enforced nowhere, so the
-    project's own GPU recipe selected both in one expression. What it produces
-    is not an out-of-memory error but a spawned service that never becomes
-    healthy - surfacing as a health-poll timeout in an unrelated-looking test,
-    late in a long lane, naming nothing about memory.
+    Subprocess-GPU tests spawn a service that loads its own models; the
+    resident tiers keep theirs loaded. Together they exceed the card, and what
+    that produces is not an out-of-memory error but a spawned service that
+    never becomes healthy - surfacing as a health-poll timeout in an unrelated
+    test, late in a long lane, naming nothing about memory. The constraint was
+    written beside the marker and enforced nowhere, so the project's own recipe
+    selected both in one expression.
+
+    The gate that refuses such a selection is exercised where it lives, against
+    collected items. This guards the other half: that the runner satisfies it.
+    Cheap, and it fails in the fast lane the moment the recipe stops splitting,
+    rather than an hour into a GPU run.
     """
 
-    def test_a_selection_reaching_both_device_tiers_is_detected(self) -> None:
-        from ._tier_gate import coscheduled_device_tiers
-
-        both = "(integration or quality or robustness or subprocess_gpu or cuda)"
-        assert coscheduled_device_tiers(both) == [
-            "integration",
-            "quality",
-            "robustness",
-        ]
-
-    def test_each_lane_on_its_own_is_allowed(self) -> None:
-        from ._tier_gate import coscheduled_device_tiers
-
-        assert coscheduled_device_tiers("subprocess_gpu") == []
-        assert (
-            coscheduled_device_tiers(
-                "(integration or quality or robustness or cuda) "
-                "and not performance and not subprocess_gpu"
-            )
-            == []
-        )
-
-    def test_the_gpu_recipe_runs_the_two_lanes_separately(self) -> None:
-        """The runner has to satisfy the gate, not just the gate exist."""
+    def _gpu_recipe_selections(self) -> list[str]:
+        """Return the marker expressions the GPU recipe runs, in order."""
         import re
         from pathlib import Path
 
-        from ._tier_gate import coscheduled_device_tiers
-
         justfile = Path(__file__).resolve().parents[3] / "justfile"
         recipe = justfile.read_text(encoding="utf-8")
-        selections = re.findall(r'pytest [^\n]*?-m "([^"]+)"', recipe)
-        assert selections, "no marker expressions found in the runner"
-        offending = [
-            expression
-            for expression in selections
-            if coscheduled_device_tiers(expression)
-        ]
-        assert not offending, (
-            "the runner selects subprocess_gpu alongside a resident-model tier: "
-            f"{offending}"
+        block = re.search(r'"gpu"\s*\{(.*?)\n\s*\}', recipe, re.DOTALL)
+        assert block is not None, "the runner has no gpu recipe"
+        return re.findall(r'pytest [^\n]*?-m "([^"]+)"', block.group(1))
+
+    def test_the_gpu_recipe_runs_the_two_tiers_as_separate_selections(self) -> None:
+        """Mutation it catches: merging the two selections back into one.
+
+        A single ``-m "integration or ... or subprocess_gpu"`` reads as
+        covering the same tests, and does - in one session, which is the
+        wedge. Asserted as a count plus each selection's role, so restoring
+        the union fails here rather than after an hour of GPU time.
+        """
+        selections = self._gpu_recipe_selections()
+
+        assert len(selections) == 2, (
+            f"the gpu recipe must run two selections, found {selections}"
+        )
+        resident, subprocess_tier = selections
+        assert "not subprocess_gpu" in resident, (
+            f"the resident selection must exclude the subprocess tier: {resident}"
+        )
+        assert subprocess_tier == "subprocess_gpu", (
+            f"the second selection must name only the subprocess tier: "
+            f"{subprocess_tier}"
         )
 
 
