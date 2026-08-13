@@ -40,6 +40,8 @@ __all__ = [
     "SLOW_TIERS",
     "SUBPROCESS_GPU",
     "TIER_MARKERS",
+    "coscheduled_device_tiers",
+    "coscheduled_gpu_failure_message",
     "distributed_worker_count",
     "enforce_serial_gpu_lane",
     "enforce_tiers",
@@ -250,6 +252,39 @@ def parallel_gpu_failure_message(
         "Run the GPU tiers serially, without -n or --dist, or keep the "
         "distributed lane clear of them by excluding every slow tier: "
         f'-m "not ({exclusion})".'
+    )
+
+
+def coscheduled_device_tiers(markexpr: str) -> list[str]:
+    """Return the GPU tiers a selection would co-schedule with subprocess GPU.
+
+    Empty when the expression cannot reach ``subprocess_gpu``, or reaches no
+    resident-model tier alongside it.
+    """
+    selectable = set(selectable_slow_tiers(markexpr))
+    if SUBPROCESS_GPU not in selectable:
+        return []
+    return sorted(selectable & GPU_MARKERS)
+
+
+def coscheduled_gpu_failure_message(tiers: list[str], *, markexpr: str) -> str:
+    """Compose the operator-facing explanation for a co-scheduled GPU selection."""
+    selection = (
+        f"marker expression '{markexpr}'"
+        if markexpr.strip()
+        else "no marker expression, so the whole suite is selected"
+    )
+    named = ", ".join(tiers)
+    return (
+        f"This session uses {selection}, which selects {SUBPROCESS_GPU} tests "
+        f"alongside {named}. Those cannot share a device: the lane holds its "
+        "models resident while each subprocess test spawns a service that loads "
+        "its own, and the combined footprint exceeds the card. The symptom is "
+        "not an out-of-memory error but a spawned service that never becomes "
+        "healthy, surfacing as an unrelated-looking timeout late in the run.\n"
+        f"Run them as two sequential selections instead, e.g. "
+        f"-m '({' or '.join(tiers)}) and not {SUBPROCESS_GPU}' followed by "
+        f"-m {SUBPROCESS_GPU}."
     )
 
 
