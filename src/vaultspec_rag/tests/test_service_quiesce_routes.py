@@ -29,7 +29,12 @@ from ..service_quiesce import (
     QuiesceTransition,
 )
 from ._job_roots import _TEST_PROJECT_ROOT
-from ._quiesce_helpers import QUIESCE_THREAD_TIMEOUT, wait_for_quiesce_state
+from ._quiesce_helpers import (
+    QUIESCE_THREAD_TIMEOUT,
+    held_quiesce_snapshot,
+    running_quiesce_snapshot,
+    wait_for_quiesce_state,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -371,3 +376,62 @@ def test_a_resume_opposing_an_owned_pause_answers_with_an_envelope(
     assert payload["quiesce"]["state"] == "pausing"
     assert not owner.is_alive()
     assert owner_outcomes[0].achieved
+
+
+class TestAnUnachievedTransitionNamesItsConsequence:
+    """A refusal has to say the service stopped serving, not just which step failed.
+
+    A pause whose drain times out leaves the service in ``pausing`` with
+    admission closed. Nothing reopens it: the transition is owned by the caller
+    that started it, so when that caller gives up the service keeps refusing
+    every search and index update until someone retries pause or resumes. The
+    status said ``drain_timed_out`` and ``retryable``, both true and neither
+    sufficient - an operator reading them has no reason to think the service
+    has stopped answering.
+    """
+
+    def test_a_closed_admission_state_names_the_refusal_and_both_remedies(
+        self,
+    ) -> None:
+        """Mutation it catches: reporting only the transition and its reason.
+
+        That is what shipped. The sentence was accurate and an operator acting
+        on it would have left a service serving nothing.
+        """
+        from ..server._routes import _quiesce_reason
+
+        snapshot = held_quiesce_snapshot()
+        message = _quiesce_reason("drain_timed_out", snapshot)
+
+        assert "admission stays closed" in message.lower()
+        assert "refused" in message
+        assert "retry pause" in message
+        assert "resume" in message
+
+    def test_an_open_admission_state_is_not_given_a_warning_it_has_not_earned(
+        self,
+    ) -> None:
+        """Mutation it catches: appending the warning unconditionally.
+
+        A transition refused while the service is still serving must not tell
+        an operator that searches are being turned away.
+        """
+        from ..server._routes import _quiesce_reason
+
+        message = _quiesce_reason("pause_unavailable", running_quiesce_snapshot())
+
+        assert "admission stays closed" not in message.lower()
+        assert "refused" not in message
+
+    def test_the_state_is_reported_in_readable_english(self) -> None:
+        """Mutation it catches: the 'left the service is <state>' phrasing.
+
+        Operator-facing text is read under pressure; a sentence that does not
+        parse costs attention exactly when there is none to spare.
+        """
+        from ..server._routes import _quiesce_reason
+
+        message = _quiesce_reason("drain_timed_out", held_quiesce_snapshot())
+
+        assert "left the service in 'quiesced'" in message
+        assert "the service is '" not in message

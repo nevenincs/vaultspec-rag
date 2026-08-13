@@ -1213,12 +1213,28 @@ def _borrower_refusal_message(code: str) -> str:
 
 
 def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
-    """Describe an unachieved transition from the controller's own evidence."""
+    """Describe an unachieved transition from the controller's own evidence.
+
+    An unachieved transition can leave admission closed, and that is the part
+    an operator has to act on: the service then refuses every search and index
+    update, and nothing reopens it on its own, because the transition is owned
+    by the caller that started it. Reporting only which transition failed left
+    a service silently serving nothing while its status said the pause had
+    merely timed out.
+    """
     failure_reason = snapshot.failure_reason
-    held = f"the service is {snapshot.state.value!r}"
-    if failure_reason is not None:
-        return f"Quiesce transition {status!r} left {held}: {failure_reason}."
-    return f"Quiesce transition {status!r} left {held}."
+    detail = "" if failure_reason is None else f": {failure_reason}"
+    outcome = (
+        f"Quiesce transition {status!r} left the service in "
+        f"{snapshot.state.value!r}{detail}."
+    )
+    if snapshot.admissions_open:
+        return outcome
+    return (
+        f"{outcome} Admission stays closed in this state, so searches and index "
+        "updates are refused until the transition finishes; retry pause to "
+        "complete it, or resume to release it."
+    )
 
 
 async def _borrower_capability_from_request(
