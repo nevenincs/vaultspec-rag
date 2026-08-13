@@ -29,11 +29,11 @@ from textual.app import ScreenStackError
 from textual.widgets import DataTable
 
 from ..cli._jobs_tui import (
-    _LOG_LINES,
     _SPINNER_FRAMES,
     _SPINNER_INTERVAL,
     ServerWatchApp,
 )
+from ..cli._jobs_tui_constants import LOG_LINES
 from ..cli._jobs_tui_palette import DARK_THEME_NAME, LIGHT_THEME_NAME
 from ..service_quiesce import QuiesceSnapshot, QuiesceState
 from ..serviceclient._transport import DEFAULT_ADMIN_TIMEOUT_SECONDS, _try_http_admin
@@ -3072,7 +3072,7 @@ class TestClosingTheSession:
             # The same window the interface asks for, from the same transport.
             answer = _try_http_admin(
                 "get_logs",
-                {"lines": _LOG_LINES, "source": "service", "job_id": selected},
+                {"lines": LOG_LINES, "source": "service", "job_id": selected},
                 control_service.port,
             )
             assert answer is not None and answer.get("ok") is True, (
