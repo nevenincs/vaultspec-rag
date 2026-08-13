@@ -1083,7 +1083,10 @@ def test_a_matching_envelope_is_left_to_the_transition_check() -> None:
     )
     from ..service_quiesce import QuiesceState
 
-    refused = {"ok": False, "quiesce": _envelope(state="running")}
+    refused: dict[str, object] = {
+        "ok": False,
+        "quiesce": _envelope(state="running"),
+    }
     _reject_unrecognised_quiesce(refused, verb="pause")
     assert not _acknowledged_transition(refused, QuiesceState.QUIESCED)
 
