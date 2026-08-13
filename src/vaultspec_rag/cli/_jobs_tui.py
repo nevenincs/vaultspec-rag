@@ -27,7 +27,7 @@ from textual.widgets import DataTable, Footer, Static
 from textual.widgets.data_table import ColumnKey
 from textual.worker import WorkerState
 
-from ..jobs import count, measurement
+from .._job_values import count, measurement
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
 from ..serviceclient._transport import (
     _try_http_admin,
@@ -69,6 +69,7 @@ from ._jobs_tui_constants import (
     MIN_COLUMN_CELLS,
     SEARCH_ACTIVITY_LIMIT,
     SEARCH_COLUMN_WEIGHTS,
+    SEARCH_COUNT_NAMES,
     SPLIT_MIN_CELLS,
 )
 from ._jobs_tui_controls import JobControlMixin
@@ -695,7 +696,7 @@ class ServerWatchApp(
         # confirmed "counts" is a dict before returning None.
         counts = cast("dict[str, object]", payload["counts"])
         self._search.counts = {
-            name: count(counts.get(name)) or 0 for name in ("active", "recent", "total")
+            name: count(counts.get(name)) or 0 for name in SEARCH_COUNT_NAMES
         }
         # Counts are computed over every record; the rows are the bounded
         # projection. Keeping the served figure is what lets the title say so.

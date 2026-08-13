@@ -24,9 +24,10 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._job_progress import record_progress
 from ..config._settings import managed_status_dir
 from ..job_models import JobSource
-from ..jobs import record_progress, record_start, reset, snapshot
+from ..jobs import record_start, reset, snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

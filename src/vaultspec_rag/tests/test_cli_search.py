@@ -20,10 +20,10 @@ from ._cli_helpers import (
     _display_search_results,
     _display_service_error,
     _get_search_timeout,
-    _search_records,
     _try_http_search,
     app,
     runner,
+    search_records,
 )
 from ._http_stubs import QuietHandler
 
@@ -559,13 +559,13 @@ class TestSearchResultRendering:
     def test_default_keeps_full_snippet(self):
         """Default output renders the full snippet."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "a" * 300})
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["text"] == "a" * 300
 
     def test_scores_are_hidden_by_default(self):
         """Default output shows numbering, not numeric relevance score."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["number"] == 1
         assert record["location"] == "foo.py"
         assert record["score"] is None
@@ -576,7 +576,7 @@ class TestSearchResultRendering:
             {"path": "foo.py", "score": 0.9, "snippet": "test"},
             show_scores=True,
         )
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["score"] == "0.9000"
 
     def test_display_empty_results(self) -> None:
@@ -590,7 +590,7 @@ class TestSearchResultRendering:
         rendered = self._render_all([])
 
         assert rendered == ""
-        assert _search_records(rendered) == []
+        assert search_records(rendered) == []
 
     def test_display_missing_fields(self) -> None:
         """A result carrying no keys still renders, and names the gap.
@@ -601,7 +601,7 @@ class TestSearchResultRendering:
         """
         rendered = self._render({})
 
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["number"] == 1
         assert record["location"] == "location-not-reported"
         assert record["score"] is None
@@ -612,13 +612,13 @@ class TestSearchResultRendering:
         rendered = self._render(
             {"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42},
         )
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["location"] == "foo.py:42"
 
     def test_display_without_line_start(self):
         """Result without line_start renders location as bare path."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["location"] == "foo.py"
 
     def test_display_with_anchor_prefers_deep_link(self):
@@ -632,7 +632,7 @@ class TestSearchResultRendering:
                 "snippet": "test",
             }
         )
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["location"] == "report.pdf#page=4"
 
     def test_display_service_lock_error_hides_backend_contract(

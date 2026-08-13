@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 from rich.cells import cell_len
 from rich.text import Text
 
-from ..jobs import count, mapping, measurement, text
+from .._job_values import count, mapping, measurement, text
 from ..search._outcomes import FAILED_ACTIVITY_OUTCOMES
 from ._cli_format import compact_duration
 from ._jobs_tui_constants import (

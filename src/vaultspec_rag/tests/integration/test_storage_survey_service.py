@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ..._job_values import count
 from ..._store_models import root_collection_prefix
-from ...jobs import count
 from ...serviceclient._transport import _do_http_call, _try_http_admin
 
 if TYPE_CHECKING:

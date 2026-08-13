@@ -15,7 +15,7 @@ import pytest
 import uvicorn
 from typer.testing import CliRunner
 
-from ... import jobs, server
+from ... import _job_admission, jobs, server
 from ..._index_breadth import index_meta_path
 from ..._source_types import PublicSourceType
 from ...cli import app
@@ -958,7 +958,7 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
         encoding="utf-8",
     )
 
-    preflight = jobs.validate_code_index_policy(root)
+    preflight = _job_admission.validate_code_index_policy(root)
     created = manager.create(
         JobSpec(
             operation=JobOperation.INDEX,

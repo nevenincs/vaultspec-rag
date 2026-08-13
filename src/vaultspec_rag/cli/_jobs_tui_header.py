@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, cast
 from rich.text import Text
 from textual.widgets import Static
 
-from ..jobs import count, measurement
+from .._job_values import count, measurement
 from ..service_quiesce import QuiesceState
 from ._cli_format import compact_duration
 from ._jobs_tui_cells import (

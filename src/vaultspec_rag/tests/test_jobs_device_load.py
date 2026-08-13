@@ -40,7 +40,7 @@ def clear_device_load_cache() -> Iterator[None]:
     would otherwise answer the next one's poll instead of the substituted
     reading it installed.
     """
-    import vaultspec_rag.jobs as jobs_module
+    import vaultspec_rag._job_evidence as jobs_module
 
     jobs_module._device_load_snapshot_cache = None
     yield
@@ -69,7 +69,7 @@ class TestDeviceLoadSnapshotCaching:
         recorded instead of one).
         """
         import vaultspec_rag._gpu_admission as admission_module
-        from vaultspec_rag.jobs import device_load_snapshot
+        from vaultspec_rag._job_evidence import device_load_snapshot
 
         calls: list[int] = []
 
@@ -93,7 +93,7 @@ class TestDeviceLoadSnapshotCaching:
         fail on ``len(calls) == 2`` (only one call recorded).
         """
         import vaultspec_rag._gpu_admission as admission_module
-        from vaultspec_rag.jobs import (
+        from vaultspec_rag._job_evidence import (
             _DEVICE_LOAD_SNAPSHOT_CACHE_SECONDS,
             device_load_snapshot,
         )
@@ -115,7 +115,7 @@ class TestDeviceLoadSnapshotCaching:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import vaultspec_rag._gpu_admission as admission_module
-        from vaultspec_rag.jobs import device_load_snapshot
+        from vaultspec_rag._job_evidence import device_load_snapshot
 
         monkeypatch.setattr(admission_module, "device_load_reading", lambda: _reading())
 
@@ -141,7 +141,7 @@ class TestDeviceLoadSnapshotAbsence:
         injected exception instead of a clean ``None``.
         """
         import vaultspec_rag._gpu_admission as admission_module
-        from vaultspec_rag.jobs import device_load_snapshot
+        from vaultspec_rag._job_evidence import device_load_snapshot
 
         monkeypatch.setattr(admission_module, "device_load_reading", lambda: None)
 
@@ -156,7 +156,7 @@ class TestDeviceLoadSnapshotAbsence:
         regardless of what the read comes back as.
         """
         import vaultspec_rag._gpu_admission as admission_module
-        from vaultspec_rag.jobs import device_load_snapshot
+        from vaultspec_rag._job_evidence import device_load_snapshot
 
         calls: list[int] = []
 

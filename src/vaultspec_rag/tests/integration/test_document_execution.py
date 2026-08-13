@@ -16,6 +16,10 @@ from typing import TYPE_CHECKING
 import psutil
 import pytest
 
+from ..._job_admission import (
+    validate_document_index_policy,
+    validate_document_support_profile,
+)
 from ..._job_errors import JobError, JobErrorKind
 from ..._store_models import DocumentChunk, DocumentPayload
 from ..._store_writes import VolumeReading
@@ -56,10 +60,6 @@ from ...job_models import (
     JobSource,
     JobSpec,
     job_spec_error,
-)
-from ...jobs import (
-    validate_document_index_policy,
-    validate_document_support_profile,
 )
 from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController

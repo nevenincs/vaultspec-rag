@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, cast
 
+from .._job_values import text
 from .._operator_commands import (
     IndexCommandOptions,
     index_command,
@@ -22,7 +23,6 @@ from .._operator_commands import (
 )
 from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
-from ..jobs import text
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 if TYPE_CHECKING:
