@@ -3,10 +3,10 @@ generated: true
 tags:
   - '#index'
   - '#large-index-resilience'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-13'
+modified: '2026-08-13'
 body_schema: 'body-v1'
-body_hash: 'sha256:d6ae9325b3f872f7f4f2b3af6e5edcff0b9146c021e3b1689905cfa37f742826'
+body_hash: 'sha256:aa6e013f875213166a927943068f549f4fa23fcbdfce57d1a40b142f0f074dab'
 related:
   - '[[2026-07-21-large-index-resilience-W01-P01-S01]]'
   - '[[2026-07-21-large-index-resilience-W01-P01-S02]]'
@@ -70,6 +70,31 @@ related:
   - '[[2026-07-21-large-index-resilience-W04-P13-S46]]'
   - '[[2026-07-21-large-index-resilience-W04-P13-S47]]'
   - '[[2026-07-21-large-index-resilience-W05-P14-S48]]'
+  - '[[2026-07-21-large-index-resilience-W05-P14-S49]]'
+  - '[[2026-07-21-large-index-resilience-W06-P16-S60]]'
+  - '[[2026-07-21-large-index-resilience-W06-P16-S61]]'
+  - '[[2026-07-21-large-index-resilience-W06-P16-S62]]'
+  - '[[2026-07-21-large-index-resilience-W06-P16-S63]]'
+  - '[[2026-07-21-large-index-resilience-W06-P16-summary]]'
+  - '[[2026-07-21-large-index-resilience-W06-P17-S64]]'
+  - '[[2026-07-21-large-index-resilience-W06-P17-S65]]'
+  - '[[2026-07-21-large-index-resilience-W06-P17-summary]]'
+  - '[[2026-07-21-large-index-resilience-W06-P18-S66]]'
+  - '[[2026-07-21-large-index-resilience-W06-P18-S67]]'
+  - '[[2026-07-21-large-index-resilience-W06-P18-S68]]'
+  - '[[2026-07-21-large-index-resilience-W06-P18-summary]]'
+  - '[[2026-07-21-large-index-resilience-W06-P19-S69]]'
+  - '[[2026-07-21-large-index-resilience-W06-P19-S70]]'
+  - '[[2026-07-21-large-index-resilience-W06-P19-S71]]'
+  - '[[2026-07-21-large-index-resilience-W06-P19-summary]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S72]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S73]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S74]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S75]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S76]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S77]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S78]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-summary]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
   - '[[2026-07-21-large-index-resilience-reference]]'
@@ -86,6 +111,7 @@ related:
   - '[[2026-07-22-large-index-resilience-run-checkpoint-audit]]'
   - '[[2026-07-22-large-index-resilience-run-ledger-audit]]'
   - '[[2026-07-23-large-index-resilience-closing-review-audit]]'
+  - '[[2026-08-13-large-index-resilience-ledger-concurrency-audit]]'
 ---
 
 # `large-index-resilience` feature index
@@ -112,6 +138,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-22-large-index-resilience-run-checkpoint-audit` - `large-index-resilience` audit: `run checkpoint bridge`
 - `2026-07-22-large-index-resilience-run-ledger-audit` - `large-index-resilience` audit: `run ledger`
 - `2026-07-23-large-index-resilience-closing-review-audit` - `large-index-resilience` audit: `independent closing review — passed with two follow-ups`
+- `2026-08-13-large-index-resilience-ledger-concurrency-audit` - `large-index-resilience` audit: `ledger concurrency`
 
 ### exec
 
@@ -177,6 +204,31 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W04-P13-S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses
 - `2026-07-21-large-index-resilience-W05-P14-S48` - Run focused indexer, watcher, storage-write, jobs, profile, restart, and GPU integration suites
 - `2026-07-21-large-index-resilience-W04-P13-S47` - Complete the 250872-chunk incident floor on the declared default managed-service profile
+- `2026-07-21-large-index-resilience-W05-P14-S49` - Run the complete project test suite without skips or expected failures
+- `2026-07-21-large-index-resilience-W06-P16-S60` - Open every run-ledger connection in write-ahead logging mode and prove the mode persists across reopen
+- `2026-07-21-large-index-resilience-W06-P16-S61` - Apply the same connection contract to the route-migration journal
+- `2026-07-21-large-index-resilience-W06-P16-S62` - Move full-database integrity verification off the per-run open path onto an explicit maintenance and recovery entry point
+- `2026-07-21-large-index-resilience-W06-P16-S63` - Replace transaction-scoped use of raw connections with one closing accessor and repoint every read site onto it
+- `2026-07-21-large-index-resilience-W06-P16-summary` - `large-index-resilience` `W06.P16` summary
+- `2026-07-21-large-index-resilience-W06-P17-S64` - Classify a busy or locked database as a typed transient condition rather than an unclassified failure
+- `2026-07-21-large-index-resilience-W06-P17-S65` - Retry a contended ledger transaction under a bounded policy instead of failing the generation and discarding storage-confirmed work
+- `2026-07-21-large-index-resilience-W06-P17-summary` - `large-index-resilience` `W06.P17` summary
+- `2026-07-21-large-index-resilience-W06-P18-S66` - Prove a reader overlapping a committing writer on one real ledger file cannot fail that commit, and that the guard fails under a rollback journal
+- `2026-07-21-large-index-resilience-W06-P18-S67` - Prove a document or vault run opening the shared ledger cannot fail a concurrent code run's commit on the same root
+- `2026-07-21-large-index-resilience-W06-P18-S68` - Exercise overlapping index and search load against a live service on a realistic corpus and assert no locked-database outcome
+- `2026-07-21-large-index-resilience-W06-P18-summary` - `large-index-resilience` `W06.P18` summary
+- `2026-07-21-large-index-resilience-W06-P19-S69` - Rework the ledger suite's single-threaded stand-ins and remove assertions that cannot observe contention
+- `2026-07-21-large-index-resilience-W06-P19-S70` - Raise ledger fixtures to a size that reaches the contention window, reusing the canonical corpus fixtures
+- `2026-07-21-large-index-resilience-W06-P19-S71` - Guard at source level that the ledger connection helpers cannot ship without the concurrency contract
+- `2026-07-21-large-index-resilience-W06-P19-summary` - `large-index-resilience` `W06.P19` summary
+- `2026-07-21-large-index-resilience-W06-P20-S72` - Split the GPU runner into two sequential selections so the subprocess tier never shares a card with a resident-model tier
+- `2026-07-21-large-index-resilience-W06-P20-S73` - Refuse a collected selection holding both device tiers, judged on items rather than on the marker expression
+- `2026-07-21-large-index-resilience-W06-P20-S74` - Guard both halves - the gate against collected items, and the runner's two selections structurally
+- `2026-07-21-large-index-resilience-W06-P20-S75` - Restore a clean type gate: declare the refused-envelope literal and drop suppressions that no longer suppress anything
+- `2026-07-21-large-index-resilience-W06-P20-S76` - Repoint every subprocess test off the resident tier it inherited, and make declaring both a collection-time violation
+- `2026-07-21-large-index-resilience-W06-P20-S77` - Make a refused quiesce transition name that admission is closed, and give the pause drain a budget longer than one encode slice
+- `2026-07-21-large-index-resilience-W06-P20-S78` - Audit the start verb's exit paths against the lifecycle envelope contract and rebuild the collection the pin move stranded
+- `2026-07-21-large-index-resilience-W06-P20-summary` - `large-index-resilience` `W06.P20` summary
 
 ### plan
 

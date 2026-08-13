@@ -63,9 +63,8 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
-pytestmark = [pytest.mark.integration]
 
-
+@pytest.mark.integration
 def test_poll_health_honours_subsecond_deadline() -> None:
     """A real unreachable endpoint cannot overrun the caller's short budget."""
     port = free_loopback_port()
@@ -75,6 +74,7 @@ def test_poll_health_honours_subsecond_deadline() -> None:
     assert time.monotonic() - started < 1.0
 
 
+@pytest.mark.integration
 def test_live_service_spawn_failure_has_shared_deadline_diagnostics(
     tmp_path: Path,
 ) -> None:
@@ -99,6 +99,7 @@ def test_live_service_spawn_failure_has_shared_deadline_diagnostics(
     assert "Service output:" in message
 
 
+@pytest.mark.integration
 def test_live_service_status_failure_cleans_up_inside_startup_budget(
     tmp_path: Path,
 ) -> None:
@@ -123,7 +124,6 @@ def test_live_service_status_failure_cleans_up_inside_startup_budget(
     assert "Service output:" in message
 
 
-@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_live_service_readiness_expiry_uses_reserved_cleanup_budget(
     tmp_path: Path,
@@ -174,7 +174,6 @@ def test_live_service_readiness_expiry_uses_reserved_cleanup_budget(
     assert _wait_for_listeners_closed(service_port, qdrant_port)
 
 
-@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_running_phase_status_failure_rolls_back_all_started_components(
     request: pytest.FixtureRequest,
@@ -267,7 +266,6 @@ def test_running_phase_status_failure_rolls_back_all_started_components(
         assert heartbeat_after == heartbeat_before
 
 
-@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 def test_startup_expiry_reaps_pre_readiness_qdrant(
     request: pytest.FixtureRequest,
@@ -351,6 +349,7 @@ def test_startup_expiry_reaps_pre_readiness_qdrant(
 
 if sys.platform == "win32":
 
+    @pytest.mark.integration
     def test_windows_late_spawn_timeout_cleans_before_pid_assignment(
         tmp_path: Path,
     ) -> None:
@@ -378,7 +377,6 @@ if sys.platform == "win32":
                 assert not pid_alive(int(identity["qdrant_pid"]))
                 assert not _port_is_listening(int(identity["http_port"]))
 
-    @pytest.mark.integration
     @pytest.mark.subprocess_gpu
     def test_windows_late_spawn_cleanup_finds_detached_daemon_and_qdrant(
         request: pytest.FixtureRequest,
@@ -434,6 +432,7 @@ if sys.platform == "win32":
             assert _wait_for_exit(qdrant_pid, timeout=15.0)
             assert _wait_for_listeners_closed(port, qdrant_port)
 
+    @pytest.mark.integration
     def test_windows_late_spawn_cleanup_preserves_unrelated_status_and_command(
         tmp_path: Path,
     ) -> None:
@@ -501,6 +500,7 @@ if sys.platform == "win32":
                     process.wait(timeout=5.0)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("witness_field", "expected_reason"),
     [
@@ -560,6 +560,7 @@ def test_attached_qdrant_requires_complete_live_incarnation_witness(
 
 if sys.platform != "win32":
 
+    @pytest.mark.integration
     def test_posix_attached_qdrant_publishes_existing_child_identity(
         tmp_path: Path,
     ) -> None:
@@ -617,6 +618,7 @@ if sys.platform != "win32":
                 first.stop()
                 set_active_supervisor(None)
 
+    @pytest.mark.integration
     def test_posix_restart_identity_failure_stops_new_child(tmp_path: Path) -> None:
         from ...qdrant_runtime._resolve import qdrant_identity_path
         from ...qdrant_runtime._supervise import (
@@ -636,6 +638,7 @@ if sys.platform != "win32":
                 supervisor.stop()
                 set_active_supervisor(None)
 
+    @pytest.mark.integration
     def test_posix_ordinary_orphan_reap_revalidates_live_owner(
         tmp_path: Path,
     ) -> None:
@@ -663,6 +666,7 @@ if sys.platform != "win32":
                 supervisor.stop()
                 set_active_supervisor(None)
 
+    @pytest.mark.integration
     @pytest.mark.parametrize("tampered_field", ["storage_path", "version", "http_port"])
     def test_posix_ordinary_orphan_reap_requires_complete_managed_witness(
         request: pytest.FixtureRequest,
@@ -714,6 +718,7 @@ if sys.platform != "win32":
             assert _wait_for_exit(qdrant_pid, timeout=15.0)
             assert _wait_for_listeners_closed(qdrant_port)
 
+    @pytest.mark.integration
     def test_posix_forced_stop_reaps_validated_detached_qdrant(
         request: pytest.FixtureRequest,
         tmp_path: Path,
@@ -736,6 +741,7 @@ if sys.platform != "win32":
             with pytest.raises(ProcessLookupError):
                 os.getpgid(qdrant_pid)
 
+    @pytest.mark.integration
     def test_posix_forced_stop_rejects_unwitnessed_qdrant_identity(
         request: pytest.FixtureRequest,
         tmp_path: Path,
@@ -772,6 +778,7 @@ if sys.platform != "win32":
             assert _wait_for_exit(qdrant_pid, timeout=15.0)
             assert _wait_for_listeners_closed(qdrant_port)
 
+    @pytest.mark.integration
     @pytest.mark.parametrize("child_witness", ["missing", "mismatched"])
     def test_posix_forced_stop_rejects_unwitnessed_or_recycled_qdrant_child(
         request: pytest.FixtureRequest,

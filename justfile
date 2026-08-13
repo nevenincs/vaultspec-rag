@@ -397,13 +397,25 @@ audit target='all':
 # line and silently swallows every case after it, including the closing
 # braces (this broke every target, not just "gpu", the last time it happened).
 
+# The "gpu" target runs TWO sequential selections, and that split is load
+# bearing rather than tidiness. A resident-model tier holds its models for the
+# length of the lane while each subprocess_gpu test spawns a service that loads
+# its own set, and the combined footprint exceeds the card. Co-scheduled, the
+# spawned service simply never becomes healthy - so the failure arrives as a
+# health-poll timeout in whichever test drew the short straw, naming nothing
+# about memory and pointing at code that is fine. The tier gate refuses a
+# marker expression that can reach both at once; this is the recipe that
+# satisfies it.
+#
 # Run project test suites.
 test target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
-      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "(integration or quality or robustness or subprocess_gpu or cuda) and not performance" ; \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "(integration or quality or robustness or cuda) and not performance and not subprocess_gpu" ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; \
+      {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "subprocess_gpu" ; \
       break \
     } \
     "perf" { \

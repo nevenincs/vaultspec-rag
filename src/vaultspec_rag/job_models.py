@@ -256,6 +256,53 @@ _JSON_VALUE_REQUIREMENT = (
 _OBJECT_REQUIREMENT = "an object with string keys"
 
 
+def _json_object_children(
+    path: str, mapping: dict[object, object], seen: set[int]
+) -> list[tuple[str, object]]:
+    """Return an object's members, refusing a key JSON would return as a string."""
+    if id(mapping) in seen:
+        return []
+    seen.add(id(mapping))
+    children: list[tuple[str, object]] = []
+    for key, item in mapping.items():
+        if not isinstance(key, str):
+            raise _rejection(path, _OBJECT_REQUIREMENT, optional=False)
+        children.append((f"{path}[{key!r}]", item))
+    return children
+
+
+def _json_array_children(
+    path: str, items: list[object], seen: set[int]
+) -> list[tuple[str, object]]:
+    """Return an array's members, already visited ones excluded."""
+    if id(items) in seen:
+        return []
+    seen.add(id(items))
+    return [(f"{path}[{index}]", item) for index, item in enumerate(items)]
+
+
+def _json_telemetry_children(
+    path: str, current: object, seen: set[int]
+) -> list[tuple[str, object]]:
+    """Return the children of one telemetry value, refusing an unwritable one.
+
+    A scalar has none. A container already walked returns none as well, which
+    is what bounds the walk over a shared or self-referential structure.
+    """
+    if current is None or isinstance(current, bool | int | str):
+        return []
+    if isinstance(current, float):
+        # Reuses the number contract every other persisted float is held to,
+        # so "finite" means one thing across the whole record.
+        _require_number(path, current)
+        return []
+    if isinstance(current, dict):
+        return _json_object_children(path, cast("dict[object, object]", current), seen)
+    if isinstance(current, list):
+        return _json_array_children(path, cast("list[object]", current), seen)
+    raise _rejection(path, _JSON_VALUE_REQUIREMENT, optional=False)
+
+
 def _require_json_telemetry_block(name: str, value: object) -> None:
     """Refuse a telemetry block a write and read back would not return intact.
 
@@ -293,33 +340,7 @@ def _require_json_telemetry_block(name: str, value: object) -> None:
     seen: set[int] = {id(block)}
     while pending:
         path, current = pending.pop()
-        if current is None or isinstance(current, bool | int | str):
-            continue
-        if isinstance(current, float):
-            # Reuses the number contract every other persisted float is held
-            # to, so "finite" means one thing across the whole record.
-            _require_number(path, current)
-            continue
-        if isinstance(current, dict):
-            nested = cast("dict[object, object]", current)
-            if id(nested) in seen:
-                continue
-            seen.add(id(nested))
-            for key, item in nested.items():
-                if not isinstance(key, str):
-                    raise _rejection(path, _OBJECT_REQUIREMENT, optional=False)
-                pending.append((f"{path}[{key!r}]", item))
-            continue
-        if isinstance(current, list):
-            items = cast("list[object]", current)
-            if id(items) in seen:
-                continue
-            seen.add(id(items))
-            pending.extend(
-                (f"{path}[{index}]", item) for index, item in enumerate(items)
-            )
-            continue
-        raise _rejection(path, _JSON_VALUE_REQUIREMENT, optional=False)
+        pending.extend(_json_telemetry_children(path, current, seen))
 
 
 @dataclass(frozen=True, slots=True)

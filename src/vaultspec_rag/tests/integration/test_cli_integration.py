@@ -20,8 +20,6 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
-pytestmark = [pytest.mark.integration]
-
 
 @pytest.fixture(scope="session")
 def cli_vault(tmp_path_factory: TempPathFactory) -> Path:
@@ -67,6 +65,7 @@ def _run_cli(
 class TestCLIStatus:
     """Tests for ``vaultspec-rag status``."""
 
+    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_status_shows_gpu_info(self, cli_vault: Path) -> None:
         """``vaultspec-rag status`` should display CUDA GPU information."""
@@ -75,6 +74,7 @@ class TestCLIStatus:
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "cuda" in result.stdout.lower() or "GPU" in result.stdout
 
+    @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_status_shows_document_counts(self, cli_vault: Path) -> None:
         """``vaultspec-rag status`` should show document count digits."""

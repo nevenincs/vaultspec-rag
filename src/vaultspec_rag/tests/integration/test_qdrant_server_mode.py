@@ -22,6 +22,7 @@ from ..._store_search import HybridSearchRequest
 from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
+from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
 from .._ports import free_loopback_port
@@ -573,7 +574,7 @@ class TestSupervision:
         pid = supervisor.pid
         assert pid is not None
         assert pid_alive(pid)
-        assert supervisor.server_version().startswith("1.18")
+        assert supervisor.server_version() == QDRANT_SERVER_VERSION
 
         supervisor.stop()
 
@@ -604,7 +605,7 @@ class TestSupervision:
             assert supervisor.restart(timeout=60.0) is True
             assert supervisor.restart_count == 1
             assert supervisor.is_alive()
-            assert supervisor.server_version().startswith("1.18")
+            assert supervisor.server_version() == QDRANT_SERVER_VERSION
         finally:
             supervisor.stop()
 

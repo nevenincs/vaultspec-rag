@@ -572,6 +572,201 @@ class TestGeometryReconcileIsNonDestructive:
         assert store_schema.SERVER_SEGMENT_NUMBER == 2
 
 
+class TestLedgerConcurrencyContract:
+    """ADR: the shared per-root ledger's durable-state concurrency contract.
+
+    The behavioural guards for this live in the run-ledger suite and need
+    real threads and a real database file. These are the cheap structural
+    backstops: they catch the contract being edited out of the source, which
+    is how it was lost the first time - a formatting-level change to one
+    connection helper, with every existing test still green.
+    """
+
+    def test_every_ledger_connection_requests_write_ahead_logging(self) -> None:
+        """One opener, and it must ask for WAL and verify it got it.
+
+        A second connection helper is the real risk here: the ledger and the
+        route-migration journal are separate databases, and a copied opener
+        that skipped this line would reintroduce the starvation on one of them
+        while the other stayed correct.
+        """
+        import inspect
+
+        from ..indexer import _route_migration, _run_ledger_models
+
+        requested = inspect.getsource(_run_ledger_models._request_write_ahead_logging)
+        assert "journal_mode = WAL" in requested
+        source = inspect.getsource(_run_ledger_models.open_ledger_connection)
+        assert 'mode != "wal"' in source, (
+            "the opener must verify the mode took effect, not just request it"
+        )
+
+        # Every module that reaches durable state, not just the two that own
+        # the helpers. The contract was lost in the runtime module, which still
+        # imports sqlite3 and is where the deleted opener used to live, so a
+        # scan that skipped it would miss the exact regression it names.
+        from ..indexer import (
+            _run_ledger_commits,
+            _run_ledger_files,
+            _run_ledger_finalization,
+            _run_ledger_runtime,
+        )
+
+        opener = inspect.getsource(_run_ledger_models.open_ledger_connection)
+        for module in (
+            _run_ledger_models,
+            _run_ledger_runtime,
+            _run_ledger_commits,
+            _run_ledger_files,
+            _run_ledger_finalization,
+            _route_migration,
+        ):
+            assert "sqlite3.connect(" not in inspect.getsource(module).replace(
+                opener, ""
+            ), (
+                f"{module.__name__} opens SQLite outside the shared opener, "
+                "so that connection escapes the concurrency contract"
+            )
+
+    def test_opening_the_ledger_does_not_scan_the_whole_database(self) -> None:
+        """A full-database scan on open is what starved commits cross-kind.
+
+        ``quick_check`` reads every page in a file shared by every content
+        kind on the root, and it held a read lock for that whole time. It
+        belongs to deliberate recovery, not to opening.
+        """
+        import inspect
+
+        from ..indexer._run_ledger_runtime import RunLedger
+
+        assert "quick_check" not in inspect.getsource(RunLedger.__init__)
+        assert "quick_check" in inspect.getsource(RunLedger.verify_integrity)
+
+    def test_lock_contention_is_classified_as_its_own_transient_kind(self) -> None:
+        """Contention must never fall through to the terminal ``other`` bucket.
+
+        That fallthrough is what turned a transient lock into a discarded
+        generation holding storage-confirmed work.
+        """
+        from .._job_errors import JobErrorKind, classify_error_text, remediation
+
+        for text in ("database is locked", "database table is locked"):
+            assert classify_error_text(text) is JobErrorKind.LEDGER_CONTENDED
+        assert remediation(JobErrorKind.LEDGER_CONTENDED)
+
+    def test_unapplied_ingest_carries_its_remedy_rather_than_being_other(
+        self,
+    ) -> None:
+        """A terminal failure with an exact remedy must still carry that remedy.
+
+        Not every classification exists to make something retryable. This one is
+        genuinely terminal - a retry repeats it, and the circuit opening is the
+        right response - but it has one specific fix, and ``other`` is where a
+        fix goes to be lost. It is the condition an operator meets after the
+        vector store is carried across a Qdrant version change, at which point
+        the affected index needs a clean rebuild.
+        """
+        from .._job_errors import JobErrorKind, classify_error_text, remediation
+        from ..watcher_retry import _classify_failure
+
+        observed = (
+            "ingest verification failed for r01fa8eefb788_codebase_docs: "
+            "expected 96441 applied point(s), found 95375. One or more "
+            "acknowledged batches did not apply; failing the run before "
+            "stale-purge or metadata publish."
+        )
+        kind = classify_error_text(observed)
+        assert kind is JobErrorKind.INGEST_VERIFICATION_FAILED
+        assert "clean re-index" in (remediation(kind) or "")
+
+        _kind, retryable = _classify_failure(RuntimeError(observed))
+        assert not retryable, (
+            "retrying an unapplied-write failure repeats it; the circuit must open"
+        )
+
+    def test_contention_does_not_open_the_watcher_circuit_on_first_failure(
+        self,
+    ) -> None:
+        """Classifying the kind is worthless if nothing consults it.
+
+        The watcher decides retryability from its own set, and anything outside
+        that set opens the circuit on the first occurrence - pausing automatic
+        indexing for a condition that clears when the peer run commits. A kind
+        that classifies correctly but is missing from this set produces exactly
+        the outcome the classification exists to avoid, which is why the guard
+        asserts the decision rather than the label.
+        """
+        import sqlite3
+
+        from .._job_errors import JobErrorKind
+        from ..indexer._run_ledger_models import RunLedgerContentionError
+        from ..watcher_retry import _classify_failure
+
+        kind, retryable = _classify_failure(
+            RunLedgerContentionError(
+                "run ledger runs.sqlite3 is locked: database is locked"
+            )
+        )
+        assert kind is JobErrorKind.LEDGER_CONTENDED
+        assert retryable, "contention must not open the circuit on first failure"
+
+        _kind, raw_retryable = _classify_failure(
+            sqlite3.OperationalError("database is locked")
+        )
+        assert raw_retryable
+
+
+class TestDeviceTierIsolation:
+    """The GPU runner must schedule the two device tiers separately.
+
+    Subprocess-GPU tests spawn a service that loads its own models; the
+    resident tiers keep theirs loaded. Together they exceed the card, and what
+    that produces is not an out-of-memory error but a spawned service that
+    never becomes healthy - surfacing as a health-poll timeout in an unrelated
+    test, late in a long lane, naming nothing about memory. The constraint was
+    written beside the marker and enforced nowhere, so the project's own recipe
+    selected both in one expression.
+
+    The gate that refuses such a selection is exercised where it lives, against
+    collected items. This guards the other half: that the runner satisfies it.
+    Cheap, and it fails in the fast lane the moment the recipe stops splitting,
+    rather than an hour into a GPU run.
+    """
+
+    def _gpu_recipe_selections(self) -> list[str]:
+        """Return the marker expressions the GPU recipe runs, in order."""
+        import re
+        from pathlib import Path
+
+        justfile = Path(__file__).resolve().parents[3] / "justfile"
+        recipe = justfile.read_text(encoding="utf-8")
+        block = re.search(r'"gpu"\s*\{(.*?)\n\s*\}', recipe, re.DOTALL)
+        assert block is not None, "the runner has no gpu recipe"
+        return re.findall(r'pytest [^\n]*?-m "([^"]+)"', block.group(1))
+
+    def test_the_gpu_recipe_runs_the_two_tiers_as_separate_selections(self) -> None:
+        """Mutation it catches: merging the two selections back into one.
+
+        A single ``-m "integration or ... or subprocess_gpu"`` reads as
+        covering the same tests, and does - in one session, which is the
+        wedge. Asserted as a count plus each selection's role, so restoring
+        the union fails here rather than after an hour of GPU time.
+        """
+        selections = self._gpu_recipe_selections()
+
+        assert len(selections) == 2, (
+            f"the gpu recipe must run two selections, found {selections}"
+        )
+        resident, subprocess_tier = selections
+        assert "not subprocess_gpu" in resident, (
+            f"the resident selection must exclude the subprocess tier: {resident}"
+        )
+        assert subprocess_tier == "subprocess_gpu", (
+            f"the second selection must name only the subprocess tier: "
+            f"{subprocess_tier}"
+        )
+
+
 class TestJobErrorTaxonomyStaysLight:
     """The shared job-failure taxonomy must stay torch- and CLI-free.
 

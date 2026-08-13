@@ -24,8 +24,17 @@ if TYPE_CHECKING:
     from .._sync_vocabulary import ProvisionAction
 
 #: Pinned Qdrant server release. Must stay on the same minor line as
-#: the locked qdrant-client (1.18.x as of this pin).
-QDRANT_SERVER_VERSION: Final[str] = "1.18.2"
+#: the locked qdrant-client (1.19.x as of this pin).
+#:
+#: The lock tracks the newest client, so this pin is what follows it rather
+#: than what holds it back, and a guard fails the suite whenever the two drift
+#: apart. Moving the pin means re-deriving every digest below: stream each
+#: asset from the pinned host and hash it, and re-derive the OUTGOING version's
+#: digests the same way first. Reproducing the digests already committed here
+#: is what shows the method and the transport can be trusted to mint the next
+#: set - without that step, a digest taken alongside the artifact attests to
+#: nothing but itself.
+QDRANT_SERVER_VERSION: Final[str] = "1.19.0"
 
 #: The pinned Qdrant server cannot complete uploaded-snapshot recovery on
 #: Windows. Archives remain portable: restore them with a supported
@@ -82,22 +91,22 @@ ASSET_WINDOWS_X86: Final = "qdrant-x86_64-pc-windows-msvc.zip"
 #: two lists differ only by this one entry.
 QDRANT_ASSET_SHA256: Final[dict[str, str]] = {
     ASSET_MACOS_ARM: (
-        "859f487e316ae1bda3b5d7c1e129a0a7344424d992503c188979ca6ac1b47253"
+        "4e279a80cc1ebe73e859318ff86375af54c123887dd7ae46605c0eb6cb7c44e8"
     ),
     ASSET_LINUX_ARM_MUSL: (
-        "2ead5bb8206289b67c930f0eb29123228ddb43c2344551a0947cbc9046f92c6c"
+        "8986afbbff9ac32d6e2dbe5cabec80565f613f777126096a461ba066573d3245"
     ),
     ASSET_MACOS_X86: (
-        "d395eb3d96c2196bbb8c611b800842928fb8b4997924b585bf42ce0ceb90fa1f"
+        "e7afefcc125856157b33c6184c00ddee3f1d5b112474649070592d9fdd9a3f54"
     ),
     ASSET_WINDOWS_X86: (
-        "b2b262cba6f78cf4fa794ae78d73a8f70a221c93c76c75ac8fd6fe95d809b142"
+        "980cb2e1ae771155cf211da8c0a8a9206b6482bd4effdc4db994d3adb707b087"
     ),
     ASSET_LINUX_X86_GNU: (
-        "cd619c61d8d32dd176af88cf498714ecb765b7df9021d691862478d6ac35392c"
+        "e4405091f67d02f96fb941695ef8a6974e677632507ff7b04a3fcbb332ad9c19"
     ),
     ASSET_LINUX_X86_MUSL: (
-        "40a6af44f8a496560c9d2352b6b2a0ada816aa48d0781c68f602582e67b3aea0"
+        "9ec667456443463eee390e43cd36988af6b730c6db807b4e39f57c303d0264a3"
     ),
 }
 

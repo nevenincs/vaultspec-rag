@@ -146,6 +146,13 @@ class RunCheckpointBase:
         refusal lives here rather than beside each signature: a copy that
         drifted would leave one source type failing every incremental where
         the other recovers.
+
+        This is also where the ledger's deep integrity scan belongs. It is far
+        too expensive to run per open - it reads every page the root's content
+        kinds have ever written - but a generation carrying committed units is
+        about to be trusted to *skip* storage work on that evidence's word.
+        Verifying exactly there costs a fresh run nothing and still refuses to
+        resume onto damaged durable state.
         """
         generation = ledger.start_generation(signature)
         if (
@@ -157,6 +164,8 @@ class RunCheckpointBase:
                 f"incremental {cls._kind_label} indexing requires a compatible "
                 "published manifest; run a full reconciliation"
             )
+        if ledger.committed_unit_count(generation.generation_id) > 0:
+            ledger.verify_integrity()
         return generation
 
     @property

@@ -59,6 +59,49 @@ def _has_expected_mapping_size(value: object, expected: int) -> bool:
     return isinstance(value, Sized) and len(value) == expected
 
 
+def _valid_quiesce_counters(state: str, epoch: int, tickets: int) -> bool:
+    """Whether the state name is known and both counters are real and non-negative.
+
+    ``bool`` is a subclass of ``int``, so a published ``true`` satisfies the
+    integer pattern these counters are matched against and has to be rejected
+    by name.
+    """
+    return (
+        state in {item.value for item in QuiesceState}
+        and not isinstance(epoch, bool)
+        and epoch >= 0
+        and not isinstance(tickets, bool)
+        and tickets >= 0
+    )
+
+
+def _valid_quiesce_timestamps(timestamps: tuple[object, ...]) -> bool:
+    """Whether every published timestamp is absent, or a finite non-bool number."""
+    return all(
+        not isinstance(timestamp, bool)
+        and (timestamp is None or _finite_number(timestamp))
+        for timestamp in timestamps
+    )
+
+
+def _borrow_claim_carries_evidence(
+    safe_to_borrow_gpu: bool,
+    *,
+    pause_requested_at: object,
+    drain_acknowledged_at: object,
+    quiesced_at: object,
+) -> bool:
+    """Whether a safe-to-borrow claim carries the three stamps that would prove it.
+
+    A service claiming the GPU is safe to take must have recorded that it was
+    asked to pause, that the drain was acknowledged, and when it quiesced. A
+    claim missing any of them describes a state that cannot have happened.
+    """
+    if not safe_to_borrow_gpu:
+        return True
+    return None not in (pause_requested_at, drain_acknowledged_at, quiesced_at)
+
+
 def _strict_quiesce(value: object) -> dict[str, object] | None:
     """Accept exactly the controller's published quiesce vocabulary.
 
@@ -89,24 +132,14 @@ def _strict_quiesce(value: object) -> dict[str, object] | None:
                 quiesced_at,
                 warming_started_at,
             )
-            if (
-                state not in {item.value for item in QuiesceState}
-                or isinstance(epoch, bool)
-                or epoch < 0
-                or isinstance(tickets, bool)
-                or tickets < 0
-                or any(isinstance(timestamp, bool) for timestamp in timestamps)
-                or any(
-                    timestamp is not None and not _finite_number(timestamp)
-                    for timestamp in timestamps
-                )
-                or (
-                    safe_to_borrow_gpu
-                    and (
-                        pause_requested_at is None
-                        or drain_acknowledged_at is None
-                        or quiesced_at is None
-                    )
+            if not (
+                _valid_quiesce_counters(state, epoch, tickets)
+                and _valid_quiesce_timestamps(timestamps)
+                and _borrow_claim_carries_evidence(
+                    safe_to_borrow_gpu,
+                    pause_requested_at=pause_requested_at,
+                    drain_acknowledged_at=drain_acknowledged_at,
+                    quiesced_at=quiesced_at,
                 )
             ):
                 return None

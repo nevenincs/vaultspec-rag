@@ -202,7 +202,6 @@ async def _fetch_daemon_metrics(port: int, token: str) -> str:
         return resp.text
 
 
-@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_search_vault_increments_counter(
     tmp_path: Path,
@@ -235,7 +234,6 @@ async def test_search_vault_increments_counter(
     assert _counter_value(after, "search_total") == searches + 1
 
 
-@pytest.mark.integration
 @pytest.mark.subprocess_gpu
 async def test_reindex_vault_increments_counter(
     tmp_path: Path,

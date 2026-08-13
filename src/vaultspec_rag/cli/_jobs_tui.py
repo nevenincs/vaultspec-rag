@@ -51,6 +51,14 @@ from ._jobs_tui_palette import (
     semantic_tones,
     tone_style,
 )
+from ._jobs_tui_state import (
+    LaneStamps,
+    LayoutMetrics,
+    MachineSignals,
+    ManagedLogState,
+    SearchActivityState,
+    ServiceVersion,
+)
 from ._jobs_tui_status import (
     ServiceStatusBar,
     ServiceStatusHeader,
@@ -727,36 +735,6 @@ def _search_time_cell(search: dict[str, object], cells: int) -> Text:
     )
 
 
-class _Stamps:
-    """Issue-ordered stamps for one lane's snapshots.
-
-    Cancelling a thread worker does not stop the OS thread it is running on,
-    so a fetch the next one superseded still delivers its answer - and with a
-    short poll interval against a long transport timeout, several can be
-    outstanding at once. Applying them in completion order lets a payload
-    fetched before a mutation land after one fetched afterwards and silently
-    revert the lane. Every lane therefore stamps what it issues and refuses
-    what it has already overtaken, and the rule lives here rather than once
-    per lane.
-    """
-
-    def __init__(self) -> None:
-        self.issued = 0
-        self._applied = 0
-
-    def issue(self) -> int:
-        """Stamp the next fetch and return the stamp to carry with it."""
-        self.issued += 1
-        return self.issued
-
-    def accept(self, generation: int) -> bool:
-        """Report whether *generation* is newer than what is already applied."""
-        if generation <= self._applied:
-            return False
-        self._applied = generation
-        return True
-
-
 def _search_reading_text(
     value: object,
     reader: Callable[[object], float | int | None],
@@ -964,9 +942,11 @@ class ServerWatchApp(App[None]):
         self._interval = interval
         self._watch_mode = watch_mode
         self._jobs: list[dict[str, object]] = []
-        self._searches: list[dict[str, object]] = []
-        self._search_counts: dict[str, int] = {}
-        self._search_returned = 0
+        self._search = SearchActivityState()
+        self._logs = ManagedLogState()
+        self._version = ServiceVersion()
+        self._signals = MachineSignals()
+        self._layout = LayoutMetrics()
         self._pending: dict[str, _Pending] = {}
         # Rows the operator deleted, held briefly so the deletion is seen.
         self._tombstones: dict[str, _Tombstone] = {}
@@ -977,26 +957,6 @@ class ServerWatchApp(App[None]):
         # The service's own tally over every record matching the filter, which
         # is the only count that describes more than the page on screen.
         self._summary: object = None
-        # The machine-wide GPU pressure block riding the jobs payload.
-        # Absent-vs-null matters: a daemon older than the field never sends
-        # it, a daemon on a host that cannot measure sends null measurements.
-        self._gpu: dict[str, object] | None = None
-        self._gpu_reported = False
-        # The machine pressure tier riding the jobs payload. A daemon that
-        # predates the tier sends no key, and must not be rendered as if it
-        # had computed one.
-        self._pressure: dict[str, object] | None = None
-        # The complete controller snapshot from the jobs response. It is kept
-        # as received for status detail rendering; this client never derives
-        # lifecycle or borrower authority from it.
-        self._quiesce: object | None = None
-        self._quiesce_reported = False
-        # The release the connected daemon reports, never the local
-        # package's own: the two differ exactly when the difference matters.
-        # ``checked`` separates "no daemon has answered yet" from "the
-        # daemon answered and predates version reporting".
-        self._service_version: str | None = None
-        self._service_version_checked = False
         self._last_refresh: float | None = None
         self._last_error: str | None = None
         # The outcome of the last control, kept in the header until another
@@ -1011,23 +971,8 @@ class ServerWatchApp(App[None]):
         self._estimates: dict[str, tuple[float, float]] = {}
         self._frame = 0
         # Each lane's fetches are stamped and applied newest-first; see
-        # ``_Stamps`` for why completion order cannot be trusted.
-        self._job_stamps = _Stamps()
-        self._search_activity_last_refresh: float | None = None
-        self._search_activity_error: str | None = None
-        self._search_activity_stamps = _Stamps()
-        # ``None`` until the operator chooses; the width decides until then.
-        self._show_log: bool | None = None
-        self._managed_logs_last_refresh: float | None = None
-        self._managed_logs_error: str | None = None
-        # The managed-log worker is independent from jobs, and carries the
-        # same late-thread-answer hazard, so it stamps its own snapshots.
-        self._managed_log_stamps = _Stamps()
-        self._bar_cells = 0
-        self._column_cells: dict[str, int] = {}
-        self._search_column_cells: dict[str, int] = {}
-        # The table width the current column shares were divided from.
-        self._divided_width = 0
+        # ``LaneStamps`` for why completion order cannot be trusted.
+        self._job_stamps = LaneStamps()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="header"):
@@ -1118,7 +1063,7 @@ class ServerWatchApp(App[None]):
         self._apply_default_log_visibility()
         if self._layout_columns() and self._jobs:
             self._render_rows()
-        if self._layout_search_columns() and self._searches:
+        if self._layout_search_columns() and self._search.records:
             self._render_searches()
 
     def _active_screen(self) -> Screen[object] | None:
@@ -1160,9 +1105,9 @@ class ServerWatchApp(App[None]):
         available = table.scrollable_content_region.width - padding
         # A hidden table reports no width. That is not a new division to
         # record; recording it would skip the real one when it reappears.
-        if available <= 0 or table.size.width == self._divided_width:
+        if available <= 0 or table.size.width == self._layout.divided_width:
             return False
-        self._divided_width = table.size.width
+        self._layout.divided_width = table.size.width
         total_weight = sum(_COLUMN_WEIGHTS.values())
         for key, weight in _COLUMN_WEIGHTS.items():
             column = table.columns.get(ColumnKey(key))
@@ -1172,15 +1117,17 @@ class ServerWatchApp(App[None]):
                 _MIN_COLUMN_CELLS, int(available * weight / total_weight)
             )
             column.auto_width = False
-            self._column_cells[key] = column.width
+            self._layout.column_cells[key] = column.width
         # The bar shares its cell with a trailing " 100%", so it takes what
         # the column has left rather than a width of its own.
-        self._bar_cells = max(0, self._column_cells.get("progress", 0) - len(" 100%"))
+        self._layout.bar_cells = max(
+            0, self._layout.column_cells.get("progress", 0) - len(" 100%")
+        )
         return True
 
     def _cells(self, column: str) -> int:
         """Return the current width of *column*, or zero before layout."""
-        return self._column_cells.get(column, 0)
+        return self._layout.column_cells.get(column, 0)
 
     def _has_screen(self) -> bool:
         """Report whether the interface still has a screen to answer into.
@@ -1195,7 +1142,7 @@ class ServerWatchApp(App[None]):
 
     def _search_cells(self, column: str) -> int:
         """Return the current width of a served-search column."""
-        return self._search_column_cells.get(column, 0)
+        return self._search.column_cells.get(column, 0)
 
     def _pane[WidgetT: Widget](
         self, selector: str, kind: type[WidgetT]
@@ -1258,7 +1205,7 @@ class ServerWatchApp(App[None]):
                 changed = True
             column.width = width
             column.auto_width = False
-            self._search_column_cells[key] = width
+            self._search.column_cells[key] = width
         return changed
 
     def _tick(self) -> None:
@@ -1352,7 +1299,7 @@ class ServerWatchApp(App[None]):
 
     def refresh_search_activity(self) -> None:
         """Issue an independent bounded served-search snapshot."""
-        self._fetch_search_activity(self._search_activity_stamps.issue())
+        self._fetch_search_activity(self._search.stamps.issue())
 
     @work(thread=True, exclusive=True, group=_SEARCH_ACTIVITY_GROUP)
     def _fetch_search_activity(self, generation: int) -> None:
@@ -1370,11 +1317,11 @@ class ServerWatchApp(App[None]):
         generation: int,
     ) -> None:
         """Apply a newer authenticated search projection without touching jobs."""
-        if not self._search_activity_stamps.accept(generation):
+        if not self._search.stamps.accept(generation):
             return
         error = _search_activity_error(result)
         if error is not None:
-            self._search_activity_error = error
+            self._search.error = error
             self._render_search_title()
             self._render_summary()
             return
@@ -1383,18 +1330,18 @@ class ServerWatchApp(App[None]):
         payload = cast("dict[str, object]", result)
         active = _search_records(payload.get("active"), "active")
         recent = _search_records(payload.get("recent"), "terminal")
-        self._searches = active + recent
+        self._search.records = active + recent
         # _search_activity_error (via _search_activity_payload_error) already
         # confirmed "counts" is a dict before returning None.
         counts = cast("dict[str, object]", payload["counts"])
-        self._search_counts = {
+        self._search.counts = {
             name: count(counts.get(name)) or 0 for name in ("active", "recent", "total")
         }
         # Counts are computed over every record; the rows are the bounded
         # projection. Keeping the served figure is what lets the title say so.
-        self._search_returned = count(payload.get("returned")) or 0
-        self._search_activity_error = None
-        self._search_activity_last_refresh = time.time()
+        self._search.returned = count(payload.get("returned")) or 0
+        self._search.error = None
+        self._search.last_refresh = time.time()
         self._layout_search_columns()
         self._render_searches()
         self._render_search_title()
@@ -1402,7 +1349,7 @@ class ServerWatchApp(App[None]):
 
     def refresh_managed_logs(self) -> None:
         """Issue an ordered all-source log snapshot on its own worker group."""
-        self._fetch_managed_logs(self._managed_log_stamps.issue())
+        self._fetch_managed_logs(self._logs.stamps.issue())
 
     @work(thread=True, exclusive=True, group=_MANAGED_LOG_GROUP)
     def _fetch_managed_logs(self, generation: int) -> None:
@@ -1420,10 +1367,10 @@ class ServerWatchApp(App[None]):
         generation: int,
     ) -> None:
         """Accept only the exact grouped managed-log transport contract."""
-        if not self._managed_log_stamps.accept(generation):
+        if not self._logs.stamps.accept(generation):
             return
         if result is None or result.get("ok") is False:
-            self._managed_logs_error = "the service did not answer"
+            self._logs.error = "the service did not answer"
             self._clear_managed_logs(
                 "Managed logs unavailable: the service did not answer."
             )
@@ -1435,7 +1382,7 @@ class ServerWatchApp(App[None]):
             filters={},
         )
         if groups is None:
-            self._managed_logs_error = "the service returned an invalid response"
+            self._logs.error = "the service returned an invalid response"
             self._clear_managed_logs(
                 "Managed logs unavailable: the service returned an invalid response."
             )
@@ -1444,8 +1391,8 @@ class ServerWatchApp(App[None]):
         if tank is None:
             return
         tank.show_groups(groups)
-        self._managed_logs_error = None
-        self._managed_logs_last_refresh = time.time()
+        self._logs.error = None
+        self._logs.last_refresh = time.time()
         self._refresh_managed_log_title()
 
     @work(thread=True, exclusive=True, group=_STATUS_GROUP)
@@ -1464,8 +1411,8 @@ class ServerWatchApp(App[None]):
             # Only a daemon that answered can say which daemon it is; an
             # unreachable beat keeps the last learned identity beside the
             # staleness the header already reports.
-            self._service_version = result.version
-            self._service_version_checked = True
+            self._version.value = result.version
+            self._version.checked = True
         bar = self.query("#servicestatus")
         if bar:
             bar.only_one(ServiceStatusBar).show(result)
@@ -1515,19 +1462,19 @@ class ServerWatchApp(App[None]):
         self._jobs = jobs
         self._total = count(payload.get("total"))
         self._summary = payload.get("summary")
-        self._gpu_reported = "gpu" in payload
+        self._signals.gpu_reported = "gpu" in payload
         raw_gpu = payload.get("gpu")
-        self._gpu = (
+        self._signals.gpu = (
             cast("dict[str, object]", raw_gpu) if isinstance(raw_gpu, dict) else None
         )
         raw_pressure = payload.get("pressure")
-        self._pressure = (
+        self._signals.pressure = (
             cast("dict[str, object]", raw_pressure)
             if isinstance(raw_pressure, dict)
             else None
         )
-        self._quiesce_reported = "quiesce" in payload
-        self._quiesce = _canonical_quiesce_block(payload.get("quiesce"))
+        self._signals.quiesce_reported = "quiesce" in payload
+        self._signals.quiesce = _canonical_quiesce_block(payload.get("quiesce"))
         self._reconcile_pending(generation, previous)
         self._layout_columns()
         self._render_rows()
@@ -1692,7 +1639,7 @@ class ServerWatchApp(App[None]):
             ),
             _job_cell(job, self._cells("job")),
             _path_cell(job, self._cells("path")),
-            _progress_cell(job, self._cells("progress"), self._bar_cells, tones),
+            _progress_cell(job, self._cells("progress"), self._layout.bar_cells, tones),
             _time_cell(job, self._cells("time"), ticked=self._ticked_remaining(job)),
             height=2,
             key=job_id,
@@ -1719,7 +1666,7 @@ class ServerWatchApp(App[None]):
             "job": _job_cell(job, self._cells("job")),
             "path": _path_cell(job, self._cells("path")),
             "progress": _progress_cell(
-                job, self._cells("progress"), self._bar_cells, tones
+                job, self._cells("progress"), self._layout.bar_cells, tones
             ),
             "time": _time_cell(
                 job, self._cells("time"), ticked=self._ticked_remaining(job)
@@ -1733,12 +1680,12 @@ class ServerWatchApp(App[None]):
         table = self._search_table()
         if table is None:
             return
-        wanted = [_search_id(search) for search in self._searches]
+        wanted = [_search_id(search) for search in self._search.records]
         if [key.value for key in table.rows] != wanted:
             previous = self.selected_search_id
             cursor = table.cursor_row
             table.clear()
-            for search in self._searches:
+            for search in self._search.records:
                 self._add_search_row(table, search)
             if table.row_count:
                 row = (
@@ -1748,7 +1695,7 @@ class ServerWatchApp(App[None]):
                 )
                 table.move_cursor(row=row)
         else:
-            for search in self._searches:
+            for search in self._search.records:
                 self._update_search_row(table, search)
         self._sync_search_selection(table)
 
@@ -1788,7 +1735,7 @@ class ServerWatchApp(App[None]):
 
     def selected_search(self) -> dict[str, object] | None:
         """Return the currently selected served-search activity record."""
-        return _find_record(self._searches, _search_id, self.selected_search_id)
+        return _find_record(self._search.records, _search_id, self.selected_search_id)
 
     def watch_selected_search_id(self, _request_id: str) -> None:
         self._render_search_detail()
@@ -1797,26 +1744,24 @@ class ServerWatchApp(App[None]):
         found = self.query("#searchtitle")
         if not found:
             return
-        active = self._search_counts.get("active", 0)
-        recent = self._search_counts.get("recent", 0)
+        active = self._search.counts.get("active", 0)
+        recent = self._search.counts.get("recent", 0)
         title = Text(f"Served searches · {active} active · {recent} recent")
         # The counts above cover every record the service holds; the table
         # holds the bounded projection. Without this an operator scrolls to
         # the end of 100 rows and concludes they have seen all 300.
-        total = self._search_counts.get("total", 0)
-        if 0 < self._search_returned < total:
+        total = self._search.counts.get("total", 0)
+        if 0 < self._search.returned < total:
             title.append(
-                f" · showing {self._search_returned} of {total}",
+                f" · showing {self._search.returned} of {total}",
                 style="dim",
             )
-        if self._search_activity_last_refresh is not None:
-            stamp = time.strftime(
-                "%H:%M:%S", time.localtime(self._search_activity_last_refresh)
-            )
+        if self._search.last_refresh is not None:
+            stamp = time.strftime("%H:%M:%S", time.localtime(self._search.last_refresh))
             title.append(f" · refreshed {stamp}", style="dim")
-        if self._search_activity_error is not None:
+        if self._search.error is not None:
             title.append(
-                f" · {self._search_activity_error}",
+                f" · {self._search.error}",
                 style=semantic_tones(self.theme)["bad"],
             )
         title.append(" · r refreshes · s switches lane", style="dim")
@@ -1973,14 +1918,14 @@ class ServerWatchApp(App[None]):
     def _append_search_activity(self, line: Text, tones: dict[str, str]) -> None:
         """Keep served-search lane counts visible even when narrow hides its table."""
         self._append_separator(line, unicode_ok=self._unicode_glyphs())
-        if self._search_activity_error is not None:
+        if self._search.error is not None:
             line.append("search unavailable", style=tone_style(tones, "bad", bold=True))
             return
-        if self._search_activity_last_refresh is None:
+        if self._search.last_refresh is None:
             line.append("search loading", style="dim")
             return
-        active = self._search_counts.get("active", 0)
-        recent = self._search_counts.get("recent", 0)
+        active = self._search.counts.get("active", 0)
+        recent = self._search.counts.get("recent", 0)
         line.append(
             f"search {active} active · {recent} recent",
             style=tone_style(tones, "good", bold=active > 0),
@@ -2023,9 +1968,9 @@ class ServerWatchApp(App[None]):
         The tone shift at high pressure is presentation only; any verdict
         about what the pressure means stays with the service.
         """
-        if not self._gpu_reported:
+        if not self._signals.gpu_reported:
             return "gpu —", "muted", False
-        gpu = self._gpu or {}
+        gpu = self._signals.gpu or {}
         utilization = measurement(gpu.get("utilization_percent"))
         used = measurement(gpu.get("memory_used_mib"))
         total = measurement(gpu.get("memory_total_mib"))
@@ -2059,7 +2004,7 @@ class ServerWatchApp(App[None]):
         for is still shown, because a newer daemon naming a worse state
         must never be swallowed.
         """
-        tier = (self._pressure or {}).get("tier")
+        tier = (self._signals.pressure or {}).get("tier")
         if not isinstance(tier, str) or tier in ("", "nominal"):
             return None
         return f"pressure {tier}", "bad" if tier == "critical" else "attention"
@@ -2086,9 +2031,9 @@ class ServerWatchApp(App[None]):
         released VRAM and any admitted borrower is exactly the window in
         which an operator needs all three facts at once.
         """
-        if not self._quiesce_reported:
+        if not self._signals.quiesce_reported:
             return None
-        match self._quiesce:
+        match self._signals.quiesce:
             case {
                 "state": str(state),
                 "vram_released": bool(vram_released),
@@ -2117,10 +2062,10 @@ class ServerWatchApp(App[None]):
         only in the reason given, because they leave an operator in the same
         position and one condition must not wear two names.
         """
-        if self._quiesce is not None:
+        if self._signals.quiesce is not None:
             line.append("\nquiesce details: ", style="dim")
-            line.append(str(self._quiesce), style="dim")
-        elif self._quiesce_reported:
+            line.append(str(self._signals.quiesce), style="dim")
+        elif self._signals.quiesce_reported:
             line.append(
                 "\nquiesce unavailable: invalid service response",
                 style=tone_style(tones, "bad", bold=True),
@@ -2159,9 +2104,9 @@ class ServerWatchApp(App[None]):
         # answering daemon that predates the field reads as unknown rather
         # than being filled from the local package.
         line = Text(f"{self._header_glyph()} vaultspec-rag", style="bold")
-        if self._service_version:
-            line.append(f" {self._service_version}")
-        elif self._service_version_checked:
+        if self._version.value:
+            line.append(f" {self._version.value}")
+        elif self._version.checked:
             line.append(" v?", style=tone_style(tones, "muted"))
         line.append(" · ", style="dim")
         line.append(f"port {self._port}", style="bold")
@@ -2427,14 +2372,12 @@ class ServerWatchApp(App[None]):
         if not found:
             return
         title = Text("Managed log tank · raw service + qdrant")
-        if self._managed_logs_last_refresh is not None:
-            stamp = time.strftime(
-                "%H:%M:%S", time.localtime(self._managed_logs_last_refresh)
-            )
+        if self._logs.last_refresh is not None:
+            stamp = time.strftime("%H:%M:%S", time.localtime(self._logs.last_refresh))
             title.append(f" · refreshed {stamp}", style="dim")
-        if self._managed_logs_error is not None:
+        if self._logs.error is not None:
             title.append(
-                f" · {self._managed_logs_error}",
+                f" · {self._logs.error}",
                 style=semantic_tones(self.theme)["bad"],
             )
         title.append(" · r refreshes · m returns to watch", style="dim")
@@ -2586,8 +2529,8 @@ class ServerWatchApp(App[None]):
         # One state, applied the same way in both layouts, so the key always
         # does something: the width decides only whether showing the log
         # splits the screen or takes it over.
-        self._show_log = not self._log_visible()
-        self.screen.set_class(self._show_log, "-showlog")
+        self._logs.show = not self._log_visible()
+        self.screen.set_class(self._logs.show, "-showlog")
         # The log keys gate on the pane being on screen, and the footer only
         # re-evaluates them when told to.
         self.refresh_bindings()
@@ -2597,7 +2540,7 @@ class ServerWatchApp(App[None]):
         if self._managed_log_visible():
             self.action_toggle_managed_logs()
         if self._watch_mode == "jobs" and self._log_visible():
-            self._show_log = False
+            self._logs.show = False
             self.screen.set_class(False, "-showlog")
         if self._wide() and self._watch_mode == "server":
             table = self._search_table()
@@ -2684,7 +2627,7 @@ class ServerWatchApp(App[None]):
         have chosen, the choice survives every later resize.
         """
         screen = self._active_screen()
-        if self._show_log is None and screen is not None:
+        if self._logs.show is None and screen is not None:
             screen.set_class(self._watch_mode == "jobs" and self._wide(), "-showlog")
 
     def _wide(self) -> bool:

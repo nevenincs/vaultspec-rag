@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#code-document-index-boundary'
 date: '2026-07-22'
-modified: '2026-07-27'
-body_hash: 'sha256:31b475d20ebd185b9719c98897da7c8e7f9de6fe663f20653438e443432ff505'
+modified: '2026-08-13'
+body_hash: 'sha256:f0ee782f48d9b6530b3a8fb932e8f19f225e142c2fe451f4f212da4a64fad3c5'
 tier: L3
 related:
   - '[[2026-07-21-code-document-index-boundary-adr]]'
@@ -38,7 +38,7 @@ Architecture (CUDA) memory.
 
 ## Steps
 
-### Wave `W01` - policy authority and admission parity
+## Wave `W01` - policy authority and admission parity
 
 Establish one caller-configured content policy and one immutable operation snapshot before any storage or execution path classifies input. Later waves depend on these contracts.
 
@@ -76,7 +76,7 @@ Make full, scoped, watcher, API, CLI, and service discovery consume the same pol
 - [x] `W01.P02.S94` - Retain resolved routing when preprocessing execution is disabled and mark affected work stale without deletion or reclassification; `src/vaultspec_rag/indexer/_preprocess_config.py, src/vaultspec_rag/indexer/_preprocess_glue.py, src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [x] `W01.P02.S95` - Verify the preprocessing kill switch suppresses real extractor execution while preserving ownership and stored points; `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`.
 
-### Wave `W02` - document storage and ingestion isolation
+## Wave `W02` - document storage and ingestion isolation
 
 Introduce independently owned document models, storage, lifecycle, and ingestion paths. Enforce isolation through separate models, collections, and lifecycle operations, not only result labels.
 
@@ -118,7 +118,7 @@ Route admitted source and document units into their own production models and st
 - [x] `W02.P04.S104` - Ingest explicitly routed decodable raw documents without launching an extractor; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/indexer/_chunk_worker.py`.
 - [x] `W02.P04.S105` - Verify raw and extracted document routes remain document-owned through real full and incremental indexing; `src/vaultspec_rag/tests/integration/test_document_indexing.py`.
 
-### Wave `W03` - faithful bounded preprocessing and convergence
+## Wave `W03` - faithful bounded preprocessing and convergence
 
 Harden extraction identity, metadata, caching, failure state, and resource accounting after storage isolation exists. Require durable, explicit outcomes before restart-safe reconciliation.
 
@@ -151,7 +151,7 @@ Represent unsuccessful files as unresolved work and apply enforceable source, ou
 - [x] `W03.P06.S46` - Verify failure visibility, decoder isolation, retry behavior, resource ceilings, and zero extractor launches for code-only jobs; `src/vaultspec_rag/tests/integration/test_document_execution.py, src/vaultspec_rag/tests/integration/test_service_jobs.py`.
 - [x] `W03.P06.S107` - Define and enforce a named document support profile at service job admission before GPU work; `src/vaultspec_rag/index_profiles.py, src/vaultspec_rag/jobs.py`.
 
-### Wave `W04` - per-kind generations and route migration
+## Wave `W04` - per-kind generations and route migration
 
 A generation-metadata sidecar records the last published file membership. Consume the related resilience ledger and add destination-first recovery for target changes, incomplete publication, and watcher deletions.
 
@@ -178,7 +178,7 @@ Recover legacy and interrupted state by freshly classifying bounded store rows, 
 - [x] `W04.P08.S59` - Keep per-kind watcher pending, retry, and circuit state under shared writer and GPU authority; `src/vaultspec_rag/watcher.py, src/vaultspec_rag/watcher_retry.py`.
 - [x] `W04.P08.S60` - Verify missing and stale generation-metadata sidecars, interrupted target flips, deletions, and policy-change recovery with real stores and watcher events; `src/vaultspec_rag/tests/integration/test_content_route_migration.py, src/vaultspec_rag/tests/integration/test_document_watcher.py`.
 
-### Wave `W05` - exhaustive public lifecycle and search
+## Wave `W05` - exhaustive public lifecycle and search
 
 Expose document ownership through one canonical public type, independent lifecycle and query behavior, and explicit three-domain combined outcomes without adapter fallthrough or reinterpretation of existing aliases.
 
@@ -223,7 +223,7 @@ Carry the closed source type and canonical service outcomes through clean, statu
 - [x] `W05.P10.S127` - Verify targeted document and combined cleanup through a real MCP session; `src/vaultspec_rag/tests/integration/test_document_mcp.py`.
 - [x] `W05.P10.S128` - Verify document count, policy, generation, and degraded state through a real MCP session; `src/vaultspec_rag/tests/integration/test_document_mcp.py`.
 
-### Wave `W06` - independent acceptance and mandatory review
+## Wave `W06` - independent acceptance and mandatory review
 
 Consume the completed source-code workload gate and prove independent document behavior. Finish with migration guidance, layout-neutral regression protection, complete project gates, and formal review.
 
