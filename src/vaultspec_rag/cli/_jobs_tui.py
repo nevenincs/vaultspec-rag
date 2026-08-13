@@ -31,9 +31,6 @@ from ..jobs import count, measurement
 from ..logging_config import MAX_MANAGED_LOG_LINES, validate_managed_log_payload
 from ..serviceclient._transport import (
     _try_http_admin,
-    _try_http_delete_job,
-    _try_http_retry_job,
-    _try_http_set_job_desired_state,
 )
 from ._jobs_tui_cells import (
     PaintContext,
@@ -64,16 +61,20 @@ from ._jobs_tui_constants import (
     ACTION_KEYS,
     ACTION_REASONS,
     COLUMN_WEIGHTS,
+    CONTROL_GROUP,
     ESTIMATE_KEY,
     LOG_CLOSED_REASON,
+    LOG_GROUP,
+    MANAGED_LOG_GROUP,
     MIN_COLUMN_CELLS,
     SEARCH_ACTIVITY_LIMIT,
     SEARCH_COLUMN_WEIGHTS,
     SPLIT_MIN_CELLS,
-    STATE_ACTIONS,
 )
+from ._jobs_tui_controls import JobControlMixin
 from ._jobs_tui_header import HeaderRenderingMixin
 from ._jobs_tui_log import JobsLogView
+from ._jobs_tui_logs import LogPanesMixin
 from ._jobs_tui_managed_logs import ManagedLogTankView
 from ._jobs_tui_palette import (
     DARK_THEME_NAME,
@@ -86,8 +87,6 @@ from ._jobs_tui_payload import (
     action_capability,
     canonical_quiesce_block,
     fetch_error_text,
-    is_gone,
-    log_lines,
     search_activity_error,
     search_records,
 )
@@ -104,7 +103,6 @@ from ._jobs_tui_status import (
     ServiceStatusHeader,
     fetch_service_status,
 )
-from ._service_jobs_query import job_revision
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -112,7 +110,6 @@ if TYPE_CHECKING:
     from textual.screen import Screen
     from textual.widget import Widget
 
-    from ..job_models import DesiredJobState
 
 __all__ = ["ServerWatchApp", "run_server_watch"]
 
@@ -122,7 +119,6 @@ __all__ = ["ServerWatchApp", "run_server_watch"]
 # nothing is; motion is reserved for activity an operator can name.
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _SPINNER_INTERVAL = 0.1
-_LOG_LINES = 200
 
 # What the header shows when nothing is in flight. A glyph that turns whether
 # or not anything is happening tells an operator nothing, and a permanently
@@ -150,9 +146,6 @@ _TOMBSTONE_SECONDS = 4.0
 # action did nothing".
 _REFRESH_GROUP = "jobs-refresh"
 _SEARCH_ACTIVITY_GROUP = "search-activity-refresh"
-_LOG_GROUP = "jobs-log"
-_MANAGED_LOG_GROUP = "managed-log-refresh"
-_CONTROL_GROUP = "jobs-control"
 # The service header polls on its own group. Textual cancels a whole group
 # when an exclusive worker in it starts, so anything sharing a group with the
 # controls can destroy a control request before it is ever sent.
@@ -162,9 +155,9 @@ _REQUEST_GROUPS = frozenset(
     {
         _REFRESH_GROUP,
         _SEARCH_ACTIVITY_GROUP,
-        _LOG_GROUP,
-        _MANAGED_LOG_GROUP,
-        _CONTROL_GROUP,
+        LOG_GROUP,
+        MANAGED_LOG_GROUP,
+        CONTROL_GROUP,
     }
 )
 # The service is far less volatile than the job list, so it is polled at a
@@ -184,7 +177,12 @@ class _LogPane(Vertical):
     ALLOW_MAXIMIZE: ClassVar[bool | None] = True
 
 
-class ServerWatchApp(HeaderRenderingMixin, App[None]):
+class ServerWatchApp(
+    HeaderRenderingMixin,
+    JobControlMixin,
+    LogPanesMixin,
+    App[None],
+):
     """The canonical live server watch for indexing and served searches."""
 
     # Every size here is relative: fractional shares for the panes, content
@@ -713,7 +711,7 @@ class ServerWatchApp(HeaderRenderingMixin, App[None]):
         """Issue an ordered all-source log snapshot on its own worker group."""
         self._fetch_managed_logs(self._logs.stamps.issue())
 
-    @work(thread=True, exclusive=True, group=_MANAGED_LOG_GROUP)
+    @work(thread=True, exclusive=True, group=MANAGED_LOG_GROUP)
     def _fetch_managed_logs(self, generation: int) -> None:
         """Fetch the bounded raw service and Qdrant log groups independently."""
         result = _try_http_admin(
@@ -1189,100 +1187,6 @@ class ServerWatchApp(HeaderRenderingMixin, App[None]):
         self._refresh_log_title()
         self.fetch_logs(job_id)
 
-    @work(thread=True, exclusive=True, group=_LOG_GROUP)
-    def fetch_logs(self, job_id: str) -> None:
-        result = _try_http_admin(
-            "get_logs",
-            {"lines": _LOG_LINES, "source": "service", "job_id": job_id},
-            self._port,
-        )
-        self.call_from_thread(self._apply_logs, job_id, result)
-
-    def _apply_logs(self, job_id: str, result: dict[str, object] | None) -> None:
-        if job_id != self.selected_id:
-            return
-        if result is None or result.get("ok") is False:
-            self._clear_log("Logs unavailable: the service did not answer.")
-            return
-        log = self._log_view()
-        if log is None:
-            return
-        log.show_lines(log_lines(result))
-        # The window just changed, so what the noise filter hides and where
-        # the errors sit changed with it - both the title's indicator and the
-        # error-jump keys in the footer have to follow.
-        self._refresh_log_title()
-        self.refresh_bindings()
-
-    def _log_view(self) -> JobsLogView | None:
-        """Return the log pane's body, or ``None`` when it is not mounted."""
-        return self._pane("#joblog", JobsLogView)
-
-    def _refresh_log_title(self) -> None:
-        """Repaint the pane's title: whose log, and what is being hidden.
-
-        The noise filter must be visible whenever it is active. Lines
-        silently missing from a log pane read as lines that never happened,
-        which is precisely the degradation an operator cannot detect.
-        """
-        found = self.query("#logtitle")
-        if not found:
-            return
-        title = Text(f"Log · {self.selected_id[:8]}" if self.selected_id else "Log")
-        log = self._log_view()
-        if log is not None:
-            hidden = log.hidden_polling_count
-            if hidden:
-                title.append(
-                    f"  ·  {hidden} polling hidden (x shows)",
-                    style=semantic_tones(self.theme)["attention"],
-                )
-            elif log.polling_shown and log.polling_count:
-                title.append("  ·  polling shown (x hides)", style="dim")
-        found.only_one(Static).update(title)
-
-    def _clear_log(self, message: str) -> None:
-        """Replace the log pane's body with *message* and re-title it."""
-        self._refresh_log_title()
-        log = self._log_view()
-        if log is not None:
-            log.show_message(message)
-
-    def _managed_log_view(self) -> ManagedLogTankView | None:
-        """Return the global raw-log tank, or ``None`` before composition."""
-        return self._pane("#managedlog", ManagedLogTankView)
-
-    def _refresh_managed_log_title(self) -> None:
-        """Say what the tank holds, when it last refreshed, and how to leave.
-
-        The title is the only place the grouping is stated: records are shown
-        exactly as each producer wrote them, never merged into an inferred
-        cross-producer timeline.
-        """
-        found = self.query("#managedlogtitle")
-        if not found:
-            return
-        title = Text("Managed log tank · raw service + qdrant")
-        if self._logs.last_refresh is not None:
-            stamp = time.strftime("%H:%M:%S", time.localtime(self._logs.last_refresh))
-            title.append(f" · refreshed {stamp}", style="dim")
-        if self._logs.error is not None:
-            title.append(
-                f" · {self._logs.error}",
-                style=semantic_tones(self.theme)["bad"],
-            )
-        title.append(" · r refreshes · m returns to watch", style="dim")
-        found.only_one(Static).update(title)
-
-    def _clear_managed_logs(self, message: str) -> None:
-        """Show a global-log fetch failure without disturbing the jobs pane."""
-        tank = self._managed_log_view()
-        if tank is not None:
-            tank.show_message(message)
-        self._refresh_managed_log_title()
-
-    # -- actions ------------------------------------------------------------
-
     def selected_job(self) -> dict[str, object] | None:
         """Return the currently selected indexing-job record."""
         return find_record(self._jobs, job_id_of, self.selected_id)
@@ -1528,174 +1432,6 @@ class ServerWatchApp(HeaderRenderingMixin, App[None]):
         self.refresh_jobs()
         self.refresh_search_activity()
         self.refresh_managed_logs()
-
-    def action_job_pause(self) -> None:
-        self._request_state("pause")
-
-    def action_job_resume(self) -> None:
-        self._request_state("resume")
-
-    def action_job_stop(self) -> None:
-        self._request_state("stop")
-
-    def _request_state(self, action: str) -> None:
-        job = self._actionable(action)
-        if job is None:
-            return
-        revision = job_revision(job)
-        if revision is None:
-            self.notify("The service reported no revision for this job.")
-            return
-        flag, desired = STATE_ACTIONS[action]
-        del flag
-        self._mark_pending(job, action, expected=desired.value)
-        self._send_state(job_id_of(job), desired, revision, action)
-
-    @work(thread=True, group=_CONTROL_GROUP)
-    def _send_state(
-        self,
-        job_id: str,
-        desired: DesiredJobState,
-        revision: int,
-        action: str,
-    ) -> None:
-        result = _try_http_set_job_desired_state(
-            job_id,
-            desired,
-            self._port,
-            expected_revision=revision,
-            mode="graceful",
-        )
-        self.call_from_thread(self._after_control, job_id, action, result)
-
-    def action_job_retry(self) -> None:
-        self._request_send("retry", self._send_retry)
-
-    @work(thread=True, group=_CONTROL_GROUP)
-    def _send_retry(self, job_id: str) -> None:
-        result = _try_http_retry_job(
-            job_id,
-            self._port,
-            initiator_kind="cli",
-            command="server_job_retry",
-        )
-        self.call_from_thread(self._after_control, job_id, "retry", result)
-
-    def action_job_delete(self) -> None:
-        self._request_send("delete", self._send_delete)
-
-    @work(thread=True, group=_CONTROL_GROUP)
-    def _send_delete(self, job_id: str) -> None:
-        result = _try_http_delete_job(job_id, self._port)
-        self.call_from_thread(self._after_control, job_id, "delete", result)
-
-    def _request_send(self, action: str, send: Callable[[str], object]) -> None:
-        """Mark the selected job pending for *action*, then hand it to *send*.
-
-        The state transitions go through ``_request_state`` instead: they carry
-        a revision and an expected state, which this shape has no place for.
-        """
-        job = self._actionable(action)
-        if job is not None:
-            self._mark_pending(job, action)
-            send(job_id_of(job))
-
-    def _actionable(self, action: str) -> dict[str, object] | None:
-        """Return the selected job when it permits *action*, else ``None``.
-
-        The footer already greys a disallowed key, but a binding can still
-        fire; this is the check that makes the refusal real rather than
-        cosmetic, so no request is sent for a capability the service denies.
-
-        The refusal is reported here as well as at the key, because this is the
-        gate an action reaching the method by any other route still meets - and
-        a refused request that says nothing is indistinguishable from one that
-        was sent and lost.
-        """
-        flag = action_capability(f"job_{action}")
-        if not self._job_action_context_available():
-            self.notify(self._refusal(f"job_{action}"), severity="warning")
-            return None
-        job = self.selected_job()
-        if job is None or flag is None or not capability_flag(job, flag):
-            self.notify(self._refusal(f"job_{action}"), severity="warning")
-            return None
-        return job
-
-    def _mark_pending(
-        self,
-        job: dict[str, object],
-        action: str,
-        expected: str | None = None,
-    ) -> None:
-        """Put the request on the row before it leaves the interface.
-
-        The row changes on the keystroke, not on the answer. The gap between
-        the two is the whole window in which an operator decides whether
-        anything is wired up at all.
-        """
-        self._pending[job_id_of(job)] = Pending(
-            action, expected, "requested", "", self._job_stamps.issued
-        )
-        self._render_rows()
-
-    def _after_control(
-        self,
-        job_id: str,
-        action: str,
-        result: dict[str, object] | None,
-    ) -> None:
-        short = job_id[:8] or "job"
-        if result is None:
-            self._settle(
-                job_id, "refused", f"{action} failed: the service is not reachable."
-            )
-        elif is_gone(result):
-            # Not a generic failure: the view was addressing a job the service
-            # has dropped. The answer is a corrected list and a plain sentence,
-            # never a raw error.
-            self._settle(
-                job_id,
-                "gone",
-                f"{action}: {short} is no longer on the service - list refreshed.",
-            )
-        elif result.get("ok") is not True:
-            message = result.get("message")
-            self._settle(
-                job_id,
-                "refused",
-                f"{action} refused: {message}"
-                if isinstance(message, str)
-                else f"{action} was refused by the service.",
-            )
-        else:
-            # Accepted is not yet done. The row keeps saying so until the
-            # service's own payload carries the transition, because a control
-            # that reports success and leaves the row unchanged is exactly what
-            # reads as nothing having been wired up.
-            self._settle(
-                job_id, "sent", f"{action} accepted for {short}; awaiting the service."
-            )
-        self._render_rows()
-        self.refresh_jobs()
-
-    def _settle(self, job_id: str, outcome: str, detail: str) -> None:
-        """Record where a control got to, on the row and in the header."""
-        marker = self._pending.get(job_id)
-        self._pending[job_id] = Pending(
-            marker.action if marker is not None else "control",
-            marker.expected if marker is not None else None,
-            outcome,
-            detail,
-            # Only a fetch issued after this point can carry the mutation, and
-            # ``refresh_jobs`` below takes the next stamp.
-            self._job_stamps.issued,
-        )
-        failed = outcome in {"refused", "gone"}
-        # The tone token, not a resolved style: the outcome outlives theme
-        # flips, so its colour is resolved at each render, never stored.
-        self._last_outcome = (detail, "bad" if failed else "good")
-        self.notify(detail, severity="error" if failed else "information")
 
 
 def run_server_watch(

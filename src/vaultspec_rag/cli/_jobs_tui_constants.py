@@ -165,3 +165,13 @@ PILL_CAP_RIGHT = "\ue0b4"
 # piece at every width. It renders as an empty cell in the same braille
 # block the busy spinner already draws from.
 PILL_JOINER = "\u2800"
+
+#: How many log lines the watch asks for in one fetch.
+LOG_LINES = 200
+
+#: Worker group every job control runs in, so one cancels the last.
+CONTROL_GROUP = "jobs-control"
+
+#: Worker groups: one fetch per pane at a time, so a new one cancels the last.
+LOG_GROUP = "jobs-log"
+MANAGED_LOG_GROUP = "managed-log-refresh"
