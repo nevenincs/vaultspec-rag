@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import subprocess
 import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
+from ..cli._gpu_lease import _read_health_evidence
+from ..serviceclient._transport import (
+    DEFAULT_HEALTH_TIMEOUT_SECONDS,
+    health_probe_timed_out,
+)
 from ._child_signal import await_marker, child_stderr
 from ._ports import free_loopback_port
 
@@ -19,7 +28,15 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-_PROCESS_TIMEOUT_SECONDS = 10.0
+# Lifetime bound for the helper processes below, not a bound on any behaviour
+# they are asserting. Each one pays for a fresh interpreter and the import of
+# the client package before it reaches its first statement, and on a contended
+# machine that fixed cost alone has been measured well into the tens of
+# seconds - larger than the whole budget a tighter bound would allow. A bound
+# under that does not catch a wedged child sooner; it fails a correct one for
+# the machine's speed. The child's own assertions are what prove the
+# behaviour, so this only has to be clear of the startup cost.
+_PROCESS_TIMEOUT_SECONDS = 120.0
 _RESIDENT_ROUTE_HOST = """
 import json
 import os
@@ -392,6 +409,61 @@ def test_captured_target_uses_original_lease_after_singleton_paths_redirect(
                 trace_path=trace_path,
                 host_lock_path=host_lock_path,
             )
+
+
+_SLOW_HEALTH_BODY = {
+    "pid": 4242,
+    "port": 0,
+    "service_token": "slow-health-identity-token",
+}
+
+
+def _slow_health_handler(delay: float) -> type[BaseHTTPRequestHandler]:
+    """Build a handler that answers ``/health`` only after *delay* seconds."""
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            time.sleep(delay)
+            body = json.dumps(_SLOW_HEALTH_BODY).encode("utf-8")
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            _ = self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            _ = format, args
+
+    return _Handler
+
+
+def test_health_evidence_read_outlasts_the_readiness_poll_bound() -> None:
+    """A service too busy to answer quickly still proves its own identity.
+
+    Reading ``/health`` to decide WHICH service holds a port is an evidence
+    read, and an unanswered probe there is indistinguishable from a service
+    whose identity genuinely disagrees - the caller refuses either way. So the
+    readiness poll's short bound must not govern it, or a service merely busy
+    enough to answer slowly reads as a different service. Mutation: taking the
+    probe's default bound instead of the operator-governed one returns the
+    accepted-but-unanswered sentinel here, and both assertions below fire.
+    """
+    delay = DEFAULT_HEALTH_TIMEOUT_SECONDS + 1.0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _slow_health_handler(delay))
+    port = int(server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        observed = _read_health_evidence(port)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=_PROCESS_TIMEOUT_SECONDS)
+
+    assert not health_probe_timed_out(observed), (
+        "a slow but live service was read as accepted-but-unanswered"
+    )
+    assert observed == _SLOW_HEALTH_BODY
 
 
 def test_capture_missing_original_lock_never_creates_an_anchor(tmp_path: Path) -> None:
