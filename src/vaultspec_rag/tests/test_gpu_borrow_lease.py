@@ -859,6 +859,21 @@ def test_the_bound_witness_names_a_hold_without_naming_its_holder(
 # hits inside a reverted build and none inside a correct one.
 _LEASE_RACE_SAMPLES = 400
 
+# The floor below which the sample carries too little power to stand as
+# evidence. A reverted build reads a torn record on the order of one sample in
+# seventy, so this many samples still fail it with probability well above 0.9,
+# while a correct build passes at any count. Sampling stops at the floor only
+# when the budget below runs out first, which takes a machine several times
+# slower than an already-contended runner.
+_LEASE_RACE_MIN_SAMPLES = 200
+
+# Wall-clock ceiling on the sampling loop. It exists to stop a wedged reader,
+# NOT to pace the evidence: the sample count carries the statistical power, so
+# a slow machine is given the time to reach it rather than being failed for
+# arriving late. Sized well clear of the rate a contended runner sustains, so
+# reaching it at all means something is wrong beyond ordinary contention.
+_LEASE_RACE_BUDGET_SECONDS = 120.0
+
 _REPUBLISH_LEASE_RECORD = """
 import os
 import sys
@@ -923,20 +938,29 @@ def test_republished_lease_record_is_never_verified_invalid(tmp_path: Path) -> N
                 assert capability is not None, (
                     f"republishing lease holder did not start: {diagnostics.read()}"
                 )
-                # A fixed sample COUNT, not a fixed duration: the count carries
-                # the statistical power, and a loaded machine must not quietly
-                # reduce it to a handful of reads that prove nothing.
+                # The claim under test is a ratio - no republication is ever
+                # read as invalid - so the assertion is on the torn count, and
+                # a machine that samples slowly is given longer rather than
+                # failed for its speed. Asserting the sample count itself made
+                # this guard cry wolf on a contended runner, which costs more
+                # than the samples it was protecting: a guard that fails for
+                # reasons unrelated to its property trains its readers to
+                # re-run it. The floor keeps the sample honest without making
+                # throughput the thing being proved.
                 torn = 0
                 samples = 0
-                deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
-                while samples < _LEASE_RACE_SAMPLES:
-                    assert time.monotonic() < deadline, (
-                        f"only reached {samples} samples"
-                    )
+                deadline = time.monotonic() + _LEASE_RACE_BUDGET_SECONDS
+                while samples < _LEASE_RACE_SAMPLES and time.monotonic() < deadline:
                     status = borrower_lease_status(capability)
                     samples += 1
                     if status is not BorrowerLeaseStatus.HELD:
                         torn += 1
+                assert samples >= _LEASE_RACE_MIN_SAMPLES, (
+                    f"only reached {samples} samples in "
+                    f"{_LEASE_RACE_BUDGET_SECONDS:g}s, too few to stand as "
+                    "evidence that a republished record is never read as "
+                    "invalid"
+                )
                 assert torn == 0, (
                     f"{torn} of {samples} verifications of a held lease could "
                     "not read its capability while the holder republished its "
@@ -990,3 +1014,78 @@ def test_published_lease_record_stays_readable_as_plain_json(
             assert parsed == {"pid": os.getpid(), "capability": lease.capability}
         finally:
             release_gpu_borrow_lease(lease)
+
+
+def _envelope(**overrides: object) -> dict[str, object]:
+    """Build the canonical quiesce envelope this build publishes."""
+    from ..cli._gpu_lease import QUIESCE_ENVELOPE_FIELDS
+
+    defaults: dict[str, object] = {
+        "state": "running",
+        "admission_epoch": 1,
+        "admissions_open": True,
+        "active_compute_tickets": 0,
+        "drain_complete": False,
+        "vram_released": False,
+        "safe_to_borrow_gpu": False,
+        "borrower_bound": False,
+        "pause_requested_at": None,
+        "drain_acknowledged_at": None,
+        "quiesced_at": None,
+        "warming_started_at": None,
+        "failure_reason": None,
+    }
+    assert frozenset(defaults) == QUIESCE_ENVELOPE_FIELDS, (
+        "the fixture envelope must track the contract it stands in for"
+    )
+    return defaults | overrides
+
+
+def test_a_skewed_quiesce_envelope_is_named_as_a_build_mismatch() -> None:
+    """A different build's envelope must not read as a refused transition.
+
+    The transition checks compare the field set exactly, which is correct: a
+    partial snapshot must never pass for a safe handoff. But that comparison
+    cannot, on its own, tell a service that refused to quiesce from one that
+    quiesced and said so in a vocabulary this build does not know. Both used to
+    surface as "the service did not acknowledge borrower pause", sending the
+    reader to debug quiescence when the actual condition was two builds of the
+    same service disagreeing - and the transition may already have succeeded.
+    """
+    import pytest as _pytest
+
+    from ..cli._gpu_lease import BorrowGPUError, _reject_unrecognised_quiesce
+
+    older = _envelope()
+    del older["borrower_bound"]
+    with _pytest.raises(BorrowGPUError) as failure:
+        _reject_unrecognised_quiesce({"ok": True, "quiesce": older}, verb="resume")
+    assert failure.value.error == "borrow_gpu_quiesce_contract_mismatch"
+    assert "borrower_bound" in str(failure.value)
+    assert "same install" in str(failure.value)
+
+    newer = _envelope(some_future_field=True)
+    with _pytest.raises(BorrowGPUError) as newer_failure:
+        _reject_unrecognised_quiesce({"ok": True, "quiesce": newer}, verb="pause")
+    assert "some_future_field" in str(newer_failure.value)
+
+
+def test_a_matching_envelope_is_left_to_the_transition_check() -> None:
+    """The mismatch guard must not usurp the judgement it precedes.
+
+    A refused transition on a recognised envelope is still a refused
+    transition, and has to keep reaching the acknowledgement check rather than
+    being relabelled a build mismatch.
+    """
+    from ..cli._gpu_lease import (
+        _acknowledged_transition,
+        _reject_unrecognised_quiesce,
+    )
+    from ..service_quiesce import QuiesceState
+
+    refused = {"ok": False, "quiesce": _envelope(state="running")}
+    _reject_unrecognised_quiesce(refused, verb="pause")
+    assert not _acknowledged_transition(refused, QuiesceState.QUIESCED)
+
+    _reject_unrecognised_quiesce(None, verb="resume")
+    _reject_unrecognised_quiesce({"ok": True}, verb="resume")
