@@ -92,6 +92,7 @@ class JobErrorKind(StrEnum):
     DECODE_FAILED = "decode_failed"
     CHUNK_FAILED = "chunk_failed"
     LEDGER_CONTENDED = "ledger_contended"
+    INGEST_VERIFICATION_FAILED = "ingest_verification_failed"
 
 
 _REMEDIATION: Final = MappingProxyType(
@@ -164,6 +165,13 @@ _REMEDIATION: Final = MappingProxyType(
             "root; storage-confirmed work is intact and the run resumes from its "
             "last checkpoint on retry"
         ),
+        JobErrorKind.INGEST_VERIFICATION_FAILED: (
+            "the vector store acknowledged writes it did not apply, so the run "
+            "stopped before publishing over missing points; nothing was deleted. "
+            "Retrying will not clear this - rebuild the affected index with a "
+            "clean re-index, which is also the remedy after the store is carried "
+            "across a Qdrant version change"
+        ),
     }
 )
 
@@ -219,6 +227,11 @@ LOCK_CONTENTION_MARKERS = (
     "database is locked",
     "database table is locked",
 )
+#: The ingest barrier's own wording for acknowledged-but-unapplied writes. It
+#: is terminal rather than transient - a retry repeats it - but it has an exact
+#: remedy, and falling through to ``other`` buried that remedy at the one moment
+#: an operator needs it.
+INGEST_VERIFICATION_MARKERS = ("ingest verification failed",)
 _TIMEOUT_MARKERS = ("timed out", "timeout")
 _UNAVAILABLE_MARKERS = (
     "connection refused",
@@ -236,6 +249,7 @@ _UNAVAILABLE_MARKERS = (
 _MARKER_CLASSIFICATIONS: Final = (
     (DISK_FULL_MARKERS, JobErrorKind.DISK_FULL),
     (LOCK_CONTENTION_MARKERS, JobErrorKind.LEDGER_CONTENDED),
+    (INGEST_VERIFICATION_MARKERS, JobErrorKind.INGEST_VERIFICATION_FAILED),
     (_TIMEOUT_MARKERS, JobErrorKind.TIMEOUT),
     (_UNAVAILABLE_MARKERS, JobErrorKind.UNAVAILABLE),
 )
