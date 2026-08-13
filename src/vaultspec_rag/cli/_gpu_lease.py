@@ -276,7 +276,7 @@ def _require_acknowledged_pause(
     if not _acknowledged_transition(result, QuiesceState.QUIESCED):
         raise BorrowGPUError(
             _PAUSE_UNACKNOWLEDGED,
-            "The service did not acknowledge borrower pause.",
+            _pause_refusal_message(result),
         )
     if result is None or not _is_exact_safe_quiesce(result.get("quiesce")):
         raise BorrowGPUError(
@@ -302,6 +302,37 @@ def _resume_is_acknowledged(
     if target_verified:
         _reject_unrecognised_quiesce(result, verb="resume")
     return target_verified and _acknowledged_transition(result, QuiesceState.RUNNING)
+
+
+def _pause_refusal_message(result: dict[str, object] | None) -> str:
+    """Explain a refused borrower pause using the envelope it came back with.
+
+    "The service did not acknowledge borrower pause" is true of every refusal
+    and therefore useless for the common one. A service still working cannot
+    hand over the device yet, and that reads identically to a service that will
+    never hand it over - so the operator is left with no way to tell "wait" from
+    "something is wrong". The envelope already says which it is.
+    """
+    quiesce = result.get("quiesce") if result is not None else None
+    if _is_exact_quiesce_snapshot(quiesce):
+        tickets = quiesce["active_compute_tickets"]
+        if isinstance(tickets, int) and tickets > 0:
+            return (
+                f"The service is still running {tickets} compute "
+                f"{'ticket' if tickets == 1 else 'tickets'} and cannot hand over "
+                "the device yet. This clears on its own once that work drains; "
+                "retry the borrow, or wait for the service to report idle."
+            )
+        if quiesce["state"] != QuiesceState.QUIESCED.value:
+            return (
+                "The service did not reach a quiesced state for the borrower "
+                f"(state: {quiesce['state']!r})."
+            )
+        return (
+            "The service reached a quiesced state but did not acknowledge the "
+            "borrower's pause."
+        )
+    return "The service did not acknowledge borrower pause."
 
 
 def _reject_unrecognised_quiesce(
