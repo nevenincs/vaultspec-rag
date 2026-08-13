@@ -4,7 +4,7 @@ tags:
   - '#large-index-resilience'
 date: '2026-07-21'
 modified: '2026-08-13'
-body_hash: 'sha256:62bf1179b8485235062a12599561b0ef818d106bb93b03d5d799e92aba8bb599'
+body_hash: 'sha256:99d317f2cc8c02065a8b89e66367956845f6b033bd1358e09c1dabb58c1abc79'
 related:
   - "[[2026-07-21-large-index-resilience-research]]"
   - "[[2026-07-21-large-index-resilience-reference]]"
@@ -252,6 +252,10 @@ The overlap under test is the one the shared file creates: a reader or an openin
 Contention tests are guard tests and carry that obligation: each is shown to fail against the unfixed configuration before it is trusted, since a contention assertion that passes under a rollback journal is asserting nothing. Ledger size is part of the fixture, because the window in which a commit can be starved scales with the work a reader holds its lock across, and a ledger of a few rows never opens it.
 
 The same standard governs the durable-state layer generally: a component whose failure mode is concurrent access is verified under concurrent access, and a test that stands in for that with a single-threaded call over a fake is removed rather than counted.
+
+**D11 — A transient kind is only transient where retries are decided.** Classifying contention as its own kind is necessary and not sufficient. The watcher decides retryability from its own set and opens its circuit on anything outside it, so a kind that classifies correctly but is absent from that set pauses automatic indexing on the first occurrence - the exact outcome the classification exists to prevent, reached by a different route. Any kind introduced as transient is added to that set in the same change, and the guard asserts the decision rather than the label.
+
+The same applies to error translation beneath it. The durable-state layer converts database errors into corruption, and a held lock is a database error, so a lock reaching those handlers is reported as damaged durable state the caller cannot recover from. Lock contention is separated out ahead of that conversion on every path that performs it, including the integrity verification the resume path calls precisely when a generation is carrying storage-confirmed work.
 
 ## Rationale
 

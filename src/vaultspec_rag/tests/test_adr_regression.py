@@ -594,15 +594,35 @@ class TestLedgerConcurrencyContract:
 
         from ..indexer import _route_migration, _run_ledger_models
 
+        requested = inspect.getsource(_run_ledger_models._request_write_ahead_logging)
+        assert "journal_mode = WAL" in requested
         source = inspect.getsource(_run_ledger_models.open_ledger_connection)
-        assert "journal_mode = WAL" in source
         assert 'mode != "wal"' in source, (
             "the opener must verify the mode took effect, not just request it"
         )
 
-        for module in (_run_ledger_models, _route_migration):
+        # Every module that reaches durable state, not just the two that own
+        # the helpers. The contract was lost in the runtime module, which still
+        # imports sqlite3 and is where the deleted opener used to live, so a
+        # scan that skipped it would miss the exact regression it names.
+        from ..indexer import (
+            _run_ledger_commits,
+            _run_ledger_files,
+            _run_ledger_finalization,
+            _run_ledger_runtime,
+        )
+
+        opener = inspect.getsource(_run_ledger_models.open_ledger_connection)
+        for module in (
+            _run_ledger_models,
+            _run_ledger_runtime,
+            _run_ledger_commits,
+            _run_ledger_files,
+            _run_ledger_finalization,
+            _route_migration,
+        ):
             assert "sqlite3.connect(" not in inspect.getsource(module).replace(
-                inspect.getsource(_run_ledger_models.open_ledger_connection), ""
+                opener, ""
             ), (
                 f"{module.__name__} opens SQLite outside the shared opener, "
                 "so that connection escapes the concurrency contract"
@@ -633,6 +653,37 @@ class TestLedgerConcurrencyContract:
         for text in ("database is locked", "database table is locked"):
             assert classify_error_text(text) is JobErrorKind.LEDGER_CONTENDED
         assert remediation(JobErrorKind.LEDGER_CONTENDED)
+
+    def test_contention_does_not_open_the_watcher_circuit_on_first_failure(
+        self,
+    ) -> None:
+        """Classifying the kind is worthless if nothing consults it.
+
+        The watcher decides retryability from its own set, and anything outside
+        that set opens the circuit on the first occurrence - pausing automatic
+        indexing for a condition that clears when the peer run commits. A kind
+        that classifies correctly but is missing from this set produces exactly
+        the outcome the classification exists to avoid, which is why the guard
+        asserts the decision rather than the label.
+        """
+        import sqlite3
+
+        from .._job_errors import JobErrorKind
+        from ..indexer._run_ledger_models import RunLedgerContentionError
+        from ..watcher_retry import _classify_failure
+
+        kind, retryable = _classify_failure(
+            RunLedgerContentionError(
+                "run ledger runs.sqlite3 is locked: database is locked"
+            )
+        )
+        assert kind is JobErrorKind.LEDGER_CONTENDED
+        assert retryable, "contention must not open the circuit on first failure"
+
+        _kind, raw_retryable = _classify_failure(
+            sqlite3.OperationalError("database is locked")
+        )
+        assert raw_retryable
 
 
 class TestJobErrorTaxonomyStaysLight:

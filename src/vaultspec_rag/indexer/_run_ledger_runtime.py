@@ -37,6 +37,7 @@ from ._run_ledger_models import (
     fetch_one,
     ledger_connection,
     ledger_transaction,
+    raise_if_lock_contention,
 )
 
 __all__ = ["RunLedger"]
@@ -56,6 +57,16 @@ class RunLedger(
             with ledger_connection(self.path) as connection:
                 self._initialize(connection)
                 self._verify_schema(connection)
+        except sqlite3.OperationalError as exc:
+            # A held lock is not damage. It reaches here because opening
+            # converts the journal mode and schema-migrates, both of which a
+            # peer's transaction can block. Reporting that as corrupt durable
+            # state would be a lie the caller cannot recover from, where the
+            # truth is a condition that clears on its own.
+            raise_if_lock_contention(exc, path=self.path)
+            raise RunLedgerCorruptionError(
+                f"cannot open run ledger {self.path}: {exc}"
+            ) from exc
         except sqlite3.DatabaseError as exc:
             raise RunLedgerCorruptionError(
                 f"cannot open run ledger {self.path}: {exc}"
@@ -78,6 +89,14 @@ class RunLedger(
         try:
             with ledger_connection(self.path) as connection:
                 rows: list[sqlite3.Row] = fetch_all(connection, "PRAGMA quick_check")
+        except sqlite3.OperationalError as exc:
+            # This runs on the resume path, on a generation that already holds
+            # storage-confirmed work. Calling a held lock corruption here would
+            # discard exactly the work this verification exists to protect.
+            raise_if_lock_contention(exc, path=self.path)
+            raise RunLedgerCorruptionError(
+                f"cannot verify run ledger {self.path}: {exc}"
+            ) from exc
         except sqlite3.DatabaseError as exc:
             raise RunLedgerCorruptionError(
                 f"cannot verify run ledger {self.path}: {exc}"

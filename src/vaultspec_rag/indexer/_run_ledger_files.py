@@ -14,8 +14,8 @@ from ._run_ledger_models import (
     RunLedgerStateError,
     fetch_all,
     fetch_one,
+    in_ledger_transaction,
     ledger_connection,
-    ledger_transaction,
 )
 
 if TYPE_CHECKING:
@@ -70,7 +70,8 @@ class RunLedgerFileMethods:
 
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
-        with ledger_transaction(self.path) as connection:
+
+        def body(connection: sqlite3.Connection) -> None:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError(
@@ -124,10 +125,13 @@ class RunLedgerFileMethods:
                 ),
             )
 
+        in_ledger_transaction(self.path, body)
+
     def record_path_deleted(self, generation_id: str, rel_path: str) -> None:
         """Remove carried/current manifest state after confirmed path deletion."""
         validate_rel_path(rel_path)
-        with ledger_transaction(self.path) as connection:
+
+        def body(connection: sqlite3.Connection) -> None:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError(
@@ -154,6 +158,8 @@ class RunLedgerFileMethods:
                 """,
                 (generation_id, rel_path),
             )
+
+        in_ledger_transaction(self.path, body)
 
     def superseded_point_ids(
         self,
@@ -232,7 +238,8 @@ class RunLedgerFileMethods:
                 its file states can no longer change.
         """
         validate_rel_path(rel_path)
-        with ledger_transaction(self.path) as connection:
+
+        def body(connection: sqlite3.Connection) -> int:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError(
@@ -259,6 +266,8 @@ class RunLedgerFileMethods:
                 (generation_id, rel_path),
             )
             return removed
+
+        return in_ledger_transaction(self.path, body)
 
     def iter_file_states(
         self,
