@@ -654,6 +654,36 @@ class TestLedgerConcurrencyContract:
             assert classify_error_text(text) is JobErrorKind.LEDGER_CONTENDED
         assert remediation(JobErrorKind.LEDGER_CONTENDED)
 
+    def test_unapplied_ingest_carries_its_remedy_rather_than_being_other(
+        self,
+    ) -> None:
+        """A terminal failure with an exact remedy must still carry that remedy.
+
+        Not every classification exists to make something retryable. This one is
+        genuinely terminal - a retry repeats it, and the circuit opening is the
+        right response - but it has one specific fix, and ``other`` is where a
+        fix goes to be lost. It is the condition an operator meets after the
+        vector store is carried across a Qdrant version change, at which point
+        the affected index needs a clean rebuild.
+        """
+        from .._job_errors import JobErrorKind, classify_error_text, remediation
+        from ..watcher_retry import _classify_failure
+
+        observed = (
+            "ingest verification failed for r01fa8eefb788_codebase_docs: "
+            "expected 96441 applied point(s), found 95375. One or more "
+            "acknowledged batches did not apply; failing the run before "
+            "stale-purge or metadata publish."
+        )
+        kind = classify_error_text(observed)
+        assert kind is JobErrorKind.INGEST_VERIFICATION_FAILED
+        assert "clean re-index" in (remediation(kind) or "")
+
+        _kind, retryable = _classify_failure(RuntimeError(observed))
+        assert not retryable, (
+            "retrying an unapplied-write failure repeats it; the circuit must open"
+        )
+
     def test_contention_does_not_open_the_watcher_circuit_on_first_failure(
         self,
     ) -> None:
