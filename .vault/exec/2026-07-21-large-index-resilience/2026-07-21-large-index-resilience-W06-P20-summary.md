@@ -5,7 +5,7 @@ tags:
 date: '2026-08-13'
 modified: '2026-08-13'
 body_schema: 'body-v1'
-body_hash: 'sha256:9756210fe7254fff403b57f93d60fa0c7bf14030105869709325ecc7cc1783fe'
+body_hash: 'sha256:2b02c09d5438f93bed399a44eefe99177e9c4d070773aaffc49f2f13f315363b'
 related:
   - "[[2026-07-21-large-index-resilience-plan]]"
 ---
@@ -34,3 +34,9 @@ Left open deliberately: sixty-seven tests still declare a resident tier they inh
 - Modified: `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
 - Modified: `src/vaultspec_rag/indexer/_resolved_policy.py`
 - Modified: `src/vaultspec_rag/commands/_models.py`
+
+The declarations were untangled after the gate landed, closing the half left open above. Sixty-seven tests declared the subprocess tier and a resident one at once, almost none of them by hand: the second came from a module default, a class decorator, or a class-level default, and pytest adds those to a test's own decorator rather than letting the decorator override. Each module was repointed by shape, and declaring both is now a collection-time violation so it cannot drift back. The runtime selection gate stays, because a selection can hold both tiers without any test declaring both.
+
+Verified by comparing every collected test's effective markers before and after, taken from the collector rather than re-derived: the same node ids, exactly 67 changed, all losing the resident tier and gaining nothing, none left declaring both or untiered.
+
+- Modified: `src/vaultspec_rag/tests/integration/` (sixteen modules)

@@ -6,7 +6,7 @@ tags:
 date: '2026-08-13'
 modified: '2026-08-13'
 body_schema: 'body-v1'
-body_hash: 'sha256:6cc32377ffab745a728fae749412acc50e7559430f7e78c74000832a4035cb9c'
+body_hash: 'sha256:a88bb8e1162602a3162b79ad31aca9f0bf39e8cb5b3a1a8643ef484efa410af8'
 related:
   - '[[2026-07-21-large-index-resilience-W01-P01-S01]]'
   - '[[2026-07-21-large-index-resilience-W01-P01-S02]]'
@@ -91,6 +91,7 @@ related:
   - '[[2026-07-21-large-index-resilience-W06-P20-S73]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-S74]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-S75]]'
+  - '[[2026-07-21-large-index-resilience-W06-P20-S76]]'
   - '[[2026-07-21-large-index-resilience-W06-P20-summary]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
@@ -222,6 +223,7 @@ Auto-generated index of all documents tagged with `#large-index-resilience`.
 - `2026-07-21-large-index-resilience-W06-P20-S73` - Refuse a collected selection holding both device tiers, judged on items rather than on the marker expression
 - `2026-07-21-large-index-resilience-W06-P20-S74` - Guard both halves - the gate against collected items, and the runner's two selections structurally
 - `2026-07-21-large-index-resilience-W06-P20-S75` - Restore a clean type gate: declare the refused-envelope literal and drop suppressions that no longer suppress anything
+- `2026-07-21-large-index-resilience-W06-P20-S76` - Repoint every subprocess test off the resident tier it inherited, and make declaring both a collection-time violation
 - `2026-07-21-large-index-resilience-W06-P20-summary` - `large-index-resilience` `W06.P20` summary
 
 ### plan
