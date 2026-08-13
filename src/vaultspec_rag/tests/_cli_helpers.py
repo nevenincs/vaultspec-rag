@@ -268,7 +268,7 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
     _assert_no_table_borders(output)
 
 
-def _search_records(output: str) -> list[dict[str, object]]:
+def search_records(output: str) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     current: dict[str, object] | None = None
     text_lines: list[str] = []
@@ -1067,7 +1067,6 @@ __all__ = [
     "_reindex_contract_server",
     "_running_service_record",
     "_search_output_contract_server",
-    "_search_records",
     "_section_label_values",
     "_serving",
     "_slow_search_contract_server",
@@ -1082,6 +1081,7 @@ __all__ = [
     "reset_base_config",
     "reset_rag_config",
     "runner",
+    "search_records",
 ]
 
 

@@ -14,13 +14,9 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._job_progress import record_progress
 from ..job_models import JobSource
-from ..jobs import (
-    record_progress,
-    record_start,
-    reset,
-    snapshot,
-)
+from ..jobs import record_start, reset, snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -61,30 +57,30 @@ class TestProgressRateWindow:
         return deque(samples, maxlen=16)
 
     def test_one_sample_measures_no_interval(self) -> None:
-        from ..jobs import _window_rate
+        from .._job_progress import _window_rate
 
         assert _window_rate(self._window((100.0, 5))) is None
 
     def test_span_below_the_minimum_is_refused(self) -> None:
-        from ..jobs import _window_rate
+        from .._job_progress import _window_rate
 
         # Two samples 10ms apart would report 500/s from a 5-unit advance.
         assert _window_rate(self._window((100.0, 5), (100.01, 10))) is None
 
     def test_flat_count_over_a_real_span_is_refused(self) -> None:
-        from ..jobs import _window_rate
+        from .._job_progress import _window_rate
 
         assert _window_rate(self._window((100.0, 5), (160.0, 5))) is None
 
     def test_steady_advance_yields_the_arithmetic_rate(self) -> None:
-        from ..jobs import _window_rate
+        from .._job_progress import _window_rate
 
         # 90 units across 45 seconds is exactly 2/s.
         rate = _window_rate(self._window((100.0, 10), (145.0, 100)))
         assert rate == pytest.approx(2.0)
 
     def test_step_change_discards_the_window(self) -> None:
-        from ..jobs import _sample_progress, _window_rate
+        from .._job_progress import _sample_progress, _window_rate
 
         record: dict[str, object] = {"id": "j1"}
         _sample_progress(
@@ -106,7 +102,7 @@ class TestProgressRateWindow:
         assert _window_rate(window) is None
 
     def test_count_moving_backwards_discards_the_window(self) -> None:
-        from ..jobs import _sample_progress, _window_rate
+        from .._job_progress import _sample_progress, _window_rate
 
         record: dict[str, object] = {"id": "j1"}
         _sample_progress(
@@ -263,7 +259,7 @@ class TestRealisticProgressCadence:
         first_completed: int = 0,
     ) -> float:
         """Drive ``_sample_progress`` at a fixed cadence; return the last time."""
-        from ..jobs import _sample_progress
+        from .._job_progress import _sample_progress
 
         step = cadence.step
         count = cadence.count
@@ -293,7 +289,7 @@ class TestRealisticProgressCadence:
         return cast("deque[tuple[float, int]]", record["progress_window"])
 
     def test_per_file_chunk_cadence_still_yields_a_rate(self) -> None:
-        from ..jobs import _window_rate
+        from .._job_progress import _window_rate
 
         # Mutation check: making ``_sample_progress`` append every report
         # unconditionally (dropping the coalescing) makes this fail on the
@@ -330,7 +326,7 @@ class TestRealisticProgressCadence:
         assert len(window) <= window.maxlen
 
     def test_the_rate_tracks_a_slowdown_rather_than_the_step_average(self) -> None:
-        from ..jobs import _window_rate
+        from .._job_progress import _window_rate
 
         # Mutation check: comparing the coalescing interval against
         # ``samples[-1]`` instead of ``samples[-2]`` holds the oldest sample

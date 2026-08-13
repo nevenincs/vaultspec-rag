@@ -493,7 +493,7 @@ class TestMachinePressureBlock:
 
     @pytest.mark.usefixtures("fresh_evaluator")
     def test_an_idle_machine_reports_nominal_without_probing(self) -> None:
-        from ..jobs import machine_pressure
+        from .._job_evidence import machine_pressure
 
         block = machine_pressure(now=_T0, forwards=[], project_root=None, source="code")
         assert set(block) == _PRESSURE_KEYS
@@ -512,7 +512,7 @@ class TestMachinePressureBlock:
 
     @pytest.mark.usefixtures("fresh_evaluator")
     def test_the_worst_forward_wins_the_evidence_slot(self) -> None:
-        from ..jobs import machine_pressure
+        from .._job_evidence import machine_pressure
 
         finished = _forward_block(entered_at=_T0 - 500.0, exited_at=_T0 - 490.0)
         stretched = _forward_block(entered_at=_T0 - 120.0, exited_at=None)
@@ -603,7 +603,10 @@ class TestSampleClockTracksTheProbeCaches:
         that stops them drifting apart under a later tuning pass.
         """
         from .. import pressure as pressure_module
-        from ..jobs import _BACKEND_PROBE_CACHE_SECONDS, _GPU_SNAPSHOT_CACHE_SECONDS
+        from .._job_evidence import (
+            _BACKEND_PROBE_CACHE_SECONDS,
+            _GPU_SNAPSHOT_CACHE_SECONDS,
+        )
 
         assert pressure_module._SAMPLE_INTERVAL_SECONDS == _BACKEND_PROBE_CACHE_SECONDS
         assert pressure_module._SAMPLE_INTERVAL_SECONDS == _GPU_SNAPSHOT_CACHE_SECONDS

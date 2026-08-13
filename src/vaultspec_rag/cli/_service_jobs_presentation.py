@@ -12,8 +12,8 @@ import typer
 import vaultspec_rag.cli as _cli
 
 from .._job_errors import STALL_THRESHOLD_SECONDS, classify_error_text, remediation
+from .._job_values import count, measurement
 from .._operator_commands import server_status_command
-from ..jobs import count, measurement
 from ._cli_format import (
     _counted_unit,
     _format_mib,

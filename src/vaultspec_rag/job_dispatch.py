@@ -203,11 +203,11 @@ def _run_indexing_attempt(
     shape of it: observed memory peaks with no admitted ceiling and no
     checkpoint projection, because the vault domain has neither.
     """
-    from .jobs import (
-        JobProgressReporter,
+    from ._job_admission import (
         validate_code_job_admission,
         validate_document_job_admission,
     )
+    from .jobs import JobProgressReporter
 
     # Held as two narrowed locals rather than one union: each indexer accepts
     # only its own preflight type, and the type checker cannot see that the

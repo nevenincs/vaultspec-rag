@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from ..jobs import count, mapping
+from .._job_values import count, mapping
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS
 from ._jobs_tui_cells import search_id
 from ._jobs_tui_constants import (
     GONE_CODES,
     PLAIN_ACTIONS,
+    SEARCH_COUNT_NAMES,
     STATE_ACTIONS,
 )
 
@@ -87,7 +88,7 @@ def _search_activity_payload_error(result: dict[str, object]) -> str | None:
         return "served-search activity unavailable: invalid summary"
     if count(returned) is None:
         return "served-search activity unavailable: invalid returned count"
-    for name in ("active", "recent", "total"):
+    for name in SEARCH_COUNT_NAMES:
         if count(cast("dict[str, object]", counts).get(name)) is None:
             return "served-search activity unavailable: invalid counts"
     return search_activity_records_error(

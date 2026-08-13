@@ -241,7 +241,8 @@ class TestHealthFailureGenerationBound:
         The job here stopped reporting progress before the generation started -
         exactly the shape the failure bound suppresses - and must still degrade.
         """
-        from ..jobs import record_progress, record_start
+        from .._job_progress import record_progress
+        from ..jobs import record_start
         from ..server._lifespan import _jobs_health
 
         running_id = record_start(JobSource.CODE, "watcher")

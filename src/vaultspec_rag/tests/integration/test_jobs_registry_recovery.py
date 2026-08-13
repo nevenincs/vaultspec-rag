@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ... import _job_values
 from ... import jobs as _jobs
 from ...job_control import RunControlToken
 from ...job_manager._control import AttemptTerminal
@@ -1593,13 +1594,13 @@ class TestManagedJobPersistence:
                 "control_acknowledged_at",
                 "admission_acquired_at",
             ):
-                stamp = _jobs.measurement(job.get(name))
+                stamp = _job_values.measurement(job.get(name))
                 if stamp is not None:
                     job[name] = stamp + seconds
             progress = job.get("progress")
             if isinstance(progress, dict):
                 block = cast("dict[str, object]", progress)
-                updated = _jobs.measurement(block.get("last_updated"))
+                updated = _job_values.measurement(block.get("last_updated"))
                 if updated is not None:
                     block["last_updated"] = updated + seconds
         state_path.write_text(json.dumps(payload), encoding="utf-8")

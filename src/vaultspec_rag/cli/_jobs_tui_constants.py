@@ -175,3 +175,6 @@ CONTROL_GROUP = "jobs-control"
 #: Worker groups: one fetch per pane at a time, so a new one cancels the last.
 LOG_GROUP = "jobs-log"
 MANAGED_LOG_GROUP = "managed-log-refresh"
+
+#: The served-search tallies the service reports, and the only ones read.
+SEARCH_COUNT_NAMES = ("active", "recent", "total")

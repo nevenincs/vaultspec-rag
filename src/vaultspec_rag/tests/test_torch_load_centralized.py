@@ -102,7 +102,7 @@ def test_compute_modules_have_no_module_scope_torch_import() -> None:
 _PREFLIGHT_DRIVER = """
 import pathlib, sys, tempfile
 
-from vaultspec_rag import api, jobs
+from vaultspec_rag import _job_admission, api
 from vaultspec_rag._public_index import scan_documents
 from vaultspec_rag.indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 
@@ -121,10 +121,10 @@ with tempfile.TemporaryDirectory() as tmp:
     (root / "mod.py").write_text("def alpha():\\n    return 1\\n", encoding="utf-8")
     changed = [root / "routed.bin"]
 
-    code = jobs.validate_code_index_policy(root)
-    jobs.validate_scoped_code_index_policy(root, (root / "mod.py",))
-    docs = jobs.validate_document_index_policy(root)
-    jobs.validate_scoped_document_index_policy(root, tuple(changed))
+    code = _job_admission.validate_code_index_policy(root)
+    _job_admission.validate_scoped_code_index_policy(root, (root / "mod.py",))
+    docs = _job_admission.validate_document_index_policy(root)
+    _job_admission.validate_scoped_document_index_policy(root, tuple(changed))
     api._preflight_code_index(root)
     api._preflight_document_index(root)
     api._preflight_document_scope(root, changed)

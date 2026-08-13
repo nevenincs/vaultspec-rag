@@ -450,8 +450,8 @@ def validate_acceptance_admission(
     spec: CorpusSpec,
 ) -> CodeIndexPreflight:
     """Require managed-service admission before model or mutable GPU work."""
+    from ..._job_admission import validate_code_job_admission
     from ...config._settings import get_config
-    from ...jobs import validate_code_job_admission
 
     cfg = get_config()
     if str(cast("object", cfg.index_support_profile)) != "managed-service":
