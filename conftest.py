@@ -78,11 +78,7 @@ def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     from vaultspec_rag.qdrant_runtime._resolve import resolve_binary
 
     resolved = resolve_binary(QDRANT_SERVER_VERSION)
-    if (
-        resolved is None
-        or resolved.source != "provisioned"
-        or not resolved.sha256
-    ):
+    if resolved is None or resolved.source != "provisioned" or not resolved.sha256:
         return None
     manifest = resolved.path.parent / MANIFEST_FILENAME
     if not manifest.is_file():
@@ -345,9 +341,7 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
             pytest.exit(device_contended_message(admission), returncode=1)
         for index, item in enumerate(session.items):
             nextitem = (
-                session.items[index + 1]
-                if index + 1 < len(session.items)
-                else None
+                session.items[index + 1] if index + 1 < len(session.items) else None
             )
             item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
             if session.shouldfail:

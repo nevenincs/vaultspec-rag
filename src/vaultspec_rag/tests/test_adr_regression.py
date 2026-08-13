@@ -716,6 +716,60 @@ class TestLedgerConcurrencyContract:
         assert raw_retryable
 
 
+class TestDeviceTierIsolation:
+    """Subprocess-GPU tests must not share a device with a resident-model tier.
+
+    The constraint was written beside the marker and enforced nowhere, so the
+    project's own GPU recipe selected both in one expression. What it produces
+    is not an out-of-memory error but a spawned service that never becomes
+    healthy - surfacing as a health-poll timeout in an unrelated-looking test,
+    late in a long lane, naming nothing about memory.
+    """
+
+    def test_a_selection_reaching_both_device_tiers_is_detected(self) -> None:
+        from ._tier_gate import coscheduled_device_tiers
+
+        both = "(integration or quality or robustness or subprocess_gpu or cuda)"
+        assert coscheduled_device_tiers(both) == [
+            "integration",
+            "quality",
+            "robustness",
+        ]
+
+    def test_each_lane_on_its_own_is_allowed(self) -> None:
+        from ._tier_gate import coscheduled_device_tiers
+
+        assert coscheduled_device_tiers("subprocess_gpu") == []
+        assert (
+            coscheduled_device_tiers(
+                "(integration or quality or robustness or cuda) "
+                "and not performance and not subprocess_gpu"
+            )
+            == []
+        )
+
+    def test_the_gpu_recipe_runs_the_two_lanes_separately(self) -> None:
+        """The runner has to satisfy the gate, not just the gate exist."""
+        import re
+        from pathlib import Path
+
+        from ._tier_gate import coscheduled_device_tiers
+
+        justfile = Path(__file__).resolve().parents[3] / "justfile"
+        recipe = justfile.read_text(encoding="utf-8")
+        selections = re.findall(r'pytest [^\n]*?-m "([^"]+)"', recipe)
+        assert selections, "no marker expressions found in the runner"
+        offending = [
+            expression
+            for expression in selections
+            if coscheduled_device_tiers(expression)
+        ]
+        assert not offending, (
+            "the runner selects subprocess_gpu alongside a resident-model tier: "
+            f"{offending}"
+        )
+
+
 class TestJobErrorTaxonomyStaysLight:
     """The shared job-failure taxonomy must stay torch- and CLI-free.
 
