@@ -2323,7 +2323,8 @@ class TestPillShape:
     def test_a_pill_is_capped_in_its_own_fill_colour(self) -> None:
         from rich.text import Text
 
-        from ..cli._jobs_tui import _PILL_CAP_LEFT, _PILL_CAP_RIGHT, _append_pill
+        from ..cli._jobs_tui_cells import _append_pill
+        from ..cli._jobs_tui_constants import _PILL_CAP_LEFT, _PILL_CAP_RIGHT
 
         line = Text()
         _append_pill(line, "> 2 running", self._FILL, unicode_ok=True)
@@ -2350,7 +2351,8 @@ class TestPillShape:
         """
         from rich.text import Text
 
-        from ..cli._jobs_tui import _PILL_CAP_LEFT, _PILL_CAP_RIGHT, _append_pill
+        from ..cli._jobs_tui_cells import _append_pill
+        from ..cli._jobs_tui_constants import _PILL_CAP_LEFT, _PILL_CAP_RIGHT
 
         line = Text()
         _append_pill(line, "> 2 running", self._FILL, unicode_ok=False)
@@ -3096,7 +3098,7 @@ class TestRedactedSearchActivity:
 
     def test_a_redacted_record_is_accepted(self) -> None:
         """Mutation: requiring ``query`` again fails this on the returned error."""
-        from ..cli._jobs_tui import _search_activity_records_error
+        from ..cli._jobs_tui_payload import _search_activity_records_error
 
         redacted: dict[str, object] = {
             "request_id": "r-1",
@@ -3111,14 +3113,14 @@ class TestRedactedSearchActivity:
         A record that simply lost the field must still fail: the check is that
         exactly one of the two is present, not that the strict one was relaxed.
         """
-        from ..cli._jobs_tui import _search_activity_records_error
+        from ..cli._jobs_tui_payload import _search_activity_records_error
 
         silent: dict[str, object] = {"request_id": "r-2", "state": "active"}
         assert _search_activity_records_error([silent], []) is not None
 
     def test_a_record_claiming_both_is_rejected(self) -> None:
         """Disclosed and redacted at once describes no service state."""
-        from ..cli._jobs_tui import _search_activity_records_error
+        from ..cli._jobs_tui_payload import _search_activity_records_error
 
         both: dict[str, object] = {
             "request_id": "r-3",
