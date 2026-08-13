@@ -17,12 +17,15 @@ from ._run_ledger_models import (
     RunLedgerStateError,
     fetch_all,
     fetch_one,
+    ledger_connection,
+    ledger_transaction,
+    with_contention_retry,
 )
 
 if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Iterator
-    from contextlib import AbstractContextManager
+    from pathlib import Path
 
     from ._run_ledger_models import GenerationRow, RunGeneration
 
@@ -99,10 +102,7 @@ class _UnitCountRow(TypedDict):
 
 class RunLedgerCommitMethods:
     if TYPE_CHECKING:
-
-        def _transaction(self) -> AbstractContextManager[sqlite3.Connection]: ...
-
-        def _connect(self) -> sqlite3.Connection: ...
+        path: Path
 
         @staticmethod
         def _require_mutable_generation(
@@ -144,8 +144,24 @@ class RunLedgerCommitMethods:
         """
         if not units:
             raise ValueError("a confirmed storage mutation must contain units")
+        return with_contention_retry(
+            lambda: self._record_storage_confirmed_units_once(generation_id, units),
+            path=self.path,
+        )
+
+    def _record_storage_confirmed_units_once(
+        self,
+        generation_id: str,
+        units: tuple[CommitUnit, ...],
+    ) -> int:
+        """Record the units in one transaction, without the contention replay.
+
+        Separated so the replay above has a body to re-run. A contended
+        transaction rolls back whole, and an already-recorded unit reports zero
+        insertions, so re-running is safe on either outcome.
+        """
         now = time.time()
-        with self._transaction() as connection:
+        with ledger_transaction(self.path) as connection:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError("cannot add units after finalization begins")
@@ -316,7 +332,7 @@ class RunLedgerCommitMethods:
 
     def unit_committed(self, generation_id: str, unit: CommitUnit) -> bool:
         """Return whether an exact storage-confirmed unit is durable."""
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             row: object | None = fetch_one(
                 connection,
                 """
@@ -329,7 +345,7 @@ class RunLedgerCommitMethods:
 
     def committed_unit_count(self, generation_id: str) -> int:
         """Return the committed-unit count without materializing ledger rows."""
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             row: _UnitCountRow | None = fetch_one(
                 connection,
                 """
@@ -344,7 +360,7 @@ class RunLedgerCommitMethods:
     def file_complete(self, generation_id: str, rel_path: str) -> bool:
         """Return whether every segment (or the deletion unit) is committed."""
         validate_rel_path(rel_path)
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             complete, _digest = self._file_completion_evidence(
                 connection,
                 generation_id,
@@ -409,7 +425,7 @@ class RunLedgerCommitMethods:
             raise ValueError("batch_size must be positive")
         last_key: tuple[str, str, int, str] | None = None
         while True:
-            with self._connect() as connection:
+            with ledger_connection(self.path) as connection:
                 rows: list[_CommitUnitRow]
                 if last_key is None:
                     rows = fetch_all(
@@ -467,7 +483,7 @@ class RunLedgerCommitMethods:
                        points.point_id) > (?, ?, ?, ?, ?)
                 """
                 parameters = (generation_id, *last_key)
-            with self._connect() as connection:
+            with ledger_connection(self.path) as connection:
                 rows: list[_PointIdJoinRow] = fetch_all(
                     connection,
                     f"""
@@ -527,7 +543,7 @@ class RunLedgerCommitMethods:
                 parameters = (*parameters, rel_path)
             if last_key is not None:
                 parameters = (*parameters, *last_key)
-            with self._connect() as connection:
+            with ledger_connection(self.path) as connection:
                 rows: list[_RetainedPointRow] = fetch_all(
                     connection,
                     retained_point_ids_sql(

@@ -14,12 +14,14 @@ from ._run_ledger_models import (
     RunLedgerStateError,
     fetch_all,
     fetch_one,
+    ledger_connection,
+    ledger_transaction,
 )
 
 if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Iterator
-    from contextlib import AbstractContextManager
+    from pathlib import Path
 
     from ._run_ledger_models import GenerationRow, RunGeneration
 
@@ -51,10 +53,7 @@ class _PointIdRow(TypedDict):
 
 class RunLedgerFileMethods:
     if TYPE_CHECKING:
-
-        def _transaction(self) -> AbstractContextManager[sqlite3.Connection]: ...
-
-        def _connect(self) -> sqlite3.Connection: ...
+        path: Path
 
         @staticmethod
         def _require_mutable_generation(
@@ -71,7 +70,7 @@ class RunLedgerFileMethods:
 
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
-        with self._transaction() as connection:
+        with ledger_transaction(self.path) as connection:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError(
@@ -128,7 +127,7 @@ class RunLedgerFileMethods:
     def record_path_deleted(self, generation_id: str, rel_path: str) -> None:
         """Remove carried/current manifest state after confirmed path deletion."""
         validate_rel_path(rel_path)
-        with self._transaction() as connection:
+        with ledger_transaction(self.path) as connection:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError(
@@ -174,7 +173,7 @@ class RunLedgerFileMethods:
         the very content the re-record is about to claim.
         """
         validate_rel_path(rel_path)
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             rows: list[_PointIdRow] = fetch_all(
                 connection,
                 """
@@ -233,7 +232,7 @@ class RunLedgerFileMethods:
                 its file states can no longer change.
         """
         validate_rel_path(rel_path)
-        with self._transaction() as connection:
+        with ledger_transaction(self.path) as connection:
             generation = self._require_mutable_generation(connection, generation_id)
             if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
                 raise RunLedgerStateError(
@@ -273,7 +272,7 @@ class RunLedgerFileMethods:
             raise ValueError("batch_size must be positive")
         last_path: str | None = None
         while True:
-            with self._connect() as connection:
+            with ledger_connection(self.path) as connection:
                 rows: list[FileStateRow]
                 if last_path is None:
                     rows = fetch_all(
@@ -315,7 +314,7 @@ class RunLedgerFileMethods:
             return {}
         unique_paths = tuple(dict.fromkeys(rel_paths))
         placeholders = ", ".join("?" for _path in unique_paths)
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             rows: list[FileStateRow] = fetch_all(
                 connection,
                 f"""
@@ -365,7 +364,7 @@ class RunLedgerFileMethods:
             return frozenset()
         unique_ids = tuple(dict.fromkeys(point_ids))
         placeholders = ", ".join("?" for _point_id in unique_ids)
-        with self._connect() as connection:
+        with ledger_connection(self.path) as connection:
             # Candidate IDs are the bounded input, so keep them as the outer
             # loop.  A regular JOIN lets SQLite start from every indexed file
             # state and probe the candidate set, making each store page scale
