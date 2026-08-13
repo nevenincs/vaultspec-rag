@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-27'
-body_hash: 'sha256:a1af50490c4294e1d2c4ce37f3cb2cc348c748191363b340810e1f4a24be8588'
+modified: '2026-08-13'
+body_hash: 'sha256:71e15c4a1866aef60d83a00a4ea840ffd0c526ce28a5a18ef142e1bb8cb746c3'
 tier: L3
 related:
   - '[[2026-07-21-large-index-resilience-adr]]'
@@ -35,7 +35,7 @@ service and its Qdrant child remain untouched until that gate is explicitly sati
 
 ## Steps
 
-### Wave `W01` - safety gates and bounded execution
+## Wave `W01` - safety gates and bounded execution
 
 Add enforceable resource, retry, and streaming limits first; downstream resume work depends on these bounds, and the large-root daemon must not restart after only this wave.
 
@@ -85,7 +85,7 @@ Prove low ceilings, bounded queue shutdown, and circuit behavior through product
 - [x] `W01.P04.S18` - Verify low RSS and CUDA ceilings stop production with typed outcomes and bounded cleanup; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 - [x] `W01.P04.S19` - Verify a blocked store consumer cannot trap producer queue waits or hold the writer lock beyond the deadline; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 
-### Wave `W02` - durable checkpoint and recovery
+## Wave `W02` - durable checkpoint and recovery
 
 Persist storage-confirmed generations and integrate resumable full and incremental finalization; completion of this wave is the minimum gate before any large-root restart.
 
@@ -121,7 +121,7 @@ Interrupt real work and prove one-unit replay, exact final state, and safe signa
 - [x] `W02.P08.S30` - Invalidate incompatible checkpoints on model, schema, content, membership, preprocessing, and configuration drift; `src/vaultspec_rag/tests/test_config_epoch.py`.
 - [x] `W02.P08.S31` - Interrupt each finalization phase and prove restart converges to exact point IDs and metadata; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
 
-### Wave `W03` - service operability and control integration
+## Wave `W03` - service operability and control integration
 
 Expose checkpoint and safety state through the service domain and coordinate the accepted job-control plan against the completed ledger contract.
 
@@ -148,7 +148,7 @@ Prove jobs, health, status, and logs expose the same resilience state and remedi
 
 - [x] `W03.P11.S39` - Verify controlled, interrupted, memory-limited, timed-out, and circuit-open jobs converge on one operator snapshot; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
 
-### Wave `W04` - support profiles and corpus acceptance
+## Wave `W04` - support profiles and corpus acceptance
 
 Define honest backend and hardware admission and prove the accepted incident corpus on the declared managed-service profile.
 
@@ -170,7 +170,7 @@ Measure bounded growth, concurrent search headroom, and completion at the incide
 - [x] `W04.P13.S46` - Prove concurrent search retains reserved GPU headroom while bounded indexing progresses; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 - [x] `W04.P13.S47` - Complete the 250872-chunk incident floor on the declared default managed-service profile; `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`.
 
-### Wave `W05` - system verification and review
+## Wave `W05` - system verification and review
 
 Run the complete resilience, concurrency, restart, and operability verification matrix and close with mandatory code review.
 
@@ -187,6 +187,42 @@ Run focused and full suites across indexing, watcher, storage, jobs, restart, an
 Review the finished system against both resilience and job-control ADRs and all GPU, storage, and test rules.
 
 - [x] `W05.P15.S51` - Perform the mandatory code review for checkpoint correctness, bounded resources, retry liveness, GPU discipline, operability, and test integrity; `.vault/audit/2026-07-21-large-index-resilience-audit.md`.
+
+## Wave `W06` - ledger concurrency and durable-state test hardening
+
+Restore the no-competing-global-lock constraint on the shared per-root ledger, and build the concurrency verification whose absence let that constraint lapse unobserved. Runs after W05 because it remediates shipped behaviour rather than completing the original build.
+
+### Phase `W06.P16` - ledger concurrency contract
+
+Open the shared per-root ledger in write-ahead logging mode, take full-database integrity verification off the per-run open path, and close every connection the ledger opens.
+
+- [x] `W06.P16.S60` - Open every run-ledger connection in write-ahead logging mode and prove the mode persists across reopen; `src/vaultspec_rag/indexer/_run_ledger_runtime.py`.
+- [x] `W06.P16.S61` - Apply the same connection contract to the route-migration journal; `src/vaultspec_rag/indexer/_route_migration.py`.
+- [x] `W06.P16.S62` - Move full-database integrity verification off the per-run open path onto an explicit maintenance and recovery entry point; `src/vaultspec_rag/indexer/_run_ledger_runtime.py`.
+- [x] `W06.P16.S63` - Replace transaction-scoped use of raw connections with one closing accessor and repoint every read site onto it; `src/vaultspec_rag/indexer/_run_ledger_runtime.py`.
+
+### Phase `W06.P17` - contention as a typed retryable outcome
+
+Classify a busy database as the transient condition it is, so lock contention costs a bounded retry instead of discarding a generation's storage-confirmed work.
+
+- [x] `W06.P17.S64` - Classify a busy or locked database as a typed transient condition rather than an unclassified failure; `src/vaultspec_rag/_job_errors.py`.
+- [x] `W06.P17.S65` - Retry a contended ledger transaction under a bounded policy instead of failing the generation and discarding storage-confirmed work; `src/vaultspec_rag/indexer/_run_ledger_runtime.py`.
+
+### Phase `W06.P18` - durable-state concurrency verification
+
+Add the overlapping-access coverage that can observe this defect class: real temporary databases on disk, production open paths, and cross-content-kind overlap on one root.
+
+- [x] `W06.P18.S66` - Prove a reader overlapping a committing writer on one real ledger file cannot fail that commit, and that the guard fails under a rollback journal; `src/vaultspec_rag/tests/test_index_run_ledger.py`.
+- [x] `W06.P18.S67` - Prove a document or vault run opening the shared ledger cannot fail a concurrent code run's commit on the same root; `src/vaultspec_rag/tests/integration/test_content_kind_restart.py`.
+- [x] `W06.P18.S68` - Exercise overlapping index and search load against a live service on a realistic corpus and assert no locked-database outcome; `src/vaultspec_rag/tests/integration/test_indexer_integration.py`.
+
+### Phase `W06.P19` - existing ledger suite hardening
+
+Rework ledger tests that assert only single-threaded behaviour and raise the fixtures to realistic ledger size, so the suite stops reporting coverage of a property it never exercises.
+
+- [x] `W06.P19.S69` - Rework the ledger suite's single-threaded stand-ins and remove assertions that cannot observe contention; `src/vaultspec_rag/tests/test_index_run_ledger.py`.
+- [x] `W06.P19.S70` - Raise ledger fixtures to a size that reaches the contention window, reusing the canonical corpus fixtures; `src/vaultspec_rag/tests/corpus.py`.
+- [x] `W06.P19.S71` - Guard at source level that the ledger connection helpers cannot ship without the concurrency contract; `src/vaultspec_rag/tests/test_adr_regression.py`.
 
 ## Parallelization
 

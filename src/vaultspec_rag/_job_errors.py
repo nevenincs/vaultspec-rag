@@ -91,6 +91,7 @@ class JobErrorKind(StrEnum):
     EXTRACTION_TERMINAL = "extract_terminal"
     DECODE_FAILED = "decode_failed"
     CHUNK_FAILED = "chunk_failed"
+    LEDGER_CONTENDED = "ledger_contended"
 
 
 _REMEDIATION: Final = MappingProxyType(
@@ -158,6 +159,11 @@ _REMEDIATION: Final = MappingProxyType(
             "the admitted content could not be chunked; inspect the parser failure "
             "and retry after correcting the content or parser support"
         ),
+        JobErrorKind.LEDGER_CONTENDED: (
+            "durable index bookkeeping stayed locked by concurrent indexing on this "
+            "root; storage-confirmed work is intact and the run resumes from its "
+            "last checkpoint on retry"
+        ),
     }
 )
 
@@ -205,6 +211,14 @@ DISK_FULL_MARKERS = (
 #: built from it classifies as ``disk_full`` and reaches the operator with
 #: the friendly remediation instead of falling through to ``other``.
 DISK_FULL_PHRASE = "No space left on device"
+#: SQLite's spellings for a lock another connection already holds. Both are
+#: transient by construction - the peer's transaction ends and the next attempt
+#: succeeds - so they must not fall through to ``other``, which reads as a
+#: terminal fault and discards a generation holding storage-confirmed work.
+LOCK_CONTENTION_MARKERS = (
+    "database is locked",
+    "database table is locked",
+)
 _TIMEOUT_MARKERS = ("timed out", "timeout")
 _UNAVAILABLE_MARKERS = (
     "connection refused",
@@ -212,6 +226,18 @@ _UNAVAILABLE_MARKERS = (
     "connection error",
     "failed to connect",
     "unavailable",
+)
+
+
+#: Legacy free-text marker sets in the order they are tested. Order is part of
+#: the contract, not incidental: a message can carry more than one marker, and
+#: the first match wins. Kept as a table rather than a chain of branches so
+#: adding a condition does not lengthen the classifier.
+_MARKER_CLASSIFICATIONS: Final = (
+    (DISK_FULL_MARKERS, JobErrorKind.DISK_FULL),
+    (LOCK_CONTENTION_MARKERS, JobErrorKind.LEDGER_CONTENDED),
+    (_TIMEOUT_MARKERS, JobErrorKind.TIMEOUT),
+    (_UNAVAILABLE_MARKERS, JobErrorKind.UNAVAILABLE),
 )
 
 
@@ -231,12 +257,9 @@ def classify_error_text(text: str | None) -> JobErrorKind | None:
             return JobErrorKind(token.strip())
         except ValueError:
             pass
-    if any(marker in lowered for marker in DISK_FULL_MARKERS):
-        return JobErrorKind.DISK_FULL
-    if any(marker in lowered for marker in _TIMEOUT_MARKERS):
-        return JobErrorKind.TIMEOUT
-    if any(marker in lowered for marker in _UNAVAILABLE_MARKERS):
-        return JobErrorKind.UNAVAILABLE
+    for markers, kind in _MARKER_CLASSIFICATIONS:
+        if any(marker in lowered for marker in markers):
+            return kind
     return JobErrorKind.OTHER
 
 

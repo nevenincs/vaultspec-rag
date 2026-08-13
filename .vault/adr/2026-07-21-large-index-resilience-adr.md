@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-27'
-body_hash: 'sha256:cf4d28616fba9180edecec78a86784fe1825a9fb0b8bafcbf49dec736b68d62a'
+modified: '2026-08-13'
+body_hash: 'sha256:62bf1179b8485235062a12599561b0ef818d106bb93b03d5d799e92aba8bb599'
 related:
   - "[[2026-07-21-large-index-resilience-research]]"
   - "[[2026-07-21-large-index-resilience-reference]]"
@@ -233,6 +233,26 @@ real Qdrant, exercises low production memory ceilings, proves resource release a
 compares memory high-water as corpus size doubles, and completes the 250,872-chunk incident
 corpus on the declared default profile.
 
+**D9 — Ledger concurrency contract.** D1 is amended. A root receives one shared ledger file partitioned by a source-type column, not one ledger per source type. Code, document, and vault runs on a root therefore commit through the same database, and the contract below is what keeps that sharing from becoming the competing global lock the constraints forbid.
+
+The ledger is opened in write-ahead logging mode. Under a rollback journal a commit must escalate its reserved lock to an exclusive one, which no concurrent reader can be holding; a read that outlasts the busy timeout then fails an unrelated writer's commit rather than merely delaying it. Write-ahead logging admits many readers alongside one writer, and the shared file depends on that property rather than on runs never overlapping.
+
+Opening the ledger is bounded work. Full-database integrity verification does not run on a run's open path. It belongs to an explicit maintenance or recovery entry point, because an unbounded scan taken on every open holds a read lock proportional to the total ledger size across every source sharing the file, and grows with corpus size exactly where resilience matters most.
+
+Every connection the ledger opens is closed on every path. A context manager that ends a transaction is not one that releases the handle, and accumulated live handles widen the window in which a writer can be blocked.
+
+Lock contention is a typed, retryable outcome. A busy database is a transient condition that costs a bounded retry, never an unclassified failure that discards a generation's storage-confirmed work and returns the run to the watcher as pending.
+
+**D10 — Durable-state concurrency verification.** The ledger's concurrency properties are proven by tests that run overlapping work against a real database file, because the defect class they cover is invisible to every test that opens the ledger once from one thread. A suite may hold high nominal coverage of a durable component and still assert nothing about the property that fails in production.
+
+Contention tests use a real temporary database on disk. An in-memory database has no file locking and cannot express the contract at all, and a shared handle exercises the driver rather than the lock. Each participant opens the ledger the way production opens it.
+
+The overlap under test is the one the shared file creates: a reader or an opening run of one content kind against a committing writer of another, on one root. Tests drive that through the canonical corpus, component, and live-service fixtures already in the suite rather than through bespoke scaffolding, so what they exercise stays the production path.
+
+Contention tests are guard tests and carry that obligation: each is shown to fail against the unfixed configuration before it is trusted, since a contention assertion that passes under a rollback journal is asserting nothing. Ledger size is part of the fixture, because the window in which a commit can be starved scales with the work a reader holds its lock across, and a ledger of a few rows never opens it.
+
+The same standard governs the durable-state layer generally: a component whose failure mode is concurrent access is verified under concurrent access, and a test that stands in for that with a single-threaded call over a fake is removed rather than counted.
+
 ## Rationale
 
 We will mutate storage first and checkpoint second because that provides the strongest recovery
@@ -280,3 +300,11 @@ corpus floor because the incident input is within the capability already promise
   fit; the outcome describes missing resources rather than unsupported corpus.
 - Benchmark-derived ceilings above the required floor remain operational data. Reducing the
   floor requires a superseding ADR.
+
+- The ledger's per-root file is shared by every content kind, so its concurrency mode is load-bearing rather than incidental: a rollback journal reintroduces a cross-kind global write lock that the constraints forbid.
+- Write-ahead logging adds a sidecar journal and a checkpointing lifecycle beside the ledger, and the managed per-root index-data area must tolerate both.
+- Ledger integrity verification moves off the hot open path, so corruption is detected at an explicit maintenance or recovery entry point rather than on every run open.
+- Contention becomes an observable retry rather than a failed generation, so operators see slower convergence under load instead of discarded storage-confirmed work.
+
+- Durable-state components gain concurrency tests that run real overlapping work against real database files, which are slower and more intricate than the single-threaded tests they join, and are the only tests that can observe this defect class.
+- Existing ledger tests that assert only single-threaded behaviour are strengthened or removed rather than counted as coverage of a concurrent component.

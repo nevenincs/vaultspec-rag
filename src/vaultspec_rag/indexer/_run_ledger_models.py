@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -13,15 +16,19 @@ from ._content_policy import ContentKind
 from ._file_state import validate_rel_path
 
 if TYPE_CHECKING:
-    import sqlite3
+    from collections.abc import Callable, Generator
 
 __all__ = [
     "INDEX_RUN_LEDGER_FILENAME",
+    "LEDGER_BUSY_TIMEOUT_SECONDS",
+    "LEDGER_CONTENTION_ATTEMPTS",
     "CommitUnit",
     "CommitUnitKind",
     "FinalizationPhase",
     "RunGeneration",
     "RunLedgerCompatibilityError",
+    "RunLedgerConcurrencyError",
+    "RunLedgerContentionError",
     "RunLedgerCorruptionError",
     "RunLedgerError",
     "RunLedgerIndexedPathCollisionError",
@@ -29,9 +36,15 @@ __all__ = [
     "RunOperation",
     "RunSignature",
     "RunTerminalState",
+    "column_int",
+    "column_text",
     "fetch_all",
     "fetch_one",
     "index_run_ledger_path",
+    "ledger_connection",
+    "ledger_transaction",
+    "open_ledger_connection",
+    "with_contention_retry",
 ]
 
 
@@ -62,6 +75,155 @@ def fetch_all[T](
     return connection.execute(sql, parameters).fetchall()
 
 
+#: How long a caller waits for a lock a peer already holds. ``sqlite3.connect``
+#: takes this as the busy budget directly, so it is set once at open rather than
+#: repeated as a PRAGMA. It is generous because the thing being waited on is
+#: another indexing thread's short commit, and delaying a caller is always
+#: cheaper than failing a generation that holds storage-confirmed work.
+LEDGER_BUSY_TIMEOUT_SECONDS: Final = 30.0
+
+
+def open_ledger_connection(path: Path) -> sqlite3.Connection:
+    """Open one ledger connection under the durable-state concurrency contract.
+
+    Write-ahead logging is the load-bearing part. Under a rollback journal a
+    commit must escalate its reserved lock to an exclusive one, and no reader
+    can be holding a shared lock at that moment; a read that outlasts the busy
+    budget therefore fails an unrelated writer's commit rather than merely
+    delaying it. A root's ledger is shared by every content kind, so that
+    starvation crosses content kinds: opening the ledger for a document run can
+    fail a code run's commit. Write-ahead logging admits many readers alongside
+    one writer and removes the escalation entirely.
+
+    The journal mode is a property of the database file, not of the connection,
+    so the first open converts the file and every later open reads the mode
+    back. A file that will not hold the conversion cannot honour the contract -
+    a network filesystem is the usual reason - and this raises rather than
+    returning a connection that would quietly reintroduce the starvation.
+    """
+    connection = sqlite3.connect(path, timeout=LEDGER_BUSY_TIMEOUT_SECONDS)
+    try:
+        connection.row_factory = sqlite3.Row
+        mode_row: sqlite3.Row | None = fetch_one(
+            connection, "PRAGMA journal_mode = WAL"
+        )
+        mode = column_text(mode_row, 0).lower() if mode_row is not None else "none"
+        if mode != "wal":
+            raise RunLedgerConcurrencyError(
+                f"run ledger {path} reports journal mode {mode!r} after requesting "
+                "write-ahead logging; concurrent indexing cannot be made safe on "
+                "this filesystem"
+            )
+        connection.execute("PRAGMA foreign_keys = ON")
+    except BaseException:
+        connection.close()
+        raise
+    return connection
+
+
+@contextmanager
+def ledger_connection(path: Path) -> Generator[sqlite3.Connection]:
+    """Yield a ledger connection and close it when the block ends.
+
+    ``sqlite3.Connection`` is itself a context manager, but that manager scopes
+    a *transaction*, not the handle: its ``__exit__`` commits or rolls back and
+    leaves the connection open. A read taken through it strands a live handle
+    until the collector happens to reclaim it. This scopes the handle, which is
+    what the call sites mean.
+    """
+    connection = open_ledger_connection(path)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+@contextmanager
+def ledger_transaction(path: Path) -> Generator[sqlite3.Connection]:
+    """Yield a connection inside one immediate transaction, then close it.
+
+    ``BEGIN IMMEDIATE`` takes the write lock up front rather than on first
+    write, so two writers resolve their ordering before either has done any
+    work instead of one discovering halfway through that it cannot proceed.
+    """
+    with ledger_connection(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+
+
+#: How many times an idempotent ledger write replays before it gives up. The
+#: busy budget already absorbs an ordinary peer commit, so reaching this at all
+#: means sustained contention rather than a single unlucky overlap.
+LEDGER_CONTENTION_ATTEMPTS: Final = 4
+
+#: Seconds to wait before each replay. Short and bounded: the caller is holding
+#: an indexing run open, and the condition either clears quickly or is not the
+#: transient one this retry is for.
+_CONTENTION_BACKOFF_SECONDS: Final = (0.1, 0.25, 0.5)
+
+
+def with_contention_retry[T](operation: Callable[[], T], *, path: Path) -> T:
+    """Run an idempotent ledger write, replaying it while a peer holds the lock.
+
+    Only safe for operations that are idempotent by construction, which the
+    ledger's write methods are: a contended transaction rolls back whole, and
+    an exact replay of an already-recorded unit is a no-op that reports zero
+    insertions. Replay therefore either lands the work or observes that it is
+    already landed.
+
+    The point is what happens on exhaustion. Contention is transient and the
+    run's storage-confirmed work is intact, so this raises a typed error whose
+    text carries SQLite's own wording. That keeps the condition classifiable as
+    retryable at the service boundary instead of falling through as an
+    unclassified fault that discards the generation.
+    """
+    last: sqlite3.OperationalError | None = None
+    for attempt in range(LEDGER_CONTENTION_ATTEMPTS):
+        try:
+            return operation()
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            last = exc
+            if attempt < len(_CONTENTION_BACKOFF_SECONDS):
+                time.sleep(_CONTENTION_BACKOFF_SECONDS[attempt])
+    raise RunLedgerContentionError(
+        f"run ledger {path} stayed locked across "
+        f"{LEDGER_CONTENTION_ATTEMPTS} attempts: {last}"
+    ) from last
+
+
+def column_text(row: sqlite3.Row, key: int | str) -> str:
+    """Return one SQLite result column as text, narrowed from the driver's Any.
+
+    ``sqlite3.Row.__getitem__`` is typed ``Any`` - the driver cannot know a
+    query's column affinity ahead of running it. Every PRAGMA and
+    schema-introspection read goes through this (or :func:`column_int`) rather
+    than trusting a bare ``str()``/``int()`` conversion of that ``Any``, which
+    would silently accept a value that merely stringifies instead of proving the
+    driver returned text.
+    """
+    value = row[key]
+    if not isinstance(value, str):
+        raise RunLedgerCorruptionError(f"run ledger result column {key!r} was not text")
+    return value
+
+
+def column_int(row: sqlite3.Row, key: int | str) -> int:
+    """Return one SQLite result column as an integer, narrowed from Any."""
+    value = row[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RunLedgerCorruptionError(
+            f"run ledger result column {key!r} was not an integer"
+        )
+    return value
+
+
 class GenerationRow(TypedDict):
     """The ``generations`` row columns :func:`RunLedger._generation_from_row` reads.
 
@@ -89,7 +251,6 @@ SCHEMA_VERSION: Final = 6
 FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
 INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
-_LEGACY_CODE_RUN_LEDGER_FILENAME: Final = "code_index_runs.sqlite3"
 REQUIRED_SCHEMA: Final = {
     "generations": frozenset(
         {
@@ -141,13 +302,8 @@ REQUIRED_SCHEMA: Final = {
 
 
 def index_run_ledger_path(data_root: Path) -> Path:
-    """Return one shared per-root ledger path with legacy continuity."""
-    root = Path(data_root)
-    current = root / INDEX_RUN_LEDGER_FILENAME
-    legacy = root / _LEGACY_CODE_RUN_LEDGER_FILENAME
-    if current.exists() or not legacy.is_file():
-        return current
-    return legacy
+    """Return the one shared per-root ledger path."""
+    return Path(data_root) / INDEX_RUN_LEDGER_FILENAME
 
 
 class RunLedgerError(RuntimeError):
@@ -160,6 +316,18 @@ class RunLedgerCompatibilityError(RunLedgerError):
 
 class RunLedgerCorruptionError(RunLedgerError):
     """SQLite reported corrupt durable state."""
+
+
+class RunLedgerConcurrencyError(RunLedgerError):
+    """The ledger file cannot honour the durable-state concurrency contract."""
+
+
+class RunLedgerContentionError(RunLedgerError):
+    """A peer held the ledger lock past this operation's retry budget.
+
+    Transient rather than terminal: the generation's storage-confirmed work is
+    untouched and the run resumes from its last checkpoint.
+    """
 
 
 class RunLedgerStateError(RunLedgerError):

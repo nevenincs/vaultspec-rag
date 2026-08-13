@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#code-document-index-boundary'
 date: '2026-07-21'
-modified: '2026-07-22'
-body_hash: 'sha256:21e261ccc303d74b0f01cf6a253b79703df34240f05ce321b822205b93207085'
+modified: '2026-08-13'
+body_hash: 'sha256:ab5946a50400a55cfd070d2eeb9fc636d4bbe9f3998cc26730d637a7e491d71c'
 related:
   - "[[2026-07-21-code-document-index-boundary-research]]"
   - '[[2026-07-21-code-document-index-boundary-reference]]'
@@ -208,6 +208,10 @@ The managed code profile retains its accepted numeric floor but must prove it wi
 true source. A separately named document profile declares independent aggregate source-byte,
 extracted-byte, chunk, queue, RSS, and CUDA limits. The mixed workload is not a code acceptance
 fixture.
+
+**D9 - Shared ledger file, partitioned by content kind.** The dedicated document ledger source D6 restores is a logical partition, not a separate database file. A root keeps one ledger whose generations, commit units, and file states are keyed by content kind, so document, code, and vault runs isolate their manifests, publication state, and recovery from one another while sharing storage.
+
+Sharing a file means sharing a write lock, so the isolation D6 promises holds only while that file admits concurrent readers alongside a writer. That property is the ledger concurrency contract in the large-index resilience decision record, and this decision depends on it. Without it a document run's ledger open can fail a code run's commit, which is cross-kind interference of precisely the sort the content-kind boundary exists to prevent, arriving through the durable-state layer rather than through admission or storage.
 
 ## Rationale
 

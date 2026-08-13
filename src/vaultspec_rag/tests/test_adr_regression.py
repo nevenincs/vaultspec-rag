@@ -572,6 +572,69 @@ class TestGeometryReconcileIsNonDestructive:
         assert store_schema.SERVER_SEGMENT_NUMBER == 2
 
 
+class TestLedgerConcurrencyContract:
+    """ADR: the shared per-root ledger's durable-state concurrency contract.
+
+    The behavioural guards for this live in the run-ledger suite and need
+    real threads and a real database file. These are the cheap structural
+    backstops: they catch the contract being edited out of the source, which
+    is how it was lost the first time - a formatting-level change to one
+    connection helper, with every existing test still green.
+    """
+
+    def test_every_ledger_connection_requests_write_ahead_logging(self) -> None:
+        """One opener, and it must ask for WAL and verify it got it.
+
+        A second connection helper is the real risk here: the ledger and the
+        route-migration journal are separate databases, and a copied opener
+        that skipped this line would reintroduce the starvation on one of them
+        while the other stayed correct.
+        """
+        import inspect
+
+        from ..indexer import _route_migration, _run_ledger_models
+
+        source = inspect.getsource(_run_ledger_models.open_ledger_connection)
+        assert "journal_mode = WAL" in source
+        assert 'mode != "wal"' in source, (
+            "the opener must verify the mode took effect, not just request it"
+        )
+
+        for module in (_run_ledger_models, _route_migration):
+            assert "sqlite3.connect(" not in inspect.getsource(module).replace(
+                inspect.getsource(_run_ledger_models.open_ledger_connection), ""
+            ), (
+                f"{module.__name__} opens SQLite outside the shared opener, "
+                "so that connection escapes the concurrency contract"
+            )
+
+    def test_opening_the_ledger_does_not_scan_the_whole_database(self) -> None:
+        """A full-database scan on open is what starved commits cross-kind.
+
+        ``quick_check`` reads every page in a file shared by every content
+        kind on the root, and it held a read lock for that whole time. It
+        belongs to deliberate recovery, not to opening.
+        """
+        import inspect
+
+        from ..indexer._run_ledger_runtime import RunLedger
+
+        assert "quick_check" not in inspect.getsource(RunLedger.__init__)
+        assert "quick_check" in inspect.getsource(RunLedger.verify_integrity)
+
+    def test_lock_contention_is_classified_as_its_own_transient_kind(self) -> None:
+        """Contention must never fall through to the terminal ``other`` bucket.
+
+        That fallthrough is what turned a transient lock into a discarded
+        generation holding storage-confirmed work.
+        """
+        from .._job_errors import JobErrorKind, classify_error_text, remediation
+
+        for text in ("database is locked", "database table is locked"):
+            assert classify_error_text(text) is JobErrorKind.LEDGER_CONTENDED
+        assert remediation(JobErrorKind.LEDGER_CONTENDED)
+
+
 class TestJobErrorTaxonomyStaysLight:
     """The shared job-failure taxonomy must stay torch- and CLI-free.
 
