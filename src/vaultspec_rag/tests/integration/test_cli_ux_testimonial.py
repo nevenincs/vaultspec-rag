@@ -17,7 +17,6 @@ Personas
 from __future__ import annotations
 
 import re
-import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -31,7 +30,6 @@ if TYPE_CHECKING:
 
     from pytest import TempPathFactory
 
-pytestmark = [pytest.mark.integration]
 
 runner = CliRunner()
 
@@ -145,8 +143,7 @@ class TestFirstTimeIndexer:
     into the help output.
     """
 
-    pytestmark: typing.ClassVar = [pytest.mark.integration]
-
+    @pytest.mark.integration
     def test_persona(self, tmp_path: Path) -> None:
         observations = _observe_first_time_indexer(tmp_path)
         _assert_observations_succeeded(observations)
@@ -172,8 +169,7 @@ class TestSearchPowerUser:
     ranked output.
     """
 
-    pytestmark: typing.ClassVar = [pytest.mark.integration]
-
+    @pytest.mark.integration
     def test_search_help(self) -> None:
         """``search --help`` lists filters plainly and contains no leaked tokens."""
         r = runner.invoke(app, ["search", "--help"])
@@ -320,10 +316,9 @@ class TestServiceOperator:
     and are marked ``subprocess_gpu``.
     """
 
-    pytestmark: typing.ClassVar = [pytest.mark.integration]
-
     # -- workspace-free: no live daemon required ----------------------------
 
+    @pytest.mark.integration
     def test_server_service_is_invalid(self) -> None:
         """``server service`` must no longer be a valid command path."""
         r = runner.invoke(app, ["server", "service", "--help"])
@@ -336,6 +331,7 @@ class TestServiceOperator:
             f"Expected 'No such command' error for 'server service':\n{r.output}"
         )
 
+    @pytest.mark.integration
     def test_server_status_no_service(self, tmp_path: Path) -> None:
         """``server status`` exits 3 and reports 'stopped' when no daemon is running."""
         from ._helpers import _service_env
@@ -358,6 +354,7 @@ class TestServiceOperator:
             f"Expected 'stopped'/'missing' in status output:\n{obs.output}"
         )
 
+    @pytest.mark.integration
     def test_server_logs_no_service(self, tmp_path: Path) -> None:
         """``server logs`` reads retained source groups without a daemon."""
         from ._helpers import _service_env
@@ -378,6 +375,7 @@ class TestServiceOperator:
         )
         assert obs.output == "[service]\n[qdrant]\n"
 
+    @pytest.mark.integration
     def test_server_jobs_no_service(self, tmp_path: Path) -> None:
         """``server jobs`` exits 3 with a remediation message when down."""
         from ._helpers import _service_env
@@ -398,6 +396,7 @@ class TestServiceOperator:
         )
         assert obs.output.strip(), "Expected non-empty output (remediation hint)"
 
+    @pytest.mark.integration
     def test_server_updates_status_no_service(self, tmp_path: Path) -> None:
         """``server updates status`` exits 3 when no daemon is running."""
         from ._helpers import _service_env
@@ -417,6 +416,7 @@ class TestServiceOperator:
             f"Expected exit 3, got {obs.exit_code}:\n{obs.output}"
         )
 
+    @pytest.mark.integration
     def test_server_projects_list_no_service(self, tmp_path: Path) -> None:
         """``server projects list`` exits 3 when no daemon is running."""
         from ._helpers import _service_env

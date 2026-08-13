@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.subprocess_gpu]
 
 
 async def _mcp_session_call(
@@ -176,8 +176,6 @@ def _assert_isolation_search_results(
     )
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Spawn service, verify health, terminate, verify exit."""
     with _service_env(tmp_path):
@@ -204,8 +202,6 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
         assert not pid_alive(pid)
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 @pytest.mark.timeout(600)
 def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     tmp_path: Path,
@@ -316,8 +312,6 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     )
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 @pytest.mark.timeout(600)
 def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
     tmp_path: Path,
@@ -421,8 +415,6 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         assert search.status_code == 200, search.text
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Second start on the same port reports 'already in use'."""
     with _service_env(tmp_path):
@@ -443,8 +435,6 @@ def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -
         )
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 def test_stale_pid_recovery(tmp_path: Path) -> None:
     """Service start recovers from a stale PID in the status file."""
     with _service_env(tmp_path):
@@ -488,8 +478,6 @@ def test_stale_pid_recovery(tmp_path: Path) -> None:
                 _wait_for_exit(pid)
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 def test_stop_when_not_running(tmp_path: Path) -> None:
     """Stopping when no service is running reports appropriately."""
     with _service_env(tmp_path):
@@ -504,8 +492,6 @@ def test_stop_when_not_running(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     """Stop a running service via CLI and verify cleanup."""
     with _service_env(tmp_path):
@@ -529,8 +515,6 @@ def test_stop_running_service(request: pytest.FixtureRequest, tmp_path: Path) ->
         assert not _status_file().exists(), "Status file should be removed after stop"
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 def test_stop_running_service_by_port_without_status_file(
     request: pytest.FixtureRequest, tmp_path: Path
 ) -> None:
@@ -568,8 +552,6 @@ def test_stop_running_service_by_port_without_status_file(
         assert not pid_alive(serving_pid)
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 def test_service_status_running(
     request: pytest.FixtureRequest,
     tmp_path: Path,
@@ -627,8 +609,6 @@ def test_service_status_running(
         assert "next_action" in operational
 
 
-@pytest.mark.integration
-@pytest.mark.subprocess_gpu
 def test_multi_project_search_isolation(
     request: pytest.FixtureRequest,
     tmp_path: Path,

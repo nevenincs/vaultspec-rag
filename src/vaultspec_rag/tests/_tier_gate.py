@@ -82,6 +82,9 @@ GPU_MARKERS = frozenset({"integration", "quality", "performance", "robustness"})
 
 #: CLI subprocess tests that load their own GPU models. These must NOT
 #: co-schedule with GPU_MARKERS tests - combined VRAM exceeds 16 GB on RTX 4080.
+#: Enforced twice, because stating it beside the marker is what failed: a test
+#: may not DECLARE this alongside a GPU_MARKERS tier, and no selection may hold
+#: both. The first keeps the second from having anything to catch.
 SUBPROCESS_GPU = "subprocess_gpu"
 
 #: The lane that needs no real device.
@@ -112,18 +115,22 @@ def selected_tiers(items: Sequence[TieredItem]) -> set[str]:
     return tiers
 
 
-def tier_violations(items: Sequence[TieredItem]) -> tuple[list[str], list[str]]:
-    """Return node ids that declare no tier, and those that declare two lanes.
+def tier_violations(
+    items: Sequence[TieredItem],
+) -> tuple[list[str], list[str], list[str]]:
+    """Return node ids that declare no tier, two lanes, or two device tiers.
 
     Args:
         items: The collected test items.
 
     Returns:
-        ``(untiered, contradictory)`` - tests carrying no tier marker, and
-        tests carrying the fast tier alongside a slow one.
+        ``(untiered, contradictory, both_devices)`` - tests carrying no tier
+        marker, tests carrying the fast tier alongside a slow one, and tests
+        declaring the subprocess tier alongside a resident-model one.
     """
     untiered: list[str] = []
     contradictory: list[str] = []
+    both_devices: list[str] = []
     for item in items:
         names = _marker_names(item)
         nodeid = item.nodeid
@@ -131,7 +138,9 @@ def tier_violations(items: Sequence[TieredItem]) -> tuple[list[str], list[str]]:
             untiered.append(nodeid)
         elif FAST_TIER in names and names & SLOW_TIERS:
             contradictory.append(nodeid)
-    return untiered, contradictory
+        elif SUBPROCESS_GPU in names and names & GPU_MARKERS:
+            both_devices.append(nodeid)
+    return untiered, contradictory, both_devices
 
 
 def _listing(ids: list[str]) -> str:
@@ -141,9 +150,23 @@ def _listing(ids: list[str]) -> str:
     return f"  {shown}" + (f"\n  ... and {rest} more" if rest > 0 else "")
 
 
-def tier_failure_message(untiered: list[str], contradictory: list[str]) -> str:
+def tier_failure_message(
+    untiered: list[str], contradictory: list[str], both_devices: list[str]
+) -> str:
     """Compose the operator-facing explanation for a tier violation."""
     parts: list[str] = []
+    if both_devices:
+        parts.append(
+            f"{len(both_devices)} test(s) declare '{SUBPROCESS_GPU}' alongside a "
+            f"resident-model tier:\n{_listing(both_devices)}\n\nA test that "
+            "spawns a service loading its own models belongs to the subprocess "
+            "tier alone. Declaring a resident tier as well puts it in both "
+            "lanes, and the lane that selects it by that second declaration "
+            "cannot run it - the two exceed the card. This is usually inherited "
+            "rather than written: a module-level `pytestmark` applies to every "
+            "test in the module and pytest ADDS it to the decorator. Scope the "
+            "default, or drop it and let each test name its own tier."
+        )
     if untiered:
         parts.append(
             f"{len(untiered)} test(s) declare no tier marker:\n{_listing(untiered)}"
@@ -169,9 +192,11 @@ def enforce_tiers(items: Sequence[TieredItem]) -> None:
     Raises:
         pytest.UsageError: On the first collection carrying a violation.
     """
-    untiered, contradictory = tier_violations(items)
-    if untiered or contradictory:
-        raise pytest.UsageError(tier_failure_message(untiered, contradictory))
+    untiered, contradictory, both_devices = tier_violations(items)
+    if untiered or contradictory or both_devices:
+        raise pytest.UsageError(
+            tier_failure_message(untiered, contradictory, both_devices)
+        )
 
 
 class _TierMatcher:
@@ -259,16 +284,16 @@ def coscheduled_device_tiers(
     """Split *items* into the subprocess tier and the resident-model tier.
 
     Read off what was actually selected rather than modelled from the marker
-    expression, because the expression cannot answer it. Most subprocess tests
-    inherit a module default naming a resident tier too, so probing one tier at
-    a time reports no hazard for the selections that have one, and probing
-    every combination that could exist reports a hazard for selections whose
-    combinations do not - which would refuse the performance lane to protect it
-    from tests it never selects.
+    expression, because the expression does not know which tests exist. Probing
+    every tier combination that could exist refuses the performance lane to
+    protect it from subprocess tests it never selects, and probing one tier at
+    a time misses any test declaring two - which is what the suite looked like
+    when this was written, before those declarations were untangled.
 
-    A test declaring both belongs to the subprocess side: what it does is spawn
-    a service that loads its own models, and the second declaration is a
-    module default it never asked for.
+    A test declaring both is still counted on the subprocess side rather than
+    ignored: what it does is spawn a service that loads its own models. The
+    declaration gate refuses that combination separately, so the two checks
+    cannot disagree about which lane such a test belongs to.
 
     Returns:
         ``(subprocess_ids, resident_ids)`` - the selected node ids on each

@@ -68,7 +68,7 @@ class TestTierClassification:
         from ``tier_violations``. Every unmarked test would then be accepted and
         would run in the fast lane on hardware that cannot satisfy it.
         """
-        untiered, contradictory = tier_violations([_FakeItem("t.py::test_nothing")])
+        untiered, contradictory, _ = tier_violations([_FakeItem("t.py::test_nothing")])
 
         assert untiered == ["t.py::test_nothing"]
         assert contradictory == []
@@ -81,7 +81,7 @@ class TestTierClassification:
         test belongs to, and accepting them would let an unclassified test pass
         merely because it declared a timeout.
         """
-        untiered, _ = tier_violations(
+        untiered, _, _ = tier_violations(
             [_FakeItem("t.py::test_slow", "timeout", "xdist_group")]
         )
 
@@ -101,7 +101,7 @@ class TestTierClassification:
     )
     def test_each_declared_tier_satisfies_the_gate(self, tier: str) -> None:
         """Every registered tier must be accepted, or the gate blocks real work."""
-        untiered, contradictory = tier_violations([_FakeItem("t.py::test_x", tier)])
+        untiered, contradictory, _ = tier_violations([_FakeItem("t.py::test_x", tier)])
 
         assert untiered == []
         assert contradictory == []
@@ -114,25 +114,45 @@ class TestTierClassification:
         would then silently add ``unit`` to GPU tests in that module, and
         ``-m unit`` would schedule them on a machine with no device.
         """
-        _, contradictory = tier_violations(
+        _, contradictory, _ = tier_violations(
             [_FakeItem("t.py::test_gpu", "unit", "integration")]
         )
 
         assert contradictory == ["t.py::test_gpu"]
 
-    def test_two_slow_tiers_together_are_allowed(self) -> None:
-        """integration+subprocess_gpu is a real, intended combination.
+    def test_two_device_tiers_together_are_reported(self) -> None:
+        """The pairing this suite carried for a long time, now refused.
 
-        Mutation it catches: rejecting any test carrying more than one tier.
-        That would fail the existing GPU suite, which deliberately pairs
-        ``integration`` with ``subprocess_gpu`` and with ``quality``.
+        It was read as intended and was not: a test that spawns a service
+        loading its own models belongs to the subprocess tier alone, and the
+        resident tier came from a module default it never asked for. The
+        result was that ``-m integration`` selected 67 subprocess tests, which
+        one card cannot run.
+
+        Mutation it catches: dropping the ``SUBPROCESS_GPU in names and names &
+        GPU_MARKERS`` branch. The declarations would drift back one module at a
+        time, and nothing would say so until a lane wedged.
         """
-        untiered, contradictory = tier_violations(
+        _, _, both_devices = tier_violations(
             [_FakeItem("t.py::test_gpu", "integration", "subprocess_gpu")]
+        )
+
+        assert both_devices == ["t.py::test_gpu"]
+
+    def test_two_resident_tiers_together_are_allowed(self) -> None:
+        """Resident tiers still combine; they share one process and one model.
+
+        Mutation it catches: widening the device-tier branch to any two slow
+        tiers. ``integration`` with ``quality`` is a real pairing in this
+        suite, and refusing it would fail collection outright.
+        """
+        untiered, contradictory, both_devices = tier_violations(
+            [_FakeItem("t.py::test_gpu", "integration", "quality")]
         )
 
         assert untiered == []
         assert contradictory == []
+        assert both_devices == []
 
 
 class TestGateRefusesTheRun:
