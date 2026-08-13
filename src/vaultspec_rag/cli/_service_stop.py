@@ -645,6 +645,56 @@ def _guard_unconfirmed_port_holder(
     )
 
 
+def _discovery_pointer_pid() -> int:
+    """Return the pid the discovery pointer names, or zero when it names none."""
+    status = read_service_status()
+    if status is None:
+        return 0
+    raw = status.get("pid")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    return 0
+
+
+def _protected_pids(matched: dict[int, int], anchors: set[int]) -> set[int]:
+    """Return the anchors plus each anchor's matched shim parent and children.
+
+    A venv shim makes every live daemon a launcher and worker PAIR, so
+    protecting the anchor pid alone would leave its partner reapable and a live
+    singleton's launcher would be taken for an orphan.
+    """
+    protected = set(anchors)
+    for pid, ppid in matched.items():
+        if pid in anchors and ppid in matched:
+            protected.add(ppid)
+        if ppid in anchors:
+            protected.add(pid)
+    return protected
+
+
+def _reap_unprotected(
+    matched: dict[int, int], protected: set[int]
+) -> tuple[list[int], list[int], bool]:
+    """Terminate every matched daemon outside *protected*, confirming each.
+
+    Returns:
+        ``(reaped, survivors, signal_denied)`` - those confirmed gone, those
+        still running, and whether the OS refused a termination outright.
+    """
+    reaped: list[int] = []
+    survivors: list[int] = []
+    denied = False
+    for pid in matched:
+        if pid in protected or not _is_our_service(pid):
+            continue
+        # Discovered pid, not one we spawned: force-kill by pid, never a
+        # console-group CTRL_BREAK that could reach the operator's own console.
+        result = _terminate_and_confirm(pid, console_group_signal=False)
+        denied = denied or result.signal_denied
+        (reaped if _pid_terminated(pid) else survivors).append(pid)
+    return reaped, survivors, denied
+
+
 def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     """Reap race-loser daemons for the machine singleton on *port*.
 
@@ -699,12 +749,7 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
             port=port,
         )
     lock_holder = lock_probe.holder_pid
-    status = read_service_status()
-    pointer_pid = 0
-    if status is not None:
-        raw = status.get("pid")
-        if isinstance(raw, int) and not isinstance(raw, bool):
-            pointer_pid = raw
+    pointer_pid = _discovery_pointer_pid()
 
     # The pid actually bound to and answering /health on the port is the
     # authoritative "this daemon owns the port" signal: an isolated-config daemon
@@ -717,24 +762,9 @@ def _reap_orphan_daemons(port: int, json_mode: bool) -> None:
     _guard_unconfirmed_port_holder(port, serving, json_mode)
 
     anchors = {os.getpid(), lock_holder, pointer_pid, serving_pid}
-    protected = set(anchors)
-    for pid, ppid in matched.items():
-        if pid in anchors and ppid in matched:
-            protected.add(ppid)
-        if ppid in anchors:
-            protected.add(pid)
-
-    reaped: list[int] = []
-    survivors: list[int] = []
-    denied = False
-    for pid in matched:
-        if pid in protected or not _is_our_service(pid):
-            continue
-        # Discovered pid, not one we spawned: force-kill by pid, never a
-        # console-group CTRL_BREAK that could reach the operator's own console.
-        result = _terminate_and_confirm(pid, console_group_signal=False)
-        denied = denied or result.signal_denied
-        (reaped if _pid_terminated(pid) else survivors).append(pid)
+    reaped, survivors, denied = _reap_unprotected(
+        matched, _protected_pids(matched, anchors)
+    )
 
     if survivors:
         cause = (
