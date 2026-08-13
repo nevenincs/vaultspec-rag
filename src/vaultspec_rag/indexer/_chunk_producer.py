@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from ._chunk_worker import FileChunkResult
     from ._preprocess_config import PreprocessContext, PreprocessRule
     from ._run_policy import RunPolicy
-    from ._streaming import CodeFileSegment
+    from ._streaming_types import CodeFileSegment
 
 logger = logging.getLogger(__name__)
 

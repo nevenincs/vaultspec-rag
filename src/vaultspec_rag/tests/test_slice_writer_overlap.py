@@ -27,11 +27,11 @@ if TYPE_CHECKING:
 from ..indexer._streaming import (
     StoreWriteTask,
     UnsettledStoreWriterError,
-    VaultStreamRequest,
     _release_cuda_cache,
     _SliceWriter,
     _stream_encode_and_upsert_vault,
 )
+from ..indexer._streaming_types import VaultStreamRequest
 from ..job_control import CancelRequested
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore

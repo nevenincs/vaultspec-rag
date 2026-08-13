@@ -33,11 +33,8 @@ from ..indexer._consumer_pipeline import (
     CodePipelineLimits,
     _WeightedConsumerRun,
 )
-from ..indexer._streaming import (
-    CodeFileSegment,
-    EncodeBucketReporter,
-    WeightedCodeSlice,
-)
+from ..indexer._streaming import EncodeBucketReporter
+from ..indexer._streaming_types import CodeFileSegment, WeightedCodeSlice
 from ..job_models import JobSource
 from ..jobs import JobProgressReporter, record_start, reset, snapshot
 from ..memory_probe import MemoryProbe

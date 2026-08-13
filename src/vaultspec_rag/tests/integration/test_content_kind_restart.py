@@ -277,7 +277,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
     )
     from ...indexer._run_ledger_models import RunOperation, RunTerminalState
     from ...indexer._run_policy import RunPolicy
-    from ...indexer._streaming import CodeFileSegment
+    from ...indexer._streaming_types import CodeFileSegment
 
     policy = resolve_index_policy(
         tmp_path,

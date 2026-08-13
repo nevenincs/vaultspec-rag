@@ -37,7 +37,8 @@ from ._index_lifecycle import (
     incremental_mode,
     run_index_lifecycle,
 )
-from ._streaming import VaultStreamRequest, _stream_encode_and_upsert_vault
+from ._streaming import _stream_encode_and_upsert_vault
+from ._streaming_types import VaultStreamRequest
 from ._vault_fingerprint import VaultDelta
 from ._vault_meta import (
     VAULT_CONTENT_EPOCH_KEY,

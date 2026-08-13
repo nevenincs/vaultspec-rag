@@ -46,13 +46,9 @@ from ._run_ledger_models import (
 )
 from ._run_policy import RunPolicy
 from ._scan_cache import MembershipScanCache
-from ._streaming import (
-    DocumentSliceRequest,
-    DocumentSliceStreamRequest,
-    _SliceWriter,
-    encode_and_upsert_document_slice,
-    iter_weighted_document_slices,
-)
+from ._slicing import iter_weighted_document_slices
+from ._streaming import _SliceWriter, encode_and_upsert_document_slice
+from ._streaming_types import DocumentSliceRequest, DocumentSliceStreamRequest
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:

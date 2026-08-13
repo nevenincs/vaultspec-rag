@@ -226,7 +226,7 @@ class TestIncrementalPublicationRecovery:
         """Control before finalization leaves checkpointed storage intact."""
         from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
         from ...indexer._run_ledger_models import RunOperation
-        from ...indexer._streaming import CodeFileSegment
+        from ...indexer._streaming_types import CodeFileSegment
         from ...job_control import CancelRequested, RunControlToken
 
         indexer = code_project["code_indexer"]
@@ -300,11 +300,8 @@ class TestIncrementalPublicationRecovery:
         from ...indexer import _chunk_worker
         from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
         from ...indexer._run_ledger_models import RunOperation, RunTerminalState
-        from ...indexer._streaming import (
-            CodeFileSegment,
-            CodeFileSegmentRequest,
-            iter_code_file_segments,
-        )
+        from ...indexer._slicing import iter_code_file_segments
+        from ...indexer._streaming_types import CodeFileSegment, CodeFileSegmentRequest
         from ...job_control import RunControlToken
 
         indexer = code_project["code_indexer"]

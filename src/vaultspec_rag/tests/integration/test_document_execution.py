@@ -45,10 +45,8 @@ from ...indexer._preprocess_config import (
 )
 from ...indexer._preprocess_runner import run_preprocessor
 from ...indexer._run_policy import RunPolicy
-from ...indexer._streaming import (
-    DocumentSliceStreamRequest,
-    iter_weighted_document_slices,
-)
+from ...indexer._slicing import iter_weighted_document_slices
+from ...indexer._streaming_types import DocumentSliceStreamRequest
 from ...job_control import CancelRequested, RunControlToken
 from ...job_dispatch import _AttemptDispatch, _run_indexing_attempt
 from ...job_manager.manager import JobManager
