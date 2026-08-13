@@ -1089,3 +1089,36 @@ def test_a_matching_envelope_is_left_to_the_transition_check() -> None:
 
     _reject_unrecognised_quiesce(None, verb="resume")
     _reject_unrecognised_quiesce({"ok": True}, verb="resume")
+
+
+def test_a_busy_service_is_told_to_wait_not_that_pause_failed() -> None:
+    """A draining service and a broken one must not read the same.
+
+    "The service did not acknowledge borrower pause" is true of every refusal,
+    so it says nothing about the one that actually happens: the service was
+    mid-index and could not hand over the device yet. That clears on its own,
+    but the flat message gives the reader no way to tell it apart from a fault,
+    and the envelope already carries the answer.
+    """
+    from ..cli._gpu_lease import _pause_refusal_message
+
+    busy = _pause_refusal_message(
+        {"ok": True, "quiesce": _envelope(state="running", active_compute_tickets=3)}
+    )
+    assert "3 compute tickets" in busy
+    assert "retry" in busy
+
+    one = _pause_refusal_message(
+        {"ok": True, "quiesce": _envelope(active_compute_tickets=1)}
+    )
+    assert "1 compute ticket" in one
+
+    stuck = _pause_refusal_message(
+        {"ok": True, "quiesce": _envelope(state="pausing", active_compute_tickets=0)}
+    )
+    assert "'pausing'" in stuck
+
+    assert (
+        _pause_refusal_message(None)
+        == "The service did not acknowledge borrower pause."
+    )
