@@ -331,23 +331,19 @@ enable = ["C0302", "R0902", "R0904", "R0916"]
 # module the gate could never see and left ~450 lines of unused headroom over
 # the real subject. Count what the gate counts.
 #
-# Census (2026-07-27, 203 production modules):
+# Census (2026-08-14, 275 production modules):
 #
-#     over 3000:   0        <- the enforced ceiling; the tree meets it
-#     over 2500:   1
-#     over 2000:   4
-#     over 1500:   7
+#     over 1500:   0
 #     over 1200:  20
-#     over 1000:  28
-#     over  500:  60        <- where modules should settle
+#     over 1000:  27
+#     over  500:  85        <- where modules should settle
 #
-# Longest production module: job_manager.py at 2955 lines.
+# Longest production module: vaultspec_rag/server/_routes.py at 1478 lines.
 #
-# Test modules are NOT gated on length; the longest is 3942 lines. That is a
-# deliberate scope choice, but it does mean test growth is invisible here.
-# `just health` ranks the whole tree.
+# Test modules are NOT gated on length; `ignore-paths` above excludes them, so
+# the census counts what the gate counts. `just health` ranks the whole tree.
 [tool.pylint.format]
-max-module-lines = 3000
+max-module-lines = 1500
 
 # BASELINE-CALIBRATED (captured 2026-07-27): each sits at the current worst
 # offender, so the gate is green today and can only be ratcheted DOWN.
