@@ -4,7 +4,7 @@ tags:
   - '#maintainability-remediation'
 date: '2026-07-27'
 modified: '2026-08-14'
-body_hash: 'sha256:5b208955cafc89d7b69a71f0e35a98b0702040fd57d5855d2dc8e7d44f99e642'
+body_hash: 'sha256:55b38405f9f865fc52dbfe9aa084f5b113ba6c4a1e15e9159119207080d64c07'
 tier: L3
 related:
   - '[[2026-06-01-module-split-adr]]'
@@ -97,7 +97,7 @@ Every surviving alias, pass-through export, and semantically duplicated declarat
 - [x] `W04.P08.S16` - Sweep the package for aliases that rename an existing binding, and repoint their callers at the original; `src/vaultspec_rag/cli/_app.py, src/vaultspec_rag/serviceclient/_discovery.py`.
 - [x] `W04.P08.S17` - Search by meaning for declarations that restate logic owned elsewhere, and collapse each onto its owner; `src/vaultspec_rag/`.
 - [x] `W04.P08.S18` - Confirm no non-facade module exports a name it does not define, and that the guard proves it; `src/vaultspec_rag/tests/test_no_reexports.py`.
-- [ ] `W04.P08.S21` - Make the test helpers that now cross module boundaries public, after establishing why narrowing the shared harness import destabilises distributed workers; `src/vaultspec_rag/tests/_jobs_tui_harness.py, src/vaultspec_rag/tests/test_cli_jobs_tui*.py`.
+- [x] `W04.P08.S21` - Make the test helpers that now cross module boundaries public, after establishing why narrowing the shared harness import destabilises distributed workers; `src/vaultspec_rag/tests/_jobs_tui_harness.py, src/vaultspec_rag/tests/test_cli_jobs_tui*.py`.
 
 ### Phase `W04.P09` - gate the regressions a split can introduce
 
