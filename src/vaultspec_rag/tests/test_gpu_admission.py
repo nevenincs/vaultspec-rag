@@ -29,19 +29,23 @@ import pytest
 
 from .._fd_lock import lock_fd_exclusive, unlock_fd
 from .._gpu_admission import (
+    DEVICE_CONTENDED_MESSAGE,
     REASON_BELOW_FLOOR,
+    REASON_DEVICE_UNREADABLE,
     REASON_LOAD_IN_PROGRESS,
     REASON_NO_CUDA,
     REASON_TORCH_ABSENT,
+    UNREADABLE_ADMISSION_LIMIT,
     DeviceAdmission,
     admission_from_reading,
     admit_gpu_load,
     clear_gpu_admission_latch,
-    device_contended_message,
     device_load_reading,
     device_load_window,
     device_load_wire,
+    device_refusal_message,
     load_window_lock_path,
+    observe_unreadable_streak,
 )
 from .._units import bytes_to_mib
 from ..config._settings import rag_default
@@ -93,16 +97,29 @@ _CROWDED = CudaDeviceMemory(
 )
 
 #: A present device whose driver answered presence and then refused the memory
-#: query. The verdict it produces is admitted, and is the one verdict no floor
-#: was consulted for - which is what the latch has to tell apart. It carries no
-#: device size on purpose: nothing asserted about the latch depends on one, and
-#: a figure here would tie this guard to a particular card without buying it
-#: anything.
+#: query. Its verdict is the one no floor was consulted for - which is what the
+#: latch has to tell apart - and, below the streak limit, an admitted one. It
+#: carries no device size on purpose: nothing asserted about the latch depends
+#: on one, and a figure here would tie this guard to a particular card without
+#: buying it anything.
 _UNREADABLE = CudaDeviceMemory(
     torch_present=True,
     cuda_present=True,
     free_mib=None,
     total_mib=None,
+    own_reserved_mib=None,
+)
+
+#: The same refused query on a device that did report its size. Total memory is
+#: readable through a different call than free memory, so a driver can answer
+#: one and refuse the other; the predicate tests use this reading so they are
+#: exercising an absent FREE figure specifically rather than a reading that is
+#: empty in every dimension.
+_UNREADABLE_WITH_TOTAL = CudaDeviceMemory(
+    torch_present=True,
+    cuda_present=True,
+    free_mib=None,
+    total_mib=float(_SCENARIO_TOTAL_MIB),
     own_reserved_mib=None,
 )
 
@@ -159,18 +176,27 @@ sys.stdin.read()
 
 @pytest.fixture(autouse=True)
 def unlatched_admission() -> Generator[None]:
-    """Leave the process-wide admission latch clear at both test boundaries.
+    """Leave the latch clear and the unreadable ledger settled at both edges.
 
     The latch is per-process by design, so a test that sets it would otherwise
     hand the next test an admission it never asked for - and the latch's whole
     job is to suppress a second evaluation, which would make that next test pass
     without exercising anything.
+
+    The unreadable streak is per-process for the same reason and needs the same
+    treatment in the other direction: a test that leaves it near the limit would
+    hand the next one a refusal it never asked for. It is settled by feeding the
+    ledger a reading that answers - the production reset path, not a back door
+    into the counter - which is also the behaviour under test in the ledger
+    guards below, so nothing here can pass on a reset that production lacks.
     """
     clear_gpu_admission_latch()
+    observe_unreadable_streak(_ROOMY)
     try:
         yield
     finally:
         clear_gpu_admission_latch()
+        observe_unreadable_streak(_ROOMY)
 
 
 @pytest.fixture
@@ -367,31 +393,129 @@ class TestTheFloorPredicate:
         assert absent.free_mib is None
         assert cpu_only.free_mib is None
 
-    def test_a_present_device_with_an_unreadable_figure_is_admitted(self) -> None:
-        """An unmeasurable device admits rather than refusing all GPU work.
+    def test_one_unreadable_reading_is_a_hiccup_and_is_admitted(self) -> None:
+        """A single refused memory query must not refuse all GPU work.
 
-        The deliberate fail-open: a driver that answers presence but refuses the
-        memory query is a hiccup, and the per-job CUDA ceiling and the
-        allocator's own backoff remain in force behind this gate. Asserted so
-        the choice is visible rather than incidental.
+        The deliberate fail-open, kept for the case it was written for: one
+        driver blip says nothing about whether the device will answer the next
+        question, and the per-job CUDA ceiling and the allocator's own backoff
+        remain in force behind this gate. Asserted so the choice stays visible
+        rather than incidental - and so the refusal below is proven to be about
+        persistence rather than about unreadability as such.
 
-        Mutation: refused the unreadable case with ``no_cuda``. Observed this
-        assertion fail on ``admitted is True``.
+        Mutation: widened the streak comparison to ``>= 0`` so every unreadable
+        reading refused. Observed this assertion fail on ``admitted is True``.
         """
         admission = admission_from_reading(
-            CudaDeviceMemory(
-                torch_present=True,
-                cuda_present=True,
-                free_mib=None,
-                total_mib=float(_SCENARIO_TOTAL_MIB),
-                own_reserved_mib=None,
-            ),
+            _UNREADABLE_WITH_TOTAL,
             floor_mib=_FLOOR,
+            unreadable_streak=1,
         )
 
         assert admission.admitted is True
         assert admission.reason == ""
         assert admission.free_mib is None
+
+    def test_a_persistently_unreadable_device_is_refused(self) -> None:
+        """A device that has stopped answering is a fault, not a hiccup.
+
+        The defect this guard exists for: with no memory of previous readings
+        the gate admitted an unbounded run of loads onto a device that had
+        stopped answering, and every job it admitted failed on a driver error
+        it could not attribute. The streak is the whole difference, so it is
+        the only input that moves between this test and the one above.
+
+        Mutation: restored the unconditional ``admitted=True`` this branch
+        shipped with. Observed this assertion fail on ``admitted is False``.
+        """
+        admission = admission_from_reading(
+            _UNREADABLE_WITH_TOTAL,
+            floor_mib=_FLOOR,
+            unreadable_streak=UNREADABLE_ADMISSION_LIMIT,
+        )
+
+        assert admission.admitted is False
+        assert admission.reason == REASON_DEVICE_UNREADABLE
+        assert admission.free_mib is None
+
+    def test_the_last_tolerated_reading_still_admits(self) -> None:
+        """The threshold is a boundary, and it is asserted as one.
+
+        A guard that only ever checks a streak far past the limit cannot tell a
+        correct threshold from one placed a reading early or late, which is the
+        off-by-one this fixes in place.
+
+        Mutation: changed the comparison to ``>`` so the limit itself admitted.
+        Observed the refusal assertion below fail on ``admitted is False``.
+        """
+        tolerated = admission_from_reading(
+            _UNREADABLE_WITH_TOTAL,
+            floor_mib=_FLOOR,
+            unreadable_streak=UNREADABLE_ADMISSION_LIMIT - 1,
+        )
+        refused = admission_from_reading(
+            _UNREADABLE_WITH_TOTAL,
+            floor_mib=_FLOOR,
+            unreadable_streak=UNREADABLE_ADMISSION_LIMIT,
+        )
+
+        assert tolerated.admitted is True
+        assert refused.admitted is False
+
+    def test_an_unreadable_refusal_is_told_apart_from_an_absent_device(
+        self,
+    ) -> None:
+        """Two refusals that send an operator to two different places.
+
+        A device present but not answering is a driver fault; a device that is
+        not there is an installation or hardware question. Collapsing them
+        points the operator at the wrong thing, which is the same failure the
+        torch-absent/no-CUDA split already exists to prevent.
+
+        Mutation: reused ``REASON_NO_CUDA`` for the unreadable refusal.
+        Observed this assertion fail on the reason inequality.
+        """
+        unreadable = admission_from_reading(
+            _UNREADABLE_WITH_TOTAL,
+            floor_mib=_FLOOR,
+            unreadable_streak=UNREADABLE_ADMISSION_LIMIT,
+        )
+        absent = admission_from_reading(
+            CudaDeviceMemory(
+                torch_present=True,
+                cuda_present=False,
+                free_mib=None,
+                total_mib=None,
+                own_reserved_mib=None,
+            ),
+            floor_mib=_FLOOR,
+        )
+
+        assert unreadable.reason != absent.reason
+        assert unreadable.reason == REASON_DEVICE_UNREADABLE
+        assert absent.reason == REASON_NO_CUDA
+
+    def test_the_unreadable_refusal_names_the_driver_not_the_floor(self) -> None:
+        """The remedy has to match the fault the operator actually has.
+
+        Nothing about an unreadable device is fixed by waiting for a tenant or
+        by lowering the admission floor, and a message that offered either
+        would send an operator to spend time on a knob that cannot help.
+
+        Mutation: rendered the contended prose for this reason too. Observed
+        this assertion fail on the floor-knob absence check.
+        """
+        message = device_refusal_message(
+            admission_from_reading(
+                _UNREADABLE_WITH_TOTAL,
+                floor_mib=_FLOOR,
+                unreadable_streak=UNREADABLE_ADMISSION_LIMIT,
+            )
+        )
+
+        assert "nvidia-smi" in message
+        assert EnvVar.GPU_ADMISSION_FLOOR_MIB.value not in message
+        assert DEVICE_CONTENDED_MESSAGE not in message
 
     def test_the_refusal_message_names_free_the_floor_and_a_way_out(self) -> None:
         """An operator can only act on a refusal that carries the figures.
@@ -400,7 +524,7 @@ class TestTheFloorPredicate:
         standing prose alone. Observed this assertion fail on the free-memory
         membership check.
         """
-        message = device_contended_message(
+        message = device_refusal_message(
             admission_from_reading(_CROWDED, floor_mib=_FLOOR)
         )
 
@@ -420,7 +544,7 @@ class TestTheFloorPredicate:
         check.
         """
         own = _SCENARIO_MARGIN_MIB // 2
-        message = device_contended_message(
+        message = device_refusal_message(
             admission_from_reading(
                 CudaDeviceMemory(
                     torch_present=True,
@@ -435,6 +559,170 @@ class TestTheFloorPredicate:
 
         assert f"plus {own} MiB this process already holds" in message
         assert f"{_BELOW_FLOOR_MIB} MiB free" in message
+
+
+class TestTheUnreadableLedger:
+    """What the gate remembers between readings, and what clears it."""
+
+    def test_consecutive_unreadable_readings_accumulate(self) -> None:
+        """Without accumulation the threshold can never be reached.
+
+        Mutation: made the ledger return a constant 1. Observed this assertion
+        fail on the second element of the observed sequence.
+        """
+        observed = [observe_unreadable_streak(_UNREADABLE_WITH_TOTAL) for _ in range(3)]
+
+        assert observed == [1, 2, 3]
+
+    def test_a_reading_that_answers_clears_the_streak(self) -> None:
+        """A hiccup must cost nothing once the device answers again.
+
+        This is the half that keeps the refusal narrow: without it, a device
+        that blips occasionally over a long-lived process eventually
+        accumulates its way to a refusal it never deserved.
+
+        Mutation: dropped the reset branch so the counter only ever grew.
+        Observed this assertion fail on ``cleared == 0``.
+        """
+        for _ in range(UNREADABLE_ADMISSION_LIMIT):
+            observe_unreadable_streak(_UNREADABLE_WITH_TOTAL)
+
+        cleared = observe_unreadable_streak(_ROOMY)
+        after = observe_unreadable_streak(_UNREADABLE_WITH_TOTAL)
+
+        assert cleared == 0
+        assert after == 1
+
+    def test_a_reading_that_never_reached_the_question_leaves_it_alone(
+        self,
+    ) -> None:
+        """An absent device is not evidence that a faulty one recovered.
+
+        A CPU-only or torch-free reading answers a question about the
+        installation, not about a device that has stopped responding. Letting
+        it clear the streak would let an unplugged card launder a real fault
+        into a fresh start on the next reading.
+
+        Mutation: replaced the ``cuda_present`` test with a bare ``else``, so
+        an absent device counted toward the streak like an unreadable one.
+        Observed this assertion fail on ``preserved == 2``, the streak having
+        reached three.
+        """
+        observe_unreadable_streak(_UNREADABLE_WITH_TOTAL)
+        observe_unreadable_streak(_UNREADABLE_WITH_TOTAL)
+
+        observe_unreadable_streak(
+            CudaDeviceMemory(
+                torch_present=True,
+                cuda_present=False,
+                free_mib=None,
+                total_mib=None,
+                own_reserved_mib=None,
+            )
+        )
+        preserved = observe_unreadable_streak(_UNREADABLE_WITH_TOTAL) - 1
+
+        assert preserved == 2
+
+    def test_a_supplied_reading_is_judged_by_the_ledger_too(
+        self,
+        tmp_path: Path,
+        floor: int,
+    ) -> None:
+        """The window's supplied reading must not bypass the streak.
+
+        A supplied reading that skipped the ledger would exercise a predicate
+        production never runs, which is the failure a guard is meant to catch
+        rather than embody. Driven through the real window on a real lock, so
+        what is asserted is the production composition and not a re-derivation
+        of it.
+
+        Mutation: judged the supplied reading against the floor alone, the
+        shape this path had before the ledger existed. Observed this assertion
+        fail on ``verdicts[-1].admitted is False``.
+        """
+        del floor
+        anchor = tmp_path / "load-window.lock"
+        verdicts: list[DeviceAdmission] = []
+        for _ in range(UNREADABLE_ADMISSION_LIMIT):
+            with device_load_window(
+                anchor=anchor,
+                reading=_UNREADABLE_WITH_TOTAL,
+            ) as admission:
+                verdicts.append(admission)
+
+        assert verdicts[0].admitted is True
+        assert verdicts[-1].admitted is False
+        assert verdicts[-1].reason == REASON_DEVICE_UNREADABLE
+
+    def test_a_persistently_unreadable_device_stops_the_load(
+        self,
+        tmp_path: Path,
+        floor: int,
+    ) -> None:
+        """The refusal has to reach the loader, not merely be reported.
+
+        A reason the gate computes but does not act on is the whole defect in
+        another form: the incident was not a missing verdict but an unbounded
+        run of loads admitted alongside one.
+
+        Mutation: left ``REASON_DEVICE_UNREADABLE`` out of the refusing set.
+        Observed this fail on ``DID NOT RAISE RuntimeError`` - the gate having
+        computed the refusal and handed the loader the device anyway, which is
+        the defect's exact shape one layer up.
+        """
+        del floor
+        entries: list[int] = []
+        loads: list[str] = []
+        source = _windowed(
+            tmp_path / "load-window.lock",
+            [_UNREADABLE_WITH_TOTAL],
+            entries,
+        )
+
+        def _loader() -> str:
+            loads.append("loaded")
+            return "loaded"
+
+        for _ in range(UNREADABLE_ADMISSION_LIMIT - 1):
+            admit_gpu_load(_loader, window=source)
+        with pytest.raises(RuntimeError, match="present but not answering"):
+            admit_gpu_load(_loader, window=source)
+
+        assert len(loads) == UNREADABLE_ADMISSION_LIMIT - 1
+
+    def test_a_refused_unreadable_verdict_does_not_latch(
+        self,
+        tmp_path: Path,
+        floor: int,
+    ) -> None:
+        """An unverifiable observation must never retire the floor check.
+
+        The refusal reached no floor comparison, so latching it would leave the
+        gate reporting itself present while the predicate it exists for had
+        stopped running - the worst direction for unverifiable state to move
+        protection.
+
+        Mutation: latched on any verdict rather than only on one that reached
+        the comparison. Observed this assertion fail on ``entries``, the second
+        load riding the refused verdict instead of re-reading the device.
+        """
+        del floor
+        entries: list[int] = []
+        source = _windowed(
+            tmp_path / "load-window.lock",
+            [_UNREADABLE_WITH_TOTAL, _UNREADABLE_WITH_TOTAL, _ROOMY],
+            entries,
+        )
+
+        def _loader() -> str:
+            return "loaded"
+
+        for _ in range(UNREADABLE_ADMISSION_LIMIT - 1):
+            admit_gpu_load(_loader, window=source)
+        assert admit_gpu_load(_loader, window=source) == "loaded"
+
+        assert len(entries) == UNREADABLE_ADMISSION_LIMIT
 
 
 class TestTheFloorIsDerivedFromTheWorkload:

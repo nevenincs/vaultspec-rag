@@ -352,13 +352,13 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
 
     def run_selected_items() -> None:
         from vaultspec_rag._gpu_admission import (
-            device_contended_message,
+            device_refusal_message,
             evaluate_device_admission,
         )
 
         admission = evaluate_device_admission()
         if not admission.admitted:
-            pytest.exit(device_contended_message(admission), returncode=1)
+            pytest.exit(device_refusal_message(admission), returncode=1)
         for index, item in enumerate(session.items):
             nextitem = (
                 session.items[index + 1] if index + 1 < len(session.items) else None
