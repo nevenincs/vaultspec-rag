@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#maintainability-remediation'
 date: '2026-07-27'
-modified: '2026-07-27'
-body_hash: 'sha256:931e89564dfb76237036b0ea62852efacc50e05d8b82eddf55577549abf5f1b8'
+modified: '2026-08-14'
+body_hash: 'sha256:5b208955cafc89d7b69a71f0e35a98b0702040fd57d5855d2dc8e7d44f99e642'
 tier: L3
 related:
   - '[[2026-06-01-module-split-adr]]'
@@ -85,6 +85,26 @@ Separate matching-rebuild, transport, and diagnostics behavior, then prove the r
 - [ ] `W03.P07.S13` - Split matching-rebuild, HTTP, MCP, and timeout diagnostics scenarios; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - [x] `W03.P07.S14` - Strengthen direct-owner import coverage for moved production seams; `src/vaultspec_rag/tests/test_no_reexports.py`.
 - [ ] `W03.P07.S15` - Verify the maintainability floor and all focused real-behavior regressions; `tools/health_report.py`.
+
+## Wave `W04` - eliminate duplicated declarations and gate what a split can regress
+
+The module-size work surfaced a class of defect the gates could not see: a declaration duplicated across a new seam, a decorator orphaned by a line-range cut, and an export that outlived what defined it. Remove the instances and add the guard that would have caught each.
+
+### Phase `W04.P08` - remove duplicated and aliased declarations
+
+Every surviving alias, pass-through export, and semantically duplicated declaration is removed or given one owner, so no behaviour is described in two places.
+
+- [x] `W04.P08.S16` - Sweep the package for aliases that rename an existing binding, and repoint their callers at the original; `src/vaultspec_rag/cli/_app.py, src/vaultspec_rag/serviceclient/_discovery.py`.
+- [x] `W04.P08.S17` - Search by meaning for declarations that restate logic owned elsewhere, and collapse each onto its owner; `src/vaultspec_rag/`.
+- [x] `W04.P08.S18` - Confirm no non-facade module exports a name it does not define, and that the guard proves it; `src/vaultspec_rag/tests/test_no_reexports.py`.
+- [ ] `W04.P08.S21` - Make the test helpers that now cross module boundaries public, after establishing why narrowing the shared harness import destabilises distributed workers; `src/vaultspec_rag/tests/_jobs_tui_harness.py, src/vaultspec_rag/tests/test_cli_jobs_tui*.py`.
+
+### Phase `W04.P09` - gate the regressions a split can introduce
+
+A decorator orphaned by a line-range cut, and a test module growing past the production ceiling, are both invisible to today's gates. Each gets a guard proven to fail.
+
+- [x] `W04.P09.S19` - Guard that an extraction cannot orphan a decorator onto the definition below it; `src/vaultspec_rag/tests/`.
+- [x] `W04.P09.S20` - Bring every test module under the production module ceiling and gate them at it; `src/vaultspec_rag/tests/, pyproject.toml`.
 
 ## Parallelization
 
