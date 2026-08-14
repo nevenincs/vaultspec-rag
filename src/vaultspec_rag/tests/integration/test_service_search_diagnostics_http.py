@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ...serviceclient._transport import _do_http_call
-from .test_service_search_diagnostics import (
-    _assert_empty_search_phase_timing,
-    _assert_request_id,
-    _raw_search,
-    _wait_for_search_log_line,
+from ._service_search_diagnostics_support import (
+    assert_empty_search_phase_timing,
+    assert_request_id,
+    raw_search,
+    wait_for_search_log_line,
 )
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ def test_direct_http_search_type_contract(
     # so both an alias and a malformed (non-string) type are rejected the
     # same way here.
     for invalid_type in ("all", "codebase", ["code"]):
-        status, _headers, body = _raw_search(
+        status, _headers, body = raw_search(
             port,
             token,
             {
@@ -63,7 +63,7 @@ def test_direct_http_search_type_contract(
         assert "'document'" in message, body
         assert "'combined'" in message, body
 
-    canonical_status, _canonical_headers, canonical_body = _raw_search(
+    canonical_status, _canonical_headers, canonical_body = raw_search(
         port,
         token,
         {
@@ -77,8 +77,8 @@ def test_direct_http_search_type_contract(
     assert canonical_status == 200, canonical_body
     index_state = cast("dict[str, object]", canonical_body["index_state"])
     assert index_state["source"] == "code", canonical_body
-    request_id = _assert_request_id(canonical_body)
-    canonical_log = _wait_for_search_log_line(port, request_id)
+    request_id = assert_request_id(canonical_body)
+    canonical_log = wait_for_search_log_line(port, request_id)
     assert "source=code" in canonical_log
     assert "search_type=code" in canonical_log
 
@@ -105,9 +105,9 @@ def test_direct_http_code_search_reports_code_index_state(
     )
 
     assert isinstance(result, dict)
-    _assert_request_id(result)
+    assert_request_id(result)
     assert result["results"] == []
-    _assert_empty_search_phase_timing(result)
+    assert_empty_search_phase_timing(result)
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
     assert index_state["source"] == "code"
