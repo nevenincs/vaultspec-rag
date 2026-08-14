@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 
 from ... import jobs as _jobs
+from ...job_manager.models import MAX_RECORDS
 from ...job_models import JobSource
 from ._jobs_registry_support import (
     assert_done_job_snapshot,
@@ -97,16 +98,16 @@ def test_snapshot_returns_independent_copies(_clean_jobs: None) -> None:
 
 @pytest.mark.unit
 def test_registry_is_bounded(_clean_jobs: None) -> None:
-    overflow = _jobs.MAX_RECORDS + 50
+    overflow = MAX_RECORDS + 50
     ids = [_jobs.record_start(JobSource.VAULT, "tool") for _ in range(overflow)]
 
     snap = _jobs.snapshot()
-    assert len(snap) == _jobs.MAX_RECORDS
+    assert len(snap) == MAX_RECORDS
 
     # Newest-first: the most recent record must be the last id started, and
     # the oldest retained must be the first id NOT evicted.
     assert snap[0]["id"] == ids[-1]
-    assert snap[-1]["id"] == ids[-_jobs.MAX_RECORDS]
+    assert snap[-1]["id"] == ids[-MAX_RECORDS]
 
     # Evicted ids are gone entirely.
     retained_ids = {entry["id"] for entry in snap}
@@ -134,7 +135,7 @@ def test_concurrent_writers_do_not_corrupt(_clean_jobs: None) -> None:
     snap = _jobs.snapshot()
     # The buffer is bounded, so the final count is exactly the cap (total
     # writes far exceed MAX_RECORDS).
-    assert len(snap) == _jobs.MAX_RECORDS
+    assert len(snap) == MAX_RECORDS
 
     # No record is corrupt: every retained entry carries the full schema,
     # unique ids, and a consistent phase/result pairing.

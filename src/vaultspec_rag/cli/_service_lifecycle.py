@@ -20,7 +20,7 @@ import vaultspec_rag.cli as _cli
 
 from ..config._settings import configured_model_repos, get_config
 from ..config._types import EnvVar
-from ._app import server_app
+from ._app import server_root_app
 from ._gpu_errors import _handle_gpu_error
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
@@ -202,7 +202,7 @@ def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
     return f"{repo_id} downloaded"
 
 
-@server_app.command(
+@server_root_app.command(
     "warmup",
     help=(
         "Download GPU model files before they are needed. "

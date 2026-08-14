@@ -17,7 +17,8 @@ import pytest
 
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import VaultIndexer
-from ...indexer._streaming import VaultStreamRequest, _stream_encode_and_upsert_vault
+from ...indexer._streaming import _stream_encode_and_upsert_vault
+from ...indexer._streaming_types import VaultStreamRequest
 from ...job_control import (
     CancelRequested,
     ControlRequest,

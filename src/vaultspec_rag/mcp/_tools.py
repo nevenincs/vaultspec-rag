@@ -25,13 +25,12 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict
 
 from .._source_types import SourceTypeParseError, parse_source_type
+from ..serviceclient._search_transport import document_search_filters, try_http_search
 from ..serviceclient._transport import (
     _try_http_admin,
     _try_http_clean,
     _try_http_code_file,
     _try_http_reindex,
-    _try_http_search,
-    document_search_filters,
 )
 from ._mcp import mcp
 from ._roots import _resolve_project_root
@@ -248,7 +247,7 @@ async def search_vault(  # noqa: PLR0913 - MCP exposes the stable flat tool inpu
     port = _require_port()
     result = await _delegate(
         partial(
-            _try_http_search,
+            try_http_search,
             query,
             _canonical_tool_source("vault"),
             top_k,
@@ -304,7 +303,7 @@ async def search_codebase(  # noqa: PLR0913 - MCP exposes the stable flat tool i
     )
     result = await _delegate(
         partial(
-            _try_http_search,
+            try_http_search,
             full_query,
             _canonical_tool_source("codebase"),
             top_k,
@@ -340,7 +339,7 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
     port = _require_port()
     result = await _delegate(
         partial(
-            _try_http_search,
+            try_http_search,
             query,
             _canonical_tool_source("document"),
             top_k,
@@ -388,7 +387,7 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
     port = _require_port()
     result = await _delegate(
         partial(
-            _try_http_search,
+            try_http_search,
             _with_domain_tokens(
                 query,
                 exclude_domains=exclude_domains,

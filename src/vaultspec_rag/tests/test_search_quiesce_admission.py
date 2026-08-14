@@ -144,13 +144,13 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
 
 def test_search_transport_preserves_the_exact_quiesce_envelope() -> None:
     """The client returns the service's rejection unchanged, without fallback."""
-    from ..serviceclient._transport import _try_http_search
+    from ..serviceclient._search_transport import try_http_search
 
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), _QuiesceSearchEnvelopeHandler)
     server_thread = threading.Thread(target=httpd.serve_forever)
     server_thread.start()
     try:
-        response = _try_http_search(
+        response = try_http_search(
             query="closed admission must not fall back",
             search_type="vault",
             top_k=1,

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ... import _job_values
 from ... import jobs as _managed_jobs
 from ..._job_errors import JobError, JobErrorKind, remediation
 from ...cli import app
@@ -202,7 +203,7 @@ def _rounded_measure(key: str, value: object) -> object:
     """
     if key not in _RESILIENCE_MEASURE_KEYS:
         return value
-    measured = _managed_jobs.measurement(value)
+    measured = _job_values.measurement(value)
     return value if measured is None else round(measured, 1)
 
 

@@ -42,6 +42,7 @@ from starlette.routing import Route
 
 import vaultspec_rag.server as _m
 
+from .. import _job_evidence
 from .. import jobs as _jobs
 from .._store_locks import VaultStoreLockedError
 from ..gpu_borrow_lease import is_borrower_capability
@@ -349,9 +350,12 @@ async def _validate_index_job_spec(
     spec: JobSpec,
 ) -> CodeIndexPreflight | DocumentIndexPreflight | None:
     """Resolve domain admission before durable job mutation."""
+    from .._job_admission import (
+        validate_code_job_admission,
+        validate_document_job_admission,
+    )
     from .._job_errors import JobError
     from ..job_models import JobSource
-    from ..jobs import validate_code_job_admission, validate_document_job_admission
 
     if spec.project_root is None or spec.source is JobSource.VAULT:
         return None
@@ -604,7 +608,7 @@ async def jobs_route(request: Request) -> JSONResponse:
             # from a short-lived cache; every measurement is null where this
             # host cannot measure, and the key itself marks a daemon that
             # reports at all.
-            "gpu": _jobs.gpu_pressure_snapshot(now=now),
+            "gpu": _job_evidence.gpu_pressure_snapshot(now=now),
             # The machine-wide pressure tier beside the GPU reading: same
             # probes, folded through hysteresis into one verdict. Additive -
             # the key's absence marks a daemon that predates the tier - and
@@ -617,7 +621,7 @@ async def jobs_route(request: Request) -> JSONResponse:
             # this listing can see the one fact that decides whether the next
             # load or test run is refused. Null when this host's reading could
             # not be taken; the key's absence marks a daemon that predates it.
-            "device_load": _jobs.device_load_snapshot(now=now),
+            "device_load": _job_evidence.device_load_snapshot(now=now),
             "filters": {
                 "phase": phase,
                 "state": state,

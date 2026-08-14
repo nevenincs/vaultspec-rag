@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import typing
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
@@ -33,6 +34,7 @@ from ..config._settings import get_config
 from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
 from ..progress import NullProgressReporter
+from ._jobs_tui_harness import _JobService
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from .corpus import CorpusManifest, build_synthetic_vault
 
@@ -420,3 +422,12 @@ def clean_config() -> Generator[None]:
     yield
     reset_config()
     reset_rag_config()
+
+
+@pytest.fixture
+def control_service() -> typing.Iterator[_JobService]:
+    server = _JobService()
+    try:
+        yield server
+    finally:
+        server.close()

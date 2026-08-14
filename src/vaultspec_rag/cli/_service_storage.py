@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, cast
 
 import typer
 
+from .._job_values import count
 from .._units import human_bytes
-from ..jobs import count
 from ._app import JsonMode, server_storage_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _emit_json_error_and_exit, _plain_line

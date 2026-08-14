@@ -14,11 +14,11 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from ...serviceclient._search_transport import try_http_search
 from ...serviceclient._transport import (
     _do_http_call,
     _try_http_get_job,
     _try_http_reindex,
-    _try_http_search,
 )
 
 if TYPE_CHECKING:
@@ -201,7 +201,7 @@ def _assert_service_searches(
     port: int, root: Path, source_path: str, phrase: str
 ) -> None:
     for search_type in ("document", "combined"):
-        response = _try_http_search(
+        response = try_http_search(
             phrase,
             search_type,
             5,
@@ -221,7 +221,7 @@ def _assert_service_searches(
 def _assert_unsupported_feedback_is_rejected(
     port: int, root: Path, phrase: str
 ) -> None:
-    rejected_feedback = _try_http_search(
+    rejected_feedback = try_http_search(
         phrase,
         "combined",
         5,

@@ -1120,7 +1120,7 @@ def _failure_belongs_to_this_generation(record: dict[str, object]) -> bool:
     reading it: it stays in the reported rollup, but only a failure that
     finished inside the current generation may degrade health.
     """
-    from ..jobs import measurement
+    from .._job_values import measurement
 
     generation_start = _generation_start_wall_clock()
     if generation_start is None:

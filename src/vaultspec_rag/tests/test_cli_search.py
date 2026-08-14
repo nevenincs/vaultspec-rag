@@ -19,11 +19,11 @@ from ._cli_helpers import (
     DEFAULT_SEARCH_TIMEOUT_SECONDS,
     _display_search_results,
     _display_service_error,
-    _get_search_timeout,
-    _search_records,
-    _try_http_search,
     app,
+    get_search_timeout,
     runner,
+    search_records,
+    try_http_search,
 )
 from ._http_stubs import QuietHandler
 
@@ -70,7 +70,7 @@ class TestSearchTimeoutDefaults:
     def test_default_search_timeout_is_production_budget(self) -> None:
         previous = os.environ.pop("VAULTSPEC_RAG_SEARCH_TIMEOUT", None)
         try:
-            assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+            assert get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
         finally:
             if previous is not None:
                 os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = previous
@@ -79,7 +79,7 @@ class TestSearchTimeoutDefaults:
         previous = os.environ.get("VAULTSPEC_RAG_SEARCH_TIMEOUT")
         os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = "not-a-number"
         try:
-            assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+            assert get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
         finally:
             if previous is None:
                 os.environ.pop("VAULTSPEC_RAG_SEARCH_TIMEOUT", None)
@@ -87,27 +87,27 @@ class TestSearchTimeoutDefaults:
                 os.environ["VAULTSPEC_RAG_SEARCH_TIMEOUT"] = previous
 
     def test_explicit_timeout_still_wins(self) -> None:
-        assert _get_search_timeout(0.25) == 0.25
+        assert get_search_timeout(0.25) == 0.25
 
 
 class TestMcpFastPath:
-    """Tests for MCP fast-path functions (_try_http_search, _display_search_results)."""
+    """Tests for MCP fast-path functions (try_http_search, _display_search_results)."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
 
     def test_tool_map_vault(self):
         """Connection refused on port 1 returns None, no exception."""
-        result = _try_http_search("test query", "vault", 5, 1, "/tmp/proj")
+        result = try_http_search("test query", "vault", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_tool_map_code(self):
         """search_type='code' maps to search_codebase, returns None on failure."""
-        result = _try_http_search("test query", "code", 5, 1, "/tmp/proj")
+        result = try_http_search("test query", "code", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_invalid_search_type(self):
         """Unknown search types fail explicitly without a transport fallback."""
-        result = _try_http_search("test query", "invalid", 5, 1, "/tmp/proj")
+        result = try_http_search("test query", "invalid", 5, 1, "/tmp/proj")
         assert isinstance(result, dict)
         assert result["ok"] is False
         assert result["error"] == "unknown_source_type"
@@ -115,7 +115,7 @@ class TestMcpFastPath:
 
     def test_code_filters_with_vault_returns_usage_error(self):
         """Filter kwargs with --type vault yield a structured usage error."""
-        result = _try_http_search(
+        result = try_http_search(
             "test query",
             "vault",
             5,
@@ -130,7 +130,7 @@ class TestMcpFastPath:
 
     def test_code_filters_with_all_reach_combined_transport(self):
         """The explicit all alias accepts code filters for combined search."""
-        result = _try_http_search(
+        result = try_http_search(
             "q",
             "all",
             5,
@@ -144,12 +144,12 @@ class TestMcpFastPath:
     def test_code_filters_unset_dont_short_circuit(self):
         """All filters None must not trigger the usage error path."""
         # No service running on port 1 → expect transport None, NOT usage-error dict.
-        result = _try_http_search("q", "vault", 5, 1, "/tmp/proj")
+        result = try_http_search("q", "vault", 5, 1, "/tmp/proj")
         assert result is None
 
     def test_code_filters_with_code_attempts_call(self):
         """Filters paired with --type code reach the call path; no service → None."""
-        result = _try_http_search(
+        result = try_http_search(
             "q",
             "code",
             5,
@@ -220,7 +220,7 @@ class TestMcpFastPath:
 
     def test_path_filter_with_vault_returns_usage_error(self):
         """--path is a code filter; pairing it with vault must error."""
-        result = _try_http_search(
+        result = try_http_search(
             "test",
             "vault",
             5,
@@ -234,7 +234,7 @@ class TestMcpFastPath:
 
     def test_vault_filter_with_code_returns_usage_error(self):
         """doc_type/feature/date/tag with --type code must error."""
-        result = _try_http_search(
+        result = try_http_search(
             "test",
             "code",
             5,
@@ -248,7 +248,7 @@ class TestMcpFastPath:
 
     def test_vault_filters_with_code_attempt_call(self):
         """doc_type/feature/date/tag with --type vault reach the call path."""
-        result = _try_http_search(
+        result = try_http_search(
             "q",
             "vault",
             5,
@@ -264,7 +264,7 @@ class TestMcpFastPath:
 
     def test_include_path_with_vault_returns_usage_error(self):
         """--include-path is a code filter; --type vault must error."""
-        result = _try_http_search(
+        result = try_http_search(
             "test",
             "vault",
             5,
@@ -278,7 +278,7 @@ class TestMcpFastPath:
 
     def test_exclude_path_with_vault_returns_usage_error(self):
         """--exclude-path with --type vault errors out symmetrically."""
-        result = _try_http_search(
+        result = try_http_search(
             "test",
             "vault",
             5,
@@ -292,7 +292,7 @@ class TestMcpFastPath:
 
     def test_glob_filters_with_code_attempt_call(self):
         """--include-path/--exclude-path with --type code reach the call path."""
-        result = _try_http_search(
+        result = try_http_search(
             "q",
             "code",
             5,
@@ -305,7 +305,7 @@ class TestMcpFastPath:
 
     def test_dedup_locales_with_vault_returns_usage_error(self):
         """--dedup-locales is a code-only post-process flag."""
-        result = _try_http_search(
+        result = try_http_search(
             "test",
             "vault",
             5,
@@ -319,7 +319,7 @@ class TestMcpFastPath:
 
     def test_prefer_with_vault_returns_usage_error(self):
         """--prefer is a code-only post-process flag."""
-        result = _try_http_search(
+        result = try_http_search(
             "test",
             "vault",
             5,
@@ -333,7 +333,7 @@ class TestMcpFastPath:
 
     def test_postproc_flags_with_code_attempt_call(self):
         """dedup_locales/prefer with --type code reach the call path."""
-        result = _try_http_search(
+        result = try_http_search(
             "q",
             "code",
             5,
@@ -460,7 +460,7 @@ class TestMcpFastPath:
 
     def test_path_filter_with_code_attempts_call(self):
         """--path with --type code reaches the call path."""
-        result = _try_http_search(
+        result = try_http_search(
             "q",
             "code",
             5,
@@ -478,10 +478,10 @@ class TestMcpFastPath:
         The server here is genuinely listening and genuinely answering with
         something unusable, which is the condition being discriminated.
         """
-        from ..serviceclient._transport import _try_http_search
+        from ..serviceclient._search_transport import try_http_search
 
         with _misbehaving_service() as port:
-            result = _try_http_search("q", "code", 5, port, "/tmp/proj")
+            result = try_http_search("q", "code", 5, port, "/tmp/proj")
 
         assert isinstance(result, dict)
         assert result.get("ok") is False
@@ -509,13 +509,13 @@ class TestMcpFastPath:
         system rather than a substituted transport - which is the only way to
         know the caller still reads a real refusal as a dead service.
         """
-        from ..serviceclient._transport import _try_http_search
+        from ..serviceclient._search_transport import try_http_search
 
         with contextlib.closing(__import__("socket").socket()) as probe:
             probe.bind(("127.0.0.1", 0))
             dead_port = probe.getsockname()[1]
 
-        result = _try_http_search("q", "code", 5, dead_port, "/tmp/proj")
+        result = try_http_search("q", "code", 5, dead_port, "/tmp/proj")
         assert result is None
 
 
@@ -559,13 +559,13 @@ class TestSearchResultRendering:
     def test_default_keeps_full_snippet(self):
         """Default output renders the full snippet."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "a" * 300})
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["text"] == "a" * 300
 
     def test_scores_are_hidden_by_default(self):
         """Default output shows numbering, not numeric relevance score."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["number"] == 1
         assert record["location"] == "foo.py"
         assert record["score"] is None
@@ -576,7 +576,7 @@ class TestSearchResultRendering:
             {"path": "foo.py", "score": 0.9, "snippet": "test"},
             show_scores=True,
         )
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["score"] == "0.9000"
 
     def test_display_empty_results(self) -> None:
@@ -590,7 +590,7 @@ class TestSearchResultRendering:
         rendered = self._render_all([])
 
         assert rendered == ""
-        assert _search_records(rendered) == []
+        assert search_records(rendered) == []
 
     def test_display_missing_fields(self) -> None:
         """A result carrying no keys still renders, and names the gap.
@@ -601,7 +601,7 @@ class TestSearchResultRendering:
         """
         rendered = self._render({})
 
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["number"] == 1
         assert record["location"] == "location-not-reported"
         assert record["score"] is None
@@ -612,13 +612,13 @@ class TestSearchResultRendering:
         rendered = self._render(
             {"path": "foo.py", "score": 0.9, "snippet": "test", "line_start": 42},
         )
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["location"] == "foo.py:42"
 
     def test_display_without_line_start(self):
         """Result without line_start renders location as bare path."""
         rendered = self._render({"path": "foo.py", "score": 0.9, "snippet": "test"})
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["location"] == "foo.py"
 
     def test_display_with_anchor_prefers_deep_link(self):
@@ -632,7 +632,7 @@ class TestSearchResultRendering:
                 "snippet": "test",
             }
         )
-        [record] = _search_records(rendered)
+        [record] = search_records(rendered)
         assert record["location"] == "report.pdf#page=4"
 
     def test_display_service_lock_error_hides_backend_contract(

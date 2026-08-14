@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ... import jobs, server
+from ... import _job_values, jobs, server
 from ..._store_search import HybridSearchRequest
 from ...concurrency import get_encode_limiter, reset_limiters
 from ...config._settings import get_config
@@ -1170,7 +1170,9 @@ async def test_watcher_cancellation_releases_real_admitted_claim(
         )
         active_state = await _wait_for_watcher_state(
             state_path,
-            lambda state: jobs.count(state.get("attempt_generation")) is not None,
+            lambda state: (
+                _job_values.count(state.get("attempt_generation")) is not None
+            ),
             "watcher never durably admitted a convergence generation",
         )
         running = await _wait_for_watcher_job(

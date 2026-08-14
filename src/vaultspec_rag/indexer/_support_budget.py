@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel
     from ..index_profiles import SupportProfileLimits
     from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot
-    from ._streaming import CodeFileSegment
+    from ._streaming_types import CodeFileSegment
 
 
 class CodeSupportBudget:

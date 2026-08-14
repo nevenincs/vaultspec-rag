@@ -62,7 +62,7 @@ from ..serviceclient._transport import _try_http_health
 from ._app import (
     JSON_ENVELOPE_OPTION_HELP,
     _global_target,
-    server_app,
+    server_root_app,
 )
 from ._core import logger
 from ._gpu_errors import (
@@ -770,7 +770,7 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
         ) from exc
 
 
-@server_app.command(
+@server_root_app.command(
     "start",
     cls=_ServiceStartCommand,
     help=(

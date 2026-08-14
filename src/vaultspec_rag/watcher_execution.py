@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from anyio.to_thread import run_sync as _run_in_thread
 
+from . import _job_admission, _job_progress
 from . import jobs as _jobs
 from .job_control import QuiesceRequested
 from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceUpdate
@@ -78,10 +79,10 @@ async def submit_watcher_job(
     document_preflight = None
     if slot.source is JobSource.CODE:
         policy_resolver = (
-            _jobs.validate_code_index_policy
+            _job_admission.validate_code_index_policy
             if retry_decision.requires_unscoped
             else partial(
-                _jobs.validate_scoped_code_index_policy,
+                _job_admission.validate_scoped_code_index_policy,
                 changed_paths=candidate_paths,
             )
         )
@@ -91,16 +92,16 @@ async def submit_watcher_job(
         )
     elif slot.source is JobSource.DOCUMENT:
         policy_resolver = (
-            _jobs.validate_document_index_policy
+            _job_admission.validate_document_index_policy
             if retry_decision.requires_unscoped
             else partial(
-                _jobs.validate_scoped_document_index_policy,
+                _job_admission.validate_scoped_document_index_policy,
                 changed_paths=candidate_paths,
             )
         )
         document_preflight = await _run_in_thread(policy_resolver, slot.root)
         await _run_in_thread(
-            _jobs.validate_document_support_profile,
+            _job_admission.validate_document_support_profile,
             slot.root,
             document_preflight,
         )
@@ -234,7 +235,7 @@ async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> N
         )
 
     def _on_started(started: JobSnapshot) -> None:
-        _jobs.record_progress(started.id, "queued")
+        _job_progress.record_progress(started.id, "queued")
 
     def _on_finished(
         finished: JobSnapshot,
@@ -609,9 +610,9 @@ def _resolve_attempt_preflights(
     if slot.source is JobSource.CODE and code_preflight is None:
         context.control.checkpoint()
         code_preflight = (
-            _jobs.validate_code_index_policy(slot.root)
+            _job_admission.validate_code_index_policy(slot.root)
             if scope.requires_unscoped
-            else _jobs.validate_scoped_code_index_policy(
+            else _job_admission.validate_scoped_code_index_policy(
                 slot.root, scope.captured_paths
             )
         )
@@ -619,9 +620,9 @@ def _resolve_attempt_preflights(
     if slot.source is JobSource.DOCUMENT and document_preflight is None:
         context.control.checkpoint()
         document_preflight = (
-            _jobs.validate_document_index_policy(slot.root)
+            _job_admission.validate_document_index_policy(slot.root)
             if scope.requires_unscoped
-            else _jobs.validate_scoped_document_index_policy(
+            else _job_admission.validate_scoped_document_index_policy(
                 slot.root, scope.captured_paths
             )
         )
@@ -629,7 +630,7 @@ def _resolve_attempt_preflights(
     if slot.source is JobSource.DOCUMENT:
         if document_preflight is None:
             raise RuntimeError("document watcher attempt has no admission preflight")
-        _jobs.validate_document_support_profile(slot.root, document_preflight)
+        _job_admission.validate_document_support_profile(slot.root, document_preflight)
         context.control.checkpoint()
     return replace(
         scope,

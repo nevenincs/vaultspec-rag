@@ -18,12 +18,12 @@ from ._cli_helpers import (
     _label_values,
     _plain_lines,
     _search_output_contract_server,
-    _search_records,
     _slow_search_contract_server,
     _sparse_search_output_contract_server,
     app,
     invoke_timed_out_search,
     runner,
+    search_records,
     store_locked_by_another_process,
 )
 
@@ -124,7 +124,7 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 0, result.output
         assert requests == [_expected_code_search_request(tmp_path, "service status")]
-        records = _search_records(result.output)
+        records = search_records(result.output)
         assert [record["number"] for record in records] == [1, 2]
         _assert_record(
             records[0],
@@ -204,7 +204,7 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 0, result.output
         assert requests == [_expected_code_search_request(tmp_path, "service status")]
-        records = _search_records(result.output)
+        records = search_records(result.output)
         _assert_record(
             records[0],
             number=1,
@@ -228,7 +228,7 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        records = _search_records(result.output)
+        records = search_records(result.output)
         _assert_record(
             records[0],
             number=1,
@@ -442,11 +442,11 @@ class TestSearchSafetyContract:
         Proven able to fail: raising the timeout above the server's sleep lets
         the request complete and the error is no longer http_search_timeout.
         """
-        from ..serviceclient._transport import _try_http_search
+        from ..serviceclient._search_transport import try_http_search
 
         server, thread = _slow_search_contract_server()
         try:
-            res = _try_http_search(
+            res = try_http_search(
                 query="test",
                 search_type="vault",
                 top_k=5,

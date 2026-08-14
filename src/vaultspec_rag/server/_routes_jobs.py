@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import cast
 
+from .. import _job_evidence, _job_progress, _job_values
 from .. import jobs as _jobs
 from .._job_errors import (
     DEGRADED_THRESHOLD_SECONDS,
@@ -45,7 +46,7 @@ __all__ = [
 
 _CANONICAL_STATES = frozenset(state.value for state in JobState)
 _TRANSITIONAL_STATES = frozenset({JobState.PAUSING.value, JobState.CANCELLING.value})
-_TERMINAL_STATES = frozenset(state.value for state in JobState if state.is_terminal)
+TERMINAL_STATES = frozenset(state.value for state in JobState if state.is_terminal)
 _LEGACY_TERMINAL_PHASES = {
     "done": JobState.SUCCEEDED.value,
     "error": JobState.FAILED.value,
@@ -113,7 +114,7 @@ def _job_phase(record: dict[str, object], state: str) -> str:
 
 
 def _job_spec_value(record: dict[str, object], key: str) -> object | None:
-    return _jobs.mapping(record.get("spec")).get(key)
+    return _job_values.mapping(record.get("spec")).get(key)
 
 
 def job_source(record: dict[str, object]) -> str:
@@ -128,7 +129,7 @@ def _job_trigger(record: dict[str, object]) -> str:
     trigger = record.get("trigger")
     if trigger is not None and str(trigger).strip():
         return str(trigger).strip().lower()
-    initiator = _jobs.mapping(record.get("initiator"))
+    initiator = _job_values.mapping(record.get("initiator"))
     kind = str(initiator.get("kind", "")).strip().lower()
     if kind in {"watcher", "schedule"}:
         return kind
@@ -138,7 +139,7 @@ def _job_trigger(record: dict[str, object]) -> str:
 def _job_project_root(record: dict[str, object]) -> str | None:
     project_root = _job_spec_value(record, "project_root")
     if project_root is None:
-        project_root = _jobs.mapping(record.get("initiator")).get("project_root")
+        project_root = _job_values.mapping(record.get("initiator")).get("project_root")
     if project_root is None:
         project_root = record.get("project_root")
     return str(project_root) if project_root is not None else None
@@ -208,12 +209,14 @@ def _job_progress_text(record: dict[str, object]) -> str:
 
 
 def _job_progress_step(record: dict[str, object]) -> str:
-    progress = _jobs.mapping(record.get("progress"))
+    progress = _job_values.mapping(record.get("progress"))
     return str(progress.get("step", "")).strip().lower()
 
 
 def _job_progress_timestamp(record: dict[str, object]) -> float | None:
-    return _jobs.measurement(_jobs.mapping(record.get("progress")).get("last_updated"))
+    return _job_values.measurement(
+        _job_values.mapping(record.get("progress")).get("last_updated")
+    )
 
 
 def job_updated_timestamp(record: dict[str, object]) -> float | None:
@@ -221,10 +224,10 @@ def job_updated_timestamp(record: dict[str, object]) -> float | None:
         timestamp
         for timestamp in (
             _job_progress_timestamp(record),
-            _jobs.measurement(record.get("state_changed_at")),
-            _jobs.measurement(record.get("finished_at")),
-            _jobs.measurement(record.get("started_at")),
-            _jobs.measurement(record.get("created_at")),
+            _job_values.measurement(record.get("state_changed_at")),
+            _job_values.measurement(record.get("finished_at")),
+            _job_values.measurement(record.get("started_at")),
+            _job_values.measurement(record.get("created_at")),
         )
         if timestamp is not None
     ]
@@ -232,17 +235,17 @@ def job_updated_timestamp(record: dict[str, object]) -> float | None:
 
 
 def _job_runtime_seconds(record: dict[str, object], now: float) -> float | None:
-    started_at = _jobs.measurement(record.get("started_at"))
+    started_at = _job_values.measurement(record.get("started_at"))
     if started_at is None:
         return None
     state = job_state(record)
     if state == JobState.QUEUED.value:
         return None
-    finished_at = _jobs.measurement(record.get("finished_at"))
+    finished_at = _job_values.measurement(record.get("finished_at"))
     if finished_at is not None:
         end = finished_at
     elif state == JobState.PAUSED.value:
-        state_changed_at = _jobs.measurement(record.get("state_changed_at"))
+        state_changed_at = _job_values.measurement(record.get("state_changed_at"))
         if state_changed_at is None:
             return None
         end = state_changed_at
@@ -263,12 +266,12 @@ def _timestamp_age_seconds(
     key: str,
     now: float,
 ) -> float | None:
-    return _age_seconds(_jobs.measurement(record.get(key)), now)
+    return _age_seconds(_job_values.measurement(record.get(key)), now)
 
 
 def _control_acknowledgement_seconds(record: dict[str, object]) -> float | None:
-    requested = _jobs.measurement(record.get("control_requested_at"))
-    acknowledged = _jobs.measurement(record.get("control_acknowledged_at"))
+    requested = _job_values.measurement(record.get("control_requested_at"))
+    acknowledged = _job_values.measurement(record.get("control_acknowledged_at"))
     if requested is None or acknowledged is None:
         return None
     duration = acknowledged - requested
@@ -281,10 +284,10 @@ def _control_pending_age_seconds(
 ) -> float | None:
     if job_state(record) not in _TRANSITIONAL_STATES:
         return None
-    requested = _jobs.measurement(record.get("control_requested_at"))
+    requested = _job_values.measurement(record.get("control_requested_at"))
     if requested is None:
         return None
-    acknowledged = _jobs.measurement(record.get("control_acknowledged_at"))
+    acknowledged = _job_values.measurement(record.get("control_acknowledged_at"))
     if acknowledged is not None and acknowledged >= requested:
         return None
     return _age_seconds(requested, now)
@@ -330,7 +333,7 @@ def _job_telemetry(record: dict[str, object], name: str) -> dict[str, object] | 
         return cast("dict[str, object]", raw)
     identifier = record.get("id")
     if isinstance(identifier, str) and identifier:
-        return _jobs.telemetry_block(identifier, name)
+        return _job_progress.telemetry_block(identifier, name)
     return None
 
 
@@ -353,7 +356,7 @@ def _job_rates(record: dict[str, object]) -> tuple[float | None, float | None]:
     identifier = record.get("id")
     if not isinstance(identifier, str) or not identifier:
         return None, None
-    return _jobs.progress_rates(identifier)
+    return _job_progress.progress_rates(identifier)
 
 
 def _shaped_rate_baseline(
@@ -395,7 +398,7 @@ def _forward_signal_age(
     stamps = [
         stamp
         for key in ("entered_at", "exited_at")
-        if (stamp := _jobs.measurement(forward.get(key))) is not None
+        if (stamp := _job_values.measurement(forward.get(key))) is not None
     ]
     return _age_seconds(max(stamps), now) if stamps else None
 
@@ -418,7 +421,7 @@ def _rate_collapsed(rate_baseline: dict[str, object] | None) -> bool:
     """
     if rate_baseline is None:
         return False
-    ratio = _jobs.measurement(rate_baseline.get("ratio"))
+    ratio = _job_values.measurement(rate_baseline.get("ratio"))
     if ratio is None:
         return False
     return ratio <= RATE_COLLAPSE_RATIO
@@ -482,9 +485,9 @@ def _countable_progress(record: dict[str, object]) -> tuple[int, int] | None:
     count with no total is progress an operator can read but not a basis for
     an estimate.
     """
-    progress = _jobs.mapping(record.get("progress"))
-    completed = _jobs.count(progress.get("completed"))
-    total = _jobs.count(progress.get("total"))
+    progress = _job_values.mapping(record.get("progress"))
+    completed = _job_values.count(progress.get("completed"))
+    total = _job_values.count(progress.get("total"))
     if completed is None or total is None:
         return None
     if total <= 0 or completed >= total:
@@ -528,7 +531,7 @@ def _round_measure(value: object) -> float | None:
     inherits every shape that reader refuses instead of drifting from it. The
     rounding is the only thing this adds.
     """
-    numeric = _jobs.measurement(value)
+    numeric = _job_values.measurement(value)
     return None if numeric is None else round(numeric, 1)
 
 
@@ -588,7 +591,7 @@ def _activity_record_capabilities(state: str) -> dict[str, object]:
             resumable=False,
             cancellable=False,
             retryable=False,
-            deletable=state in _TERMINAL_STATES,
+            deletable=state in TERMINAL_STATES,
         )
     )
 
@@ -647,9 +650,9 @@ def _job_with_liveness(
     # verdict, and renderers read that difference the same way they do for
     # the completion estimate.
     enriched["degradation_evidence"] = (
-        _jobs.degradation_evidence(
+        _job_evidence.degradation_evidence(
             now=now,
-            inputs=_jobs.DegradationInputs(
+            inputs=_job_evidence.DegradationInputs(
                 source=job_source(record),
                 project_root=_job_project_root(record),
                 step=_job_progress_step(record) or None,
@@ -764,7 +767,7 @@ def _job_nested_values(raw: object) -> list[str]:
 
 
 def _job_controllable(record: dict[str, object]) -> bool:
-    capability_map = _jobs.mapping(record.get("capabilities"))
+    capability_map = _job_values.mapping(record.get("capabilities"))
     return any(
         capability_map.get(key) is True
         for key in ("pausable", "resumable", "cancellable")
@@ -772,7 +775,7 @@ def _job_controllable(record: dict[str, object]) -> bool:
 
 
 def _job_capability(record: dict[str, object], key: str) -> bool:
-    return _jobs.mapping(record.get("capabilities")).get(key) is True
+    return _job_values.mapping(record.get("capabilities")).get(key) is True
 
 
 def _increment(counts: dict[str, int], value: str) -> None:
@@ -809,7 +812,7 @@ def _tally_job_initiator(
         return
     kind = str(cast("dict[str, object]", initiator).get("kind", "unknown"))
     _increment(tally.initiators, kind)
-    if state not in _TERMINAL_STATES:
+    if state not in TERMINAL_STATES:
         _increment(tally.active_initiators, kind)
 
 
@@ -882,9 +885,9 @@ def _job_summary(
         "paused": states.get("paused", 0),
         "transitional": sum(states.get(state, 0) for state in _TRANSITIONAL_STATES),
         "active": sum(
-            count for state, count in states.items() if state not in _TERMINAL_STATES
+            count for state, count in states.items() if state not in TERMINAL_STATES
         ),
-        "terminal": sum(states.get(state, 0) for state in _TERMINAL_STATES),
+        "terminal": sum(states.get(state, 0) for state in TERMINAL_STATES),
         "succeeded": states.get("succeeded", 0),
         "failed": states.get("failed", 0),
         "cancelled": states.get("cancelled", 0),
@@ -920,7 +923,7 @@ def _machine_pressure(
         if job_state(record) == JobState.RUNNING.value and not _job_is_waiting(record)
     ]
     anchor = running[0] if running else None
-    return _jobs.machine_pressure(
+    return _job_evidence.machine_pressure(
         now=now,
         forwards=[_job_telemetry(record, "forward") for record in running],
         project_root=_job_project_root(anchor) if anchor is not None else None,
@@ -946,7 +949,7 @@ def _recent_store_failures(
         kind = record.get("error_kind")
         if not isinstance(kind, str) or not kind:
             continue
-        age = _age_seconds(_jobs.measurement(record.get("finished_at")), now)
+        age = _age_seconds(_job_values.measurement(record.get("finished_at")), now)
         if age is not None and age <= STALL_THRESHOLD_SECONDS:
             kinds.append(kind)
     return tuple(kinds)

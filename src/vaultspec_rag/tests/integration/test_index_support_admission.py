@@ -15,7 +15,7 @@ from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...index_profiles import SupportMeasurement, SupportProfileLimits
 from ...indexer import CodebaseIndexer
-from ...indexer._streaming import CodeFileSegment
+from ...indexer._streaming_types import CodeFileSegment
 from ...jobs import get_job_manager, reset
 from ...server import ServerRouteRuntime, create_http_app
 from ...service import ServiceRegistry

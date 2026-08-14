@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..serviceclient._search_transport import get_search_timeout
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
     DEFAULT_SEARCH_TIMEOUT_SECONDS,
     _get_admin_timeout,
-    _get_search_timeout,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -58,7 +58,7 @@ def _admin_timeout_env(value: str | None) -> Generator[None]:
 
 def test_default_search_timeout_is_production_budget() -> None:
     with _search_timeout_env(None):
-        assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        assert get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize("env_timeout", ["not-a-number", "", "   "])
@@ -68,7 +68,7 @@ def test_invalid_env_timeout_uses_production_budget(env_timeout: str) -> None:
     # turning every search into a crash. Drop the catch and these fail with
     # ValueError, not an assertion.
     with _search_timeout_env(env_timeout):
-        assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        assert get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize("env_timeout", ["0", "-1", "nan", "inf", "-inf"])
@@ -76,18 +76,18 @@ def test_non_positive_or_non_finite_env_timeout_uses_production_budget(
     env_timeout: str,
 ) -> None:
     with _search_timeout_env(env_timeout):
-        assert _get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+        assert get_search_timeout(None) == DEFAULT_SEARCH_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan"), float("inf")])
 def test_non_positive_or_non_finite_explicit_timeout_uses_production_budget(
     timeout: float,
 ) -> None:
-    assert _get_search_timeout(timeout) == DEFAULT_SEARCH_TIMEOUT_SECONDS
+    assert get_search_timeout(timeout) == DEFAULT_SEARCH_TIMEOUT_SECONDS
 
 
 def test_explicit_timeout_still_wins() -> None:
-    assert _get_search_timeout(0.25) == 0.25
+    assert get_search_timeout(0.25) == 0.25
 
 
 def test_default_admin_timeout_is_bounded() -> None:

@@ -199,7 +199,7 @@ def test_mcp_service_state_preserves_the_production_quiesce_block(
     completed = _run_mcp_service_state_probe(tmp_path)
 
     assert completed.returncode == 0, completed.stderr
-    from ..jobs import mapping
+    from .._job_values import mapping
 
     payload = mapping(json.loads(completed.stdout))
     direct = mapping(payload.get("direct"))
@@ -337,7 +337,7 @@ async def test_jobs_tui_renders_production_quiesce_controller_evidence(
             job_args={},
         )
 
-    from ..jobs import mapping
+    from .._job_values import mapping
 
     canonical = mapping(quiesce)
     assert set(canonical) == QUIESCE_ENVELOPE_FIELDS

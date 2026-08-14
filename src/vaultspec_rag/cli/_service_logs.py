@@ -27,7 +27,7 @@ from ..logging_config import (
 )
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ._app import JSON_OPTION_HELP, server_app
+from ._app import JSON_OPTION_HELP, server_root_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
 
 if TYPE_CHECKING:
@@ -146,7 +146,7 @@ def _render_log_groups(groups: list[ManagedLogGroup]) -> None:
         sys.stdout.flush()
 
 
-@server_app.command(
+@server_root_app.command(
     "logs",
     cls=_ServiceLogsCommand,
     help="Show grouped raw service and Qdrant logs live or offline.",

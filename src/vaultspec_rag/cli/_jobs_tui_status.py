@@ -74,10 +74,10 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
+from .._job_values import count, flag, mapping, measurement
 from .._loopback_http import LOOPBACK_OPENER
 from .._units import human_bytes
 from ..concurrency import LIMITER_STAT_FIELDS
-from ..jobs import count, flag, mapping, measurement
 from ..serviceclient._compat import classify_service_version
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,

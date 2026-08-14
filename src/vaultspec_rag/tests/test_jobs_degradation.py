@@ -24,19 +24,10 @@ from .._job_errors import (
     RATE_COLLAPSE_RATIO,
     STALL_THRESHOLD_SECONDS,
 )
+from .._job_evidence import DegradationInputs, degradation_evidence
+from .._job_progress import progress_rates, record_progress, telemetry_block
 from ..job_models import JobSource
-from ..jobs import (
-    TERMINAL_PHASES,
-    DegradationInputs,
-    JobProgressReporter,
-    degradation_evidence,
-    progress_rates,
-    record_progress,
-    record_start,
-    reset,
-    snapshot,
-    telemetry_block,
-)
+from ..jobs import TERMINAL_PHASES, JobProgressReporter, record_start, reset, snapshot
 from ..server._routes_jobs import (
     _LEGACY_TERMINAL_PHASES,
     _job_degradation,
@@ -557,7 +548,7 @@ class TestPhaseAwareEvidence:
         assert forward["expected"] is True
 
     def test_the_published_step_vocabulary_classifies_both_ways(self) -> None:
-        from ..jobs import _forward_pass_expected
+        from .._job_evidence import _forward_pass_expected
 
         encoding = {
             "chunk + embed",
@@ -588,9 +579,9 @@ class TestPhaseAwareEvidence:
         assert _forward_pass_expected("") is None
 
     def test_the_cpu_section_reports_a_reading_after_priming(self) -> None:
-        import vaultspec_rag.jobs as jobs_module
+        import vaultspec_rag._job_evidence as jobs_module
 
-        from ..jobs import _process_cpu_evidence
+        from .._job_evidence import _process_cpu_evidence
 
         jobs_module._cpu_snapshot_cache = None
         jobs_module._cpu_probe_process = None
@@ -607,9 +598,9 @@ class TestPhaseAwareEvidence:
         assert percent >= 0.0
 
     def test_polling_inside_the_window_reuses_the_cpu_reading(self) -> None:
-        import vaultspec_rag.jobs as jobs_module
+        import vaultspec_rag._job_evidence as jobs_module
 
-        from ..jobs import _process_cpu_evidence
+        from .._job_evidence import _process_cpu_evidence
 
         jobs_module._cpu_snapshot_cache = None
         jobs_module._cpu_probe_process = None
@@ -636,12 +627,12 @@ class TestGpuPressureSnapshot:
 
     @staticmethod
     def _reset_cache() -> None:
-        import vaultspec_rag.jobs as jobs_module
+        import vaultspec_rag._job_evidence as jobs_module
 
         jobs_module._gpu_snapshot_cache = None
 
     def test_the_snapshot_carries_the_evidence_shape(self) -> None:
-        from ..jobs import gpu_pressure_snapshot
+        from .._job_evidence import gpu_pressure_snapshot
 
         self._reset_cache()
         snapshot = gpu_pressure_snapshot(now=1000.0)
@@ -651,9 +642,9 @@ class TestGpuPressureSnapshot:
 
     def test_polling_inside_the_window_reuses_the_reading(self) -> None:
         """The stamp moves only when the probe actually re-runs."""
-        import vaultspec_rag.jobs as jobs_module
+        import vaultspec_rag._job_evidence as jobs_module
 
-        from ..jobs import gpu_pressure_snapshot
+        from .._job_evidence import gpu_pressure_snapshot
 
         self._reset_cache()
         gpu_pressure_snapshot(now=2000.0)
@@ -676,7 +667,7 @@ class TestGpuPressureSnapshot:
         the mutation below lands in the cache, and the assertion fails by
         name; restored, it passes.
         """
-        from ..jobs import gpu_pressure_snapshot
+        from .._job_evidence import gpu_pressure_snapshot
 
         self._reset_cache()
         first = gpu_pressure_snapshot(now=3000.0)

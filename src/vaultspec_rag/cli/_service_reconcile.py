@@ -23,7 +23,7 @@ from ..serviceclient._status import (
     reconcile_discovery,
 )
 from ..serviceclient._transport import _try_http_health
-from ._app import JSON_OPTION_HELP, server_app
+from ._app import JSON_OPTION_HELP, server_root_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json
 from ._service_lifecycle import (
@@ -40,7 +40,7 @@ __all__ = ["service_reconcile"]
 _RECONCILE_COMMAND = "service.reconcile"
 
 
-@server_app.command(
+@server_root_app.command(
     "reconcile",
     help=(
         "Wait for the running service to republish its discovery records. "
