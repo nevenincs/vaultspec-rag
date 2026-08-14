@@ -310,7 +310,10 @@ max-complexity-allowed = 20
 # It is not a second general-purpose linter here — enabling more would produce
 # findings ruff already reports, under a different code, with no new signal.
 [tool.pylint.main]
-ignore-paths = [".*[\\/]tests[\\/].*"]
+# Tests are not excluded. They were, and their length was invisible while
+# the gate held production: the longest test module reached 3196 lines
+# against a ceiling nothing measured it by. A suite grows the same way a
+# module does, and gets just as hard to read.
 jobs = 0
 
 [tool.pylint."messages control"]
@@ -325,23 +328,21 @@ enable = ["C0302", "R0902", "R0904", "R0916"]
 # count; the ceiling is a ratchet, not a target — lower it whenever an
 # extraction lands, and never raise it.
 #
-# The census counts PRODUCTION modules only, because `ignore-paths` above
-# means those are the only ones this gate measures. An earlier census here
-# counted the whole tree, which set the ceiling against a 3398-line TEST
-# module the gate could never see and left ~450 lines of unused headroom over
-# the real subject. Count what the gate counts.
+# The census counts every module the gate measures, which is now the whole
+# tree. An earlier census counted the tree while the gate excluded tests,
+# setting the ceiling against a module it could never see. Count what the
+# gate counts, and gate what the census counts.
 #
-# Census (2026-08-14, 275 production modules):
+# Census (2026-08-14, 671 modules, tests included):
 #
 #     over 1500:   0
-#     over 1200:  20
-#     over 1000:  27
-#     over  500:  85        <- where modules should settle
+#     over 1200:  35
+#     over 1000:  50
+#     over  500: 182        <- where modules should settle
 #
-# Longest production module: vaultspec_rag/server/_routes.py at 1478 lines.
+# Longest module: vaultspec_rag/tests/test_config.py at 1488 lines.
 #
-# Test modules are NOT gated on length; `ignore-paths` above excludes them, so
-# the census counts what the gate counts. `just health` ranks the whole tree.
+# `just health` ranks the whole tree on the other dimensions.
 [tool.pylint.format]
 max-module-lines = 1500
 
