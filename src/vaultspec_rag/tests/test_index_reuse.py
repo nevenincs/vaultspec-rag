@@ -32,11 +32,9 @@ from ..indexer._reuse import (
     ReuseStats,
     resolve_donor_reuse,
 )
-from ..indexer._streaming import (
-    CodeSliceRequest,
-    _code_embed_text,
-    encode_and_upsert_code_slice,
-)
+from ..indexer._slicing import code_embed_text
+from ..indexer._streaming import encode_and_upsert_code_slice
+from ..indexer._streaming_types import CodeSliceRequest
 from ..store_runtime import DonorPoint, VaultStore
 
 if TYPE_CHECKING:
@@ -262,9 +260,9 @@ class TestContentVerification:
         # freshly encoded - never adopt the stale donor vector.
         assert context.stats.reuse_hits == 0
         assert context.stats.reuse_misses == 1
-        assert model.encoded_texts == [_code_embed_text(changed)]
+        assert model.encoded_texts == [code_embed_text(changed)]
         stored = store.retrieve_donor_points(store.CODE_TABLE_NAME, [donor.id])
-        assert stored[donor.id].dense == _encoded_dense(_code_embed_text(changed))
+        assert stored[donor.id].dense == _encoded_dense(code_embed_text(changed))
         assert stored[donor.id].dense != _donor_dense(7)
 
     def test_identical_content_at_same_point_id_is_adopted(
@@ -349,7 +347,7 @@ class TestFlagOffBaseline:
                 )
             )
 
-            assert model.encoded_texts == [_code_embed_text(chunk) for chunk in chunks]
+            assert model.encoded_texts == [code_embed_text(chunk) for chunk in chunks]
         finally:
             tripwire.close()
 
@@ -389,8 +387,8 @@ class TestMixedSliceAlignment:
 
         # Only the misses reach the encoder, in their original slice order.
         assert model.encoded_texts == [
-            _code_embed_text(chunks[1]),
-            _code_embed_text(chunks[3]),
+            code_embed_text(chunks[1]),
+            code_embed_text(chunks[3]),
         ]
         stored = store.retrieve_donor_points(
             store.CODE_TABLE_NAME, [chunk.id for chunk in chunks]
@@ -405,10 +403,10 @@ class TestMixedSliceAlignment:
                 assert point.sparse_indices == [index + 10, index + 13]
             else:
                 # Miss positions carry EXACTLY their own encoded vector.
-                assert point.dense == _encoded_dense(_code_embed_text(chunk)), (
+                assert point.dense == _encoded_dense(code_embed_text(chunk)), (
                     f"chunk {index} was mis-aligned with another row"
                 )
-                assert point.sparse_indices == [_text_slot(_code_embed_text(chunk))]
+                assert point.sparse_indices == [_text_slot(code_embed_text(chunk))]
         assert context.stats.reuse_hits == 3
         assert context.stats.reuse_misses == 2
         assert context.stats.hit_rate == pytest.approx(0.6)
@@ -451,7 +449,7 @@ class TestDonorFailureDegradesToEncode:
                 )
             )
 
-            assert model.encoded_texts == [_code_embed_text(chunk) for chunk in chunks]
+            assert model.encoded_texts == [code_embed_text(chunk) for chunk in chunks]
             assert context.stats.reuse_hits == 0
             assert context.stats.reuse_misses == 2
         finally:

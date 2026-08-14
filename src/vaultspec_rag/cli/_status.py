@@ -7,9 +7,9 @@ from typing import cast
 
 import typer
 
+from .._job_values import count
 from .._operator_commands import index_command, server_status_command
 from .._source_types import PublicSourceType
-from ..jobs import count
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, JsonMode, app

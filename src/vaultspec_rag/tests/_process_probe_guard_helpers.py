@@ -22,7 +22,8 @@ _ALLOWED: dict[str, str] = {
     # about THIS process's RSS, which is a memory concern, not process
     # identity: no pid to confuse, no liveness to get wrong.
     "memory_probe.py": "samples this process's own RSS",
-    "jobs.py": "samples this process's own RSS",
+    "_job_admission.py": "samples this process's own RSS",
+    "_job_evidence.py": "samples this process's own CPU",
     # Holds SYNCHRONIZE handles open to WAIT on ancestor death, and walks a
     # toolhelp snapshot to find them. That is handle lifetime management, not
     # a point-in-time probe, and it needs its own `use_last_error` WinDLL.

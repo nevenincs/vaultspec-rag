@@ -34,7 +34,7 @@ from ..indexer._run_ledger_models import (
     RunTerminalState,
 )
 from ..indexer._run_policy import RunPolicy
-from ..indexer._streaming import CodeFileSegment
+from ..indexer._streaming_types import CodeFileSegment
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -33,17 +33,15 @@ from ._chunk_producer import (
 from ._file_state import FileStateKind
 from ._run_checkpoint import CodeRunConfiguration
 from ._run_ledger_models import RunOperation
+from ._slicing import iter_code_file_segments, iter_weighted_code_slices
 from ._streaming import (
-    CodeFileSegmentRequest,
-    CodeSliceRequest,
     EncodeBucketReporter,
     _release_cuda_cache,
     encode_and_upsert_code_slice,
-    iter_code_file_segments,
-    iter_weighted_code_slices,
     report_forward_entry,
     report_forward_exit,
 )
+from ._streaming_types import CodeFileSegmentRequest, CodeSliceRequest
 
 if TYPE_CHECKING:
     import contextlib
@@ -62,7 +60,7 @@ if TYPE_CHECKING:
     from ._reuse import DonorReuseContext, ReuseStats
     from ._run_checkpoint import CodeRunCheckpoint
     from ._run_policy import RunPolicy
-    from ._streaming import CodeFileSegment, WeightedCodeSlice
+    from ._streaming_types import CodeFileSegment, WeightedCodeSlice
 
 logger = logging.getLogger(__name__)
 

@@ -530,7 +530,7 @@ def _name_indexed_files(
     confirmed segment stands behind.
     """
     from ..._store_models import CodeChunk
-    from ...indexer._streaming import CodeFileSegment
+    from ...indexer._streaming_types import CodeFileSegment
 
     for rel_path in rel_paths:
         stem = rel_path.rpartition("/")[2].partition(".")[0]

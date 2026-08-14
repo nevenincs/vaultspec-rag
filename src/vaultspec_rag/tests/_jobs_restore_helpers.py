@@ -10,11 +10,8 @@ import sys
 import time
 
 from vaultspec_rag.job_models import JobSource  # absolute-import-ok
-from vaultspec_rag.jobs import (  # absolute-import-ok
-    record_finish,
-    record_progress,
-    record_start,
-)
+from vaultspec_rag._job_progress import record_progress  # absolute-import-ok
+from vaultspec_rag.jobs import record_finish, record_start  # absolute-import-ok
 
 job_id = record_start(JobSource.CODE, "tool", command="reindex_codebase")
 # Mid-phase progress past both write throttles, so the persisted snapshot

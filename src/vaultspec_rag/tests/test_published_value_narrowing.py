@@ -29,12 +29,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import TypeGuard
 
-from .. import jobs as _jobs_module
+from .. import _job_values as _values_module
+from .._job_values import count, flag, mapping, measurement
 from ..cli._cli_format import _format_mib, _format_seconds, compact_duration
-from ..cli._jobs_tui import _capability, _fetch_error
+from ..cli._jobs_tui import capability_flag, fetch_error_text
 from ..cli._service_jobs_presentation import _nested_section, render_jobs_result
 from ..cli._service_watcher import _format_delay_milliseconds, _format_delay_seconds
-from ..jobs import count, flag, mapping, measurement
 from ..server._routes_jobs import _job_capability
 
 pytestmark = [pytest.mark.unit]
@@ -471,7 +471,7 @@ _NUMERIC_SHAPES = frozenset({"int", "float"})
 
 def _narrowing_surface_paths() -> dict[Path, str]:
     """Every enrolled source file, mapped to the label offenders report it by."""
-    package_root = Path(_jobs_module.__file__).parent
+    package_root = Path(_values_module.__file__).parent
     surfaces = {package_root / relative: relative for relative in _NARROWING_SURFACES}
     for tree_relative in _NARROWING_SURFACE_TREES:
         for path in sorted((package_root / tree_relative).rglob("*.py")):
@@ -686,12 +686,13 @@ class TestNoSurfaceNarrowsANumberTwice:
         assert stale == []
 
     def test_the_readers_still_live_in_exactly_one_place(self) -> None:
-        # The survivors are the jobs module's, and the surfaces import them
-        # rather than restating them.
-        assert measurement.__module__ == _jobs_module.__name__
-        assert count.__module__ == _jobs_module.__name__
-        assert mapping.__module__ == _jobs_module.__name__
-        assert flag.__module__ == _jobs_module.__name__
+        # The survivors belong to the value module, and every surface imports
+        # them rather than restating them. They live at the bottom of the job
+        # import graph precisely so that one home can serve all of them.
+        assert measurement.__module__ == _values_module.__name__
+        assert count.__module__ == _values_module.__name__
+        assert mapping.__module__ == _values_module.__name__
+        assert flag.__module__ == _values_module.__name__
 
 
 class TestTheAssertCarveOutRefusesALeakyIntClaim:
@@ -806,12 +807,12 @@ class TestTheLookalikesThatMustNotBeMerged:
         # the route reads absent as denied because it is publishing a claim.
         # Merging these silently greys out every key against an older daemon.
         restored: dict[str, object] = {"id": "restored-job"}
-        assert _capability(restored, "pause") is True
+        assert capability_flag(restored, "pause") is True
         assert _job_capability(restored, "pause") is False
 
         # They agree wherever the service actually said something.
         denied: dict[str, object] = {"capabilities": {"pause": False}}
-        assert _capability(denied, "pause") is False
+        assert capability_flag(denied, "pause") is False
         assert _job_capability(denied, "pause") is False
 
     def test_the_nested_section_reader_answers_none_not_empty(self) -> None:
@@ -832,8 +833,8 @@ class TestTheLookalikesThatMustNotBeMerged:
 
         refusal: dict[str, object] = {"ok": False, "error": "refused"}
         assert _ok_payload(refusal) == {}
-        assert _fetch_error(refusal) is not None
+        assert fetch_error_text(refusal) is not None
 
         good: dict[str, object] = {"ok": True, "jobs": []}
         assert _ok_payload(good) == good
-        assert _fetch_error(good) is None
+        assert fetch_error_text(good) is None

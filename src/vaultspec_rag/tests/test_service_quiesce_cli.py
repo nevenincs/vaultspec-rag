@@ -13,9 +13,9 @@ import pytest
 import uvicorn
 from typer.testing import CliRunner
 
+from .._job_values import mapping
 from ..cli import app
 from ..config._types import EnvVar
-from ..jobs import mapping
 from ..server import ServerRouteRuntime, create_http_app
 from ..service import ServiceRegistry
 from ..service_quiesce import QuiesceState

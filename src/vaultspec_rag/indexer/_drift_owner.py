@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from ..store_runtime import VaultStore
     from ._run_checkpoint import CodeRunCheckpoint
-    from ._streaming import CodeFileSegment
+    from ._streaming_types import CodeFileSegment
 
 __all__ = [
     "DEFAULT_DRIFT_RETRY_BUDGET",

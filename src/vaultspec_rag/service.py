@@ -10,304 +10,54 @@ initialization in ``api.py`` and the RAG daemon (``server/_main.py``).
 from __future__ import annotations
 
 import contextlib
-import gc
-import hmac
 import logging
 import threading
 import time
-from dataclasses import dataclass, field, replace
-from math import isfinite
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
-    from types import TracebackType
 
     from sentence_transformers import CrossEncoder
 
     from .embeddings import EmbeddingModel
-    from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
     from .job_manager.manager import JobManager
-    from .search import VaultSearcher
     from .store_runtime import VaultStore
 
-from .gpu_borrow_lease import BorrowerLeaseStatus, borrower_lease_status
+from ._service_borrower import BorrowerLeaseMixin
+from ._service_eviction import ProjectEvictionMixin
+from ._service_residency import GPUResidencyMixin
+from ._service_types import (
+    STORE_FORCE_CLOSE_SECONDS,
+    ComputeLease,
+    GPUResidencyRecipe,
+    GPUResidencyTransitionError,
+    ProjectBusyError,
+    ProjectComputeRuntime,
+    ProjectSlot,
+    RegistryFullError,
+    ResourceTransitionOperation,
+    SearchLease,
+    ServiceHealth,
+    require_present,
+)
 from .graph_cache import GraphCache
 from .service_quiesce import (
     ComputeTicket,
-    QuiesceSnapshot,
-    QuiesceState,
-    QuiesceTransition,
-    QuiesceTransitionCode,
     ServiceQuiesceController,
-    ServiceQuiesceTransitionConflictError,
-    ServiceQuiesceTransitionWaitTimeoutError,
 )
 
 logger = logging.getLogger(__name__)
 
-# Bound the per-store collection-lock acquisition during shutdown teardown.
-# close_all() reaches store.close() only after its 5s busy drain, so a lock
-# still held here belongs to a wedged consumer that the graceful drain could
-# not release; a short bound then force-closes the client rather than blocking
-# the daemon's bounded shutdown on the writer lock indefinitely.
-_STORE_FORCE_CLOSE_SECONDS = 5.0
+__all__ = ["ServiceRegistry"]
 
 
-def _validate_resource_transition_timeout(timeout_seconds: float) -> None:
-    """Reject invalid waits before they can close compute admission."""
-    if not isfinite(timeout_seconds) or timeout_seconds < 0:
-        raise ValueError(
-            "timeout_seconds must be a finite value greater than or equal to zero"
-        )
-
-
-def _require_present[T](value: T | None, unavailable: str) -> T:
-    """Return a lifecycle-owned reference, or name the step that never ran.
-
-    Reaching one of these accessors with its reference unset means a caller
-    skipped the lifecycle step that establishes it.  That is a wiring bug, and
-    it should name itself rather than surface as an attribute error on ``None``
-    several frames deeper.
-    """
-    if value is None:
-        raise RuntimeError(unavailable)
-    return value
-
-
-__all__ = [
-    "ComputeLease",
-    "GPURebuildEvidence",
-    "GPUReleaseEvidence",
-    "GPUResidencyTransitionError",
-    "ProjectBusyError",
-    "ProjectComputeRuntime",
-    "ProjectSlot",
-    "QuiesceInvariantError",
-    "RegistryFullError",
-    "SearchLease",
-    "ServiceHealth",
-    "ServiceRegistry",
-]
-
-
-class ServiceHealth(TypedDict):
-    """Diagnostic status returned by :meth:`ServiceRegistry.health`.
-
-    ``nonconforming`` names each warm collection whose stored vectors were not
-    produced by the models this process is configured with. It reports only
-    what the ensure path already judged, so a health poll never probes the
-    backend; collections nobody has opened, and those judged unverifiable, are
-    absent rather than listed as problems.
-    """
-
-    model_loaded: bool
-    reranker_loaded: bool
-    cuda: bool
-    project_count: int
-    projects: list[str]
-    nonconforming: list[str]
-
-
-class RegistryFullError(Exception):
-    """Raised by :meth:`ServiceRegistry._lru_victim_root` when no slot is evictable.
-
-    Attributes:
-        max_projects: The registry's configured ``max_projects`` cap.
-    """
-
-    def __init__(self, max_projects: int) -> None:
-        super().__init__(
-            f"ServiceRegistry is full ({max_projects} slots, all busy)",
-        )
-        self.max_projects = max_projects
-
-
-class ProjectBusyError(RuntimeError):
-    """Raised when explicit project closure would invalidate a live lease."""
-
-    def __init__(self, root: Path) -> None:
-        super().__init__(f"Project is busy and cannot be closed: {root}")
-        self.root = root
-
-
-class QuiesceInvariantError(RuntimeError):
-    """Raised when a GPU residency transition lacks controller evidence."""
-
-
-class GPUResidencyTransitionError(RuntimeError):
-    """Raised when registry-owned GPU residency teardown or rebuild fails."""
-
-
-@dataclass(frozen=True, slots=True)
-class GPUReleaseEvidence:
-    """Immutable evidence from one completed GPU dependency detachment."""
-
-    admission_epoch: int
-    detached_slot_count: int
-    model_detached: bool
-    reranker_detached: bool
-
-
-@dataclass(frozen=True, slots=True)
-class GPURebuildEvidence:
-    """Immutable evidence from one completed shared GPU dependency rebuild."""
-
-    admission_epoch: int
-    model_rebuilt: bool
-    reranker_rebuilt: bool
-    lazy_slot_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class _GPUResidencyRecipe:
-    """Object-free recipe retained across GPU residency transitions."""
-
-    model_name: str | None
-    restore_model: bool
-    restore_reranker: bool
-
-
-@dataclass(slots=True)
-class _ResourceTransitionOperation:
-    """One registry-owned side-effect transition shared by concurrent callers."""
-
-    direction: Literal["pause", "resume"]
-    completed: bool = False
-    outcome: QuiesceTransition | None = None
-    failure: BaseException | None = None
-
-
-@dataclass(slots=True)
-class ProjectComputeRuntime:
-    """GPU-dependent components attached to one retained project slot."""
-
-    model: EmbeddingModel
-    searcher: VaultSearcher
-    vault_indexer: VaultIndexer
-    code_indexer: CodebaseIndexer
-    document_indexer: DocumentIndexer
-
-
-@dataclass
-class ProjectSlot:
-    """Per-project storage identity managed by ``ServiceRegistry``.
-
-    Attributes:
-        store: Qdrant-backed vector store for this project.
-        graph_cache: Thread-safe TTL graph cache for this project. It remains
-            resident through GPU quiescence.
-        compute_runtime: The sole slot-reachable owner of GPU-dependent
-            model, search, and index components. The registry detaches it
-            before it releases resident GPU dependencies.
-        last_access: Monotonic seconds of the most recent successful
-            :meth:`ServiceRegistry.lease` acquire.  Never mutated or
-            read outside the registry's ``_lock``.
-        ref_count: Number of currently held leases against this slot.
-            Incremented on lease acquire and decremented on release;
-            only the sweeper looks at slots with ``ref_count == 0``.
-    """
-
-    store: VaultStore
-    graph_cache: GraphCache
-    compute_runtime: ProjectComputeRuntime | None = None
-    last_access: float = field(default=0.0)
-    ref_count: int = field(default=0)
-
-
-@dataclass(slots=True)
-class ComputeLease:
-    """Ticketed, refcounted access to one project's compute runtime."""
-
-    _root: Path
-    _model_name: str | None
-    _acquire_ticket: Callable[[], ComputeTicket]
-    _acquire_slot: Callable[[Path], contextlib.AbstractContextManager[ProjectSlot]]
-    _create_runtime: Callable[[Path, ProjectSlot, str | None], ProjectComputeRuntime]
-    _ticket: ComputeTicket | None = field(default=None, init=False)
-    _slot_lease: contextlib.AbstractContextManager[ProjectSlot] | None = field(
-        default=None,
-        init=False,
-    )
-    _runtime: ProjectComputeRuntime | None = field(default=None, init=False)
-
-    def __enter__(self) -> ComputeLease:
-        """Acquire controller admission before the project runtime."""
-        self._ticket = self._acquire_ticket()
-        try:
-            slot_lease = self._acquire_slot(self._root)
-            slot = slot_lease.__enter__()
-        except BaseException:
-            self._ticket.release()
-            self._ticket = None
-            raise
-        self._slot_lease = slot_lease
-        try:
-            self._runtime = self._create_runtime(
-                self._root.resolve(),
-                slot,
-                self._model_name,
-            )
-        except BaseException:
-            self._slot_lease.__exit__(None, None, None)
-            self._slot_lease = None
-            self._ticket.release()
-            self._ticket = None
-            raise
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool:
-        """Release slot ownership before making the ticket drainable."""
-        self._runtime = None
-        try:
-            if self._slot_lease is not None:
-                self._slot_lease.__exit__(exc_type, exc_val, exc_tb)
-        finally:
-            self._slot_lease = None
-            if self._ticket is not None:
-                self._ticket.release()
-                self._ticket = None
-        return False
-
-    @property
-    def runtime(self) -> ProjectComputeRuntime:
-        """Return the runtime only while this lease is entered."""
-        return _require_present(self._runtime, "compute lease is not active")
-
-
-@dataclass(slots=True)
-class SearchLease:
-    """Ticketed, refcounted access to one project's search component."""
-
-    _compute_lease: ComputeLease
-
-    def __enter__(self) -> SearchLease:
-        """Acquire the underlying compute lease."""
-        self._compute_lease.__enter__()
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool:
-        """Release the underlying compute lease."""
-        return self._compute_lease.__exit__(exc_type, exc_val, exc_tb)
-
-    @property
-    def searcher(self) -> VaultSearcher:
-        """Return the searcher only while this lease is entered."""
-        return self._compute_lease.runtime.searcher
-
-
-class ServiceRegistry:
+class ServiceRegistry(
+    GPUResidencyMixin,
+    BorrowerLeaseMixin,
+    ProjectEvictionMixin,
+):
     """Shared GPU models + per-project isolated components.
 
     The registry owns a single ``EmbeddingModel`` instance shared
@@ -375,9 +125,9 @@ class ServiceRegistry:
         # resource transition.  It is never held while the owner drains jobs,
         # waits for tickets, or takes GPU/registry locks.
         self._resource_transition_condition = threading.Condition(threading.Lock())
-        self._resource_transition: _ResourceTransitionOperation | None = None
+        self._resource_transition: ResourceTransitionOperation | None = None
         self._reranker: CrossEncoder | None = None
-        self._gpu_residency_recipe: _GPUResidencyRecipe | None = None
+        self._gpu_residency_recipe: GPUResidencyRecipe | None = None
         self._reranker_lock = threading.Lock()
         self._on_close_project: Callable[[Path], object] | None = None
         self._shutting_down = False
@@ -467,7 +217,7 @@ class ServiceRegistry:
                 if self._gpu_residency_recipe is not None
                 else self._reranker is not None
             )
-            self._gpu_residency_recipe = _GPUResidencyRecipe(
+            self._gpu_residency_recipe = GPUResidencyRecipe(
                 model_name=model_name,
                 restore_model=True,
                 restore_reranker=reranker_loaded,
@@ -486,7 +236,7 @@ class ServiceRegistry:
         Raises:
             RuntimeError: If ``load_model()`` has not been called.
         """
-        return _require_present(
+        return require_present(
             self._model,
             "EmbeddingModel not loaded - call load_model() first",
         )
@@ -553,7 +303,7 @@ class ServiceRegistry:
                     if self._gpu_residency_recipe is not None
                     else None
                 )
-                self._gpu_residency_recipe = _GPUResidencyRecipe(
+                self._gpu_residency_recipe = GPUResidencyRecipe(
                     model_name=model_name,
                     restore_model=True,
                     restore_reranker=True,
@@ -572,394 +322,6 @@ class ServiceRegistry:
 
             sample_resident_cuda_baseline()
             return self._reranker
-
-    def quiesce_resources(self, *, timeout_seconds: float) -> QuiesceTransition:
-        """Drain and detach GPU residency through the registry's one façade."""
-        return self._run_resource_transition(
-            direction="pause",
-            timeout_seconds=timeout_seconds,
-            run=lambda: self._quiesce_resources_once(timeout_seconds),
-        )
-
-    def _quiesce_resources_once(self, timeout_seconds: float) -> QuiesceTransition:
-        """Perform the one pause owner's drain and residency-release effects."""
-        started = self._quiesce_controller.begin_pause()
-        if started.snapshot.state is QuiesceState.QUIESCED:
-            return started
-        if started.snapshot.state is not QuiesceState.PAUSING:
-            return started
-        self.create_job_manager().request_quiesce_attempts()
-        drained = self._quiesce_controller.wait_for_drain(timeout_seconds)
-        if not drained.achieved:
-            return drained
-        try:
-            self._detach_gpu_dependencies(
-                admission_epoch=drained.snapshot.admission_epoch,
-            )
-        except (GPUResidencyTransitionError, QuiesceInvariantError):
-            return self._quiesce_controller.fail_transition(
-                code=QuiesceTransitionCode.QUIESCE_FAILED,
-                reason="gpu_dependency_release_failed",
-            )
-        return self._quiesce_controller.acknowledge_vram_released()
-
-    def resume_resources(self, *, timeout_seconds: float = 5.0) -> QuiesceTransition:
-        """Rebuild shared GPU residency before reopening compute admission.
-
-        Resume is the single operator-facing way back to ``running``, from a
-        completed quiesce and from a pause that failed alike.  An operator
-        whose pause was stranded has no way to know which of the two they are
-        looking at, so the verb - not the operator - picks the recovery.
-        """
-        return self._run_resource_transition(
-            direction="resume",
-            timeout_seconds=timeout_seconds,
-            run=self._resume_resources_once,
-        )
-
-    def _resume_resources_once(self) -> QuiesceTransition:
-        """Recover a failed pause or rebuild, prepare recovery, and reopen admission."""
-        observed = self._quiesce_controller.snapshot()
-        if observed.state is QuiesceState.PAUSING:
-            return self._abort_pause_once(observed.admission_epoch)
-        warming = self._quiesce_controller.begin_warming()
-        if warming.snapshot.state is not QuiesceState.WARMING:
-            return warming
-        try:
-            self._rebuild_gpu_dependencies(
-                admission_epoch=warming.snapshot.admission_epoch,
-            )
-        except (GPUResidencyTransitionError, QuiesceInvariantError):
-            return self._quiesce_controller.fail_transition(
-                code=QuiesceTransitionCode.WARMUP_FAILED,
-                reason="gpu_dependency_rebuild_failed",
-            )
-        from .job_manager.models import QuiescedResumeStatus
-
-        manager = self.create_job_manager()
-        prepared = manager.prepare_quiesced_resume()
-        match prepared.status:
-            case QuiescedResumeStatus.PREPARED | QuiescedResumeStatus.NO_WORK:
-                pass
-            case QuiescedResumeStatus.PERSISTENCE_UNPUBLISHED:
-                return self._quiesce_controller.fail_transition(
-                    code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
-                    reason="job_resume_persistence_unpublished",
-                )
-            case QuiescedResumeStatus.PERSISTENCE_PUBLISHED_NOT_DURABLE:
-                return self._quiesce_controller.fail_transition(
-                    code=QuiesceTransitionCode.RESUME_RECOVERY_FAILED,
-                    reason="job_resume_persistence_published_not_durable",
-                )
-        completed = self._quiesce_controller.complete_warming()
-        if completed.achieved and completed.snapshot.state is QuiesceState.RUNNING:
-            manager.dispatch_prepared_quiesced_resume(prepared)
-        return completed
-
-    def _recover_already_running_resources(
-        self,
-        snapshot: QuiesceSnapshot,
-    ) -> QuiesceTransition:
-        """Reconcile retained durable work before reporting an idempotent resume."""
-        self.create_job_manager().recover_running_quiesced_resume()
-        return QuiesceTransition(
-            code=QuiesceTransitionCode.RUNNING,
-            achieved=True,
-            snapshot=snapshot,
-        )
-
-    def _abort_pause_once(self, admission_epoch: int) -> QuiesceTransition:
-        """Return a failed pause to running, rebuilding what it already released.
-
-        A resume aimed at ``pausing`` is aimed at a pause that stopped without
-        quiescing, so there is no ``warming`` to enter and no quiesced
-        evidence to rebuild against.  Restoring residency first is what makes
-        the reopening honest: the residency-release failure path detaches the
-        shared model and reranker before it reports, so flipping admission
-        open without rebuilding them would readmit compute against a stack
-        that is no longer there.
-        """
-        try:
-            self._restore_paused_gpu_dependencies(admission_epoch=admission_epoch)
-        except (GPUResidencyTransitionError, QuiesceInvariantError):
-            return self._quiesce_controller.fail_transition(
-                code=QuiesceTransitionCode.QUIESCE_FAILED,
-                reason="gpu_dependency_rebuild_failed",
-            )
-        aborted = self._quiesce_controller.abort_pause()
-        if aborted.achieved and aborted.snapshot.state is QuiesceState.RUNNING:
-            self.create_job_manager().recover_running_quiesced_resume()
-        return aborted
-
-    def _run_resource_transition(
-        self,
-        *,
-        direction: Literal["pause", "resume"],
-        timeout_seconds: float,
-        run: Callable[[], QuiesceTransition],
-    ) -> QuiesceTransition:
-        """Claim or join one registry side-effect transition without lock nesting."""
-        _validate_resource_transition_timeout(timeout_seconds)
-        conflict_direction: Literal["pause", "resume"] | None = None
-        operation: _ResourceTransitionOperation | None = None
-        owner = False
-        with self._resource_transition_condition:
-            active = self._resource_transition
-            if active is not None:
-                if active.direction != direction:
-                    conflict_direction = active.direction
-                else:
-                    operation = active
-                    owner = False
-            else:
-                operation = _ResourceTransitionOperation(direction=direction)
-                self._resource_transition = operation
-                owner = True
-        if conflict_direction is not None:
-            raise ServiceQuiesceTransitionConflictError(
-                requested_direction=direction,
-                active_direction=conflict_direction,
-                snapshot=self._quiesce_controller.snapshot(),
-            )
-        if operation is None:
-            raise RuntimeError("resource transition claim did not select an operation")
-        if not owner:
-            return self._wait_for_resource_transition(
-                operation,
-                direction=direction,
-                timeout_seconds=timeout_seconds,
-            )
-        observed = self._quiesce_controller.snapshot()
-        if direction == "pause" and observed.state is QuiesceState.QUIESCED:
-            return self._complete_owned_resource_transition(
-                operation,
-                lambda: QuiesceTransition(
-                    code=QuiesceTransitionCode.ALREADY_QUIESCED,
-                    achieved=True,
-                    snapshot=observed,
-                ),
-            )
-        if direction == "resume" and observed.state is QuiesceState.RUNNING:
-            return self._complete_owned_resource_transition(
-                operation,
-                lambda: self._recover_already_running_resources(observed),
-            )
-        return self._complete_owned_resource_transition(operation, run)
-
-    def _wait_for_resource_transition(
-        self,
-        operation: _ResourceTransitionOperation,
-        *,
-        direction: Literal["pause", "resume"],
-        timeout_seconds: float,
-    ) -> QuiesceTransition:
-        """Wait boundedly for the owner without taking registry or GPU locks."""
-        deadline = time.monotonic() + timeout_seconds
-        timed_out = False
-        with self._resource_transition_condition:
-            while not operation.completed:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0 or not self._resource_transition_condition.wait(
-                    timeout=remaining
-                ):
-                    timed_out = not operation.completed
-                    break
-            if operation.completed:
-                if operation.failure is not None:
-                    raise operation.failure
-                if operation.outcome is None:
-                    raise RuntimeError("completed resource transition has no outcome")
-                return operation.outcome
-        if timed_out:
-            raise ServiceQuiesceTransitionWaitTimeoutError(
-                direction=direction,
-                snapshot=self._quiesce_controller.snapshot(),
-            )
-        raise RuntimeError("resource transition waiter left without an outcome")
-
-    def _complete_owned_resource_transition(
-        self,
-        operation: _ResourceTransitionOperation,
-        run: Callable[[], QuiesceTransition],
-    ) -> QuiesceTransition:
-        """Run owner effects once, then publish their exact terminal truth."""
-        outcome: QuiesceTransition | None = None
-        failure: BaseException | None = None
-        try:
-            outcome = run()
-            return outcome
-        except BaseException as exc:
-            failure = exc
-            raise
-        finally:
-            with self._resource_transition_condition:
-                operation.outcome = outcome
-                operation.failure = failure
-                operation.completed = True
-                if self._resource_transition is operation:
-                    self._resource_transition = None
-                self._resource_transition_condition.notify_all()
-
-    def _detach_gpu_dependencies(
-        self,
-        *,
-        admission_epoch: int,
-    ) -> GPUReleaseEvidence:
-        """Detach GPU objects only after the current epoch has fully drained."""
-        snapshot = self._quiesce_controller.snapshot()
-        self._require_drained_closed_epoch(
-            snapshot,
-            admission_epoch,
-            expected_state=QuiesceState.PAUSING,
-            operation="detach",
-        )
-        with self._gpu_lock, self._lock:
-            detached_slot_count = len(self._projects)
-            model_detached = self._model is not None
-            reranker_detached = self._reranker is not None
-            recipe = self._gpu_residency_recipe
-            self._gpu_residency_recipe = _GPUResidencyRecipe(
-                model_name=recipe.model_name if recipe is not None else None,
-                restore_model=model_detached,
-                restore_reranker=reranker_detached,
-            )
-            for slot in self._projects.values():
-                slot.compute_runtime = None
-            self._model = None
-            self._reranker = None
-        self._release_gpu_residency()
-        return GPUReleaseEvidence(
-            admission_epoch=admission_epoch,
-            detached_slot_count=detached_slot_count,
-            model_detached=model_detached,
-            reranker_detached=reranker_detached,
-        )
-
-    def _rebuild_gpu_dependencies(
-        self,
-        *,
-        admission_epoch: int,
-    ) -> GPURebuildEvidence:
-        """Rebuild shared dependencies while the controller keeps admission closed."""
-        snapshot = self._quiesce_controller.snapshot()
-        self._require_drained_closed_epoch(
-            snapshot,
-            admission_epoch,
-            expected_state=QuiesceState.WARMING,
-            operation="rebuild",
-        )
-        return self._restore_gpu_residency(admission_epoch=admission_epoch)
-
-    def _restore_paused_gpu_dependencies(self, *, admission_epoch: int) -> None:
-        """Rebuild the residency a failed pause released, before it reopens.
-
-        A pause that never got past its drain released nothing, so this must
-        not reach for the GPU lock the unfinished slice is still holding -
-        doing so would make the way out of a stranded pause wait on exactly
-        the work that stranded it.  Only a pause that already detached
-        residency has anything to rebuild, and detaching is reachable only
-        from a drained closed epoch, so every restore that actually allocates
-        is still guarded by the full drained-epoch invariant.
-        """
-        snapshot = self._quiesce_controller.snapshot()
-        if (
-            snapshot.state is not QuiesceState.PAUSING
-            or snapshot.admission_epoch != admission_epoch
-            or snapshot.admissions_open
-        ):
-            raise QuiesceInvariantError(
-                "GPU restore requires the closed epoch its failed pause left behind"
-            )
-        if not self._gpu_residency_detached():
-            return
-        self._require_drained_closed_epoch(
-            snapshot,
-            admission_epoch,
-            expected_state=QuiesceState.PAUSING,
-            operation="restore",
-        )
-        self._restore_gpu_residency(admission_epoch=admission_epoch)
-
-    def _gpu_residency_detached(self) -> bool:
-        """Report whether the recipe names residency the registry no longer holds."""
-        with self._lock:
-            recipe = self._gpu_residency_recipe
-            if recipe is None:
-                return False
-            return (recipe.restore_model and self._model is None) or (
-                recipe.restore_reranker and self._reranker is None
-            )
-
-    def _restore_gpu_residency(self, *, admission_epoch: int) -> GPURebuildEvidence:
-        """Reconstruct the recipe's shared GPU stack, failing closed on any error."""
-        recipe = self._gpu_residency_recipe
-        try:
-            with self._gpu_lock:
-                if recipe is not None and recipe.restore_model:
-                    self._load_model(recipe.model_name)
-                    if recipe.restore_reranker:
-                        self._get_reranker()
-            with self._lock:
-                lazy_slot_count = len(self._projects)
-                model_rebuilt = self._model is not None
-                reranker_rebuilt = self._reranker is not None
-        except Exception as exc:
-            self._clear_partial_gpu_dependencies()
-            raise GPUResidencyTransitionError("GPU dependency rebuild failed") from exc
-        return GPURebuildEvidence(
-            admission_epoch=admission_epoch,
-            model_rebuilt=model_rebuilt,
-            reranker_rebuilt=reranker_rebuilt,
-            lazy_slot_count=lazy_slot_count,
-        )
-
-    def _require_drained_closed_epoch(
-        self,
-        snapshot: QuiesceSnapshot,
-        admission_epoch: int,
-        *,
-        expected_state: QuiesceState,
-        operation: str,
-    ) -> None:
-        """Reject ``operation`` unless its own closed epoch has drained."""
-        if (
-            snapshot.state is not expected_state
-            or snapshot.admission_epoch != admission_epoch
-            or snapshot.admissions_open
-            or snapshot.active_compute_tickets != 0
-            or not snapshot.drain_complete
-            or snapshot.drain_acknowledged_at is None
-        ):
-            raise QuiesceInvariantError(
-                f"GPU {operation} requires a drained closed epoch"
-            )
-
-    def _release_gpu_residency(self) -> None:
-        """Collect detached references and release allocator cache outside locks."""
-        from .memory_probe import (
-            rebase_resident_cuda_baseline,
-            reset_cuda_peak_memory_stats,
-        )
-
-        try:
-            gc.collect()
-            reset_cuda_peak_memory_stats()
-            rebase_resident_cuda_baseline()
-        except Exception as exc:
-            raise GPUResidencyTransitionError(
-                "GPU dependency release cleanup failed"
-            ) from exc
-
-    def _clear_partial_gpu_dependencies(self) -> None:
-        """Fail closed after rebuild failure while retaining the object-free recipe."""
-        with self._gpu_lock, self._lock:
-            for slot in self._projects.values():
-                slot.compute_runtime = None
-            self._model = None
-            self._reranker = None
-        self._release_gpu_residency()
-
-    # -- per-project slots -------------------------------------------------
 
     @contextlib.contextmanager
     def _root_store_guard(self, resolved: Path) -> Generator[None]:
@@ -1557,324 +919,6 @@ class ServiceRegistry:
         with self._lock:
             self._job_manager = None
 
-    def quiesce_snapshot(self) -> QuiesceSnapshot:
-        """Return the registry-owned controller's read-only lifecycle truth."""
-        return self.published_quiesce_snapshot(self._quiesce_controller.snapshot())
-
-    def published_quiesce_snapshot(self, snapshot: QuiesceSnapshot) -> QuiesceSnapshot:
-        """Stamp borrower ownership onto one controller snapshot before it ships.
-
-        The controller decides lifecycle state and the registry decides who owns
-        the resulting hold, so neither half can answer an operator alone.  Every
-        snapshot that leaves this process goes through here, including the one
-        carried on a transition result: a route that rendered the controller's
-        own snapshot would report an unowned hold on exactly the responses where
-        ownership is the thing being reported.
-
-        The binding is read without ``self._lock`` deliberately.  That lock is
-        held across model construction, and the watcher reads a snapshot on its
-        intake path, so acquiring it here would let a model load stall watcher
-        handoff.  Reading one attribute is atomic, and the answer is a
-        point-in-time observation either way: the controller half of this
-        snapshot was already taken at a different instant.  The security-
-        relevant comparison in :meth:`borrower_capability_is_bound` still takes
-        the lock, because deciding who may act is not an observation.
-        """
-        return replace(
-            snapshot,
-            borrower_bound=self._borrower_capability is not None,
-        )
-
-    def validate_borrower_lifecycle_request(
-        self,
-        capability: str | None,
-        *,
-        pause: bool,
-    ) -> str | None:
-        """Return one lease denial, or ``None`` for an authorized lifecycle call."""
-        with self._lock:
-            bound_capability = self._borrower_capability
-        if bound_capability is not None:
-            if capability is None:
-                return None if pause else "borrower_lease_required"
-            if not hmac.compare_digest(bound_capability, capability):
-                return "borrower_lease_mismatch"
-        if capability is None:
-            return None
-        return self._borrower_lease_error(capability)
-
-    def borrower_capability_is_bound(self, capability: str) -> bool:
-        """Return whether this exact capability already owns the current hold.
-
-        Separate from :meth:`bind_borrower_capability` because the caller needs
-        to distinguish "already mine" from "bindable" before deciding whether an
-        observed quiescence may be claimed at all.  Compared in constant time
-        like every other capability check.
-        """
-        with self._lock:
-            bound_capability = self._borrower_capability
-        if bound_capability is None:
-            return False
-        return hmac.compare_digest(bound_capability, capability)
-
-    def bind_borrower_capability(self, capability: str) -> bool:
-        """Retain a verified borrower only after the registry is safely quiesced."""
-        snapshot = self._quiesce_controller.snapshot()
-        if (
-            snapshot.state is not QuiesceState.QUIESCED
-            or not snapshot.vram_released
-            or not snapshot.safe_to_borrow_gpu
-        ):
-            return False
-        with self._lock:
-            bound_capability = self._borrower_capability
-            if bound_capability is None:
-                self._borrower_capability = capability
-                return True
-            return hmac.compare_digest(bound_capability, capability)
-
-    def clear_borrower_capability_after_resume(self, capability: str | None) -> None:
-        """Clear a borrower binding only for its matching achieved resume."""
-        if capability is None:
-            return
-        with self._lock:
-            bound_capability = self._borrower_capability
-            if bound_capability is not None and hmac.compare_digest(
-                bound_capability,
-                capability,
-            ):
-                self._borrower_capability = None
-
-    def resume_lost_borrower_lease(self) -> QuiesceTransition | None:
-        """Recover only a borrower-bound safe quiescence after its OS lock dies."""
-        with self._lock:
-            bound_capability = self._borrower_capability
-        if bound_capability is None:
-            return None
-        snapshot = self._quiesce_controller.snapshot()
-        if snapshot.state is not QuiesceState.QUIESCED:
-            return None
-        lease_status = borrower_lease_status(bound_capability)
-        if lease_status is BorrowerLeaseStatus.UNAVAILABLE:
-            logger.warning(
-                "GPU borrower lease is unavailable; retaining service quiescence"
-            )
-            return None
-        if lease_status is not BorrowerLeaseStatus.NOT_HELD:
-            return None
-        transition = self.resume_resources()
-        if transition.achieved:
-            self.clear_borrower_capability_after_resume(bound_capability)
-        return transition
-
-    @staticmethod
-    def _borrower_lease_error(capability: str) -> str | None:
-        """Map one live borrower verification result to its lifecycle error."""
-        match borrower_lease_status(capability):
-            case BorrowerLeaseStatus.HELD:
-                return None
-            case BorrowerLeaseStatus.NOT_HELD:
-                return "borrower_lease_not_held"
-            case BorrowerLeaseStatus.CAPABILITY_INVALID:
-                return "borrower_capability_invalid"
-            case BorrowerLeaseStatus.UNAVAILABLE:
-                return "borrower_lease_unavailable"
-
-    def _acquire(self, root: Path) -> ProjectSlot:
-        """Admit or fetch *root*'s slot and increment its ``ref_count``.
-
-        Must NOT be called outside :meth:`lease`.  The shared project-admission
-        authority pins a newly published slot while it still holds the
-        registry lock, closing the old gap where :meth:`peek_project` exposed
-        an unpinned slot before this method could increment it.
-
-        Args:
-            root: Workspace root directory.
-
-        Returns:
-            The acquired ``ProjectSlot``, with its ``ref_count`` already
-            incremented.
-
-        Raises:
-            RegistryFullError: When admission would exceed the LRU cap
-                and no slot is evictable.
-            RuntimeError: When the registry is shutting down.
-        """
-        acquired_slot = self._admit_project_slot(root.resolve(), pin=True)
-        try:
-            with self._lock:
-                idle_roots = self._idle_victim_roots()
-            self._evict_idle_roots(idle_roots)
-            return acquired_slot
-        except BaseException:
-            # _admit_project_slot pinned before returning.  If a later idle
-            # teardown fails, lease() never receives the slot to release it.
-            # Roll it back before preserving that original teardown failure.
-            self._release(acquired_slot)
-            raise
-
-    def _release(self, slot: ProjectSlot) -> None:
-        """Decrement a slot's ``ref_count`` under ``_lock``."""
-        with self._lock:
-            if slot.ref_count > 0:
-                slot.ref_count -= 1
-
-    # -- eviction ---------------------------------------------------------
-
-    def _is_idle(self, slot: ProjectSlot, now: float) -> bool:
-        """Return whether *slot* is unleased and older than the idle TTL."""
-        return (
-            slot.ref_count == 0 and (now - slot.last_access) >= self._idle_ttl_seconds
-        )
-
-    def _idle_victim_roots(self) -> list[Path]:
-        """Return the roots whose slot is idle-evictable right now.
-
-        Caller MUST hold ``self._lock``.  Returns with the lock still held.
-        Selection only: nothing is removed here, because removal has to
-        happen under the victim's own store guard and that guard cannot be
-        taken beneath ``self._lock`` without inverting the registry's lock
-        order.  :meth:`_evict_idle_roots` re-tests this predicate under the
-        guard, so a root leased in between is left alone.
-        """
-        if self._idle_ttl_seconds <= 0:
-            return []
-        now = time.monotonic()
-        return [r for r, s in self._projects.items() if self._is_idle(s, now)]
-
-    def _evict_idle_roots(self, roots: list[Path]) -> None:
-        """Evict each root of *roots* that is still idle, under its own guard.
-
-        Caller MUST NOT hold ``self._lock``.  A root's store guard is taken
-        before its slot leaves ``_projects`` and released only once that
-        slot's store has closed, so no arrival for that root is ever admitted
-        into the window where the slot is invisible but its storage lock is
-        still held.
-        """
-        for root in roots:
-            with self._root_store_guard(root):
-                with self._lock:
-                    slot = self._projects.get(root)
-                    if slot is None or not self._is_idle(slot, time.monotonic()):
-                        continue
-                    del self._projects[root]
-                self._teardown_slot(root, slot, reason="idle")
-
-    def _lru_victim_root(self) -> Path:
-        """Return the root to evict to make room for one more slot.
-
-        Caller MUST hold ``self._lock`` and have already established that no
-        project-admission seat is free.  Selection only: the caller takes the
-        selected root's guard before rechecking and replacing it atomically.
-
-        Raises:
-            RegistryFullError: When the registry is at capacity and every
-                slot is leased.
-        """
-        candidates = [
-            (slot.last_access, r)
-            for r, slot in self._projects.items()
-            if slot.ref_count == 0
-        ]
-        if not candidates:
-            raise RegistryFullError(self._max_projects)
-        candidates.sort()
-        return candidates[0][1]
-
-    def _teardown_slot(
-        self,
-        root: Path,
-        slot: ProjectSlot,
-        *,
-        reason: str,
-    ) -> None:
-        """Run the watcher-stop + store-close teardown for an evicted slot.
-
-        Caller MUST have already removed *slot* from ``self._projects``.
-        Caller MUST NOT hold ``self._lock``, and MUST hold *root*'s
-        :meth:`_root_store_guard` from before that removal until after this
-        returns: the store keeps its exclusive storage lock until ``close()``
-        completes, so a guard released any earlier readmits an opener into a
-        window where the refusal blames a foreign process.  Mirrors the
-        teardown order used by :meth:`close_project` (watcher first, then
-        store) so that ``incremental_index()`` cannot fire against a closed
-        store.
-        """
-        if self._on_close_project is not None:
-            self._on_close_project(root)
-        slot.graph_cache.invalidate()
-        slot.store.close()
-        logger.info("Evicted ProjectSlot %s (reason=%s)", root, reason)
-
-    def try_evict(self, root: Path) -> tuple[bool, str]:
-        """Manually evict *root* atomically.
-
-        Used by the ``evict_project`` MCP admin tool and the
-        ``vaultspec-rag server projects evict`` CLI command.  The existence
-        and busy checks and the removal all happen under ``self._lock`` so a
-        concurrent :meth:`lease` cannot race the evict, and the whole
-        sequence runs under *root*'s store guard so a concurrent opener
-        cannot race the close either.  Teardown runs outside ``self._lock``
-        per the same protocol as :meth:`_evict_idle_roots` and
-        :meth:`_make_room_for_admission`.
-
-        Returns:
-            ``(True, "forced")`` when the slot was evicted,
-            ``(False, "busy")`` when ``ref_count > 0``,
-            ``(False, "not_found")`` when no slot exists for *root*.
-        """
-        target = root.resolve()
-        with self._root_store_guard(target):
-            with self._lock:
-                slot = self._projects.get(target)
-                if slot is None:
-                    return (False, "not_found")
-                if slot.ref_count > 0:
-                    return (False, "busy")
-                del self._projects[target]
-            self._teardown_slot(target, slot, reason="forced")
-        return (True, "forced")
-
-    def busy_roots(self) -> list[Path]:
-        """Return a list of resolved roots with ``ref_count > 0``."""
-        with self._lock:
-            return [r for r, s in self._projects.items() if s.ref_count > 0]
-
-    def projects_envelope(self, projects: list[dict[str, Any]]) -> dict[str, Any]:
-        """Wrap an already-shaped project list in its published bounds.
-
-        The per-project entries differ by surface - the route publishes the
-        slots as they are, the consolidated state adds derived timings - but
-        the bounds beside them are this registry's own and are read the same
-        way by both. Written out at each surface they agree only until one
-        gains a field, and nothing reports the disagreement because each
-        surface still answers with a well-formed payload.
-        """
-        return {
-            "projects": projects,
-            "max_projects": self.max_projects,
-            "idle_ttl_seconds": self.idle_ttl_seconds,
-        }
-
-    def snapshot(self) -> list[dict[str, Any]]:
-        """Return a list of per-slot diagnostic dicts (for ``list_projects``).
-
-        Each dict contains ``root`` (resolved Path), ``last_access``
-        (monotonic float), ``ref_count`` (int), and ``idle_seconds``
-        (float, derived from ``time.monotonic() - last_access``).
-        """
-        now = time.monotonic()
-        with self._lock:
-            return [
-                {
-                    "root": r,
-                    "last_access": slot.last_access,
-                    "ref_count": slot.ref_count,
-                    "idle_seconds": max(0.0, now - slot.last_access),
-                }
-                for r, slot in self._projects.items()
-            ]
-
     def _create_slot(self, root: Path) -> ProjectSlot:
         """Build one storage-only project slot for *root*.
 
@@ -2084,14 +1128,14 @@ class ServiceRegistry:
                         root,
                         slot.ref_count,
                     )
-                slot.store.close(force_after_seconds=_STORE_FORCE_CLOSE_SECONDS)
+                slot.store.close(force_after_seconds=STORE_FORCE_CLOSE_SECONDS)
                 logger.info("ProjectSlot closed for %s", root)
             for store in tuple(self._transient_stores):
                 logger.warning(
                     "Force-closing busy transient store %s",
                     store.root_dir,
                 )
-                store.close(force_after_seconds=_STORE_FORCE_CLOSE_SECONDS)
+                store.close(force_after_seconds=STORE_FORCE_CLOSE_SECONDS)
             # Active context managers retain their registration until their
             # own finally block completes.  Clearing here would claim that a
             # force-closed maintenance or cold lease had finished releasing

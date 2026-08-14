@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._job_progress import telemetry_block
 from .._store_models import CodeChunk
 from ..embeddings import EncodeBucketProgress
 from ..indexer._chunk_producer import WeightedCodeSegmentQueue
@@ -32,19 +33,10 @@ from ..indexer._consumer_pipeline import (
     CodePipelineLimits,
     _WeightedConsumerRun,
 )
-from ..indexer._streaming import (
-    CodeFileSegment,
-    EncodeBucketReporter,
-    WeightedCodeSlice,
-)
+from ..indexer._streaming import EncodeBucketReporter
+from ..indexer._streaming_types import CodeFileSegment, WeightedCodeSlice
 from ..job_models import JobSource
-from ..jobs import (
-    JobProgressReporter,
-    record_start,
-    reset,
-    snapshot,
-    telemetry_block,
-)
+from ..jobs import JobProgressReporter, record_start, reset, snapshot
 from ..memory_probe import MemoryProbe
 
 if TYPE_CHECKING:

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ...embeddings import EmbeddingModel
     from ._frozen_corpus_evidence import FrozenCorpusEvidence
 
+from ..._job_values import count, measurement
 from ..._machine_lock import (
     machine_lock_path,
     probe_machine_lock,
@@ -34,7 +35,6 @@ from ..._machine_lock import (
 )
 from ...config._settings import get_config, reset_config
 from ...config._types import EnvVar
-from ...jobs import count, measurement
 from ...progress import NullProgressReporter
 from .._model_setup import (
     configured_service_model_ids,

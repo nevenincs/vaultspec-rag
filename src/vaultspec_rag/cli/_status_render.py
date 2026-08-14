@@ -36,6 +36,7 @@ from ..serviceclient._discovery import (
     read_service_status,
     resolve_machine_service,
 )
+from ..serviceclient._search_transport import probe_unavailable
 from ..serviceclient._status import (
     EXIT_FAULT,
     EXIT_RUNNING,
@@ -51,15 +52,11 @@ from ..serviceclient._status import (
     LivenessSignals,
     compose_discovery_status,
 )
-from ..serviceclient._transport import (
-    _try_http_admin,
-    _try_http_health,
-    probe_unavailable,
-)
+from ..serviceclient._transport import _try_http_admin, _try_http_health
 from ._app import (
     JSON_OPTION_HELP,
     PortOption,
-    server_app,
+    server_root_app,
 )
 from ._cli_format import NOT_REPORTED
 from ._process import (
@@ -1100,7 +1097,7 @@ def _render_explicit_port_status(
     )
 
 
-@server_app.command(
+@server_root_app.command(
     "status",
     help=(
         "Show the human operator summary for server readiness, work, and next checks."

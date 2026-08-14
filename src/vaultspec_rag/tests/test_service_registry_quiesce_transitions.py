@@ -26,10 +26,11 @@ from ..service_quiesce import (
     ServiceQuiesceTransitionWaitTimeoutError,
 )
 from ._job_roots import _TEST_PROJECT_ROOT
+from ._quiesce_helpers import QUIESCE_THREAD_TIMEOUT, wait_for_quiesce_state
 
 if TYPE_CHECKING:
     from pathlib import Path
-from ._quiesce_helpers import QUIESCE_THREAD_TIMEOUT, wait_for_quiesce_state
+
 
 pytestmark = [pytest.mark.unit]
 

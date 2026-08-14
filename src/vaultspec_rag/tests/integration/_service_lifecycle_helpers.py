@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from typer.testing import CliRunner
 
+from ..._job_values import count
 from ..._loopback_http import probe_loopback_connect
 from ..._process_probe import pid_alive
 from ...cli._process import _terminate_pid
@@ -33,7 +34,6 @@ from ...cli._service_status import (
     read_service_status,
 )
 from ...config._types import EnvVar
-from ...jobs import count
 from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from .._model_setup import (
     model_setup_timeout_seconds,
