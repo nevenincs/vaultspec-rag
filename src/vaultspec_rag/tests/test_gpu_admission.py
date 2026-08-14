@@ -655,6 +655,58 @@ class TestTheUnreadableLedger:
         assert verdicts[-1].admitted is False
         assert verdicts[-1].reason == REASON_DEVICE_UNREADABLE
 
+    def test_a_diagnostic_reading_advances_the_streak_a_load_then_sees(
+        self,
+        tmp_path: Path,
+        floor: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The polling a daemon already does is what makes the limit reachable.
+
+        The health payload and the jobs listing publish this verdict, so a
+        long-lived process on a failing card takes readings whether or not a
+        load is ever attempted. Those readings feed the same ledger the load
+        gate consults, which is what puts the refusal within seconds of the
+        fault instead of within however long it takes to attempt three loads -
+        on a daemon asked for model work rarely, that is the difference between
+        a limit that is reached and one that is not.
+
+        The coupling is the audit's, not a test's invention: the two figures
+        that set the real-time window - this limit and the cadence of whatever
+        polls - live in different modules, and nothing else states that they
+        compose. A later refactor sparing the read-only path from touching
+        mutable state would read as a tidy-up and would silently put the streak
+        back on load attempts alone.
+
+        Asserted across both paths at once, driving the probed reading through
+        the diagnostic entry point and the load through the real window, because
+        neither path's own guards can see the ledger they share.
+
+        Mutation: judged the probed reading against the floor alone, sparing the
+        diagnostic path the ledger. Observed this fail on ``DID NOT RAISE
+        RuntimeError``, the load arriving as the streak's first unreadable
+        reading and being admitted as a hiccup.
+        """
+        del floor
+        monkeypatch.setattr(
+            "vaultspec_rag.memory_probe.cuda_device_memory",
+            lambda: _UNREADABLE_WITH_TOTAL,
+        )
+        for _ in range(UNREADABLE_ADMISSION_LIMIT - 1):
+            assert device_load_reading() is not None
+
+        source = _windowed(
+            tmp_path / "load-window.lock",
+            [_UNREADABLE_WITH_TOTAL],
+            [],
+        )
+
+        def _loader() -> str:
+            return "loaded"
+
+        with pytest.raises(RuntimeError, match="present but not answering"):
+            admit_gpu_load(_loader, window=source)
+
     def test_a_persistently_unreadable_device_stops_the_load(
         self,
         tmp_path: Path,
