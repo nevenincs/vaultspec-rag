@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#serviceclient-admin-errors'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:6c2f9877a305e5ad6052a9ec70a418fee160591d4c2d5b7fb0aae531c87ef259'
 related:

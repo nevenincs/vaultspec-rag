@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#install-cuda'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:915f20175a32498f2aabd70bbc0f9b19cb41f3be355019b0dbb951314e241731'
 related:

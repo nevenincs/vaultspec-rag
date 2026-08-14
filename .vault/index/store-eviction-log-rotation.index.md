@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#store-eviction-log-rotation'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:a05f3b10681c7b14cf9392f1338f489ebb3e3ccb69df90d2b248b37a9b6c6886'
 related:

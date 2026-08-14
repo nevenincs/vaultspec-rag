@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#watcher-targeted-reindex'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:17802de3ca0fe91ae27eeacd655d6292dc23f7aa25d48753bb7978cd39a03e73'
 related:

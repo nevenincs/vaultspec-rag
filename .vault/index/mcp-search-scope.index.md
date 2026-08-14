@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-search-scope'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:11503233fba9f1372013776d678646d0ad98e9cd35f1493043ccdab6f0265ecb'
 related:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-project-root-contract'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:e3edd687481e2fbf2caa10687a546be138a72084ff2607dbaf241d5f3b444563'
 related:

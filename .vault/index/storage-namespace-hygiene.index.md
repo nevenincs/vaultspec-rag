@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#storage-namespace-hygiene'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:d3ed8d155f8c96c83a0d1fb5d3ce66cb0a8a745f28c19a65f3ed67d75825a762'
 related:

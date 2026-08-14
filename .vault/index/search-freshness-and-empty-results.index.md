@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#search-freshness-and-empty-results'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:ad79f28f96a506623815ecc975fdaef391ea217be9a2a24bc76e14b6cf93726d'
 related:

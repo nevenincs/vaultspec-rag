@@ -5,44 +5,11 @@ tags:
 date: '2026-07-25'
 modified: '2026-08-14'
 body_schema: 'body-v1'
-body_hash: 'sha256:32d2e3fc47b303cd8844af652e0bc1f8899cc415974d392964fb486c340d1015'
+body_hash: 'sha256:98d023248b1446590b1d58ade98d0c667799bd2b130ca5cb33e9ac43a4c190bd'
 step_id: 'S16'
 related:
   - "[[2026-07-25-archive-restore-contract-plan]]"
 ---
-
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #exec) and one feature tag.
-     Replace archive-restore-contract with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     step_id is the originating Step's canonical identifier, e.g. S01.
-     The S16 and 2026-07-25-archive-restore-contract-plan placeholders are machine-filled by
-     `vaultspec-core vault add exec`; do not fill them by hand.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar-plan]]' and link the
-     parent plan.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
-<!-- STEP RECORD:
-     This file represents one Step from the originating plan. Identified
-     by its canonical leaf identifier (S##) and ancestor display path.
-     The Emit exactly one structured envelope on every exit path of the verb in JSON mode, refusal and success alike and ## Scope
-
-- `src/vaultspec_rag/cli/_service_storage.py` placeholders below are machine-filled
-     by `vaultspec-core vault add exec` from the originating Step row;
-     do not fill them by hand. -->
 
 # Emit exactly one structured envelope on every exit path of the verb in JSON mode, refusal and success alike
 
@@ -52,7 +19,7 @@ related:
 
 ## Description
 
-<!-- Succinct line-by-line list of steps executed. Use imperative language, mirroring git commit summary lines. -->
+Emit exactly one structured envelope on every exit path of the verb in JSON mode - refusal, preview, and success alike - so no exit ever leaves stdout empty or writes twice.
 
 ## Outcome
 
@@ -70,4 +37,4 @@ Writing the refusal wording surfaced a real gap. An applied restore is refused o
 
 ## Notes
 
-<!-- Incidents. Data loss. Difficulties; persistent failures. Skipped work. Scaffolds left in code. Failures. -->
+The refusal envelope is deliberately stricter than the sibling `delete` verb, which renders its own `failed` status as `ok: true` and exits zero. That is a gap in `delete` rather than a pattern worth matching: restore writes into a namespace, so a refusal reported as success is the more expensive mistake. Reconciling `delete` is not in this plan's scope.
