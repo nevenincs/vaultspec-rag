@@ -26,7 +26,7 @@ from ..serviceclient._transport import (
     _try_http_health,
     health_probe_timed_out,
 )
-from ._app import JsonMode, PortOption, server_app
+from ._app import JsonMode, PortOption, server_root_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain, address_line
 
 _PREFLIGHT_COMMAND: Final = "server.preflight"
@@ -356,7 +356,7 @@ def _health_matches_discovery(
     )
 
 
-@server_app.command(
+@server_root_app.command(
     "preflight",
     help="Observe service quiescence and device capacity without authorizing GPU work.",
 )

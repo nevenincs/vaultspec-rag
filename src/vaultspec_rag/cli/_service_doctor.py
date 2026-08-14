@@ -24,11 +24,11 @@ import typer
 
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
-from ._app import JSON_ENVELOPE_OPTION_HELP, server_app
+from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
 from ._render import _emit_json, _plain
 
 
-@server_app.command(
+@server_root_app.command(
     "doctor",
     help=(
         "Report readiness across two axes: installed dependencies (torch, "

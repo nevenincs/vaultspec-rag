@@ -14,7 +14,7 @@ from ._app import (
     JSON_OPTION_HELP,
     PORT_OPTION_HELP,
     WATCH_INTERVAL_OPTION_HELP,
-    server_app,
+    server_root_app,
 )
 from ._render import _emit_json
 from ._service_jobs_presentation import render_jobs_result
@@ -187,7 +187,7 @@ class _ServiceJobsCommand(TyperCommand):
         )
 
 
-@server_app.command(
+@server_root_app.command(
     "jobs",
     cls=_ServiceJobsCommand,
     help="Show recent index update activity from the running service.",

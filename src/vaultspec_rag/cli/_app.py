@@ -1,7 +1,7 @@
 """Typer application objects, sub-app nesting, state, and root callback.
 
 This submodule MUST be imported first by the package ``__init__`` so
-the ``app`` / ``server_root_app`` / ``server_app`` /
+the ``app`` / ``server_root_app`` / ``server_root_app`` /
 ``server_job_app`` / ``server_projects_app`` / ``server_watcher_app`` objects
 exist and are nested before any command submodule's ``@*.command()`` decorator
 runs.
@@ -55,10 +55,10 @@ __all__ = [
     "app",
     "main",
     "preprocess_app",
-    "server_app",
     "server_job_app",
     "server_projects_app",
     "server_qdrant_app",
+    "server_root_app",
     "server_storage_app",
     "server_watcher_app",
     "version_callback",
@@ -351,8 +351,6 @@ server_root_app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=False,
 )
-# Alias kept for backward-compatible decorator references in command modules.
-server_app = server_root_app
 server_job_app = typer.Typer(
     help="Inspect and control one exact service job.",
     rich_markup_mode=None,
