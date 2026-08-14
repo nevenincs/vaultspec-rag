@@ -16,7 +16,7 @@ from ..serviceclient._transport import _try_http_admin
 from ._app import (
     JsonMode,
     PortOption,
-    server_app,
+    server_root_app,
 )
 from ._render import (
     _emit_json,
@@ -108,7 +108,7 @@ def _fail_unreachable(command: str, json_mode: bool, *, port: int | None) -> Non
     raise typer.Exit(1)
 
 
-@server_app.command("pause", help="Hold the running service at safe checkpoints.")
+@server_root_app.command("pause", help="Hold the running service at safe checkpoints.")
 def service_pause(
     port: PortOption = None,
     json_mode: JsonMode = False,
@@ -117,7 +117,7 @@ def service_pause(
     _quiesce(pause=True, command=_PAUSE_COMMAND, port=port, json_mode=json_mode)
 
 
-@server_app.command("resume", help="Release a paused service.")
+@server_root_app.command("resume", help="Release a paused service.")
 def service_resume(
     port: PortOption = None,
     json_mode: JsonMode = False,

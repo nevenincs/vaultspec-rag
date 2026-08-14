@@ -56,7 +56,7 @@ from ..serviceclient._transport import _try_http_admin, _try_http_health
 from ._app import (
     JSON_OPTION_HELP,
     PortOption,
-    server_app,
+    server_root_app,
 )
 from ._cli_format import NOT_REPORTED
 from ._process import (
@@ -1097,7 +1097,7 @@ def _render_explicit_port_status(
     )
 
 
-@server_app.command(
+@server_root_app.command(
     "status",
     help=(
         "Show the human operator summary for server readiness, work, and next checks."
