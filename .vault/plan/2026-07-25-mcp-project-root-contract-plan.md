@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#mcp-project-root-contract'
 date: '2026-07-25'
-modified: '2026-07-27'
-body_hash: 'sha256:844b6f12953c1f689efb44808c07779fac5051ba0da3280dbb9b21c7c0a9ea31'
+modified: '2026-08-14'
+body_hash: 'sha256:894a12d934f3494d5e254d9c0918d31cf4c295a3ee1e0c912ee34e54842cd37e'
 tier: L1
 related:
   - '[[2026-07-25-mcp-project-root-contract-adr]]'
@@ -21,7 +21,7 @@ No separate description is recorded in the retained prior plan body. Source: ret
 
 - [x] `S01` - Add a single dispatch-root seam on the MCP adapter and forward every delegation site through it; `src/vaultspec_rag/mcp/_tools.py`.
 - [x] `S02` - Route the vault document resource through the same seam, since a resource URI carries no root; `src/vaultspec_rag/mcp/_resources.py`.
-- [ ] `S03` - Assert against a recording daemon that an omitting caller sends a concrete root and an explicit root still wins; `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`.
+- [x] `S03` - Assert against a recording daemon that an omitting caller sends a concrete root and an explicit root still wins; `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`.
 
 ## Parallelization
 
