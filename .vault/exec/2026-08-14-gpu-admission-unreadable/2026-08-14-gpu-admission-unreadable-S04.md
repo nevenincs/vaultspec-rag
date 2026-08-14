@@ -5,7 +5,7 @@ tags:
 date: '2026-08-14'
 modified: '2026-08-14'
 body_schema: 'body-v1'
-body_hash: 'sha256:ff06d25d490ddbcbdb10b24cc60e9c2e8c239f60c436f197f3d5e35e5ef38214'
+body_hash: 'sha256:cc3be3d08b8cf012bbcc86e6ab479103970cb52fb4c3c60ea258ce08a40225f5'
 step_id: 'S04'
 related:
   - "[[2026-08-14-gpu-admission-unreadable-plan]]"
@@ -57,8 +57,11 @@ daemon's own gate. The broader GPU and integration lanes were deliberately not
 run for that reason, and this step's evidence should be read as covering the
 gate suite alone.
 
-One unrelated observation, recorded because it cost time and may recur: the
-module-size gate failed once mid-session naming a source file that does not
-exist, then passed on an unchanged tree. The tree carries orphaned bytecode
-from an earlier test split, which is the obvious suspect and is not the proven
-cause - the failure did not reproduce, and nothing was deleted to chase it.
+One unrelated observation, recorded because it will recur in a shared tree.
+The module-size gate failed once naming a source file that does not exist,
+then passed on an unchanged tree. The cause was not this work and not stale
+bytecode, which was the first and wrong suspect: another worker's suite split
+landed during the run, so the gate enumerated a path and tried to load it
+after that same commit had moved it. A tree-wide gate read concurrently with
+another worker's refactor can fail on a file neither worker is touching, and
+the tell is that it does not reproduce.
