@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.4.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.1...vaultspec-rag-v0.4.2) (2026-08-14)
+
+
+### Features
+
+* **qdrant:** move the server pin to 1.19.0 and let the lock lead ([0d1bdda](https://github.com/nevenincs/vaultspec-rag/commit/0d1bdda6fe063c7ca49109cd27c651c6211e5592))
+
+
+### Bug Fixes
+
+* **anchor:** publish the owner witness without an unreadable window ([#343](https://github.com/nevenincs/vaultspec-rag/issues/343)) ([4cdae90](https://github.com/nevenincs/vaultspec-rag/commit/4cdae90ff4c4b0d8e64bab7349d0b1456ec0b017))
+* **borrow:** read health identity on the evidence bound, not the poll bound ([1b686fa](https://github.com/nevenincs/vaultspec-rag/commit/1b686fa29d5ca04c7ced14d6e9ea96c01892b294))
+* **cli,tests:** stop hardcoding the qdrant pin, and say why a borrow was refused ([c066f5d](https://github.com/nevenincs/vaultspec-rag/commit/c066f5d7a5e2ac11f2c8e13d737d5565ee52f396))
+* **cli:** name a build mismatch instead of blaming borrower quiesce ([ea12a05](https://github.com/nevenincs/vaultspec-rag/commit/ea12a0578727f2669aa2383609fc6ecaf63de7a6))
+* **deps:** cap qdrant-client to the pinned server's minor line ([a0120c6](https://github.com/nevenincs/vaultspec-rag/commit/a0120c6e0ab83086b848503ee54c549193bb383c))
+* **indexer:** honour ledger contention where retries are actually decided ([4c1213b](https://github.com/nevenincs/vaultspec-rag/commit/4c1213ba095ece8845361be65ac3700a866a8ac5))
+* **indexer:** make the shared run ledger safe under concurrent access ([48cabd1](https://github.com/nevenincs/vaultspec-rag/commit/48cabd156844abffc74a0b74eb98fdd36677c221))
+* **indexer:** make the shared run ledger safe under concurrent access ([12e1db0](https://github.com/nevenincs/vaultspec-rag/commit/12e1db0a2928b29b4e727acecf7c956d940e3c77))
+* **install:** translate provider paths against the resolved projection root ([#345](https://github.com/nevenincs/vaultspec-rag/issues/345)) ([39a3f2c](https://github.com/nevenincs/vaultspec-rag/commit/39a3f2c5e2b75144061062c0dadb55c236ca28d7))
+* **jobs:** accept quiesce-parked work on reload ([c9f3e48](https://github.com/nevenincs/vaultspec-rag/commit/c9f3e4879aa65460a7d983d45c7e0dc6b94c87ec))
+* **jobs:** give run telemetry a value space it can round-trip ([81c6646](https://github.com/nevenincs/vaultspec-rag/commit/81c6646842249d84d61a0c960f2d908c817c7fac))
+* **jobs:** give unapplied-write ingest failures their remedy instead of 'other' ([586e356](https://github.com/nevenincs/vaultspec-rag/commit/586e3568c82595342085d62863fbc3b02a61c187))
+* **jobs:** keep a backwards clock step from unreadable job state ([4780134](https://github.com/nevenincs/vaultspec-rag/commit/4780134a8066a5fbb652407171c134eff6ffd81f))
+* **jobs:** keep a retained job's replay binding when restore exceeds the bound ([c99bfb8](https://github.com/nevenincs/vaultspec-rag/commit/c99bfb855f1ba28987b2f188e940346abda7c4a0))
+* **jobs:** let a capacity cut cost admission, never the daemon's start ([96c2768](https://github.com/nevenincs/vaultspec-rag/commit/96c27686aa3ddbf99fe6a41c6c01d5898885effd))
+* **jobs:** let paused work persist running intent ([2becb0f](https://github.com/nevenincs/vaultspec-rag/commit/2becb0f0609256ddc874d6ce94131d9a2feed016))
+* **jobs:** quarantine an invalid state file instead of bricking startup ([8bbb6a3](https://github.com/nevenincs/vaultspec-rag/commit/8bbb6a377c8a224772417563e8bb87449b4ed7de))
+* **jobs:** stop leaking state temporaries and widen the version contract ([e084f06](https://github.com/nevenincs/vaultspec-rag/commit/e084f06b9cefa7ffce9f714f680279ecaa201bde))
+* **jobs:** stop reporting a newer build state file as corrupt ([e46da1e](https://github.com/nevenincs/vaultspec-rag/commit/e46da1e2c085d83f29acb185e97e3a0714956065))
+* **jobs:** stop the daemon writing job state its own loader refuses ([3829a77](https://github.com/nevenincs/vaultspec-rag/commit/3829a772477534023ab286838824af22b6c59705))
+* **jobs:** validate persisted job state where it is produced ([1687031](https://github.com/nevenincs/vaultspec-rag/commit/168703125e88f3a05fc81fd44453dd70143ed4e3))
+* **quiesce:** let a borrower own only the pause it actually caused ([d29e260](https://github.com/nevenincs/vaultspec-rag/commit/d29e260294c04462f096b63d2549a672837e7a33))
+* **quiesce:** read the ownership witness off the registry lock ([90d7cc0](https://github.com/nevenincs/vaultspec-rag/commit/90d7cc03605ae6de4cbcc9ad145e964a04fae22e))
+* **serviceclient:** report a timed-out health probe as its own verdict ([#342](https://github.com/nevenincs/vaultspec-rag/issues/342)) ([2277a1b](https://github.com/nevenincs/vaultspec-rag/commit/2277a1b29ce1458b9a2ce7a796254aa9080784c3))
+* **service:** give the pause drain a budget longer than one encode slice ([ab0a5b5](https://github.com/nevenincs/vaultspec-rag/commit/ab0a5b52e882b69e10862b9f4661da33a52bcdbc))
+* **service:** say that a refused transition stopped the service serving ([7f29fc4](https://github.com/nevenincs/vaultspec-rag/commit/7f29fc4e387c036e514072614fd24625b9ee5537))
+* **status:** report a held service as held, and stop dropping what it published ([a0711dc](https://github.com/nevenincs/vaultspec-rag/commit/a0711dc63718904501a030ff420154d0e9c0c813))
+* **tests:** declare the refused-envelope literal the quiesce guards read ([309ce5b](https://github.com/nevenincs/vaultspec-rag/commit/309ce5be17601f4b827d81c23ed0720030a4c20f))
+* **tests:** derive the published qdrant version from the pin ([299674e](https://github.com/nevenincs/vaultspec-rag/commit/299674ec61981d19d3746a624e5ffabb0edc35e8))
+* **tests:** latch the rollover observation instead of re-reading it ([#344](https://github.com/nevenincs/vaultspec-rag/issues/344)) ([230d58c](https://github.com/nevenincs/vaultspec-rag/commit/230d58cd06c26e3b188d56828b2b187790b22e92))
+* **tests:** let each watch suite declare its own tier, and clear the strict gate ([90a9e0a](https://github.com/nevenincs/vaultspec-rag/commit/90a9e0ad58f00846acc5a99da3793937030de07d))
+* **tests:** read a stamp through the owned reader, not a fresh narrowing ([22c7371](https://github.com/nevenincs/vaultspec-rag/commit/22c7371be2d517d3e2c45ed96539072c7208adc9))
+* **tests:** refuse a selection that holds both device tiers ([08e61cc](https://github.com/nevenincs/vaultspec-rag/commit/08e61cc7924b53e5d42612a6f66e7677d69d67e3))
+* **tests:** repair the harness defects keeping the platform legs red ([#341](https://github.com/nevenincs/vaultspec-rag/issues/341)) ([b83b892](https://github.com/nevenincs/vaultspec-rag/commit/b83b8926c4844fa5861f6c1d371516edecdd2dd6))
+* **tests:** stop co-scheduling subprocess-GPU tests with a resident-model tier ([391a201](https://github.com/nevenincs/vaultspec-rag/commit/391a20146dbbbf776c8791bbb92466f6c414ae40))
+* **tests:** stop two job-state guards asserting timing they never owned ([#340](https://github.com/nevenincs/vaultspec-rag/issues/340)) ([34467d8](https://github.com/nevenincs/vaultspec-rag/commit/34467d8991ef4a812db2ca426944d6f71702139c))
+* **vault:** format two records and bind the triage plan to its decisions ([#336](https://github.com/nevenincs/vaultspec-rag/issues/336)) ([6261c16](https://github.com/nevenincs/vaultspec-rag/commit/6261c16aef126af8455c66b53121f7e3fee9c481))
+* **vault:** format two records to the markdown gate ([#348](https://github.com/nevenincs/vaultspec-rag/issues/348)) ([172b679](https://github.com/nevenincs/vaultspec-rag/commit/172b679bdeddb025264fa447466591c26d836f10))
+* **vault:** restore Wave heading levels in the boundary plan ([7ae90bc](https://github.com/nevenincs/vaultspec-rag/commit/7ae90bc3cab271432bc3b4e182fb64f0b210cb04))
+
 ## [0.4.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.0...vaultspec-rag-v0.4.1) (2026-07-31)
 
 
