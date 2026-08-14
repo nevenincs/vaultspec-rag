@@ -22,6 +22,21 @@ worker that raises during its own collection is reported as an internal
 scheduling fault whose text never reaches the operator. So the gate reads the
 resolved distribution options and the marker expression, both of which are
 final before collection starts, and refuses there.
+
+Triaging a refusal from this module: read the EXIT CODE, not the summary line.
+A ``UsageError`` raised from ``pytest_collection_modifyitems`` still prints
+``N tests collected in X.XXs`` on stdout as though nothing were wrong; the
+refusal goes to stderr and the only reliable signal is the exit code (4). A
+serial ``--collect-only`` was read here as proof that collection was fine, on
+the strength of that summary line, while the run had in fact been refused -
+which sent an investigation of a distributed worker crash down three wrong
+paths. Under ``-n``, the same refusal kills the worker, and xdist reports it
+as ``assert not crashitem`` naming whatever unrelated test that worker held.
+
+The marker a suite is refused for may not be missing so much as inherited: a
+module-level ``pytestmark`` reaches a sibling that imports it by name, and
+nothing in the suite body references it, so any "import only what is used"
+pass drops it and un-tiers every test in that file at once.
 """
 
 from __future__ import annotations
