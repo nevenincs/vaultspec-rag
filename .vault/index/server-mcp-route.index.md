@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#server-mcp-route'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:b736f9817a2fb9fcb3f42fda4b8deffeff4f6b86af1a9502427408c8c9a6a87b'
 related:

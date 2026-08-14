@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#gpu-admission-gate'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:d266eb94603e7eff6c3aea0d1cc7120c14e212da2404f7d8be9c103ac77d1257'
 related:

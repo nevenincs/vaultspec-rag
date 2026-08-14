@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-release-compatibility'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:7dcf08c87d02f1800757b0f90b7cff8a18a4fb250222d99c3b91c740b61a3c4c'
 related:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-argv-expansion'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:a071fb96a461382b6a72e0688b49b9aac25ce239109fa01549957327d520b988'
 related:

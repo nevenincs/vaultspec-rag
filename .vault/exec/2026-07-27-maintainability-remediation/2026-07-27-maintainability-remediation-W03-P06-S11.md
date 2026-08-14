@@ -5,44 +5,11 @@ tags:
 date: '2026-07-27'
 modified: '2026-08-14'
 body_schema: 'body-v1'
-body_hash: 'sha256:2ee9f8e525da7abac79fcf557f161b8617cd6f18f0cd1832716bc1a33619c094'
+body_hash: 'sha256:98d45ea54865cc21283006d6d459a639658479effd9bedf714fb3e560e3849cf'
 step_id: 'S11'
 related:
   - "[[2026-07-27-maintainability-remediation-plan]]"
 ---
-
-<!-- FRONTMATTER RULES:
-     tags: one directory tag (hardcoded #exec) and one feature tag.
-     Replace maintainability-remediation with a kebab-case feature tag, e.g. #foo-bar.
-     Additional tags may be appended below the required pair.
-
-     modified: CLI-maintained last-modified stamp; set at scaffold time,
-     refreshed by mutating CLI verbs and vault check fix; never hand-edit.
-
-     step_id is the originating Step's canonical identifier, e.g. S01.
-     The S11 and 2026-07-27-maintainability-remediation-plan placeholders are machine-filled by
-     `vaultspec-core vault add exec`; do not fill them by hand.
-
-     Related: use wiki-links as '[[yyyy-mm-dd-foo-bar-plan]]' and link the
-     parent plan.
-
-     DO NOT add fields beyond those scaffolded; metadata lives
-     only in the frontmatter. -->
-
-<!-- LINK RULES:
-     - [[wiki-links]] are ONLY for .vault/ documents in the related: field above.
-     - NEVER use [[wiki-links]] or markdown links in the document body.
-     - NEVER reference file paths in the body. If you must name a source file,
-       class, or function, use inline backtick code: `src/module.py`. -->
-
-<!-- STEP RECORD:
-     This file represents one Step from the originating plan. Identified
-     by its canonical leaf identifier (S##) and ancestor display path.
-     The Split service-job collection, CLI, HTTP control, and resilience scenarios and ## Scope
-
-- `src/vaultspec_rag/tests/integration/test_service_jobs.py` placeholders below are machine-filled
-     by `vaultspec-core vault add exec` from the originating Step row;
-     do not fill them by hand. -->
 
 # Split service-job collection, CLI, HTTP control, and resilience scenarios
 
@@ -52,7 +19,7 @@ related:
 
 ## Description
 
-<!-- Succinct line-by-line list of steps executed. Use imperative language, mirroring git commit summary lines. -->
+Split the service-jobs integration module into collection contracts, CLI presentation and watch, HTTP control, and resilience parity.
 
 ## Outcome
 
@@ -69,4 +36,6 @@ Thirteen modules, 90 to 411 lines, MI 21.64 to 58.82. None at the floor, none ne
 
 ## Notes
 
-<!-- Incidents. Data loss. Difficulties; persistent failures. Skipped work. Scaffolds left in code. Failures. -->
+Thirteen modules is more than the four domains the step row names, because the CLI domain divided further along the views it renders and the route domain along the methods it serves. Each still owns one behaviour; none is a fragment that has to be read alongside a sibling to make sense.
+
+Verified from the tree, not executed: these are real-service scenarios and were not run in this session.

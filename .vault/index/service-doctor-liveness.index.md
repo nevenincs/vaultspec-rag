@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-doctor-liveness'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:6b27c91cfa9415f6d783aee2b171ed8a8a648f8e0a03ccfac59b0d87784ad7f2'
 related:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#install-command'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:ad3b6e42e0e6607e4fc3d8ef1dc09ccbd5c4a5c2601390a4c996666de22f40bf'
 related:

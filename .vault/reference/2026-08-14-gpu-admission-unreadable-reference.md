@@ -5,7 +5,7 @@ tags:
 date: '2026-08-14'
 modified: '2026-08-14'
 body_schema: 'body-v1'
-body_hash: 'sha256:9ce857e465b26bc487186a18d470d057b7a12eb790f0a9a792f483aad583f248'
+body_hash: 'sha256:abcd0b590fbcbe5ca054ce7e95447ca2220843067f39cbfe7fba7c67f936359b'
 related:
   - "[[2026-07-29-gpu-admission-gate-adr]]"
 ---
@@ -31,8 +31,7 @@ handle loss, not a reported fault.
 The driver fault itself is not this project's to fix. What is this project's is
 what followed. Between 06:55:02 and 08:04:20 the service emitted:
 
-- **79** admission warnings reading `device free memory is unreadable;
-  admitting the load on presence alone`.
+- **79** admission warnings reading `device free memory is unreadable; admitting the load on presence alone`.
 - **112** job failures reading `CUDA error: unknown error`.
 
 The run ended when an operator terminated the daemon by hand. No internal

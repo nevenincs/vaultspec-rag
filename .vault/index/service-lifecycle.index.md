@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-lifecycle'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:557fe7b60d2d5f6c0ddb2a7f9096bbd75022d4bdcd3b761b58eb767d8f5bec4b'
 related:

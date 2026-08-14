@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#vaultragignore'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:e2decbb90f806fc6780df45b4b1078e21caac9f03f2ffeeb523e9457dc53676f'
 related:

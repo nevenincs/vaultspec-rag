@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#storage-lifecycle'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:1a707460f4a24f49d9eb1d7c7e0b330bb5564e46fe309c585d57054814f257e7'
 related:

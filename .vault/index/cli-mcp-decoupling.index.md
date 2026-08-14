@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-mcp-decoupling'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:de31f20decd03ef31f15170bb36beee1b17b79833da4ff6cf163f2bb57182148'
 related:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#index-drift-hardening'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:6c88e35fcbc4326be667273c6999d665f94af5579caa4afbade4222a3ef14bba'
 related:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-index-default'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:a0416176fbe73e090ecf538e3b85dc2fa2e608053c3fb9a7b3efb5727fa3731b'
 related:

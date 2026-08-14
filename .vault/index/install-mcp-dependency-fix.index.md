@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#install-mcp-dependency-fix'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:30721b6b001790bf1ef2da1dd2eb27351f9fcc09e9300dae78c758ba4e6fc667'
 related:

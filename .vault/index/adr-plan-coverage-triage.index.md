@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#adr-plan-coverage-triage'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:e4fefc3a584957e3dd49e9037e6e4c2dbab5f79ef6d95a152b3c81ced7e94e09'
 related:
