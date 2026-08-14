@@ -55,6 +55,41 @@ if TYPE_CHECKING:
 
     from ..embeddings import EmbeddingModel
 
+#: Includes the helpers a sibling suite imports from here. Declared so a
+#: checker reads them as this module's surface rather than as helpers it
+#: defines and never calls.
+__all__ = [
+    "_age",
+    "_contract_class",
+    "_declared_members",
+    "_deeply_nested",
+    "_fully_populated_snapshot",
+    "_generation",
+    "_identical",
+    "_nested_past_the_encoders_limit",
+    "_owner_class",
+    "_parse_job_dispatch_module",
+    "_parse_jobs_module",
+    "_resources",
+    "_round_trip_cases",
+    "_runtime",
+    "_self_referential",
+    "_sibling_declarations",
+    "_snapshot_in_state",
+    "_spec",
+    "_telemetry_construction",
+    "_telemetry_of",
+    "_telemetry_refusal",
+    "_temporaries",
+    "_valid_snapshot",
+    "test_job_manager_import_does_not_pull_in_jobs",
+    "test_job_manager_logs_under_the_jobs_namespace",
+    "test_job_manager_rejects_unknown_attributes",
+    "test_job_models_are_defined_exactly_once",
+    "test_shared_owner_surface_is_declared_not_dynamic",
+]
+
+
 pytestmark = [pytest.mark.unit]
 
 
