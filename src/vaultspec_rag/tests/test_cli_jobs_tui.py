@@ -27,39 +27,29 @@ from ..cli._jobs_tui import (
 )
 from ..cli._jobs_tui_constants import LOG_LINES
 from ..serviceclient._transport import _try_http_admin
-from ._jobs_tui_harness import (  # noqa: F401
-    _HANDOFF_TIMEOUT,
+from ._jobs_tui_harness import (
     _NARROW,
-    _POLL_INTERVAL,
-    _READY_RETRIES,
     _WIDE,
     _app,
-    _await_gone,
     _await_painted,
     _await_painted_when,
     _finished_job,
     _header_line,
-    _health_payload,
-    _hold,
     _job,
-    _jobs_payload,
     _JobService,
     _line_with,
-    _log_payload,
-    _quiesce_block,
     _ready,
-    _requested_state,
-    _row_line,
     _screen_failure,
     _screen_text,
-    _search_activity_payload,
-    _served_search,
     _settle,
     _settled_paint,
-    _summarise,
-    _unpainted,
-    pytestmark,
 )
+
+# Declared here rather than inherited: a module-level `pytestmark`
+# reaches a suite only if the suite imports that name, so a tier that
+# arrives through a helper import disappears the moment the import is
+# narrowed - and an untiered test kills its worker at collection.
+pytestmark = [pytest.mark.unit]
 
 
 class TestTeardown:

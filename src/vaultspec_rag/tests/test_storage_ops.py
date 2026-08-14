@@ -47,6 +47,27 @@ if TYPE_CHECKING:
 
     from qdrant_client import QdrantClient
 
+#: Includes the helpers a sibling suite imports from here. Declared so a
+#: checker reads them as this module's surface rather than as helpers it
+#: defines and never calls.
+__all__ = [
+    "_CycleClient",
+    "_FakeClient",
+    "_FakeCollections",
+    "_GeometryClient",
+    "_IdentityOverrides",
+    "_ScriptedClient",
+    "_ScriptedCollection",
+    "_collection_of",
+    "_identity",
+    "_orphaned_namespace",
+    "_run_cycle",
+    "_survey",
+    "_temp_survey",
+    "isolate_manifest_dir",
+]
+
+
 pytestmark = [pytest.mark.unit]
 
 _NOW = datetime(2026, 7, 14, 12, 0, 0, tzinfo=UTC)

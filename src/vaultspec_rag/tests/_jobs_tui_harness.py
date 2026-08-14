@@ -28,6 +28,44 @@ from ..cli._jobs_tui import (
 from ..service_quiesce import QuiesceSnapshot, QuiesceState
 from ..serviceclient._transport import DEFAULT_ADMIN_TIMEOUT_SECONDS, _try_http_admin
 
+#: The harness surface the watch suites import. Declared because these are
+#: this module's public API to its siblings, not module-private helpers -
+#: without it a checker reads every one as defined and never used, since
+#: nothing inside this module calls them.
+__all__ = [
+    "_HANDOFF_TIMEOUT",
+    "_NARROW",
+    "_POLL_INTERVAL",
+    "_READY_RETRIES",
+    "_WIDE",
+    "_JobService",
+    "_app",
+    "_await_gone",
+    "_await_painted",
+    "_await_painted_when",
+    "_finished_job",
+    "_header_line",
+    "_health_payload",
+    "_hold",
+    "_job",
+    "_jobs_payload",
+    "_line_with",
+    "_log_payload",
+    "_quiesce_block",
+    "_ready",
+    "_requested_state",
+    "_row_line",
+    "_screen_failure",
+    "_screen_text",
+    "_search_activity_payload",
+    "_served_search",
+    "_settle",
+    "_settled_paint",
+    "_summarise",
+    "_unpainted",
+]
+
+
 pytestmark = [pytest.mark.unit]
 _HANDOFF_TIMEOUT = DEFAULT_ADMIN_TIMEOUT_SECONDS * 1.5
 _READY_RETRIES = 3
