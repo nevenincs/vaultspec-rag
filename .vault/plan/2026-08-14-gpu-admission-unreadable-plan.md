@@ -4,7 +4,7 @@ tags:
   - '#gpu-admission-unreadable'
 date: '2026-08-14'
 modified: '2026-08-14'
-body_hash: 'sha256:da217d62972fee0b89670d1a88acaa455b478f6bacc2f9711ad5087d93f4dad5'
+body_hash: 'sha256:2164ed80bcb7efe1d85a1cd67fbb9e10b9c1d4c5222d662855da7e56525125d5'
 tier: L1
 related:
   - '[[2026-08-14-gpu-admission-unreadable-adr]]'
@@ -34,6 +34,7 @@ the floor comparison, the latch, or the load window.
 - [x] `S01` - Give the gate a consecutive-unreadable ledger and refuse past its limit under a distinct reason; `src/vaultspec_rag/_gpu_admission.py`.
 - [x] `S02` - Route the probed and the supplied reading through one judgement so neither bypasses the ledger; `src/vaultspec_rag/_gpu_admission.py, conftest.py`.
 - [x] `S03` - Repoint the fail-open guard and prove both directions of the new refusal; `src/vaultspec_rag/tests/test_gpu_admission.py`.
+- [x] `S04` - Assert the ledger coupling the audit found stated only in prose - that a diagnostic reading advances the streak a later load is refused on; `src/vaultspec_rag/tests/test_gpu_admission.py`.
 
 ## Parallelization
 
