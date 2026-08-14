@@ -96,7 +96,9 @@ __all__ = [
     "device_load_wire",
     "device_refusal_message",
     "evaluate_device_admission",
+    "judge_device_reading",
     "load_window_lock_path",
+    "observe_unreadable_streak",
 ]
 
 # Stable machine-readable refusal causes. A consumer branches on these rather
