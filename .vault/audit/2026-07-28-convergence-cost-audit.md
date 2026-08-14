@@ -3,19 +3,35 @@ tags:
   - '#audit'
   - '#convergence-cost'
 date: '2026-07-28'
-modified: '2026-07-28'
+modified: '2026-08-14'
 body_schema: 'body-v1'
-body_hash: 'sha256:ed96edad0a3469a5700b2c9dc04f291e8075a334889f2a951510b43b7c307877'
+body_hash: 'sha256:afb9660fe4aca7fbfed89f5aa6bc4c64a390100e0371ca89fa1ac4a5d1e2e964'
 related:
   - "[[2026-07-28-convergence-cost-plan]]"
   - "[[2026-07-28-convergence-cost-adr]]"
 ---
 
-# `convergence-cost` audit: `Verification of the stat gate and scoped convergence retention`
-
 Verification of the stat-evidence rehash gate and the scoped-convergence retention
 change, executed against the plan and its accepted decision record. Both changes landed
 as `1bcde198`.
+
+## Scope
+
+The two behaviours the accepted decision authorised, and nothing beyond them:
+
+- the stat-evidence rehash gate - reuse on an unchanged stat identity, refusal on a
+  visible change, and the discard paths for a racy, corrupt, defective, or
+  wrong-schema sidecar - across the code, document, and vault indexers;
+- scoped convergence retention, including the interruption, mid-attempt-success,
+  failure, crash-recovery, construction-over-pending, and cross-instance refresh
+  promotion paths.
+
+Evidence was taken from the gate and retry test modules, from three mutations applied
+to the gate and one to retention, and from a full unit-tier run.
+
+Out of scope: the observability gap the live incident exposed during verification. It
+is recorded below because it happened during this pass, not because this change caused
+it; it is grounded and decided in its own records.
 
 ## Findings
 
