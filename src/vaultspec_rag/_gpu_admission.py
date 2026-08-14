@@ -27,6 +27,17 @@ Two properties make the gate correct rather than merely present:
   against a fresh reading. Only a verdict that reached the floor comparison
   latches: latching one that never got a figure would retire the gate on a
   reading that was never taken.
+- **An unmeasurable device is a hiccup once and a fault repeatedly.** A driver
+  that answers presence and then refuses the memory query says nothing, in one
+  reading, about which of the two it is, so one such reading is admitted and a
+  run of them is refused. The gate keeps a count of consecutive unreadable
+  readings for exactly this, cleared by any reading that yields a figure: a
+  blip on a working card never approaches the limit, while a device that has
+  stopped answering reaches it in the first few load attempts. Admitting
+  regardless is how a driver fault becomes an unbounded run of jobs that each
+  fail on an error they cannot attribute - the per-job ceiling and the
+  allocator's backoff, which make the single-reading fail-open safe, both
+  assume a device that answers and neither fires against one that does not.
 - **Detection alone cannot close the race.** Two processes can read the same
   free figure, both find room, and both load. An OS advisory lock held across
   the check-and-load window makes that sequence atomic between processes: a
@@ -69,18 +80,21 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEVICE_CONTENDED_MESSAGE",
+    "DEVICE_UNREADABLE_MESSAGE",
     "REASON_BELOW_FLOOR",
+    "REASON_DEVICE_UNREADABLE",
     "REASON_LOAD_IN_PROGRESS",
     "REASON_NO_CUDA",
     "REASON_TORCH_ABSENT",
+    "UNREADABLE_ADMISSION_LIMIT",
     "DeviceAdmission",
     "admission_from_reading",
     "admit_gpu_load",
     "clear_gpu_admission_latch",
-    "device_contended_message",
     "device_load_reading",
     "device_load_window",
     "device_load_wire",
+    "device_refusal_message",
     "evaluate_device_admission",
     "load_window_lock_path",
 ]
@@ -88,16 +102,23 @@ __all__ = [
 # Stable machine-readable refusal causes. A consumer branches on these rather
 # than on prose, so they are spelled once here and never restated at a call
 # site: free memory sits below the floor; another process holds the load
-# window; torch is installed but exposes no device; torch is absent entirely.
+# window; the device answers as present but has stopped answering the memory
+# query; torch is installed but exposes no device; torch is absent entirely.
 REASON_BELOW_FLOOR = "below_floor"
+REASON_DEVICE_UNREADABLE = "device_unreadable"
 REASON_LOAD_IN_PROGRESS = "load_in_progress"
 REASON_NO_CUDA = "no_cuda"
 REASON_TORCH_ABSENT = "torch_absent"
 
 #: The causes this gate refuses on. The other two are not its verdict to give:
 #: an absent torch or an absent device is the loader's own typed failure, and
-#: answering it here too would give one condition two messages.
-_REFUSING_REASONS = frozenset({REASON_BELOW_FLOOR, REASON_LOAD_IN_PROGRESS})
+#: answering it here too would give one condition two messages. A device that
+#: answers presence and nothing else has no such owner - the loader will hand
+#: it work and let it fail on a CUDA error the job cannot attribute - so that
+#: one is this gate's to refuse.
+_REFUSING_REASONS = frozenset(
+    {REASON_BELOW_FLOOR, REASON_DEVICE_UNREADABLE, REASON_LOAD_IN_PROGRESS}
+)
 
 DEVICE_CONTENDED_MESSAGE = (
     "CUDA device too contended to load models: vaultspec-rag is a GPU-only "
@@ -108,12 +129,46 @@ DEVICE_CONTENDED_MESSAGE = (
     "VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB."
 )
 
+DEVICE_UNREADABLE_MESSAGE = (
+    "CUDA device present but not answering: vaultspec-rag refuses to load "
+    "models onto a device that reports itself present and then refuses every "
+    "memory query, because each job admitted onto one fails on a driver error "
+    "it cannot attribute. This is a device fault rather than contention - no "
+    "other consumer is holding anything, and lowering the admission floor "
+    "will not help. Check the card with nvidia-smi; a driver that has lost "
+    "its handle on a device generally needs the host restarted to recover it."
+)
+
+#: How many consecutive readings that found the device present and its free
+#: memory unreadable this gate tolerates before refusing.
+#:
+#: The count is what separates a hiccup from a fault, and it is a count rather
+#: than an elapsed span deliberately: an unreadable device that is only asked
+#: occasionally produces a slow trickle of observations, and a time window
+#: could be re-armed indefinitely by an idle period between them. Any reading
+#: that does yield a figure clears the streak, so a genuine blip never
+#: approaches this number and costs nothing; a device that has stopped
+#: answering reaches it within the first handful of load attempts and stays
+#: there. Small, because every observation past the first is a job that will
+#: fail, and the two admitted before it are already generous.
+#:
+#: The stream this counts is every reading the process takes, diagnostics
+#: included, not only the ones a load asked for. That is deliberate - a refused
+#: memory query is evidence about the device whoever asked - and it means an
+#: operator watching a failing card reaches the refusal sooner than a silent
+#: one does. It also means the figure is not calibrated against load attempts
+#: alone, which is the thing to know before moving it.
+UNREADABLE_ADMISSION_LIMIT = 3
+
 #: The machine-global lock file's name. One name for the whole machine is the
 #: point: the device it guards is singular.
 _LOCK_FILENAME = "vaultspec-rag-gpu-load-window.lock"
 
 _REASON_PHRASES = {
     REASON_BELOW_FLOOR: "free device memory is below the admission floor",
+    REASON_DEVICE_UNREADABLE: (
+        "the device reports itself present and refuses every memory query"
+    ),
     REASON_LOAD_IN_PROGRESS: "another process holds the model-load window",
     REASON_NO_CUDA: "no CUDA device is available",
     REASON_TORCH_ABSENT: "torch is not installed",
@@ -143,13 +198,27 @@ class DeviceAdmission:
     reason: str
 
 
-def device_contended_message(admission: DeviceAdmission) -> str:
-    """Render one operator-facing refusal naming free, floor, and the way out.
+def device_refusal_message(admission: DeviceAdmission) -> str:
+    """Render one operator-facing refusal naming the cause and the way out.
 
     The reading belongs in the message because the alternative is an operator
     told only that the device is busy, with no figure to act on and no way to
     tell a card 200 MiB short from one 8 GiB short.
+
+    One renderer serves both refusals and dispatches on the reason it is given.
+    A second renderer for the second refusal would drift from this one, and the
+    copy that stopped getting the fix would be the one an operator read. The
+    two refusals are genuinely different messages rather than one message with
+    a different noun: a contended card has a figure, a floor, and another
+    tenant to wait for, while an unreadable one has none of those, and sending
+    its operator to the floor knob would waste their time.
     """
+    if admission.reason == REASON_DEVICE_UNREADABLE:
+        return (
+            f"{DEVICE_UNREADABLE_MESSAGE} Observed at least "
+            f"{UNREADABLE_ADMISSION_LIMIT} consecutive readings with no "
+            f"free-memory figure ({_REASON_PHRASES[REASON_DEVICE_UNREADABLE]})."
+        )
     free = (
         "an unreadable amount"
         if admission.free_mib is None
@@ -254,10 +323,45 @@ def _configured_floor_mib() -> int:
         return 0
 
 
+_unreadable_guard = threading.Lock()
+_unreadable_streak = 0
+
+
+def observe_unreadable_streak(reading: CudaDeviceMemory) -> int:
+    """Record *reading* in the unreadable ledger and return the running streak.
+
+    The whole memory this gate has. A device that answers presence and refuses
+    the memory query is indistinguishable, in one reading, from a device that
+    will answer the next one - so the streak is what tells a hiccup from a
+    fault, and nothing but a count is needed to do it.
+
+    Three cases, and the third is the one worth stating. A reading that
+    produced a figure clears the streak, because the device just answered. A
+    reading that found the device present and the figure absent extends it. A
+    reading that never reached the question - an absent torch, a device that
+    does not claim to be there - leaves it untouched: those are answers about
+    the installation rather than about a device that has stopped responding,
+    and letting them clear the streak would let an unplugged card launder a
+    real fault into a fresh start.
+
+    Returns:
+        The number of consecutive unreadable readings observed, this one
+        included; zero whenever this reading was not one of them.
+    """
+    global _unreadable_streak
+    with _unreadable_guard:
+        if reading.free_mib is not None:
+            _unreadable_streak = 0
+        elif reading.cuda_present:
+            _unreadable_streak += 1
+        return _unreadable_streak
+
+
 def admission_from_reading(
     reading: CudaDeviceMemory,
     *,
     floor_mib: int,
+    unreadable_streak: int = 0,
 ) -> DeviceAdmission:
     """Derive one verdict from one device reading and one floor.
 
@@ -281,6 +385,14 @@ def admission_from_reading(
     overstates, so the whole-number comparison can only refuse a load the float
     figures would have admitted by under two mebibytes, never admit one they
     refused, and the reported figures always reproduce the verdict.
+
+    *unreadable_streak* is how many consecutive readings, this one included,
+    found the device present and its free memory unreadable. It arrives as an
+    argument rather than being counted here so this stays a pure verdict over
+    its inputs: the threshold is then exercisable over a supplied count, in
+    both directions, without a faulty machine and without global state to
+    reset between exercises. A caller that keeps no ledger passes nothing and
+    gets the transient reading of any unreadable observation.
     """
     total_mib = None if reading.total_mib is None else int(reading.total_mib)
     own_mib = (
@@ -305,11 +417,34 @@ def admission_from_reading(
             reason=REASON_NO_CUDA,
         )
     if reading.free_mib is None:
-        # The device answers as present but refused the memory query. Admitting
-        # is the honest reading of "unmeasurable": the per-job CUDA ceiling and
-        # the allocator's own backoff are both still in force, and turning a
-        # driver hiccup into a refusal of all GPU work costs more than the
-        # protection it would buy.
+        # The device answers as present but refused the memory query. One such
+        # reading is a hiccup and is admitted: the per-job CUDA ceiling and the
+        # allocator's own backoff are both still in force, and turning a driver
+        # blip into a refusal of all GPU work would cost more than the
+        # protection it bought.
+        #
+        # A run of them is not a hiccup, and the two are indistinguishable in
+        # any single reading - which is why the streak, not this reading, is
+        # what decides. Both safeguards named above assume a device that
+        # answers; against one that has stopped, neither fires, and admitting
+        # is how a driver fault becomes an unbounded run of jobs that each
+        # crash on an error they cannot attribute. Past the limit this refuses
+        # under its own reason: "present but unreadable" sends an operator to
+        # the driver, where "no CUDA" would send them to the installation.
+        if unreadable_streak >= UNREADABLE_ADMISSION_LIMIT:
+            logger.warning(
+                "device free memory has been unreadable for %d consecutive "
+                "readings; refusing the load",
+                unreadable_streak,
+            )
+            return DeviceAdmission(
+                admitted=False,
+                free_mib=None,
+                total_mib=total_mib,
+                own_mib=own_mib,
+                floor_mib=floor_mib,
+                reason=REASON_DEVICE_UNREADABLE,
+            )
         logger.warning(
             "device free memory is unreadable; admitting the load on presence alone",
         )
@@ -333,6 +468,23 @@ def admission_from_reading(
     )
 
 
+def judge_device_reading(reading: CudaDeviceMemory) -> DeviceAdmission:
+    """Record *reading* in the ledger and return the verdict it produces.
+
+    The one place the three inputs a verdict needs are brought together - the
+    reading, the configured floor, and the running unreadable streak - so a
+    probed reading and a supplied one cannot be judged by different rules. A
+    supplied reading that bypassed the ledger would be exercising a predicate
+    production never runs, which is the failure mode a guard is supposed to
+    catch rather than embody.
+    """
+    return admission_from_reading(
+        reading,
+        floor_mib=_configured_floor_mib(),
+        unreadable_streak=observe_unreadable_streak(reading),
+    )
+
+
 def evaluate_device_admission() -> DeviceAdmission:
     """Return one verdict on the device's present capacity to take a load.
 
@@ -348,10 +500,7 @@ def evaluate_device_admission() -> DeviceAdmission:
     try:
         from .memory_probe import cuda_device_memory
 
-        return admission_from_reading(
-            cuda_device_memory(),
-            floor_mib=_configured_floor_mib(),
-        )
+        return judge_device_reading(cuda_device_memory())
     except Exception:
         logger.warning(
             "GPU admission could not be evaluated; reporting the device as unreadable",
@@ -451,7 +600,10 @@ def device_load_window(
     are parameters so the window's real locking and refusal behaviour stay
     exercisable - without contending for the machine's own anchor, which
     another tenant may legitimately be holding, and without initialising a CUDA
-    context to ask a question whose answer is already known.
+    context to ask a question whose answer is already known. A supplied reading
+    is judged exactly as a probed one, ledger included: a seam that bypassed
+    the ledger would let a guard pass against a predicate production does not
+    run, which is the failure a guard exists to catch.
     """
     from ._anchor_claim import AnchorOutcome, claim_anchor, release_anchor_claim
 
@@ -472,7 +624,7 @@ def device_load_window(
         yield (
             evaluate_device_admission()
             if reading is None
-            else admission_from_reading(reading, floor_mib=_configured_floor_mib())
+            else judge_device_reading(reading)
         )
     finally:
         if claim.descriptor is not None:
@@ -486,10 +638,11 @@ _admitted = False
 def _floor_was_evaluated(admission: DeviceAdmission) -> bool:
     """Whether *admission* actually compared a free figure against the floor.
 
-    The distinction the latch turns on. Three of the four verdicts this module
+    The distinction the latch turns on. Most of the verdicts this module
     produces never reach the comparison - an absent torch, an absent device,
-    and a driver that answered presence but refused the memory query - and all
-    three carry no free figure, so the figure's presence is the discriminator
+    and a driver that answered presence but refused the memory query, whether
+    that refusal was admitted as a blip or refused as a fault - and none of
+    them carries a free figure, so the figure's presence is the discriminator
     rather than a second flag that could disagree with it.
     """
     return admission.free_mib is not None
@@ -551,14 +704,17 @@ def admit_gpu_load[T](
     ``load_torch`` is called once per model construction and each site is behind
     its own already-constructed guard, so a process makes a handful of these
     calls in total; the device probe caches its torch lookup, so a repeat costs
-    a memory query and an uncontended lock claim rather than an import. On a
-    host whose probe fails permanently the repeats are bounded by that call
-    count, not by time, and the warning the unreadable reading emits repeats
-    with them - a handful of lines per process, which is a signal rather than a
-    flood, and the honest one to leave in place while the device cannot answer.
-    A refusal a repeat does reach is genuine: the verdict credits whatever this
-    process already holds, so it cannot be describing the models an earlier
-    unevaluated load brought up.
+    a memory query and an uncontended lock claim rather than an import.
+
+    Those repeats are also what makes an unreadable device answerable at all.
+    Each one takes a fresh reading, so the unreadable streak accumulates across
+    a process's load sites, and a device that has stopped answering crosses the
+    limit within the first few rather than being re-admitted indefinitely. The
+    two properties compose deliberately: not latching is what keeps the gate
+    asking, and the streak is what makes the repeated question eventually mean
+    something. A refusal a repeat does reach is genuine either way - the verdict
+    credits whatever this process already holds, so it cannot be describing the
+    models an earlier unevaluated load brought up.
     """
     global _admitted
     if _admitted:
@@ -568,7 +724,7 @@ def admit_gpu_load[T](
             return load()
         with window() as admission:
             if admission.reason in _REFUSING_REASONS:
-                raise RuntimeError(device_contended_message(admission))
+                raise RuntimeError(device_refusal_message(admission))
             result = load()
             evaluated = _floor_was_evaluated(admission)
         if evaluated:
