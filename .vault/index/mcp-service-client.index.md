@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-service-client'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:6959be502180054cd32d7e32c44d5bb20a66ee4473ea20f704417fee3ec7dadf'
 related:

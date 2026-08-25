@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#index-cuda-ceiling'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:3268af862698f54c0503d704f58f2a1b0c5b8a175ea00254134c98143cffac26'
 related:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-first-search-fallback'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:53703f635986eeee58937596099861f534d8c614b17266bd788287922b92631c'
 related:

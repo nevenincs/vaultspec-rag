@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#body-schema-provenance'
 date: '2026-07-27'
-modified: '2026-07-27'
-body_hash: 'sha256:aade89c6e23d6b1fd6d46ab59e96170eb22502dca35646ecee9cb334edebefd8'
+modified: '2026-08-14'
+body_hash: 'sha256:48a47ad82b5adff41e3e2af130e4c429001766767adff604cb85a35289dd56f1'
 tier: L2
 related:
   - '[[2026-07-27-body-schema-provenance-adr]]'
@@ -12,6 +12,12 @@ related:
 ---
 
 # `body-schema-provenance` plan
+
+## Description
+
+Evidence gap: the retained document body has no authored Description content beyond scaffold comments or placeholders.
+
+## Steps
 
 ### Phase `P01` - Immutable contracts
 
@@ -24,14 +30,8 @@ Make body schemas immutable and stamp new documents.
 
 Generate the reviewed legacy baseline and prove strict validation.
 
-- [ ] `P02.S03` - Generate reviewed historical schema baseline; `.vaultspec/body-schema-baseline.json and migrations`.
-- [ ] `P02.S04` - Prove restored corpus and new documents validate correctly; `checks tests and vault check body-sections`.
-
-## Description
-
-Evidence gap: the retained document body has no authored Description content beyond scaffold comments or placeholders.
-
-## Steps
+- [x] `P02.S03` - Generate reviewed historical schema baseline; `.vaultspec/body-schema-baseline.json and migrations`.
+- [x] `P02.S04` - Prove restored corpus and new documents validate correctly; `checks tests and vault check body-sections`.
 
 Evidence gap: the retained document body has no authored Steps content beyond scaffold comments or placeholders.
 

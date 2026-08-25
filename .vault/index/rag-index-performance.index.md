@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#rag-index-performance'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:34138880a526200d5ada5a7d7baca3e316bbee39cff1787ac6cd757d206b3efc'
 related:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-optional-dependency'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:1077bb18fbe61fa2d19b9600e824ee15b5caa6c970c90eefc1acb081b7b7e632'
 related:

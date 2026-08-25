@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#vault-pipeline-search'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:df0e998f41f961de7522782e9703373f90755c29c123fec118611b8a486cc7d1'
 related:

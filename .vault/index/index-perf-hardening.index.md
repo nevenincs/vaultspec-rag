@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#index-perf-hardening'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:7cb040da62abfd35ca85021bebb7a48603b2c898706bae18657808dffde99082'
 related:

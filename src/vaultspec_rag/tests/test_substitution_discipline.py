@@ -54,11 +54,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "exists to avoid",
     ),
     "test_gpu_admission.py": (
-        2,
+        3,
         "asserts the shared device-load reading's raise-swallowing behaviour "
         "and its composition with the live evaluator, which requires forcing "
         "a specific reading and a raised exception from it - neither "
-        "reachable through a real device on a CPU-only runner",
+        "reachable through a real device on a CPU-only runner; and forces a "
+        "present-but-unreadable memory reading, because the streak ledger the "
+        "diagnostic and load paths share is only observable across a run of "
+        "them and no real device yields one on demand",
     ),
     "test_install_torch_config.py": (
         1,

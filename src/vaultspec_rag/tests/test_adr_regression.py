@@ -463,10 +463,15 @@ class TestStorageMaintenanceIsLifecycleInert:
     """Storage maintenance must never reach a stop/terminate/reclaim flow.
 
     A maintenance actor that can terminate the service turns a routine
-    reclamation into an outage. Two guards: the maintenance import graph
-    must not pull in the CLI lifecycle module at all (fresh interpreter -
-    the in-process ``sys.modules`` is polluted by other tests), and the
-    maintenance sources must not name the terminate helpers.
+    reclamation into an outage, and one that can restore an archive turns a
+    reclamation into an unrequested write. The scheduled tick is read and
+    drop; nothing else.
+
+    Guarded in both directions for both flows: the maintenance import graph
+    must not pull in the CLI lifecycle module or the restore module at all
+    (fresh interpreter - the in-process ``sys.modules`` is polluted by other
+    tests), and the maintenance sources must not name the terminate helpers
+    or the restore operation.
     """
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
@@ -487,8 +492,36 @@ loaded = sorted(
 assert not loaded, loaded
 """
 
+    _RESTORE_IMPORT_CHECK = """
+import sys
+
+import vaultspec_rag.storage_manifest  # noqa: F401
+import vaultspec_rag.storage_reclamation  # noqa: F401
+import vaultspec_rag.storage_reconciliation  # noqa: F401
+import vaultspec_rag.storage_survey_ops  # noqa: F401
+import vaultspec_rag.server._lifecycle  # noqa: F401
+
+assert "vaultspec_rag.storage_restore" not in sys.modules
+"""
+
     def test_maintenance_import_graph_excludes_cli_lifecycle(self):
         assert_fresh_import_excludes(self._IMPORT_CHECK)
+
+    def test_maintenance_import_graph_excludes_the_restore_module(self):
+        """A tick that can import restore is one refactor from calling it.
+
+        This guard catches what the source scan cannot: reach through an
+        intermediate module. Mutation-proved by adding a module that
+        re-exports ``restore_archive`` and importing *that* from
+        ``storage_survey_ops``. No maintenance source then names a forbidden
+        symbol, so the source scan below stays green and only this assertion
+        fires - which is the whole reason both guards exist.
+
+        A direct ``import vaultspec_rag.storage_restore`` trips both, because
+        the import line itself carries the module name. That is the easy case;
+        the transitive one above is the case this guard is for.
+        """
+        assert_fresh_import_excludes(self._RESTORE_IMPORT_CHECK)
 
     def test_maintenance_sources_never_name_terminate_helpers(self):
         import inspect
@@ -513,6 +546,42 @@ assert not loaded, loaded
             assert not hits, (
                 f"{module.__name__} references lifecycle terminate helpers "
                 f"{hits}; storage maintenance is read/drop only"
+            )
+
+    def test_maintenance_sources_never_name_the_restore_operation(self):
+        """Restore is an operator verb; the scheduled tick may not reach it.
+
+        The names are matched exactly rather than on the word "restore".
+        ``storage_manifest`` legitimately defines ``record_restored_archive``
+        - the provenance write restore itself calls - and
+        ``storage_reclamation`` legitimately owns a private
+        ``_read_archive_records``. A substring guard on "restore" or
+        "read_archive" would fire on both and be loosened away on its first
+        false positive.
+
+        Mutation-proved by naming ``restore_archive`` in
+        ``storage_survey_ops`` without importing anything: the assertion below
+        fires naming that module and that symbol, the import-graph guard above
+        stays green, and restoring the source returns all four to passing.
+        """
+        import inspect
+
+        from .. import storage_manifest, storage_reclamation, storage_survey_ops
+        from ..server import _lifecycle
+
+        forbidden = ("storage_restore", "restore_archive", "RestoreRequest")
+        for module in (
+            storage_reclamation,
+            storage_survey_ops,
+            storage_manifest,
+            _lifecycle,
+        ):
+            src = inspect.getsource(module)
+            hits = [name for name in forbidden if name in src]
+            assert not hits, (
+                f"{module.__name__} references the archive restore operation "
+                f"{hits}; the scheduled maintenance tick is read/drop only and "
+                "restore is an operator verb"
             )
 
 

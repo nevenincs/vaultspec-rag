@@ -62,8 +62,10 @@ def load_torch() -> ModuleType:
     Returns the imported ``torch`` module. Raises ``ImportError`` when torch is
     not installed, ``RuntimeError`` when torch is installed but exposes no CUDA
     device (a CPU-only build, or no GPU) - it never silently degrades to CPU
-    compute - and ``RuntimeError`` when the device has no room for a model
-    stack, so a contended card is refused instead of starved.
+    compute - and ``RuntimeError`` when the device cannot take a load: a card
+    with no room for a model stack is refused instead of starved, and so is one
+    that answers as present and has then refused the memory query for long
+    enough that a transient fault is no longer the explanation.
 
     The device is checked once per process, before the first successful load,
     and the verdict is latched: a later call is exactly as cheap as it was

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#citation-gate-coverage'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:de3cdd7b2ed06437107678db4be70a2430e754d2c5275d59c83237b8a4dbd85f'
 related:

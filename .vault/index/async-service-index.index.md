@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#async-service-index'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:f16f34c5c96a49d3456507d50362b09f4fa79c12d94bafd3f3231078fb0d1ec9'
 related:

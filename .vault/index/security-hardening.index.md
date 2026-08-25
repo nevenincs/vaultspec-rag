@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#security-hardening'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:00f299dbc58d7b8a734de1c1c6e5d869d946c82ae4196466140f2d1a40b484f8'
 related:

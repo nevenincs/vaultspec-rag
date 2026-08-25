@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#storage-autoprune-safety'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:0e0339fde86a9e7b899317d996d6e5a2e7b4e9de80c92b288a06ef9b36dccb0e'
 related:

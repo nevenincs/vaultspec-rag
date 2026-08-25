@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#index-resume-drift-race'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:1708b49e0cff25dc3efa50e7f8995732a4103e64ea061ba89da891da813e87c5'
 related:

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#destructive-ops-security'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:0757a8ad0a03ad6ac202d24b08464bdc2796f4210d18dc8fd984613f34cdb9ba'
 related:

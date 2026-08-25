@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#mcp-server-deconflation'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:2742e85a233c6b86b89d82fec6de647a030c621bf3db255731c3c854db0e760e'
 related:

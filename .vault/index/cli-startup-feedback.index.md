@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#cli-startup-feedback'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:8ab579bd6dc4e91c1dac7ecfa67159ad9c6b8900edf1c998cacf0ee31837a18b'
 related:
