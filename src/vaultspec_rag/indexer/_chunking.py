@@ -109,14 +109,24 @@ class TextSplitter:
         ]
 
     def _merge_splits(self, splits: list[str], separator: str) -> list[str]:
+        """Rejoin *splits* into chunks that still reconstruct the source.
+
+        Every element is carried, including the empty strings ``str.split``
+        yields between consecutive separators. Dropping those collapses a run
+        of separators - four spaces of indentation become one - and the
+        rejoined chunk is then no longer a substring of the text it came from.
+        Callers locate each chunk by searching for it verbatim, so a collapsed
+        run either fails that search outright or silently matches further along
+        and drops the intervening bytes from the index.
+        """
         final_chunks: list[str] = []
         current_chunk = ""
+        started = False
 
         for s in splits:
-            if not s:
-                continue
-            if not current_chunk:
+            if not started:
                 current_chunk = s
+                started = True
             elif len(current_chunk) + len(separator) + len(s) <= self.chunk_size:
                 current_chunk += separator + s
             else:
@@ -124,7 +134,7 @@ class TextSplitter:
                 overlap_start = max(0, len(current_chunk) - self.chunk_overlap)
                 current_chunk = current_chunk[overlap_start:] + separator + s
 
-        if current_chunk:
+        if started:
             final_chunks.append(current_chunk)
         return final_chunks
 
