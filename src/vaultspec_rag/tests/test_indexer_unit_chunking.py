@@ -544,3 +544,89 @@ class TestVanishedSourceCostsOnlyItself:
             _chunk_worker.chunk_and_hash_file(unreadable, tmp_path)
 
         assert not isinstance(raised.value, FileNotFoundError)
+
+
+class TestSplitterPreservesSeparatorRuns:
+    """A rejoined chunk must still be findable verbatim in its source.
+
+    ``chunk_with_splitter`` locates every chunk with ``str.find`` to derive its
+    line span. That only works while a chunk is a byte-exact substring of the
+    text it came from, which a merge that drops the empty strings between
+    consecutive separators quietly breaks.
+    """
+
+    #: Four-space indentation is the shape that broke a real index: the space
+    #: separator repeats, so ``str.split`` yields empty strings between the
+    #: occurrences, and skipping them collapses the run to a single space.
+    INDENTED = "a" * 400 + "    " + "b" * 400 + "\n\n" + "c" * 400
+
+    #: A stylesheet whose indented declaration carries a value long enough to
+    #: drive the split down to the space separator - the arrangement that made
+    #: a real index run abort. The collapsed indent appears nowhere later in
+    #: the text, so the search for that chunk fails outright instead of
+    #: landing further along the run it collapsed.
+    _LONG_URL = (
+        'url("data:image/svg+xml,%3Csvg%20width=%2718%27%20'
+        + "%3Cpath%20d=%27M9%200L9%2018%27/" * 30
+        + '%3E")'
+    )
+    STYLESHEET = (
+        ".pagefind-ui__x {\n    color: red;\n    margin: 0;\n}\n\n"
+        ".pagefind-ui__y {\n    -webkit-mask-image: " + _LONG_URL + ";\n"
+        "    mask-image: " + _LONG_URL + ";\n}\n"
+    )
+
+    @staticmethod
+    def _chunks(content: str, language: str = "css") -> list[str]:
+        from ..indexer._chunking import TextSplitter
+
+        return TextSplitter(language=language, chunk_overlap=0).split_text(content)
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(STYLESHEET, id="indented-long-value"),
+            pytest.param(INDENTED, id="four-space-indent"),
+            pytest.param("x" * 400 + "\n\n\n" + "y" * 400, id="triple-newline"),
+            pytest.param("x" * 400 + "\n\n\n\n" + "y" * 400, id="quad-newline"),
+        ],
+    )
+    def test_every_chunk_is_found_verbatim_in_order(self, content: str) -> None:
+        """Mutation: restored the ``if not s: continue`` skip in _merge_splits.
+
+        Observed this fail on the located assertion for ``indented-long-value``
+        only, at its third chunk - that chunk carries one space where the
+        source has four, and the collapsed form appears nowhere later. The
+        other inputs still PASS under the same mutation, because their
+        collapsed chunk is found further along the very run that was dropped.
+        That is the silent half of this defect, and why the reconstruction
+        assertion below exists rather than this one standing alone.
+        """
+        offset = 0
+        for chunk in self._chunks(content):
+            located = content.find(chunk, offset)
+            assert located != -1, (
+                f"chunk not present at or after offset {offset}: {chunk[:60]!r}"
+            )
+            offset = located + len(chunk)
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(STYLESHEET, id="indented-long-value"),
+            pytest.param(INDENTED, id="four-space-indent"),
+            pytest.param("x" * 400 + "\n\n\n\n" + "y" * 400, id="quad-newline"),
+        ],
+    )
+    def test_the_chunks_reconstruct_the_source(self, content: str) -> None:
+        """The stricter half: nothing may be dropped, only partitioned.
+
+        A collapsed run can still be *found* further along the run while the
+        bytes between go unindexed, so locating every chunk is not on its own
+        evidence that the content survived. Concatenation is.
+
+        Mutation: as above. Observed this fail on the equality for every
+        input, the rejoined text short by the separators the skip removed -
+        including the ones the search assertion above cannot catch.
+        """
+        assert "".join(self._chunks(content)) == content
