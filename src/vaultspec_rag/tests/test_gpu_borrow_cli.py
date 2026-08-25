@@ -90,7 +90,12 @@ marker = Path(sys.argv[1])
 port = int(sys.argv[2])
 
 def work():
-    marker.write_text("safe", encoding="ascii")
+    # Publish the marker atomically: the parent waits on the file existing and
+    # then reads it, so a plain write lets it observe the created-but-empty
+    # file and read "" instead of the content. A replace has no such window.
+    staged = marker.with_suffix(".partial")
+    staged.write_text("safe", encoding="ascii")
+    staged.replace(marker)
     time.sleep(1.0)
 
 try:
@@ -100,6 +105,21 @@ except BorrowGPUError as exc:
     raise SystemExit(1)
 raise SystemExit("borrower coordinator unexpectedly resumed")
 """
+
+
+def _marker_published(marker: Path) -> bool:
+    """True once the child's marker is readable AND carries its full content.
+
+    Waiting on existence alone is a race the parent loses: a marker is visible
+    from the moment it is created, so the read can land on an empty file and
+    come back "" instead of "safe". The publish side stages and replaces, which
+    closes that window but opens a brief one where the rename itself makes the
+    path transiently unreadable - so both are treated as "not yet".
+    """
+    try:
+        return marker.read_text(encoding="ascii") == "safe"
+    except OSError:
+        return False
 
 
 def test_unacknowledged_resume_retains_lease_until_child_exit_for_heartbeat_recovery(
@@ -126,7 +146,7 @@ def test_unacknowledged_resume_retains_lease_until_child_exit_for_heartbeat_reco
         )
         try:
             deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
-            while not marker.is_file() and child.poll() is None:
+            while not _marker_published(marker) and child.poll() is None:
                 assert time.monotonic() < deadline, "borrower child never reached work"
                 time.sleep(0.01)
             assert marker.read_text(encoding="ascii") == "safe"
