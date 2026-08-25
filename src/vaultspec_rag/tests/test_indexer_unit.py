@@ -249,10 +249,17 @@ class TestChunkWithSplitterSearchOffset:
 
         chunks = _chunk_worker.chunk_with_splitter(content, "repeat.yaml", "yaml")
 
+        # The span ends at 301, not 300: the source carries 300 newlines and
+        # the final chunk carries the last of them. This expectation formerly
+        # read 300, which recorded a splitter that dropped the trailing
+        # separator - 599 of the source's 600 bytes survived chunking. The
+        # distinctness this test exists for is unaffected; the two chunks still
+        # map to different lines.
         assert [(chunk.line_start, chunk.line_end) for chunk in chunks] == [
             (1, 256),
-            (256, 300),
+            (256, 301),
         ]
+        assert "".join(chunk.content for chunk in chunks) == content
 
 
 class TestIncrementalIndexMetadata:
