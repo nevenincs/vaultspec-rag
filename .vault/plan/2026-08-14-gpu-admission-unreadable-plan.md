@@ -3,13 +3,14 @@ tags:
   - '#plan'
   - '#gpu-admission-unreadable'
 date: '2026-08-14'
-modified: '2026-08-14'
+modified: '2026-08-25'
 body_hash: 'sha256:2164ed80bcb7efe1d85a1cd67fbb9e10b9c1d4c5222d662855da7e56525125d5'
 tier: L1
 related:
   - '[[2026-08-14-gpu-admission-unreadable-adr]]'
   - '[[2026-07-29-gpu-admission-gate-adr]]'
   - '[[2026-08-14-gpu-admission-unreadable-reference]]'
+  - '[[2026-07-29-gpu-admission-gate-research]]'
 ---
 
 # `gpu-admission-unreadable` plan
