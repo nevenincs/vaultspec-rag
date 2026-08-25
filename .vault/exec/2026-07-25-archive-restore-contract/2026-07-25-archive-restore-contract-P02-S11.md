@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#archive-restore-contract'
 date: '2026-07-25'
-modified: '2026-08-14'
+modified: '2026-08-25'
 body_schema: 'body-v1'
-body_hash: 'sha256:baf5bbf915c0fa83fc39e736314ccd80d3f3149ddea1fa4291d5871292e13718'
+body_hash: 'sha256:67e71c06105f74101d37b9bcf5ccb6dfb56e7cc797b6ecee9d76c78dcc0b397f'
 step_id: 'S11'
 related:
   - "[[2026-07-25-archive-restore-contract-plan]]"
@@ -36,15 +36,15 @@ One refusal is not covered here and is not coverable here: an applied restore in
 
 Failure proofs, each applied alone, observed, then reverted, with the suite returning green:
 
-| Guard | Mutation | Observed |
-| --- | --- | --- |
-| empty snapshot | dropped the `st_size <= 0` half of the file check | DID NOT RAISE |
-| archived generation | returned the current schema version | `assert 2 == 1` |
-| local-mode ordering | moved the check below `read_archive` | `RuntimeError: archive manifest is unreadable` |
-| populated destination | dropped the `if existing:` refusal | reason read `windows_server_archive_restore_unsupported` |
-| dry run | removed the short circuit | `NotImplementedError` from the snapshot recovery API |
-| identity carry | restamped the current generation | `assert 2 == 1` |
-| identity-less archive | invented an identity for each collection | non-empty mapping against `== {}` |
+| Guard                 | Mutation                                          | Observed                                                 |
+| --------------------- | ------------------------------------------------- | -------------------------------------------------------- |
+| empty snapshot        | dropped the `st_size <= 0` half of the file check | DID NOT RAISE                                            |
+| archived generation   | returned the current schema version               | `assert 2 == 1`                                          |
+| local-mode ordering   | moved the check below `read_archive`              | `RuntimeError: archive manifest is unreadable`           |
+| populated destination | dropped the `if existing:` refusal                | reason read `windows_server_archive_restore_unsupported` |
+| dry run               | removed the short circuit                         | `NotImplementedError` from the snapshot recovery API     |
+| identity carry        | restamped the current generation                  | `assert 2 == 1`                                          |
+| identity-less archive | invented an identity for each collection          | non-empty mapping against `== {}`                        |
 
 Two did not land where they were first written, and the test docstrings record what actually happened rather than what was expected:
 
