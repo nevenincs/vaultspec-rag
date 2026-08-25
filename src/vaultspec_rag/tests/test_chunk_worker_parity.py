@@ -75,20 +75,51 @@ def helper_{i}(a: int, b: int) -> int:
 '''
 
 
-def test_scoped_worker_propagates_source_read_failure(tmp_path: Path) -> None:
-    """A vanished changed file is an operational failure, not an empty result."""
+def test_scoped_worker_reports_a_vanished_source_as_its_own_disposition(
+    tmp_path: Path,
+) -> None:
+    """A vanished changed file converges; it no longer ends the run.
+
+    These two previously required the read to raise, so that a file missing
+    from the corpus could not be published as an ordinary empty result. The
+    guarantee is unchanged - a vanished file still never reaches publication as
+    content - but it is now carried as a disposition the consumer converges
+    rather than an exception that ends the job, which is how one deleted file
+    in a tree under active edit was killing whole index runs.
+    """
     missing = tmp_path / "vanished.py"
 
-    with pytest.raises(FileNotFoundError):
-        _chunk_worker.chunk_file_with_status(missing, tmp_path)
+    result = _chunk_worker.chunk_file_with_status(missing, tmp_path)
+
+    assert result.preprocess_status == _chunk_worker.VANISHED_SOURCE_STATUS
+    assert result.chunks == []
 
 
-def test_full_worker_propagates_source_read_failure(tmp_path: Path) -> None:
-    """A vanished full-index file must abort before stale-point publication."""
+def test_full_worker_reports_a_vanished_source_as_its_own_disposition(
+    tmp_path: Path,
+) -> None:
+    """The full-index path carries the same disposition as the scoped one."""
     missing = tmp_path / "vanished.py"
 
-    with pytest.raises(FileNotFoundError):
-        _chunk_worker.chunk_and_hash_file(missing, tmp_path)
+    result = _chunk_worker.chunk_and_hash_file(missing, tmp_path)
+
+    assert result.preprocess_status == _chunk_worker.VANISHED_SOURCE_STATUS
+    assert result.chunks == []
+
+
+def test_an_unreadable_source_still_propagates(tmp_path: Path) -> None:
+    """Only absence converges; a read that fails otherwise still ends the run.
+
+    A directory occupying a source file's name is a real refusal from the OS,
+    not a simulated one, and it must not be mistaken for a deleted file.
+    """
+    unreadable = tmp_path / "unreadable.py"
+    unreadable.mkdir()
+
+    with pytest.raises(OSError) as raised:
+        _chunk_worker.chunk_and_hash_file(unreadable, tmp_path)
+
+    assert not isinstance(raised.value, FileNotFoundError)
 
 
 def test_batch_passthrough_hashes_the_bytes_it_chunks(tmp_path: Path) -> None:
@@ -126,6 +157,38 @@ def test_scoped_worker_retains_readable_unsupported_encoding_disposition(
 
     assert result.chunks == []
     assert result.preprocess_status is None
+
+
+def test_the_production_sink_converges_a_vanished_source(tmp_path: Path) -> None:
+    """The run survives a file deleted between enumeration and read.
+
+    Driven through the shared production helper, whose publish callback is the
+    pipeline's real sink - it records the disposition and calls the typed
+    failure raiser, which is the seam that decides whether one deleted file
+    ends the job. Asserting at the worker alone would miss that entirely: the
+    worker returning a disposition changes nothing if the sink still raises on
+    it.
+
+    Mutation: removed the vanished-source convergence from
+    ``raise_code_result_failure``. Observed this fail with
+    ``JobError: chunk_failed: admitted code source produced no indexable
+    chunks`` escaping the production call - one deleted file ending the run,
+    which is the whole defect.
+    """
+    from ._chunk_production import produce_file_results
+
+    survivor = tmp_path / "present.py"
+    survivor.write_text("value = 1\n", encoding="utf-8")
+    missing = tmp_path / "deleted_mid_run.py"
+
+    indexer = _chunk_only_indexer(tmp_path)
+    results = produce_file_results(indexer, [survivor, missing])
+
+    by_path = {result.rel_path: result for result in results}
+    assert by_path["deleted_mid_run.py"].preprocess_status == (
+        _chunk_worker.VANISHED_SOURCE_STATUS
+    )
+    assert by_path["present.py"].chunks, "the surviving file still indexes"
 
 
 def _chunk_only_indexer(root: Path) -> CodebaseIndexer:

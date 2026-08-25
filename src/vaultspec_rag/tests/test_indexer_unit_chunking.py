@@ -465,6 +465,87 @@ class TestLanguageMapConsistency:
             assert grammar is None or isinstance(grammar, str)
 
 
+class TestVanishedSourceCostsOnlyItself:
+    """A file deleted between enumeration and read must not end the run.
+
+    A tree under active edit loses files mid-run as a matter of course. The
+    sizing gate already treats a path that stopped existing as skippable; the
+    read seam did not, so one deleted file raised out of the worker and ended
+    an entire index run.
+
+    These drive the no-rule path, because that is the path every ordinary
+    source file takes and the one the reported failures came through.
+    """
+
+    @staticmethod
+    def _vanished(tmp_path: Path) -> Path:
+        """A path inside *tmp_path* that was enumerated and is now absent."""
+        return tmp_path / "gone.py"
+
+    def test_chunk_and_hash_file_reports_a_skip_rather_than_raising(
+        self, tmp_path: Path
+    ) -> None:
+        """Mutation: re-raised FileNotFoundError instead of translating it.
+
+        Observed this fail with FileNotFoundError escaping the call itself,
+        before any assertion here ran.
+        """
+        from ..indexer._chunk_worker import (
+            VANISHED_SOURCE_STATUS,
+            chunk_and_hash_file,
+        )
+
+        result = chunk_and_hash_file(self._vanished(tmp_path), tmp_path)
+
+        assert result.preprocess_status == VANISHED_SOURCE_STATUS
+        assert result.chunks == []
+        assert "vanished" in (result.preprocess_reason or "")
+
+    def test_chunk_file_with_status_reports_a_skip_rather_than_raising(
+        self, tmp_path: Path
+    ) -> None:
+        """The sibling entry point reaches the read through its own seam.
+
+        Mutation: as above. Observed the same escape from this call.
+        """
+        from ..indexer._chunk_worker import (
+            VANISHED_SOURCE_STATUS,
+            chunk_file_with_status,
+        )
+
+        result = chunk_file_with_status(self._vanished(tmp_path), tmp_path)
+
+        assert result.preprocess_status == VANISHED_SOURCE_STATUS
+        assert result.chunks == []
+        assert "vanished" in (result.preprocess_reason or "")
+
+    def test_a_source_that_cannot_be_read_still_ends_the_run(
+        self, tmp_path: Path
+    ) -> None:
+        """Only absence is survivable; a real read fault must still surface.
+
+        Narrowing the translation to a missing file is the point of it. A
+        permission or device error means the tree cannot be trusted, and
+        reporting one as an ordinary skip would index a partial corpus while
+        the run reported success.
+
+        The unreadable source here is real rather than simulated: a directory
+        occupying a source file's name, which the OS refuses to read as a file.
+
+        Mutation: widened the translation from FileNotFoundError to OSError.
+        Observed this fail on DID NOT RAISE, the refusal arriving as a skip.
+        """
+        from ..indexer import _chunk_worker
+
+        unreadable = tmp_path / "looks_like_a_module.py"
+        unreadable.mkdir()
+
+        with pytest.raises(OSError) as raised:
+            _chunk_worker.chunk_and_hash_file(unreadable, tmp_path)
+
+        assert not isinstance(raised.value, FileNotFoundError)
+
+
 class TestSplitterPreservesSeparatorRuns:
     """A rejoined chunk must still be findable verbatim in its source.
 

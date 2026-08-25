@@ -369,6 +369,8 @@ class CodeConsumerPipeline:
         """Record and raise a typed failure for a non-indexable file result."""
         if self._record_empty_source(result, checkpoint):
             return
+        if self._record_vanished_source(result, checkpoint):
+            return
         failure = self._code_result_failure(result)
         if failure is None:
             return
@@ -408,6 +410,42 @@ class CodeConsumerPipeline:
             JobErrorKind.CHUNK_FAILED,
             "admitted code source produced no indexable chunks",
         )
+
+    def _record_vanished_source(
+        self,
+        result: FileChunkResult,
+        checkpoint: CodeRunCheckpoint | None,
+    ) -> bool:
+        """Converge a deleted source instead of failing the run over it.
+
+        A tree under active edit loses files between the walk that enumerates
+        them and the read that chunks them. That is not a chunking defect -
+        there is nothing left to chunk - and failing the job for it let one
+        deleted file end an entire indexing run, repeatedly, on a tree somebody
+        was working in.
+
+        The reasoning is the sibling of the empty-source convergence above: the
+        file is absent from this generation, the purge that follows drops the
+        points it used to own, and a file that comes back is re-enumerated and
+        indexed again on the next pass. A read that fails for any other reason
+        is untouched and still ends the run, because an unreadable tree cannot
+        be published as a complete one.
+
+        Returns:
+            True when the result was a vanished source and has been recorded.
+        """
+        from ._chunk_worker import VANISHED_SOURCE_STATUS
+
+        if result.preprocess_status != VANISHED_SOURCE_STATUS:
+            return False
+        if checkpoint is not None:
+            checkpoint.record_processing_failure(
+                result.rel_path,
+                FileStateKind.EXTRACT_RETRYABLE,
+                result.preprocess_reason or "source vanished before it was read",
+                content_hash=None,
+            )
+        return True
 
     def _record_empty_source(
         self,

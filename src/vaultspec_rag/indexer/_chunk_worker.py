@@ -62,8 +62,35 @@ _SOURCE_READ_BLOCK_BYTES = 1024 * 1024
 _CHUNKER: ASTChunker | None = None
 
 
-class _SourceLimitExceededError(ValueError):
+#: Disposition recorded for a source that was enumerated and then deleted
+#: before it could be read. Distinct from ``skipped`` because the consumer
+#: converges it rather than failing the run over it, exactly as it already
+#: does for a file caught mid-save reading as zero bytes.
+VANISHED_SOURCE_STATUS = "vanished"
+
+
+class _SourceUnavailableError(ValueError):
+    """One source cannot be chunked, and the run continues without it.
+
+    The common supertype of every refusal that costs exactly one file. Callers
+    catch this rather than each subtype, so a new reason joins the existing
+    skip path instead of escaping to the job boundary and ending the run.
+    """
+
+
+class _SourceLimitExceededError(_SourceUnavailableError):
     """One source crossed its effective pre-extraction byte ceiling."""
+
+
+class _SourceVanishedError(_SourceUnavailableError):
+    """One source disappeared between being enumerated and being read.
+
+    A tree under active edit loses files mid-run as a matter of course, and the
+    sizing gate already treats a path that stops existing as skippable. This
+    makes the read agree: the file is absent from the generation, and the
+    manifest reconciliation that follows already handles a path that stopped
+    appearing.
+    """
 
 
 def _effective_source_limit(
@@ -107,6 +134,14 @@ def _stream_source(
                 if retained is not None:
                     retained.extend(block)
             run_control.checkpoint()
+    except FileNotFoundError as exc:
+        # Deleted between enumeration and read. Distinguished from every other
+        # OSError - a permission or I/O failure is a real fault and still ends
+        # the run, while a file that is simply gone costs only itself.
+        logger.info("Source vanished before it could be read: %s", path)
+        raise _SourceVanishedError(
+            f"source vanished before it was read: {path}"
+        ) from exc
     except OSError as exc:
         logger.warning("Cannot read %s: %s", path, exc)
         raise
@@ -133,8 +168,20 @@ def _require_rule_target(
     raise ValueError(f"{worker} received a non-{expected.value} extraction rule")
 
 
-def _limit_disposition(rule: PreprocessRule, error: _SourceLimitExceededError) -> str:
-    """Map a pre-launch source refusal through the rule's declared policy."""
+def _unavailable_disposition(
+    rule: PreprocessRule | None, error: _SourceUnavailableError
+) -> str:
+    """Map a pre-launch source refusal through the rule's declared policy.
+
+    Two refusals are not the policy's to govern. A vanished source is not a
+    failure of the rule that matched it, so ``on_error="fail"`` must not end
+    the run over it; and a file no rule matched has no policy to consult at
+    all. Both are skips, which the consumer records as retryable.
+    """
+    if isinstance(error, _SourceVanishedError):
+        return VANISHED_SOURCE_STATUS
+    if rule is None:
+        return "skipped"
     if rule.on_error == "fail":
         from ._preprocess_runner import PreprocessAbortError
 
@@ -801,12 +848,12 @@ def stream_document_and_hash_file(
             retain_bytes=False,
             run_control=options.run_control,
         )
-    except _SourceLimitExceededError as exc:
+    except _SourceUnavailableError as exc:
         return DocumentFileChunkStreamResult(
             rel_path,
             "unpublished",
             (),
-            preprocess_status=_limit_disposition(rule, exc),
+            preprocess_status=_unavailable_disposition(rule, exc),
             preprocess_reason=str(exc),
         )
     assert options.prep is not None
@@ -945,22 +992,22 @@ def chunk_file_with_status(
     rule = prep.config.match(rel_path) if prep is not None else None
     _require_rule_target(rule, ContentKind.CODE)
     source_limit = _effective_source_limit(prep, rule)
-    if rule is not None:
-        try:
+    try:
+        if rule is not None:
             content_hash, _raw = _stream_source(
                 path,
                 max_source_bytes=source_limit,
                 retain_bytes=False,
             )
-        except _SourceLimitExceededError as exc:
-            return ScopedChunkResult([], _limit_disposition(rule, exc), str(exc))
-    else:
-        content_hash, raw = _stream_source(
-            path,
-            max_source_bytes=source_limit,
-            retain_bytes=True,
-        )
-        assert raw is not None
+        else:
+            content_hash, raw = _stream_source(
+                path,
+                max_source_bytes=source_limit,
+                retain_bytes=True,
+            )
+            assert raw is not None
+    except _SourceUnavailableError as exc:
+        return ScopedChunkResult([], _unavailable_disposition(rule, exc), str(exc))
     if prep is not None and rule is not None:
         outcome = preprocess_file(content_hash, path, root_dir, prep)
         if outcome.status == "ok":
@@ -974,7 +1021,7 @@ def chunk_file_with_status(
                 max_source_bytes=source_limit,
                 retain_bytes=True,
             )
-        except _SourceLimitExceededError as exc:
+        except _SourceUnavailableError as exc:
             return ScopedChunkResult([], "skipped", str(exc))
         assert raw is not None
     # ``raw`` is bound on every reaching path: ``rule is not None`` implies
@@ -1030,28 +1077,28 @@ def chunk_and_hash_file(
     rule = prep.config.match(rel_path) if prep is not None else None
     _require_rule_target(rule, ContentKind.CODE)
     source_limit = _effective_source_limit(prep, rule)
-    if rule is not None:
-        try:
+    try:
+        if rule is not None:
             content_hash, _raw = _stream_source(
                 path,
                 max_source_bytes=source_limit,
                 retain_bytes=False,
             )
-        except _SourceLimitExceededError as exc:
-            return FileChunkResult(
-                rel_path,
-                "unpublished",
-                [],
-                preprocess_status=_limit_disposition(rule, exc),
-                preprocess_reason=str(exc),
+        else:
+            content_hash, raw = _stream_source(
+                path,
+                max_source_bytes=source_limit,
+                retain_bytes=True,
             )
-    else:
-        content_hash, raw = _stream_source(
-            path,
-            max_source_bytes=source_limit,
-            retain_bytes=True,
+            assert raw is not None
+    except _SourceUnavailableError as exc:
+        return FileChunkResult(
+            rel_path,
+            "unpublished",
+            [],
+            preprocess_status=_unavailable_disposition(rule, exc),
+            preprocess_reason=str(exc),
         )
-        assert raw is not None
     if prep is not None and rule is not None:
         outcome = preprocess_file(content_hash, path, root_dir, prep)
         if outcome.status == "ok":
@@ -1076,7 +1123,7 @@ def chunk_and_hash_file(
                 max_source_bytes=source_limit,
                 retain_bytes=True,
             )
-        except _SourceLimitExceededError as exc:
+        except _SourceUnavailableError as exc:
             return FileChunkResult(
                 rel_path,
                 content_hash,
@@ -1147,8 +1194,8 @@ def _prepare_batch_member(
             max_source_bytes=source_limit,
             retain_bytes=False,
         )
-    except _SourceLimitExceededError as exc:
-        _limit_disposition(rule, exc)
+    except _SourceUnavailableError as exc:
+        _unavailable_disposition(rule, exc)
         return (
             _BatchMember(
                 path,
@@ -1318,12 +1365,15 @@ def _passthrough_batch_member(
             max_source_bytes=member.source_limit,
             retain_bytes=True,
         )
-    except _SourceLimitExceededError as exc:
+    except _SourceUnavailableError as exc:
         return FileChunkResult(
             member.rel_path,
             member.content_hash,
             [],
-            preprocess_status="skipped",
+            # Through the same helper as every other seam: a source deleted
+            # before the passthrough re-read carries the disposition the
+            # consumer converges, while a size refusal stays an ordinary skip.
+            preprocess_status=_unavailable_disposition(None, exc),
             preprocess_reason=str(exc),
         )
     assert raw is not None
