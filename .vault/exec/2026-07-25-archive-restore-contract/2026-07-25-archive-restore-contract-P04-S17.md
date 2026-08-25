@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#archive-restore-contract'
 date: '2026-07-25'
-modified: '2026-08-14'
+modified: '2026-08-25'
 body_schema: 'body-v1'
-body_hash: 'sha256:402a244f7c3e1f4bf67913951516ede622fb2b58bb5b17d1772f8c23e262a378'
+body_hash: 'sha256:75b32b50d9e0ab43a6c2a157e1013b48ceea1f8776e36d23cd07fdba9f7f25f6'
 step_id: 'S17'
 related:
   - "[[2026-07-25-archive-restore-contract-plan]]"
@@ -33,11 +33,11 @@ Stdout lines are counted rather than parsed, so a traceback or a stray human lin
 
 Failure proofs, each applied alone and reverted:
 
-| Guard | Mutation | Observed |
-| --- | --- | --- |
-| missing archive | dropped the `is_dir` guard | exit 3, `service_not_running` instead of `archive_not_found` |
-| refusal envelope | rendered refusals as `ok: true` | all four parametrized cases failed on the `ok` assertion |
-| preview list | reported the archive's own names | destination assertion failed |
-| reason completeness | removed the Windows entry | failed naming exactly that reason |
+| Guard               | Mutation                         | Observed                                                     |
+| ------------------- | -------------------------------- | ------------------------------------------------------------ |
+| missing archive     | dropped the `is_dir` guard       | exit 3, `service_not_running` instead of `archive_not_found` |
+| refusal envelope    | rendered refusals as `ok: true`  | all four parametrized cases failed on the `ok` assertion     |
+| preview list        | reported the archive's own names | destination assertion failed                                 |
+| reason completeness | removed the Windows entry        | failed naming exactly that reason                            |
 
 One mutation went astray and is worth recording. The first attempt at the preview proof matched the `collections` line in `_render_delete` instead of `_render_restore`, and the restore test correctly stayed green - the mutation had not touched the code under test. It was re-applied against an anchor unique to the restore renderer, where it failed as intended. A mutation that changes nothing relevant proves nothing; a green run under one is not evidence.

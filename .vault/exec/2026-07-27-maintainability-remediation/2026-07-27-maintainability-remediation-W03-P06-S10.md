@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#maintainability-remediation'
 date: '2026-07-27'
-modified: '2026-08-14'
+modified: '2026-08-25'
 body_schema: 'body-v1'
-body_hash: 'sha256:76a3403f73701164b33fab533fbc6d8eb479d228db6708c95631d245288bae31'
+body_hash: 'sha256:d7c7bcbb628ccfb932b0c1392a3ca02f7a04aeb7c7fa49fed62d40e24821778c'
 step_id: 'S10'
 related:
   - "[[2026-07-27-maintainability-remediation-plan]]"
@@ -28,12 +28,12 @@ Split the cross-boundary job-control module into the scenario groups it actually
 
 Split into the three scenario groups the reference names, over one shared runtime module:
 
-| Module | Lines | MI |
-| --- | --- | --- |
-| `_service_job_control_e2e_support.py` | 157 | 68.07 |
-| `test_service_job_control_transport_matrix.py` | 215 | 39.29 |
-| `test_service_job_control_watcher.py` | 289 | 32.20 |
-| `test_service_job_control_pause_restart.py` | 597 | 19.03 |
+| Module                                         | Lines | MI    |
+| ---------------------------------------------- | ----- | ----- |
+| `_service_job_control_e2e_support.py`          | 157   | 68.07 |
+| `test_service_job_control_transport_matrix.py` | 215   | 39.29 |
+| `test_service_job_control_watcher.py`          | 289   | 32.20 |
+| `test_service_job_control_pause_restart.py`    | 597   | 19.03 |
 
 The single module was 1140 lines at MI 0.00.
 

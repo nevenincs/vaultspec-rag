@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#maintainability-remediation'
 date: '2026-07-27'
-modified: '2026-08-14'
+modified: '2026-08-25'
 body_schema: 'body-v1'
-body_hash: 'sha256:2b1bb668efa4ec3f612d099ce7ae3b9509f52d7d236c8641f1a223cbcf3693eb'
+body_hash: 'sha256:b466ae63f23b15bd6a1ecfa4c794c18064e2f837bd02977550e0e6a8f147e4e1'
 step_id: 'S13'
 related:
   - "[[2026-07-27-maintainability-remediation-plan]]"
@@ -29,13 +29,13 @@ Split the search-diagnostics integration module into the real-service harness, t
 
 Split into the five domains the reference names:
 
-| Module | Lines | MI | Domain |
-| --- | --- | --- | --- |
-| `_service_search_diagnostics_mcp.py` | 142 | 60.66 | MCP probe |
-| `test_service_search_diagnostics_http.py` | 156 | 52.25 | direct HTTP route |
-| `test_service_search_diagnostics_reporting.py` | 156 | 48.18 | timeout and log diagnostics |
-| `_service_search_diagnostics_support.py` | 449 | 30.01 | real-service harness |
-| `test_service_search_diagnostics_rebuild.py` | 794 | 16.67 | matching rebuild |
+| Module                                         | Lines | MI    | Domain                      |
+| ---------------------------------------------- | ----- | ----- | --------------------------- |
+| `_service_search_diagnostics_mcp.py`           | 142   | 60.66 | MCP probe                   |
+| `test_service_search_diagnostics_http.py`      | 156   | 52.25 | direct HTTP route           |
+| `test_service_search_diagnostics_reporting.py` | 156   | 48.18 | timeout and log diagnostics |
+| `_service_search_diagnostics_support.py`       | 449   | 30.01 | real-service harness        |
+| `test_service_search_diagnostics_rebuild.py`   | 794   | 16.67 | matching rebuild            |
 
 The single module was 1406 lines at MI 0.00.
 
