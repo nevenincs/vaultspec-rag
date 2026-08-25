@@ -525,7 +525,18 @@ def test_chunk_batch_files_one_spawn_for_many_files(tmp_path: Path) -> None:
         assert res.chunks[0].preprocessor_id == "counting"
 
 
-def test_batch_passthrough_propagates_source_read_failure(tmp_path: Path) -> None:
+def test_batch_passthrough_converges_a_source_the_hook_deleted(
+    tmp_path: Path,
+) -> None:
+    """A hook that deletes its own input no longer ends the run.
+
+    This previously required the passthrough re-read to raise, so a source
+    missing from the corpus could not be published as an ordinary empty
+    result. That guarantee is unchanged - the file yields no chunks and is
+    never published as content - but it is now carried as the disposition the
+    consumer converges rather than an exception that kills the batch and every
+    other file in it.
+    """
     script = _script(tmp_path, _DELETE_AND_OMIT_FIRST_BODY, name="delete-first.py")
     files = _make_files(tmp_path, 2)
     rule = _batch_rule(script, on_error="passthrough")
@@ -536,8 +547,13 @@ def test_batch_passthrough_propagates_source_read_failure(tmp_path: Path) -> Non
         project_root=tmp_path,
     )
 
-    with pytest.raises(FileNotFoundError):
-        _chunk_worker.chunk_batch_files(files, tmp_path, rule, ctx)
+    results = _chunk_worker.chunk_batch_files(files, tmp_path, rule, ctx)
+
+    by_path = {result.rel_path: result for result in results}
+    deleted = by_path[files[0].relative_to(tmp_path).as_posix()]
+    assert deleted.preprocess_status == _chunk_worker.VANISHED_SOURCE_STATUS
+    assert deleted.chunks == []
+    assert any(result.chunks for result in results), "the other file still indexes"
 
 
 def test_chunk_batch_files_second_pass_hits_cache_no_spawn(tmp_path: Path) -> None:
