@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.2...vaultspec-rag-v0.4.3) (2026-08-25)
+
+
+### Features
+
+* **storage:** expose archive restore as an operator verb ([d6d98fc](https://github.com/nevenincs/vaultspec-rag/commit/d6d98fc13f4db6be117ced34b4e5a0ad86423f7a))
+
+
+### Bug Fixes
+
+* **gpu:** name the unreadable refusal where the loader's contract is stated ([6d0f898](https://github.com/nevenincs/vaultspec-rag/commit/6d0f8987197fe38505cb4e52919e013742518c23))
+* **gpu:** refuse a device that is present but persistently unreadable ([e35a16f](https://github.com/nevenincs/vaultspec-rag/commit/e35a16fd517caa09f625c3da31d981578cd623c6))
+* **indexer:** converge a deleted source instead of ending the run ([2555276](https://github.com/nevenincs/vaultspec-rag/commit/25552760a3697fe7b5432e262414c1c9d6021b2d))
+* **indexer:** converge a deleted source instead of ending the run ([e2f0f33](https://github.com/nevenincs/vaultspec-rag/commit/e2f0f338f7a8531fe39dad4fda4e904287d78e03))
+* **indexer:** keep separator runs whole so a chunk stays findable ([45c272f](https://github.com/nevenincs/vaultspec-rag/commit/45c272f187d1cf5cfc98b9708d0a654429c46fa4))
+* **indexer:** keep separator runs whole so a chunk stays findable ([c831569](https://github.com/nevenincs/vaultspec-rag/commit/c831569d85929c58b6b871b49fe2786e56ccdf88))
+
 ## [0.4.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.1...vaultspec-rag-v0.4.2) (2026-08-14)
 
 
