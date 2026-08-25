@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#worktree-index-reuse'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:e4d8650838d6f2843e23895325defec210a680b6f715b3cd623150836513dc06'
 related:

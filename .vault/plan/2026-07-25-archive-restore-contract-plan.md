@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#archive-restore-contract'
 date: '2026-07-25'
-modified: '2026-07-27'
-body_hash: 'sha256:1b187246f4b70043b96d8d63545f00e2477207b383edc0dec4570201fa47920d'
+modified: '2026-08-25'
+body_hash: 'sha256:706a2db72ba03f2bcf3b219c591432ca48ba0646d70f6582b4640511aff09cfd'
 tier: L2
 related:
   - '[[2026-07-25-archive-restore-contract-adr]]'
@@ -64,28 +64,28 @@ Stops retention from shredding an archive into a partial one, and stops a namesp
 
 Reads an archive back into a named destination namespace, carrying the archived provenance and refusing every ambiguity rather than guessing at one.
 
-- [ ] `P02.S06` - Add the archive reader that parses a snapshot manifest and refuses an absent, unparseable, or incomplete archive whole, mutating nothing; `src/vaultspec_rag/storage_ops.py`.
-- [ ] `P02.S07` - Add the restore operation that derives the destination prefix from a named root through the existing root hash and recovers each recorded collection into it, reporting through the storage sync vocabulary; `src/vaultspec_rag/storage_ops.py`.
-- [ ] `P02.S08` - Refuse a destination holding any existing collection, a non-canonical destination prefix, and any local-mode invocation, each naming its own reason; `src/vaultspec_rag/storage_ops.py`.
-- [ ] `P02.S09` - Write the destination manifest entry from the archived per-collection identity and archived schema generation rather than current values, leaving an identity-less archive unverifiable; `src/vaultspec_rag/storage_manifest.py`.
-- [ ] `P02.S10` - Support a dry-run that returns the exact destination collection list and mutates nothing, matching the other storage operations; `src/vaultspec_rag/storage_ops.py`.
-- [ ] `P02.S11` - Cover every refusal and the identity carry with guard tests, and prove each fails when its refusal is lifted or its carry reverted to current values; `src/vaultspec_rag/tests/test_storage_ops.py`.
+- [x] `P02.S06` - Add the archive reader that parses a snapshot manifest and refuses an absent, unparseable, or incomplete archive whole, mutating nothing; `src/vaultspec_rag/storage_ops.py`.
+- [x] `P02.S07` - Add the restore operation that derives the destination prefix from a named root through the existing root hash and recovers each recorded collection into it, reporting through the storage sync vocabulary; `src/vaultspec_rag/storage_ops.py`.
+- [x] `P02.S08` - Refuse a destination holding any existing collection, a non-canonical destination prefix, and any local-mode invocation, each naming its own reason; `src/vaultspec_rag/storage_ops.py`.
+- [x] `P02.S09` - Write the destination manifest entry from the archived per-collection identity and archived schema generation rather than current values, leaving an identity-less archive unverifiable; `src/vaultspec_rag/storage_manifest.py`.
+- [x] `P02.S10` - Support a dry-run that returns the exact destination collection list and mutates nothing, matching the other storage operations; `src/vaultspec_rag/storage_ops.py`.
+- [x] `P02.S11` - Cover every refusal and the identity carry with guard tests, and prove each fails when its refusal is lifted or its carry reverted to current values; `src/vaultspec_rag/tests/test_storage_ops.py`.
 
 ### Phase `P03` - prove the round trip and keep it off the automatic path
 
 Establishes end to end against a real supervised server that an archive reconstitutes a searchable namespace, and regression-guards restore out of scheduled maintenance.
 
-- [ ] `P03.S12` - Add the end-to-end round trip against a real supervised server: index a root, archive it, drop the namespace, restore under a fresh root, and assert the restored namespace answers a search with the results the original gave, with the Qdrant storage-dir environment variable pointed at a temp path; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
+- [x] `P03.S12` - Add the end-to-end round trip against a real supervised server: index a root, archive it, drop the namespace, restore under a fresh root, and assert the restored namespace answers a search with the results the original gave, with the Qdrant storage-dir environment variable pointed at a temp path; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
 - [ ] `P03.S13` - Prove that round trip can fail by corrupting the archived snapshot body and observing the restore refuse rather than pass quietly, and record both directions; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
-- [ ] `P03.S14` - Extend the maintenance inertness regression so no module reachable from the scheduled tick can reach the restore operation; `src/vaultspec_rag/tests/test_adr_regression.py`.
+- [x] `P03.S14` - Extend the maintenance inertness regression so no module reachable from the scheduled tick can reach the restore operation; `src/vaultspec_rag/tests/test_adr_regression.py`.
 
 ### Phase `P04` - adapt the operator surface
 
 Exposes the primitive as a storage verb carrying the group's existing preview, vocabulary, and structured-envelope contract.
 
-- [ ] `P04.S15` - Add the restore verb to the storage command group as a thin adapter over the storage operation, carrying the group's dry-run preview, confirmation, and unreachable-server exit codes; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `P04.S16` - Emit exactly one structured envelope on every exit path of the verb in JSON mode, refusal and success alike; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `P04.S17` - Cover the verb's refusal exit codes and its single-envelope contract, including the JSON-without-yes refusal the other destructive verbs enforce; `src/vaultspec_rag/tests/test_storage_adversarial.py`.
+- [x] `P04.S15` - Add the restore verb to the storage command group as a thin adapter over the storage operation, carrying the group's dry-run preview, confirmation, and unreachable-server exit codes; `src/vaultspec_rag/cli/_service_storage.py`.
+- [x] `P04.S16` - Emit exactly one structured envelope on every exit path of the verb in JSON mode, refusal and success alike; `src/vaultspec_rag/cli/_service_storage.py`.
+- [x] `P04.S17` - Cover the verb's refusal exit codes and its single-envelope contract, including the JSON-without-yes refusal the other destructive verbs enforce; `src/vaultspec_rag/tests/test_storage_adversarial.py`.
 
 ### Phase `P05` - close out
 

@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#service-jobs-operability'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:826329c2a15b65e0af2162d59cb73a790fdc3db511bdba1c163b70804dba976d'
 related:

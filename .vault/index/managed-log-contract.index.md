@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#managed-log-contract'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:7a36a39cce624afc1988133ef4388977c0d518083293bffea6fa414cf3c2a546'
 related:

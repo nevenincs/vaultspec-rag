@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#large-index-resilience'
-date: '2026-08-13'
-modified: '2026-08-13'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:aa6e013f875213166a927943068f549f4fa23fcbdfce57d1a40b142f0f074dab'
 related:

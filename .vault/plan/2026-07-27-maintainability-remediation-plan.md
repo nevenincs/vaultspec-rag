@@ -4,7 +4,7 @@ tags:
   - '#maintainability-remediation'
 date: '2026-07-27'
 modified: '2026-08-14'
-body_hash: 'sha256:55b38405f9f865fc52dbfe9aa084f5b113ba6c4a1e15e9159119207080d64c07'
+body_hash: 'sha256:9543381fec48450b72204c02147b6f30bfd3069b21d49dea3ded2ab3a02cba50'
 tier: L3
 related:
   - '[[2026-06-01-module-split-adr]]'
@@ -50,7 +50,7 @@ After the shared handoffs, divide the ledger and service-job adapters by their d
 
 Keep command registration thin while concrete presentation, query, watch, and control owners preserve the existing service contract.
 
-- [ ] `W02.P03.S05` - Split presentation, query, watch, and control adapters into direct CLI owners; `src/vaultspec_rag/cli/_service_jobs.py`.
+- [x] `W02.P03.S05` - Split presentation, query, watch, and control adapters into direct CLI owners; `src/vaultspec_rag/cli/_service_jobs.py`.
 
 ### Phase `W02.P04` - separate durable ledger ownership
 
@@ -73,18 +73,18 @@ Separate index-control and installation behavior domains without replacing real 
 
 Separate registry, job-control, service-job, and lifecycle behaviors into focused real integration modules.
 
-- [ ] `W03.P06.S09` - Split registry basics, durable recovery, and route-to-recorded-job scenarios; `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
-- [ ] `W03.P06.S10` - Split pause, cancellation, restart, watcher, and exact-ID control scenarios; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
-- [ ] `W03.P06.S11` - Split service-job collection, CLI, HTTP control, and resilience scenarios; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
-- [ ] `W03.P06.S12` - Split startup, shutdown, discovery, and orphan-reaping lifecycle scenarios; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
+- [x] `W03.P06.S09` - Split registry basics, durable recovery, and route-to-recorded-job scenarios; `src/vaultspec_rag/tests/integration/test_jobs_registry.py`.
+- [x] `W03.P06.S10` - Split pause, cancellation, restart, watcher, and exact-ID control scenarios; `src/vaultspec_rag/tests/integration/test_service_job_control_e2e.py`.
+- [x] `W03.P06.S11` - Split service-job collection, CLI, HTTP control, and resilience scenarios; `src/vaultspec_rag/tests/integration/test_service_jobs.py`.
+- [x] `W03.P06.S12` - Split startup, shutdown, discovery, and orphan-reaping lifecycle scenarios; `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 
 ### Phase `W03.P07` - split search diagnostics and prove the floor is removed
 
 Separate matching-rebuild, transport, and diagnostics behavior, then prove the report and import graph satisfy the amended decision.
 
-- [ ] `W03.P07.S13` - Split matching-rebuild, HTTP, MCP, and timeout diagnostics scenarios; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
+- [x] `W03.P07.S13` - Split matching-rebuild, HTTP, MCP, and timeout diagnostics scenarios; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics.py`.
 - [x] `W03.P07.S14` - Strengthen direct-owner import coverage for moved production seams; `src/vaultspec_rag/tests/test_no_reexports.py`.
-- [ ] `W03.P07.S15` - Verify the maintainability floor and all focused real-behavior regressions; `tools/health_report.py`.
+- [x] `W03.P07.S15` - Verify the maintainability floor and all focused real-behavior regressions; `tools/health_report.py`.
 
 ## Wave `W04` - eliminate duplicated declarations and gate what a split can regress
 

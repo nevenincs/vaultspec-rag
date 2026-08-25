@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     from ..storage_migration import MigrateResult
     from ..storage_reconciliation import ReconcileBatch
+    from ..storage_restore import RestoreResult
     from ..storage_survey import NamespaceSurvey
     from ..storage_survey_ops import DeleteResult, PruneResult
 
@@ -40,6 +41,7 @@ _DELETE_CMD = "server.storage.delete"
 _PRUNE_CMD = "server.storage.prune"
 _MIGRATE_CMD = "server.storage.migrate"
 _RECONCILE_CMD = "server.storage.reconcile"
+_RESTORE_CMD = "server.storage.restore"
 
 
 @dataclass(frozen=True)
@@ -949,6 +951,155 @@ def _rekey_manifest_on_migrate(
         rekey_prefix(prefix, root=root, backend=to_backend)
     except Exception as exc:  # best-effort attribution; never fail an applied move
         typer.echo(f"Note: migrated data but could not update the manifest: {exc}")
+
+
+# -- restore ----------------------------------------------------------------
+
+
+def _restore_refusals() -> dict[str, str]:
+    """Operator-facing wording for every reason the domain can refuse a restore.
+
+    Keyed by the domain's own reason string, so the two cannot drift into
+    describing one refusal differently. Every reason ``restore_archive`` can
+    return has an entry: a refusal that reaches the operator as a bare token
+    tells them what happened but not what to do about it.
+    """
+    from ..qdrant_runtime._constants import (
+        WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
+    )
+
+    return {
+        "local_mode_unsupported": (
+            "Restore applies to the managed server. A local-only store has a "
+            "single namespace and nothing to restore into."
+        ),
+        "invalid_destination_prefix": (
+            "The destination root does not derive a canonical namespace prefix."
+        ),
+        "invalid_archive_collection": (
+            "The archive names a collection that is not inside its own namespace."
+        ),
+        "destination_exists": (
+            "The destination namespace already holds collections. Restore never "
+            "writes over existing data, and there is no flag that overrides it; "
+            "choose an empty destination root or delete that namespace first."
+        ),
+        WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON: (
+            "Applying a restore needs a non-Windows Qdrant server. Previewing "
+            "the destination with --dry-run works on any platform."
+        ),
+    }
+
+
+def _render_restore(result: RestoreResult, json_mode: bool) -> None:
+    """Emit exactly one envelope, or one human block, for this outcome."""
+    if json_mode:
+        data: dict[str, object] = {
+            "destination_prefix": result.destination_prefix,
+            "status": result.status,
+            "collections": result.collections,
+            "reason": result.reason,
+        }
+        if result.status == "refused":
+            reason = result.reason or "restore_refused"
+            _emit_json(
+                False,
+                _RESTORE_CMD,
+                data=data,
+                error=reason,
+                message=_restore_refusals().get(reason, reason),
+            )
+            return
+        _emit_json(True, _RESTORE_CMD, data=data)
+        return
+    if result.status == "refused":
+        reason = result.reason or "restore_refused"
+        _plain_line(_restore_refusals().get(reason, reason))
+        return
+    if result.status == "would_restore":
+        typer.echo(
+            f"Would restore {len(result.collections)} collections into "
+            f"{result.destination_prefix}. Re-run with --yes."
+        )
+    else:
+        typer.echo(
+            f"Restored {len(result.collections)} collections into "
+            f"{result.destination_prefix}."
+        )
+    for name in result.collections:
+        typer.echo(f"  {name}")
+
+
+@server_storage_app.command(
+    "restore",
+    help=(
+        "Restore an archived namespace into a named destination root. The "
+        "destination must hold no collections; there is no override."
+    ),
+)
+def storage_restore(
+    archive: str = typer.Argument(
+        ..., help="Path to the archive directory holding the snapshot manifest."
+    ),
+    root: str = typer.Option(
+        ...,
+        "--root",
+        help="Destination root path the restored namespace is keyed to.",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Apply the restore."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview the destination collections without writing."
+    ),
+    json_mode: JsonMode = False,
+) -> None:
+    """Recover one archived namespace into an empty destination.
+
+    A thin adapter: every refusal, the destination derivation, and the
+    archived-provenance carry belong to the storage operation. This verb
+    supplies the group's preview-first confirmation, its unreachable-server
+    exit code, and one structured envelope per exit path.
+
+    The restore is refused rather than merged when the destination already
+    holds collections, so the preview is the only way to learn the exact
+    destination list before committing to it.
+    """
+    import pathlib
+
+    from ..config._settings import get_config
+    from ..storage_restore import RestoreRequest, restore_archive
+
+    archive_dir = pathlib.Path(archive).expanduser()
+    if not archive_dir.is_dir():
+        _emit_or_echo_error(
+            _RESTORE_CMD,
+            "archive_not_found",
+            f"No archive directory at {archive_dir}.",
+            2,
+            json_mode=json_mode,
+        )
+    destination_root = pathlib.Path(root).expanduser().resolve()
+    _require_yes_for_json(_RESTORE_CMD, json_mode, yes)
+    preview = dry_run or not yes
+    result = _run_storage_op(
+        _RESTORE_CMD,
+        json_mode,
+        lambda c: restore_archive(
+            c,
+            RestoreRequest(
+                archive_dir=archive_dir,
+                destination_root=destination_root,
+                local_mode=not get_config().effective_server_mode(),
+                dry_run=preview,
+            ),
+        ),
+    )
+    _render_restore(result, json_mode)
+    if result.status == "refused":
+        raise typer.Exit(1)
+    # A preview the operator did not ask for exits non-zero: nothing was
+    # applied, and a broker must not read "would_restore" as done.
+    if result.status == "would_restore" and not dry_run:
+        raise typer.Exit(1)
 
 
 def _emit_or_echo_error(

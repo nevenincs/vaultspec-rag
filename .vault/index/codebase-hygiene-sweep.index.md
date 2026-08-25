@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#codebase-hygiene-sweep'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:a3aa59a0e79305c4275cdcf0939fd699fe2d26a83c214fb34da19aaf4d0d0b88'
 related:

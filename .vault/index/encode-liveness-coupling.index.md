@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#encode-liveness-coupling'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:a01bfc084ccf2a06857f936246cc054e13b5723e36c3e2e279b85fda642c9aaf'
 related:

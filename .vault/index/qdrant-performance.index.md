@@ -3,8 +3,8 @@ generated: true
 tags:
   - '#index'
   - '#qdrant-performance'
-date: '2026-07-31'
-modified: '2026-07-31'
+date: '2026-08-14'
+modified: '2026-08-14'
 body_schema: 'body-v1'
 body_hash: 'sha256:b30281d583d1ed463bd6e185b81d0c5bee0defde01b0212cc206ae8ea72d6db9'
 related:

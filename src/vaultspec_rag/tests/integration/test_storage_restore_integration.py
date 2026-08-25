@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from qdrant_client import QdrantClient
+    from qdrant_client.models import ExtendedPointId
 
     from ...qdrant_runtime._supervise import QdrantSupervisor
 
@@ -266,5 +267,127 @@ def test_restore_rolls_back_after_a_real_corrupt_snapshot_failure(
 
         assert not client.collection_exists(f"{destination_prefix}aaa")
         assert not client.collection_exists(f"{destination_prefix}zzz")
+    finally:
+        client.close()
+
+
+_QUERY_VECTOR = [0.9, 0.1, 0.0, 0.0]
+#: Payload bodies keyed by point id, ordered so the query vector above ranks
+#: them ``1, 2, 3`` by cosine distance. Distinct bodies make a silently empty
+#: or reordered restore fail on content rather than on arity alone.
+_SEARCHABLE_POINTS: tuple[tuple[int, list[float], str], ...] = (
+    (1, [1.0, 0.0, 0.0, 0.0], "nearest neighbour"),
+    (2, [0.6, 0.8, 0.0, 0.0], "middle neighbour"),
+    (3, [0.0, 0.0, 1.0, 0.0], "orthogonal neighbour"),
+)
+
+
+def _create_searchable_collection(client: QdrantClient, name: str) -> None:
+    """Create a named-dense collection carrying distinguishable payloads.
+
+    Mirrors the production collection shape - a named ``dense`` vector queried
+    with ``using="dense"`` - so the round trip exercises the same addressing a
+    real search does rather than the default unnamed vector.
+    """
+    from qdrant_client import models
+
+    client.create_collection(
+        collection_name=name,
+        vectors_config={
+            "dense": models.VectorParams(size=4, distance=models.Distance.COSINE),
+        },
+    )
+    client.upsert(
+        collection_name=name,
+        points=[
+            models.PointStruct(
+                id=point, vector={"dense": vector}, payload={"body": body}
+            )
+            for point, vector, body in _SEARCHABLE_POINTS
+        ],
+        wait=True,
+    )
+
+
+def _search_bodies(
+    client: QdrantClient, name: str
+) -> tuple[tuple[ExtendedPointId, str], ...]:
+    """Answer the fixed query against *name* as ``(id, body)`` in rank order."""
+    results = client.query_points(
+        collection_name=name,
+        query=_QUERY_VECTOR,
+        using="dense",
+        limit=len(_SEARCHABLE_POINTS),
+        with_payload=True,
+    )
+    return tuple(
+        (point.id, str((point.payload or {})["body"])) for point in results.points
+    )
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_restored_namespace_answers_the_search_the_original_answered(
+    restore_qdrant: QdrantSupervisor,
+    tmp_path: Path,
+) -> None:
+    """The full round trip: a restored namespace is searchable, not merely present.
+
+    Point counts alone cannot tell a restored namespace from one recovered with
+    its payloads dropped or its vectors unindexed, so this asserts the restored
+    collection answers the *same* query with the *same* ranked bodies the source
+    gave before it was archived and destroyed.
+    """
+    from qdrant_client import QdrantClient
+
+    client = QdrantClient(url=restore_qdrant.url, timeout=60)
+    try:
+        source_root = tmp_path / "source"
+        source_root.mkdir()
+        source_prefix = root_collection_prefix(source_root)
+        source_name = f"{source_prefix}vault_docs"
+        record_root(source_root, backend="server")
+        _create_searchable_collection(client, source_name)
+
+        before = _search_bodies(client, source_name)
+        assert before == (
+            (1, "nearest neighbour"),
+            (2, "middle neighbour"),
+            (3, "orthogonal neighbour"),
+        )
+
+        archive_dir = tmp_path / "archive"
+        archive_prefix(
+            client,
+            source_prefix,
+            snapshots_dir=restore_qdrant.storage_dir.parent / "snapshots",
+            archive_dir=archive_dir,
+        )
+        client.delete_collection(collection_name=source_name)
+        remove_prefix(source_prefix)
+        assert not client.collection_exists(source_name)
+
+        destination_root = tmp_path / "destination"
+        destination_root.mkdir()
+        destination_prefix = root_collection_prefix(destination_root)
+        destination_name = f"{destination_prefix}vault_docs"
+        restored = restore_archive(
+            client,
+            RestoreRequest(
+                archive_dir=archive_dir / source_prefix.rstrip("_"),
+                destination_root=destination_root,
+                local_mode=False,
+                dry_run=False,
+            ),
+        )
+
+        if sys.platform == "win32":
+            assert restored.status == "refused"
+            assert restored.reason == WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON
+            assert not client.collection_exists(destination_name)
+            assert destination_prefix not in load_manifest()
+        else:
+            assert restored.status == "restored"
+            assert restored.collections == (destination_name,)
+            assert _search_bodies(client, destination_name) == before
     finally:
         client.close()

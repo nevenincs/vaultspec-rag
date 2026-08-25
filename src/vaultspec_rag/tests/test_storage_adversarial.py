@@ -12,6 +12,7 @@ unknown or live) lives in the integration suite.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -33,7 +34,12 @@ runner = CliRunner()
 
 @pytest.mark.parametrize(
     "command",
-    ["server.storage.delete", "server.storage.prune", "server.storage.migrate"],
+    [
+        "server.storage.delete",
+        "server.storage.prune",
+        "server.storage.migrate",
+        "server.storage.restore",
+    ],
 )
 def test_json_without_yes_is_refused(command: str) -> None:
     """Every destructive verb refuses --json unless --yes is also given."""
@@ -227,6 +233,203 @@ class TestReconcileRendering:
         )
 
         assert "already at the bounded geometry" in capsys.readouterr().out
+
+
+class TestRestoreRefusesInOneEnvelope:
+    """Restore is the verb that writes into a namespace, so it owes clarity.
+
+    Every exit path here is one an operator or a broker can hit before any
+    data moves: no archive at that path, a scripted run without ``--yes``, a
+    server that is not answering, and the domain's own refusals. Each must
+    exit non-zero and, in JSON mode, say so in exactly one envelope.
+
+    The end-to-end ``destination_exists`` refusal against a populated
+    destination needs a real supervised server and lives with the round trip
+    in the integration suite; what is pinned here is that the refusal
+    reaches the operator intact once the domain returns it.
+    """
+
+    def test_a_missing_archive_is_refused_before_any_client_opens(
+        self, tmp_path: Path
+    ) -> None:
+        """Exit 2 and one envelope, without reaching for the server.
+
+        Mutation: dropped the ``is_dir`` guard. Observed this fail with exit
+        3 and ``service_not_running`` - the verb had gone to the server to
+        ask about an archive that does not exist, turning an operator typo
+        into a service-health question.
+        """
+        result = CliRunner().invoke(
+            app,
+            [
+                "server",
+                "storage",
+                "restore",
+                str(tmp_path / "no-such-archive"),
+                "--root",
+                str(tmp_path / "destination"),
+                "--json",
+                "--yes",
+            ],
+        )
+
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        assert len(lines) == 1, result.stdout
+        envelope = json.loads(lines[0])
+        assert envelope["ok"] is False
+        assert envelope["command"] == "server.storage.restore"
+        assert envelope["error"] == "archive_not_found"
+        assert result.exit_code == 2
+
+    def test_an_unreachable_server_answers_a_real_archive_with_one_envelope(
+        self,
+        isolated_singleton_dirs: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A complete archive still exits 3 when nothing is listening."""
+        del isolated_singleton_dirs
+        from ._storage_archive import write_archive
+
+        archive = write_archive(tmp_path / "archive")
+        # A port nothing listens on: the real client performs a real
+        # connection attempt and raises its real transport exception.
+        monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_PORT", "59997")
+        monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", "http://127.0.0.1:59997")
+        from ..config._settings import reset_config
+
+        reset_config()
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "server",
+                "storage",
+                "restore",
+                str(archive),
+                "--root",
+                str(tmp_path / "destination"),
+                "--json",
+                "--yes",
+                "--dry-run",
+            ],
+        )
+
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        assert len(lines) == 1, result.stdout
+        envelope = json.loads(lines[0])
+        assert envelope["ok"] is False
+        assert envelope["error"] == "service_not_running"
+        assert result.exit_code == 3
+
+    def test_every_reason_the_domain_can_return_has_operator_wording(self) -> None:
+        """No refusal may reach an operator as a bare token.
+
+        Enumerated from the domain module rather than listed here: a reason
+        added to ``restore_archive`` has to be discovered by this test, not
+        remembered by whoever adds it.
+
+        Mutation: removed the Windows entry, which is the one reason that is
+        a shared constant rather than a literal in the refusal table.
+        Observed this fail naming exactly that reason.
+        """
+        import inspect
+
+        from .. import storage_restore
+        from ..cli._service_storage import _restore_refusals
+
+        source = inspect.getsource(storage_restore.restore_archive)
+        returned = {
+            literal
+            for literal in re.findall(r'"([a-z_]+)"\s*\)', source)
+            if literal not in {"refused", "would_restore", "restored", "rb"}
+        }
+        assert returned, "the reason sweep found nothing; it proves nothing"
+        wording = _restore_refusals()
+        assert returned <= set(wording), sorted(returned - set(wording))
+        # The Windows refusal is a shared constant, so it is checked by name
+        # rather than swept out of the source.
+        from ..qdrant_runtime._constants import (
+            WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
+        )
+
+        assert WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON in wording
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "destination_exists",
+            "local_mode_unsupported",
+            "invalid_destination_prefix",
+            "invalid_archive_collection",
+        ],
+    )
+    def test_each_domain_refusal_reaches_the_operator_by_its_own_name(
+        self, capsys: pytest.CaptureFixture[str], reason: str
+    ) -> None:
+        """One envelope, ``ok`` false, and the domain's own reason as the error.
+
+        The reason is asserted as the envelope's ``error`` rather than only
+        inside ``data``: a broker branches on ``error``, and a refusal that
+        arrives as a generic failure with the real cause buried is one the
+        caller cannot act on.
+
+        Mutation: emitted every refusal as ``ok`` true, the way the delete
+        verb still renders its own failed status. Observed all four
+        parametrized cases fail on the ``ok`` assertion below.
+        """
+        from ..cli._service_storage import _render_restore
+        from ..storage_restore import RestoreResult
+
+        _render_restore(
+            RestoreResult("refused", "rdeadbeefcafe_", (), reason),
+            json_mode=True,
+        )
+
+        lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+        assert len(lines) == 1
+        envelope = json.loads(lines[0])
+        assert envelope["ok"] is False
+        assert envelope["command"] == "server.storage.restore"
+        assert envelope["error"] == reason
+        assert envelope["data"]["status"] == "refused"
+        # The operator-facing wording must be a sentence, not the bare token
+        # echoed back; a refusal that only repeats its own name tells nobody
+        # what to do next.
+        assert envelope["message"] != reason
+        assert envelope["message"].endswith(".")
+
+    def test_a_preview_names_the_exact_destination_collections(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The dry run's whole value is the list it commits to.
+
+        Mutation: reported the archive's own collection names instead of the
+        destination's. Observed this fail on the assertion below, previewing
+        the source namespace the operator is restoring *from*.
+        """
+        from ..cli._service_storage import _render_restore
+        from ..storage_restore import RestoreResult
+
+        _render_restore(
+            RestoreResult(
+                "would_restore",
+                "rfeedfacefeed_",
+                ("rfeedfacefeed_vault_docs", "rfeedfacefeed_code_docs"),
+            ),
+            json_mode=True,
+        )
+
+        lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+        assert len(lines) == 1
+        envelope = json.loads(lines[0])
+        assert envelope["ok"] is True
+        assert envelope["data"]["status"] == "would_restore"
+        assert envelope["data"]["collections"] == [
+            "rfeedfacefeed_vault_docs",
+            "rfeedfacefeed_code_docs",
+        ]
+        assert envelope["data"]["destination_prefix"] == "rfeedfacefeed_"
 
 
 class TestUnreachableStorageStillAnswers:
