@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#archive-restore-contract'
 date: '2026-07-25'
-modified: '2026-08-14'
-body_hash: 'sha256:83e967ee4a935714188945030696a1f84fd887dbf7693e34c87a24206b4f9967'
+modified: '2026-08-25'
+body_hash: 'sha256:706a2db72ba03f2bcf3b219c591432ca48ba0646d70f6582b4640511aff09cfd'
 tier: L2
 related:
   - '[[2026-07-25-archive-restore-contract-adr]]'
@@ -75,7 +75,7 @@ Reads an archive back into a named destination namespace, carrying the archived 
 
 Establishes end to end against a real supervised server that an archive reconstitutes a searchable namespace, and regression-guards restore out of scheduled maintenance.
 
-- [ ] `P03.S12` - Add the end-to-end round trip against a real supervised server: index a root, archive it, drop the namespace, restore under a fresh root, and assert the restored namespace answers a search with the results the original gave, with the Qdrant storage-dir environment variable pointed at a temp path; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
+- [x] `P03.S12` - Add the end-to-end round trip against a real supervised server: index a root, archive it, drop the namespace, restore under a fresh root, and assert the restored namespace answers a search with the results the original gave, with the Qdrant storage-dir environment variable pointed at a temp path; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
 - [ ] `P03.S13` - Prove that round trip can fail by corrupting the archived snapshot body and observing the restore refuse rather than pass quietly, and record both directions; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
 - [x] `P03.S14` - Extend the maintenance inertness regression so no module reachable from the scheduled tick can reach the restore operation; `src/vaultspec_rag/tests/test_adr_regression.py`.
 

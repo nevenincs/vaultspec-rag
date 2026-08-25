@@ -3,10 +3,10 @@ generated: true
 tags:
   - '#index'
   - '#archive-restore-contract'
-date: '2026-08-14'
-modified: '2026-08-14'
+date: '2026-08-25'
+modified: '2026-08-25'
 body_schema: 'body-v1'
-body_hash: 'sha256:67f34fe59dfd8fd7216c43675072a9522b8a26a1e6f0e54a1eee80212637035c'
+body_hash: 'sha256:467b8eae3e493751e01b57a6beeed71ed331b7b98c92cde2b020fbb276b51fca'
 related:
   - '[[2026-07-25-archive-restore-contract-P01-S01]]'
   - '[[2026-07-25-archive-restore-contract-P01-S02]]'
@@ -20,6 +20,7 @@ related:
   - '[[2026-07-25-archive-restore-contract-P02-S09]]'
   - '[[2026-07-25-archive-restore-contract-P02-S10]]'
   - '[[2026-07-25-archive-restore-contract-P02-S11]]'
+  - '[[2026-07-25-archive-restore-contract-P03-S12]]'
   - '[[2026-07-25-archive-restore-contract-P03-S14]]'
   - '[[2026-07-25-archive-restore-contract-P04-S15]]'
   - '[[2026-07-25-archive-restore-contract-P04-S16]]'
@@ -67,6 +68,7 @@ Auto-generated index of all documents tagged with `#archive-restore-contract`.
 - `2026-07-25-archive-restore-contract-P01-S04` - `P01.S04` completed archive integrity gate
 - `2026-07-25-archive-restore-contract-P01-S05` - `P01.S05` archive guard coverage
 - `2026-07-25-archive-restore-contract-P01-summary` - `archive-restore-contract` `P01` summary
+- `2026-07-25-archive-restore-contract-P03-S12` - Add the end-to-end round trip against a real supervised server: index a root, archive it, drop the namespace, restore under a fresh root, and assert the restored namespace answers a search with the results the original gave, with the Qdrant storage-dir environment variable pointed at a temp path
 
 ### plan
 
