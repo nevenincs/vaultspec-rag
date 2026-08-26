@@ -615,6 +615,26 @@ def test_reconcile_is_idempotent_on_a_converged_backend(
 
 
 @pytest.mark.usefixtures("isolated_status_dir")
+def _converged_at_target(
+    client: QdrantClient,
+    storage: Path,
+    name: str,
+) -> bool:
+    """True once *name* sits at the segment target with its optimizer green."""
+    from ...storage_reconciliation import read_geometry
+    from ...store_schema import SERVER_SEGMENT_NUMBER
+
+    entry = next(
+        (e for e in read_geometry(client, storage) if e.collection == name),
+        None,
+    )
+    return (
+        entry is not None
+        and entry.segment_target == SERVER_SEGMENT_NUMBER
+        and entry.settled
+    )
+
+
 def test_unwaited_reconcile_never_reports_a_reclaim_figure(
     ops_qdrant: QdrantSupervisor,
 ) -> None:
@@ -657,12 +677,25 @@ def test_unwaited_reconcile_never_reports_a_reclaim_figure(
         # unlinks segment dirs and atomic-write temp files between the walk
         # and the stat, so the size must be read through the production
         # best-effort measure rather than a bare stat-every-entry sum.
+        #
+        # Both conditions are waited on, because they are not the same
+        # milestone. A shrinking directory says the merge produced something;
+        # ``settled`` says the optimizer reports green. ``drifted_remaining``
+        # counts a collection at target but unsettled as still drifted - see
+        # ``unsettled_at_target`` in storage_reconciliation - so waiting only
+        # for the size to fall lets the assertion below run while the merge is
+        # still in flight, which is a race, not a slow machine.
         deadline = time.monotonic() + 300.0
         while time.monotonic() < deadline:
-            if directory_size_bytes(storage / name) < before_bytes:
+            if _converged_at_target(client, storage, name) and (
+                directory_size_bytes(storage / name) < before_bytes
+            ):
                 break
             time.sleep(1.0)
         assert directory_size_bytes(storage / name) < before_bytes
+        assert _converged_at_target(client, storage, name), (
+            "the optimizer never reported green within the budget"
+        )
 
         again = reconcile_collections(
             client, storage_dir=storage, cap=10, budget_s=300.0
@@ -768,7 +801,7 @@ def test_archive_manifest_carries_identity_from_the_real_manifest(
     from ...storage_reclamation import archive_prefix
     from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
-    client = QdrantClient(url=ops_qdrant.url)
+    client = QdrantClient(url=ops_qdrant.url, timeout=600)
     try:
         root = tmp_path / "archived"
         root.mkdir()

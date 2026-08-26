@@ -482,15 +482,22 @@ if sys.platform == "win32":
                     ),
                     encoding="utf-8",
                 )
+                # 15s is the production default (``cleanup_timeout``) and what
+                # the sibling test above passes for a strictly heavier reap.
+                # The 5s this used to pass was tighter than production ever
+                # runs, and the drain re-scans the whole process table on every
+                # iteration, so on a loaded host the budget expired before the
+                # terminate landed and an authorized kill was reported as a
+                # survivor.
                 error = _cleanup_late_service_spawn(
                     launcher_pid=owned.pid,
                     launcher_start_time=pid_start_time(owned.pid),
                     port=port,
                     launch_token=owned_token,
-                    timeout=5.0,
+                    timeout=15.0,
                 )
                 assert error == ""
-                assert _wait_for_exit(owned.pid, timeout=5.0)
+                assert _wait_for_exit(owned.pid, timeout=15.0)
                 assert unrelated.poll() is None
                 assert pid_alive(unrelated.pid)
             finally:
