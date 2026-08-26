@@ -525,18 +525,46 @@ def _claim_leaks_a_used_bool(
     value = claim.args[0]
     names = _asserted_value_names(value)
     spelling = None if isinstance(value, ast.Name) else ast.unparse(value)
-    for other in ast.walk(statement.test):
-        if (
-            _isinstance_claim(other)
-            and other is not claim
-            and "bool" in _shape_names(other)
-            and (
-                (isinstance(other.args[0], ast.Name) and other.args[0].id in names)
-                or (spelling is not None and ast.unparse(other.args[0]) == spelling)
-            )
-        ):
-            return False
+    if _same_assert_refuses_bool(statement, claim, names, spelling):
+        return False
     end = (statement.end_lineno or statement.lineno, statement.end_col_offset or 0)
+    return _value_is_read_after(scope, end, names, spelling)
+
+
+def _refers_to_asserted_value(
+    node: ast.expr,
+    names: frozenset[str] | set[str],
+    spelling: str | None,
+) -> bool:
+    """True when *node* names, or re-spells, the value under assertion."""
+    if isinstance(node, ast.Name) and node.id in names:
+        return True
+    return spelling is not None and ast.unparse(node) == spelling
+
+
+def _same_assert_refuses_bool(
+    statement: ast.Assert,
+    claim: ast.Call,
+    names: frozenset[str] | set[str],
+    spelling: str | None,
+) -> bool:
+    """True when a sibling claim in the same assert tests the value for bool."""
+    return any(
+        _isinstance_claim(other)
+        and other is not claim
+        and "bool" in _shape_names(other)
+        and _refers_to_asserted_value(other.args[0], names, spelling)
+        for other in ast.walk(statement.test)
+    )
+
+
+def _value_is_read_after(
+    scope: ast.AST,
+    end: tuple[int, int],
+    names: frozenset[str] | set[str],
+    spelling: str | None,
+) -> bool:
+    """True when the asserted value is read again past *end* in *scope*."""
     for later in ast.walk(scope):
         if not isinstance(later, ast.expr) or (later.lineno, later.col_offset) <= end:
             continue

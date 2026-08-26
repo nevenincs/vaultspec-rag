@@ -100,45 +100,65 @@ def test_clean_waits_for_a_cold_store_lease_then_recreates_the_collection(
         assert inspected_store.client.collection_exists(inspected_store.TABLE_NAME)
 
 
+def _attribute_calls(node: ast.AST, attr: str) -> list[ast.Call]:
+    """Return every call in *node* made through an attribute named *attr*."""
+    return [
+        found
+        for found in ast.walk(node)
+        if isinstance(found, ast.Call)
+        and isinstance(found.func, ast.Attribute)
+        and found.func.attr == attr
+    ]
+
+
+def _name_calls(node: ast.AST, name: str) -> list[ast.Call]:
+    """Return every call in *node* made through a bare name *name*."""
+    return [
+        found
+        for found in ast.walk(node)
+        if isinstance(found, ast.Call)
+        and isinstance(found.func, ast.Name)
+        and found.func.id == name
+    ]
+
+
+def _imported_names(node: ast.AST, module: str, name: str) -> list[str]:
+    """Return each import of *name* from *module* found under *node*."""
+    return [
+        imported.name
+        for found in ast.walk(node)
+        if isinstance(found, ast.ImportFrom) and found.module == module
+        for imported in found.names
+        if imported.name == name
+    ]
+
+
 def test_clean_does_not_construct_or_import_vault_store_directly() -> None:
-    """The facade delegates store lifecycle ownership to ServiceRegistry."""
+    """The facade delegates store lifecycle ownership to ServiceRegistry.
+
+    The scan reads ``clean``'s own AST, so a guard that stopped reaching the
+    function would pass on an empty walk rather than object.
+
+    Mutation: added ``from .store_runtime import VaultStore`` and a
+    ``VaultStore(root_dir)`` construction to ``api.clean``. Observed the
+    import assertion fail with ``['VaultStore'] == []``, naming
+    "api.clean must not import VaultStore". Restored, and it passes.
+    """
     tree = ast.parse(textwrap.dedent(inspect.getsource(clean)))
     clean_node = next(
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "clean"
     )
-    vault_store_imports = [
-        imported.name
-        for node in ast.walk(clean_node)
-        if isinstance(node, ast.ImportFrom) and node.module == "store_runtime"
-        for imported in node.names
-        if imported.name == "VaultStore"
-    ]
-    vault_store_constructions = [
-        node
-        for node in ast.walk(clean_node)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "VaultStore"
-    ]
-    close_project_calls = [
-        node
-        for node in ast.walk(clean_node)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "close_project"
-    ]
-    maintenance_leases = [
-        node
-        for node in ast.walk(clean_node)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "lease_maintenance_store"
-    ]
 
-    assert vault_store_imports == [], "api.clean must not import VaultStore"
-    assert vault_store_constructions == [], "api.clean must not construct VaultStore"
-    assert close_project_calls == [], "api.clean must not evict projects directly"
-    assert len(maintenance_leases) == 1
+    assert _imported_names(clean_node, "store_runtime", "VaultStore") == [], (
+        "api.clean must not import VaultStore"
+    )
+    assert _name_calls(clean_node, "VaultStore") == [], (
+        "api.clean must not construct VaultStore"
+    )
+    assert _attribute_calls(clean_node, "close_project") == [], (
+        "api.clean must not evict projects directly"
+    )
+    assert len(_attribute_calls(clean_node, "lease_maintenance_store")) == 1
     assert api.clean is clean
