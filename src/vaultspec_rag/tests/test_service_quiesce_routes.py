@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, NamedTuple, cast
 
@@ -172,6 +173,31 @@ def quiesce_routes() -> Generator[QuiesceRoutes]:
         yield QuiesceRoutes(client, registry)
 
 
+def _assert_lifecycle_envelope(
+    payload: Mapping[str, object],
+    *,
+    status: str,
+    safe_to_borrow_gpu: bool,
+) -> None:
+    """Assert one achieved lifecycle payload carries no failure vocabulary.
+
+    ``status`` doubles as the expected ``quiesce.state``: the route reports the
+    reached lifecycle state under both keys, and asserting them together is
+    what catches a payload that agrees with itself in only one place.
+    """
+    quiesce = payload["quiesce"]
+    assert isinstance(quiesce, Mapping)
+    assert payload["ok"] is True
+    assert payload["status"] == status
+    assert set(quiesce) == _ENVELOPE_KEYS
+    assert quiesce["state"] == status
+    assert quiesce["safe_to_borrow_gpu"] is safe_to_borrow_gpu
+    assert quiesce["failure_reason"] is None
+    assert "error" not in payload
+    assert "message" not in payload
+    assert "retryable" not in payload
+
+
 def test_pause_resume_routes_return_the_complete_controller_envelope(
     quiesce_routes: QuiesceRoutes,
 ) -> None:
@@ -188,25 +214,12 @@ def test_pause_resume_routes_return_the_complete_controller_envelope(
     pause_payload = paused.json()
     resume_payload = resumed.json()
 
-    assert pause_payload["ok"] is True
-    assert pause_payload["status"] == "quiesced"
-    assert set(pause_payload["quiesce"]) == _ENVELOPE_KEYS
-    assert pause_payload["quiesce"]["state"] == "quiesced"
-    assert pause_payload["quiesce"]["safe_to_borrow_gpu"] is True
-    assert pause_payload["quiesce"]["failure_reason"] is None
-    assert "error" not in pause_payload
-    assert "message" not in pause_payload
-    assert "retryable" not in pause_payload
-
-    assert resume_payload["ok"] is True
-    assert resume_payload["status"] == "running"
-    assert set(resume_payload["quiesce"]) == _ENVELOPE_KEYS
-    assert resume_payload["quiesce"]["state"] == "running"
-    assert resume_payload["quiesce"]["safe_to_borrow_gpu"] is False
-    assert resume_payload["quiesce"]["failure_reason"] is None
-    assert "error" not in resume_payload
-    assert "message" not in resume_payload
-    assert "retryable" not in resume_payload
+    _assert_lifecycle_envelope(
+        pause_payload, status="quiesced", safe_to_borrow_gpu=True
+    )
+    _assert_lifecycle_envelope(
+        resume_payload, status="running", safe_to_borrow_gpu=False
+    )
 
 
 def test_resume_releases_a_daemon_a_failed_pause_left_held(

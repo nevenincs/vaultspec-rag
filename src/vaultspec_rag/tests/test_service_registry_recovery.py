@@ -388,6 +388,40 @@ def test_registry_reports_unpublished_recovery_without_reopening_admission(
     assert retained.desired_state is DesiredJobState.RUNNING
 
 
+def _assert_recovery_failed_before_running(
+    failed: QuiesceTransition,
+    runner_started: threading.Event,
+) -> None:
+    """Assert the unpublished recovery stopped short of running the attempt."""
+    assert failed.code is QuiesceTransitionCode.RESUME_RECOVERY_FAILED
+    assert not failed.achieved
+    assert failed.snapshot.state is QuiesceState.WARMING
+    assert failed.snapshot.admission_epoch == 1
+    assert not runner_started.is_set()
+
+
+def _assert_both_workers_shared_one_outcome(
+    first: threading.Thread,
+    second: threading.Thread,
+    errors: list[BaseException],
+    outcomes: list[QuiesceTransition],
+    *,
+    expected_epoch: int,
+) -> None:
+    """Assert two racing resumes returned the very same transition object.
+
+    Identity, not equality: two equal-but-distinct results would mean each
+    worker drove its own transition, which is the coalescing this guards.
+    """
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert len(outcomes) == 2
+    assert outcomes[0] is outcomes[1]
+    assert outcomes[0].code is QuiesceTransitionCode.RUNNING
+    assert outcomes[0].snapshot.admission_epoch == expected_epoch
+
+
 def test_repaired_concurrent_resume_shares_one_transition_claim_and_attempt(
     tmp_path: Path,
 ) -> None:
@@ -403,12 +437,7 @@ def test_repaired_concurrent_resume_shares_one_transition_claim_and_attempt(
     )
 
     failed = _unpublished_recovery_failure(registry, state_path)
-
-    assert failed.code is QuiesceTransitionCode.RESUME_RECOVERY_FAILED
-    assert not failed.achieved
-    assert failed.snapshot.state is QuiesceState.WARMING
-    assert failed.snapshot.admission_epoch == 1
-    assert not runner_started.is_set()
+    _assert_recovery_failed_before_running(failed, runner_started)
 
     state_path.parent.unlink()
     state_path.parent.mkdir()
@@ -450,13 +479,13 @@ def test_repaired_concurrent_resume_shares_one_transition_claim_and_attempt(
         )
         completed = _wait_for_state(manager, job_id, JobState.SUCCEEDED)
 
-    assert not first.is_alive()
-    assert not second.is_alive()
-    assert errors == []
-    assert len(outcomes) == 2
-    assert outcomes[0] is outcomes[1]
-    assert outcomes[0].code is QuiesceTransitionCode.RUNNING
-    assert outcomes[0].snapshot.admission_epoch == failed.snapshot.admission_epoch + 1
+    _assert_both_workers_shared_one_outcome(
+        first,
+        second,
+        errors,
+        outcomes,
+        expected_epoch=failed.snapshot.admission_epoch + 1,
+    )
     assert manager._next_quiesced_dispatch_generation == initial_claim_generation + 1
     assert manager._pending_quiesced_dispatches == {}
     assert attempts == [2]
