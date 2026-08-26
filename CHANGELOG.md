@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.4](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.3...vaultspec-rag-v0.4.4) (2026-08-26)
+
+
+### Features
+
+* **mcp:** serve only the read tools under a read-only launch flag ([10c4138](https://github.com/nevenincs/vaultspec-rag/commit/10c4138b4cfe8e643f0c60f6163a9e0dacefabec))
+* **mcp:** serve only the read tools under a read-only launch flag ([80e9303](https://github.com/nevenincs/vaultspec-rag/commit/80e93034ac3e45c067dbdc6700db2345d8f35661))
+
+
+### Bug Fixes
+
+* **cli:** decode a search snippet's source with replacement ([aa04ea0](https://github.com/nevenincs/vaultspec-rag/commit/aa04ea0dd223fbd3e722845dd43ad2a2fd5b24cd))
+* **cli:** decode a search snippet's source with replacement ([c3847a5](https://github.com/nevenincs/vaultspec-rag/commit/c3847a5d027e43f6d1140784027ffa1161176bdf))
+
 ## [0.4.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.2...vaultspec-rag-v0.4.3) (2026-08-25)
 
 
