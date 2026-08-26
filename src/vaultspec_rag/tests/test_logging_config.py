@@ -513,7 +513,7 @@ import sys
 
 import faulthandler
 
-from vaultspec_rag.logging_config import install_fatal_fault_dump
+from vaultspec_rag.logging_config import install_fatal_fault_dump  # absolute-import-ok
 
 install_fatal_fault_dump(pathlib.Path(sys.argv[1]))
 faulthandler._sigsegv()

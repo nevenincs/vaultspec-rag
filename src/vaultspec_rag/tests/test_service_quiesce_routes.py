@@ -185,8 +185,11 @@ def _assert_lifecycle_envelope(
     reached lifecycle state under both keys, and asserting them together is
     what catches a payload that agrees with itself in only one place.
     """
-    quiesce = payload["quiesce"]
-    assert isinstance(quiesce, Mapping)
+    raw_quiesce = payload["quiesce"]
+    assert isinstance(raw_quiesce, Mapping)
+    # isinstance narrows the origin but leaves the parameters unknown, which
+    # the strict checker reports; the cast states what the route publishes.
+    quiesce = cast("Mapping[str, object]", raw_quiesce)
     assert payload["ok"] is True
     assert payload["status"] == status
     assert set(quiesce) == _ENVELOPE_KEYS
