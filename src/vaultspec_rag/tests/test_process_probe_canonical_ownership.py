@@ -372,9 +372,7 @@ class TestJsonOptionHasOneDeclaration:
 
 def _is_enum_class(node: ast.ClassDef) -> bool:
     """True when *node* names an Enum among its bases."""
-    return any(
-        isinstance(base, ast.Name) and "Enum" in base.id for base in node.bases
-    )
+    return any(isinstance(base, ast.Name) and "Enum" in base.id for base in node.bases)
 
 
 def _string_member_values(node: ast.ClassDef) -> set[str]:

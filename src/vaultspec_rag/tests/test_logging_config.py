@@ -507,18 +507,17 @@ def test_one_generation_never_exceeds_what_the_reader_can_return() -> None:
     assert int(rag_default("managed_log_max_bytes")) <= MAX_MANAGED_LOG_SOURCE_BYTES
 
 
-
-_CRASHING_CHILD = '''
+_CRASHING_CHILD = """
 import pathlib
 import sys
 
 import faulthandler
 
-from vaultspec_rag.logging_config import install_fatal_fault_dump
+from vaultspec_rag.logging_config import install_fatal_fault_dump  # absolute-import-ok
 
 install_fatal_fault_dump(pathlib.Path(sys.argv[1]))
 faulthandler._sigsegv()
-'''
+"""
 
 
 def test_a_non_unwinding_death_still_writes_a_traceback(tmp_path: Path) -> None:
