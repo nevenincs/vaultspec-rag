@@ -13,7 +13,7 @@ import sys
 import time
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
 
@@ -24,7 +24,9 @@ if TYPE_CHECKING:
     from pytest import TempPathFactory
     from sentence_transformers import CrossEncoder
 
+    from ... import CodebaseIndexer
     from ...embeddings import EmbeddingModel
+    from ...store_runtime import VaultStore
     from ._frozen_corpus_evidence import FrozenCorpusEvidence
 
 from ..._job_values import count, measurement
@@ -819,3 +821,89 @@ def live_service_with_watch(
     """
     with _attach_live_service(_live_service_with_watch_daemon) as service:
         yield service
+
+
+SAMPLE_PYTHON = '''\
+"""Sample module for testing codebase indexing."""
+
+
+def hello_world():
+    """Print a greeting message."""
+    print("Hello, world!")
+
+
+class Calculator:
+    """A simple calculator class."""
+
+    def add(self, a: int, b: int) -> int:
+        """Return the sum of two numbers."""
+        return a + b
+
+    def multiply(self, a: int, b: int) -> int:
+        """Return the product of two numbers."""
+        return a * b
+'''
+
+
+SAMPLE_PYTHON_2 = '''\
+"""Another module for incremental indexing tests."""
+
+
+def fibonacci(n: int) -> int:
+    """Compute the nth Fibonacci number."""
+    if n <= 1:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
+'''
+
+
+SAMPLE_VENDOR = '''\
+"""Vendored library that should be excluded from indexing."""
+
+
+def vendor_helper():
+    """Do vendor things."""
+    return "vendor"
+'''
+
+
+class _CodeProject(TypedDict):
+    code_indexer: CodebaseIndexer
+    store: VaultStore
+    model: EmbeddingModel
+    reranker: CrossEncoder
+    root: Path
+    src_dir: Path
+
+
+@pytest.fixture
+def code_project(
+    rag_components: RagComponentsWithManifest,
+    tmp_path: Path,
+) -> Generator[_CodeProject]:
+    """Create a temp project with Python source files and a CodebaseIndexer.
+
+    Yields a dict with code_indexer, store, model, root, and the source dir.
+    """
+    from ... import CodebaseIndexer
+    from ...store_runtime import VaultStore
+
+    model = rag_components["model"]
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+
+    store = VaultStore(tmp_path)
+    code_indexer = CodebaseIndexer(tmp_path, model, store)
+
+    yield _CodeProject(
+        code_indexer=code_indexer,
+        store=store,
+        model=model,
+        reranker=rag_components["reranker"],
+        root=tmp_path,
+        src_dir=src_dir,
+    )
+
+    store.close()
