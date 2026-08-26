@@ -280,6 +280,25 @@ class TestSearchFilterVocabularyHasOneHome:
         )
 
 
+def _is_restated_json_option(node: ast.Call) -> bool:
+    """True when *node* declares ``--json`` without composing on a constant.
+
+    Composing on a canonical constant is the supported way for a verb to say
+    more; restating the sentence is not.
+    """
+    if not is_attr_call(node, "typer", "Option"):
+        return False
+    if not any(
+        isinstance(arg, ast.Constant) and arg.value == "--json" for arg in node.args
+    ):
+        return False
+    return not any(
+        isinstance(inner, ast.Name)
+        and inner.id in {"JSON_OPTION_HELP", "JSON_ENVELOPE_OPTION_HELP"}
+        for inner in ast.walk(node)
+    )
+
+
 class TestJsonOptionHasOneDeclaration:
     """Every verb's ``--json`` flag is declared in one place.
 
@@ -329,25 +348,11 @@ class TestJsonOptionHasOneDeclaration:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except SyntaxError:  # pragma: no cover - parsed elsewhere
                 continue
-            for node in ast.walk(tree):
-                if not (
-                    isinstance(node, ast.Call) and is_attr_call(node, "typer", "Option")
-                ):
-                    continue
-                if not any(
-                    isinstance(arg, ast.Constant) and arg.value == "--json"
-                    for arg in node.args
-                ):
-                    continue
-                # Composing on a canonical constant is the supported way for a
-                # verb to say more; restating the sentence is not.
-                composes = any(
-                    isinstance(inner, ast.Name)
-                    and inner.id in {"JSON_OPTION_HELP", "JSON_ENVELOPE_OPTION_HELP"}
-                    for inner in ast.walk(node)
-                )
-                if not composes:
-                    find_offenders.append(f"{path.name}:{node.lineno}")
+            find_offenders.extend(
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and _is_restated_json_option(node)
+            )
         assert not find_offenders, (
             f"a second --json option declaration at {find_offenders}; use the "
             "JsonMode / JsonEnvelopeMode annotations from _app"
@@ -363,6 +368,24 @@ class TestJsonOptionHasOneDeclaration:
 
         assert JSON_ENVELOPE_OPTION_HELP != JSON_OPTION_HELP
         assert "one structured" in JSON_ENVELOPE_OPTION_HELP
+
+
+def _is_enum_class(node: ast.ClassDef) -> bool:
+    """True when *node* names an Enum among its bases."""
+    return any(
+        isinstance(base, ast.Name) and "Enum" in base.id for base in node.bases
+    )
+
+
+def _string_member_values(node: ast.ClassDef) -> set[str]:
+    """Return the string constants assigned directly in *node*'s body."""
+    return {
+        stmt.value.value
+        for stmt in node.body
+        if isinstance(stmt, ast.Assign)
+        and isinstance(stmt.value, ast.Constant)
+        and isinstance(stmt.value.value, str)
+    }
 
 
 class TestOneVocabularyHasOneType:
@@ -392,20 +415,9 @@ class TestOneVocabularyHasOneType:
             except SyntaxError:  # pragma: no cover - parsed elsewhere
                 continue
             for node in ast.walk(tree):
-                if not isinstance(node, ast.ClassDef):
+                if not (isinstance(node, ast.ClassDef) and _is_enum_class(node)):
                     continue
-                if not any(
-                    isinstance(base, ast.Name) and "Enum" in base.id
-                    for base in node.bases
-                ):
-                    continue
-                values = {
-                    stmt.value.value
-                    for stmt in node.body
-                    if isinstance(stmt, ast.Assign)
-                    and isinstance(stmt.value, ast.Constant)
-                    and isinstance(stmt.value.value, str)
-                }
+                values = _string_member_values(node)
                 # Two-member enums are too small for a shared set to mean
                 # anything; a boolean-ish pair collides by coincidence.
                 if len(values) >= 3:
