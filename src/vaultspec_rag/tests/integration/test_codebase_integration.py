@@ -5,70 +5,29 @@ from __future__ import annotations
 import hashlib
 import os
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, NamedTuple, TypedDict
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
 from ...progress import NullProgressReporter
+from .conftest import (
+    SAMPLE_PYTHON_2,
+    _CodeProject,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
-    from sentence_transformers import CrossEncoder
-
     from ..._store_models import CodeChunk
-    from ...embeddings import EmbeddingModel
     from ...indexer import CodebaseIndexer
     from ...indexer._content_discovery import CodeExecutionPreflight
     from ...indexer._vault_prep import IndexResult
     from ...progress import ProgressReporter
     from ...store_runtime import VaultStore
-    from ..conftest import RagComponentsWithManifest
     from .test_indexer_progress_integration import CountingProgressReporter
 
 pytestmark = [pytest.mark.integration]
-
-SAMPLE_PYTHON = '''\
-"""Sample module for testing codebase indexing."""
-
-
-def hello_world():
-    """Print a greeting message."""
-    print("Hello, world!")
-
-
-class Calculator:
-    """A simple calculator class."""
-
-    def add(self, a: int, b: int) -> int:
-        """Return the sum of two numbers."""
-        return a + b
-
-    def multiply(self, a: int, b: int) -> int:
-        """Return the product of two numbers."""
-        return a * b
-'''
-
-SAMPLE_PYTHON_2 = '''\
-"""Another module for incremental indexing tests."""
-
-
-def fibonacci(n: int) -> int:
-    """Compute the nth Fibonacci number."""
-    if n <= 1:
-        return n
-    return fibonacci(n - 1) + fibonacci(n - 2)
-'''
-
-
-class _CodeProject(TypedDict):
-    code_indexer: CodebaseIndexer
-    store: VaultStore
-    model: EmbeddingModel
-    reranker: CrossEncoder
-    root: Path
-    src_dir: Path
 
 
 class _IncrementalFailureCase(NamedTuple):
@@ -89,39 +48,6 @@ class _IncrementalRetryCase(NamedTuple):
     good: Path
     failing: Path
     attempted: set[str]
-
-
-@pytest.fixture
-def code_project(
-    rag_components: RagComponentsWithManifest,
-    tmp_path: Path,
-) -> Generator[_CodeProject]:
-    """Create a temp project with Python source files and a CodebaseIndexer.
-
-    Yields a dict with code_indexer, store, model, root, and the source dir.
-    """
-    from ... import CodebaseIndexer
-    from ...store_runtime import VaultStore
-
-    model = rag_components["model"]
-
-    src_dir = tmp_path / "src"
-    src_dir.mkdir()
-    (src_dir / "sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
-
-    store = VaultStore(tmp_path)
-    code_indexer = CodebaseIndexer(tmp_path, model, store)
-
-    yield _CodeProject(
-        code_indexer=code_indexer,
-        store=store,
-        model=model,
-        reranker=rag_components["reranker"],
-        root=tmp_path,
-        src_dir=src_dir,
-    )
-
-    store.close()
 
 
 def _stored_partial_chunk(path: str, chunk_id: str) -> CodeChunk:
@@ -1122,13 +1048,3 @@ class TestCodebaseIncrementalModifyDelete:
         )
         assert result.removed >= 1, f"Expected removed >= 1, got {result.removed}"
         assert store.count_code() < count_before
-
-
-SAMPLE_VENDOR = '''\
-"""Vendored library that should be excluded from indexing."""
-
-
-def vendor_helper():
-    """Do vendor things."""
-    return "vendor"
-'''

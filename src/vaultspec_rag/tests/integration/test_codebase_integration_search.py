@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ...progress import NullProgressReporter
-from .test_codebase_integration import (
+from .conftest import (
     SAMPLE_PYTHON,
     SAMPLE_VENDOR,
     _CodeProject,
