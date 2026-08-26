@@ -22,6 +22,7 @@ that nothing here formats, bounds, rotates, or can read back.
 from __future__ import annotations
 
 import contextlib
+import faulthandler
 import json
 import logging
 import os
@@ -57,6 +58,7 @@ __all__ = [
     "clamp_managed_log_lines",
     "configure_logging",
     "install_daemon_log_capture",
+    "install_fatal_fault_dump",
     "log_event",
     "managed_log_filters",
     "query_managed_logs",
@@ -1174,6 +1176,39 @@ def _validate_daemon_capture_settings(max_bytes: int, backup_count: int) -> None
         or backup_count < 0
     ):
         raise ValueError("backup_count must be a non-negative integer")
+
+
+def install_fatal_fault_dump(log_path: Path) -> TextIO:
+    """Route fatal-interpreter tracebacks to a file beside ``service.log``.
+
+    A death that unwinds writes its traceback through logging and lands in
+    ``service.log`` like anything else. A death that does NOT unwind - a
+    native abort, a fatal interpreter error, an out-of-memory kill - runs no
+    Python, so the log simply stops mid-line and the operator is left with a
+    process that vanished and no record of why.
+
+    ``faulthandler`` closes that gap by writing the C-level traceback from
+    the signal handler itself. It is given its own file rather than the
+    daemon's stderr because stderr is redirected into a pipe whose drain
+    thread lives in this same process: a fatal signal kills the drain along
+    with everything else, so bytes still sitting in the pipe die with it.
+    Writing to a dedicated descriptor puts the dump in the kernel's hands
+    instead, which is the only party still running once the interpreter is
+    not.
+
+    Args:
+        log_path: Absolute path to the active ``service.log`` file. The dump
+            is written to its ``.fatal`` sibling.
+
+    Returns:
+        The open dump stream, which the caller keeps alive for the process
+        lifetime and closes on an orderly shutdown.
+    """
+    dump_path = log_path.with_name(f"{log_path.stem}.fatal{log_path.suffix}")
+    dump_path.parent.mkdir(parents=True, exist_ok=True)
+    stream = dump_path.open("a", encoding="utf-8")
+    faulthandler.enable(file=stream, all_threads=True)
+    return stream
 
 
 def install_daemon_log_capture(

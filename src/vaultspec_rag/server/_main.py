@@ -128,10 +128,15 @@ def _run_http_daemon(port: int) -> None:
     import uvicorn
 
     from ..config._settings import get_config
-    from ..logging_config import configure_logging, install_daemon_log_capture
+    from ..logging_config import (
+        configure_logging,
+        install_daemon_log_capture,
+        install_fatal_fault_dump,
+    )
     from ..registry import get_registry
 
-    # Install ordering (CRITICAL): argparse → configure_logging → capture → uvicorn.
+    # Install ordering (CRITICAL): argparse → configure_logging → capture →
+    # fault dump → uvicorn.
     configure_logging(level="INFO")
     cfg = get_config()
     log_capture = install_daemon_log_capture(
@@ -139,6 +144,9 @@ def _run_http_daemon(port: int) -> None:
         max_bytes=int(cfg.managed_log_max_bytes),
         backup_count=int(cfg.managed_log_backup_count),
     )
+    # After the capture, so the log directory exists; before uvicorn, so a
+    # fatal death during startup is recorded too.
+    fault_dump = install_fatal_fault_dump(_m._resolve_log_path())
     runtime = ServerRouteRuntime(
         token=uuid.uuid4().hex,
         registry=get_registry(),
@@ -179,6 +187,7 @@ def _run_http_daemon(port: int) -> None:
             runtime.registry.close_all()
         finally:
             capture_closed = log_capture.close()
+            fault_dump.close()
         if _m._daemon_process:
             os._exit(daemon_exit_code if capture_closed else 1)
         if not capture_closed:

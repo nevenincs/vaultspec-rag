@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -504,3 +505,62 @@ def test_one_generation_never_exceeds_what_the_reader_can_return() -> None:
     from ..config._settings import rag_default
 
     assert int(rag_default("managed_log_max_bytes")) <= MAX_MANAGED_LOG_SOURCE_BYTES
+
+
+
+_CRASHING_CHILD = '''
+import pathlib
+import sys
+
+import faulthandler
+
+from vaultspec_rag.logging_config import install_fatal_fault_dump
+
+install_fatal_fault_dump(pathlib.Path(sys.argv[1]))
+faulthandler._sigsegv()
+'''
+
+
+def test_a_non_unwinding_death_still_writes_a_traceback(tmp_path: Path) -> None:
+    """A fatal signal records the C-level stack the service log cannot hold.
+
+    This is the reported defect: the service vanished mid-job and left a log
+    that simply stopped - no shutdown line, no traceback, nothing to diagnose
+    from. A death that unwinds is already covered, because it logs on the way
+    out. This drives the case that does NOT unwind, using a real fatal signal
+    rather than an exception, because only that reproduces the silence.
+
+    The subprocess is the point rather than an inconvenience: the crash has to
+    kill an interpreter, and it cannot be this one.
+
+    Mutation: removed the ``faulthandler.enable`` call from
+    ``install_fatal_fault_dump``. Observed this fail on the "wrote no fatal
+    traceback" assertion, with the dump file present but empty - which is
+    exactly the silence being guarded against, so the assertion discriminates
+    the fix from its absence rather than merely from a missing file. Restored,
+    and it passes.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path as RuntimePath
+
+    log_path = tmp_path / "managed" / "service.log"
+    dump_path = log_path.with_name("service.fatal.log")
+    script = tmp_path / "crash_child.py"
+    script.write_text(_CRASHING_CHILD, encoding="utf-8")
+    src_root = RuntimePath(__file__).resolve().parents[2]
+
+    crashed = subprocess.run(
+        [sys.executable, str(script), str(log_path)],
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(src_root)},
+        timeout=120,
+    )
+
+    assert crashed.returncode != 0, "the child was supposed to die of a fatal signal"
+    assert dump_path.exists(), "no fatal dump file was written beside service.log"
+    dumped = dump_path.read_text(encoding="utf-8", errors="replace")
+    assert "Fatal Python error" in dumped, (
+        f"the crash wrote no fatal traceback; the dump held {dumped!r}"
+    )
