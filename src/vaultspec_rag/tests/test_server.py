@@ -168,6 +168,69 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
         reset_config()
 
 
+class TestToolsSendOnlyCanonicalSources:
+    """No MCP tool may put a compatibility alias on the wire.
+
+    The daemon's search route parses its source with ``allow_aliases=False`` -
+    a deliberately closed contract - while the CLI and the service client parse
+    with ``allow_aliases=True`` at their own boundaries. An adapter that
+    forwards its public spelling instead of canonicalising it therefore fails
+    against the route while working everywhere else, which is exactly how
+    ``search_codebase`` came to be refused with ``unknown_source_type``:
+    ``received: "codebase"``, ``aliases_allowed: false``.
+
+    The alias table itself is already guarded in ``test_source_types``. What
+    was unguarded is this: that the adapter actually consults it.
+    """
+
+    #: Every alias the adapter may be handed, and the canonical value the
+    #: route will accept for it. Taken from the same table the parser reads,
+    #: so a new alias cannot be added without this pairing being considered.
+    ALIAS_EXPECTATIONS: typing.ClassVar = [
+        ("codebase", "code"),
+        ("docs", "vault"),
+        ("all", "combined"),
+    ]
+
+    @pytest.mark.parametrize(("alias", "canonical"), ALIAS_EXPECTATIONS)
+    def test_an_alias_is_resolved_before_it_reaches_the_wire(
+        self, alias: str, canonical: str
+    ) -> None:
+        """Mutation: had ``_canonical_tool_source`` return ``str(value)``.
+
+        Observed this fail on the equality for ``codebase`` first, the adapter
+        handing the route the spelling it refuses.
+        """
+        from ..mcp._tools import _canonical_tool_source
+
+        assert _canonical_tool_source(alias) == canonical
+
+    def test_every_canonical_source_survives_unchanged(self) -> None:
+        """Canonicalising must not disturb a value that is already canonical.
+
+        Mutation: as above. Observed no failure here - a passthrough leaves
+        canonical values correct, which is why the alias case above is the one
+        carrying this contract.
+        """
+        from .._source_types import PublicSourceType
+        from ..mcp._tools import _canonical_tool_source
+
+        for source in PublicSourceType:
+            assert _canonical_tool_source(source.value) == source.value
+
+    def test_an_unknown_source_is_refused_rather_than_forwarded(self) -> None:
+        """A value in neither the enum nor the table must not reach the route.
+
+        Mutation: as above. Observed this fail on DID NOT RAISE, the adapter
+        forwarding an unknown spelling for the daemon to reject instead of
+        refusing it where the caller can be told why.
+        """
+        from ..mcp._tools import _canonical_tool_source
+
+        with pytest.raises(ValueError, match="unknown_source_type"):
+            _canonical_tool_source("not_a_source")
+
+
 class TestToolRegistration:
     """Verify all expected tools are registered on the MCPServer instance."""
 
