@@ -76,12 +76,12 @@ def _missing_mcp_extra_message(exc: ImportError) -> str:
     )
 
 
-def _resolve_daemon_argv() -> tuple[int | None, int | None]:
-    """Parse ``--port``/``--parent-pid``/``--launch-token`` from ``sys.argv``.
+def _resolve_daemon_argv() -> tuple[int | None, int | None, bool]:
+    """Parse the daemon's launch flags from ``sys.argv``.
 
     The console-script path (no explicit ``port`` argument). Sets the
     per-process launch token on the package namespace exactly as the inline
-    parse did, and returns ``(port, parent_pid)``.
+    parse did, and returns ``(port, parent_pid, read_only)``.
     """
     import argparse
 
@@ -109,9 +109,18 @@ def _resolve_daemon_argv() -> tuple[int | None, int | None]:
         default="",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        help=(
+            "Serve only the search and read tools. The index-management tools "
+            "are absent from the advertised listing, not merely refused, so a "
+            "composing agent is never handed a schema it may not call."
+        ),
+    )
     args = parser.parse_args()
     _m._launch_token = str(args.launch_token)
-    return args.port, args.parent_pid
+    return args.port, args.parent_pid, args.read_only
 
 
 def _run_http_daemon(port: int) -> None:
@@ -178,12 +187,22 @@ def _run_http_daemon(port: int) -> None:
             )
 
 
-def _run_stdio_mcp(parent_pid: int | None) -> None:
-    """Run the thin stdio MCP client without loading the indexing model."""
+def _run_stdio_mcp(parent_pid: int | None, *, read_only: bool = False) -> None:
+    """Run the thin stdio MCP client without loading the indexing model.
+
+    Under *read_only* the mutating tools are withdrawn before the first
+    listing is served, so they are absent from the surface rather than
+    present and refusing.
+    """
     try:
         from ..mcp import mcp
     except ImportError as exc:
         raise RuntimeError(_missing_mcp_extra_message(exc)) from exc
+
+    if read_only:
+        from ..mcp._tools import restrict_to_read_only_tools
+
+        restrict_to_read_only_tools()
 
     from ._stdio_lifetime import install_stdio_lifetime_watchdog
 
@@ -220,8 +239,9 @@ def main(port: int | None = None) -> None:
             127.0.0.1:<port>. Otherwise parse argv (or use stdio).
     """
     parent_pid: int | None = None
+    read_only = False
     if port is None:
-        port, parent_pid = _resolve_daemon_argv()
+        port, parent_pid, read_only = _resolve_daemon_argv()
     else:
         parent_pid = None
         _m._launch_token = ""
@@ -231,4 +251,4 @@ def main(port: int | None = None) -> None:
     if port is not None:
         _run_http_daemon(port)
         return
-    _run_stdio_mcp(parent_pid)
+    _run_stdio_mcp(parent_pid, read_only=read_only)

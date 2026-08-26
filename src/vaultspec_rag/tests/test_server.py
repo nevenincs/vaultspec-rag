@@ -168,6 +168,152 @@ def discovery_publisher(tmp_path: Path) -> Iterator[_DiscoveryPublisher]:
         reset_config()
 
 
+class TestReadOnlyLaunchSurface:
+    """Under the read-only flag the mutating tools are gone, not refusing.
+
+    A composing agent must not be handed the schema of a capability it may not
+    call: a tool the model can see is a tool that eventually gets called, and
+    two of the withdrawn ones drop a shared index every other consumer on the
+    machine depends on. So the contract is absence from the listing, which is
+    what these assert.
+
+    Which tools are withdrawn is never spelled out here either. The production
+    code derives it from the read-only annotation each tool is registered with,
+    and so does this - restating the six names would be a second source of
+    truth in the tests, free to disagree with the one in the code.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    @pytest.fixture
+    def restored_tool_registry(self) -> typing.Iterator[None]:
+        """Return the shared server's tool registry to its launch state.
+
+        The restriction mutates the process-wide server that every other test
+        in this file lists, so without this a read-only case would silently
+        narrow the surface those cases assert against.
+        """
+        from ..mcp._mcp import mcp
+
+        registry = mcp._tool_manager._tools
+        snapshot = dict(registry)
+        try:
+            yield
+        finally:
+            registry.clear()
+            registry.update(snapshot)
+
+    @staticmethod
+    def _declared_read_only() -> set[str]:
+        """Names whose registration declares them read-only."""
+        from ..mcp._mcp import mcp
+
+        return {
+            tool.name
+            for tool in mcp._tool_manager.list_tools()
+            if tool.annotations and tool.annotations.read_only_hint
+        }
+
+    def test_the_restricted_listing_serves_exactly_the_read_only_tools(
+        self, restored_tool_registry: None
+    ) -> None:
+        """Mutation: had the restriction withdraw nothing (an empty tuple).
+
+        Observed this fail on the set equality, the listing still carrying the
+        six mutating tools that the flag exists to remove.
+        """
+        del restored_tool_registry
+        from ..mcp._tools import restrict_to_read_only_tools
+
+        expected = self._declared_read_only()
+        assert expected, "no tool declares itself read-only; the premise is gone"
+
+        restrict_to_read_only_tools()
+
+        assert {tool.name for tool in _run(mcp.list_tools())} == expected
+
+    def test_no_tool_that_can_mutate_survives_the_flag(
+        self, restored_tool_registry: None
+    ) -> None:
+        """The assertion that catches a mutating tool added later.
+
+        Equality with the read-only set above would already fail for a new
+        mutating tool, but only because the set it compares against is derived.
+        This says the invariant directly, so the reason a failure matters is
+        legible from the test that fails.
+
+        Mutation: as above. Observed this fail naming ``clean_all`` among the
+        survivors.
+        """
+        del restored_tool_registry
+        from ..mcp._tools import restrict_to_read_only_tools
+
+        restrict_to_read_only_tools()
+
+        survivors = [
+            tool.name
+            for tool in _run(mcp.list_tools())
+            if not (tool.annotations and tool.annotations.read_only_hint)
+        ]
+        assert survivors == [], f"mutating tools survived the flag: {survivors}"
+
+    def test_the_default_launch_still_serves_every_tool(self) -> None:
+        """The flag must not narrow the surface an operator or CI gets.
+
+        Deliberately a sibling of the two above rather than trusting them: a
+        change that satisfied the restricted assertions by withdrawing tools
+        eagerly would leave both of them green and break every operator use of
+        reindex and clean.
+
+        Mutation: called the restriction at import time in the tools module,
+        so the surface is narrowed before anything asks for it. Observed this
+        fail on the strict-subset assertion, the default listing already down
+        to the six read-only tools.
+        """
+        served = {tool.name for tool in _run(mcp.list_tools())}
+
+        assert self._declared_read_only() < served, (
+            "the default surface must be strictly wider than the read-only one"
+        )
+
+    @pytest.mark.parametrize(
+        ("argv", "expected"),
+        [
+            pytest.param(["vaultspec-search-mcp"], False, id="absent"),
+            pytest.param(["vaultspec-search-mcp", "--read-only"], True, id="present"),
+        ],
+    )
+    def test_the_restriction_is_opt_in_at_the_launch_boundary(
+        self, argv: list[str], expected: bool
+    ) -> None:
+        """The surface assertions above cannot see which launches restrict.
+
+        They list the shared server directly, so a runner that restricted on
+        every launch rather than under the flag would leave all three green
+        while silently withdrawing reindex and clean from every operator. The
+        opt-in has to be asserted where it is actually decided, which is the
+        argument parse.
+
+        Mutation: gave ``--read-only`` ``default=True``. Observed the
+        ``absent`` case fail on ``False is True``, the flag no longer opt-in.
+        """
+        import sys
+
+        from ..server._main import _resolve_daemon_argv
+
+        # Set and restore rather than substitute: the parser reads the real
+        # argv, so this drives production's own entry point on a real command
+        # line instead of standing anything in for it.
+        original = sys.argv
+        sys.argv = argv
+        try:
+            resolved = _resolve_daemon_argv()[2]
+        finally:
+            sys.argv = original
+
+        assert resolved is expected
+
+
 class TestToolsSendOnlyCanonicalSources:
     """No MCP tool may put a compatibility alias on the wire.
 

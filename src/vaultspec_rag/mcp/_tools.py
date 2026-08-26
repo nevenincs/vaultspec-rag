@@ -94,6 +94,33 @@ _CLEAN = ToolAnnotations(
 )
 
 
+def restrict_to_read_only_tools() -> tuple[str, ...]:
+    """Withdraw every registered tool that does not declare itself read-only.
+
+    A tool the model can see is a tool that eventually gets called, so a
+    read-only launch has to remove the mutating tools from the advertised
+    listing rather than let them refuse when invoked. Refusing still hands the
+    model the schema of a capability it may not use.
+
+    Which tools those are is not restated here. Every tool is registered with
+    annotations that already declare whether it is read-only, so that
+    declaration is the one place a tool's class is stated and this reads it.
+    A second list would be a second source of truth, free to disagree with the
+    annotations, and nothing would object when it did.
+
+    Returns:
+        The withdrawn tool names, in the order they were registered.
+    """
+    withdrawn = tuple(
+        tool.name
+        for tool in mcp._tool_manager.list_tools()
+        if not (tool.annotations and tool.annotations.read_only_hint)
+    )
+    for name in withdrawn:
+        mcp.remove_tool(name)
+    return withdrawn
+
+
 def _canonical_tool_source(value: object) -> str:
     """Return one closed-set source value or raise a structured tool error."""
     try:
