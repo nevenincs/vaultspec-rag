@@ -43,6 +43,7 @@ from ..server._utils import (
     _validate_vault_root,
 )
 from ..service import ServiceRegistry
+from ..serviceclient._discovery import HEARTBEAT_STALENESS_SECONDS
 
 pytestmark = [pytest.mark.unit]
 
@@ -1268,7 +1269,19 @@ class TestDaemonLifecycleHelpers:
         ts = datetime.fromisoformat(cast("str", data["last_heartbeat"]))
         assert ts.tzinfo is not None
         delta = (datetime.now(UTC) - ts).total_seconds()
-        assert -1 < delta < 5
+        # Bounded by the project's own definition of a stale heartbeat rather
+        # than a hand-picked number. What this pins is that the tick stamps
+        # NOW - a stale or absent stamp is off by the age of the record, which
+        # is orders of magnitude past this bound. The 5s it used to assert was
+        # narrower than the freshness anything actually requires, so on a
+        # loaded runner the scheduling gap between the write and this read
+        # failed a heartbeat that was entirely correct.
+        #
+        # Mutation: made _discovery_timestamp stamp one hour in the past.
+        # Observed this fail on the assertion below with 3600.4 < 60, so the
+        # wider bound still discriminates a stale stamp from a fresh one.
+        # Restored, and it passes.
+        assert -1 < delta < HEARTBEAT_STALENESS_SECONDS
 
     def test_heartbeat_tick_sync_merges_service_token(
         self,
