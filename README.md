@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="vaultspec-rag family logo" width="150" />
+<img src="assets/logo.png" alt="vaultspec-rag family logo" width="150" />
 
 # vaultspec-rag
 
