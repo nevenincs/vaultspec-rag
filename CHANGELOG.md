@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.5](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.4...vaultspec-rag-v0.4.5) (2026-08-26)
+
+
+### Bug Fixes
+
+* **service:** record a traceback when the daemon dies without unwinding ([d7b1c34](https://github.com/nevenincs/vaultspec-rag/commit/d7b1c3423030975c97a17d9054137a33ec45ccaa))
+* **service:** record a traceback when the daemon dies without unwinding ([a775d78](https://github.com/nevenincs/vaultspec-rag/commit/a775d78cd27cf7e0df3552ce436145bbffd130a1))
+
 ## [0.4.4](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.3...vaultspec-rag-v0.4.4) (2026-08-26)
 
 
