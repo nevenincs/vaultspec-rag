@@ -825,3 +825,64 @@ class TestFileBreadthWarningContract:
 
         assert result.exit_code == 0, result.output
         assert "files but holds content for only" not in result.output, result.output
+
+
+class TestOneUndecodableFileCannotAbortTheSearch:
+    """A source that is not valid UTF-8 costs its own snippet, not the search.
+
+    The line-fetch decoded strictly and caught only OSError. A strict decode
+    raises UnicodeDecodeError, which is a ValueError and passes straight
+    through that arm, so a single undecodable file anywhere in the results
+    ended the whole search rather than degrading one snippet.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    @staticmethod
+    def _undecodable(tmp_path: Path) -> Path:
+        """Write a file whose bytes are not valid UTF-8 under any decoding."""
+        target = tmp_path / "latin1_source.py"
+        # 0xFF is not a legal UTF-8 lead byte, so a strict decode must fail.
+        target.write_bytes(b"first = 1\nsecond = '\xff\xfe'\nthird = 3\n")
+        return target
+
+    def test_the_lines_still_render_with_replacement(self, tmp_path: Path) -> None:
+        """Mutation: dropped ``errors="replace"`` from the read.
+
+        Observed this fail with UnicodeDecodeError escaping the call, before
+        any assertion here ran - which is the defect, one file ending the
+        search rather than losing its own snippet.
+        """
+        from ..cli._render import _source_line_text_lines
+
+        source = self._undecodable(tmp_path)
+        result: dict[str, object] = {
+            "source_path": source.name,
+            "line_start": 1,
+            "line_end": 3,
+        }
+
+        lines = _source_line_text_lines(result, root=tmp_path)
+
+        assert len(lines) == 3
+        assert lines[0] == "first = 1"
+        assert lines[2] == "third = 3"
+
+    def test_a_missing_file_still_yields_no_lines(self, tmp_path: Path) -> None:
+        """The OSError arm still absorbs an absent file rather than raising.
+
+        Tolerating an undecodable file must not have cost the existing
+        tolerance for one that is not there at all.
+
+        Mutation: removed the ``except OSError`` arm. Observed this fail with
+        FileNotFoundError escaping the call.
+        """
+        from ..cli._render import _source_line_text_lines
+
+        result: dict[str, object] = {
+            "source_path": "never_written.py",
+            "line_start": 1,
+            "line_end": 2,
+        }
+
+        assert _source_line_text_lines(result, root=tmp_path) == []

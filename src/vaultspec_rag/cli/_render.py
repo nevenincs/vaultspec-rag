@@ -395,7 +395,12 @@ def _source_line_text_lines(
     if not path.is_absolute():
         path = (root or Path.cwd()) / path
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        # Decoded with replacement rather than strictly: a source file that is
+        # not valid UTF-8 is still worth showing, and a strict decode raises
+        # UnicodeDecodeError - a ValueError, which the OSError arm below does
+        # not catch - so one such file aborted the whole search rather than
+        # costing its own snippet.
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
     return lines[line_start - 1 : end]
