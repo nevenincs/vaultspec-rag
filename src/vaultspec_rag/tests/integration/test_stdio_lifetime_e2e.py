@@ -417,6 +417,59 @@ def _veto_diagnosis(orphan_pid: int) -> str:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ancestry semantics")
+def _trampoline_free_child_env() -> dict[str, str]:
+    """Return an environment that puts this checkout and its libs on the path."""
+    src_root = Path(__file__).resolve().parents[3]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part
+        for part in (
+            str(src_root),
+            sysconfig.get_paths()["purelib"],
+            env.get("PYTHONPATH"),
+        )
+        if part
+    )
+    return env
+
+
+def _assert_reaped_after_confirming_rounds(
+    events: list[dict[str, object]],
+    confirm_rounds: int,
+) -> None:
+    """Assert the orphan reaped itself only after a full confirming run.
+
+    The reap must follow a full run of CONSECUTIVE confirming rounds,
+    numbered from zero: the counter restarting on a live-but-unopenable
+    ancestor (or a recycled pid slot) is the safety valve that keeps a
+    live session from being reaped, so a reap that never counted up to
+    the shipped total means the valve is not holding. A benign restart
+    mid-run is tolerated; only the run ending in the reap is asserted.
+    """
+    kinds = [event.get("event") for event in events]
+    assert "stdio_watchdog_unanchored" in kinds, (
+        f"the orphan never reported losing its anchor: {kinds}"
+    )
+    assert kinds[-1] == "stdio_watchdog_exit", (
+        f"the orphan died without reaping itself: {kinds}"
+    )
+
+    unanchored = [
+        event for event in events if event.get("event") == "stdio_watchdog_unanchored"
+    ]
+    rounds = [event.get("round") for event in unanchored]
+    confirming_run = list(range(confirm_rounds))
+    assert rounds[-confirm_rounds:] == confirming_run, (
+        f"the reap did not follow {confirm_rounds} consecutive "
+        f"confirming rounds: {rounds}"
+    )
+    totals = {event.get("reap_after_rounds") for event in unanchored}
+    assert totals == {confirm_rounds}, (
+        f"the orphan counted toward a different total than the shipped "
+        f"{confirm_rounds}: {totals}"
+    )
+
+
 def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
     tmp_path: Path,
 ) -> None:
@@ -462,17 +515,7 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
     assert _GRACE_SECONDS + _REARM_SECONDS * _ORPHAN_CONFIRM_ROUNDS <= 120.0
 
     base_python = getattr(sys, "_base_executable", None) or sys.executable
-    src_root = Path(__file__).resolve().parents[3]
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(
-        part
-        for part in (
-            str(src_root),
-            sysconfig.get_paths()["purelib"],
-            env.get("PYTHONPATH"),
-        )
-        if part
-    )
+    env = _trampoline_free_child_env()
 
     pid_file = tmp_path / "orphan.pid"
     log_file = tmp_path / "orphan.stderr"
@@ -520,36 +563,7 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
             f"{_veto_diagnosis(orphan_pid)}"
         )
 
-        kinds = [event.get("event") for event in events]
-        assert "stdio_watchdog_unanchored" in kinds, (
-            f"the orphan never reported losing its anchor: {kinds}"
-        )
-        assert kinds[-1] == "stdio_watchdog_exit", (
-            f"the orphan died without reaping itself: {kinds}"
-        )
-
-        # The reap must follow a full run of CONSECUTIVE confirming rounds,
-        # numbered from zero: the counter restarting on a live-but-unopenable
-        # ancestor (or a recycled pid slot) is the safety valve that keeps a
-        # live session from being reaped, so a reap that never counted up to
-        # the shipped total means the valve is not holding. A benign restart
-        # mid-run is tolerated; only the run ending in the reap is asserted.
-        unanchored = [
-            event
-            for event in events
-            if event.get("event") == "stdio_watchdog_unanchored"
-        ]
-        rounds = [event.get("round") for event in unanchored]
-        confirming_run = list(range(_ORPHAN_CONFIRM_ROUNDS))
-        assert rounds[-_ORPHAN_CONFIRM_ROUNDS:] == confirming_run, (
-            f"the reap did not follow {_ORPHAN_CONFIRM_ROUNDS} consecutive "
-            f"confirming rounds: {rounds}"
-        )
-        totals = {event.get("reap_after_rounds") for event in unanchored}
-        assert totals == {_ORPHAN_CONFIRM_ROUNDS}, (
-            f"the orphan counted toward a different total than the shipped "
-            f"{_ORPHAN_CONFIRM_ROUNDS}: {totals}"
-        )
+        _assert_reaped_after_confirming_rounds(events, _ORPHAN_CONFIRM_ROUNDS)
     finally:
         if _pid_alive(orphan_pid):
             subprocess.run(

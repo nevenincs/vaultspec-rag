@@ -219,6 +219,36 @@ async def _invalidate_loopless_recovery_before_callback(
     return scheduled[0], claim_observed[0], controls[0]
 
 
+def _assert_paused_job_released_everything(
+    manager: JobManager,
+    controller: ServiceQuiesceController,
+    job_id: str,
+) -> None:
+    """Assert the paused attempt surrendered its ticket and every resource."""
+    quiesced = manager.get(job_id)
+    assert quiesced is not None
+    assert quiesced.id == job_id
+    assert quiesced.desired_state is DesiredJobState.RUNNING
+    assert not quiesced.resources.holds_anything
+    assert controller.snapshot().active_compute_tickets == 0
+    assert controller.wait_for_drain(timeout=0).achieved
+    assert controller.acknowledge_vram_released().achieved
+
+
+def _prepared_durable_resume(
+    manager: JobManager,
+    controller: ServiceQuiesceController,
+    job_id: str,
+) -> QuiescedResumeResult:
+    """Warm the controller and return the durable resume it prepared."""
+    assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
+    prepared = manager.prepare_quiesced_resume()
+    assert prepared.status is QuiescedResumeStatus.PREPARED
+    assert prepared.persistence is QuiescedResumePersistence.DURABLE
+    assert prepared.job_ids == (job_id,)
+    return prepared
+
+
 @pytest.mark.asyncio
 async def test_quiesce_releases_ticket_and_resources_before_same_id_resume() -> None:
     """A real worker unwinds, drains, and reconciles only after running."""
@@ -259,19 +289,8 @@ async def test_quiesce_releases_ticket_and_resources_before_same_id_resume() -> 
     release_first_attempt.set()
     await _await_state(manager, job_id, JobState.PAUSED)
 
-    quiesced = manager.get(job_id)
-    assert quiesced is not None
-    assert quiesced.id == job_id
-    assert quiesced.desired_state is DesiredJobState.RUNNING
-    assert not quiesced.resources.holds_anything
-    assert controller.snapshot().active_compute_tickets == 0
-    assert controller.wait_for_drain(timeout=0).achieved
-    assert controller.acknowledge_vram_released().achieved
-    assert controller.begin_warming().snapshot.state is QuiesceState.WARMING
-    prepared = manager.prepare_quiesced_resume()
-    assert prepared.status is QuiescedResumeStatus.PREPARED
-    assert prepared.persistence is QuiescedResumePersistence.DURABLE
-    assert prepared.job_ids == (job_id,)
+    _assert_paused_job_released_everything(manager, controller, job_id)
+    prepared = _prepared_durable_resume(manager, controller, job_id)
     assert controller.complete_warming().snapshot.state is QuiesceState.RUNNING
     assert manager.dispatch_prepared_quiesced_resume(prepared) == (job_id,)
     await _await_state(manager, job_id, JobState.SUCCEEDED)

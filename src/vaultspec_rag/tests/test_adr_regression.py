@@ -6,6 +6,7 @@ that would violate the documented architectural contract.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import typing
 from typing import TYPE_CHECKING
@@ -15,7 +16,6 @@ import pytest
 from ._import_probe import assert_fresh_import_excludes
 
 if TYPE_CHECKING:
-    import ast
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -878,6 +878,16 @@ def _cuda_oom_handlers(root: ast.AST) -> list[ast.ExceptHandler]:
     ]
 
 
+def _called_name(node: ast.Call) -> str | None:
+    """Return the bare name a call targets, whether attribute or plain name."""
+    callee = node.func
+    if isinstance(callee, ast.Attribute):
+        return callee.attr
+    if isinstance(callee, ast.Name):
+        return callee.id
+    return None
+
+
 class TestEncodeRecoveryStaysBounded:
     """No unbounded retry may stand between a storage error and job failure.
 
@@ -973,20 +983,11 @@ class TestEncodeRecoveryStaysBounded:
         }
 
         def reaches_handling(function: ast.FunctionDef) -> bool:
-            for node in ast.walk(function):
-                if not isinstance(node, ast.Call):
-                    continue
-                callee = node.func
-                called = (
-                    callee.attr
-                    if isinstance(callee, ast.Attribute)
-                    else callee.id
-                    if isinstance(callee, ast.Name)
-                    else None
-                )
-                if called in handling:
-                    return True
-            return False
+            return any(
+                _called_name(node) in handling
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+            )
 
         uncovered = [
             path

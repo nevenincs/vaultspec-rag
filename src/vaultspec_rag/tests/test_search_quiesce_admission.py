@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pytest
 from starlette.testclient import TestClient
@@ -22,7 +22,19 @@ from ..service_quiesce import (
 pytestmark = [pytest.mark.unit]
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+    from ..service_quiesce import QuiesceSnapshot
+
+
+class _JsonResponse(Protocol):
+    """The two members the envelope assertions read off a search response."""
+
+    @property
+    def status_code(self) -> int: ...
+
+    def json(self) -> dict[str, object]: ...
 
 
 _QUIESCE_SEARCH_MESSAGE = (
@@ -57,6 +69,44 @@ class _QuiesceSearchEnvelopeHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         """Keep the focused transport proof's loopback request silent."""
+
+
+def _assert_closed_admission_envelope(
+    response: _JsonResponse,
+    source: str,
+    snapshot: QuiesceSnapshot,
+) -> None:
+    """Assert one rejected search carries the whole retryable 503 envelope."""
+    assert response.status_code == 503, source
+    payload: dict[str, object] = response.json()
+    request_id = payload.get("request_id")
+    assert isinstance(request_id, str), source
+    assert payload == {
+        "ok": False,
+        "error": "quiesce_admission_closed",
+        "message": _QUIESCE_SEARCH_MESSAGE,
+        "retryable": True,
+        "request_id": request_id,
+        "quiesce": {
+            "state": "quiesced",
+            "admission_epoch": snapshot.admission_epoch,
+            "safe_to_borrow_gpu": True,
+        },
+    }
+
+
+def _assert_single_unavailable_record(
+    recent: Sequence[Mapping[str, object]],
+    query: str,
+) -> None:
+    """Assert the ledger holds exactly one unavailable record for *query*."""
+    records = [record for record in recent if record.get("query") == query]
+    assert len(records) == 1
+    record = records[0]
+    assert record["status_code"] == 503
+    assert record["outcome"] == "unavailable"
+    assert record["error_code"] == "quiesce_admission_closed"
+    assert record["error_message"] == _QUIESCE_SEARCH_MESSAGE
 
 
 def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
@@ -98,35 +148,12 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
         }
     snapshot = registry.quiesce_snapshot()
     for source, response in responses.items():
-        assert response.status_code == 503, source
-        payload: dict[str, object] = response.json()
-        request_id = payload.get("request_id")
-        assert isinstance(request_id, str), source
-        assert payload == {
-            "ok": False,
-            "error": "quiesce_admission_closed",
-            "message": _QUIESCE_SEARCH_MESSAGE,
-            "retryable": True,
-            "request_id": request_id,
-            "quiesce": {
-                "state": "quiesced",
-                "admission_epoch": snapshot.admission_epoch,
-                "safe_to_borrow_gpu": True,
-            },
-        }
+        _assert_closed_admission_envelope(response, source, snapshot)
 
     activity = search_activity_ledger().snapshot(include_query=True)
     recent = activity["recent"]
     for source in ("vault", "code", "document", "combined"):
-        records = [
-            record for record in recent if record.get("query") == f"{marker}-{source}"
-        ]
-        assert len(records) == 1
-        record = records[0]
-        assert record["status_code"] == 503
-        assert record["outcome"] == "unavailable"
-        assert record["error_code"] == "quiesce_admission_closed"
-        assert record["error_message"] == _QUIESCE_SEARCH_MESSAGE
+        _assert_single_unavailable_record(recent, f"{marker}-{source}")
     assert registry.snapshot() == []
     assert registry.health() == {
         "model_loaded": False,
