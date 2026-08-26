@@ -13,6 +13,7 @@ import pytest
 
 from .._job_errors import JobError, JobErrorKind
 from ..watcher_durability import (
+    _CANCELLATION_DURABILITY_SECONDS,
     _STATE_TRANSACTION_WORKER_SLOTS,
     admit_watcher_attempt,
     persist_observed_sources,
@@ -316,10 +317,30 @@ async def test_cancelled_contended_admission_settles_committed_claim(
     policy.mark_convergence_pending(now=0.0)
     lock_path = state_path.with_name(f"{state_path.name}.lock")
     ready_path = tmp_path / "admission-lock-ready.marker"
+    # Two things must both hold, and they pull in opposite directions. The
+    # lock has to still be held when the admission is cancelled, or the
+    # contended path is never entered. And it has to be RELEASED well within
+    # the cancelled admission's own settle budget, or that settle gives up and
+    # hands the authority to a detached settler - the sibling case below,
+    # which deliberately holds for longer than the budget to force exactly
+    # that.
+    #
+    # Derived from the production budget rather than hand-picked, so the two
+    # cannot drift apart. The 2.4s this used to hold was under the 3.0s budget
+    # by only 0.6s, and a loaded runner spent that slack before the settle
+    # acquired the lock: the admission handed off, and the failure surfaced
+    # much later as "watcher admission authority has been handed off" from an
+    # unrelated-looking policy.admit() call.
+    #
+    # Mutation: held for _CANCELLATION_DURABILITY_SECONDS * 2 instead.
+    # Observed the original failure exactly - WatcherRetryStateError, "watcher
+    # admission authority has been handed off" - so this still tells the
+    # in-process settle apart from the handoff, which is the whole point of
+    # the case. Restored, and it passes.
     holder = _spawn_state_lock_holder(
         lock_path,
         ready_path,
-        hold_seconds=2.4,
+        hold_seconds=_CANCELLATION_DURABILITY_SECONDS / 4,
     )
     try:
         for _ in range(100):
@@ -336,6 +357,13 @@ async def test_cancelled_contended_admission_settles_committed_claim(
             )
         )
         await asyncio.sleep(0.05)
+        # Stated rather than assumed: if the hold has already lapsed, the rest
+        # of this test is exercising the handoff path under the name of the
+        # in-process one, and the failure that follows says nothing about why.
+        assert holder.poll() is None, (
+            "the lock holder exited before the admission was cancelled, so "
+            "the contended path under test was never entered"
+        )
         admission.cancel()
         with pytest.raises(asyncio.CancelledError):
             await admission
