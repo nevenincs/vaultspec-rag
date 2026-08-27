@@ -38,6 +38,7 @@ from ..indexer._run_ledger_models import (
     index_run_ledger_path,
 )
 from ..indexer._run_ledger_runtime import RunLedger
+from ._production_service import PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -803,7 +804,12 @@ def test_overlapping_metadata_publications_are_each_atomic(tmp_path: Path) -> No
     errors: list[BaseException] = []
 
     def states(prefix: str):
-        barrier.wait(timeout=5.0)
+        # Both publishers must reach the rendezvous or the barrier breaks and
+        # the failure surfaces as a BrokenBarrierError rather than as anything
+        # about atomicity. Five seconds was a hand-picked figure for two
+        # threads merely starting up; under a parallel run that is thread
+        # scheduling, which is what the canonical ceiling exists to bound.
+        barrier.wait(timeout=PROCESS_TIMEOUT_SECONDS)
         for ordinal in range(200):
             yield FileState.indexed(
                 f"src/{prefix}-{ordinal:04d}.py",
@@ -830,10 +836,23 @@ def test_overlapping_metadata_publications_are_each_atomic(tmp_path: Path) -> No
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=10.0)
+        thread.join(timeout=PROCESS_TIMEOUT_SECONDS)
 
     assert not errors
-    assert all(not thread.is_alive() for thread in threads)
+    # Named rather than bare: this fired on CI as an unadorned "assert False",
+    # which says nothing about whether a publisher was starved or the write
+    # itself is wrong - and those two want opposite investigations. The
+    # atomicity assertions below are only meaningful once both publishers have
+    # finished, so this is the precondition for them, not a result.
+    # Mutation: stalled one publisher past the join. Observed
+    # "publisher thread(s) still running after 10s: ['Thread-2 (publish)']".
+    # Restored, and it passes. Note the ceiling is unchanged at 10s, so this
+    # names the next occurrence rather than preventing it.
+    still_running = [thread.name for thread in threads if thread.is_alive()]
+    assert not still_running, (
+        f"publisher thread(s) still running after "
+        f"{PROCESS_TIMEOUT_SECONDS:.0f}s: {still_running}"
+    )
     raw = read_meta_raw(meta_path)
     winner = raw[GENERATION_ID_KEY].removeprefix("generation-")
     assert winner in {"left", "right"}
