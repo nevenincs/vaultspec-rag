@@ -192,12 +192,7 @@ lint target='all':
       break \
     } \
     "absolute-imports" { \
-      $absHits = Get-ChildItem -Recurse -Path src/vaultspec_rag -Filter *.py | Select-String -Pattern "^\s*from vaultspec_rag\." -CaseSensitive | Where-Object { $_.Line -notmatch "absolute-import-ok" } ; \
-      if ($absHits) { \
-        Write-Host "ABSOLUTE IMPORTS FOUND!" -ForegroundColor Red ; \
-        $absHits | ForEach-Object { Write-Host "$($_.Path):$($_.LineNumber):$($_.Line)" } ; \
-        exit 1 \
-      } ; \
+      {{uvr}} python tools/absolute_import_gate.py ; \
       break \
     } \
     "all" { \
