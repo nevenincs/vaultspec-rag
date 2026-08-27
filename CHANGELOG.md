@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.7](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.6...vaultspec-rag-v0.4.7) (2026-08-27)
+
+
+### Features
+
+* **delivery:** add binary, scoop, and homebrew channels ([fb5a609](https://github.com/nevenincs/vaultspec-rag/commit/fb5a609494abe49bf33072bc6ab70917c29308aa))
+* **delivery:** add binary, scoop, and homebrew channels ([fb833cf](https://github.com/nevenincs/vaultspec-rag/commit/fb833cf182896cc954c66cad284ef6f2e00ac348))
+
+
+### Bug Fixes
+
+* **delivery:** bootstrap the GPU torch build, and stop building macOS ([0a8105c](https://github.com/nevenincs/vaultspec-rag/commit/0a8105c29a7756efb2de6247d89b2c77382be1f1))
+* **packaging:** point the product default at the product that exists ([b00a78e](https://github.com/nevenincs/vaultspec-rag/commit/b00a78e1875128354f24e82bffa2fd91047a99a2))
+
 ## [0.4.6](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.5...vaultspec-rag-v0.4.6) (2026-08-26)
 
 
