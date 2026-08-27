@@ -168,7 +168,6 @@ exclude = ["src/vaultspec_rag/tests"]
 # live outside the package, still need an explicit sdist include.
 [tool.hatch.build.targets.sdist.force-include]
 "assets/logo.png" = "assets/logo.png"
-"assets/logo.svg" = "assets/logo.svg"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
