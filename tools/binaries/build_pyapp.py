@@ -1,0 +1,244 @@
+#!/usr/bin/env python
+"""Build the standalone ``vaultspec-rag`` and ``vaultspec-search-mcp`` binaries.
+
+PyApp (https://ofek.dev/pyapp) is a Rust bootstrapper from the Hatch
+ecosystem. It is configured entirely through ``PYAPP_*`` environment
+variables read at ``cargo`` build time; there is no project-side config
+file. This script encodes the decided build model once so the release
+workflow (and a maintainer reproducing a release locally) can invoke it
+identically on every target.
+
+Two binaries are produced from the same PyPI distribution, differing only
+in their execution entry point:
+
+- ``vaultspec-rag`` runs ``python -m vaultspec_rag`` (PYAPP_EXEC_MODULE).
+- ``vaultspec-search-mcp`` runs the object reference ``vaultspec_rag.server:main``
+  (PYAPP_EXEC_SPEC), matching the ``vaultspec-search-mcp`` console script.
+
+The MCP server lives behind the ``mcp`` extra, so the binary installs
+``vaultspec-rag[mcp]``: a bare install omits the ``mcp`` dependency and the
+server binary would fail to import at first launch.
+
+Torch is pinned to the accelerated build on every target that publishes one,
+because the bootstrap's default - plain PyPI - is CPU-only on Windows and is
+not the build this project resolves on Linux. See
+``tools.binaries.torch_channel`` for how the pin is derived from ``uv.lock``
+and why it is a direct wheel reference rather than an extra index.
+
+The distribution source is the published PyPI package pinned to the release
+version: PyApp installs it into a per-user data directory on first launch
+(PYAPP_PROJECT_NAME + PYAPP_PROJECT_VERSION), while the CPython runtime is
+embedded into the binary itself (PYAPP_DISTRIBUTION_EMBED). The binary
+therefore needs no Python on the user's machine, but does resolve
+``vaultspec-rag==<version>`` from PyPI on first run - so the release must
+be published to PyPI for the binary to bootstrap.
+
+Usage::
+
+    uv run --no-project --python 3.13 python tools/binaries/build_pyapp.py \
+        --tag vaultspec-rag-v0.4.6 --outdir dist-bin [--target <triple>]
+
+``--target`` cross-compiles for a Rust target triple other than the host
+(the CI matrix uses it to build the macOS x86_64 binary on an Apple Silicon
+runner); the matching ``rustup target`` must already be installed. Only the
+Python standard library is used, so any Python 3.13 interpreter can run it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+from tools.binaries.torch_channel import pip_extra_args
+
+# Pinned PyApp crate version. Bumping this changes the bootstrapper and the
+# embedded python-build-standalone distributions it selects, so it is an
+# explicit, reviewable dependency rather than "whatever is latest".
+PYAPP_VERSION = "0.29.0"
+
+# The PyPI distribution both binaries install from.
+PROJECT_NAME = "vaultspec-rag"
+
+# Embedded CPython series. Must satisfy the package's requires-python.
+PYTHON_VERSION = "3.13"
+
+
+@dataclass(frozen=True)
+class Binary:
+    """One console entry point rendered as a standalone binary."""
+
+    name: str
+    # Exactly one of exec_module / exec_spec is set (PyApp execution modes
+    # are mutually exclusive).
+    exec_module: str | None = None
+    exec_spec: str | None = None
+
+    def pyapp_exec_env(self) -> dict[str, str]:
+        if self.exec_module is not None:
+            return {"PYAPP_EXEC_MODULE": self.exec_module}
+        assert self.exec_spec is not None
+        return {"PYAPP_EXEC_SPEC": self.exec_spec}
+
+
+BINARIES = (
+    Binary(name="vaultspec-rag", exec_module="vaultspec_rag"),
+    Binary(name="vaultspec-search-mcp", exec_spec="vaultspec_rag.server:main"),
+)
+
+#: PyPI extras the bootstrap must install. The MCP server is an opt-in extra
+#: in this project, so a bare `vaultspec-rag` install produces a binary that
+#: cannot import `mcp` on first launch.
+PROJECT_FEATURES = "mcp"
+
+
+def version_from_tag(tag: str) -> str:
+    """Derive the PyPI version from a release tag.
+
+    Release tags are ``vaultspec-rag-v<version>`` (see publish.yml); a bare
+    ``v<version>`` or ``<version>`` is also accepted for local invocation.
+    """
+    for prefix in (f"{PROJECT_NAME}-v", "v"):
+        if tag.startswith(prefix):
+            return tag[len(prefix) :]
+    return tag
+
+
+def host_target_triple() -> str:
+    """Return the host Rust target triple as reported by ``rustc``."""
+    out = subprocess.run(
+        ["rustc", "-vV"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    for line in out.splitlines():
+        if line.startswith("host:"):
+            return line.split(":", 1)[1].strip()
+    raise RuntimeError("could not determine host target triple from `rustc -vV`")
+
+
+def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
+    """Build a single PyApp binary and return the path to the raw executable."""
+    root = workdir / binary.name
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYAPP_PROJECT_NAME": PROJECT_NAME,
+            "PYAPP_PROJECT_VERSION": version,
+            # Installs `vaultspec-rag[mcp]` rather than the bare distribution.
+            "PYAPP_PROJECT_FEATURES": PROJECT_FEATURES,
+            "PYAPP_PYTHON_VERSION": PYTHON_VERSION,
+            # Install the project with uv rather than pip on first launch.
+            "PYAPP_UV_ENABLED": "1",
+            # Bake the CPython distribution into the binary so the target
+            # machine needs no interpreter.
+            "PYAPP_DISTRIBUTION_EMBED": "1",
+        }
+    )
+    env.update(binary.pyapp_exec_env())
+    # Bootstrap the accelerated torch build on every target that has one.
+    # Without this the first launch resolves torch from default PyPI, which on
+    # Windows is CPU-only - a GPU product delivered with the GPU absent.
+    extra_args = pip_extra_args(target, PYTHON_VERSION)
+    if extra_args is not None:
+        env["PYAPP_PIP_EXTRA_ARGS"] = extra_args
+
+    cmd = [
+        "cargo",
+        "install",
+        "pyapp",
+        "--version",
+        PYAPP_VERSION,
+        "--locked",
+        "--force",
+        "--root",
+        str(root),
+        "--target",
+        target,
+    ]
+    print(f"::group::cargo install pyapp ({binary.name}, {target})", flush=True)
+    subprocess.run(cmd, check=True, env=env)
+    print("::endgroup::", flush=True)
+
+    exe = "pyapp.exe" if target.endswith("windows-msvc") else "pyapp"
+    produced = root / "bin" / exe
+    if not produced.is_file():
+        raise FileNotFoundError(f"pyapp did not produce {produced}")
+    return produced
+
+
+def asset_name(binary: Binary, target: str) -> str:
+    suffix = ".exe" if target.endswith("windows-msvc") else ""
+    return f"{binary.name}-{target}{suffix}"
+
+
+def write_checksum(asset: Path) -> Path:
+    """Write ``<asset>.sha256`` in ``sha256sum``-compatible format.
+
+    ``newline=""`` is load-bearing, not cosmetic. Without it Python's text
+    layer rewrites the trailing newline to the host line ending, so the
+    Windows leg of the release matrix emits CRLF while every other leg emits
+    LF. The aggregated ``SHA256SUMS`` then carries mixed endings and both
+    downstream readers break on exactly the Windows rows: ``sha256sum -c``
+    refuses to verify them, and a field-splitting reader sees the asset name
+    with a trailing carriage return, so a lookup by name finds nothing. That
+    is how vaultspec-core-v0.1.60 published a Scoop manifest with empty
+    hashes out of a green run.
+    """
+    digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+    checksum = asset.with_name(asset.name + ".sha256")
+    checksum.write_text(f"{digest}  {asset.name}\n", encoding="utf-8", newline="")
+    return checksum
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--tag", help="release tag, e.g. vaultspec-rag-v0.4.6")
+    source.add_argument("--version", help="PyPI version directly, e.g. 0.1.48")
+    parser.add_argument(
+        "--outdir",
+        type=Path,
+        default=Path("dist-bin"),
+        help="directory to place the renamed binaries and checksums in",
+    )
+    parser.add_argument(
+        "--target",
+        help="Rust target triple to (cross-)build for; defaults to the host",
+    )
+    args = parser.parse_args()
+
+    version = args.version if args.version else version_from_tag(args.tag)
+    target = args.target if args.target else host_target_triple()
+
+    outdir: Path = args.outdir
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    produced: list[Path] = []
+    with tempfile.TemporaryDirectory(prefix="pyapp-build-") as tmp:
+        workdir = Path(tmp)
+        for binary in BINARIES:
+            raw = build_one(binary, version, target, workdir)
+            asset = outdir / asset_name(binary, target)
+            shutil.copy2(raw, asset)
+            if not target.endswith("windows-msvc"):
+                asset.chmod(0o755)
+            checksum = write_checksum(asset)
+            produced.extend((asset, checksum))
+            print(f"built {asset} ({asset.stat().st_size} bytes)", flush=True)
+
+    print(f"\n{PROJECT_NAME} {version} binaries for {target}:")
+    for path in produced:
+        print(f"  {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -56,6 +56,26 @@ Two tool-lifecycle warnings:
 
 The commands in this guide use the `uv run` prefix, which runs the command-line interface (CLI) inside the project's environment. If you installed the standalone tool, drop the prefix and call `vaultspec-rag` directly.
 
+## Install the standalone binaries
+
+Once a binaries release has published, `vaultspec-rag` and `vaultspec-search-mcp` are also available as standalone binaries that need no Python toolchain on the machine:
+
+```powershell
+scoop bucket add vaultspec-rag https://github.com/nevenincs/vaultspec-rag
+scoop install vaultspec-rag
+```
+
+```sh
+brew tap nevenincs/vaultspec-rag https://github.com/nevenincs/vaultspec-rag
+brew install vaultspec-rag
+```
+
+**Windows and Linux only, and the GPU requirement is unchanged.** These are the same platforms listed under [Before you begin](#before-you-begin); there is no macOS binary and the Homebrew formula does not offer a macOS install, because the stack is CUDA-only and there is no CUDA build for macOS at any version. A macOS binary would install cleanly and raise on first use, which reads as a defect rather than as an unsupported platform.
+
+The binaries bootstrap the **same accelerated torch build this project resolves** - the `cu130` wheel, pinned from `uv.lock`, so the binary cannot drift onto a different torch than `uv sync` installs. That pin is load-bearing rather than cosmetic: `tool.uv.sources` is a workspace setting, not wheel metadata, so it does not survive into an install of the published wheel from PyPI. Without it the bootstrap resolves plain PyPI torch, which on Windows declares no CUDA dependency at all - and the service then refuses to start, exactly as it does for a CPU-only tool environment.
+
+First launch is a large download: about 1.8 GB on Windows, 500 MB on Linux. That is the same download `uv tool install` with the torch pin performs; the binary does not add to it, it just does it on first run.
+
 ## Provision dependencies with the install command
 
 The `install` command enrolls the workspace and provisions three external dependencies:
