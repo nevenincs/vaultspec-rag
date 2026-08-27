@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.6](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.5...vaultspec-rag-v0.4.6) (2026-08-26)
+
+
+### Bug Fixes
+
+* **mcp:** list tools through the public API instead of the private manager ([f87d52b](https://github.com/nevenincs/vaultspec-rag/commit/f87d52b1f3c496cc7d2810795fc328e1f8d06f78))
+
 ## [0.4.5](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.4...vaultspec-rag-v0.4.5) (2026-08-26)
 
 
