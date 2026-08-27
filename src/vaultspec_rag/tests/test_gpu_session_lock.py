@@ -32,6 +32,10 @@ from ..serviceclient._discovery import (
 from ._child_signal import await_marker, child_stderr
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 from ._ports import free_loopback_port
+from ._production_service import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    PROCESS_TIMEOUT_SECONDS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -40,7 +44,6 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 _SERVICE_TOKEN = "gpu-pytest-session-route-token"
-_PROCESS_TIMEOUT_SECONDS = 10.0
 
 # A nested pytest session costs one interpreter start, one plugin load, and
 # the repository conftest's configure hooks. Bounding that at the ten seconds
@@ -104,7 +107,7 @@ class _ProductionRoutes(NamedTuple):
     def stop(self) -> None:
         """Stop the loopback listener after its borrower has resumed."""
         self.server.should_exit = True
-        self.thread.join(timeout=_PROCESS_TIMEOUT_SECONDS)
+        self.thread.join(timeout=PROCESS_TIMEOUT_SECONDS)
         assert not self.thread.is_alive(), "production route server did not stop"
 
 
@@ -134,7 +137,7 @@ def _production_routes(status_dir: Path) -> Generator[_ProductionRoutes]:
     routes = _ProductionRoutes(registry, server, thread)
     thread.start()
     try:
-        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
+        deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
         while not server.started and time.monotonic() < deadline:
             time.sleep(0.01)
         assert server.started, "production route server did not start"
@@ -172,7 +175,9 @@ def _borrower_holder(tmp_path: Path) -> Generator[subprocess.Popen[str]]:
             text=True,
         )
         try:
-            reported = await_marker(marker, process, timeout=_PROCESS_TIMEOUT_SECONDS)
+            reported = await_marker(
+                marker, process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
+            )
             assert reported == "held", (
                 f"borrower holder did not take the lease: {diagnostics.read()}"
             )
@@ -182,10 +187,10 @@ def _borrower_holder(tmp_path: Path) -> Generator[subprocess.Popen[str]]:
                 assert process.stdin is not None
                 process.stdin.close()
             try:
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             assert process.returncode == 0, diagnostics.read()
 
 
@@ -203,7 +208,7 @@ def _child_borrower_lease_outcome() -> str:
         capture_output=True,
         check=False,
         text=True,
-        timeout=_PROCESS_TIMEOUT_SECONDS,
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
     )
     assert process.returncode == 0, process.stderr
     return process.stdout.strip()

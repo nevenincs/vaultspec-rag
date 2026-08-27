@@ -31,6 +31,7 @@ from ..serviceclient._transport import _try_http_admin
 from ._child_signal import await_marker, child_stderr
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 from ._ports import free_loopback_port
+from ._production_service import CHILD_PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -39,7 +40,6 @@ pytestmark = [pytest.mark.unit]
 
 _SERVICE_TOKEN = "service-preflight-route-token"
 _AMBIENT_SERVICE_TOKEN = "isolated-ambient-status-token"
-_PROCESS_TIMEOUT_SECONDS = 10.0
 runner = CliRunner()
 
 
@@ -179,7 +179,9 @@ def _machine_pointer_service(
             text=True,
         )
         try:
-            ready = await_marker(ready_path, process, timeout=_PROCESS_TIMEOUT_SECONDS)
+            ready = await_marker(
+                ready_path, process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
+            )
             assert ready == "ready", (
                 f"machine route host did not publish discovery: {diagnostics.read()}"
             )
@@ -188,10 +190,10 @@ def _machine_pointer_service(
             if process.poll() is None:
                 stop_path.write_text("stop", encoding="ascii")
             try:
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             assert process.returncode == 0, diagnostics.read()
 
 
