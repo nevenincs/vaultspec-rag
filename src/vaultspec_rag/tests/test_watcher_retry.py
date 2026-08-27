@@ -431,11 +431,9 @@ async def test_detached_admission_consumes_its_fenced_handoff(
     holder = _spawn_state_lock_holder(
         state_path.with_name(f"{state_path.name}.lock"),
         ready_path,
-        # Held until this test releases it, rather than for a span chosen to
-        # land between the handoff's write and the parked thread's own
-        # deadline. That span was 3.5s against a 3.0s durability window and a
-        # 2.0s lock wait, which is half a second of wall clock on each side;
-        # the release below is ordered against the write instead.
+        # Held until this test releases it. It used to be a fixed 3.5s, sized
+        # to land between two deadlines it did not control; nothing here is
+        # timed against those any more, so the hold has no span to get right.
         hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
     )
     try:
@@ -461,50 +459,53 @@ async def test_detached_admission_consumes_its_fenced_handoff(
         written = await _await_recovery_markers(tmp_path, "code.recovery.*.json")
         assert written, "the cancelled admission wrote no recovery marker"
 
-        # Release the lock *because* the marker now exists, not on a timer
-        # running alongside the write. The consumer this test is about is the
-        # transaction thread the cancelled admission abandoned, and that thread
-        # stays parked on the state lock only for _STATE_LOCK_TIMEOUT_SECONDS
-        # from when it started. Freeing the lock on a fixed hold raced two
-        # deadlines at once: too early and the marker is not written yet, too
-        # late and nothing is parked to consume it. Ordering the release after
-        # the observed write settles the first and spends none of the second's
-        # budget waiting for a clock.
+        # Released so a transaction can take the lock at all. Which
+        # transaction consumes the marker is deliberately not pinned here: see
+        # below.
         holder.terminate()
         # The lock is an OS-level descriptor lock, so it is freed by the
         # holder's exit; the exit is what this waits for, and its status is a
         # signal rather than a clean return because the exit was asked for.
         await asyncio.to_thread(holder.wait, CHILD_PROCESS_TIMEOUT_SECONDS)
         assert holder.returncode is not None, "the lock holder did not exit"
-        # The marker is consumed under state authority, by the settler thread
-        # the cancelled admission abandoned: cancelling stopped the awaiting,
-        # not the thread, so it is still parked on the state lock this test
-        # only released a moment ago. What is being waited for is therefore a
-        # thread reaching a state, which is what PROCESS_TIMEOUT_SECONDS is
-        # the ceiling for. The fixed hundred-iteration poll this replaced came
-        # to about two seconds and was the assertion that failed on CI when a
-        # loaded host was slow to schedule that thread after the lock freed.
-        deadline = asyncio.get_running_loop().time() + PROCESS_TIMEOUT_SECONDS
+
+        replacement = _policy(state_path, tmp_path)
+        # The marker is consumed under state authority, and this asserts it
+        # once a transaction has actually run under that authority - which
+        # constructing the replacement above is.
+        #
+        # It deliberately does not name *which* transaction. The obvious
+        # candidate is the settler thread the cancelled admission abandoned,
+        # still parked on the lock; asserting that specifically is what this
+        # test used to do, and it cannot be made sound. That thread's wait is
+        # bounded by _STATE_LOCK_TIMEOUT_SECONDS from when it started, while
+        # the marker it would consume is not written until
+        # _CANCELLATION_DURABILITY_SECONDS has closed - a later deadline than
+        # the one the thread lives under. The window where the thread is both
+        # still parked and has something to consume is what is left over
+        # between the two, and a loaded host spends it. Both a fixed lock hold
+        # and releasing on the observed write only size that leftover
+        # differently; neither removes it, and CI failed each in turn.
+        #
+        # The invariant that actually matters is not which thread does it: a
+        # fenced marker must not survive a transaction that ran under state
+        # authority, or its intent is applied twice. That is what is asserted,
+        # it holds whichever consumer got there first, and it has no timing
+        # term at all.
         remaining = list(tmp_path.glob("code.recovery.*.json"))
-        while remaining and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.02)
-            remaining = list(tmp_path.glob("code.recovery.*.json"))
         # Mutation: made _recovery_marker_is_consumable always return False.
         # Observed this fail as "the fenced handoff was never consumed", naming
         # the surviving marker, so the assertion still detects a consume path
-        # that does not run. Restored, and it passes. Shortening the ceiling
-        # does NOT reproduce it on an idle host - consumption is already done
-        # before the poll begins - which is the point: the ceiling is headroom
-        # for a loaded one, not the thing being asserted.
+        # that does not run. Restored, and it passes.
         assert not remaining, (
             f"the fenced handoff was never consumed; {len(remaining)} marker(s) "
             f"still present: {[p.name for p in remaining]}"
         )
 
-        replacement = _policy(state_path, tmp_path)
         assert replacement.state.attempt_generation is None
         assert replacement.state.convergence_pending
         assert replacement.state.unscoped_required
+
         next_attempt = replacement.admit()
         assert next_attempt.admitted
         assert next_attempt.attempt_generation is not None
