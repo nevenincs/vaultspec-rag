@@ -18,7 +18,7 @@ from ..cli._service_preflight import _quiesce_is_safe, _strict_quiesce
 from ..gpu_borrow_lease import acquire_gpu_borrow_lease, release_gpu_borrow_lease
 from ..serviceclient._transport import _try_http_admin
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
-from ._production_service import PROCESS_TIMEOUT_SECONDS, production_service
+from ._production_service import CHILD_PROCESS_TIMEOUT_SECONDS, production_service
 
 pytestmark = [pytest.mark.unit]
 
@@ -145,7 +145,7 @@ def test_unacknowledged_resume_retains_lease_until_child_exit_for_heartbeat_reco
             env=environment,
         )
         try:
-            deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+            deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
             while not _marker_published(marker) and child.poll() is None:
                 assert time.monotonic() < deadline, "borrower child never reached work"
                 time.sleep(0.01)
@@ -153,14 +153,14 @@ def test_unacknowledged_resume_retains_lease_until_child_exit_for_heartbeat_reco
             assert service.registry.quiesce_snapshot().state.value == "quiesced"
 
             service.stop()
-            stdout, stderr = child.communicate(timeout=PROCESS_TIMEOUT_SECONDS)
+            stdout, stderr = child.communicate(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             assert child.returncode == 1, stderr
             assert stdout == "borrow_gpu_resume_unacknowledged\n"
             assert service.registry.quiesce_snapshot().state.value == "quiesced"
         finally:
             if child.poll() is None:
                 child.terminate()
-                child.wait(timeout=PROCESS_TIMEOUT_SECONDS)
+                child.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
 
         _assert_lease_is_available()
         from ..server._lifespan import _borrower_lease_recovery_tick
