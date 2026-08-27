@@ -56,6 +56,29 @@ Two tool-lifecycle warnings:
 
 The commands in this guide use the `uv run` prefix, which runs the command-line interface (CLI) inside the project's environment. If you installed the standalone tool, drop the prefix and call `vaultspec-rag` directly.
 
+## Install the standalone binaries (CPU only)
+
+Once a binaries release has published, `vaultspec-rag` and `vaultspec-search-mcp` are also available as standalone binaries that need no Python toolchain on the machine:
+
+```powershell
+scoop bucket add vaultspec-rag https://github.com/nevenincs/vaultspec-rag
+scoop install vaultspec-rag
+```
+
+```sh
+brew tap nevenincs/vaultspec-rag https://github.com/nevenincs/vaultspec-rag
+brew install vaultspec-rag
+```
+
+**These are a CPU-only path, and that is not a temporary limitation.** The binaries bootstrap their pinned distribution from default PyPI on first launch, which resolves the CPU torch wheel - the same re-resolution the bare `uv tool install` warning above describes. Baking a CUDA index into the binary would not fix it and would make things worse: CUDA availability is a property of your machine, not of the target the binary was built for, so a Linux x86-64 laptop with no NVIDIA GPU would be handed a CUDA torch it cannot use.
+
+So choose by what you need:
+
+- **GPU acceleration** - use `uv tool install` with the `--with` torch pin above. This is the supported path for the product's headline capability.
+- **A CPU-only shim, or a machine with no Python** - the binaries are a legitimate fit, particularly for `vaultspec-search-mcp`, which loads no models and delegates every tool call to the HTTP daemon over REST.
+
+Both channels carry this caveat in their own install output (Scoop `notes`, Homebrew `caveats`), so it reaches whoever runs the command rather than living only in this guide.
+
 ## Provision dependencies with the install command
 
 The `install` command enrolls the workspace and provisions three external dependencies:
