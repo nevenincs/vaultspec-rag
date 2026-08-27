@@ -31,6 +31,7 @@ from ..server import ServerRouteRuntime, create_http_app
 from ..server._lifespan import _borrower_lease_recovery_tick
 from ..service import ServiceRegistry
 from ._child_signal import await_marker, child_stderr
+from ._production_service import CHILD_PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -47,7 +48,6 @@ _HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
 # under that does not catch a wedged child sooner; it fails a correct one for
 # the machine's speed. The child's own assertions are what prove the
 # behaviour, so this only has to be clear of the startup cost.
-_PROCESS_TIMEOUT_SECONDS = 120.0
 
 _CAPTURED_AUTHORITY_SCENARIO = """
 import os
@@ -392,10 +392,12 @@ def _borrower_process() -> Generator[BorrowerProcess]:
             text=True,
         )
         try:
-            capability = await_marker(marker, process, timeout=_PROCESS_TIMEOUT_SECONDS)
+            capability = await_marker(
+                marker, process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
+            )
             if capability is None:
                 process.kill()
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
                 raise AssertionError(
                     f"borrower child did not acquire the OS lease: {diagnostics.read()}"
                 )
@@ -405,10 +407,10 @@ def _borrower_process() -> Generator[BorrowerProcess]:
             if process.poll() is None:
                 process.terminate()
             try:
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             assert process.poll() is not None, "borrower child did not exit"
 
 
@@ -457,7 +459,7 @@ def _unrelated_capability() -> str:
 
 def _await_borrower_release(capability: str) -> BorrowerLeaseStatus:
     """Wait only for the OS to finish releasing a just-crashed child lock."""
-    deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
+    deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
     status = borrower_lease_status(capability)
     while status is BorrowerLeaseStatus.HELD and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -534,7 +536,7 @@ def test_os_lease_contends_and_releases_after_borrower_crash(tmp_path: Path) -> 
         assert acquire_gpu_borrow_lease() is None
 
         borrower.process.kill()
-        borrower.process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+        borrower.process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
         assert borrower.process.poll() is not None, "borrower child did not terminate"
 
         assert (
@@ -569,7 +571,7 @@ def _run_captured_authority_scenario(
         capture_output=True,
         text=True,
         check=False,
-        timeout=_PROCESS_TIMEOUT_SECONDS,
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
         env=environment,
     )
 
@@ -735,7 +737,7 @@ def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
                 asyncio.run(_borrower_lease_recovery_tick(routes.registry))
                 assert routes.registry.quiesce_snapshot().state.value == "quiesced"
             borrower.process.kill()
-            borrower.process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            borrower.process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             assert borrower.process.poll() is not None, (
                 "borrower child did not terminate"
             )
@@ -943,7 +945,7 @@ def test_republished_lease_record_is_never_verified_invalid(tmp_path: Path) -> N
             )
             try:
                 capability = await_marker(
-                    marker, process, timeout=_PROCESS_TIMEOUT_SECONDS
+                    marker, process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
                 )
                 assert capability is not None, (
                     f"republishing lease holder did not start: {diagnostics.read()}"
@@ -979,10 +981,10 @@ def test_republished_lease_record_is_never_verified_invalid(tmp_path: Path) -> N
             finally:
                 stop.write_text("stop", encoding="ascii")
                 try:
-                    process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                    process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                    process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
                 assert process.returncode == 0, diagnostics.read()
 
 
