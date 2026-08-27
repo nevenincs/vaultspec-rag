@@ -768,6 +768,31 @@ async def _settled_paint(pilot: typing.Any, app: ServerWatchApp) -> None:
         await asyncio.sleep(_POLL_INTERVAL)
 
 
+def _marker_evidence(app: ServerWatchApp) -> str:
+    """Summarise the control markers the interface is holding.
+
+    A row cell for a control is painted from a pending marker, so "the needle
+    never appeared" has two very different causes: the marker was never made,
+    or it was made and then settled by a payload that should not have been
+    allowed to settle it - the second being the defect these tests exist to
+    catch. The painted frame cannot separate them, because both render the
+    job's plain state. That is what made one CI failure here expensive to
+    read: the frame showed the control acknowledged on the notification line
+    while the row read "finished", and nothing said whether the marker was
+    still held.
+
+    ``settled_after`` is the generation a fetch must exceed before it may
+    confirm the control, so printing it beside the issued count shows whether
+    a poll predating the control was what cleared it.
+    """
+    markers = [
+        f"{job_id}:{marker.action}/{marker.outcome}@{marker.settled_after}"
+        for job_id, marker in sorted(app._pending.items())
+    ]
+    held = ", ".join(markers) if markers else "none"
+    return f"pending markers=[{held}] issued={app._job_stamps.issued}"
+
+
 async def _await_painted(pilot: typing.Any, app: ServerWatchApp, needle: str) -> str:
     """Return the painted screen once *needle* is on it.
 
@@ -784,7 +809,9 @@ async def _await_painted(pilot: typing.Any, app: ServerWatchApp, needle: str) ->
         if needle in painted:
             return painted
         await asyncio.sleep(_POLL_INTERVAL)
-    raise AssertionError(f"{needle!r} was never painted; last frame:\n{painted}")
+    raise AssertionError(
+        f"{needle!r} was never painted; {_marker_evidence(app)}; last frame:\n{painted}"
+    )
 
 
 async def _await_painted_when(
@@ -802,7 +829,10 @@ async def _await_painted_when(
         if predicate(painted):
             return painted
         await asyncio.sleep(_POLL_INTERVAL)
-    raise AssertionError(f"{described} was never painted; last frame:\n{painted}")
+    raise AssertionError(
+        f"{described} was never painted; {_marker_evidence(app)}; "
+        f"last frame:\n{painted}"
+    )
 
 
 async def _await_gone(pilot: typing.Any, app: ServerWatchApp, needle: str) -> str:
@@ -815,7 +845,10 @@ async def _await_gone(pilot: typing.Any, app: ServerWatchApp, needle: str) -> st
         if needle not in painted:
             return painted
         await asyncio.sleep(_POLL_INTERVAL)
-    raise AssertionError(f"{needle!r} never left the screen; last frame:\n{painted}")
+    raise AssertionError(
+        f"{needle!r} never left the screen; {_marker_evidence(app)}; "
+        f"last frame:\n{painted}"
+    )
 
 
 def _screen_failure(deliver: typing.Callable[[], object]) -> ScreenStackError | None:
