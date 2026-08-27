@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.8](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.7...vaultspec-rag-v0.4.8) (2026-08-27)
+
+
+### Bug Fixes
+
+* **binaries:** invoke the builder as a module so it can find its package ([29512e7](https://github.com/nevenincs/vaultspec-rag/commit/29512e7dd8dbc8f166e5a06c6d2b02fb65df31ee))
+* **binaries:** invoke the builder as a module so it can find its package ([f0d8345](https://github.com/nevenincs/vaultspec-rag/commit/f0d83455019fefde0da8d5580abf95bc17425d58))
+
 ## [0.4.7](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.6...vaultspec-rag-v0.4.7) (2026-08-27)
 
 
