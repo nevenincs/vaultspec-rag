@@ -292,7 +292,14 @@ def test_real_extractor_no_progress_watchdog_terminates_child(tmp_path: Path) ->
     _write_rule(tmp_path, command=_command(extractor))
     rule = load_preprocess_rules(tmp_path, strict=True).match(source.name)
     assert rule is not None
-    policy = RunPolicy(no_progress_timeout_seconds=0.2)
+    # The clock starts here, before run_preprocessor spawns anything, and the
+    # child has no way to record progress into this policy - progress is
+    # recorded by the indexer, not by the subprocess. So the window has to
+    # outlast a cold interpreter start, or the watchdog fires before the child
+    # runs its first line and the test asserts the reaping of a process that
+    # never existed. It stays far below the child's 30s sleep, so the child is
+    # still making no progress when the watchdog does fire.
+    policy = RunPolicy(no_progress_timeout_seconds=10.0)
 
     with pytest.raises(JobError) as caught:
         run_preprocessor(
@@ -304,7 +311,7 @@ def test_real_extractor_no_progress_watchdog_terminates_child(tmp_path: Path) ->
         )
 
     assert caught.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
-    assert started.exists()
+    assert started.exists(), "the child never started, so nothing was watchdogged"
     assert not finished.exists()
     child_pid = int(started.read_text())
     deadline = time.monotonic() + 3

@@ -18,6 +18,7 @@ search/index tools on the shared :data:`mcp` instance.
 
 from __future__ import annotations
 
+import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
@@ -111,9 +112,13 @@ def restrict_to_read_only_tools() -> tuple[str, ...]:
     Returns:
         The withdrawn tool names, in the order they were registered.
     """
+    # The public listing is the protocol's own, and it is async because the
+    # protocol handler is. This runs at launch, before ``mcp.run`` starts its
+    # loop, so it owns the only loop in the process for the length of the call.
+    listed = asyncio.run(mcp.list_tools())
     withdrawn = tuple(
         tool.name
-        for tool in mcp._tool_manager.list_tools()
+        for tool in listed
         if not (tool.annotations and tool.annotations.read_only_hint)
     )
     for name in withdrawn:
