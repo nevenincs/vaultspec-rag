@@ -22,6 +22,7 @@ from ..serviceclient._transport import (
 )
 from ._child_signal import await_marker, child_stderr
 from ._ports import free_loopback_port
+from ._production_service import CHILD_PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -36,7 +37,6 @@ pytestmark = [pytest.mark.unit]
 # under that does not catch a wedged child sooner; it fails a correct one for
 # the machine's speed. The child's own assertions are what prove the
 # behaviour, so this only has to be clear of the startup cost.
-_PROCESS_TIMEOUT_SECONDS = 120.0
 _RESIDENT_ROUTE_HOST = """
 import json
 import os
@@ -335,7 +335,7 @@ def _captured_resident_routes(
         )
         try:
             reported = await_marker(
-                ready_path, process, timeout=_PROCESS_TIMEOUT_SECONDS
+                ready_path, process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
             )
             assert reported is not None, (
                 f"resident route host did not start: {diagnostics.read()}"
@@ -347,10 +347,10 @@ def _captured_resident_routes(
             if process.poll() is None:
                 stop_path.write_text("stop", encoding="ascii")
             try:
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+                process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
             assert process.returncode == 0, diagnostics.read()
 
 
@@ -379,7 +379,7 @@ def _run_captured_target_proof(
         capture_output=True,
         text=True,
         env=environment,
-        timeout=_PROCESS_TIMEOUT_SECONDS,
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
         check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -458,7 +458,7 @@ def test_health_evidence_read_outlasts_the_readiness_poll_bound() -> None:
     finally:
         server.shutdown()
         server.server_close()
-        thread.join(timeout=_PROCESS_TIMEOUT_SECONDS)
+        thread.join(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
 
     assert not health_probe_timed_out(observed), (
         "a slow but live service was read as accepted-but-unanswered"
@@ -481,7 +481,7 @@ def test_capture_missing_original_lock_never_creates_an_anchor(tmp_path: Path) -
         capture_output=True,
         text=True,
         env=environment,
-        timeout=_PROCESS_TIMEOUT_SECONDS,
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
         check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
