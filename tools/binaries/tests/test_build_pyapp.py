@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 from tools.binaries.build_pyapp import (
     BINARIES,
     PROJECT_NAME,
@@ -24,9 +27,6 @@ from tools.binaries.build_pyapp import (
     version_from_tag,
     write_checksum,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 
@@ -186,7 +186,11 @@ def test_the_release_workflow_invokes_this_builder(repo_root: Path) -> None:
     """The script is not orphaned: the binaries workflow is its automated caller."""
     workflow = repo_root / ".github" / "workflows" / "binaries.yml"
     text = workflow.read_text(encoding="utf-8")
-    assert "tools/binaries/build_pyapp.py" in text
+    # The dotted form, not the file path: see
+    # test_no_call_site_runs_a_packaged_tool_as_a_script for why the path form
+    # cannot resolve this package. Pinning the path here is what let the broken
+    # invocation pass its own test.
+    assert "-m tools.binaries.build_pyapp" in text
     assert "--tag" in text
     assert "--outdir" in text
 
@@ -194,4 +198,40 @@ def test_the_release_workflow_invokes_this_builder(repo_root: Path) -> None:
 def test_the_justfile_exposes_a_local_build_recipe(repo_root: Path) -> None:
     """A maintainer can reproduce a release build without copying CI's command."""
     text = (repo_root / "justfile").read_text(encoding="utf-8")
-    assert "tools/binaries/build_pyapp.py" in text
+    assert "-m tools.binaries.build_pyapp" in text
+
+
+def test_no_call_site_runs_a_packaged_tool_as_a_script(repo_root: Path) -> None:
+    """Every packaged tool must be invoked with ``-m``, never by file path.
+
+    ``tools/binaries`` and ``tools/packaging`` are packages whose modules
+    import each other by their full dotted path. Running one by file path puts
+    its own directory on ``sys.path`` instead of the repository root, so the
+    first such import dies with ``ModuleNotFoundError: No module named
+    'tools'`` - before any argument is read, and identically on every
+    platform.
+
+    That is not hypothetical: the release job and the ``build-binaries`` recipe
+    both invoked the builder by path, and the first dispatch of the binaries
+    workflow failed on exactly this, on the Linux leg, having built nothing.
+    The unit tests could not see it because they import the module rather than
+    spawn it, so the entry point had no coverage at all.
+
+    Mutation: put the file-path form back in either call site; this fails
+    naming that file and line. Restored, it passes.
+    """
+    sources = [
+        repo_root / "justfile",
+        *sorted((repo_root / ".github" / "workflows").glob("*.yml")),
+    ]
+    offenders = [
+        f"{path.relative_to(repo_root).as_posix()}:{number}"
+        for path in sources
+        if path.exists()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if re.search(r"python\s+\S*tools/\w+/\w+\.py", line)
+    ]
+    assert not offenders, (
+        "these call sites run a packaged tool by file path, which cannot "
+        f"resolve its own package: {offenders}"
+    )
