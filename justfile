@@ -456,7 +456,7 @@ health *args='':
 
 # Build the standalone PyApp binaries for one release tag and Rust target.
 binaries tag rust_target outdir='dist-bin':
-  uv run --no-project --python 3.13 -- python tools/binaries/build_pyapp.py --tag {{tag}} --target {{rust_target}} --outdir {{outdir}}
+  uv run --no-project --python 3.13 -- python -m tools.binaries.build_pyapp --tag {{tag}} --target {{rust_target}} --outdir {{outdir}}
 
 # Regenerate the Scoop manifest and Homebrew formula for one released tag.
 # Point `checksums` at the release's SHA256SUMS (locally built, or downloaded
