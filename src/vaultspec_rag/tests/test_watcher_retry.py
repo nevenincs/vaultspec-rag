@@ -28,6 +28,10 @@ from ..watcher_retry import (
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import ObservedSource
+from ._production_service import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    PROCESS_TIMEOUT_SECONDS,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -420,13 +424,32 @@ async def test_detached_admission_consumes_its_fenced_handoff(
         assert asyncio.get_running_loop().time() - started < 5.5
         assert list(tmp_path.glob("code.recovery.*.json"))
 
-        await asyncio.to_thread(holder.wait, 10.0)
+        await asyncio.to_thread(holder.wait, CHILD_PROCESS_TIMEOUT_SECONDS)
         assert holder.returncode == 0
-        for _ in range(100):
-            if not list(tmp_path.glob("code.recovery.*.json")):
-                break
+        # The marker is consumed under state authority, by the settler thread
+        # the cancelled admission abandoned: cancelling stopped the awaiting,
+        # not the thread, so it is still parked on the state lock the holder
+        # only released a moment ago. What is being waited for is therefore a
+        # thread reaching a state, which is what PROCESS_TIMEOUT_SECONDS is
+        # the ceiling for. The fixed hundred-iteration poll this replaced came
+        # to about two seconds and was the assertion that failed on CI when a
+        # loaded host was slow to schedule that thread after the lock freed.
+        deadline = asyncio.get_running_loop().time() + PROCESS_TIMEOUT_SECONDS
+        remaining = list(tmp_path.glob("code.recovery.*.json"))
+        while remaining and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(0.02)
-        assert not list(tmp_path.glob("code.recovery.*.json"))
+            remaining = list(tmp_path.glob("code.recovery.*.json"))
+        # Mutation: made _recovery_marker_is_consumable always return False.
+        # Observed this fail as "the fenced handoff was never consumed", naming
+        # the surviving marker, so the assertion still detects a consume path
+        # that does not run. Restored, and it passes. Shortening the ceiling
+        # does NOT reproduce it on an idle host - consumption is already done
+        # before the poll begins - which is the point: the ceiling is headroom
+        # for a loaded one, not the thing being asserted.
+        assert not remaining, (
+            f"the fenced handoff was never consumed; {len(remaining)} marker(s) "
+            f"still present: {[p.name for p in remaining]}"
+        )
 
         replacement = _policy(state_path, tmp_path)
         assert replacement.state.attempt_generation is None
