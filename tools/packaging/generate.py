@@ -126,7 +126,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--product",
-        default=products.VAULTSPEC_CORE.name,
+        default=products.VAULTSPEC_RAG.name,
         choices=sorted(products.PRODUCTS),
         help="which product's channels to generate",
     )

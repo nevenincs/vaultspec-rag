@@ -17,7 +17,7 @@ import pytest
 from tools.binaries.build_pyapp import BINARIES, asset_name
 from tools.packaging import homebrew, products, scoop
 from tools.packaging.checksums import ChecksumError
-from tools.packaging.generate import available_targets, generate
+from tools.packaging.generate import _parser, available_targets, generate
 from tools.packaging.pointer import PointerError, check_forward
 from tools.packaging.products import VAULTSPEC_RAG
 
@@ -231,3 +231,22 @@ def test_generate_writes_lf_line_endings(tmp_path: Path) -> None:
 
     for path in generate(tmp_path, VAULTSPEC_RAG, TAG, aggregate):
         assert b"\r" not in path.read_bytes()
+
+
+def test_the_cli_default_product_is_one_it_can_resolve() -> None:
+    """The parser's default product must be a product the CLI actually holds.
+
+    A default naming something ``PRODUCTS`` does not carry fails while the
+    parser is being built, so every invocation dies before it reads an
+    argument - ``--help`` included, and the release job's call with it. The
+    other tests here all reach ``generate`` directly and never build the
+    parser, which is how a dangling default sat in ``main`` unnoticed.
+
+    Mutation: pointed the default at a name ``PRODUCTS`` does not carry; this
+    fails on parser construction, naming the missing member. Restored, it
+    passes.
+    """
+    parsed = _parser().parse_args(
+        ["--tag", "vaultspec-rag-v0.0.0", "--checksums", "SHA256SUMS"]
+    )
+    assert parsed.product in products.PRODUCTS
