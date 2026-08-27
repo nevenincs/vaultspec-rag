@@ -56,7 +56,7 @@ Two tool-lifecycle warnings:
 
 The commands in this guide use the `uv run` prefix, which runs the command-line interface (CLI) inside the project's environment. If you installed the standalone tool, drop the prefix and call `vaultspec-rag` directly.
 
-## Install the standalone binaries (CPU only)
+## Install the standalone binaries
 
 Once a binaries release has published, `vaultspec-rag` and `vaultspec-search-mcp` are also available as standalone binaries that need no Python toolchain on the machine:
 
@@ -70,14 +70,11 @@ brew tap nevenincs/vaultspec-rag https://github.com/nevenincs/vaultspec-rag
 brew install vaultspec-rag
 ```
 
-**These are a CPU-only path, and that is not a temporary limitation.** The binaries bootstrap their pinned distribution from default PyPI on first launch, which resolves the CPU torch wheel - the same re-resolution the bare `uv tool install` warning above describes. Baking a CUDA index into the binary would not fix it and would make things worse: CUDA availability is a property of your machine, not of the target the binary was built for, so a Linux x86-64 laptop with no NVIDIA GPU would be handed a CUDA torch it cannot use.
+**Windows and Linux only, and the GPU requirement is unchanged.** These are the same platforms listed under [Before you begin](#before-you-begin); there is no macOS binary and the Homebrew formula does not offer a macOS install, because the stack is CUDA-only and there is no CUDA build for macOS at any version. A macOS binary would install cleanly and raise on first use, which reads as a defect rather than as an unsupported platform.
 
-So choose by what you need:
+The binaries bootstrap the **same accelerated torch build this project resolves** - the `cu130` wheel, pinned from `uv.lock`, so the binary cannot drift onto a different torch than `uv sync` installs. That pin is load-bearing rather than cosmetic: `tool.uv.sources` is a workspace setting, not wheel metadata, so it does not survive into an install of the published wheel from PyPI. Without it the bootstrap resolves plain PyPI torch, which on Windows declares no CUDA dependency at all - and the service then refuses to start, exactly as it does for a CPU-only tool environment.
 
-- **GPU acceleration** - use `uv tool install` with the `--with` torch pin above. This is the supported path for the product's headline capability.
-- **A CPU-only shim, or a machine with no Python** - the binaries are a legitimate fit, particularly for `vaultspec-search-mcp`, which loads no models and delegates every tool call to the HTTP daemon over REST.
-
-Both channels carry this caveat in their own install output (Scoop `notes`, Homebrew `caveats`), so it reaches whoever runs the command rather than living only in this guide.
+First launch is a large download: about 1.8 GB on Windows, 500 MB on Linux. That is the same download `uv tool install` with the torch pin performs; the binary does not add to it, it just does it on first run.
 
 ## Provision dependencies with the install command
 

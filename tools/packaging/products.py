@@ -63,6 +63,15 @@ class Product:
     executables: tuple[Executable, ...]
     #: Channel-specific caveats surfaced to whoever installs from a manifest.
     notes: tuple[str, ...] = ()
+    #: The triples this product can actually RUN on. Distinct from what a
+    #: package manager serves: Homebrew runs on macOS, but a CUDA-only
+    #: product cannot, and offering an install there ships a binary that
+    #: raises at startup. Empty means "every target the channel serves".
+    supported_targets: tuple[str, ...] = ()
+
+    def serves(self, target: str) -> bool:
+        """Return whether this product may be offered on ``target``."""
+        return not self.supported_targets or target in self.supported_targets
 
     def version_from_tag(self, tag: str) -> str:
         """Return the version a release tag names.
@@ -112,18 +121,22 @@ VAULTSPEC_RAG = Product(
             summary="the semantic-search MCP server",
         ),
     ),
+    # CUDA-ONLY. This is not a preference to soften in a channel manifest:
+    # `embeddings.py`, `search/_searcher.py` and `server/_lifespan.py` each
+    # raise RuntimeError when `torch.cuda.is_available()` is false, and
+    # docs/installation.md states macOS and Apple Silicon are unsupported.
+    # Homebrew runs on macOS, so without this the formula would offer an
+    # install that places a binary raising at startup - a worse outcome than
+    # not being installable, because it looks like a product defect.
+    supported_targets=(WINDOWS_X86_64, LINUX_X86_64, LINUX_ARM64),
     notes=(
-        # The honest caveat for this product specifically. PyApp resolves the
-        # pinned distribution from default PyPI on first launch, so torch
-        # arrives as the CPU build - the `pytorch-cu130` index this project
-        # configures for development is not consulted. Baking a CUDA index
-        # into the binary is not the fix: CUDA availability is a property of
-        # the user's machine, not of the Rust target the binary was built for,
-        # so a Linux x86-64 laptop with no NVIDIA GPU would be handed a CUDA
-        # torch it cannot use.
-        "Bootstraps torch from default PyPI on first launch; needs network once.",
-        "macOS gets Metal (MPS) support; Linux gets the CPU build, not CUDA.",
-        "For CUDA, install with uv instead - see docs/installation.md.",
+        # The binaries bootstrap the SAME accelerated torch build the project
+        # resolves: `tools.binaries.torch_channel` pins the cu130 wheel from
+        # uv.lock for every target built. Without it the bootstrap resolves
+        # plain PyPI torch, which on Windows carries no CUDA at all.
+        "Requires an NVIDIA GPU with a working CUDA driver; there is no CPU mode.",
+        "First launch downloads the CUDA runtime; needs network once, and space.",
+        "Same GPU torch build uv installs, pinned from this project's lock.",
         "Verify with: vaultspec-rag --version",
     ),
 )

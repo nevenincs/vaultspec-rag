@@ -160,7 +160,7 @@ def render(
     product: Product,
     version: str,
     digests: dict[str, str],
-    available: tuple[str, ...] = products.HOMEBREW_TARGETS,
+    available: tuple[str, ...] | None = None,
 ) -> str:
     """Return the formula as the exact bytes committed to ``Formula/``.
 
@@ -168,7 +168,17 @@ def render(
     the build matrix does not yet cover is omitted from the formula rather
     than emitted with an invented digest, so ``brew install`` reports an
     unsupported platform instead of failing a checksum.
+
+    Defaulting to the product's own supported set - rather than to every
+    triple Homebrew serves - means the renderer cannot offer a platform the
+    product raises on, even when called without an explicit list.
     """
+    if available is None:
+        available = tuple(
+            target for target in products.HOMEBREW_TARGETS if product.serves(target)
+        )
+    else:
+        available = tuple(target for target in available if product.serves(target))
     primary = product.executables[0]
     lines = [
         f"class {product.formula_class} < Formula",

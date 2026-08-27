@@ -17,9 +17,13 @@ in their execution entry point:
 
 The MCP server lives behind the ``mcp`` extra, so the binary installs
 ``vaultspec-rag[mcp]``: a bare install omits the ``mcp`` dependency and the
-server binary would fail to import at first launch. Torch resolves from
-default PyPI here, which means the CPU build - see ``tools/packaging`` for
-why a CUDA index is not baked into the binary.
+server binary would fail to import at first launch.
+
+Torch is pinned to the accelerated build on every target that publishes one,
+because the bootstrap's default - plain PyPI - is CPU-only on Windows and is
+not the build this project resolves on Linux. See
+``tools.binaries.torch_channel`` for how the pin is derived from ``uv.lock``
+and why it is a direct wheel reference rather than an extra index.
 
 The distribution source is the published PyPI package pinned to the release
 version: PyApp installs it into a per-user data directory on first launch
@@ -51,6 +55,8 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from tools.binaries.torch_channel import pip_extra_args
 
 # Pinned PyApp crate version. Bumping this changes the bootstrapper and the
 # embedded python-build-standalone distributions it selects, so it is an
@@ -137,6 +143,12 @@ def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
         }
     )
     env.update(binary.pyapp_exec_env())
+    # Bootstrap the accelerated torch build on every target that has one.
+    # Without this the first launch resolves torch from default PyPI, which on
+    # Windows is CPU-only - a GPU product delivered with the GPU absent.
+    extra_args = pip_extra_args(target, PYTHON_VERSION)
+    if extra_args is not None:
+        env["PYAPP_PIP_EXTRA_ARGS"] = extra_args
 
     cmd = [
         "cargo",
