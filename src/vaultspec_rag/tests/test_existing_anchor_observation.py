@@ -28,6 +28,10 @@ from .._machine_lock import (
 )
 from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ._production_service import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    PROCESS_TIMEOUT_SECONDS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -35,7 +39,6 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-_PROCESS_TIMEOUT_SECONDS = 10.0
 
 # Observations taken against a holder that is republishing its owner record.
 # The truncate-then-write order this guards against leaves the anchor empty for
@@ -182,7 +185,7 @@ def _held_anchor(
         # parseable pid rather than for the path: an empty read here is the
         # holder mid-write, not a holder that failed to start.
         holder_pid = 0
-        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
+        deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
         while holder_pid == 0 and process.poll() is None:
             assert time.monotonic() < deadline, "real anchor holder did not start"
             with contextlib.suppress(OSError, ValueError):
@@ -195,10 +198,10 @@ def _held_anchor(
         if process.poll() is None:
             stop_path.write_text("stop", encoding="ascii")
         try:
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=_PROCESS_TIMEOUT_SECONDS)
+            process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
         assert process.stderr is not None
         stderr = process.stderr.read()
         process.stderr.close()
@@ -223,7 +226,7 @@ def test_republished_owner_record_is_never_observed_absent(tmp_path: Path) -> No
         # quietly reduce it to a handful of reads that prove nothing.
         unreadable = 0
         samples = 0
-        deadline = time.monotonic() + _PROCESS_TIMEOUT_SECONDS
+        deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
         while samples < _RACE_SAMPLES:
             assert time.monotonic() < deadline, f"only reached {samples} samples"
             observation = observe_existing_anchor(anchor, pid_record=True)
