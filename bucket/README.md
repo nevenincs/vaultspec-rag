@@ -28,22 +28,17 @@ beside `"hash": ["", ""]` out of a green run. The generator in `tools/packaging`
 now refuses every step of that path - and this bucket stays empty until there is a
 real release to point at.
 
-## GPU caveat
+## GPU requirement
 
-The Scoop binaries bootstrap a **CPU** build of torch on first launch. PyApp
-resolves the pinned distribution from default PyPI, so the `pytorch-cu130` index
-this project configures for development is not consulted, and baking a CUDA index
-into the binary would be wrong anyway: CUDA availability is a property of the
-user's machine, not of the Rust target the binary was built for.
+vaultspec-rag is CUDA-only - `embeddings.py`, `search/_searcher.py` and
+`server/_lifespan.py` each raise when `torch.cuda.is_available()` is false. The Scoop
+binaries therefore bootstrap the **accelerated** torch build, pinned from `uv.lock` by
+`tools/binaries/torch_channel.py`, not whatever default PyPI resolves.
 
-For GPU acceleration, install with uv instead:
-
-```powershell
-uv tool install vaultspec-rag
-```
-
-The generated manifest carries this caveat in its `notes`, so it reaches whoever
-runs `scoop install` rather than living only here.
+That pin is the whole point. PyPI's Windows torch wheel declares no CUDA dependency at
+all, and `tool.uv.sources` does not survive into an install of the published wheel, so
+without it a Scoop install would place a binary whose service refuses to start. First
+launch downloads roughly 1.8 GB.
 
 ## Maintenance
 

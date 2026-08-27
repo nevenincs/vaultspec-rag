@@ -28,15 +28,15 @@ jobs:
           - name: windows-x86_64
             runner: [self-hosted, Windows, X64]
             target: x86_64-pc-windows-msvc
-          - name: macos-aarch64
-            runner: [self-hosted, macOS, ARM64]
-            target: aarch64-apple-darwin
-          # No self-hosted macOS x86_64 host exists; PyApp cross-builds it on
-          # the Apple Silicon runner (the CPython distribution is selected from
-          # the cargo target triple, and clang links both arches natively).
-          - name: macos-x86_64
-            runner: [self-hosted, macOS, ARM64]
-            target: x86_64-apple-darwin
+          # NO macOS LEGS, deliberately. vaultspec-rag is CUDA-only:
+          # embeddings.py, search/_searcher.py and server/_lifespan.py each
+          # raise RuntimeError when torch.cuda.is_available() is false, and
+          # there is no CUDA build for macOS at any version. Building macOS
+          # binaries would publish assets that install cleanly and raise on
+          # first use, which reads as a product defect rather than as an
+          # unsupported platform. tools/packaging refuses to offer them too:
+          # the product's supported_targets excludes darwin, so the Homebrew
+          # formula covers Linux only.
           # DELIVERY GAP, deliberately left unschedulable rather than silently
           # absent. Homebrew supports Linux ARM64, so the missing
           # aarch64-unknown-linux-gnu build is a platform the formula cannot

@@ -32,33 +32,20 @@ The idiom shared across the family is the generation discipline - one pointer pe
 channel, generated from the release's own `SHA256SUMS`, guarded against a backward
 bump - not the formula's internal strategy.
 
-## GPU caveat
+## Linux only
 
-The binaries bootstrap the default-PyPI build of torch on first launch, for the
-reasons in `../bucket/README.md`. What that costs depends on the platform:
+The formula covers **Linux x86-64 only**, and that is a product constraint rather than a
+build gap. vaultspec-rag is CUDA-only, there is no CUDA build for macOS at any version,
+and Homebrew runs on macOS - so nothing but the product's own `supported_targets` stops
+the formula offering an install that would place a binary raising at startup. The
+generator refuses it, and no macOS binaries are built at all.
 
-- **macOS** - little. There is no CUDA build for macOS at all, so the default wheel
-  is what any install would use, and it carries Metal (MPS) support.
-- **Linux with an NVIDIA GPU** - the CUDA build. Install with
-  `uv tool install vaultspec-rag` and the torch pin from `docs/installation.md`
-  instead.
+Linux arm64 is a genuine gap rather than a decision: the cu130 index publishes a
+`manylinux_2_28_aarch64` wheel, so the platform is servable as soon as the runner is
+registered. See the matrix comment in `binaries.yml`.
 
-The generated formula's `caveats` carry this so it reaches whoever runs
-`brew install`.
-
-## Coverage
-
-| Platform     | Status                                                       |
-| ------------ | ------------------------------------------------------------ |
-| macOS arm64  | built                                                        |
-| macOS x86-64 | built                                                        |
-| Linux x86-64 | built                                                        |
-| Linux arm64  | **gap** - no build; see the matrix comment in `binaries.yml` |
-
-Homebrew supports Linux arm64, so the missing `aarch64-unknown-linux-gnu` build is
-a platform the formula cannot offer an install on at all. The generator omits it
-rather than pinning an asset that was never published, and prints a `::warning::`
-naming the gap on every release.
+The binaries bootstrap the accelerated torch build pinned from `uv.lock`, for the
+reasons in `../bucket/README.md`. First launch downloads roughly 500 MB.
 
 ## Maintenance
 

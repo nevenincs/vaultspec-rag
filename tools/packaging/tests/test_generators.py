@@ -29,12 +29,10 @@ pytestmark = pytest.mark.unit
 VERSION = "0.4.6"
 TAG = f"vaultspec-rag-v{VERSION}"
 
-#: Every triple the release matrix attaches, plus the two Homebrew serves
-#: that it does not, so coverage gaps are exercised rather than assumed.
+#: Every triple the release matrix attaches. macOS is absent because this
+#: product is CUDA-only and does not build there - see products.py.
 ALL_TARGETS = (
     products.WINDOWS_X86_64,
-    products.MACOS_ARM64,
-    products.MACOS_X86_64,
     products.LINUX_X86_64,
 )
 
@@ -118,14 +116,9 @@ def test_homebrew_formula_pins_every_covered_platform() -> None:
     """Each built platform gets a url and a sha256 for each executable."""
     digests = digests_for()
 
-    formula = homebrew.render(
-        VAULTSPEC_RAG,
-        VERSION,
-        digests,
-        (products.MACOS_ARM64, products.MACOS_X86_64, products.LINUX_X86_64),
-    )
+    formula = homebrew.render(VAULTSPEC_RAG, VERSION, digests, (products.LINUX_X86_64,))
 
-    for target in (products.MACOS_ARM64, products.MACOS_X86_64, products.LINUX_X86_64):
+    for target in (products.LINUX_X86_64,):
         for executable in VAULTSPEC_RAG.executables:
             asset = VAULTSPEC_RAG.asset_name(executable, target)
             assert f"/{asset}" in formula
@@ -139,10 +132,7 @@ def test_homebrew_formula_omits_an_unbuilt_platform() -> None:
     failing a checksum against an asset that was never published.
     """
     formula = homebrew.render(
-        VAULTSPEC_RAG,
-        VERSION,
-        digests_for(),
-        (products.MACOS_ARM64, products.MACOS_X86_64, products.LINUX_X86_64),
+        VAULTSPEC_RAG, VERSION, digests_for(), (products.LINUX_X86_64,)
     )
 
     assert products.LINUX_ARM64 not in formula
@@ -172,12 +162,26 @@ def test_available_targets_requires_every_executable_on_a_platform() -> None:
     del digests[
         VAULTSPEC_RAG.asset_name(
             VAULTSPEC_RAG.executables[1],
-            products.MACOS_ARM64,
+            products.LINUX_X86_64,
         )
     ]
 
-    assert products.MACOS_ARM64 not in available_targets(VAULTSPEC_RAG, digests)
-    assert products.MACOS_X86_64 in available_targets(VAULTSPEC_RAG, digests)
+    assert products.LINUX_X86_64 not in available_targets(VAULTSPEC_RAG, digests)
+
+
+def test_an_unsupported_platform_is_never_offered() -> None:
+    """macOS is excluded even when assets for it exist.
+
+    Homebrew runs on macOS, so nothing but the product's own
+    supported_targets stops the formula offering an install there - and this
+    product raises at startup without CUDA, which macOS never has.
+    """
+    digests = digests_for((products.MACOS_ARM64, products.LINUX_X86_64))
+
+    resolved = available_targets(VAULTSPEC_RAG, digests)
+
+    assert products.MACOS_ARM64 not in resolved
+    assert products.LINUX_X86_64 in resolved
 
 
 @pytest.mark.parametrize(
