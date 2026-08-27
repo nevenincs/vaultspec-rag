@@ -389,6 +389,30 @@ async def test_cancelled_contended_admission_settles_committed_claim(
             holder.wait(timeout=5.0)
 
 
+async def _await_recovery_markers(root: Path, pattern: str) -> list[Path]:
+    """Return the recovery markers matching *pattern*, waiting for them to land.
+
+    The handoff writes its marker from the worker thread the cancellation
+    abandoned - cancelling stops the awaiting, not the thread - so the write is
+    asynchronous with respect to the cancel that triggered it. Sampling the
+    directory the instant the cancel returns therefore races the write, which
+    is what failed on CI as a bare ``assert []``.
+
+    Bounded by the ceiling for a thread reaching a state. A handoff that never
+    happens still fails here; only the instantaneous sampling is given up.
+
+    Mutation: made ``_run_cancellation_fallback`` return False so no marker is
+    ever written. All four callers fail, each naming the source whose handoff
+    did not happen. Restored, 29 passed.
+    """
+    deadline = asyncio.get_running_loop().time() + PROCESS_TIMEOUT_SECONDS
+    markers = list(root.glob(pattern))
+    while not markers and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.02)
+        markers = list(root.glob(pattern))
+    return markers
+
+
 @pytest.mark.asyncio
 async def test_detached_admission_consumes_its_fenced_handoff(
     tmp_path: Path,
@@ -422,7 +446,8 @@ async def test_detached_admission_consumes_its_fenced_handoff(
         with pytest.raises(asyncio.CancelledError):
             await admission
         assert asyncio.get_running_loop().time() - started < 5.5
-        assert list(tmp_path.glob("code.recovery.*.json"))
+        written = await _await_recovery_markers(tmp_path, "code.recovery.*.json")
+        assert written, "the cancelled admission wrote no recovery marker"
 
         await asyncio.to_thread(holder.wait, CHILD_PROCESS_TIMEOUT_SECONDS)
         assert holder.returncode == 0
@@ -525,7 +550,8 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
         with pytest.raises(asyncio.CancelledError):
             await persistence
         assert asyncio.get_running_loop().time() - started < 6.0
-        assert list(tmp_path.glob("code.recovery.*.json"))
+        written = await _await_recovery_markers(tmp_path, "code.recovery.*.json")
+        assert written, "the cancelled persistence wrote no recovery marker"
     finally:
         for _ in range(acquired_slots):
             _STATE_TRANSACTION_WORKER_SLOTS.release()
@@ -822,8 +848,10 @@ async def test_mixed_batch_cancellation_hands_off_both_sources(
         assert await persistence is True
 
         assert asyncio.get_running_loop().time() - started < 8.0
-        assert list(tmp_path.glob("vault.recovery.*.json"))
-        assert list(tmp_path.glob("code.recovery.*.json"))
+        vault_written = await _await_recovery_markers(tmp_path, "vault.recovery.*.json")
+        assert vault_written, "the vault source wrote no recovery marker"
+        code_written = await _await_recovery_markers(tmp_path, "code.recovery.*.json")
+        assert code_written, "the code source wrote no recovery marker"
     finally:
         for holder in holders:
             if holder.poll() is None:
@@ -875,7 +903,8 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
         elapsed = asyncio.get_running_loop().time() - started
 
         assert elapsed < 8.0
-        assert list(tmp_path.glob("code.recovery.*.json"))
+        written = await _await_recovery_markers(tmp_path, "code.recovery.*.json")
+        assert written, "the cancelled refresh wrote no recovery marker"
     finally:
         if holder.poll() is None:
             holder.terminate()
