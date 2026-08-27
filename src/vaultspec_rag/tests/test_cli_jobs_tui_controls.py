@@ -522,10 +522,19 @@ class TestDurableRequestState:
             # the key will eventually deliver.
             stale = _try_http_admin("get_jobs", {"limit": 20}, control_service.port)
 
-            # Every later read is slow, so the poll issued next is still out
-            # when the control lands - which is the ordinary case at a
-            # two-second interval against a thirty-second timeout.
-            control_service.fetch_delay = 1.2
+            # The next poll is held open rather than merely made slow, so it
+            # is still out when the control lands - the ordinary case at a
+            # two-second interval against a thirty-second timeout. Held on an
+            # event, because the reads that could settle the marker are the
+            # ones this test needs never to answer until it has read the
+            # frame: the control's own follow-up refresh is issued the moment
+            # the service accepts, and a delay only bets that the marker is
+            # painted and observed before that refresh returns. That bet is
+            # the whole of the margin, and a loaded shard loses it - the
+            # marker is settled before any frame carries it, and the wait then
+            # sits out its full bound looking for a needle nothing will paint
+            # again. Released below, once the frame has been read.
+            control_service.fetch_gate = threading.Event()
             stale_generation = app._job_stamps.issued + 1
             app.refresh_jobs()
 
@@ -536,6 +545,12 @@ class TestDurableRequestState:
             app._apply_result(stale, stale_generation)
             await pilot.pause()
             painted = _screen_text(app)
+            # Freed here rather than left to the service's teardown: the reads
+            # are held on worker threads the interface joins as it closes, and
+            # every one still parked is a full hold bound paid by the session
+            # that ends.
+            control_service.fetch_gate.set()
+            await _settle(pilot)
 
         assert " retry sent" in painted, (
             "a payload fetched before the control cannot settle it"
