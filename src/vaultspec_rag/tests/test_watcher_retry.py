@@ -61,6 +61,13 @@ def _policy(
     )
 
 
+#: A hold long enough that the lock is only ever freed by the test releasing
+#: the holder. A test that needs the lock held "until I say so" says so with
+#: this, rather than picking a span and hoping the events it brackets land
+#: inside it.
+_LOCK_HELD_UNTIL_RELEASED = 30.0
+
+
 def _spawn_state_lock_holder(
     lock_path: Path,
     ready_path: Path,
@@ -424,7 +431,12 @@ async def test_detached_admission_consumes_its_fenced_handoff(
     holder = _spawn_state_lock_holder(
         state_path.with_name(f"{state_path.name}.lock"),
         ready_path,
-        hold_seconds=3.5,
+        # Held until this test releases it, rather than for a span chosen to
+        # land between the handoff's write and the parked thread's own
+        # deadline. That span was 3.5s against a 3.0s durability window and a
+        # 2.0s lock wait, which is half a second of wall clock on each side;
+        # the release below is ordered against the write instead.
+        hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
     )
     try:
         for _ in range(100):
@@ -449,11 +461,24 @@ async def test_detached_admission_consumes_its_fenced_handoff(
         written = await _await_recovery_markers(tmp_path, "code.recovery.*.json")
         assert written, "the cancelled admission wrote no recovery marker"
 
+        # Release the lock *because* the marker now exists, not on a timer
+        # running alongside the write. The consumer this test is about is the
+        # transaction thread the cancelled admission abandoned, and that thread
+        # stays parked on the state lock only for _STATE_LOCK_TIMEOUT_SECONDS
+        # from when it started. Freeing the lock on a fixed hold raced two
+        # deadlines at once: too early and the marker is not written yet, too
+        # late and nothing is parked to consume it. Ordering the release after
+        # the observed write settles the first and spends none of the second's
+        # budget waiting for a clock.
+        holder.terminate()
+        # The lock is an OS-level descriptor lock, so it is freed by the
+        # holder's exit; the exit is what this waits for, and its status is a
+        # signal rather than a clean return because the exit was asked for.
         await asyncio.to_thread(holder.wait, CHILD_PROCESS_TIMEOUT_SECONDS)
-        assert holder.returncode == 0
+        assert holder.returncode is not None, "the lock holder did not exit"
         # The marker is consumed under state authority, by the settler thread
         # the cancelled admission abandoned: cancelling stopped the awaiting,
-        # not the thread, so it is still parked on the state lock the holder
+        # not the thread, so it is still parked on the state lock this test
         # only released a moment ago. What is being waited for is therefore a
         # thread reaching a state, which is what PROCESS_TIMEOUT_SECONDS is
         # the ceiling for. The fixed hundred-iteration poll this replaced came
@@ -817,12 +842,12 @@ async def test_mixed_batch_cancellation_hands_off_both_sources(
         _spawn_state_lock_holder(
             vault_path.with_name(f"{vault_path.name}.lock"),
             vault_ready,
-            hold_seconds=30.0,
+            hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
         ),
         _spawn_state_lock_holder(
             code_path.with_name(f"{code_path.name}.lock"),
             code_ready,
-            hold_seconds=30.0,
+            hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
         ),
     ]
     try:
@@ -877,7 +902,7 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
     holder = _spawn_state_lock_holder(
         lock_path,
         ready_path,
-        hold_seconds=30.0,
+        hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
     )
     try:
         for _ in range(100):
