@@ -191,7 +191,11 @@ markers = [
   "robustness: edge case and error handling tests",
   "timeout: timeout in seconds for individual tests",
 ]
-testpaths = ["src/vaultspec_rag/tests"]
+# `tools` joins the library tests so the release-path guards (the binary
+# builder and the Scoop/Homebrew generators) actually run. They are pure
+# stdlib and fast; leaving them uncollected is how a channel manifest ships
+# broken out of a green suite.
+testpaths = ["src/vaultspec_rag/tests", "tools"]
 timeout = 300
 timeout_func_only = true
 tmp_path_retention_count = 1

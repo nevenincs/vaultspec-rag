@@ -1,0 +1,208 @@
+name: Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build binaries for (e.g. vaultspec-rag-v0.4.6)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binaries-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: [self-hosted, Linux, X64]
+            target: x86_64-unknown-linux-gnu
+          - name: windows-x86_64
+            runner: [self-hosted, Windows, X64]
+            target: x86_64-pc-windows-msvc
+          - name: macos-aarch64
+            runner: [self-hosted, macOS, ARM64]
+            target: aarch64-apple-darwin
+          # No self-hosted macOS x86_64 host exists; PyApp cross-builds it on
+          # the Apple Silicon runner (the CPython distribution is selected from
+          # the cargo target triple, and clang links both arches natively).
+          - name: macos-x86_64
+            runner: [self-hosted, macOS, ARM64]
+            target: x86_64-apple-darwin
+          # DELIVERY GAP, deliberately left unschedulable rather than silently
+          # absent. Homebrew supports Linux ARM64, so the missing
+          # aarch64-unknown-linux-gnu build is a platform the formula cannot
+          # offer an install on at all - not a platform this product declines
+          # to serve. The machine exists and already carries this label on the
+          # dashboard and cadrumo fleets (`macbook-neo-linux-arm-vaultspec`,
+          # `gw-macbook-linux-arm`); it was simply never registered against
+          # this repository.
+          #
+          # The leg stays COMMENTED OUT until that registration happens. A
+          # label no registered runner carries does not fail the release - it
+          # queues, silently and indefinitely, and `release` needs the whole
+          # matrix, so enabling this early would hang every publication. Until
+          # then dev/packaging omits the platform from the formula rather than
+          # pinning an asset that was never built, and the generator prints a
+          # `::warning::` naming the gap on every release.
+          #
+          # To close it: register macbook neo as a self-hosted runner on this
+          # repository with the auto-assigned Linux + ARM64 labels, then
+          # uncomment the three lines below. No other change is required.
+          # - name: linux-aarch64
+          #   runner: [self-hosted, Linux, ARM64]
+          #   target: aarch64-unknown-linux-gnu
+    # Artifact builds run on the shared self-hosted fleet (hosted multiplatform
+    # runners are cost-prohibitive); see publish.yml for the same constraint.
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Build binaries
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          uv run --no-project --python 3.13 -- \
+            python tools/binaries/build_pyapp.py --tag "${TAG}" --target "${TARGET}" --outdir dist-bin
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.name }}
+          path: dist-bin/
+          if-no-files-found: error
+          retention-days: 5
+
+  release:
+    name: Attach to release
+    needs: build
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: write
+    steps:
+      # Check out main so the channel-pointer steps can regenerate and
+      # commit the in-repo Scoop manifest and Homebrew formula after the
+      # assets are attached. The SSH deploy
+      # key authenticates the manifest push: main is protected by a ruleset
+      # that requires status checks, and a deploy-key push is a bypass actor,
+      # so the automated bump lands without a human-gated PR while every other
+      # push stays gated.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          ssh-key: ${{ secrets.CHANNEL_DEPLOY_KEY }}
+
+      # The channel generator runs in this job, so it needs an interpreter
+      # here too; previously only the build matrix installed one.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Download binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: binaries-*
+          path: dist-bin/
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        shell: bash
+        run: |
+          cd dist-bin
+          # Per-asset .sha256 files are produced by build_pyapp.py; fold them
+          # into one sha256sum-compatible manifest and drop the fragments.
+          cat ./*.sha256 > SHA256SUMS
+          rm -f ./*.sha256
+          {
+            echo "### Binary checksums"
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: gh release upload "${TAG}" dist-bin/* --clobber
+
+      # Regenerate BOTH release-channel pointers from the SHA256SUMS just
+      # built, then commit them. A Scoop manifest and a Homebrew formula are
+      # pointers a user's package manager acts on, so they are generated whole
+      # by dev/packaging rather than edited in place here.
+      #
+      # This replaced an inline jq rewrite, and the reason is worth keeping:
+      # that version looked digests up with awk and guarded the result with
+      # `test -n "$A" && test -n "$B" && test -n "$C"`, which is INERT under
+      # `set -e` - bash exempts every command in an && list except the one
+      # after the final &&. When the Windows build leg emitted CRLF checksum
+      # sidecars, the awk lookup matched nothing, the guard did not fire, and
+      # vaultspec-core-v0.1.60 published a manifest with empty hashes out of
+      # a green run - this repository adopts the fix rather than repeating it. The generator raises on a missing digest, refuses a
+      # backward bump, and omits an unbuilt platform instead of inventing one.
+      - name: Generate release channel pointers
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          uv run --no-project --python 3.13 --             python -m tools.packaging.generate               --tag "${TAG}"               --checksums dist-bin/SHA256SUMS
+
+      - name: Commit the Scoop manifest and Homebrew formula
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- bucket Formula; then
+            echo "channels already at ${TAG}; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -- bucket Formula
+          git commit -m "chore(release): point scoop and homebrew at ${TAG}"
+          # This job runs after a long matrix build, so main may have advanced
+          # meanwhile. Rebase-and-retry (bounded) so an unrelated commit does not
+          # fail the push non-fast-forward; the backward-bump guard in the
+          # generator still protects against clobbering a newer pointer.
+          attempt=1
+          max_attempts=3
+          until git push origin main; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::channel pointer push failed after ${max_attempts} attempts"
+              exit 1
+            fi
+            echo "push rejected (attempt ${attempt}/${max_attempts}); rebasing onto origin/main"
+            git fetch origin main
+            git rebase origin/main
+            attempt=$((attempt + 1))
+          done
