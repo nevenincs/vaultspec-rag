@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.10](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.9...vaultspec-rag-v0.4.10) (2026-08-28)
+
+
+### Bug Fixes
+
+* **binaries:** stop gating every release on a laptop runner ([923fe9b](https://github.com/nevenincs/vaultspec-rag/commit/923fe9b17a7ebd0156874b2894084b7b72bf6295))
+* **binaries:** stop gating every release on a laptop runner ([5a0153d](https://github.com/nevenincs/vaultspec-rag/commit/5a0153dbaeb4a3bba8b8ee479038a9c43fc3f852))
+
 ## [0.4.9](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.8...vaultspec-rag-v0.4.9) (2026-08-28)
 
 
