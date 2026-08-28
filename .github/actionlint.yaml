@@ -1,5 +1,11 @@
 self-hosted-runner:
+  # Custom labels carried by this fleet's self-hosted runners. actionlint
+  # rejects any label it does not know, so a runner label added to the fleet
+  # has to be declared here before a workflow may select on it.
   labels:
     - dev-runner
     - gpu
     - cuda
+    # Marks the host that runs release builds, matching the sibling project's
+    # Linux runner so both select their release host the same way.
+    - build
