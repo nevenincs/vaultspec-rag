@@ -136,7 +136,7 @@ VAULTSPEC_RAG = Product(
     # runner and its container already exist, matched to the sibling project's
     # pattern - but the host it runs on stands down on battery, so the leg is
     # commented out in binaries.yml and this list matches that reality.
-    supported_targets=(WINDOWS_X86_64, LINUX_X86_64),
+    supported_targets=(WINDOWS_X86_64, LINUX_X86_64, LINUX_ARM64),
     notes=(
         # The binaries bootstrap the SAME accelerated torch build the project
         # resolves: `tools.binaries.torch_channel` pins the cu130 wheel from
