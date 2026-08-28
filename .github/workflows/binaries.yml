@@ -37,22 +37,31 @@ jobs:
           # unsupported platform. tools/packaging refuses to offer them too:
           # the product's supported_targets excludes darwin, so the Homebrew
           # formula covers Linux only.
-          # Linux ARM64 is served by `macbook-neo-linux-arm-rag`, a colima
-          # container on macbook neo registered against this repository and
-          # enrolled in both of the host's fleet scripts - the powergate that
-          # enforces the AC-only directive, and the hook installer. Homebrew
-          # supports the platform, so without this leg the formula could not
-          # offer an install on it at all.
+          # DELIVERY GAP for Linux ARM64, deliberately unschedulable rather
+          # than silently absent. Homebrew supports the platform, so the
+          # missing aarch64-unknown-linux-gnu build is one the formula cannot
+          # offer an install on at all. The generator prints a `::warning::`
+          # naming the gap on every release, and omits the platform from the
+          # formula rather than pinning an asset that was never built.
           #
-          # This leg is load-bearing for every publication: `release` needs the
-          # whole matrix, and a label no ONLINE runner carries does not fail -
-          # it queues silently and indefinitely. The powergate stops this
-          # container on battery, so if a release hangs here with the other
-          # legs green, check that the host is on AC before looking anywhere
-          # else.
-          - name: linux-aarch64
-            runner: [self-hosted, Linux, ARM64]
-            target: aarch64-unknown-linux-gnu
+          # It was enabled once, on `macbook-neo-linux-arm-rag`, and the build
+          # itself is fine - it produced working aarch64 binaries for v0.4.8.
+          # What is not fine is what carries it: that runner is a container on
+          # a laptop, and the host's powergate stops it on battery. It went
+          # offline between one release and the next, and because `release`
+          # needs the whole matrix and a label no ONLINE runner carries QUEUES
+          # rather than fails, v0.4.9 hung with the other two legs green and
+          # had to be cancelled by hand. A job that is queued rather than
+          # running is not bounded by `timeout-minutes`, so nothing in the
+          # workflow rescues it.
+          #
+          # Re-enable by uncommenting the three lines below - but only once
+          # this label is served by a runner that does not sleep. A release
+          # gated on a laptop is a release that stops whenever the lid closes,
+          # which is worse than the gap this closes.
+          # - name: linux-aarch64
+          #   runner: [self-hosted, Linux, ARM64]
+          #   target: aarch64-unknown-linux-gnu
     # Artifact builds run on the shared self-hosted fleet (hosted multiplatform
     # runners are cost-prohibitive); see publish.yml for the same constraint.
     runs-on: ${{ matrix.runner }}
