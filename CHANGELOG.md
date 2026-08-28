@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.9](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.8...vaultspec-rag-v0.4.9) (2026-08-28)
+
+
+### Features
+
+* **binaries:** actually enable the linux-arm64 leg ([255965b](https://github.com/nevenincs/vaultspec-rag/commit/255965b42a556e52dfccf43cb8c69f2b08f1fb15))
+* **binaries:** actually enable the linux-arm64 leg ([b951219](https://github.com/nevenincs/vaultspec-rag/commit/b951219815ecdaf734f6233619ed7b595b27d7d2))
+* **binaries:** enable the linux-arm64 leg on a registered runner ([43c1644](https://github.com/nevenincs/vaultspec-rag/commit/43c1644702a4d7546af34e978ac5c6a6ef8fb021))
+
+
+### Bug Fixes
+
+* **binaries:** stage the channel pointers before asking if they changed ([053c825](https://github.com/nevenincs/vaultspec-rag/commit/053c8252d13cd07697e2d0c9010ee09ad34243e5))
+* **binaries:** stage the channel pointers before asking if they changed ([df95832](https://github.com/nevenincs/vaultspec-rag/commit/df958329185550b9200a6b989eb5cc7568a560cd))
+* **ci:** scope the bot identity to the commit instead of the checkout ([f12ad55](https://github.com/nevenincs/vaultspec-rag/commit/f12ad55a9d323bf04130eb7b3427d06649f626af))
+* **ci:** scope the bot identity to the commit instead of the checkout ([534cbc7](https://github.com/nevenincs/vaultspec-rag/commit/534cbc74ca032bb3c59fbd890535e137b94d0d0e))
+
 ## [0.4.8](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.7...vaultspec-rag-v0.4.8) (2026-08-27)
 
 
