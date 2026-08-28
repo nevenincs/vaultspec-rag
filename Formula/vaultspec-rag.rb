@@ -20,6 +20,16 @@ class VaultspecRag < Formula
         sha256 "10105aa2b7e93b86f96507e285445d21c3950975727e42e19faa2f9cd5228675"
       end
     end
+
+    on_arm do
+      url "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.8/vaultspec-rag-aarch64-unknown-linux-gnu"
+      sha256 "8ce3f01570b82a1deec2909401317837ed59a1a3aba271d1909bd45b34eb9c91"
+
+      resource "vaultspec-search-mcp" do
+        url "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.8/vaultspec-search-mcp-aarch64-unknown-linux-gnu"
+        sha256 "dc882e11f0caca82120935453cef2693e6df39237c8627078971479f41c8491f"
+      end
+    end
   end
 
   def install
