@@ -191,8 +191,6 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           # Stage BEFORE asking whether anything changed. `git diff` reports
           # only tracked paths, so on the first release for a channel - when
           # the generator has just created bucket/*.json and Formula/*.rb and
@@ -206,7 +204,17 @@ jobs:
             echo "channels already at ${TAG}; nothing to commit"
             exit 0
           fi
-          git commit -m "chore(release): point scoop and homebrew at ${TAG}"
+          # The identity is passed to this one commit rather than written
+          # with `git config`. This runner is self-hosted and its checkout is
+          # reused by every later job on the box, so a persisted user.email
+          # outlives the run: the citation gate derives its machine-identity
+          # tokens from `git config user.email`, so the bot address became a
+          # token and then matched its own literal in these workflow files,
+          # failing the unit lane on main for work that never touched it.
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore(release): point scoop and homebrew at ${TAG}"
           # This job runs after a long matrix build, so main may have advanced
           # meanwhile. Rebase-and-retry (bounded) so an unrelated commit does not
           # fail the push non-fast-forward; the backward-bump guard in the
