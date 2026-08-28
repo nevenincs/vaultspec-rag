@@ -48,10 +48,15 @@ jobs:
           if git diff --quiet uv.lock; then
             echo "uv.lock is already up to date"
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
             git add uv.lock
-            git commit -m "chore: update uv.lock for release"
+            # Scoped to the commit, never written to the checkout's config:
+            # see the note in binaries.yml - a persisted identity outlives the
+            # run on a reused self-hosted checkout and poisons the citation
+            # gate's machine-identity detection.
+            git \
+              -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore: update uv.lock for release"
             git push
           fi
 
