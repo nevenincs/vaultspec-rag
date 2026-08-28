@@ -116,11 +116,18 @@ deps target='sync':
 # never contain a `#` comment - PowerShell's `#` runs to the end of the joined
 # line and silently swallows every case after it, closing braces included.
 
+# `type` checks `tools` alongside the package. tools/ carries the release
+# binary builder and the Scoop/Homebrew generators, where a break fails a
+# release rather than a test. Both were outside this gate when a generator
+# default naming a product that does not exist, and a builder invoked so it
+# could not import its own package, reached main with CI green; `ty` finds
+# either in one pass.
+
 # Run static analysis and documentation checks.
 lint target='all':
   switch ("{{target}}") { \
     "python" { {{uvr}} ruff check src tools ; break } \
-    "type" { {{uvr}} python -m ty check src/vaultspec_rag ; break } \
+    "type" { {{uvr}} python -m ty check src/vaultspec_rag tools ; break } \
     "links" { \
       if (Get-Command lychee -ErrorAction SilentlyContinue) { \
         lychee --config lychee.toml README.md .vault .vaultspec \
