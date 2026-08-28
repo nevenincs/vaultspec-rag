@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
 
 import pytest
 
@@ -394,8 +395,30 @@ class TestStaleSelection:
     async def test_a_pending_marker_does_not_outlive_its_job(
         self, control_service: _JobService
     ) -> None:
-        """A marker left on a dead id would describe a request forever."""
-        control_service.control_delay = 0.4
+        """A marker left on a dead id would describe a request forever.
+
+        The service answers the held control with ``job_not_found``, because
+        the job left the list while the control was in flight, so the marker
+        settles as ``gone`` rather than ``sent``. A gone marker for a job the
+        service no longer lists must be dropped.
+
+        The claim is carried by ``app._pending``, not by the frame: the row
+        itself is gone, so nothing paints for it either way. The painted wait
+        below is a synchronisation point, and ``_settle`` is what guarantees
+        the control has actually resolved before the assertions run.
+
+        Proven able to fail: made the gone-marker branch of
+        ``_reconcile_pending`` skip its delete; this fails on
+        ``app._pending == {}``, carrying the surviving marker. Restored, it
+        passes.
+        """
+        # The control is held rather than merely slowed. The requested stage
+        # lasts exactly as long as the service takes to answer, so a delay
+        # makes the whole assertion a bet that this box paints and reads a
+        # frame inside it - and a loaded shard loses that bet, after which the
+        # wait sits out its full bound hunting a stage that is already over.
+        # Held on an event, the stage ends on the observation that proves it.
+        control_service.control_gate = threading.Event()
         jobs = [_job("abc123def456"), _job("def456abc123")]
         app = _app(control_service, jobs)
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
@@ -403,9 +426,27 @@ class TestStaleSelection:
             await pilot.press("p")
             await _await_painted(pilot, app, "pause requested")
 
+            # The job leaves the service while its control is still in flight,
+            # which is the situation this test is about.
             control_service.set_jobs([jobs[1]])
             app.refresh_jobs()
-            painted = await _await_painted(pilot, app, "showing 1 of 1")
+            await _await_painted(pilot, app, "showing 1 of 1")
+
+            # Only now may the control answer, against a job the service no
+            # longer holds. The marker must not outlive that.
+            control_service.control_gate.set()
+            # Every painted form of the marker, not just the requested one:
+            # the outcome flips to "sent" the moment the service answers, so
+            # waiting for "pause requested" alone would be satisfied by the
+            # stage advancing rather than by the marker actually going.
+            painted = await _await_painted_when(
+                pilot,
+                app,
+                lambda frame: (
+                    "pause requested" not in frame and "pause sent" not in frame
+                ),
+                "the pause marker leaving the row",
+            )
             await _settle(pilot)
 
         assert "pause requested" not in painted, (
