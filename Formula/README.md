@@ -40,9 +40,15 @@ and Homebrew runs on macOS - so nothing but the product's own `supported_targets
 the formula offering an install that would place a binary raising at startup. The
 generator refuses it, and no macOS binaries are built at all.
 
-Linux arm64 is a genuine gap rather than a decision: the cu130 index publishes a
-`manylinux_2_28_aarch64` wheel, so the platform is servable as soon as the runner is
-registered. See the matrix comment in `binaries.yml`.
+Linux arm64 is now built too. The cu130 index publishes a `manylinux_2_28_aarch64`
+wheel, and the matrix leg is served by a colima container on macbook neo registered
+as `macbook-neo-linux-arm-rag`, so the accelerated torch pin covers it like any other
+target.
+
+One property of this fleet is worth knowing when a release seems slow: **runners
+serve only on AC power.** On battery the host's power gate stops every runner once it
+is idle, never mid-job, and GitHub queues new jobs until AC returns. An unplugged
+laptop makes a release wait, not fail.
 
 The binaries bootstrap the accelerated torch build pinned from `uv.lock`, for the
 reasons in `../bucket/README.md`. First launch downloads roughly 500 MB.
