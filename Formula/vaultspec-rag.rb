@@ -1,7 +1,7 @@
 class VaultspecRag < Formula
   desc "Hybrid dense and sparse semantic search for your docs and source code"
   homepage "https://github.com/nevenincs/vaultspec-rag"
-  version "0.4.8"
+  version "0.4.9"
   license "MIT"
 
   livecheck do
@@ -12,22 +12,12 @@ class VaultspecRag < Formula
 
   on_linux do
     on_intel do
-      url "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.8/vaultspec-rag-x86_64-unknown-linux-gnu"
-      sha256 "f2d63a8b672cab1dae7f8774468e039dc4c439c22592386daef2be9e73b17cf9"
+      url "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.9/vaultspec-rag-x86_64-unknown-linux-gnu"
+      sha256 "92bd7b646fd9e161d1474ece5e506ccd466dcfc8ccd80ee3a4956b254a45cc9b"
 
       resource "vaultspec-search-mcp" do
-        url "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.8/vaultspec-search-mcp-x86_64-unknown-linux-gnu"
-        sha256 "10105aa2b7e93b86f96507e285445d21c3950975727e42e19faa2f9cd5228675"
-      end
-    end
-
-    on_arm do
-      url "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.8/vaultspec-rag-aarch64-unknown-linux-gnu"
-      sha256 "8ce3f01570b82a1deec2909401317837ed59a1a3aba271d1909bd45b34eb9c91"
-
-      resource "vaultspec-search-mcp" do
-        url "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.8/vaultspec-search-mcp-aarch64-unknown-linux-gnu"
-        sha256 "dc882e11f0caca82120935453cef2693e6df39237c8627078971479f41c8491f"
+        url "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.9/vaultspec-search-mcp-x86_64-unknown-linux-gnu"
+        sha256 "cc19f327dad0bdb5e855ae802ddc923abf301099e2ec7f92fc2a6db9c368f499"
       end
     end
   end
