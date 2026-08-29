@@ -241,12 +241,41 @@ jobs:
 
       - name: Aggregate checksums
         shell: bash
+        env:
+          # Needed by the merge below. Without them `gh release download` fails
+          # and the merge silently no-ops - which looks exactly like success and
+          # leaves the manifest incomplete again.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
           cd dist-bin
           # Per-asset .sha256 files are produced by build_pyapp.py; fold them
           # into one sha256sum-compatible manifest and drop the fragments.
           cat ./*.sha256 > SHA256SUMS
           rm -f ./*.sha256
+          # MERGE into whatever the release already carries rather than
+          # replacing it. binaries.yml and publish.yml both publish a file named
+          # SHA256SUMS to the same release with --clobber, and neither knows
+          # which ran first. On v0.4.11 the binaries run landed last and the
+          # published manifest ended up describing only the six binaries - the
+          # wheel and the sdist were attached with no digest anyone could check
+          # them against, which is precisely the verifiability the manifest
+          # exists to provide.
+          #
+          # Entries for the files THIS run is publishing are dropped from the
+          # inherited copy before appending, so a re-run replaces its own lines
+          # instead of duplicating them.
+          if gh release download "${TAG}" --repo "$GITHUB_REPOSITORY"                --pattern SHA256SUMS --output inherited.txt 2>/dev/null; then
+            while read -r _digest name; do
+              [ -n "${name}" ] || continue
+              grep -v -- "  ${name}$" inherited.txt > inherited.tmp || true
+              mv inherited.tmp inherited.txt
+            done < SHA256SUMS
+            cat inherited.txt >> SHA256SUMS
+            rm -f inherited.txt
+            LC_ALL=C sort -k2 -o SHA256SUMS SHA256SUMS
+          fi
           {
             echo "### Binary checksums"
             echo '```'
