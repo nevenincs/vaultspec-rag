@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.11](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.10...vaultspec-rag-v0.4.11) (2026-08-29)
+
+
+### Features
+
+* **binaries:** restore the linux-arm64 target now its host is available ([#402](https://github.com/nevenincs/vaultspec-rag/issues/402)) ([49fc86e](https://github.com/nevenincs/vaultspec-rag/commit/49fc86e25112cb2273bfb9b094d49a6f68f3ee15))
+
 ## [0.4.10](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.9...vaultspec-rag-v0.4.10) (2026-08-28)
 
 
