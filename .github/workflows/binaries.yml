@@ -28,6 +28,19 @@ jobs:
           - name: windows-x86_64
             runner: [self-hosted, Windows, X64]
             target: x86_64-pc-windows-msvc
+          # Restored. It was dropped because no leg could be scheduled while
+          # the host stood its runners down on battery, on the explicit
+          # condition that it return once that stopped being true. The host is
+          # on AC, `macbook-neo-linux-arm-rag` is online, and its container is
+          # enrolled in both of the host's fleet scripts - runner-powergate.sh
+          # and runner-deploy-hooks.sh - so the condition is met.
+          #
+          # The accelerated torch pin already covers this target: the cu130
+          # index publishes a manylinux_2_28_aarch64 wheel, which
+          # tools/binaries/torch_channel.py resolves like any other.
+          - name: linux-aarch64
+            runner: [self-hosted, Linux, ARM64]
+            target: aarch64-unknown-linux-gnu
           # NO macOS LEGS, deliberately. vaultspec-rag is CUDA-only:
           # embeddings.py, search/_searcher.py and server/_lifespan.py each
           # raise RuntimeError when torch.cuda.is_available() is false, and
