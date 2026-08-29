@@ -119,18 +119,30 @@ jobs:
     permissions:
       contents: write
     steps:
-      # Check out main so the channel-pointer steps can regenerate and
-      # commit the in-repo Scoop manifest and Homebrew formula after the
-      # assets are attached. The SSH deploy
-      # key authenticates the manifest push: main is protected by a ruleset
-      # that requires status checks, and a deploy-key push is a bypass actor,
-      # so the automated bump lands without a human-gated PR while every other
-      # push stays gated.
+      # This repo, for the generator itself. No deploy key and no push: the
+      # channel pointers no longer live here.
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: main
-          ssh-key: ${{ secrets.CHANNEL_DEPLOY_KEY }}
+
+      # The ORG-WIDE distribution repository. Scoop manifests and Homebrew
+      # formulae belong to the account rather than to each product, so a user
+      # taps or bucket-adds ONCE, ever - not once per product. Publishing into
+      # this repo instead multiplied that one-time step by the number of
+      # products and committed to a public product repo's default branch on
+      # every release.
+      #
+      # vaultspec-core retargets identically; the two products now share this
+      # branch, which is what makes the per-product staging below load-bearing
+      # rather than tidy.
+      - name: Checkout the distribution repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/homebrew-tap
+          ref: main
+          path: channels
+          ssh-key: ${{ secrets.CHANNEL_ROOT_DEPLOY_KEY }}
 
       # The channel generator runs in this job, so it needs an interpreter
       # here too; previously only the build matrix installed one.
@@ -189,7 +201,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          uv run --no-project --python 3.13 --             python -m tools.packaging.generate               --tag "${TAG}"               --checksums dist-bin/SHA256SUMS
+          uv run --no-project --python 3.13 --             python -m tools.packaging.generate               --tag "${TAG}"               --checksums dist-bin/SHA256SUMS               --root channels
 
       - name: Commit the Scoop manifest and Homebrew formula
         shell: bash
@@ -197,6 +209,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          cd channels
           # Stage BEFORE asking whether anything changed. `git diff` reports
           # only tracked paths, so on the first release for a channel - when
           # the generator has just created bucket/*.json and Formula/*.rb and
@@ -205,7 +218,11 @@ jobs:
           # pointer at all. That is exactly what happened on v0.4.8: both
           # files were written, neither was committed, and the job went green.
           # Comparing the index against HEAD sees an added path as a change.
-          git add -- bucket Formula
+          # Only THIS product's two files. The distribution repo serves every
+          # product under the account, so a repo-wide `git add` would sweep up a
+          # sibling's pointer if two releases raced and publish it under this
+          # tag's message.
+          git add -- bucket/vaultspec-rag.json Formula/vaultspec-rag.rb
           if git diff --cached --quiet -- bucket Formula; then
             echo "channels already at ${TAG}; nothing to commit"
             exit 0
