@@ -80,6 +80,7 @@ class CodeDriftOwner:
         self._retry_budget = retry_budget
         self._attempts: dict[str, int] = {}
         self._superseded: set[str] = set()
+        self._superseded_ids: set[str] = set()
         self._deferred: set[str] = set()
         self._collisions = 0
 
@@ -87,6 +88,22 @@ class CodeDriftOwner:
     def superseded_paths(self) -> tuple[str, ...]:
         """Return every path this run superseded, in deterministic order."""
         return tuple(sorted(self._superseded))
+
+    @property
+    def superseded_point_ids(self) -> frozenset[str]:
+        """Return every point identity this run dropped as superseded.
+
+        A run's caller cannot derive this from a pre-run id snapshot: chunk
+        identity embeds a content digest, so a drifted path's replacement
+        points carry new identities and the superseded ones are simply gone.
+        Anything reconciling the snapshot against live storage has to be told
+        which identities this run retired, or it counts them as still present.
+
+        Deduplicated by construction: a path may be superseded several times
+        within its retry budget, and dropping the same identity twice retires
+        it once.
+        """
+        return frozenset(self._superseded_ids)
 
     @property
     def collisions_observed(self) -> int:
@@ -261,6 +278,7 @@ class CodeDriftOwner:
         """
         if stale_ids:
             self._store.delete_code_chunks(list(stale_ids))
+            self._superseded_ids.update(stale_ids)
         self._checkpoint.reopen_drifted_path(rel_path, superseded_digest)
         self._superseded.add(rel_path)
 
