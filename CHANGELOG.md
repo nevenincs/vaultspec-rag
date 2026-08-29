@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.12](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.11...vaultspec-rag-v0.4.12) (2026-08-29)
+
+
+### Features
+
+* **binaries:** refuse to let an artifact-less release serve as latest ([#408](https://github.com/nevenincs/vaultspec-rag/issues/408)) ([f347f59](https://github.com/nevenincs/vaultspec-rag/commit/f347f59fe93fa19257ed7bd6678af4e8935fb441))
+* **release:** publish channel pointers to the org distribution repo ([#405](https://github.com/nevenincs/vaultspec-rag/issues/405)) ([e698bfc](https://github.com/nevenincs/vaultspec-rag/commit/e698bfc052bbfa8efc9bbb89105a21b40f5dfb4f))
+
+
+### Bug Fixes
+
+* **release:** merge SHA256SUMS instead of clobbering it ([#410](https://github.com/nevenincs/vaultspec-rag/issues/410)) ([c83d584](https://github.com/nevenincs/vaultspec-rag/commit/c83d584f3d691be938f7c97e63d35afe5c1f98bb))
+
 ## [0.4.11](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.10...vaultspec-rag-v0.4.11) (2026-08-29)
 
 
