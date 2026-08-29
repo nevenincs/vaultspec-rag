@@ -16,7 +16,72 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Refuse a build whose runners cannot serve it.
+  #
+  # A selector with no ONLINE runner does not fail - it QUEUES, unbounded by
+  # timeout-minutes, and this workflow sets no timeouts at all. v0.4.9 hung
+  # exactly that way: two legs green, the third queued, cancelled by hand.
+  #
+  # Both selectors this matrix requires are served from the workstation today,
+  # so on main this is a cheap assertion rather than a live catch. It earns its
+  # place at the moment the linux-aarch64 leg returns - that runner lives on the
+  # power-gated MacBook, and re-enabling the leg without this reconstructs the
+  # v0.4.9 hang precisely, behind a release job that needs the whole matrix.
+  #
+  # The gate is not the problem and this does not fight it. Stopping runners on
+  # battery is correct; spending a day discovering it is not.
+  #
+  # Hosted, deliberately - a preflight that needs the fleet cannot report that
+  # the fleet is down.
+  preflight:
+    name: Preflight runners
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every matrix selector has an online runner
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          runners=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runners"             --jq '.runners[] | [.status, ([.labels[].name] | map(ascii_downcase) | join(","))] | @tsv')
+          [ -n "${runners}" ] || { echo "::error::no self-hosted runners are registered"; exit 1; }
+
+          # Kept in step with binaries.yml's matrix. Add the aarch64 selector
+          # here in the same change that re-enables that leg.
+          selectors=(
+            "self-hosted,linux,x64,build"
+            "self-hosted,windows,x64"
+          )
+
+          failed=0
+          for want in "${selectors[@]}"; do
+            online=0; registered=0
+            while IFS=$'	' read -r status labels; do
+              missing=0
+              IFS=',' read -ra parts <<< "${want}"
+              for part in "${parts[@]}"; do
+                case ",${labels}," in *",${part},"*) ;; *) missing=1; break ;; esac
+              done
+              [ "${missing}" -eq 0 ] || continue
+              registered=$((registered + 1))
+              [ "${status}" = "online" ] && online=$((online + 1))
+            done <<< "${runners}"
+
+            if [ "${online}" -gt 0 ]; then
+              echo "ok        [${want}] -> ${online} online"
+            elif [ "${registered}" -eq 0 ]; then
+              echo "::error::[${want}] is carried by no registered runner." >&2
+              failed=1
+            else
+              echo "::error::[${want}] matches ${registered} runner(s), none online - usually the power-gated host on battery. Dispatch again on AC." >&2
+              failed=1
+            fi
+          done
+
+          [ "${failed}" -eq 0 ] || { echo "::error::preflight refused a build that would queue rather than run" >&2; exit 1; }
+
   build:
+    needs: preflight
     name: Build ${{ matrix.name }}
     strategy:
       fail-fast: false
