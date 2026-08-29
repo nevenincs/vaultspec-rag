@@ -1,15 +1,15 @@
 {
-  "version": "0.4.10",
+  "version": "0.4.11",
   "description": "Hybrid dense and sparse semantic search for your docs and source code",
   "homepage": "https://github.com/nevenincs/vaultspec-rag",
   "license": "MIT",
   "url": [
-    "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.10/vaultspec-rag-x86_64-pc-windows-msvc.exe",
-    "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.10/vaultspec-search-mcp-x86_64-pc-windows-msvc.exe"
+    "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.11/vaultspec-rag-x86_64-pc-windows-msvc.exe",
+    "https://github.com/nevenincs/vaultspec-rag/releases/download/vaultspec-rag-v0.4.11/vaultspec-search-mcp-x86_64-pc-windows-msvc.exe"
   ],
   "hash": [
-    "32c10b976d09eeaa1d8b88049ec520133961abd94e26c78c269c877ff110feba",
-    "a10a89b3aa6b824d0ada02850af5df7b360d8c39227124e7a8ee5157357f86b3"
+    "132f7a6ec171a4190b87ca2133ca2df77170849d224ca714a7547df96d5d1901",
+    "d91be66a0db6b298c8549c8635444949f26c47d1c9be93232863b862540d2d2c"
   ],
   "bin": [
     [
