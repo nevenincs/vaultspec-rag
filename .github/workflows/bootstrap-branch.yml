@@ -12,11 +12,28 @@ jobs:
   bootstrap:
     timeout-minutes: 10
     runs-on: [self-hosted, dev-runner]
+    # DISABLED. No registered runner carries the `dev-runner` label, so this job
+    # does not run - it QUEUES, and a queued job is not bounded by
+    # `timeout-minutes`, so the 10 above never fires. Every issue event has been
+    # adding to a backlog that can never drain, with nothing going red.
+    #
+    # vaultspec-core hit this, filed issue #326 against one symptom, and
+    # contained it exactly this way; its comment records that the cause is
+    # fleet-wide. This repo is one of the five that still had the job live.
+    # Skipping BEFORE a runner is queued is the whole point - an `if:` on the
+    # job is evaluated by the scheduler, so nothing is ever dispatched.
+    #
+    # Containment, not a verdict. Whether the label gets served by real
+    # containers or these jobs are retired is still open; ci-fleet records it as
+    # accepted debt with what it costs. Re-enable by dropping the `false &&`
+    # once a runner carries the label.
+    #
     # Skip edited events unless title or body changed
     if: >-
-      github.event.action != 'edited' ||
+      false &&
+      (github.event.action != 'edited' ||
       github.event.changes.title != null ||
-      github.event.changes.body != null
+      github.event.changes.body != null)
     concurrency:
       group: bootstrap-issue-${{ github.event.issue.number }}
       cancel-in-progress: false
