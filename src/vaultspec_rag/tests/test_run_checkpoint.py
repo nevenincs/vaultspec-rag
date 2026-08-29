@@ -509,6 +509,54 @@ def test_the_pre_record_check_keeps_visible_drift_off_the_signal_path(
     assert owner.collisions_observed == 0
 
 
+def test_superseded_identities_are_reported_for_snapshot_reconciliation(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """Drift retires identities a pre-run snapshot still claims.
+
+    The ingest barrier reconciles the id snapshot taken before a failure-safe
+    rebuild against live storage. Chunk identity embeds a content digest, so a
+    drifted path's replacement points never overwrite the superseded ones -
+    those identities leave storage and never come back. A barrier told only
+    the snapshot and the run's published ids expects the retired identities
+    back, finds them missing, and reports a correct rebuild as a store that
+    acknowledged writes it never applied.
+    """
+    checkpoint = _open(tmp_path)
+    original = _segments("src/racing.py")
+    _index_path(checkpoint, "src/racing.py", _digest("before the edit"))
+    _publish(drift_store, original)
+    _interrupt(checkpoint, "interrupted after one path was indexed")
+
+    resumed = _open(tmp_path)
+    owner = CodeDriftOwner(resumed, drift_store)
+    snapshot_before = _identities(original)
+
+    moved = _segments("src/racing.py", marker="_moved")
+    _publish(drift_store, moved)
+    owner.record_segments(moved, {"src/racing.py": _digest("after the edit")})
+
+    published = _identities(moved)
+    retired = owner.superseded_point_ids
+    # Exactly the identities that left storage - no more, no fewer. The
+    # narrow equality is the assertion: reporting a superset would subtract
+    # live points and under-count, a subset leaves the original defect.
+    assert retired == snapshot_before - published
+    assert retired, "drift that retires nothing cannot exercise the barrier"
+
+    # Reconcile the snapshot the way the barrier does, and land on what
+    # storage actually holds.
+    assert len((published | snapshot_before) - (retired - published)) == len(
+        _stored(drift_store, "src/racing.py")
+    )
+    # The union alone - the expectation before this accounting existed -
+    # overshoots by precisely the retired identities.
+    assert len(published | snapshot_before) == len(
+        _stored(drift_store, "src/racing.py")
+    ) + len(retired)
+
+
 def test_a_resubmission_under_the_same_digest_stays_fatal(
     tmp_path: Path,
     drift_store: VaultStore,
