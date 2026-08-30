@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.19](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.18...vaultspec-rag-v0.4.19) (2026-08-30)
+
+
+### Features
+
+* **binaries:** build linux-aarch64 in the pinned image, dropping its floor to 2.28 ([#431](https://github.com/nevenincs/vaultspec-rag/issues/431)) ([4061041](https://github.com/nevenincs/vaultspec-rag/commit/4061041f699ac4239fd14140add6ec34e0b1a5d2))
+
 ## [0.4.18](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.17...vaultspec-rag-v0.4.18) (2026-08-30)
 
 
