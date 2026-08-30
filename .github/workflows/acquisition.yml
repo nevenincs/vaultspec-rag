@@ -1,0 +1,178 @@
+name: Acquisition check
+
+# Everything else in this repository tests what is IN the tree. This tests what
+# a user actually receives: it downloads the published binary onto a machine
+# with no checkout, no warm cache and no toolchain, and asks the one question
+# the build cannot answer about itself - does the dynamic loader accept it.
+#
+# vaultspec-rag#409 is why. A Linux binary built on a host with newer glibc than
+# the floor it claims loads fine everywhere it is built and tested, and fails on
+# a user's machine with a missing symbol version. That gap was found by reading
+# ELF sections by hand, at v0.4.14, three releases after it appeared. Running
+# the artifact on a distribution older than the build host closes it.
+#
+# WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT
+#
+# It asserts the loader accepts the binary. It does NOT assert the product
+# works, and that is not laziness: the binary is a PyApp bootstrapper that
+# resolves `vaultspec-rag[mcp]` from PyPI on first launch, pulling torch cu130
+# and ~15 `nvidia-*` wheels - three to five gigabytes - and the Linux build
+# host carries no GPU. Nothing past startup is assertable here, so this checks
+# the thing that IS: that the artifact is loadable on the platforms its floor
+# claims, and that any failure is not a loader failure.
+#
+# It cannot run before publication, so it runs after. Note that
+# `release: published` is INERT for releases this repository cuts: GitHub raises
+# no workflow events for refs created with the default GITHUB_TOKEN, and
+# release-please publishes with exactly that token. It is declared anyway for a
+# human-published release, but the path that actually reaches this workflow is
+# the explicit dispatch from `binaries.yml`, plus the weekly schedule. The
+# schedule matters on its own: acquisition rots for reasons no commit causes -
+# a yanked release, a renamed asset, a base image whose glibc moves.
+
+on:
+  release:
+    types: [published]
+  schedule:
+    # Weekly, off the hour: nothing here is urgent and the fleet is shared.
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to acquire (defaults to the latest release)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  acquire:
+    name: acquire on ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # AT the declared floor. Nothing else here tests 2.28 itself - the
+          # Debian and Ubuntu images below sit comfortably above it, so they
+          # would keep passing if the floor slipped a version or two. RHEL 8's
+          # glibc is 2.28 exactly, which makes this the leg that can actually
+          # fail when the container pin in binaries.yml stops doing its job.
+          - image: almalinux:8
+            setup: dnf install -y -q curl
+          # Above the floor and below the build host, which is the band a user
+          # is most likely to be in. bookworm is 2.36, jammy is 2.35.
+          - image: debian:bookworm-slim
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+          - image: ubuntu:22.04
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+    # x86_64 ONLY, and the gap is declared rather than silent.
+    #
+    # There is no aarch64 leg because this fleet cannot host one. The ARM64
+    # Linux runner is itself a colima container with no reachable docker daemon,
+    # so it cannot start any of the images above - a container job there dies in
+    # `Initialize containers`. Running natively on it would test glibc 2.39
+    # against a declared floor of 2.39, which asserts nothing.
+    #
+    # The gap closes when an ARM64 Linux host that can run containers exists;
+    # that is the same change that moves the aarch64 floor to 2.28 and restores
+    # the image pin for that leg in binaries.yml.
+    runs-on: [self-hosted, Linux, X64, build]
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install what acquisition itself needs
+        run: |
+          set -eux
+          ${{ matrix.setup }}
+
+      - name: Acquire the published binaries
+        env:
+          REPO: ${{ github.repository }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -eux
+          tag="${EVENT_TAG:-${INPUT_TAG:-}}"
+          if [ -z "${tag}" ]; then
+            tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+                  | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+          fi
+          [ -n "${tag}" ] || { echo "::error::could not resolve a release tag"; exit 1; }
+          echo "TAG=${tag}" >> "$GITHUB_ENV"
+
+          mkdir -p /opt/acq
+          # BOTH executables. They are built the same way from the same spec, so
+          # a floor regression would hit both - but they are separate assets and
+          # a release can attach one without the other, which is exactly the
+          # partial-release shape the guard in binaries.yml exists to catch.
+          for name in vaultspec-rag vaultspec-search-mcp; do
+            curl -fsSL -o "/opt/acq/${name}" \
+              "https://github.com/${REPO}/releases/download/${tag}/${name}-x86_64-unknown-linux-gnu"
+            chmod +x "/opt/acq/${name}"
+          done
+
+      - name: The loader must accept them
+        run: |
+          set -eu
+          echo "distribution glibc: $(ldd --version | head -1)"
+
+          failed=0
+          for name in vaultspec-rag vaultspec-search-mcp; do
+            binary="/opt/acq/${name}"
+
+            # `ldd` resolves every symbol version the binary requires against
+            # this distribution's libc and reports what it cannot satisfy. It
+            # answers the loader question directly and in milliseconds, without
+            # launching anything - which matters here, because launching would
+            # start a multi-gigabyte bootstrap that has nothing to do with what
+            # is being tested.
+            if ! out=$(ldd "${binary}" 2>&1); then
+              printf '::error::%s: ldd failed on %s\n%s\n' "${name}" "${{ matrix.image }}" "${out}"
+              failed=1
+              continue
+            fi
+            if printf '%s' "${out}" | grep -q 'not found'; then
+              printf '::error::%s does not load on %s. Unsatisfied by this distribution:\n%s\n' \
+                "${name}" "${{ matrix.image }}" "$(printf '%s' "${out}" | grep 'not found')"
+              printf '::error::This is vaultspec-rag#409 recurring: the artifact was built against a newer libc than the floor it claims. Check the container pin for this target in binaries.yml.\n'
+              failed=1
+              continue
+            fi
+            echo "ok: ${name} resolves every required symbol version here"
+          done
+          [ "${failed}" -eq 0 ] || exit 1
+
+      - name: Starting up must not be a loader failure
+        run: |
+          set -eu
+          # A second, independent probe. `ldd` reads the binary; this runs it.
+          #
+          # The run is NOT expected to succeed. `--version` makes the PyApp
+          # bootstrapper resolve the distribution from PyPI, which is gigabytes
+          # and needs a GPU-capable environment to be meaningful. So the exit
+          # code is deliberately not asserted - only that whatever went wrong
+          # was not the dynamic loader refusing the binary.
+          #
+          # Asserting success here would be a check that fails for reasons
+          # unrelated to acquisition, and a check that cries wolf gets disabled.
+          export HOME=/tmp/fresh-home
+          rm -rf "$HOME"; mkdir -p "$HOME"
+
+          for name in vaultspec-rag vaultspec-search-mcp; do
+            set +e
+            out=$(timeout 120 "/opt/acq/${name}" --version 2>&1)
+            rc=$?
+            set -e
+            printf '%s exited %s\n' "${name}" "${rc}"
+
+            if printf '%s' "${out}" | grep -qE 'GLIBC_[0-9]+\.[0-9]+|version .GLIBC|cannot execute binary file|No such file or directory.*ld-linux'; then
+              printf '::error::%s failed to LOAD on %s, not merely to run:\n%s\n' \
+                "${name}" "${{ matrix.image }}" "${out}"
+              exit 1
+            fi
+            printf '  no loader diagnostic in output; any failure above is downstream of startup\n'
+          done
+
+      - name: Return the workspace to the runner's user
+        if: always()
+        run: chown -R --reference=/__w "$GITHUB_WORKSPACE" || true
