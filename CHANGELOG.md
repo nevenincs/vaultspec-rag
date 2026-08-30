@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.18](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.17...vaultspec-rag-v0.4.18) (2026-08-30)
+
+
+### Bug Fixes
+
+* **binaries:** derive the preflight selectors, and correct two misleading claims ([#427](https://github.com/nevenincs/vaultspec-rag/issues/427)) ([52a4c5e](https://github.com/nevenincs/vaultspec-rag/commit/52a4c5eeb0583cdd2221500e506a126c655c2c04))
+
 ## [0.4.17](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.16...vaultspec-rag-v0.4.17) (2026-08-30)
 
 
