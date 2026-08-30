@@ -48,44 +48,72 @@ permissions:
 
 jobs:
   acquire:
-    name: acquire on ${{ matrix.image }}
+    name: acquire ${{ matrix.arch }} on ${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # AT the declared floor. Nothing else here tests 2.28 itself - the
-          # Debian and Ubuntu images below sit comfortably above it, so they
-          # would keep passing if the floor slipped a version or two. RHEL 8's
-          # glibc is 2.28 exactly, which makes this the leg that can actually
-          # fail when the container pin in binaries.yml stops doing its job.
+          # AT the declared floor, on both architectures. Nothing else here
+          # tests 2.28 itself - the Debian and Ubuntu images below sit
+          # comfortably above it, so they would keep passing if the floor
+          # slipped a version or two. RHEL 8's glibc is 2.28 exactly, which
+          # makes these the two legs that can actually fail when a container
+          # pin in binaries.yml stops doing its job.
           - image: almalinux:8
             setup: dnf install -y -q curl
+            arch: x86_64
+            runner: [self-hosted, Linux, X64, build]
+            triple: x86_64-unknown-linux-gnu
+          - image: almalinux:8
+            setup: dnf install -y -q curl
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
           # Above the floor and below the build host, which is the band a user
           # is most likely to be in. bookworm is 2.36, jammy is 2.35.
           - image: debian:bookworm-slim
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+            arch: x86_64
+            runner: [self-hosted, Linux, X64, build]
+            triple: x86_64-unknown-linux-gnu
+          - image: debian:bookworm-slim
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
           - image: ubuntu:22.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
-    # x86_64 ONLY, and the gap is declared rather than silent.
+            arch: x86_64
+            runner: [self-hosted, Linux, X64, build]
+            triple: x86_64-unknown-linux-gnu
+          - image: ubuntu:22.04
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+    # BOTH ARCHITECTURES, and the aarch64 half is new because the artifact it
+    # tests is new.
     #
-    # There is still no aarch64 leg, but the reason has CHANGED and is now a
-    # sequencing one rather than a hardware one.
+    # This workflow was x86_64-only for two different reasons in sequence.
+    # First no host could run these images on ARM64 at all. Then, once
+    # binaries.yml moved that target onto `ubuntu-24.04-arm` and the declared
+    # floor dropped to 2.28, the blocker became sequencing: this workflow tests
+    # the LATEST PUBLISHED release, and every release up to that point was
+    # built natively at 2.39, so an aarch64 almalinux:8 leg would have failed
+    # truthfully about an artifact the fix had not reached.
     #
-    # It used to be that no host could run these images on ARM64. That is no
-    # longer true: binaries.yml builds that target on `ubuntu-24.04-arm`, a
-    # hosted runner which can, and the declared floor dropped to 2.28 with it.
+    # v0.4.19 is the first release built under the pin. Its published aarch64
+    # binaries measure a 2.28 floor - read from `.gnu.version_r` on the
+    # downloaded assets, not inferred from the build succeeding - so the leg
+    # now has something real to pass or fail against.
     #
-    # What blocks the leg now is that this workflow tests the LATEST PUBLISHED
-    # release, and every release published so far was built natively at 2.39.
-    # An aarch64 `almalinux:8` leg added today would fail truthfully - that
-    # artifact really does need 2.39 - and would be a check that cries wolf
-    # about a defect already fixed upstream of it.
-    #
-    # Add the leg once a release built under the pin exists. At that point it
-    # is the same shape as the x86_64 legs above with `runs-on` moved into the
-    # matrix, and almalinux:8 becomes the leg that can actually fail for ARM64
-    # too.
-    runs-on: [self-hosted, Linux, X64, build]
+    # THE TRIPLE MOVED INTO THE MATRIX, and that is the load-bearing part of
+    # this change rather than the extra rows. The download URL used to hardcode
+    # `-x86_64-unknown-linux-gnu`; an aarch64 leg stacked on top of that would
+    # have pulled the x86_64 binary onto an ARM64 machine. `ldd` would have
+    # refused it and the leg would have failed for the wrong reason - or worse,
+    # been "fixed" by relaxing the assertion that catches it.
+    runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     steps:
       - name: Install what acquisition itself needs
@@ -98,6 +126,7 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          TRIPLE: ${{ matrix.triple }}
         run: |
           set -eux
           tag="${EVENT_TAG:-${INPUT_TAG:-}}"
@@ -115,7 +144,7 @@ jobs:
           # partial-release shape the guard in binaries.yml exists to catch.
           for name in vaultspec-rag vaultspec-search-mcp; do
             curl -fsSL -o "/opt/acq/${name}" \
-              "https://github.com/${REPO}/releases/download/${tag}/${name}-x86_64-unknown-linux-gnu"
+              "https://github.com/${REPO}/releases/download/${tag}/${name}-${TRIPLE}"
             chmod +x "/opt/acq/${name}"
           done
 
