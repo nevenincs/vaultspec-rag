@@ -1,21 +1,27 @@
 name: Binaries
 
-# BUILDS ON A TAG, not only on dispatch.
+# WHAT ACTUALLY STARTS THIS WORKFLOW: an explicit dispatch from
+# `release-please.yml:98`. Not the `push: tags` trigger below.
 #
-# This is the fault that cost THIS repo its release matrix tonight.
-# vaultspec-rag-v0.4.12 was cut and became `latest` carrying the wheel, the
-# sdist and SHA256SUMS - and not one platform binary. rag went from 3/3 to 0/3.
-# Cutting a release simply did not build them, and nobody was going to remember
-# to dispatch it.
+# The trigger is kept and it is not dead - a human running `git push --tags`
+# with a PAT does fire it, which is the manual-release path, and the
+# concurrency group keys on `github.ref_name` for exactly that case. But it
+# does not fire for a normal release, because **GitHub raises no workflow
+# events for refs created with the default GITHUB_TOKEN**, and release-please
+# publishes with exactly that token. Every one of the last fifteen runs of this
+# workflow was `workflow_dispatch`; none was `push`.
 #
-# The artifact-less-release guard did not catch it and could not: that guard
-# lives in THIS workflow, and a workflow that never runs cannot demote anything.
-# The guard had already merged. It was unreachable, not broken.
+# This comment used to claim the opposite - that adding the tag trigger was the
+# fix for the v0.4.12 failure. It was not. #416's dispatch step in
+# release-please.yml is, and the distinction is load-bearing: a maintainer who
+# believed the comment could delete that step as redundant and reproduce
+# v0.4.12 exactly.
 #
-# vaultspec-dashboard has never had this problem because its release workflow
-# runs on tag push. This brings rag to the same shape. Dispatch is kept for
-# repairing a tag whose build failed - which is exactly how v0.4.12 was
-# recovered.
+# The failure worth remembering: vaultspec-rag-v0.4.12 was cut and became
+# `latest` carrying the wheel, the sdist and SHA256SUMS - and not one platform
+# binary. rag went from 3/3 to 0/3. The artifact-less-release guard did not
+# catch it and could not: that guard lives in THIS workflow, and a workflow
+# that never runs cannot demote anything. It was unreachable, not broken.
 on:
   push:
     tags:
