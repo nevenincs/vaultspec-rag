@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tools.binaries.build_pyapp import BINARIES, asset_name
+from tools.binaries.build_pyapp import BINARIES, GLIBC_FLOOR, asset_name
 from tools.packaging import homebrew, products, scoop
 from tools.packaging.checksums import ChecksumError
 from tools.packaging.generate import _parser, available_targets, generate
@@ -250,3 +250,53 @@ def test_the_cli_default_product_is_one_it_can_resolve() -> None:
         ["--tag", "vaultspec-rag-v0.0.0", "--checksums", "SHA256SUMS"]
     )
     assert parsed.product in products.PRODUCTS
+
+
+def test_homebrew_formula_states_the_shared_linux_glibc_floor() -> None:
+    """A Linux install must be told the floor its loader will enforce.
+
+    Homebrew serves Linux, so this formula's reader can install a binary whose
+    dynamic loader then refuses it with a missing-symbol-version error. The
+    floor is read from the table the build enforces after linking, so the two
+    cannot drift apart.
+    """
+    targets = (products.WINDOWS_X86_64, products.LINUX_X86_64, products.LINUX_ARM64)
+    formula = homebrew.render(
+        VAULTSPEC_RAG, VERSION, digests_for(targets), available=targets
+    )
+    floor = ".".join(str(part) for part in GLIBC_FLOOR[products.LINUX_X86_64])
+    assert f"Linux builds require glibc {floor} or newer." in formula
+
+
+def test_homebrew_formula_states_each_floor_when_targets_disagree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Divergent floors are stated per target, never collapsed into one.
+
+    Naming a single floor across targets that do not share it either
+    understates the requirement on one architecture or overstates it on the
+    other, and both send a user to the wrong conclusion.
+    """
+    monkeypatch.setattr(
+        homebrew,
+        "GLIBC_FLOOR",
+        {products.LINUX_X86_64: (2, 28), products.LINUX_ARM64: (2, 39)},
+    )
+    targets = (products.WINDOWS_X86_64, products.LINUX_X86_64, products.LINUX_ARM64)
+    formula = homebrew.render(
+        VAULTSPEC_RAG, VERSION, digests_for(targets), available=targets
+    )
+    assert f"{products.LINUX_X86_64} requires glibc 2.28 or newer." in formula
+    assert f"{products.LINUX_ARM64} requires glibc 2.39 or newer." in formula
+    assert "Linux builds require glibc" not in formula
+
+
+def test_scoop_manifest_carries_no_glibc_caveat() -> None:
+    """Scoop is Windows-only, so a glibc floor there is a caveat for nobody.
+
+    The two channels deliberately share their notes; this one line is the
+    exception, and it belongs only to the channel that serves the assets it
+    constrains.
+    """
+    manifest = scoop.render(VAULTSPEC_RAG, VERSION, digests_for())
+    assert "glibc" not in manifest.lower()
