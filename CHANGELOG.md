@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.14](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.13...vaultspec-rag-v0.4.14) (2026-08-30)
+
+
+### Bug Fixes
+
+* **release:** dispatch the binaries build, not only Publish ([#416](https://github.com/nevenincs/vaultspec-rag/issues/416)) ([a822684](https://github.com/nevenincs/vaultspec-rag/commit/a8226849e76829abbbf1c1a75f007c2675caaa8f))
+
 ## [0.4.13](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.12...vaultspec-rag-v0.4.13) (2026-08-30)
 
 
