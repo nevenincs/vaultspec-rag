@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.16](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.15...vaultspec-rag-v0.4.16) (2026-08-30)
+
+
+### Bug Fixes
+
+* **binaries:** return the containerised workspace to the runner's user ([#423](https://github.com/nevenincs/vaultspec-rag/issues/423)) ([2f8d02a](https://github.com/nevenincs/vaultspec-rag/commit/2f8d02ae2ec3ca356b30e78d3dfbec443229ad0f))
+* **binaries:** the ARM64 runner cannot host a container; declare its real floor ([#420](https://github.com/nevenincs/vaultspec-rag/issues/420)) ([b0c0c00](https://github.com/nevenincs/vaultspec-rag/commit/b0c0c00243ffcd0df0add5319a9fde9d58741713))
+* **binaries:** the guard must require every declared target, not any asset ([#422](https://github.com/nevenincs/vaultspec-rag/issues/422)) ([107ed2b](https://github.com/nevenincs/vaultspec-rag/commit/107ed2b53d628f93addb855deb27840c0a9a439b))
+
 ## [0.4.15](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.14...vaultspec-rag-v0.4.15) (2026-08-30)
 
 
