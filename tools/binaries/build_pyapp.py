@@ -205,24 +205,21 @@ GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
     # the build environment enforces rather than one the build host happens to
     # satisfy. Verified on v0.4.15.
     "x86_64-unknown-linux-gnu": (2, 28),
-    # 2.39, NOT 2.28, and the difference is a host constraint rather than a
-    # choice. The ARM64 runner is itself a colima container with no reachable
-    # docker daemon, so it cannot start the pinned manylinux image - the leg
-    # dies in `Initialize containers`. It therefore builds natively and inherits
-    # the guest's glibc.
+    # 2.28, matching x86_64. This target now builds inside the digest-pinned
+    # manylinux_2_28_aarch64 image on a GitHub-hosted ARM64 runner, so like
+    # x86_64 above this is a promise the build environment enforces rather than
+    # one the build host happens to satisfy.
     #
-    # Declared at what it can actually meet so the check still BINDS: at 2.28
-    # this target would fail every build, which is a check that cries wolf, and
-    # at "unlisted" it would assert nothing at all. 2.39 catches a regression
-    # above the current line while stating the real requirement.
+    # It was 2.39 for as long as the only ARM64 Linux host was a colima
+    # container that could not start the image and therefore built natively,
+    # inheriting the guest's glibc. That was declared rather than hidden, at
+    # what it could actually meet, so the check still bound. The divergence was
+    # marked as one that "should not be permanent"; this is it closing.
     #
-    # This is a DIVERGENCE from x86_64 and should not be permanent. It closes
-    # when an ARM64 Linux host that can run containers exists; that change moves
-    # this line to (2, 28) and restores the image pin in binaries.yml together.
-    #
-    # docs/installation.md states this per-platform rather than promising a bare
-    # "Linux" - the actual user-facing complaint in vaultspec-rag#409.
-    "aarch64-unknown-linux-gnu": (2, 39),
+    # Releases built BEFORE this change still require 2.39 - the floor is a
+    # property of each built artifact, not of this line - which is why
+    # docs/installation.md dates the drop rather than restating it flatly.
+    "aarch64-unknown-linux-gnu": (2, 28),
 }
 
 # Section type of the GNU version-requirements table (``.gnu.version_r``).
