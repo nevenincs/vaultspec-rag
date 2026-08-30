@@ -384,6 +384,17 @@ jobs:
           set -euo pipefail
           uv run --no-project --python 3.13 --             python -m tools.packaging.generate               --tag "${TAG}"               --checksums dist-bin/SHA256SUMS               --root channels
 
+      # Between generating the pointers and committing them, which is the
+      # only point where a bad pointer can still be STOPPED rather than
+      # reported after it has shipped. vaultspec-core published a manifest
+      # with the right version, the right URLs and empty hashes out of a run
+      # that was green end to end; this repository had no equivalent check.
+      - name: Refuse an uninstallable channel pointer
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-project --python 3.13 -- python -m tools.packaging.validate --root channels
+
       - name: Commit the Scoop manifest and Homebrew formula
         shell: bash
         env:
