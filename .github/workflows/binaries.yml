@@ -1,6 +1,25 @@
 name: Binaries
 
+# BUILDS ON A TAG, not only on dispatch.
+#
+# This is the fault that cost THIS repo its release matrix tonight.
+# vaultspec-rag-v0.4.12 was cut and became `latest` carrying the wheel, the
+# sdist and SHA256SUMS - and not one platform binary. rag went from 3/3 to 0/3.
+# Cutting a release simply did not build them, and nobody was going to remember
+# to dispatch it.
+#
+# The artifact-less-release guard did not catch it and could not: that guard
+# lives in THIS workflow, and a workflow that never runs cannot demote anything.
+# The guard had already merged. It was unreachable, not broken.
+#
+# vaultspec-dashboard has never had this problem because its release workflow
+# runs on tag push. This brings rag to the same shape. Dispatch is kept for
+# repairing a tag whose build failed - which is exactly how v0.4.12 was
+# recovered.
 on:
+  push:
+    tags:
+      - "vaultspec-rag-v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -12,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: binaries-${{ inputs.tag }}
+  group: binaries-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -162,7 +181,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -178,7 +197,7 @@ jobs:
       - name: Build binaries
         shell: bash
         env:
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || github.ref_name }}
           TARGET: ${{ matrix.target }}
         run: |
           uv run --no-project --python 3.13 -- \
@@ -246,7 +265,7 @@ jobs:
           # and the merge silently no-ops - which looks exactly like success and
           # leaves the manifest incomplete again.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           cd dist-bin
@@ -287,7 +306,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: gh release upload "${TAG}" dist-bin/* --clobber
 
       # Regenerate BOTH release-channel pointers from the SHA256SUMS just
@@ -307,7 +326,7 @@ jobs:
       - name: Generate release channel pointers
         shell: bash
         env:
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           uv run --no-project --python 3.13 --             python -m tools.packaging.generate               --tag "${TAG}"               --checksums dist-bin/SHA256SUMS               --root channels
@@ -315,7 +334,7 @@ jobs:
       - name: Commit the Scoop manifest and Homebrew formula
         shell: bash
         env:
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           cd channels
@@ -388,7 +407,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TAG: ${{ inputs.tag }}
+      TAG: ${{ inputs.tag || github.ref_name }}
       RELEASE_RESULT: ${{ needs.release.result }}
     steps:
       - name: Require artifacts on the published release
