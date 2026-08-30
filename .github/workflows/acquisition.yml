@@ -68,15 +68,23 @@ jobs:
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
     # x86_64 ONLY, and the gap is declared rather than silent.
     #
-    # There is no aarch64 leg because this fleet cannot host one. The ARM64
-    # Linux runner is itself a colima container with no reachable docker daemon,
-    # so it cannot start any of the images above - a container job there dies in
-    # `Initialize containers`. Running natively on it would test glibc 2.39
-    # against a declared floor of 2.39, which asserts nothing.
+    # There is still no aarch64 leg, but the reason has CHANGED and is now a
+    # sequencing one rather than a hardware one.
     #
-    # The gap closes when an ARM64 Linux host that can run containers exists;
-    # that is the same change that moves the aarch64 floor to 2.28 and restores
-    # the image pin for that leg in binaries.yml.
+    # It used to be that no host could run these images on ARM64. That is no
+    # longer true: binaries.yml builds that target on `ubuntu-24.04-arm`, a
+    # hosted runner which can, and the declared floor dropped to 2.28 with it.
+    #
+    # What blocks the leg now is that this workflow tests the LATEST PUBLISHED
+    # release, and every release published so far was built natively at 2.39.
+    # An aarch64 `almalinux:8` leg added today would fail truthfully - that
+    # artifact really does need 2.39 - and would be a check that cries wolf
+    # about a defect already fixed upstream of it.
+    #
+    # Add the leg once a release built under the pin exists. At that point it
+    # is the same shape as the x86_64 legs above with `runs-on` moved into the
+    # matrix, and almalinux:8 becomes the leg that can actually fail for ARM64
+    # too.
     runs-on: [self-hosted, Linux, X64, build]
     container: ${{ matrix.image }}
     steps:
