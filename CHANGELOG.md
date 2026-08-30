@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.20](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.19...vaultspec-rag-v0.4.20) (2026-08-30)
+
+
+### Features
+
+* **acquisition:** cover aarch64 now that a release meets its floor ([#433](https://github.com/nevenincs/vaultspec-rag/issues/433)) ([326bc18](https://github.com/nevenincs/vaultspec-rag/commit/326bc1810ff652feff9bfccbeca40b0ca4c046ef))
+
 ## [0.4.19](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.18...vaultspec-rag-v0.4.19) (2026-08-30)
 
 
