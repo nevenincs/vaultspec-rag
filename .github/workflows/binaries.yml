@@ -1,21 +1,27 @@
 name: Binaries
 
-# BUILDS ON A TAG, not only on dispatch.
+# WHAT ACTUALLY STARTS THIS WORKFLOW: an explicit dispatch from
+# `release-please.yml:98`. Not the `push: tags` trigger below.
 #
-# This is the fault that cost THIS repo its release matrix tonight.
-# vaultspec-rag-v0.4.12 was cut and became `latest` carrying the wheel, the
-# sdist and SHA256SUMS - and not one platform binary. rag went from 3/3 to 0/3.
-# Cutting a release simply did not build them, and nobody was going to remember
-# to dispatch it.
+# The trigger is kept and it is not dead - a human running `git push --tags`
+# with a PAT does fire it, which is the manual-release path, and the
+# concurrency group keys on `github.ref_name` for exactly that case. But it
+# does not fire for a normal release, because **GitHub raises no workflow
+# events for refs created with the default GITHUB_TOKEN**, and release-please
+# publishes with exactly that token. Every one of the last fifteen runs of this
+# workflow was `workflow_dispatch`; none was `push`.
 #
-# The artifact-less-release guard did not catch it and could not: that guard
-# lives in THIS workflow, and a workflow that never runs cannot demote anything.
-# The guard had already merged. It was unreachable, not broken.
+# This comment used to claim the opposite - that adding the tag trigger was the
+# fix for the v0.4.12 failure. It was not. #416's dispatch step in
+# release-please.yml is, and the distinction is load-bearing: a maintainer who
+# believed the comment could delete that step as redundant and reproduce
+# v0.4.12 exactly.
 #
-# vaultspec-dashboard has never had this problem because its release workflow
-# runs on tag push. This brings rag to the same shape. Dispatch is kept for
-# repairing a tag whose build failed - which is exactly how v0.4.12 was
-# recovered.
+# The failure worth remembering: vaultspec-rag-v0.4.12 was cut and became
+# `latest` carrying the wheel, the sdist and SHA256SUMS - and not one platform
+# binary. rag went from 3/3 to 0/3. The artifact-less-release guard did not
+# catch it and could not: that guard lives in THIS workflow, and a workflow
+# that never runs cannot demote anything. It was unreachable, not broken.
 on:
   push:
     tags:
@@ -56,6 +62,14 @@ jobs:
     name: Preflight runners
     runs-on: ubuntu-latest
     steps:
+      # Only the workflow directory, only this commit: the step below reads the
+      # matrix out of this file to learn which selectors it must check.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: .github/workflows
+          sparse-checkout-cone-mode: false
+
       - name: Every matrix selector has an online runner
         shell: bash
         env:
@@ -80,12 +94,30 @@ jobs:
           fi
           [ -n "${runners}" ] || { echo "::error::no self-hosted runners are registered"; exit 1; }
 
-          # Kept in step with binaries.yml's matrix. Add the aarch64 selector
-          # here in the same change that re-enables that leg.
-          selectors=(
-            "self-hosted,linux,x64,build"
-            "self-hosted,windows,x64"
-          )
+          # DERIVED from the matrix rather than kept in step with it by hand.
+          #
+          # The comment this replaces read: "Add the aarch64 selector here in
+          # the same change that re-enables that leg." The leg was re-enabled
+          # and the selector was not added, so this check has been passing on
+          # two of the three label sets the matrix requires. With the ARM64
+          # runner offline, preflight would report every selector healthy and
+          # the build would then QUEUE on a leg no online runner can serve -
+          # the single failure this job exists to prevent, and the reason
+          # earlier releases ran for 24 hours before failing.
+          #
+          # An instruction in a comment is not a mechanism. vaultspec-core had
+          # the mirror image - a selector left behind after its leg was removed,
+          # which would have REFUSED a serviceable build - and both stayed
+          # invisible in review for the same reason: nothing connects the list
+          # to the matrix except a maintainer remembering to.
+          workflow=".github/workflows/binaries.yml"
+          [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out; cannot derive selectors" >&2; exit 1; }
+          mapfile -t selectors < <(awk -F'[][]' '/^[[:space:]]*runner:/ && NF > 2 {print $2}' "${workflow}" | tr -d ' ' | tr '[:upper:]' '[:lower:]' | sort -u)
+          if [ "${#selectors[@]}" -eq 0 ]; then
+            echo "::error::derived no runner selector from ${workflow}; refusing to pass vacuously" >&2
+            exit 1
+          fi
+          printf 'derived selector: %s\n' "${selectors[@]}"
 
           failed=0
           for want in "${selectors[@]}"; do
