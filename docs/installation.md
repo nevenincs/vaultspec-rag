@@ -9,7 +9,22 @@ You need:
 - CPython 3.13 or 3.14. The runtime accepts that range and rejects anything outside it at import; 3.15 and later are refused until the test matrix covers them.
 - [uv](https://docs.astral.sh/uv/) for dependency and tool management.
 - An NVIDIA GPU with a working CUDA driver and roughly 3 GB of free video memory (VRAM).
-- Linux or Windows.
+- Linux or Windows. The published Linux binaries state a glibc floor, because
+  a binary links against whatever C library built it and a bare "Linux" is not
+  a promise a download can keep:
+
+  | binary | requires | covers |
+  | --- | --- | --- |
+  | `x86_64-unknown-linux-gnu` | glibc 2.28 | Debian 10+, Ubuntu 18.04+, RHEL 8+, Amazon Linux 2023 |
+  | `aarch64-unknown-linux-gnu` | glibc 2.39 | Ubuntu 24.04+ |
+
+  On an older distribution the binary does not start, and the error names a
+  missing symbol version rather than the distribution being too old — so it is
+  worth checking `ldd --version` first. Installing from PyPI with `uv` has no
+  such floor and works wherever the Python and CUDA requirements above are met.
+
+  The aarch64 floor is higher than x86_64's because that target is not yet
+  built in a pinned image; it drops to 2.28 when it is.
 
 Confirm the GPU is visible before you start:
 
