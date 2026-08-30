@@ -170,6 +170,47 @@ class TestDeleteRootAddressing:
         assert envelope["data"]["status"] == "removed"
         assert envelope["data"]["queried_root"]["prefix"] == prefix
 
+    def test_a_torn_down_root_keeps_no_claim_over_deleted_collections(
+        self, storage: QdrantClient, tmp_path: Path
+    ) -> None:
+        """A claim outliving its data makes every later run address a ghost.
+
+        The served pointer and the published metadata are read ahead of any
+        derivation, so a namespace deleted underneath them leaves the next run
+        resolving to a collection the store does not hold - a 404 it can
+        neither retry nor explain, repeating for as long as the files sit
+        there, and surviving a restart because they are on disk.
+        """
+        from ..._index_breadth import index_meta_path
+        from ..._source_types import PublicSourceType
+        from ..._store_models import (
+            publish_served_code_collection,
+            served_code_pointer_path,
+        )
+
+        root, prefix = self._registered_root(tmp_path, "torn-down")
+        generation = f"{prefix}codebase_docs_g{'a' * 16}"
+        self._create(storage, f"{prefix}vault_docs", generation)
+        pointer = served_code_pointer_path(root)
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        publish_served_code_collection(root, generation)
+        code_meta = index_meta_path(root, PublicSourceType.CODE)
+        code_meta.parent.mkdir(parents=True, exist_ok=True)
+        code_meta.write_text("{}", encoding="utf-8")
+        assert pointer.is_file()
+        assert code_meta.is_file()
+
+        result = runner.invoke(
+            app,
+            ["server", "storage", "delete", "--root", str(root), "--yes"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert not any(name.startswith(prefix) for name in self._live(storage))
+        # The exact assertion: nothing on disk still names what was deleted.
+        assert not pointer.is_file(), "served pointer outlived its collection"
+        assert not code_meta.is_file(), "published claim outlived its collection"
+
     def test_absent_namespace_is_an_idempotent_success(
         self, storage: QdrantClient, tmp_path: Path
     ) -> None:
