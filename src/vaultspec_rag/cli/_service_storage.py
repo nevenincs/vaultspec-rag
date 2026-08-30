@@ -13,6 +13,7 @@ impossible without an explicit manifest attribution.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -23,6 +24,8 @@ from .._units import human_bytes
 from ._app import JsonMode, server_storage_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _emit_json_error_and_exit, _plain_line
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -425,6 +428,40 @@ def _render_delete(
         typer.echo(f"Failed {result.prefix}: {result.reason}")
 
 
+def _evict_torn_down_root(
+    prefix: str,
+    queried_root: dict[str, str] | None,
+) -> None:
+    """Drop a torn-down root from the running service, if one is running.
+
+    The teardown runs against Qdrant directly, so a service already holding
+    this root keeps serving a pointer to collections that no longer exist and
+    fails every later job against them until it restarts. Clearing the on-disk
+    claims cannot reach that resident copy; evicting the project can.
+
+    Best-effort: no service, or a service that declines, must not turn a
+    completed teardown into a failure.
+    """
+    from ..serviceclient._discovery import _default_service_port
+    from ..serviceclient._transport import _try_http_admin
+
+    root = queried_root.get("root") if queried_root else None
+    if root is None:
+        from ..storage_manifest import load_manifest
+
+        entry = load_manifest().get(prefix)
+        root = entry.root if entry is not None and entry.root else None
+    if root is None:
+        return
+    port = _default_service_port()
+    if port is None:
+        return
+    try:
+        _try_http_admin("evict_project", {"root": root}, port)
+    except Exception:  # teardown already succeeded; eviction is advisory
+        logger.debug("could not evict %s after teardown", root, exc_info=True)
+
+
 @server_storage_app.command(
     "delete",
     help=(
@@ -500,6 +537,8 @@ def storage_delete(  # noqa: PLR0913 - Typer exposes the stable public CLI optio
         # already holds, so this is a success, not a fault a broker or
         # harness should retry.
         result = dataclasses.replace(result, status="already_absent", reason=None)
+    if result.status == "removed":
+        _evict_torn_down_root(result.prefix, queried_root)
     _render_delete(result, json_mode, queried_root)
     # A non-dry preview that found a target exits non-zero to signal "not applied".
     if not dry_run and not yes and result.status == "would_remove":
