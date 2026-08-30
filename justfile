@@ -465,8 +465,13 @@ health *args='':
 binaries tag rust_target outdir='dist-bin':
   uv run --no-project --python 3.13 -- python -m tools.binaries.build_pyapp --tag {{tag}} --target {{rust_target}} --outdir {{outdir}}
 
-# Regenerate the Scoop manifest and Homebrew formula for one released tag.
-# Point `checksums` at the release's SHA256SUMS (locally built, or downloaded
-# from the release).
-channels tag checksums='dist-bin/SHA256SUMS':
-  uv run --no-project --python 3.13 -- python -m tools.packaging.generate --tag {{tag}} --checksums {{checksums}}
+# `root` is REQUIRED and is a checkout of nevenincs/homebrew-tap - the account
+# channel root, which is where these pointers live. It used to default to this
+# repository, which quietly wrote into a local `bucket/` and `Formula/` that the
+# release job never read; those copies sat at 0.4.11 while the live tap served
+# 0.4.14. Point `checksums` at the release's SHA256SUMS.
+#
+# Regenerate and validate a release's channel pointers, as the release job does.
+channels tag root checksums='dist-bin/SHA256SUMS':
+  uv run --no-project --python 3.13 -- python -m tools.packaging.generate --tag {{tag}} --checksums {{checksums}} --root {{root}}
+  uv run --no-project --python 3.13 -- python -m tools.packaging.validate --root {{root}}
