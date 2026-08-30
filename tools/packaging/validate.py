@@ -42,30 +42,66 @@ if TYPE_CHECKING:
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
-#: Every triple any product may ship. A pointer naming something outside this
-#: set names an asset no build can emit, so it would 404 on install.
-_ALL_TARGETS = (
-    products.WINDOWS_X86_64,
-    products.MACOS_ARM64,
-    products.MACOS_X86_64,
-    products.LINUX_X86_64,
-    products.LINUX_ARM64,
-)
+#: This repository (``tools/packaging/`` -> ``tools/`` -> repo), where the build
+#: matrix lives. Distinct from the CHANNEL root, which is a tap checkout.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: The workflow whose matrix decides what this repository can actually build.
+_WORKFLOW = Path(".github") / "workflows" / "binaries.yml"
+
+#: A matrix row's `target: <triple>`.
+_MATRIX_TARGET = re.compile(r"^\s+target:\s+(\S+)\s*$", re.MULTILINE)
 
 
-def _buildable_asset_names() -> set[str]:
+class UnknownTargetsError(RuntimeError):
+    """The build matrix could not be read, so nothing can be called buildable."""
+
+
+def buildable_targets(repo_root: Path) -> tuple[str, ...]:
+    """The triples the build matrix declares, read from the matrix itself.
+
+    This started as a hand-written list of every triple the products module
+    knows, which made the check weaker than it looks: this product serves three
+    targets and the module names five, so a pointer at a macOS asset - a
+    platform this product does not support at all - validated clean.
+
+    Derived instead, like the release guard's target list (#422) and for the
+    same reason: a second copy of the matrix drifts from it, and every instance
+    of that in this fleet was invisible until something shipped broken.
+    """
+    try:
+        text = (repo_root / _WORKFLOW).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise UnknownTargetsError(f"cannot read {_WORKFLOW}: {exc}") from exc
+    targets = tuple(sorted(set(_MATRIX_TARGET.findall(text))))
+    if not targets:
+        raise UnknownTargetsError(
+            f"{_WORKFLOW} declares no build target; refusing to treat every "
+            f"asset name as unbuildable on the strength of a parse failure",
+        )
+    return targets
+
+
+def _buildable_asset_names(repo_root: Path) -> set[str]:
     return {
-        asset_name(binary, target) for binary in BINARIES for target in _ALL_TARGETS
+        asset_name(binary, target)
+        for binary in BINARIES
+        for target in buildable_targets(repo_root)
     }
 
 
-def validate(root: Path, product: Product) -> list[str]:
+def validate(root: Path, product: Product, repo_root: Path | None = None) -> list[str]:
     """Return every reason these channel pointers are unfit to publish.
+
+    ``root`` is the CHANNEL root - a checkout of the account tap. ``repo_root``
+    is this repository, where the build matrix lives; the two are different
+    trees, and conflating them is what left a stale copy of the pointers here.
 
     A list rather than an exception: a half-generated pair usually breaks in
     more than one way, and reporting only the first sends the maintainer round
     the loop again.
     """
+    repo_root = REPO_ROOT if repo_root is None else repo_root
     problems: list[str] = []
     manifest_path = scoop_path(root, product)
     formula_file = formula_path(root, product)
@@ -120,8 +156,18 @@ def validate(root: Path, product: Product) -> list[str]:
     #     404 at install time and nowhere earlier.
     referenced = {str(url).rsplit("/", 1)[-1] for url in manifest.get("url") or []}
     referenced |= set(re.findall(r'url "[^"]*/([^"/]+)"', formula))
-    unbuildable = sorted(referenced - _buildable_asset_names())
-    problems.extend(f"names an asset no build produces: {name}" for name in unbuildable)
+    try:
+        buildable = _buildable_asset_names(repo_root)
+    except UnknownTargetsError as exc:
+        # Not "assume everything is fine". An unreadable matrix means the
+        # question cannot be answered, and answering it anyway - in either
+        # direction - is how a check starts lying.
+        problems.append(f"cannot determine what this repository builds: {exc}")
+    else:
+        unbuildable = sorted(referenced - buildable)
+        problems.extend(
+            f"names an asset no build produces: {name}" for name in unbuildable
+        )
 
     return problems
 
@@ -142,6 +188,13 @@ def main() -> int:
     )
     args = parser.parse_args()
     product = products.PRODUCTS[args.product]
+
+    try:
+        targets = buildable_targets(REPO_ROOT)
+    except UnknownTargetsError as exc:
+        print(f"::error::{exc}", file=sys.stderr, flush=True)
+        return 1
+    print(f"matrix builds: {', '.join(targets)}", flush=True)
 
     problems = validate(args.root, product)
     if problems:

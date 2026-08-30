@@ -20,7 +20,7 @@ from tools.binaries.build_pyapp import BINARIES, asset_name
 from tools.packaging import products
 from tools.packaging.generate import formula_path, generate, scoop_path
 from tools.packaging.products import VAULTSPEC_RAG
-from tools.packaging.validate import validate
+from tools.packaging.validate import REPO_ROOT, buildable_targets, validate
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,13 +33,20 @@ _DIGEST = "a" * 64
 
 @pytest.fixture
 def channel_root(tmp_path: Path) -> Path:
-    """A generated, well-formed pair of channel pointers in a scratch root."""
+    """A generated, well-formed pair of channel pointers in a scratch root.
+
+    The checksums cover exactly the targets THE MATRIX BUILDS, because that is
+    what a real ``SHA256SUMS`` contains - the release aggregates the assets that
+    were produced, not the ones the products module can name.
+    """
+    built = set(buildable_targets(REPO_ROOT))
     lines = [
         f"{_DIGEST}  {asset_name(binary, target)}"
         for target in (*products.HOMEBREW_TARGETS, products.WINDOWS_X86_64)
-        if VAULTSPEC_RAG.serves(target)
+        if VAULTSPEC_RAG.serves(target) and target in built
         for binary in BINARIES
     ]
+    assert lines, "the matrix builds nothing this product serves"
     checksums = tmp_path / "SHA256SUMS"
     # newline="" so Windows does not translate to CRLF: the checksum reader
     # rejects a carriage return outright, and correctly so.
@@ -141,3 +148,61 @@ def test_a_missing_pointer_is_refused_rather_than_passing_vacuously(
     problems = validate(tmp_path, VAULTSPEC_RAG)
     assert problems
     assert all("does not exist" in problem for problem in problems)
+
+
+def _repo_with_matrix(tmp_path: Path, *targets: str) -> Path:
+    """A stand-in repository whose build matrix declares exactly ``targets``."""
+    repo = tmp_path / "repo"
+    workflow = repo / ".github" / "workflows"
+    workflow.mkdir(parents=True)
+    rows = "\n".join(
+        f"          - name: leg-{i}\n            target: {target}"
+        for i, target in enumerate(targets)
+    )
+    (workflow / "binaries.yml").write_text(
+        f"jobs:\n  build:\n    strategy:\n      matrix:\n        include:\n{rows}\n",
+        encoding="utf-8",
+        newline="",
+    )
+    return repo
+
+
+def test_buildable_targets_reads_the_matrix(tmp_path: Path) -> None:
+    """The buildable set comes from the matrix, not from a second list."""
+    repo = _repo_with_matrix(tmp_path, "b-triple", "a-triple", "a-triple")
+    assert buildable_targets(repo) == ("a-triple", "b-triple")
+
+
+def test_an_asset_for_a_target_the_matrix_never_builds_is_refused(
+    channel_root: Path, tmp_path: Path
+) -> None:
+    """The defect this check was carrying, made into a test.
+
+    The buildable set used to hand-list every triple the products module knows,
+    including two macOS targets this product does not support at all. A pointer
+    naming one validated clean, so the check could not have caught the very
+    mistake it exists for.
+    """
+    repo = _repo_with_matrix(tmp_path, products.WINDOWS_X86_64)
+
+    path = scoop_path(channel_root, VAULTSPEC_RAG)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["url"][0] = (
+        f"https://github.com/nevenincs/vaultspec-rag/releases/download/{TAG}/"
+        f"{asset_name(BINARIES[0], products.MACOS_ARM64)}"
+    )
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    problems = validate(channel_root, VAULTSPEC_RAG, repo_root=repo)
+    assert any("names an asset no build produces" in problem for problem in problems)
+
+
+def test_an_unreadable_matrix_is_reported_rather_than_assumed(
+    channel_root: Path, tmp_path: Path
+) -> None:
+    """No matrix means the question cannot be answered - so it must not be."""
+    problems = validate(channel_root, VAULTSPEC_RAG, repo_root=tmp_path / "absent")
+    assert any(
+        "cannot determine what this repository builds" in problem
+        for problem in problems
+    )
