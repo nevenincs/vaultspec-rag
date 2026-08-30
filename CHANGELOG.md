@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.21](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.20...vaultspec-rag-v0.4.21) (2026-08-30)
+
+
+### Features
+
+* **packaging:** state the Linux glibc floor in the Homebrew formula ([#435](https://github.com/nevenincs/vaultspec-rag/issues/435)) ([de318d7](https://github.com/nevenincs/vaultspec-rag/commit/de318d77ccbe6ad3eeb68235ff3eeae4bf30e175))
+
 ## [0.4.20](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.19...vaultspec-rag-v0.4.20) (2026-08-30)
 
 
