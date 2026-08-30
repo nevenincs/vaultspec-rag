@@ -451,13 +451,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --json assets --jq '.assets | length')
+          names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          assets=$(printf '%s' "${names}" | grep -c . || true)
           echo "release ${TAG} carries ${assets} asset(s); release job=${RELEASE_RESULT}"
 
-          if [ "${assets}" -gt 0 ]; then
+          # EVERY DECLARED TARGET, not "any asset at all". v0.4.15 is why.
+          #
+          # Its aarch64 leg failed, so `Attach to release` was skipped and no
+          # binary reached the release - but `Publish` had already attached the
+          # wheel, the sdist and SHA256SUMS on the tag. The old check asked only
+          # whether the asset count was above zero, saw three, and passed. A
+          # release carrying no binaries at all served as `latest`, and the guard
+          # that exists to prevent exactly that reported success.
+          #
+          # The per-target assert cannot cover this: it lives in the `release`
+          # job, which is the job that does not run when a build leg fails.
+          #
+          # Targets are DERIVED from the matrix in this same file rather than
+          # listed again - a second list drifts, and this repo has paid for that.
+          workflow=".github/workflows/binaries.yml"
+          mapfile -t expected < <(awk '/^[[:space:]]+target:[[:space:]]/ {print $2}' "${workflow}" | sort -u)
+          if [ ${#expected[@]} -eq 0 ]; then
+            echo "::error::could not derive any target from ${workflow}; refusing to pass vacuously"
+            exit 1
+          fi
+
+          missing=()
+          for triple in "${expected[@]}"; do
+            printf '%s' "${names}" | grep -q -- "${triple}" || missing+=("${triple}")
+          done
+
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "all ${#expected[@]} declared target(s) present on ${TAG}"
             exit 0
           fi
+
+          echo "::warning::${TAG} is missing: ${missing[*]}"
 
           if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
                   --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
@@ -465,7 +494,7 @@ jobs:
             echo "::notice::demoted ${TAG} to a prerelease so latest skips it"
           fi
 
-          echo "::error::${TAG} carries no artifacts (release job=${RELEASE_RESULT}). It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back once artifacts attach."
+          echo "::error::${TAG} is INCOMPLETE - missing ${missing[*]} (release job=${RELEASE_RESULT}). It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back once every declared target attaches."
           exit 1
 
       # Undo an earlier demotion once a re-dispatch actually attaches something,
