@@ -248,6 +248,22 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+      # A containerised leg runs as root, and its workspace is the SAME
+      # directory this runner reuses for every other job on the machine. Left
+      # alone it hands the next job a tree it has no permission to clean, and
+      # that job dies in `Checkout` on `failed to remove
+      # dist-bin/vaultspec-rag-x86_64-unknown-linux-gnu: Permission denied` -
+      # which is how every job on this runner went red after the Linux leg was
+      # first put in a pinned image.
+      #
+      # `/__w` is created by the runner and keeps the runner's ownership, so it
+      # is the reference for what the tree should look like on the way out.
+      # Runs on failure too: a leg that dies mid-build poisons the tree just as
+      # thoroughly as one that succeeds.
+      - name: Return the workspace to the runner's user
+        if: ${{ always() && matrix.container != '' }}
+        run: chown -R --reference=/__w "$GITHUB_WORKSPACE"
+
   release:
     name: Attach to release
     needs: build
