@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.13](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.12...vaultspec-rag-v0.4.13) (2026-08-30)
+
+
+### Bug Fixes
+
+* **binaries:** build on the tag, not only on a dispatch nobody remembers ([#414](https://github.com/nevenincs/vaultspec-rag/issues/414)) ([1fef476](https://github.com/nevenincs/vaultspec-rag/commit/1fef476b1da53ebf768f091955a1c6aa72523f19))
+
 ## [0.4.12](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.11...vaultspec-rag-v0.4.12) (2026-08-29)
 
 
