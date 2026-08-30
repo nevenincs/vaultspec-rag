@@ -201,8 +201,28 @@ def asset_name(binary: Binary, target: str) -> str:
 # reports GLIBC_2.39 and refuses it against the 2.28 floor.
 
 GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
+    # Built inside a digest-pinned manylinux_2_28 image, so this is a promise
+    # the build environment enforces rather than one the build host happens to
+    # satisfy. Verified on v0.4.15.
     "x86_64-unknown-linux-gnu": (2, 28),
-    "aarch64-unknown-linux-gnu": (2, 28),
+    # 2.39, NOT 2.28, and the difference is a host constraint rather than a
+    # choice. The ARM64 runner is itself a colima container with no reachable
+    # docker daemon, so it cannot start the pinned manylinux image - the leg
+    # dies in `Initialize containers`. It therefore builds natively and inherits
+    # the guest's glibc.
+    #
+    # Declared at what it can actually meet so the check still BINDS: at 2.28
+    # this target would fail every build, which is a check that cries wolf, and
+    # at "unlisted" it would assert nothing at all. 2.39 catches a regression
+    # above the current line while stating the real requirement.
+    #
+    # This is a DIVERGENCE from x86_64 and should not be permanent. It closes
+    # when an ARM64 Linux host that can run containers exists; that change moves
+    # this line to (2, 28) and restores the image pin in binaries.yml together.
+    #
+    # docs/installation.md states this per-platform rather than promising a bare
+    # "Linux" - the actual user-facing complaint in vaultspec-rag#409.
+    "aarch64-unknown-linux-gnu": (2, 39),
 }
 
 # Section type of the GNU version-requirements table (``.gnu.version_r``).

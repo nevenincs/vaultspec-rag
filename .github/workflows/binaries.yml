@@ -150,13 +150,31 @@ jobs:
           # The accelerated torch pin already covers this target: the cu130
           # index publishes a manylinux_2_28_aarch64 wheel, which
           # tools/binaries/torch_channel.py resolves like any other.
-          # Same baseline, aarch64 image, likewise digest-pinned. The cu130
-          # torch wheel this target resolves is itself manylinux_2_28, so the
-          # accelerated dependency does not raise the floor above the image.
+          # NO CONTAINER HERE, and the reason is the host, not the image.
+          #
+          # `macbook-neo-linux-arm-rag` IS ITSELF a colima container on the
+          # MacBook. It has no reachable docker daemon, so a nested container
+          # cannot start - the leg dies in `Initialize containers` with
+          # `Value cannot be null. (Parameter 'network')`. vaultspec-core hit
+          # exactly this and excluded its own linux-aarch64 leg over it; I added
+          # the pin here without checking whether this runner could host one,
+          # and v0.4.15 proved it cannot.
+          #
+          # So this target builds natively and inherits the colima guest's
+          # glibc, which is 2.39. That is DECLARED in GLIBC_FLOOR below rather
+          # than promised as plain "Linux" - an accurately stated narrow target
+          # is conformant; a silently narrow one is what vaultspec-rag#409 is
+          # about.
+          #
+          # The honest fix is an ARM64 Linux host that can run containers, at
+          # which point this gets the same pinned manylinux_2_28_aarch64 image
+          # as x86_64 and the floor below drops to 2.28 with it. Until then,
+          # dropping the target entirely would remove a platform this product
+          # currently ships to, which is the worse trade.
           - name: linux-aarch64
             runner: [self-hosted, Linux, ARM64]
             target: aarch64-unknown-linux-gnu
-            container: quay.io/pypa/manylinux_2_28_aarch64@sha256:15ac47b9d4ff96443e73bd2165e26fa412c3044a962e96bc1593bd5798b1dc65
+            container: ""
           # NO macOS LEGS, deliberately. vaultspec-rag is CUDA-only:
           # embeddings.py, search/_searcher.py and server/_lifespan.py each
           # raise RuntimeError when torch.cuda.is_available() is false, and
