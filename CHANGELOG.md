@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.15](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.14...vaultspec-rag-v0.4.15) (2026-08-30)
+
+
+### Bug Fixes
+
+* **binaries:** build Linux in a pinned image, and refuse a floor violation ([#418](https://github.com/nevenincs/vaultspec-rag/issues/418)) ([a990c2a](https://github.com/nevenincs/vaultspec-rag/commit/a990c2a580475152b15533a61ae5ff4b697e151e))
+
 ## [0.4.14](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.13...vaultspec-rag-v0.4.14) (2026-08-30)
 
 
