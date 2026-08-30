@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.17](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.16...vaultspec-rag-v0.4.17) (2026-08-30)
+
+
+### Features
+
+* **acquisition:** run the published binary somewhere older than the build host ([#429](https://github.com/nevenincs/vaultspec-rag/issues/429)) ([46cd2c6](https://github.com/nevenincs/vaultspec-rag/commit/46cd2c6559c8bf9cb7c0dd765fa435ee4584649f))
+
+
+### Bug Fixes
+
+* **binaries:** host the release guard, and give it the file it reads ([#424](https://github.com/nevenincs/vaultspec-rag/issues/424)) ([684367d](https://github.com/nevenincs/vaultspec-rag/commit/684367dd000a988154a9afd3a15fb106ef722470))
+* **channels:** one channel root, a guard that watches it, and docs that name it ([#425](https://github.com/nevenincs/vaultspec-rag/issues/425)) ([7567a9e](https://github.com/nevenincs/vaultspec-rag/commit/7567a9e8d4c32623e179fa9ddff7b50cb0e3111f))
+
 ## [0.4.16](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.15...vaultspec-rag-v0.4.16) (2026-08-30)
 
 
