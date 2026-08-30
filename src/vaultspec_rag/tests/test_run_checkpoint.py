@@ -92,6 +92,7 @@ def _open(
     *,
     configuration: CodeRunConfiguration | None = None,
     operation: RunOperation = RunOperation.FULL,
+    clean: bool = False,
 ) -> CodeRunCheckpoint:
     policy = resolve_index_policy(
         tmp_path,
@@ -106,7 +107,7 @@ def _open(
             policy=policy,
             run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
             operation=operation,
-            clean=False,
+            clean=clean,
             model_identity="model-v1",
             dense_dimensions=8,
             configuration=configuration or _configuration(),
@@ -507,6 +508,61 @@ def test_the_pre_record_check_keeps_visible_drift_off_the_signal_path(
     assert owner.superseded_paths == ("src/known.py",)
     # The point of the cheap re-check: the ledger never had to refuse a write.
     assert owner.collisions_observed == 0
+
+
+def test_a_clean_generation_is_never_named_after_the_one_it_replaces(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """Generation names must stay one suffix wide, however many rebuilds run.
+
+    Publication makes the new collection the served one. Minting the next
+    generation's name from the served collection therefore appends a suffix to
+    a name that already carries one, and every clean rebuild widens the next -
+    names accumulating a dozen generations of history, with the collections
+    behind them never dropped. The derived name is a function of the root
+    alone, so minting from it is both bounded and still recomputable by a run
+    resuming after a crash.
+    """
+    from .._store_models import generation_code_collection
+    from ..indexer._generation_lifecycle import (
+        CodeGenerationBindings,
+        CodeGenerationLifecycle,
+    )
+
+    derived = drift_store.DERIVED_CODE_TABLE_NAME
+
+    def _lifecycle() -> CodeGenerationLifecycle:
+        return CodeGenerationLifecycle(
+            CodeGenerationBindings(
+                root_dir=tmp_path,
+                data_root=tmp_path / ".state",
+                meta_path=tmp_path / "code_index_meta.json",
+                store=drift_store,
+                load_meta=dict,
+                read_meta_raw=dict,
+            )
+        )
+
+    first = _lifecycle().build_collection(_open(tmp_path, clean=True))
+    assert first is not None
+    assert first.startswith(derived)
+
+    # Publication rebinds the store to the collection it just published
+    # (CodeGenerationLifecycle.publish), so the next run mints against a
+    # served name that already carries a suffix. Reproduce exactly that
+    # rebinding - it is the whole precondition for the defect.
+    drift_store.CODE_TABLE_NAME = first
+    second = _lifecycle().build_collection(_open(tmp_path / "next", clean=True))
+
+    assert second is not None
+    # The exact assertion: the replacement is minted from the derived name,
+    # not from the collection it replaces. Widening by one suffix per rebuild
+    # is what produced 207-character names carrying ten generations.
+    assert second.count("_g") == 1
+    assert len(second) == len(first)
+    assert not second.startswith(first)
+    assert second == generation_code_collection(derived, second.rsplit("_g", 1)[1])
 
 
 def test_superseded_identities_are_reported_for_snapshot_reconciliation(
