@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tools.binaries.build_pyapp import GLIBC_FLOOR
 from tools.packaging import products
 from tools.packaging.checksums import require
 
@@ -140,18 +141,49 @@ def _install_body(product: Product) -> list[str]:
     return lines
 
 
-def _caveats_body(product: Product) -> list[str]:
+def _glibc_caveats(available: tuple[str, ...]) -> list[str]:
+    """Return the glibc floor caveat for the Linux targets being offered.
+
+    Homebrew is the only channel that serves Linux - Scoop is Windows-only by
+    construction - so this is the one manifest whose reader can install a
+    binary their loader then refuses. The floor comes from the same table the
+    build enforces after linking, so the formula cannot promise a platform the
+    artifact does not actually meet.
+    """
+    floors = {
+        target: GLIBC_FLOOR[target] for target in available if target in GLIBC_FLOOR
+    }
+    if not floors:
+        return []
+    distinct = set(floors.values())
+    if len(distinct) == 1:
+        version = ".".join(str(part) for part in distinct.pop())
+        return [f"Linux builds require glibc {version} or newer."]
+    # Naming one floor for targets that do not share it would understate the
+    # requirement on one architecture or overstate it on the other, so each
+    # target states its own.
+    return [
+        f"{target} requires glibc "
+        f"{'.'.join(str(part) for part in floor)} or newer."
+        for target, floor in sorted(floors.items())
+    ]
+
+
+def _caveats_body(product: Product, available: tuple[str, ...]) -> list[str]:
     """Return a ``caveats`` method carrying the product's channel notes.
 
     The Homebrew counterpart of the Scoop manifest's ``notes``. Both channels
     render the same strings from the same Product, so a caveat that matters at
     install time - a GPU build that has to come from elsewhere, a first launch
     that needs network - cannot reach one channel's users and not the other's.
+    The glibc floor is the exception: it is appended here only, because only
+    this channel offers the assets it constrains.
     """
-    if not product.notes:
+    notes = [*product.notes, *_glibc_caveats(available)]
+    if not notes:
         return []
     lines = ["  def caveats", "    <<~EOS"]
-    lines.extend(f"      {note}" for note in product.notes)
+    lines.extend(f"      {note}" for note in notes)
     lines.extend(["    EOS", "  end"])
     return lines
 
@@ -180,6 +212,7 @@ def render(
     else:
         available = tuple(target for target in available if product.serves(target))
     primary = product.executables[0]
+    caveats = _caveats_body(product, available)
     lines = [
         f"class {product.formula_class} < Formula",
         f'  desc "{product.description}"',
@@ -198,8 +231,8 @@ def render(
         *_os_blocks(product, version, digests, available),
         "",
         *_install_body(product),
-        *([""] if product.notes else []),
-        *_caveats_body(product),
+        *([""] if caveats else []),
+        *caveats,
         "",
         "  test do",
         # PyApp resolves the pinned distribution from PyPI on first launch, so
