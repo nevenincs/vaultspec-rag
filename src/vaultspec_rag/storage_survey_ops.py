@@ -309,6 +309,52 @@ def gather_survey(
     return surveys
 
 
+def forget_root_index_claims(root: str) -> tuple[str, ...]:
+    """Drop a torn-down root's on-disk claims over collections now deleted.
+
+    Removing a namespace leaves the root's served pointer and published
+    metadata naming collections storage no longer holds. Those files outlive
+    the data and are read ahead of any derivation, so the next run resolves
+    through them and addresses a collection that is not there - a 404 the run
+    can neither retry nor explain, repeating for as long as the claims sit on
+    disk. A claim describes data; when the data goes, it goes.
+
+    Best-effort by design: a root that is gone, or one whose files cannot be
+    removed, must not fail a teardown that already removed the namespace.
+
+    Returns:
+        The claim paths actually removed, for the caller to report.
+    """
+    from ._index_breadth import index_meta_path
+    from ._source_types import PublicSourceType
+    from ._store_models import served_code_pointer_path
+    from .indexer._document_meta import document_metadata_path
+
+    root_path = Path(root)
+    if not root_path.is_dir():
+        return ()
+    cleared: list[str] = []
+    claims = (
+        served_code_pointer_path(root_path),
+        index_meta_path(root_path, PublicSourceType.VAULT),
+        index_meta_path(root_path, PublicSourceType.CODE),
+        document_metadata_path(root_path),
+    )
+    for claim in claims:
+        try:
+            if claim.is_file():
+                claim.unlink()
+                cleared.append(str(claim))
+        except OSError:
+            logger.warning(
+                "could not drop index claim %s for torn-down root %s",
+                claim,
+                root,
+                exc_info=True,
+            )
+    return tuple(cleared)
+
+
 def delete_prefix(
     client: QdrantClient,
     prefix: str,
@@ -355,6 +401,9 @@ def delete_prefix(
             removed.append(name)
         except (OSError, RuntimeError) as exc:
             return DeleteResult(prefix, "failed", removed, reason=str(exc))
+    entry = manifest.get(prefix)
+    if entry is not None and entry.root:
+        forget_root_index_claims(entry.root)
     remove_prefix(prefix)
     return DeleteResult(prefix, "removed", removed)
 
