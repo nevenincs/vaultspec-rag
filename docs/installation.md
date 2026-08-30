@@ -15,7 +15,7 @@ You need:
 
   | binary | requires | covers |
   | --- | --- | --- |
-  | `x86_64-unknown-linux-gnu` | glibc 2.28 | Debian 10+, Ubuntu 18.04+, RHEL 8+, Amazon Linux 2023 |
+  | `x86_64-unknown-linux-gnu` | glibc 2.28 | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 |
   | `aarch64-unknown-linux-gnu` | glibc 2.39 | Ubuntu 24.04+ |
 
   On an older distribution the binary does not start, and the error names a
