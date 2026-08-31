@@ -749,7 +749,7 @@ def test_a_vanished_path_that_owned_nothing_does_not_block_finalization(
     outlives every attempt to resolve it and the run dies at finalization
     instead of at the read, repeatedly, on a tree somebody is working in.
 
-    Mutation: dropped the ``forget_vanished_path`` call from
+    Mutation: dropped the ``forget_unevidenced_path`` call from
     ``_record_vanished_source``. Observed this fail with ``RunLedgerStateError:
     cannot finalize unresolved file state for src/vanished.py`` - verbatim the
     production failure.
@@ -764,7 +764,9 @@ def test_a_vanished_path_that_owned_nothing_does_not_block_finalization(
         "source vanished before it was read",
         content_hash=None,
     )
-    assert checkpoint.forget_vanished_path("src/vanished.py")
+    assert checkpoint.ledger.forget_unevidenced_path(
+        checkpoint.generation_id, "src/vanished.py"
+    )
 
     meta_path = tmp_path / ".state" / "code_meta.json"
     # The assertion is that finalization completes at all: before the forget,
@@ -784,10 +786,11 @@ def test_a_path_this_generation_owns_is_never_forgotten(tmp_path: Path) -> None:
     checkpoint = _open(tmp_path)
     _index_path(checkpoint, "src/owned.py", _digest("owned"))
 
-    assert not checkpoint.forget_vanished_path("src/owned.py"), (
-        "a path with commit units must survive the forget"
-    )
+    assert not checkpoint.ledger.forget_unevidenced_path(
+        checkpoint.generation_id, "src/owned.py"
+    ), "a path with commit units must survive the forget"
     assert any(
         state.rel_path == "src/owned.py"
         for state in checkpoint.ledger.iter_file_states(checkpoint.generation_id)
     )
+
