@@ -253,3 +253,35 @@ async def test_admission_refusal_states_its_kind_exactly_once(
         if text.startswith("Source code: failed:")
     )
     assert line.count(kind) == 1
+
+
+def test_the_support_measurement_survives_a_file_deleted_before_it_stats(
+    tmp_path: Path,
+) -> None:
+    """A tree under edit must not lose the run to a stat on a vanished file.
+
+    This pass only sizes the run. A file that disappeared between the walk
+    that enumerated it and this measurement will never be read, so it cannot
+    change the budget - but a bare ``stat`` on it ended the entire index
+    before a single chunk was produced. On a tree somebody is working in that
+    repeats for as long as the edits continue, which is how one deleted module
+    became four consecutive failed code indexes.
+
+    Mutation: restored the bare ``path.stat().st_size``. Observed this fail
+    with ``FileNotFoundError: [WinError 2] The system cannot find the file
+    specified`` escaping the call below, which is the defect exactly.
+    """
+    from ...indexer._support_budget import CodeSupportBudget
+
+    present = tmp_path / "present.py"
+    present.write_text("value = 1\n", encoding="utf-8")
+    vanished = tmp_path / "deleted_before_stat.py"
+    assert not vanished.exists()
+
+    budget = CodeSupportBudget(cast("Any", None))
+    # The whole assertion: this must return rather than raise.
+    budget.begin_support_measurement([present, vanished])
+
+    measurement = budget.measurement
+    assert measurement.source_files == 1, "a vanished file must not be counted"
+    assert measurement.source_bytes == present.stat().st_size
