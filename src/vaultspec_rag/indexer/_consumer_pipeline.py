@@ -450,7 +450,9 @@ class CodeConsumerPipeline:
             # outcome just recorded would wedge finalization over a file that
             # contributed nothing. Where the path IS owned, the row stays and
             # the stale purge resolves it.
-            checkpoint.forget_vanished_path(result.rel_path)
+            checkpoint.ledger.forget_unevidenced_path(
+                checkpoint.generation_id, result.rel_path
+            )
         return True
 
     def _record_empty_source(
