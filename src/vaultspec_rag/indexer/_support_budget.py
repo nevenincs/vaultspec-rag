@@ -106,8 +106,19 @@ class CodeSupportBudget:
         source_files = 0
         source_bytes = 0
         for path in paths:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                # A tree under active edit loses files between the walk that
+                # enumerated them and this measurement. This pass only sizes
+                # the run; a file that is already gone contributes nothing to
+                # it and will never be read. Ending an entire index here - on
+                # a stat, before a single chunk is produced - is the same
+                # defect the chunk sink converges for a vanished source, and
+                # on a tree somebody is working in it repeats indefinitely.
+                continue
             source_files += 1
-            source_bytes += path.stat().st_size
+            source_bytes += size
         profile = get_index_support_profile(get_config().index_support_profile)
         self._support_limits = profile.code
         self._support_profile_name = profile.name
