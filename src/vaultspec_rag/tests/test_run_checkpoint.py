@@ -734,3 +734,60 @@ def test_drift_telemetry_reports_volume_the_breaker_cannot_see(
         "collisions_observed": 0,
         "retry_budget": 1,
     }
+
+
+def test_a_vanished_path_that_owned_nothing_does_not_block_finalization(
+    tmp_path: Path,
+) -> None:
+    """A file created and deleted before it was ever indexed must not wedge a run.
+
+    The sink converges a vanished read so one deleted file cannot end the run,
+    and records the path as ``extract_retryable``. Finalization accepts only
+    ``indexed`` and ``policy_rejected``, and the one route out of
+    ``file_states`` - ``record_path_deleted`` - demands a storage-confirmed
+    deletion unit. A path that never owned points never gets one, so the row
+    outlives every attempt to resolve it and the run dies at finalization
+    instead of at the read, repeatedly, on a tree somebody is working in.
+
+    Mutation: dropped the ``forget_vanished_path`` call from
+    ``_record_vanished_source``. Observed this fail with ``RunLedgerStateError:
+    cannot finalize unresolved file state for src/vanished.py`` - verbatim the
+    production failure.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/kept.py", _digest("kept"))
+
+    # Exactly what the sink does for a source that disappeared before the read.
+    checkpoint.record_processing_failure(
+        "src/vanished.py",
+        FileStateKind.EXTRACT_RETRYABLE,
+        "source vanished before it was read",
+        content_hash=None,
+    )
+    assert checkpoint.forget_vanished_path("src/vanished.py")
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    # The assertion is that finalization completes at all: before the forget,
+    # this raised RunLedgerStateError over the vanished path.
+    checkpoint.publish_metadata(meta_path, published_points=2)
+    assert meta_path.exists()
+
+
+def test_a_path_this_generation_owns_is_never_forgotten(tmp_path: Path) -> None:
+    """Evidence is the gate; forgetting an owned path would strand its points.
+
+    A path with commit units belongs to this generation and must leave through
+    the purge that drops what it owns. Forgetting it here would remove the row
+    while its points stayed in storage, claimed by nothing - which is the
+    orphan the stale reconciliation exists to prevent.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/owned.py", _digest("owned"))
+
+    assert not checkpoint.forget_vanished_path("src/owned.py"), (
+        "a path with commit units must survive the forget"
+    )
+    assert any(
+        state.rel_path == "src/owned.py"
+        for state in checkpoint.ledger.iter_file_states(checkpoint.generation_id)
+    )

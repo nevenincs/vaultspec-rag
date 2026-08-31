@@ -256,6 +256,19 @@ class RunCheckpointBase:
         self.ledger.record_path_deleted(self.generation_id, rel_path)
         return inserted
 
+    def forget_vanished_path(self, rel_path: str) -> bool:
+        """Drop a vanished path this generation never gathered evidence for.
+
+        A source that disappeared before it was read owns no points and can
+        never receive the storage-confirmed deletion that resolving a state
+        row otherwise requires, so recording an outcome for it wedges
+        finalization instead of describing anything.
+
+        Returns:
+            True when a state row was removed.
+        """
+        return self.ledger.forget_unevidenced_path(self.generation_id, rel_path)
+
     def record_confirmed_stale_deletion(
         self,
         rel_path: str,

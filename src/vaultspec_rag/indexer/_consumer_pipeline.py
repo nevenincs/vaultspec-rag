@@ -445,6 +445,12 @@ class CodeConsumerPipeline:
                 result.preprocess_reason or "source vanished before it was read",
                 content_hash=None,
             )
+            # A path this generation holds no evidence for can never receive
+            # the storage-confirmed deletion that resolves a state row, so the
+            # outcome just recorded would wedge finalization over a file that
+            # contributed nothing. Where the path IS owned, the row stays and
+            # the stale purge resolves it.
+            checkpoint.forget_vanished_path(result.rel_path)
         return True
 
     def _record_empty_source(
