@@ -256,13 +256,19 @@ class CodeRunCheckpoint(RunCheckpointBase):
             )
         return removed
 
-    def record_empty_source(
+    def record_policy_rejection(
         self,
         rel_path: str,
+        reason: AdmissionReason,
         *,
         content_hash: str | None = None,
     ) -> None:
-        """Converge a source that carried no content to index."""
+        """Converge a source policy declined to index, under one stated reason.
+
+        Every rejection a run resolves goes through here. Splitting it per
+        reason would put the same three lines behind several names and let one
+        copy drift into recording a state finalization cannot accept.
+        """
         self.ledger.record_file_state(
             self.generation_id,
             FileState.policy_rejected(
@@ -270,7 +276,7 @@ class CodeRunCheckpoint(RunCheckpointBase):
                 AdmissionDisposition(
                     kind=ContentKind.CODE,
                     admitted=False,
-                    reason=AdmissionReason.SOURCE_EMPTY,
+                    reason=reason,
                 ),
                 content_hash=content_hash,
             ),
