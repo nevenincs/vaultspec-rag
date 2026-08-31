@@ -161,6 +161,58 @@ class RunLedgerFileMethods:
 
         in_ledger_transaction(self.path, body)
 
+    def forget_unevidenced_path(self, generation_id: str, rel_path: str) -> bool:
+        """Drop a path's state when this generation holds no evidence for it.
+
+        The counterpart to :meth:`record_path_deleted` for a path that never
+        owned anything. A file created and deleted between the walk that
+        enumerated it and the read that would have chunked it produces no
+        commit unit, so no storage-confirmed deletion can ever be recorded for
+        it - and ``record_path_deleted`` demands exactly one. Any state row it
+        left behind is therefore unresolvable, and finalization, which admits
+        only ``indexed`` and ``policy_rejected``, refuses the whole generation
+        over a file that contributed nothing to it.
+
+        Evidence is the gate: a path with any commit unit is owned by this
+        generation and must go through the purge that drops its points, never
+        through here.
+
+        Returns:
+            True when a state row was removed.
+        """
+        validate_rel_path(rel_path)
+
+        def body(connection: sqlite3.Connection) -> bool:
+            generation = self._require_mutable_generation(connection, generation_id)
+            if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
+                raise RunLedgerStateError(
+                    "cannot change file state after finalization begins"
+                )
+            evidence: _DeletionEvidenceRow | None = fetch_one(
+                connection,
+                """
+                SELECT COUNT(*) AS unit_count, SUM(is_file_end) AS end_count
+                FROM commit_units
+                WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, rel_path),
+            )
+            assert evidence is not None
+            if int(evidence["unit_count"]) != 0:
+                return False
+            return (
+                connection.execute(
+                    """
+                    DELETE FROM file_states
+                    WHERE generation_id = ? AND rel_path = ?
+                    """,
+                    (generation_id, rel_path),
+                ).rowcount
+                > 0
+            )
+
+        return in_ledger_transaction(self.path, body)
+
     def superseded_point_ids(
         self,
         generation_id: str,
