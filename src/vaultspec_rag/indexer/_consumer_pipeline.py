@@ -371,8 +371,6 @@ class CodeConsumerPipeline:
             return
         if self._record_vanished_source(result, checkpoint):
             return
-        if self._record_skipped_source(result, checkpoint):
-            return
         failure = self._code_result_failure(result)
         if failure is None:
             return
@@ -393,6 +391,12 @@ class CodeConsumerPipeline:
         result: FileChunkResult,
     ) -> tuple[FileStateKind, JobErrorKind, str] | None:
         """Return the durable state and typed error for a failed file result."""
+        if result.preprocess_status == "skipped":
+            return (
+                FileStateKind.EXTRACT_RETRYABLE,
+                JobErrorKind.EXTRACTION_RETRYABLE,
+                result.preprocess_reason or "preprocessor skipped the file",
+            )
         if result.chunks:
             return None
         if result.preprocess_status == "ok":
@@ -441,45 +445,6 @@ class CodeConsumerPipeline:
                 result.preprocess_reason or "source vanished before it was read",
                 content_hash=None,
             )
-        return True
-
-    def _record_skipped_source(
-        self,
-        result: FileChunkResult,
-        checkpoint: CodeRunCheckpoint | None,
-    ) -> bool:
-        """Converge a preprocessor-skipped source instead of failing the run.
-
-        ``on_error = "skip"`` is the operator saying a failing rule must not
-        stop the indexing of everything else. By the time a result carries
-        ``skipped`` that disposition has already been applied - the runner
-        resolved the failure against the rule and chose to skip - so raising
-        here overrides the policy the operator configured, and does it under a
-        ``retryable`` label that a permanently unparseable source can never
-        satisfy. One corrupt document then ends every run over the tree that
-        holds it, for as long as it sits there.
-
-        A rule that must stop the run still does: ``on_error = "fail"`` raises
-        in the runner and never reaches this seam.
-
-        Returns:
-            True when preprocessing skipped the result and it was recorded.
-        """
-        if result.preprocess_status != "skipped":
-            return False
-        reason = result.preprocess_reason or "preprocessor skipped the file"
-        if checkpoint is not None:
-            checkpoint.record_processing_failure(
-                result.rel_path,
-                FileStateKind.EXTRACT_RETRYABLE,
-                reason,
-                content_hash=self._lifecycle.checkpoint_content_hash(
-                    result.content_hash
-                ),
-            )
-        logger.debug(
-            "Converged preprocessor-skipped source %s: %s", result.rel_path, reason
-        )
         return True
 
     def _record_empty_source(
