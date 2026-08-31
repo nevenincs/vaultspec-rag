@@ -30,6 +30,7 @@ from ._chunk_producer import (
     WeightedCodeSegmentQueue,
     drain_code_chunks,
 )
+from ._content_policy import AdmissionReason
 from ._file_state import FileStateKind
 from ._run_checkpoint import CodeRunConfiguration
 from ._run_ledger_models import RunOperation
@@ -371,6 +372,8 @@ class CodeConsumerPipeline:
             return
         if self._record_vanished_source(result, checkpoint):
             return
+        if self._record_skipped_source(result, checkpoint):
+            return
         failure = self._code_result_failure(result)
         if failure is None:
             return
@@ -391,12 +394,6 @@ class CodeConsumerPipeline:
         result: FileChunkResult,
     ) -> tuple[FileStateKind, JobErrorKind, str] | None:
         """Return the durable state and typed error for a failed file result."""
-        if result.preprocess_status == "skipped":
-            return (
-                FileStateKind.EXTRACT_RETRYABLE,
-                JobErrorKind.EXTRACTION_RETRYABLE,
-                result.preprocess_reason or "preprocessor skipped the file",
-            )
         if result.chunks:
             return None
         if result.preprocess_status == "ok":
@@ -455,6 +452,45 @@ class CodeConsumerPipeline:
             )
         return True
 
+    def _record_skipped_source(
+        self,
+        result: FileChunkResult,
+        checkpoint: CodeRunCheckpoint | None,
+    ) -> bool:
+        """Converge a source the preprocessor declined under ``on_error=skip``.
+
+        ``skipped`` is the operator's own disposition already applied: the
+        rule failed, and the configuration said carry on. Ending the run over
+        it defeats the setting, and ending it under a ``retryable`` label a
+        permanently unparseable file can never satisfy makes every later run
+        die on the same document.
+
+        Recorded as a policy rejection against the hash that evidenced it, so
+        finalization can resolve it and a file whose content later changes is
+        classified again rather than staying refused forever. A rule that must
+        stop the run still does - ``on_error = "fail"`` raises in the runner
+        and never reaches this seam.
+
+        Returns:
+            True when preprocessing skipped the result and it was recorded.
+        """
+        if result.preprocess_status != "skipped":
+            return False
+        if checkpoint is not None:
+            checkpoint.record_policy_rejection(
+                result.rel_path,
+                AdmissionReason.PREPROCESS_SKIPPED,
+                content_hash=self._lifecycle.checkpoint_content_hash(
+                    result.content_hash
+                ),
+            )
+        logger.debug(
+            "Converged preprocessor-skipped source %s: %s",
+            result.rel_path,
+            result.preprocess_reason or "preprocessor skipped the file",
+        )
+        return True
+
     def _record_empty_source(
         self,
         result: FileChunkResult,
@@ -480,8 +516,9 @@ class CodeConsumerPipeline:
         if result.chunks or result.content_hash != _EMPTY_SOURCE_DIGEST:
             return False
         if checkpoint is not None:
-            checkpoint.record_empty_source(
+            checkpoint.record_policy_rejection(
                 result.rel_path,
+                AdmissionReason.SOURCE_EMPTY,
                 content_hash=self._lifecycle.checkpoint_content_hash(
                     result.content_hash
                 ),
