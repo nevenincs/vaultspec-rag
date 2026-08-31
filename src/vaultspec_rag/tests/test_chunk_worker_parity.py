@@ -191,6 +191,51 @@ def test_the_production_sink_converges_a_vanished_source(tmp_path: Path) -> None
     assert by_path["present.py"].chunks, "the surviving file still indexes"
 
 
+def test_the_production_sink_converges_a_preprocessor_skipped_source(
+    tmp_path: Path,
+) -> None:
+    """``on_error = "skip"`` must not end the run it was configured to survive.
+
+    ``skipped`` is not a defect report: it means the runner already resolved a
+    failing rule against the operator's own disposition and chose to skip, as
+    ``FileChunkResult`` documents. Raising on it at the sink overrides that
+    policy, and does so under a ``retryable`` label that a permanently
+    unparseable source can never satisfy - so one corrupt document ends every
+    run over the tree that holds it, indefinitely.
+
+    Asserted at the sink because that is where the decision lives; the worker
+    returning ``skipped`` changes nothing if the sink still raises on it.
+
+    Mutation: restored the ``skipped`` branch in ``_code_result_failure``.
+    Observed this fail with ``JobError: extract_retryable: preprocessor exited
+    1`` escaping the call below, which is the defect exactly.
+    """
+    from .._job_errors import JobError
+
+    pipeline = _chunk_only_indexer(tmp_path)._consumer_pipeline
+
+    skipped = _chunk_worker.FileChunkResult(
+        rel_path="corpus/corrupt.pdf",
+        content_hash="a" * 64,
+        chunks=[],
+        preprocess_status="skipped",
+        preprocess_reason="preprocessor exited 1: Data-loss while decompressing",
+    )
+    # The whole assertion: this must return rather than raise.
+    pipeline.raise_code_result_failure(skipped, None)
+
+    # And the sink must still fail a genuine defect, or the convergence above
+    # would just be a blanket "never raise".
+    unindexable = _chunk_worker.FileChunkResult(
+        rel_path="src/unindexable.py",
+        content_hash="b" * 64,
+        chunks=[],
+        preprocess_status="ok",
+    )
+    with pytest.raises(JobError):
+        pipeline.raise_code_result_failure(unindexable, None)
+
+
 def _chunk_only_indexer(root: Path) -> CodebaseIndexer:
     """Build a CodebaseIndexer for chunk-only use without a model or store.
 
