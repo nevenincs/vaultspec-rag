@@ -10,6 +10,7 @@ import pytest
 
 from .._store_models import CodeChunk
 from ..indexer._content_policy import (
+    AdmissionReason,
     ContentKind,
     RootContentPolicy,
     SourceProfileVersion,
@@ -234,7 +235,11 @@ def test_paths_without_indexed_evidence_are_never_reported_as_drifted(
 ) -> None:
     checkpoint = _open(tmp_path)
     rejected_digest = _digest("an empty source")
-    checkpoint.record_empty_source("src/empty.py", content_hash=rejected_digest)
+    checkpoint.record_policy_rejection(
+        "src/empty.py",
+        AdmissionReason.SOURCE_EMPTY,
+        content_hash=rejected_digest,
+    )
     # A path whose first segment was confirmed but never reached its file end
     # carries committed units without an indexed state.
     checkpoint.record_confirmed_segment(
@@ -794,3 +799,48 @@ def test_a_path_this_generation_owns_is_never_forgotten(tmp_path: Path) -> None:
         for state in checkpoint.ledger.iter_file_states(checkpoint.generation_id)
     )
 
+
+def test_a_preprocessor_skip_resolves_and_finalizes(tmp_path: Path) -> None:
+    """``on_error = "skip"`` must survive the whole run, not just the read.
+
+    The earlier attempt at this converged the skip at the sink and stopped
+    there, recording it through the failure recorder - whose contract is one
+    explicit UNRESOLVED outcome. Finalization admits only ``indexed`` and
+    ``policy_rejected``, so the run got further and died later instead. This
+    asserts the half that was missing: the run finalizes.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/kept.py", _digest("kept"))
+    checkpoint.record_policy_rejection(
+        "src/corpus/corrupt.pdf",
+        AdmissionReason.PREPROCESS_SKIPPED,
+        content_hash=_digest("the bytes that would not parse"),
+    )
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    checkpoint.publish_metadata(meta_path, published_points=2)
+    assert meta_path.exists()
+
+
+def test_a_skip_without_the_hash_that_evidenced_it_stays_unresolved(
+    tmp_path: Path,
+) -> None:
+    """The rejection is only trustworthy against the content it was made on.
+
+    A skip recorded with no content hash cannot be re-evaluated when the file
+    changes, so it would refuse the document forever. Finalization must keep
+    refusing it rather than let an unfalsifiable rejection settle - the same
+    bar ``source_too_large`` and ``source_binary`` are held to.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/kept.py", _digest("kept"))
+    checkpoint.record_policy_rejection(
+        "src/corpus/corrupt.pdf",
+        AdmissionReason.PREPROCESS_SKIPPED,
+        content_hash=None,
+    )
+
+    with pytest.raises(RunLedgerStateError, match="unresolved file state"):
+        checkpoint.publish_metadata(
+            tmp_path / ".state" / "code_meta.json", published_points=2
+        )
