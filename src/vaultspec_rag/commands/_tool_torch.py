@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import subprocess
 import sys
 import tomllib
@@ -57,9 +58,7 @@ class ToolCudaInstallSpec:
     def command(self) -> str:
         """Render the request for an operator without reparsing it later."""
         return " ".join(
-            f'"{part}"'
-            if part in {"vaultspec-rag[mcp]", f"torch @ {self.wheel_url}"}
-            else part
+            f'"{part}"' if " " in part or "[" in part else part
             for part in self.args
         )
 
@@ -112,6 +111,18 @@ def _wheel_platform_tag(platform_name: str, machine: str) -> str:
     return f"manylinux_2_28_{machine.lower()}"
 
 
+def _tool_package_spec() -> str:
+    """Read the one tool-mode package request from the bundled definition."""
+    from importlib.resources import files
+
+    source = files("vaultspec_rag.builtins") / "mcps" / "vaultspec-rag.builtin.json"
+    data = json.loads(source.read_text(encoding="utf-8"))
+    value = data.get("_vaultspec_mode_tool_spec")
+    if not isinstance(value, str) or not value:
+        raise RuntimeError("bundled tool definition has no tool package specification")
+    return value
+
+
 def tool_cuda_install_spec(
     *,
     torch_version: str | None = None,
@@ -144,7 +155,7 @@ def tool_cuda_install_spec(
             "--force",
             "--python",
             python_request,
-            "vaultspec-rag[mcp]",
+            _tool_package_spec(),
             "--with",
             f"torch @ {wheel_url}",
         ),
