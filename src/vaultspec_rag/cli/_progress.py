@@ -245,7 +245,10 @@ class StartupStatusReporter:
             spinner,
             console=console,
             refresh_per_second=_REFRESH_PER_SECOND,
-            transient=True,
+            # The final frame is the operator's evidence of the last completed
+            # activity. Keeping it also makes a redirected terminal stream
+            # retain the real live output instead of erasing it at teardown.
+            transient=False,
         )
         try:
             live.start()
