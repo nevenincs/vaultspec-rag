@@ -73,6 +73,25 @@ class TestRichProgressReporterFallback:
         reporter = RichProgressReporter(console)
         assert reporter._is_tty is False
 
+    def test_forced_terminal_without_interactivity_emits_plain_lines(self) -> None:
+        """FORCE_COLOR must not turn a non-interactive stream into a live region."""
+        buf = io.StringIO()
+        console = Console(
+            file=buf,
+            force_terminal=True,
+            force_interactive=False,
+            color_system=None,
+            width=120,
+        )
+        reporter = RichProgressReporter(console)
+
+        reporter.phase_start("hash documents", 1)
+        reporter.advance()
+        reporter.phase_end()
+
+        assert reporter._is_tty is False
+        assert "==> hash documents (1 items)" in buf.getvalue()
+
     def test_phase_events_emit_lines(self) -> None:
         console, buf = _make_non_tty_console()
         reporter = RichProgressReporter(console)
@@ -148,7 +167,12 @@ class TestRichProgressReporterFallback:
 
     def test_rich_reporter_rejects_use_outside_context_manager(self) -> None:
         buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True, width=120)
+        console = Console(
+            file=buf,
+            force_terminal=True,
+            force_interactive=True,
+            width=120,
+        )
         reporter = RichProgressReporter(console)
         with pytest.raises(
             RuntimeError,

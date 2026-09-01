@@ -34,8 +34,9 @@ __all__ = [
 ]
 
 TORCH_MISSING_MESSAGE = (
-    "GPU RAG dependencies not installed: torch is missing. Run `uv sync`, "
-    "then `vaultspec-rag install` to provision the cu130 CUDA torch wheel."
+    "GPU RAG dependencies not installed: torch is missing. Install "
+    "`vaultspec-rag[gpu]`, then run `vaultspec-rag install --sync` to "
+    "provision the cu130 CUDA torch wheel."
 )
 
 CUDA_REQUIRED_MESSAGE = (

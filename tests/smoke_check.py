@@ -95,7 +95,7 @@ def check_canonical_mcp_builtin() -> None:
         "args": ["@@VAULTSPEC_INSTALL_MODE_ARGS@@"],
         "_vaultspec_mode_package": "vaultspec-rag",
         "_vaultspec_mode_module": "vaultspec_rag.server",
-        "_vaultspec_mode_tool_spec": "vaultspec-rag[mcp]",
+        "_vaultspec_mode_tool_spec": "vaultspec-rag[gpu,mcp]",
     }
     if actual != expected:
         _fail(f"canonical MCP builtin mismatch: {actual!r}")
@@ -176,7 +176,7 @@ def check_installed_package_enrollment() -> None:
         )
         expected_args = [
             "--from",
-            "vaultspec-rag[mcp]",
+            "vaultspec-rag[gpu,mcp]",
             "python",
             "-m",
             "vaultspec_rag.server",
