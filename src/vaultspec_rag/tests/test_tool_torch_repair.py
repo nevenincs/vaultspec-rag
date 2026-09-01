@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pytest import MonkeyPatch
 
+from ..cli._gpu_errors import RuntimeEnvKind
 from ..commands import _tool_torch
 from ..serviceclient._discovery import (
     DISCOVERY_STATE_READY,
@@ -17,6 +18,36 @@ pytestmark = [pytest.mark.unit]
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _ready_machine_resolution() -> MachineResolution:
+    return MachineResolution(
+        state=DISCOVERY_STATE_READY,
+        source="machine_pointer",
+        holder_pid=438,
+        port=7331,
+    )
+
+
+def _persistent_tool_env(_interpreter: str) -> RuntimeEnvKind:
+    return RuntimeEnvKind.UV_TOOL
+
+
+def _no_visible_cuda_device(
+    _interpreter: str, timeout: float = 60.0
+) -> tuple[bool, str]:
+    del timeout
+    return True, "torch is a CUDA build but no CUDA device is visible (driver/GPU)"
+
+
+def _cuda_ready_probe(_interpreter: str, timeout: float = 60.0) -> None:
+    del timeout
+    return None
+
+
+def _cpu_torch_probe(_interpreter: str, timeout: float = 60.0) -> tuple[bool, str]:
+    del timeout
+    return True, "the service interpreter has a CPU-only torch wheel"
 
 
 def test_receipt_requires_the_exact_cuda_wheel(tmp_path: Path) -> None:
@@ -62,12 +93,7 @@ def test_service_holder_refuses_before_reinstall(monkeypatch: MonkeyPatch) -> No
     monkeypatch.setattr(
         _discovery,
         "resolve_machine_service",
-        lambda: MachineResolution(
-            state=DISCOVERY_STATE_READY,
-            source="machine_pointer",
-            holder_pid=438,
-            port=7331,
-        ),
+        _ready_machine_resolution,
     )
 
     def _unexpected_reinstall(
@@ -94,15 +120,12 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
     monkeypatch.setattr(
         _gpu_errors,
         "classify_interpreter_env",
-        lambda _interpreter: _gpu_errors.RuntimeEnvKind.UV_TOOL,
+        _persistent_tool_env,
     )
     monkeypatch.setattr(
         _process,
         "_probe_daemon_cuda",
-        lambda _interpreter: (
-            True,
-            "torch is a CUDA build but no CUDA device is visible (driver/GPU)",
-        ),
+        _no_visible_cuda_device,
     )
 
     def _unexpected_repair(
@@ -135,7 +158,7 @@ def test_verify_repair_requires_cuda_and_structured_receipt(
         '[tool]\nrequirements = [{ name = "torch", url = "' + wheel + '" }]\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(_process, "_probe_daemon_cuda", lambda _interpreter: None)
+    monkeypatch.setattr(_process, "_probe_daemon_cuda", _cuda_ready_probe)
 
     outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
 
@@ -144,15 +167,12 @@ def test_verify_repair_requires_cuda_and_structured_receipt(
     monkeypatch.setattr(
         _process,
         "_probe_daemon_cuda",
-        lambda _interpreter: (
-            True,
-            "the service interpreter has a CPU-only torch wheel",
-        ),
+        _cpu_torch_probe,
     )
     outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
     assert outcome.action is _tool_torch.ToolTorchRepairAction.CUDA_UNVERIFIED
 
-    monkeypatch.setattr(_process, "_probe_daemon_cuda", lambda _interpreter: None)
+    monkeypatch.setattr(_process, "_probe_daemon_cuda", _cuda_ready_probe)
     receipt.unlink()
     outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
     assert outcome.action is _tool_torch.ToolTorchRepairAction.RECEIPT_UNVERIFIED

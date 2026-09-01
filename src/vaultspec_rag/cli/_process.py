@@ -67,6 +67,7 @@ __all__ = [
     "_resolve_daemon_interpreter",
     "_spawn_service",
     "_terminate_pid",
+    "cuda_probe_is_torch_installation_defect",
 ]
 
 
@@ -478,7 +479,7 @@ def _cuda_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
     )
 
 
-def _cuda_probe_is_torch_installation_defect(detail: str) -> bool:
+def cuda_probe_is_torch_installation_defect(detail: str) -> bool:
     """Whether one documented probe detail is fixed by reinstalling torch."""
     return detail in {
         outcome[1]
