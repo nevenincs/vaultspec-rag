@@ -1,21 +1,27 @@
 name: Binaries
 
-# BUILDS ON A TAG, not only on dispatch.
+# WHAT ACTUALLY STARTS THIS WORKFLOW: an explicit dispatch from
+# `release-please.yml:98`. Not the `push: tags` trigger below.
 #
-# This is the fault that cost THIS repo its release matrix tonight.
-# vaultspec-rag-v0.4.12 was cut and became `latest` carrying the wheel, the
-# sdist and SHA256SUMS - and not one platform binary. rag went from 3/3 to 0/3.
-# Cutting a release simply did not build them, and nobody was going to remember
-# to dispatch it.
+# The trigger is kept and it is not dead - a human running `git push --tags`
+# with a PAT does fire it, which is the manual-release path, and the
+# concurrency group keys on `github.ref_name` for exactly that case. But it
+# does not fire for a normal release, because **GitHub raises no workflow
+# events for refs created with the default GITHUB_TOKEN**, and release-please
+# publishes with exactly that token. Every one of the last fifteen runs of this
+# workflow was `workflow_dispatch`; none was `push`.
 #
-# The artifact-less-release guard did not catch it and could not: that guard
-# lives in THIS workflow, and a workflow that never runs cannot demote anything.
-# The guard had already merged. It was unreachable, not broken.
+# This comment used to claim the opposite - that adding the tag trigger was the
+# fix for the v0.4.12 failure. It was not. #416's dispatch step in
+# release-please.yml is, and the distinction is load-bearing: a maintainer who
+# believed the comment could delete that step as redundant and reproduce
+# v0.4.12 exactly.
 #
-# vaultspec-dashboard has never had this problem because its release workflow
-# runs on tag push. This brings rag to the same shape. Dispatch is kept for
-# repairing a tag whose build failed - which is exactly how v0.4.12 was
-# recovered.
+# The failure worth remembering: vaultspec-rag-v0.4.12 was cut and became
+# `latest` carrying the wheel, the sdist and SHA256SUMS - and not one platform
+# binary. rag went from 3/3 to 0/3. The artifact-less-release guard did not
+# catch it and could not: that guard lives in THIS workflow, and a workflow
+# that never runs cannot demote anything. It was unreachable, not broken.
 on:
   push:
     tags:
@@ -56,6 +62,14 @@ jobs:
     name: Preflight runners
     runs-on: ubuntu-latest
     steps:
+      # Only the workflow directory, only this commit: the step below reads the
+      # matrix out of this file to learn which selectors it must check.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: .github/workflows
+          sparse-checkout-cone-mode: false
+
       - name: Every matrix selector has an online runner
         shell: bash
         env:
@@ -80,12 +94,30 @@ jobs:
           fi
           [ -n "${runners}" ] || { echo "::error::no self-hosted runners are registered"; exit 1; }
 
-          # Kept in step with binaries.yml's matrix. Add the aarch64 selector
-          # here in the same change that re-enables that leg.
-          selectors=(
-            "self-hosted,linux,x64,build"
-            "self-hosted,windows,x64"
-          )
+          # DERIVED from the matrix rather than kept in step with it by hand.
+          #
+          # The comment this replaces read: "Add the aarch64 selector here in
+          # the same change that re-enables that leg." The leg was re-enabled
+          # and the selector was not added, so this check has been passing on
+          # two of the three label sets the matrix requires. With the ARM64
+          # runner offline, preflight would report every selector healthy and
+          # the build would then QUEUE on a leg no online runner can serve -
+          # the single failure this job exists to prevent, and the reason
+          # earlier releases ran for 24 hours before failing.
+          #
+          # An instruction in a comment is not a mechanism. vaultspec-core had
+          # the mirror image - a selector left behind after its leg was removed,
+          # which would have REFUSED a serviceable build - and both stayed
+          # invisible in review for the same reason: nothing connects the list
+          # to the matrix except a maintainer remembering to.
+          workflow=".github/workflows/binaries.yml"
+          [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out; cannot derive selectors" >&2; exit 1; }
+          mapfile -t selectors < <(awk -F'[][]' '/^[[:space:]]*runner:/ && NF > 2 {print $2}' "${workflow}" | tr -d ' ' | tr '[:upper:]' '[:lower:]' | sort -u)
+          if [ "${#selectors[@]}" -eq 0 ]; then
+            echo "::error::derived no runner selector from ${workflow}; refusing to pass vacuously" >&2
+            exit 1
+          fi
+          printf 'derived selector: %s\n' "${selectors[@]}"
 
           failed=0
           for want in "${selectors[@]}"; do
@@ -150,31 +182,33 @@ jobs:
           # The accelerated torch pin already covers this target: the cu130
           # index publishes a manylinux_2_28_aarch64 wheel, which
           # tools/binaries/torch_channel.py resolves like any other.
-          # NO CONTAINER HERE, and the reason is the host, not the image.
+          # HOSTED, and the only leg that is. `macbook-neo-linux-arm-rag`
+          # still cannot serve this target and nothing about that has changed:
+          # it is itself a colima container with no reachable docker daemon, so
+          # a nested container dies in `Initialize containers` with
+          # `Value cannot be null. (Parameter 'network')`, and building
+          # natively there inherits the guest's glibc 2.39.
           #
-          # `macbook-neo-linux-arm-rag` IS ITSELF a colima container on the
-          # MacBook. It has no reachable docker daemon, so a nested container
-          # cannot start - the leg dies in `Initialize containers` with
-          # `Value cannot be null. (Parameter 'network')`. vaultspec-core hit
-          # exactly this and excluded its own linux-aarch64 leg over it; I added
-          # the pin here without checking whether this runner could host one,
-          # and v0.4.15 proved it cannot.
+          # The note this replaces said the fix was "an ARM64 Linux host that
+          # can run containers, at which point this gets the same pinned
+          # manylinux_2_28_aarch64 image as x86_64 and the floor drops to 2.28
+          # with it". That host is `ubuntu-24.04-arm`: a GitHub-hosted ARM64
+          # runner with a working docker daemon, FREE for public repositories,
+          # which this repository is. No hardware was needed - the blocker was
+          # the assumption that hosted runners were not an option here.
           #
-          # So this target builds natively and inherits the colima guest's
-          # glibc, which is 2.39. That is DECLARED in GLIBC_FLOOR below rather
-          # than promised as plain "Linux" - an accurately stated narrow target
-          # is conformant; a silently narrow one is what vaultspec-rag#409 is
-          # about.
+          # Same manylinux RELEASE as the x86_64 leg (2026.08.24-1), not merely
+          # the same floor: the build environment is a downloaded, executed
+          # input, and two builds of one toolchain can differ in ways the floor
+          # check does not measure.
           #
-          # The honest fix is an ARM64 Linux host that can run containers, at
-          # which point this gets the same pinned manylinux_2_28_aarch64 image
-          # as x86_64 and the floor below drops to 2.28 with it. Until then,
-          # dropping the target entirely would remove a platform this product
-          # currently ships to, which is the worse trade.
+          # This also takes the target off the laptop entirely, continuing what
+          # #397 started - a release no longer waits on that host being on AC
+          # for this leg.
           - name: linux-aarch64
-            runner: [self-hosted, Linux, ARM64]
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            container: ""
+            container: quay.io/pypa/manylinux_2_28_aarch64@sha256:29a6ceb78de5b00494e6e7456a72782a4cb54238de102e7491d15fe47789b4d1
           # NO macOS LEGS, deliberately. vaultspec-rag is CUDA-only:
           # embeddings.py, search/_searcher.py and server/_lifespan.py each
           # raise RuntimeError when torch.cuda.is_available() is false, and
@@ -247,6 +281,22 @@ jobs:
           path: dist-bin/
           if-no-files-found: error
           retention-days: 5
+
+      # A containerised leg runs as root, and its workspace is the SAME
+      # directory this runner reuses for every other job on the machine. Left
+      # alone it hands the next job a tree it has no permission to clean, and
+      # that job dies in `Checkout` on `failed to remove
+      # dist-bin/vaultspec-rag-x86_64-unknown-linux-gnu: Permission denied` -
+      # which is how every job on this runner went red after the Linux leg was
+      # first put in a pinned image.
+      #
+      # `/__w` is created by the runner and keeps the runner's ownership, so it
+      # is the reference for what the tree should look like on the way out.
+      # Runs on failure too: a leg that dies mid-build poisons the tree just as
+      # thoroughly as one that succeeds.
+      - name: Return the workspace to the runner's user
+        if: ${{ always() && matrix.container != '' }}
+        run: chown -R --reference=/__w "$GITHUB_WORKSPACE"
 
   release:
     name: Attach to release
@@ -368,6 +418,17 @@ jobs:
           set -euo pipefail
           uv run --no-project --python 3.13 --             python -m tools.packaging.generate               --tag "${TAG}"               --checksums dist-bin/SHA256SUMS               --root channels
 
+      # Between generating the pointers and committing them, which is the
+      # only point where a bad pointer can still be STOPPED rather than
+      # reported after it has shipped. vaultspec-core published a manifest
+      # with the right version, the right URLs and empty hashes out of a run
+      # that was green end to end; this repository had no equivalent check.
+      - name: Refuse an uninstallable channel pointer
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-project --python 3.13 -- python -m tools.packaging.validate --root channels
+
       - name: Commit the Scoop manifest and Homebrew formula
         shell: bash
         env:
@@ -439,25 +500,81 @@ jobs:
     name: Verify the release carries artifacts
     needs: release
     if: ${{ always() }}
-    runs-on: [self-hosted, Linux, X64, build]
+    # HOSTED. This job demotes a release whose build just failed - and a build
+    # fails most often when the fleet is congested or down, which is exactly
+    # when a self-hosted job will not be scheduled.
+    #
+    # vaultspec-dashboard proved the cost: its v0.1.7 guard sat QUEUED for over
+    # an hour behind the one Linux/X64 runner it shares with the build, while
+    # the empty release went on serving as `latest`, and had to be demoted by
+    # hand. The preflight above is hosted on this same reasoning.
+    runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Dispatching the acquisition check is a write to the Actions API.
+      actions: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.tag || github.ref_name }}
       RELEASE_RESULT: ${{ needs.release.result }}
     steps:
+      # #422 taught this job to read the matrix out of this file, but never
+      # gave it the file. It has been finding one only because a self-hosted
+      # job inherits the workspace the `release` job checked out on the same
+      # runner - incidental, and due to stop working the moment the job lands
+      # elsewhere or the runner's job-completion hygiene prunes that tree.
+      #
+      # The empty-derivation branch below meant the symptom would have been a
+      # loud refusal rather than a vacuous pass, which is the right failure to
+      # have - but it is still a failure, and moving to a hosted runner makes
+      # it certain. So the file is now checked out explicitly.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: .github/workflows
+          sparse-checkout-cone-mode: false
+
       - name: Require artifacts on the published release
         shell: bash
         run: |
           set -euo pipefail
-          assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --json assets --jq '.assets | length')
+          names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          assets=$(printf '%s' "${names}" | grep -c . || true)
           echo "release ${TAG} carries ${assets} asset(s); release job=${RELEASE_RESULT}"
 
-          if [ "${assets}" -gt 0 ]; then
+          # EVERY DECLARED TARGET, not "any asset at all". v0.4.15 is why.
+          #
+          # Its aarch64 leg failed, so `Attach to release` was skipped and no
+          # binary reached the release - but `Publish` had already attached the
+          # wheel, the sdist and SHA256SUMS on the tag. The old check asked only
+          # whether the asset count was above zero, saw three, and passed. A
+          # release carrying no binaries at all served as `latest`, and the guard
+          # that exists to prevent exactly that reported success.
+          #
+          # The per-target assert cannot cover this: it lives in the `release`
+          # job, which is the job that does not run when a build leg fails.
+          #
+          # Targets are DERIVED from the matrix in this same file rather than
+          # listed again - a second list drifts, and this repo has paid for that.
+          workflow=".github/workflows/binaries.yml"
+          [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out; cannot derive targets"; exit 1; }
+          mapfile -t expected < <(awk '/^[[:space:]]+target:[[:space:]]/ {print $2}' "${workflow}" | sort -u)
+          if [ ${#expected[@]} -eq 0 ]; then
+            echo "::error::could not derive any target from ${workflow}; refusing to pass vacuously"
+            exit 1
+          fi
+
+          missing=()
+          for triple in "${expected[@]}"; do
+            printf '%s' "${names}" | grep -q -- "${triple}" || missing+=("${triple}")
+          done
+
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "all ${#expected[@]} declared target(s) present on ${TAG}"
             exit 0
           fi
+
+          echo "::warning::${TAG} is missing: ${missing[*]}"
 
           if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
                   --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
@@ -465,7 +582,7 @@ jobs:
             echo "::notice::demoted ${TAG} to a prerelease so latest skips it"
           fi
 
-          echo "::error::${TAG} carries no artifacts (release job=${RELEASE_RESULT}). It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back once artifacts attach."
+          echo "::error::${TAG} is INCOMPLETE - missing ${missing[*]} (release job=${RELEASE_RESULT}). It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back once every declared target attaches."
           exit 1
 
       # Undo an earlier demotion once a re-dispatch actually attaches something,
@@ -473,6 +590,28 @@ jobs:
       # decides: release-please publishes full releases here, so anything
       # carrying a prerelease marker was meant to be one and must not be
       # promoted by a guard that only knows about assets.
+      # The acquisition check cannot see this release by itself. A release
+      # published with the default token raises no workflow events, so its
+      # `release: published` trigger never fires for anything this lane
+      # produces - only its weekly schedule does, which is days of blindness
+      # after every release. An explicit dispatch is exempt from that rule,
+      # which is why the binaries build is dispatched rather than waiting on a
+      # tag push, and this is the same move for the same reason.
+      #
+      # A failure to dispatch does not fail the release: the artifacts are
+      # already attached and verified by this point, and the weekly run still
+      # covers the release eventually. It warns rather than passing silently.
+      - name: Ask the acquisition check to try this release
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh workflow run acquisition.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG"; then
+            echo "dispatched the acquisition check for ${TAG}"
+          else
+            echo "::warning::could not dispatch the acquisition check for ${TAG}; the weekly run still covers it"
+          fi
+
       - name: Promote a repaired release back to latest
         if: ${{ success() }}
         shell: bash

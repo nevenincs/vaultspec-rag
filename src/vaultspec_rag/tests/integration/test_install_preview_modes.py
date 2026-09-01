@@ -107,7 +107,7 @@ class TestInstallModeTransitions:
             assert preview_providers[provider] == actual_providers[provider]
         entry = read_mcp_json(fresh_workspace)["mcpServers"]["vaultspec-rag"]
         assert entry["command"] == "uvx"
-        assert entry["args"][:2] == ["--from", "vaultspec-rag[mcp]"]
+        assert entry["args"][:2] == ["--from", "vaultspec-rag[gpu,mcp]"]
 
     def test_tool_to_dependency_preview_matches_real_update(
         self, fresh_workspace: Path

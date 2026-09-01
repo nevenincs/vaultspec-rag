@@ -68,7 +68,8 @@ class CodeDriftOwner:
         Args:
             checkpoint: The generation whose evidence may be superseded.
             store: Storage the superseded points are dropped from.
-            collection: Active collection the generation owns.
+            collection: Code collection the generation writes into, or ``None``
+                when it writes in place to the served collection.
             retry_budget: How many supersedes one path may consume before it is
                 deferred to the next generation.
 

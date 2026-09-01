@@ -86,11 +86,31 @@ class TestRichProgressReporterFallback:
                 width=120,
             )
         )
+        reporter.phase_start("hash documents", 1)
+        reporter.advance()
+        reporter.phase_end()
+
+        assert reporter._is_tty is False
+        assert "==> hash documents (1 items)" in buf.getvalue()
+        assert "done (1)" in buf.getvalue()
+
+    def test_forced_terminal_without_interactivity_emits_plain_lines(self) -> None:
+        """FORCE_COLOR must not turn a non-interactive stream into a live region."""
+        buf = io.StringIO()
+        console = Console(
+            file=buf,
+            force_terminal=True,
+            force_interactive=False,
+            color_system=None,
+            width=120,
+        )
+        reporter = RichProgressReporter(console)
 
         reporter.phase_start("hash documents", 1)
         reporter.advance()
         reporter.phase_end()
 
+        assert reporter._is_tty is False
         assert "==> hash documents (1 items)" in buf.getvalue()
         assert "done (1)" in buf.getvalue()
 

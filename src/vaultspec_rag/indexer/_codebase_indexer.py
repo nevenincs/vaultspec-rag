@@ -541,13 +541,15 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     point_ids = tuple(sorted(removed_ids_by_path[rel]))
                     if not point_ids:
                         continue
-                    self.store.delete_code_chunks(list(point_ids), request.collection)
+                    self.store.delete_code_chunks(
+                        list(point_ids), collection=request.collection
+                    )
                     request.checkpoint.record_confirmed_deletion(rel, point_ids)
                     path_removed_ids.update(point_ids)
                 remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
                 if remaining_stale_ids:
                     self.store.delete_code_chunks(
-                        remaining_stale_ids, request.collection
+                        remaining_stale_ids, collection=request.collection
                     )
             except OSError:
                 logger.error(

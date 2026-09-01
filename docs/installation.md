@@ -7,24 +7,30 @@ This guide covers how to install the package, provision its dependencies, verify
 You need:
 
 - CPython 3.13 or 3.14. The runtime accepts that range and rejects anything outside it at import; 3.15 and later are refused until the test matrix covers them.
+
 - [uv](https://docs.astral.sh/uv/) for dependency and tool management.
+
 - An NVIDIA GPU with a working CUDA driver and roughly 3 GB of free video memory (VRAM).
+
 - Linux or Windows. The published Linux binaries state a glibc floor, because
   a binary links against whatever C library built it and a bare "Linux" is not
   a promise a download can keep:
 
-  | binary | requires | covers |
-  | --- | --- | --- |
-  | `x86_64-unknown-linux-gnu` | glibc 2.28 | Debian 10+, Ubuntu 18.04+, RHEL 8+, Amazon Linux 2023 |
-  | `aarch64-unknown-linux-gnu` | glibc 2.39 | Ubuntu 24.04+ |
+  | binary                      | requires                                               | covers                                                                              |
+  | --------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+  | `x86_64-unknown-linux-gnu`  | glibc 2.28                                             | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023                               |
+  | `aarch64-unknown-linux-gnu` | glibc 2.28, or 2.39 if built before this floor dropped | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 (older builds: Ubuntu 24.04+) |
 
   On an older distribution the binary does not start, and the error names a
   missing symbol version rather than the distribution being too old — so it is
   worth checking `ldd --version` first. Installing from PyPI with `uv` has no
   such floor and works wherever the Python and CUDA requirements above are met.
 
-  The aarch64 floor is higher than x86_64's because that target is not yet
-  built in a pinned image; it drops to 2.28 when it is.
+  The two floors match from the first release that builds aarch64 in the same
+  pinned image x86_64 uses. Earlier aarch64 downloads were built on a host whose
+  own glibc was 2.39 and still require it, so the floor is a property of the
+  binary you downloaded rather than of the project. If an older aarch64 download
+  refuses to start, that is this difference and a current one will work.
 
 Confirm the GPU is visible before you start:
 
@@ -36,24 +42,24 @@ If that command lists your card and a driver version, the driver is loaded. macO
 
 ## Install the package
 
-Try it now with no setup, directly from PyPI:
+Try GPU setup now, directly from PyPI:
 
 ```bash
-uvx vaultspec-rag install
+uvx --from "vaultspec-rag[gpu]" vaultspec-rag install
 ```
 
-Runs `install` in an ephemeral `uv tool` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, prompting once before it edits any config (see [Provision dependencies with the install command](#provision-dependencies-with-the-install-command) below). Good for a first try; because the environment is ephemeral, it does not pin the GPU torch build across runs the way the durable options below do. For a lasting install, use one of the paths below.
+Runs `install` in an ephemeral `uv` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, prompting once before it edits any config (see [Provision dependencies with the install command](#provision-dependencies-with-the-install-command) below). The `[gpu]` extra is required for local inference; a bare package install deliberately omits that stack. For a lasting install, use one of the paths below.
 
 To add vaultspec-rag as a dependency of an existing project, run:
 
 ```bash
-uv add vaultspec-rag
+uv add "vaultspec-rag[gpu]"
 ```
 
 To install it as a standalone tool instead, pin the GPU torch wheel as a `--with` requirement. The command is environment-specific - the wheel names a python version, ABI, platform, and torch release - so do not copy it from documentation: `vaultspec-rag server start` and `vaultspec-rag install` print the exact command derived from your interpreter and installed torch whenever they detect a CPU-only tool environment. For orientation, the shape it takes (here Python 3.13, torch 2.13.0, Windows):
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
 ```
 
 The `--python` request must match the wheel's `cp3XX` tag (both are recorded in the tool receipt): without it, uv resolves the tool env on its default python, and a default that differs from the wheel's interpreter - a newer version, or a free-threaded build - fails the install on a tag mismatch. The `--with` pin matters: uv records it in the tool receipt and re-applies it on every `uv tool upgrade`, so torch keeps resolving to the GPU (cu130) wheel. Without it, every upgrade or forced reinstall re-resolves torch from PyPI and silently replaces the GPU build with a CPU-only wheel that the service refuses to start with. Do not rely on `--index` instead: current uv (verified on 0.11.x) does not record `--index` in the tool receipt, so an upgrade silently drops it. The project-scoped pin that `vaultspec-rag install` writes into `pyproject.toml` never reaches tool environments, and uv's `--torch-backend` selector is `uv pip`-only.
@@ -129,7 +135,7 @@ The `--mode` placement is independent of the `--local-only` backend choice cover
 
 ## Pull the GPU build
 
-The install is not complete until you run `uv sync`. The `install` command records the cu130 PyTorch source in `pyproject.toml` but does not download PyTorch. Until you sync, you have a CPU-only environment that cannot run searches:
+The install is not complete until you run `uv sync`. The `[gpu]` extra supplies the local inference libraries, while `install` records the cu130 PyTorch source in `pyproject.toml`. Until you sync, local inference cannot run:
 
 ```bash
 uv sync
@@ -141,12 +147,18 @@ To fold the sync into setup, pass `install --sync`, which runs `uv sync --reinst
 
 The defaults provision the supervised Qdrant server for higher throughput under concurrent load. To trim or opt out of the provisioning steps, use these conditional flags.
 
-- If you want a lighter, server-free install, pass `--local-only`. It selects the embedded on-disk store, skips the Qdrant binary download, and persists the local backend so a later `server start` honors it. Throughput is lower under concurrent load. See the [backends guide](backends.md) for the trade-offs.
+- If you want a lighter, server-free install, pass `--local-only`. It selects the embedded on-disk store, skips the Qdrant binary download, and persists the local backend so a later `server start` honors it. It does not change Python dependencies, CUDA, or model downloads. Throughput is lower under concurrent load. See the [backends guide](backends.md) for the trade-offs.
 - To skip an individual dependency, pass `--skip-torch`, `--skip-models`, or `--skip-qdrant`. Each maps onto the `install` command's skip set; `--skip-qdrant` is redundant under `--local-only`, which already drops the Qdrant step.
 - If you manage the GPU build yourself, pass `--no-torch-config` to leave `pyproject.toml` untouched.
 - To preview the full provisioning report without writing anything, pass `--dry-run`. The dry run reports `preview only` for each step and never prompts, so it's independent of the confirmation prompt.
 
 For the complete `install` flag set, see the [CLI reference](cli.md).
+
+## Choose the package footprint
+
+A bare `uv add vaultspec-rag` or `uv tool install vaultspec-rag` installs the control plane only. It does not resolve torch, sentence-transformers, transformers, or Linux NVIDIA packages, so it avoids the roughly 5 GB CUDA footprint reported for a GPU install. It can run service-control and diagnostic commands, but it cannot index or search locally.
+
+For local GPU inference, install `vaultspec-rag[gpu]` and run `install --sync`. On Linux this intentionally resolves the CUDA stack; budget roughly 5 GB for those packages and several additional gigabytes for the first model download. `--local-only` is independent of this choice: it saves the managed Qdrant binary only.
 
 ## Verify the install
 
@@ -156,7 +168,7 @@ Check the installed version:
 uv run vaultspec-rag --version
 ```
 
-This reports `vaultspec-rag v0.4.15`. <!-- x-release-please-version -->
+This reports `vaultspec-rag v0.4.21`. <!-- x-release-please-version -->
 
 Run the readiness report, which checks PyTorch CUDA, the model cache, and the Qdrant binary and server:
 
