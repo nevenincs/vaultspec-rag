@@ -307,7 +307,7 @@ class _VaultIngestMixin:
                 ),
             )
 
-        self.ensure_code_table()
+        self.ensure_code_table(_target)
         with self._point_write_lock(_target, write_policy):
             self._guarded_upsert(
                 _target,
@@ -539,7 +539,7 @@ class _VaultIngestMixin:
             return
         from qdrant_client import models
 
-        self.ensure_code_table()
+        self.ensure_code_table(_target)
         with self._point_lock(_target):
             point_ids: list[int | str | UUID] = [self._stable_id(i) for i in ids]
             self._delete_points(
