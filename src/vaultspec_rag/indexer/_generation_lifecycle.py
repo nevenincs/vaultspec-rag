@@ -78,6 +78,7 @@ class CodeGenerationLifecycle:
     """Own one root's code generation, its ledger authority, and its drift."""
 
     __slots__ = (
+        "_active_build_target",
         "_data_root",
         "_drift_owner",
         "_last_checkpoint",
@@ -109,6 +110,7 @@ class CodeGenerationLifecycle:
         self._load_meta = bindings.load_meta
         self._read_meta_raw = bindings.read_meta_raw
         self._last_checkpoint: CodeRunCheckpoint | None = None
+        self._active_build_target: str | None = None
         # Bound to the generation once a run opens its checkpoint, because
         # superseding evidence is meaningless without one to supersede in.
         self._drift_owner: CodeDriftOwner | None = None
@@ -139,9 +141,15 @@ class CodeGenerationLifecycle:
         owner = self._drift_owner
         return owner.snapshot() if owner is not None else None
 
+    @property
+    def active_build_target(self) -> str | None:
+        """Return the open generation's derived build collection."""
+        return self._active_build_target
+
     def forget_open_generation(self) -> None:
         """Drop the drift owner so a new run cannot inherit the prior one."""
         self._drift_owner = None
+        self._active_build_target = None
 
     def open_checkpoint(
         self, request: CodeGenerationOpenRequest, /
@@ -194,7 +202,12 @@ class CodeGenerationLifecycle:
             )
             checkpoint = _open(request)
         self._last_checkpoint = checkpoint
-        self._drift_owner = CodeDriftOwner(checkpoint, self._store)
+        self._active_build_target = self.build_collection(checkpoint)
+        self._drift_owner = CodeDriftOwner(
+            checkpoint,
+            self._store,
+            collection=self._active_build_target,
+        )
         return checkpoint
 
     def evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
