@@ -76,7 +76,7 @@ from ._process import (
     _call_interruptibly,
     _is_our_service,
     _port_is_available,
-    _probe_daemon_cuda,
+    _probe_daemon_accelerator,
     _resolve_daemon_interpreter,
     _spawn_service,
 )
@@ -486,22 +486,28 @@ def _fail_start(
     )
 
 
-def _preflight_daemon_cuda(interpreter: str, *, json_mode: bool) -> None:
+def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
     """Fail fast if the daemon interpreter cannot run the GPU-only service.
 
     The daemon inherits this interpreter and is GPU-only, so a missing /
-    CPU-only / no-GPU torch should fail legibly here rather than as a background
+    CPU-only / no-accelerator torch should fail legibly here rather than as a background
     model-load crash. The service does not provision its own python environment.
     An inconclusive probe (CPU-only host, torch absent in a way we cannot
     classify) is logged and allowed to proceed.
     """
-    cuda_probe = _probe_daemon_cuda(interpreter)
-    if cuda_probe is None:
+    accelerator_probe = _probe_daemon_accelerator(interpreter)
+    if accelerator_probe is None:
         return
-    blocking, reason = cuda_probe
+    blocking, reason = accelerator_probe
     if blocking:
         kind = classify_interpreter_env(interpreter)
-        if kind is RuntimeEnvKind.PROJECT_VENV:
+        if sys.platform == "darwin":
+            next_actions = (
+                "Install/repair the macOS torch build in the service environment",
+                'Confirm MPS is visible: python -c "import torch; '
+                'print(torch.backends.mps.is_available())"',
+            )
+        elif kind is RuntimeEnvKind.PROJECT_VENV:
             next_actions = (
                 "Install/repair GPU torch in the service environment: "
                 "vaultspec-rag install, then uv sync --reinstall-package torch",
@@ -853,8 +859,8 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             _print_lifecycle_lines(*env_warnings)
         # This probe spawns the daemon interpreter and imports torch in it,
         # which is the single longest pre-spawn stall (its own timeout is 60s).
-        progress.stage("Checking GPU support in the service environment...")
-        _preflight_daemon_cuda(interpreter, json_mode=json_mode)
+        progress.stage("Checking accelerator support in the service environment...")
+        _preflight_daemon_accelerator(interpreter, json_mode=json_mode)
         t0 = time.perf_counter()
         progress.stage("Launching the service process...")
         start_request = _PreparedServiceRequest(

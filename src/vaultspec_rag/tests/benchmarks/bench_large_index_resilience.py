@@ -39,8 +39,8 @@ if TYPE_CHECKING:
     from ...indexer._vault_prep import IndexResult
 
     # The subset of ``torch.cuda`` this harness's native peak reset/read
-    # needs. ``load_torch()`` returns ``ModuleType`` (attribute access on a
-    # bare module type is unavoidably ``Any``), so this narrows the one
+    # needs. The accelerator context carries a runtime module (whose attribute
+    # access is unavoidably ``Any``), so this narrows the one
     # dynamic handle to what the sampler actually calls.
     class _TorchCudaModule(Protocol):
         def reset_peak_memory_stats(self, device: int | None = ...) -> None: ...
@@ -198,16 +198,16 @@ class _ResourceSampler:
 
     @staticmethod
     def _reset_native_cuda_peak() -> None:
-        from ..._gpu import load_torch
+        from ..._gpu import load_accelerator
 
-        torch = cast("_TorchModule", load_torch())
+        torch = cast("_TorchModule", load_accelerator().torch)
         torch.cuda.reset_peak_memory_stats()
 
     @staticmethod
     def _native_cuda_peak() -> tuple[float, float]:
-        from ..._gpu import load_torch
+        from ..._gpu import load_accelerator
 
-        torch = cast("_TorchModule", load_torch())
+        torch = cast("_TorchModule", load_accelerator().torch)
         mib = 1024**2
         return (
             float(torch.cuda.max_memory_allocated() / mib),

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -17,6 +19,52 @@ if TYPE_CHECKING:
     from ..commands._models import InstallReport, UninstallReport
 
 pytestmark = [pytest.mark.unit]
+
+
+def _fake_mps_torch() -> ModuleType:
+    fake_torch = ModuleType("torch")
+    fake_torch.__dict__.update(
+        version=SimpleNamespace(cuda=None),
+        cuda=SimpleNamespace(is_available=lambda: False),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
+    )
+    return fake_torch
+
+
+def test_install_warning_refuses_enabled_mps_cpu_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ..cli import _gpu_errors
+
+    rendered: list[str] = []
+    monkeypatch.setitem(sys.modules, "torch", _fake_mps_torch())
+    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    monkeypatch.setattr(_gpu_errors, "_plain", rendered.append)
+
+    _gpu_errors.warn_if_active_torch_not_accelerator()
+
+    assert rendered
+    assert "PYTORCH_ENABLE_MPS_FALLBACK" in rendered[0]
+    assert "must be disabled" in rendered[0]
+
+
+def test_gpu_error_reports_mps_fallback_refusal_not_missing_mps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import typer
+
+    from .._gpu import MPS_FALLBACK_MESSAGE
+    from ..cli import _gpu_errors
+
+    rendered: list[str] = []
+    monkeypatch.setitem(sys.modules, "torch", _fake_mps_torch())
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(_gpu_errors, "_plain", rendered.append)
+
+    with pytest.raises(typer.Exit):
+        _gpu_errors._handle_gpu_error(RuntimeError(MPS_FALLBACK_MESSAGE))
+
+    assert rendered == [f"Error: {MPS_FALLBACK_MESSAGE}"]
 
 
 class TestCpuOnlyMessageRendering:

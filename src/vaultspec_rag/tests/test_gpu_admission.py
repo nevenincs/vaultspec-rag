@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -38,12 +39,13 @@ from .._gpu_admission import (
     UNREADABLE_ADMISSION_LIMIT,
     DeviceAdmission,
     admission_from_reading,
-    admit_gpu_load,
-    clear_gpu_admission_latch,
+    admit_accelerator_load,
+    clear_accelerator_admission_latch,
     device_load_reading,
     device_load_window,
     device_load_wire,
     device_refusal_message,
+    evaluate_device_admission,
     load_window_lock_path,
     observe_unreadable_streak,
 )
@@ -59,6 +61,26 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_device_load_reading_uses_the_detected_mps_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production's zero-argument health probe must not fall back to CUDA."""
+    fake_torch = ModuleType("torch")
+    fake_torch.__dict__.update(
+        cuda=SimpleNamespace(is_available=lambda: False),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    reading = device_load_reading()
+
+    assert reading is not None
+    assert reading["admitted"] is True
+    assert reading["reason"] == ""
+    assert reading["floor_mib"] == 0
+
 
 #: An arbitrary floor pinned for the predicate tests below, deliberately NOT
 #: the shipped default: those tests are about how a reading and a floor combine,
@@ -190,12 +212,12 @@ def unlatched_admission() -> Generator[None]:
     into the counter - which is also the behaviour under test in the ledger
     guards below, so nothing here can pass on a reset that production lacks.
     """
-    clear_gpu_admission_latch()
+    clear_accelerator_admission_latch()
     observe_unreadable_streak(_ROOMY)
     try:
         yield
     finally:
-        clear_gpu_admission_latch()
+        clear_accelerator_admission_latch()
         observe_unreadable_streak(_ROOMY)
 
 
@@ -705,7 +727,7 @@ class TestTheUnreadableLedger:
             return "loaded"
 
         with pytest.raises(RuntimeError, match="present but not answering"):
-            admit_gpu_load(_loader, window=source)
+            admit_accelerator_load(_loader, window=source)
 
     def test_a_persistently_unreadable_device_stops_the_load(
         self,
@@ -737,9 +759,9 @@ class TestTheUnreadableLedger:
             return "loaded"
 
         for _ in range(UNREADABLE_ADMISSION_LIMIT - 1):
-            admit_gpu_load(_loader, window=source)
+            admit_accelerator_load(_loader, window=source)
         with pytest.raises(RuntimeError, match="present but not answering"):
-            admit_gpu_load(_loader, window=source)
+            admit_accelerator_load(_loader, window=source)
 
         assert len(loads) == UNREADABLE_ADMISSION_LIMIT - 1
 
@@ -771,8 +793,8 @@ class TestTheUnreadableLedger:
             return "loaded"
 
         for _ in range(UNREADABLE_ADMISSION_LIMIT - 1):
-            admit_gpu_load(_loader, window=source)
-        assert admit_gpu_load(_loader, window=source) == "loaded"
+            admit_accelerator_load(_loader, window=source)
+        assert admit_accelerator_load(_loader, window=source) == "loaded"
 
         assert len(entries) == UNREADABLE_ADMISSION_LIMIT
 
@@ -1068,6 +1090,41 @@ class TestTheLoadWindow:
 class TestTheAdmissionLatch:
     """One evaluation per process, and why a second would be wrong."""
 
+    def test_mps_capability_admission_uses_and_latches_the_load_window(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """MPS admits on capability and shares the serialized load window.
+
+        Mutation: omitted ``capability_evaluated`` from the MPS verdict. The
+        second call then entered the source again and failed on the entry count.
+        """
+        from contextlib import contextmanager
+
+        entries: list[int] = []
+
+        @contextmanager
+        def source() -> Generator[DeviceAdmission]:
+            entries.append(1)
+            with device_load_window(
+                backend="mps",
+                anchor=tmp_path / "load-window.lock",
+            ) as admission:
+                yield admission
+
+        verdict = evaluate_device_admission("mps")
+        assert verdict.admitted is True
+        assert verdict.free_mib is None
+        assert (
+            admit_accelerator_load(lambda: "first", backend="mps", window=source)
+            == "first"
+        )
+        assert (
+            admit_accelerator_load(lambda: "second", backend="mps", window=source)
+            == "second"
+        )
+        assert len(entries) == 1
+
     def test_a_later_load_is_not_refused_by_this_process_s_own_residency(
         self,
         tmp_path: Path,
@@ -1083,7 +1140,7 @@ class TestTheAdmissionLatch:
 
         Mutation: removed the ``_admitted`` fast path and the latch re-check.
         Observed this assertion fail with ``RuntimeError`` naming the contended
-        device, raised from the second ``admit_gpu_load``.
+        device, raised from the second ``admit_accelerator_load``.
         """
         del floor
         entries: list[int] = []
@@ -1093,8 +1150,8 @@ class TestTheAdmissionLatch:
             entries,
         )
 
-        assert admit_gpu_load(lambda: "first", window=source) == "first"
-        assert admit_gpu_load(lambda: "second", window=source) == "second"
+        assert admit_accelerator_load(lambda: "first", window=source) == "first"
+        assert admit_accelerator_load(lambda: "second", window=source) == "second"
         assert len(entries) == 1
 
     def test_a_refused_load_is_never_latched(
@@ -1118,8 +1175,8 @@ class TestTheAdmissionLatch:
         )
 
         with pytest.raises(RuntimeError, match="too contended"):
-            admit_gpu_load(lambda: "refused", window=source)
-        assert admit_gpu_load(lambda: "admitted", window=source) == "admitted"
+            admit_accelerator_load(lambda: "refused", window=source)
+        assert admit_accelerator_load(lambda: "admitted", window=source) == "admitted"
         assert len(entries) == 2
 
     def test_the_loader_s_own_failure_is_not_restated_as_contention(
@@ -1152,7 +1209,7 @@ class TestTheAdmissionLatch:
             raise ImportError("the loader's own verdict")
 
         with pytest.raises(ImportError, match="the loader's own verdict"):
-            admit_gpu_load(_loader, window=source)
+            admit_accelerator_load(_loader, window=source)
 
     def test_clearing_the_latch_re_admits_against_a_fresh_reading(
         self,
@@ -1161,7 +1218,7 @@ class TestTheAdmissionLatch:
     ) -> None:
         """A released resident stack must not leave its verdict behind.
 
-        Mutation: made ``clear_gpu_admission_latch`` a no-op. Observed this
+        Mutation: made ``clear_accelerator_admission_latch`` a no-op. Observed this
         assertion fail on ``pytest.raises(RuntimeError)``, the second load
         riding the first load's stale admission.
         """
@@ -1173,10 +1230,10 @@ class TestTheAdmissionLatch:
             entries,
         )
 
-        assert admit_gpu_load(lambda: "first", window=source) == "first"
-        clear_gpu_admission_latch()
+        assert admit_accelerator_load(lambda: "first", window=source) == "first"
+        clear_accelerator_admission_latch()
         with pytest.raises(RuntimeError, match="too contended"):
-            admit_gpu_load(lambda: "second", window=source)
+            admit_accelerator_load(lambda: "second", window=source)
 
     def test_a_resident_release_retires_the_standing_admission(
         self,
@@ -1189,7 +1246,7 @@ class TestTheAdmissionLatch:
         the clear itself: a clear nothing calls protects nothing, and that
         omission is invisible to every other test here.
 
-        Mutation: removed the ``clear_gpu_admission_latch()`` call from
+        Mutation: removed the ``clear_accelerator_admission_latch()`` call from
         ``rebase_resident_cuda_baseline``. Observed this assertion fail on
         ``pytest.raises(RuntimeError)``.
         """
@@ -1203,10 +1260,10 @@ class TestTheAdmissionLatch:
             entries,
         )
 
-        assert admit_gpu_load(lambda: "first", window=source) == "first"
+        assert admit_accelerator_load(lambda: "first", window=source) == "first"
         rebase_resident_cuda_baseline()
         with pytest.raises(RuntimeError, match="too contended"):
-            admit_gpu_load(lambda: "second", window=source)
+            admit_accelerator_load(lambda: "second", window=source)
 
     def test_a_verdict_that_never_reached_the_floor_is_not_latched(
         self,
@@ -1238,8 +1295,8 @@ class TestTheAdmissionLatch:
             entries,
         )
 
-        assert admit_gpu_load(lambda: "first", window=source) == "first"
-        assert admit_gpu_load(lambda: "second", window=source) == "second"
+        assert admit_accelerator_load(lambda: "first", window=source) == "first"
+        assert admit_accelerator_load(lambda: "second", window=source) == "second"
         assert len(entries) == 2
 
     def test_a_refusal_reached_after_an_unevaluated_load_still_refuses(
@@ -1270,9 +1327,9 @@ class TestTheAdmissionLatch:
             entries,
         )
 
-        assert admit_gpu_load(lambda: "first", window=source) == "first"
+        assert admit_accelerator_load(lambda: "first", window=source) == "first"
         with pytest.raises(RuntimeError, match="too contended"):
-            admit_gpu_load(lambda: "second", window=source)
+            admit_accelerator_load(lambda: "second", window=source)
         assert len(entries) == 2
 
     def test_two_threads_racing_the_first_load_are_both_admitted(
@@ -1290,7 +1347,7 @@ class TestTheAdmissionLatch:
         completed.
 
         Mutation: removed the ``_admission_guard`` acquisition from
-        ``admit_gpu_load``. Observed this assertion fail on ``not failures``,
+        ``admit_accelerator_load``. Observed this assertion fail on ``not failures``,
         carrying a ``RuntimeError`` whose message named another process holding
         the model-load window.
         """
@@ -1305,7 +1362,7 @@ class TestTheAdmissionLatch:
         def _race() -> None:
             try:
                 start.wait(timeout=5.0)
-                loaded = admit_gpu_load(lambda: "loaded", window=source)
+                loaded = admit_accelerator_load(lambda: "loaded", window=source)
             except Exception as exc:  # recorded, then asserted on below
                 with lock:
                     failures.append(exc)
@@ -1378,7 +1435,7 @@ class TestTheWireReading:
         )
         monkeypatch.setattr(
             "vaultspec_rag._gpu_admission.evaluate_device_admission",
-            lambda: admission,
+            lambda _backend="cuda": admission,
         )
 
         reading = device_load_reading()
@@ -1398,7 +1455,7 @@ class TestTheWireReading:
         being swallowed into ``None``.
         """
 
-        def _boom() -> DeviceAdmission:
+        def _boom(_backend: str = "cuda") -> DeviceAdmission:
             raise RuntimeError("probe exploded")
 
         monkeypatch.setattr(

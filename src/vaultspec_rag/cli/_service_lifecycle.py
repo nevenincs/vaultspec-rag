@@ -213,9 +213,9 @@ def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
 def service_warmup() -> None:
     """Download GPU model files before they are needed."""
     try:
-        from .._gpu import load_torch
+        from .._gpu import load_accelerator
 
-        load_torch()
+        load_accelerator()
     except (ImportError, RuntimeError) as exc:
         _handle_gpu_error(exc)
 

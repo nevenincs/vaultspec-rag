@@ -63,12 +63,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AcceleratorMemory",
     "CudaCeilingObservation",
     "CudaDeviceMemory",
     "MemoryBudget",
     "MemoryBudgetSnapshot",
     "MemoryProbe",
     "MemorySample",
+    "accelerator_memory",
     "cuda_device_memory",
     "cuda_forward_peak_capture",
     "cuda_pressure",
@@ -80,6 +82,7 @@ __all__ = [
     "reset_cuda_peak_memory_stats",
     "resident_cuda_baseline_mib",
     "route_forward_peak_mib",
+    "sample_resident_accelerator_baseline",
     "sample_resident_cuda_baseline",
     "snapshot_resource_bytes",
 ]
@@ -103,6 +106,63 @@ _psutil_process: psutil.Process | None = None
 _torch_module: _TorchModule | None = None
 _torch_probed: bool = False
 _torch_has_cuda: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AcceleratorMemory:
+    """One backend-neutral accelerator allocator reading.
+
+    CUDA's reserved allocation describes discrete VRAM held by this process.
+    MPS's driver allocation and recommended maximum describe this process and
+    its unified-memory working-set guidance; neither is presented as VRAM.
+    """
+
+    torch_present: bool
+    backend: Literal["cuda", "mps"] | None
+    memory_kind: Literal["vram", "unified"] | None
+    allocated_mib: float | None
+    reserved_mib: float | None
+    total_mib: float | None
+    recommended_max_mib: float | None
+
+
+def accelerator_memory() -> AcceleratorMemory:
+    """Return a guarded allocator reading for CUDA or MPS, never raising."""
+    try:
+        import torch
+    except ImportError:
+        return AcceleratorMemory(False, None, None, None, None, None, None)
+
+    from ._gpu import detect_accelerator_backend
+
+    try:
+        backend = detect_accelerator_backend(torch)
+        if backend == "cuda":
+            reading = cuda_device_memory()
+            measured = _measure_cuda_mib()
+            return AcceleratorMemory(
+                torch_present=True,
+                backend="cuda",
+                memory_kind="vram",
+                allocated_mib=None if measured is None else measured[0],
+                reserved_mib=None if measured is None else measured[1],
+                total_mib=reading.total_mib,
+                recommended_max_mib=None,
+            )
+        if backend == "mps":
+            mps = torch.mps
+            return AcceleratorMemory(
+                torch_present=True,
+                backend="mps",
+                memory_kind="unified",
+                allocated_mib=bytes_to_mib(mps.current_allocated_memory()),
+                reserved_mib=bytes_to_mib(mps.driver_allocated_memory()),
+                total_mib=None,
+                recommended_max_mib=bytes_to_mib(mps.recommended_max_memory()),
+            )
+    except (RuntimeError, AssertionError, AttributeError):
+        return AcceleratorMemory(True, None, None, None, None, None, None)
+    return AcceleratorMemory(True, None, None, None, None, None, None)
 
 
 def is_enabled() -> bool:
@@ -507,6 +567,14 @@ def sample_resident_cuda_baseline() -> float:
         return _resident_baseline_mib
 
 
+def sample_resident_accelerator_baseline() -> float:
+    """Record CUDA residency; MPS has no discrete-memory job ceiling."""
+    reading = accelerator_memory()
+    if reading.backend != "cuda":
+        return 0.0
+    return sample_resident_cuda_baseline()
+
+
 def rebase_resident_cuda_baseline() -> float:
     """Re-establish the baseline after resident models are released.
 
@@ -536,9 +604,9 @@ def rebase_resident_cuda_baseline() -> float:
     # costs one extra reading, while an under-clear rides a stale verdict for
     # the life of the process. Clearing while sibling residency survives is
     # safe because the next verdict credits whatever this process still holds.
-    from ._gpu_admission import clear_gpu_admission_latch
+    from ._gpu_admission import clear_accelerator_admission_latch
 
-    clear_gpu_admission_latch()
+    clear_accelerator_admission_latch()
     measured = _measure_cuda_mib()
     if measured is None:
         return resident_cuda_baseline_mib()
