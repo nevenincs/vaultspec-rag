@@ -59,7 +59,9 @@ class TestStatusCommand:
         assert lines[0] == "Project index"
         assert labels["Project"] == str(tmp_path)
         assert labels["Index data"] == str(tmp_path / ".vault" / "data" / "search-data")
-        assert labels["Compute"] == "CPU only (no supported GPU detected)"
+        assert labels["Compute"] == (
+            "Unavailable (no CUDA or MPS accelerator; CPU is unsupported)"
+        )
         assert labels["Vault documents"] == "12"
         assert labels["Source code sections"] == "34"
         assert labels["Server"] == "running"
@@ -68,6 +70,34 @@ class TestStatusCommand:
             "vaultspec-rag server status --port 8766"
         )
         assert "Next action:" not in output
+
+    def test_status_human_output_names_mps_unified_memory(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {
+                "cuda": False,
+                "accelerator_available": True,
+                "accelerator_backend": "mps",
+                "accelerator_name": "Apple MPS",
+                "memory_kind": "unified",
+                "memory_mib": 4096,
+                "memory_measure": "recommended_working_set",
+                "gpu_name": "Apple MPS",
+                "vram_mib": None,
+                "storage_path": tmp_path / "search-data",
+                "vault_documents": 1,
+                "codebase_chunks": 2,
+            },
+            target=tmp_path,
+        )
+
+        compute = _label_values(capsys.readouterr().out)["Compute"]
+        assert compute == (
+            "MPS - Apple MPS (4.0 GiB recommended working set, unified memory)"
+        )
 
     def test_status_empty_index_output_is_actionable(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

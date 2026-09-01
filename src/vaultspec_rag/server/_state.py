@@ -284,25 +284,44 @@ def reset_metrics() -> None:
             _gauges[key] = 0.0
 
 
-def _gpu_memory_bytes() -> tuple[float, float] | None:
-    """Return ``(allocated, reserved)`` CUDA bytes, or ``None`` if unavailable.
+@dataclass(frozen=True, slots=True)
+class _AcceleratorMemory:
+    """Resident allocator readings with their backend semantics."""
+
+    backend: str
+    memory_kind: str
+    allocated: float
+    auxiliary_name: str
+    auxiliary: float
+
+
+def _accelerator_memory_bytes() -> _AcceleratorMemory | None:
+    """Return resident accelerator bytes, or ``None`` if unavailable.
 
     Read on-demand at scrape time. Guards both a missing ``torch`` import
-    and an absent/uninitialised CUDA device so ``/metrics`` never crashes
-    on a CPU-only host.
+    and an absent/uninitialised accelerator so ``/metrics`` never crashes
+    on a CPU-only host. MPS driver allocation is kept distinct from CUDA
+    allocator reservation because unified memory is not VRAM.
     """
-    try:
-        import torch
-    except ImportError:
+    from ..memory_probe import accelerator_memory
+
+    reading = accelerator_memory()
+    if (
+        reading.backend is None
+        or reading.memory_kind is None
+        or reading.allocated_mib is None
+        or reading.reserved_mib is None
+    ):
         return None
-    if not torch.cuda.is_available():
-        return None
-    try:
-        allocated = float(torch.cuda.memory_allocated(0))
-        reserved = float(torch.cuda.memory_reserved(0))
-    except (RuntimeError, AssertionError):
-        return None
-    return allocated, reserved
+    return _AcceleratorMemory(
+        backend=reading.backend,
+        memory_kind=reading.memory_kind,
+        allocated=reading.allocated_mib * 1024**2,
+        auxiliary_name=(
+            "reserved" if reading.backend == "cuda" else "driver_allocated"
+        ),
+        auxiliary=reading.reserved_mib * 1024**2,
+    )
 
 
 def render_prometheus() -> str:
@@ -331,13 +350,31 @@ def render_prometheus() -> str:
         lines.append(f"# TYPE {metric} gauge")
         lines.append(f"{metric} {value}")
 
-    gpu = _gpu_memory_bytes()
-    if gpu is not None:
-        allocated, reserved = gpu
-        lines.append("# TYPE vaultspec_rag_gpu_memory_allocated_bytes gauge")
-        lines.append(f"vaultspec_rag_gpu_memory_allocated_bytes {allocated}")
-        lines.append("# TYPE vaultspec_rag_gpu_memory_reserved_bytes gauge")
-        lines.append(f"vaultspec_rag_gpu_memory_reserved_bytes {reserved}")
+    accelerator = _accelerator_memory_bytes()
+    if accelerator is not None:
+        labels = (
+            f'backend="{accelerator.backend}",memory_kind="{accelerator.memory_kind}"'
+        )
+        lines.append("# TYPE vaultspec_rag_accelerator_memory_allocated_bytes gauge")
+        lines.append(
+            "vaultspec_rag_accelerator_memory_allocated_bytes"
+            f"{{{labels}}} {accelerator.allocated}"
+        )
+        auxiliary_metric = (
+            f"vaultspec_rag_accelerator_memory_{accelerator.auxiliary_name}_bytes"
+        )
+        lines.append(f"# TYPE {auxiliary_metric} gauge")
+        lines.append(f"{auxiliary_metric}{{{labels}}} {accelerator.auxiliary}")
+        if accelerator.backend == "cuda":
+            # Preserve the established CUDA series for existing scrapers.
+            lines.append("# TYPE vaultspec_rag_gpu_memory_allocated_bytes gauge")
+            lines.append(
+                f"vaultspec_rag_gpu_memory_allocated_bytes {accelerator.allocated}"
+            )
+            lines.append("# TYPE vaultspec_rag_gpu_memory_reserved_bytes gauge")
+            lines.append(
+                f"vaultspec_rag_gpu_memory_reserved_bytes {accelerator.auxiliary}"
+            )
 
     # Worker-pool partition depth: borrowed tokens and queued waiters
     # per limiter, so saturation is observable before it times out.
