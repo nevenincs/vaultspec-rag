@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from .._store_models import CodeChunk
 from ..indexer._chunk_worker import VANISHED_SOURCE_STATUS, FileChunkResult
+from ..indexer._codebase_indexer import _FullStaleReconciliation
 from ..indexer._consumer_pipeline import CodeConsumerPipeline
 from ..indexer._content_policy import (
     AdmissionReason,
@@ -665,6 +666,176 @@ def test_superseded_identities_are_reported_for_snapshot_reconciliation(
     assert len(published | snapshot_before) == len(
         _stored(drift_store, "src/racing.py")
     ) + len(retired)
+
+
+def test_clean_generation_drift_never_deletes_the_served_copy(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """A clean generation owns drift only in its own build collection.
+
+    The same old identities exist in the served collection and the incomplete
+    clean generation. A resume must retire only the generation's copy: the
+    served collection remains the fallback until publication, while the build
+    collection is left ready for replacement content.
+    """
+    from ..indexer._generation_lifecycle import (
+        CodeGenerationBindings,
+        CodeGenerationLifecycle,
+        CodeGenerationOpenRequest,
+    )
+    from ..job_control import NO_RUN_CONTROL
+
+    policy = resolve_index_policy(
+        tmp_path,
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
+    )
+    lifecycle = CodeGenerationLifecycle(
+        CodeGenerationBindings(
+            root_dir=tmp_path,
+            data_root=tmp_path / ".state",
+            meta_path=tmp_path / "code_index_meta.json",
+            store=drift_store,
+            load_meta=dict,
+            read_meta_raw=dict,
+        )
+    )
+    checkpoint = lifecycle.open_checkpoint(
+        CodeGenerationOpenRequest(
+            policy=policy,
+            operation=RunOperation.FULL,
+            clean=True,
+            configuration=_configuration(),
+            dense_dimensions=_DENSE_DIM,
+            sparse_enabled=False,
+            run_control=NO_RUN_CONTROL,
+        )
+    )
+    build_target = lifecycle.build_collection(checkpoint)
+    assert build_target is not None
+
+    path = "src/racing.py"
+    old_segments = _segments(path)
+    old_ids = _identities(old_segments)
+    for collection in (drift_store.CODE_TABLE_NAME, build_target):
+        drift_store.ensure_code_table(collection)
+        drift_store.upsert_code_chunks(
+            [
+                replace(chunk, vector=[0.125] * _DENSE_DIM)
+                for segment in old_segments
+                for chunk in segment.chunks
+            ],
+            write_policy=None,
+            collection=collection,
+        )
+    old_digest = _digest("before the edit")
+    for segment in old_segments:
+        checkpoint.record_confirmed_segment(segment, old_digest)
+
+    moved_segments = _segments(path, marker="_moved")
+    drift_store.upsert_code_chunks(
+        [
+            replace(chunk, vector=[0.125] * _DENSE_DIM)
+            for segment in moved_segments
+            for chunk in segment.chunks
+        ],
+        write_policy=None,
+        collection=build_target,
+    )
+    moved_digest = _digest("after the edit")
+
+    assert (
+        lifecycle.drift_owner.record_segments(moved_segments, {path: moved_digest}) == 2
+    )
+
+    assert set(drift_store.get_code_ids_by_paths({path})) == old_ids
+    assert set(
+        drift_store.get_code_ids_by_paths({path}, collection=build_target)
+    ) == _identities(moved_segments)
+    assert all(
+        checkpoint.ledger.unit_committed(
+            checkpoint.generation_id,
+            checkpoint.unit_for(segment, moved_digest),
+        )
+        for segment in moved_segments
+    )
+
+
+def test_clean_generation_stale_reconciliation_never_deletes_the_served_copy(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """The final clean-generation purge is scoped to its build collection."""
+    from ..indexer import CodebaseIndexer
+    from ..indexer._generation_lifecycle import (
+        CodeGenerationBindings,
+        CodeGenerationLifecycle,
+        CodeGenerationOpenRequest,
+    )
+    from ..progress import NullProgressReporter
+
+    policy = resolve_index_policy(
+        tmp_path,
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
+    )
+    lifecycle = CodeGenerationLifecycle(
+        CodeGenerationBindings(
+            root_dir=tmp_path,
+            data_root=tmp_path / ".state",
+            meta_path=tmp_path / "code_index_meta.json",
+            store=drift_store,
+            load_meta=dict,
+            read_meta_raw=dict,
+        )
+    )
+    checkpoint = lifecycle.open_checkpoint(
+        CodeGenerationOpenRequest(
+            policy=policy,
+            operation=RunOperation.FULL,
+            clean=True,
+            configuration=_configuration(),
+            dense_dimensions=_DENSE_DIM,
+            sparse_enabled=False,
+            run_control=NO_RUN_CONTROL,
+        )
+    )
+    build_target = lifecycle.build_collection(checkpoint)
+    assert build_target is not None
+
+    path = "src/removed.py"
+    segments = _segments(path)
+    old_ids = _identities(segments)
+    for collection in (drift_store.CODE_TABLE_NAME, build_target):
+        drift_store.ensure_code_table(collection)
+        drift_store.upsert_code_chunks(
+            [
+                replace(chunk, vector=[0.125] * _DENSE_DIM)
+                for segment in segments
+                for chunk in segment.chunks
+            ],
+            write_policy=None,
+            collection=collection,
+        )
+    indexer = CodebaseIndexer(tmp_path, cast("Any", None), drift_store)
+    indexer._lifecycle = lifecycle
+    assert indexer._reconcile_full_stale_ids(
+        _FullStaleReconciliation(
+            checkpoint=checkpoint,
+            previous_metadata={},
+            metadata={},
+            existing_ids=old_ids,
+            retained_ids=set(),
+            collection=build_target,
+            reporter=NullProgressReporter(),
+        )
+    ) == sorted(old_ids)
+
+    assert set(drift_store.get_code_ids_by_paths({path})) == old_ids
+    assert not drift_store.get_code_ids_by_paths({path}, collection=build_target)
 
 
 def test_a_resubmission_under_the_same_digest_stays_fatal(

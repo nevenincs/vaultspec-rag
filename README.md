@@ -6,6 +6,7 @@
 
 **Semantic search for vault records, source code, and extracted documents.**
 
+[![install](https://img.shields.io/badge/install-uvx%20vaultspec--rag%20install%20%28NVIDIA%20GPU%29-2E6B45?style=for-the-badge&logo=uv&logoColor=white&labelColor=1b1a16)](#getting-started)
 [![build](https://img.shields.io/github/actions/workflow/status/nevenincs/vaultspec-rag/ci.yml?branch=main&style=for-the-badge&label=build&logo=githubactions&logoColor=white&labelColor=1b1a16)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
 [![release](https://img.shields.io/pypi/v/vaultspec-rag?style=for-the-badge&label=release&logo=pypi&logoColor=white&labelColor=1b1a16&color=8A72B5)](https://pypi.org/project/vaultspec-rag/)
 [![runtime](https://img.shields.io/badge/runtime-Python%203.13%20%7C%203.14%20%7C%20CUDA-3F9AA6?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=1b1a16)](#getting-started)
@@ -40,38 +41,64 @@ explains how it works; the [glossary](docs/glossary.md) defines the terms used a
 
 ## Getting started
 
-vaultspec-rag needs an NVIDIA GPU with CUDA support (about 3 GB free) and CPython 3.13 or 3.14 on Linux or Windows; macOS, AMD GPUs, and Apple Silicon are not supported. See the [architecture overview](docs/architecture.md) for why the hardware floor sits where it does.
+Local indexing and search need an NVIDIA GPU with CUDA support (about 3 GB free) and CPython 3.13 or 3.14 on Linux or Windows; macOS, AMD GPUs, and Apple Silicon are not supported. The bare package is a lightweight control-plane install: it does not download torch, sentence-transformers, or CUDA. Add the `[gpu]` extra before running local inference. See the [architecture overview](docs/architecture.md) for why the hardware floor sits where it does.
 
 ### Install
 
 Try it now with no project setup, straight from PyPI:
 
 ```bash
-uvx vaultspec-rag install
+uvx --from "vaultspec-rag[gpu]" vaultspec-rag install
 ```
 
-Runs `install` in an ephemeral `uv tool` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, asking once before touching any config. Good for a first try. A bare `uvx` run does not pin the GPU torch build across invocations the way the project-dependency and standalone-tool paths do, so switch to one of those once you're keeping vaultspec-rag around.
+Runs `install` in an ephemeral `uv` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, asking once before touching any config. Good for a first try. A bare package install has no local inference stack; the `[gpu]` extra makes that choice explicit. Switch to a durable project or tool installation once you're keeping vaultspec-rag around.
 
 Add vaultspec-rag to your project and set it up:
 
 ```bash
-uv add vaultspec-rag
-uv run vaultspec-rag install
-uv sync
+uv add "vaultspec-rag[gpu]"
+uv run vaultspec-rag install --sync
 ```
 
-`install` configures the GPU PyTorch build, downloads the search models, and provisions the managed search server. `uv sync` then pulls in that GPU build. The models total a few gigabytes, so the first download takes several minutes, but it runs only once.
+`install` configures the GPU PyTorch build, downloads the search models, and provisions the managed search server. The `[gpu]` extra carries the local inference libraries, and `--sync` applies the pinned CUDA build. On Linux, expect roughly 5 GB of CUDA packages on the GPU path plus several gigabytes of models; the bare package avoids that CUDA footprint entirely but cannot index or search locally.
 
 To install as a standalone tool instead, pin the GPU torch wheel in the tool receipt so `uv tool upgrade` keeps the CUDA build. A bare `uv tool install` re-resolves torch to a CPU-only wheel on every upgrade, and `--index` is not recorded in tool receipts, so the `--with` pin is the durable fix. The command is environment-specific (python version, ABI, platform, torch release) - `vaultspec-rag server start` and `install` print the exact one for your environment when they detect a CPU-only tool env. Its shape (here Python 3.13, torch 2.13.0, Windows):
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
-uvx vaultspec-rag install
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
+vaultspec-rag install
 ```
 
 The `--python` request must match the wheel's `cp3XX` tag; without it, uv resolves the tool env on its default python, and a default that differs from the wheel's interpreter fails the install on a tag mismatch.
 
 See the [installation guide](docs/installation.md) for tool-environment repair and upgrade caveats.
+
+#### Standalone binaries
+
+Every release also publishes standalone binaries through the account channel
+root, `nevenincs/homebrew-tap`, which needs no Python toolchain on the machine:
+
+```powershell
+# Windows x86-64, via Scoop
+scoop bucket add nevenincs https://github.com/nevenincs/homebrew-tap
+scoop install vaultspec-rag
+```
+
+```bash
+# Linux x86-64 and arm64, via Homebrew
+brew tap nevenincs/tap https://github.com/nevenincs/homebrew-tap
+brew install vaultspec-rag
+```
+
+These place `vaultspec-rag` and `vaultspec-search-mcp`. The first launch of
+either resolves the package from PyPI, and the binaries carry the accelerated
+torch pin, so the GPU build arrives without the `--with` dance the tool-install
+path needs above.
+
+The tap is the **account** root rather than this repository, so it is added once
+and carries every vaultspec product. macOS is not served here for the same
+reason it is not supported at all. Linux binaries have a glibc floor - see the
+[installation guide](docs/installation.md).
 
 ### Index and search
 
@@ -140,6 +167,9 @@ See [search and index](docs/search-and-index.md) for the full filter set, [MCP i
 ### Daily use
 
 - [Search and index](docs/search-and-index.md) - run searches and refresh the index.
+- [Writing a query that finds it](docs/query-craft.md) - phrasing, the full filter surface, and what to do when a result looks wrong.
+- [Retrieval recipes](docs/examples.md) - worked searches for the questions it answers well, and the ones it answers badly.
+- [Verify the index](docs/verification.md) - confirm the service is healthy, the index is current, and it covers the tree you meant.
 - [Service mode](docs/service-mode.md) - keep models warm in a background service for faster queries.
 - [Backends](docs/backends.md) - the managed Qdrant server versus local-only mode.
 - [MCP integration](docs/mcp.md) - wire search into Claude Code and other MCP clients.

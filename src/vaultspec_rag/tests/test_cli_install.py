@@ -115,13 +115,13 @@ class TestNoTorchMessageRendering:
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
-            _no_torch_message()
+            _no_torch_message(), markup=False, highlight=False
         )
         return buf.getvalue()
 
     def test_renders_uv_add_command(self) -> None:
         out = self._render()
-        assert "uv add vaultspec-rag" in out
+        assert 'uv add "vaultspec-rag[gpu]"' in out
         assert "vaultspec-rag install" in out
 
     def test_no_stray_backslashes(self) -> None:

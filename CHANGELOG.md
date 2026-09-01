@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.4.21](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.20...vaultspec-rag-v0.4.21) (2026-08-30)
+
+
+### Features
+
+* **packaging:** state the Linux glibc floor in the Homebrew formula ([#435](https://github.com/nevenincs/vaultspec-rag/issues/435)) ([de318d7](https://github.com/nevenincs/vaultspec-rag/commit/de318d77ccbe6ad3eeb68235ff3eeae4bf30e175))
+
+## [0.4.20](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.19...vaultspec-rag-v0.4.20) (2026-08-30)
+
+
+### Features
+
+* **acquisition:** cover aarch64 now that a release meets its floor ([#433](https://github.com/nevenincs/vaultspec-rag/issues/433)) ([326bc18](https://github.com/nevenincs/vaultspec-rag/commit/326bc1810ff652feff9bfccbeca40b0ca4c046ef))
+
+## [0.4.19](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.18...vaultspec-rag-v0.4.19) (2026-08-30)
+
+
+### Features
+
+* **binaries:** build linux-aarch64 in the pinned image, dropping its floor to 2.28 ([#431](https://github.com/nevenincs/vaultspec-rag/issues/431)) ([4061041](https://github.com/nevenincs/vaultspec-rag/commit/4061041f699ac4239fd14140add6ec34e0b1a5d2))
+
+## [0.4.18](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.17...vaultspec-rag-v0.4.18) (2026-08-30)
+
+
+### Bug Fixes
+
+* **binaries:** derive the preflight selectors, and correct two misleading claims ([#427](https://github.com/nevenincs/vaultspec-rag/issues/427)) ([52a4c5e](https://github.com/nevenincs/vaultspec-rag/commit/52a4c5eeb0583cdd2221500e506a126c655c2c04))
+
+## [0.4.17](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.16...vaultspec-rag-v0.4.17) (2026-08-30)
+
+
+### Features
+
+* **acquisition:** run the published binary somewhere older than the build host ([#429](https://github.com/nevenincs/vaultspec-rag/issues/429)) ([46cd2c6](https://github.com/nevenincs/vaultspec-rag/commit/46cd2c6559c8bf9cb7c0dd765fa435ee4584649f))
+
+
+### Bug Fixes
+
+* **binaries:** host the release guard, and give it the file it reads ([#424](https://github.com/nevenincs/vaultspec-rag/issues/424)) ([684367d](https://github.com/nevenincs/vaultspec-rag/commit/684367dd000a988154a9afd3a15fb106ef722470))
+* **channels:** one channel root, a guard that watches it, and docs that name it ([#425](https://github.com/nevenincs/vaultspec-rag/issues/425)) ([7567a9e](https://github.com/nevenincs/vaultspec-rag/commit/7567a9e8d4c32623e179fa9ddff7b50cb0e3111f))
+
+## [0.4.16](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.15...vaultspec-rag-v0.4.16) (2026-08-30)
+
+
+### Bug Fixes
+
+* **binaries:** return the containerised workspace to the runner's user ([#423](https://github.com/nevenincs/vaultspec-rag/issues/423)) ([2f8d02a](https://github.com/nevenincs/vaultspec-rag/commit/2f8d02ae2ec3ca356b30e78d3dfbec443229ad0f))
+* **binaries:** the ARM64 runner cannot host a container; declare its real floor ([#420](https://github.com/nevenincs/vaultspec-rag/issues/420)) ([b0c0c00](https://github.com/nevenincs/vaultspec-rag/commit/b0c0c00243ffcd0df0add5319a9fde9d58741713))
+* **binaries:** the guard must require every declared target, not any asset ([#422](https://github.com/nevenincs/vaultspec-rag/issues/422)) ([107ed2b](https://github.com/nevenincs/vaultspec-rag/commit/107ed2b53d628f93addb855deb27840c0a9a439b))
+
 ## [0.4.15](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.14...vaultspec-rag-v0.4.15) (2026-08-30)
 
 

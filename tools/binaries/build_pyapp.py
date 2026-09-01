@@ -15,9 +15,9 @@ in their execution entry point:
 - ``vaultspec-search-mcp`` runs the object reference ``vaultspec_rag.server:main``
   (PYAPP_EXEC_SPEC), matching the ``vaultspec-search-mcp`` console script.
 
-The MCP server lives behind the ``mcp`` extra, so the binary installs
-``vaultspec-rag[mcp]``: a bare install omits the ``mcp`` dependency and the
-server binary would fail to import at first launch.
+The MCP server and local inference live behind separate extras, so the binary
+installs ``vaultspec-rag[gpu,mcp]``. A bare install omits both the MCP server
+dependency and the local inference stack.
 
 Torch is pinned to the accelerated build on every target that publishes one,
 because the bootstrap's default - plain PyPI - is CPU-only on Windows and is
@@ -93,10 +93,10 @@ BINARIES = (
     Binary(name="vaultspec-search-mcp", exec_spec="vaultspec_rag.server:main"),
 )
 
-#: PyPI extras the bootstrap must install. The MCP server is an opt-in extra
-#: in this project, so a bare `vaultspec-rag` install produces a binary that
-#: cannot import `mcp` on first launch.
-PROJECT_FEATURES = "mcp"
+#: PyPI extras the bootstrap must install. A standalone binary must start the
+#: MCP server and execute local GPU inference, neither of which belongs in a
+#: bare control-plane installation.
+PROJECT_FEATURES = "gpu,mcp"
 
 
 def version_from_tag(tag: str) -> str:
@@ -133,7 +133,7 @@ def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
         {
             "PYAPP_PROJECT_NAME": PROJECT_NAME,
             "PYAPP_PROJECT_VERSION": version,
-            # Installs `vaultspec-rag[mcp]` rather than the bare distribution.
+            # Installs the MCP and GPU runtime extras rather than the bare distribution.
             "PYAPP_PROJECT_FEATURES": PROJECT_FEATURES,
             "PYAPP_PYTHON_VERSION": PYTHON_VERSION,
             # Install the project with uv rather than pip on first launch.
@@ -180,7 +180,6 @@ def asset_name(binary: Binary, target: str) -> str:
     return f"{binary.name}-{target}{suffix}"
 
 
-
 # --- platform floor ---------------------------------------------------------
 #
 # Ported from vaultspec-core's dev/binaries/build_pyapp.py, which settled this
@@ -205,24 +204,21 @@ GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
     # the build environment enforces rather than one the build host happens to
     # satisfy. Verified on v0.4.15.
     "x86_64-unknown-linux-gnu": (2, 28),
-    # 2.39, NOT 2.28, and the difference is a host constraint rather than a
-    # choice. The ARM64 runner is itself a colima container with no reachable
-    # docker daemon, so it cannot start the pinned manylinux image - the leg
-    # dies in `Initialize containers`. It therefore builds natively and inherits
-    # the guest's glibc.
+    # 2.28, matching x86_64. This target now builds inside the digest-pinned
+    # manylinux_2_28_aarch64 image on a GitHub-hosted ARM64 runner, so like
+    # x86_64 above this is a promise the build environment enforces rather than
+    # one the build host happens to satisfy.
     #
-    # Declared at what it can actually meet so the check still BINDS: at 2.28
-    # this target would fail every build, which is a check that cries wolf, and
-    # at "unlisted" it would assert nothing at all. 2.39 catches a regression
-    # above the current line while stating the real requirement.
+    # It was 2.39 for as long as the only ARM64 Linux host was a colima
+    # container that could not start the image and therefore built natively,
+    # inheriting the guest's glibc. That was declared rather than hidden, at
+    # what it could actually meet, so the check still bound. The divergence was
+    # marked as one that "should not be permanent"; this is it closing.
     #
-    # This is a DIVERGENCE from x86_64 and should not be permanent. It closes
-    # when an ARM64 Linux host that can run containers exists; that change moves
-    # this line to (2, 28) and restores the image pin in binaries.yml together.
-    #
-    # docs/installation.md states this per-platform rather than promising a bare
-    # "Linux" - the actual user-facing complaint in vaultspec-rag#409.
-    "aarch64-unknown-linux-gnu": (2, 39),
+    # Releases built BEFORE this change still require 2.39 - the floor is a
+    # property of each built artifact, not of this line - which is why
+    # docs/installation.md dates the drop rather than restating it flatly.
+    "aarch64-unknown-linux-gnu": (2, 28),
 }
 
 # Section type of the GNU version-requirements table (``.gnu.version_r``).
@@ -231,7 +227,6 @@ SHT_GNU_VERNEED = 0x6FFFFFFE
 
 class PlatformFloorError(RuntimeError):
     """An artifact requires a platform newer than its target triple declares."""
-
 
 
 def _cstring(blob: bytes, offset: int) -> str:
@@ -337,8 +332,6 @@ def check_platform_floor(asset: Path, target: str) -> None:
             f"below the versions it requires. Build this target against a libc "
             f"at or below the declared floor rather than the build machine's."
         )
-
-
 
 
 def write_checksum(asset: Path) -> Path:

@@ -1,0 +1,182 @@
+name: Acquisition check
+
+# Everything else in this repository tests what is IN the tree. This tests what
+# a user actually receives: it downloads the published binary onto a machine
+# with no checkout, no warm cache and no toolchain, and asks the one question
+# the build cannot answer about itself - does the dynamic loader accept it.
+#
+# vaultspec-rag#409 is why. A Linux binary built on a host with newer glibc than
+# the floor it claims loads fine everywhere it is built and tested, and fails on
+# a user's machine with a missing symbol version. That gap was found by reading
+# ELF sections by hand, at v0.4.14, three releases after it appeared. Running
+# the artifact on a distribution older than the build host closes it.
+#
+# WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT
+#
+# It asserts the loader accepts the binary. It does NOT assert the product
+# works, and that is not laziness: the binary is a PyApp bootstrapper whose
+# explicit GPU runtime download is both multi-gigabyte and unusable on these
+# no-GPU hosts. `ldd` answers the loader question without triggering that
+# download, which is the only claim this workflow can exercise honestly.
+#
+# It cannot run before publication, so it runs after. Note that
+# `release: published` is INERT for releases this repository cuts: GitHub raises
+# no workflow events for refs created with the default GITHUB_TOKEN, and
+# release-please publishes with exactly that token. It is declared anyway for a
+# human-published release, but the path that actually reaches this workflow is
+# the explicit dispatch from `binaries.yml`, plus the weekly schedule. The
+# schedule matters on its own: acquisition rots for reasons no commit causes -
+# a yanked release, a renamed asset, a base image whose glibc moves.
+
+on:
+  release:
+    types: [published]
+  schedule:
+    # Weekly, off the hour: nothing here is urgent and the fleet is shared.
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to acquire (defaults to the latest release)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  acquire:
+    name: acquire ${{ matrix.arch }} on ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # AT the declared floor, on both architectures. Nothing else here
+          # tests 2.28 itself - the Debian and Ubuntu images below sit
+          # comfortably above it, so they would keep passing if the floor
+          # slipped a version or two. RHEL 8's glibc is 2.28 exactly, which
+          # makes these the two legs that can actually fail when a container
+          # pin in binaries.yml stops doing its job.
+          - image: almalinux:8
+            setup: dnf install -y -q curl
+            arch: x86_64
+            runner: [self-hosted, Linux, X64, build]
+            triple: x86_64-unknown-linux-gnu
+          - image: almalinux:8
+            setup: dnf install -y -q curl
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+          # Above the floor and below the build host, which is the band a user
+          # is most likely to be in. bookworm is 2.36, jammy is 2.35.
+          - image: debian:bookworm-slim
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+            arch: x86_64
+            runner: [self-hosted, Linux, X64, build]
+            triple: x86_64-unknown-linux-gnu
+          - image: debian:bookworm-slim
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+          - image: ubuntu:22.04
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+            arch: x86_64
+            runner: [self-hosted, Linux, X64, build]
+            triple: x86_64-unknown-linux-gnu
+          - image: ubuntu:22.04
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+    # BOTH ARCHITECTURES, and the aarch64 half is new because the artifact it
+    # tests is new.
+    #
+    # This workflow was x86_64-only for two different reasons in sequence.
+    # First no host could run these images on ARM64 at all. Then, once
+    # binaries.yml moved that target onto `ubuntu-24.04-arm` and the declared
+    # floor dropped to 2.28, the blocker became sequencing: this workflow tests
+    # the LATEST PUBLISHED release, and every release up to that point was
+    # built natively at 2.39, so an aarch64 almalinux:8 leg would have failed
+    # truthfully about an artifact the fix had not reached.
+    #
+    # v0.4.19 is the first release built under the pin. Its published aarch64
+    # binaries measure a 2.28 floor - read from `.gnu.version_r` on the
+    # downloaded assets, not inferred from the build succeeding - so the leg
+    # now has something real to pass or fail against.
+    #
+    # THE TRIPLE MOVED INTO THE MATRIX, and that is the load-bearing part of
+    # this change rather than the extra rows. The download URL used to hardcode
+    # `-x86_64-unknown-linux-gnu`; an aarch64 leg stacked on top of that would
+    # have pulled the x86_64 binary onto an ARM64 machine. `ldd` would have
+    # refused it and the leg would have failed for the wrong reason - or worse,
+    # been "fixed" by relaxing the assertion that catches it.
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install what acquisition itself needs
+        run: |
+          set -eux
+          ${{ matrix.setup }}
+
+      - name: Acquire the published binaries
+        env:
+          REPO: ${{ github.repository }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          set -eux
+          tag="${EVENT_TAG:-${INPUT_TAG:-}}"
+          if [ -z "${tag}" ]; then
+            tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+                  | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+          fi
+          [ -n "${tag}" ] || { echo "::error::could not resolve a release tag"; exit 1; }
+          echo "TAG=${tag}" >> "$GITHUB_ENV"
+
+          mkdir -p /opt/acq
+          # BOTH executables. They are built the same way from the same spec, so
+          # a floor regression would hit both - but they are separate assets and
+          # a release can attach one without the other, which is exactly the
+          # partial-release shape the guard in binaries.yml exists to catch.
+          for name in vaultspec-rag vaultspec-search-mcp; do
+            curl -fsSL -o "/opt/acq/${name}" \
+              "https://github.com/${REPO}/releases/download/${tag}/${name}-${TRIPLE}"
+            chmod +x "/opt/acq/${name}"
+          done
+
+      - name: The loader must accept them
+        run: |
+          set -eu
+          echo "distribution glibc: $(ldd --version | head -1)"
+
+          failed=0
+          for name in vaultspec-rag vaultspec-search-mcp; do
+            binary="/opt/acq/${name}"
+
+            # `ldd` resolves every symbol version the binary requires against
+            # this distribution's libc and reports what it cannot satisfy. It
+            # answers the loader question directly and in milliseconds, without
+            # launching anything - which matters here, because launching would
+            # start a multi-gigabyte bootstrap that has nothing to do with what
+            # is being tested.
+            if ! out=$(ldd "${binary}" 2>&1); then
+              printf '::error::%s: ldd failed on %s\n%s\n' "${name}" "${{ matrix.image }}" "${out}"
+              failed=1
+              continue
+            fi
+            if printf '%s' "${out}" | grep -q 'not found'; then
+              printf '::error::%s does not load on %s. Unsatisfied by this distribution:\n%s\n' \
+                "${name}" "${{ matrix.image }}" "$(printf '%s' "${out}" | grep 'not found')"
+              printf '::error::This is vaultspec-rag#409 recurring: the artifact was built against a newer libc than the floor it claims. Check the container pin for this target in binaries.yml.\n'
+              failed=1
+              continue
+            fi
+            echo "ok: ${name} resolves every required symbol version here"
+          done
+          [ "${failed}" -eq 0 ] || exit 1
+
+      - name: Return the workspace to the runner's user
+        if: always()
+        run: chown -R --reference=/__w "$GITHUB_WORKSPACE" || true
