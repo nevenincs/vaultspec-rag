@@ -228,7 +228,9 @@ class CodeGenerationLifecycle:
             checkpoint.ingestion_complete
             or checkpoint.ledger.committed_unit_count(checkpoint.generation_id) > 0
         )
-        return has_evidence and not self._store.code_collection_exists()
+        return has_evidence and not self._store.code_collection_exists(
+            self.build_collection(checkpoint)
+        )
 
     def _live_code_points(self) -> int | None:
         """Return the served code collection's point count, or ``None`` if unknown.
