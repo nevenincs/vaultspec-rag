@@ -866,6 +866,63 @@ def test_resumed_retained_outcomes_retire_storage_before_finalization(
     assert meta_path.exists()
 
 
+def test_retained_empty_source_outcome_retires_storage_and_finalizes(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """An empty resumed source retires its previous upsert before rejection.
+
+    Mutation: bypassed ``retire_retained_outcome`` in ``_record_empty_source``.
+    This then failed the exact ``_stored`` assertion below because the retained
+    points were still live; restoring the production retirement made the test
+    and finalization pass before this test was committed.
+    """
+    rel_path = "src/resumed-empty.py"
+    original = _segments(rel_path)
+    lifecycle, request = _open_generation_lifecycle(tmp_path, drift_store)
+    checkpoint = lifecycle.open_checkpoint(request)
+    _index_path(checkpoint, rel_path, _digest("content before interruption"))
+    _publish(drift_store, original)
+    _interrupt(checkpoint, "interrupted after storage-confirmed upsert")
+
+    resumed = lifecycle.open_checkpoint(request)
+    assert resumed.generation_id == checkpoint.generation_id
+    result = FileChunkResult(
+        rel_path=rel_path,
+        content_hash=_digest(""),
+        chunks=[],
+    )
+
+    assert _outcome_pipeline(lifecycle)._record_empty_source(result, resumed)
+
+    # Storage is the first durable fact: without its exact retirement, a
+    # policy-rejection row would falsely declare the retained points converged.
+    assert _stored(drift_store, rel_path) == set()
+    assert resumed.retained_upsert_evidence(rel_path) == ()
+    units = tuple(
+        unit
+        for unit in resumed.ledger.iter_units(resumed.generation_id)
+        if unit.rel_path == rel_path
+    )
+    assert len(units) == 1
+    assert units[0].kind is CommitUnitKind.DELETE_STALE
+    assert units[0].point_ids == tuple(sorted(_identities(original)))
+
+    states = tuple(
+        state
+        for state in resumed.ledger.iter_file_states(resumed.generation_id)
+        if state.rel_path == rel_path
+    )
+    assert len(states) == 1
+    assert states[0].state is FileStateKind.POLICY_REJECTED
+    assert states[0].admission_reason is AdmissionReason.SOURCE_EMPTY
+    assert states[0].content_hash == result.content_hash
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    resumed.publish_metadata(meta_path, published_points=0)
+    assert meta_path.exists()
+
+
 def test_a_vanished_path_that_owned_nothing_does_not_block_finalization(
     tmp_path: Path,
 ) -> None:
