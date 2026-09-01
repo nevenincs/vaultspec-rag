@@ -7,14 +7,13 @@ from typing import TYPE_CHECKING
 
 import typer
 
+from ..commands._tool_torch import tool_cuda_install_spec
 from ._core import logger
 from ._render import _plain
 
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import NoReturn
-
-    from packaging.tags import Tag
 
     from ..torch_config._constants import TorchDiagnosis
 
@@ -168,76 +167,7 @@ def durable_tool_install_command() -> str:
     diverge, and uv records ``python`` in the tool receipt, so upgrades keep
     resolving on the matching interpreter.
     """
-    import importlib.metadata
-    import platform
-    import sys
-
-    from packaging.tags import cpython_tags
-
-    try:
-        installed = importlib.metadata.version("torch")
-    except importlib.metadata.PackageNotFoundError:
-        installed = None
-
-    return _durable_install_command(
-        torch_version=_wheel_torch_version(installed),
-        tag=next(iter(cpython_tags())),
-        platform_tag=_wheel_platform_tag(sys.platform, platform.machine()),
-    )
-
-
-def _wheel_torch_version(installed: str | None) -> str:
-    """The cu130 release to pin for an env whose torch reports *installed*.
-
-    The local suffix is stripped: an env resolved ``+cpu``, and the index
-    names the same release ``+cu130``. An absent or unparseable version falls
-    back to the pin, which is the only case a constant is right for.
-    """
-    from packaging.version import InvalidVersion, Version
-
-    from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
-
-    if installed is None:
-        return TORCH_TOOL_PIN_VERSION
-    try:
-        return Version(installed).base_version
-    except InvalidVersion:
-        return TORCH_TOOL_PIN_VERSION
-
-
-def _wheel_platform_tag(platform_name: str, machine: str) -> str:
-    """The wheel's platform segment for a host reporting *platform_name*.
-
-    The manylinux level is hand-picked to match what PyTorch publishes; only
-    the architecture is read from the host, since that level is published per
-    architecture.
-    """
-    if platform_name == "win32":
-        return "win_amd64"
-    return f"manylinux_2_28_{machine.lower()}"
-
-
-def _durable_install_command(*, torch_version: str, tag: Tag, platform_tag: str) -> str:
-    """Assemble the pinned reinstall for one interpreter tag and platform.
-
-    The ``--python`` request is derived from the same tag as the wheel name so
-    the two cannot name different interpreters.
-    """
-    from ..torch_config._constants import CU130_INDEX_URL
-
-    # tag.interpreter is ``cp<major><minor>`` (single-digit major); uv's
-    # free-threaded request form is ``X.Yt``, signalled by the abi suffix.
-    python_request = f"{tag.interpreter[2]}.{tag.interpreter[3:]}"
-    if tag.abi.endswith("t"):
-        python_request += "t"
-    wheel = (
-        f"{CU130_INDEX_URL}/torch-{torch_version}%2Bcu130"
-        f"-{tag.interpreter}-{tag.abi}-{platform_tag}.whl"
-    )
-    return (
-        f"uv tool install --force --python {python_request} "
-        f'"vaultspec-rag[gpu,mcp]" --with "torch @ {wheel}"'
-    )
+    return tool_cuda_install_spec().command
 
 
 def _cpu_only_message() -> str:
