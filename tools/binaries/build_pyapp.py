@@ -15,9 +15,9 @@ in their execution entry point:
 - ``vaultspec-search-mcp`` runs the object reference ``vaultspec_rag.server:main``
   (PYAPP_EXEC_SPEC), matching the ``vaultspec-search-mcp`` console script.
 
-The MCP server lives behind the ``mcp`` extra, so the binary installs
-``vaultspec-rag[mcp]``: a bare install omits the ``mcp`` dependency and the
-server binary would fail to import at first launch.
+The MCP server and local inference live behind separate extras, so the binary
+installs ``vaultspec-rag[gpu,mcp]``. A bare install omits both the MCP server
+dependency and the local inference stack.
 
 Torch is pinned to the accelerated build on every target that publishes one,
 because the bootstrap's default - plain PyPI - is CPU-only on Windows and is
@@ -93,10 +93,10 @@ BINARIES = (
     Binary(name="vaultspec-search-mcp", exec_spec="vaultspec_rag.server:main"),
 )
 
-#: PyPI extras the bootstrap must install. The MCP server is an opt-in extra
-#: in this project, so a bare `vaultspec-rag` install produces a binary that
-#: cannot import `mcp` on first launch.
-PROJECT_FEATURES = "mcp"
+#: PyPI extras the bootstrap must install. A standalone binary must start the
+#: MCP server and execute local GPU inference, neither of which belongs in a
+#: bare control-plane installation.
+PROJECT_FEATURES = "gpu,mcp"
 
 
 def version_from_tag(tag: str) -> str:
@@ -133,7 +133,7 @@ def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
         {
             "PYAPP_PROJECT_NAME": PROJECT_NAME,
             "PYAPP_PROJECT_VERSION": version,
-            # Installs `vaultspec-rag[mcp]` rather than the bare distribution.
+            # Installs the MCP and GPU runtime extras rather than the bare distribution.
             "PYAPP_PROJECT_FEATURES": PROJECT_FEATURES,
             "PYAPP_PYTHON_VERSION": PYTHON_VERSION,
             # Install the project with uv rather than pip on first launch.
@@ -178,7 +178,6 @@ def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
 def asset_name(binary: Binary, target: str) -> str:
     suffix = ".exe" if target.endswith("windows-msvc") else ""
     return f"{binary.name}-{target}{suffix}"
-
 
 
 # --- platform floor ---------------------------------------------------------
@@ -228,7 +227,6 @@ SHT_GNU_VERNEED = 0x6FFFFFFE
 
 class PlatformFloorError(RuntimeError):
     """An artifact requires a platform newer than its target triple declares."""
-
 
 
 def _cstring(blob: bytes, offset: int) -> str:
@@ -334,8 +332,6 @@ def check_platform_floor(asset: Path, target: str) -> None:
             f"below the versions it requires. Build this target against a libc "
             f"at or below the declared floor rather than the build machine's."
         )
-
-
 
 
 def write_checksum(asset: Path) -> Path:
