@@ -865,16 +865,18 @@ assert not loaded, loaded
         assert_fresh_import_excludes(self._IMPORT_CHECK)
 
 
-def _cuda_oom_handlers(root: ast.AST) -> list[ast.ExceptHandler]:
-    """Collect the ``except`` handlers naming the CUDA OOM error under *root*."""
+def _accelerator_oom_handlers(root: ast.AST) -> list[ast.ExceptHandler]:
+    """Collect handlers that classify errors through the accelerator context."""
     import ast
 
     return [
         node
         for node in ast.walk(root)
         if isinstance(node, ast.ExceptHandler)
-        and node.type is not None
-        and "OutOfMemoryError" in ast.unparse(node.type)
+        and any(
+            isinstance(call, ast.Call) and _called_name(call) == "is_out_of_memory"
+            for call in ast.walk(node)
+        )
     ]
 
 
@@ -893,7 +895,7 @@ class TestEncodeRecoveryStaysBounded:
 
     The silent index-wedge incident showed what an unbounded loop in the
     embed-and-upsert path costs: hours of GPU burn with no failure. The
-    CUDA-OOM recovery must keep its floor - a bucket that cannot shrink
+    accelerator-OOM recovery must keep its floor - a bucket that cannot shrink
     (a single text) re-raises the real error instead of replanning - so
     every OOM handler must pair with the floor re-raise, and every encode
     path must reach a handler that has one.
@@ -908,12 +910,12 @@ class TestEncodeRecoveryStaysBounded:
         from .. import embeddings
 
         tree = ast.parse(inspect.getsource(embeddings))
-        oom_handlers = _cuda_oom_handlers(tree)
+        oom_handlers = _accelerator_oom_handlers(tree)
         # The shared bucket loop carries the one handler both encode
         # paths route through; zero found means this scan went stale,
         # not that the risk is gone.
         assert oom_handlers, (
-            "expected the shared bucket loop's CUDA-OOM handler in "
+            "expected the shared bucket loop's accelerator-OOM handler in "
             "embeddings.py; the source scan no longer finds any"
         )
 
@@ -940,7 +942,7 @@ class TestEncodeRecoveryStaysBounded:
             if not keeps_floor_reraise(handler)
         ]
         assert not missing, (
-            f"CUDA-OOM handlers at embeddings.py lines {missing} lack "
+            f"accelerator-OOM handlers at embeddings.py lines {missing} lack "
             "the single-text-bucket floor re-raise; the bucket retry "
             "must terminate"
         )
@@ -951,7 +953,7 @@ class TestEncodeRecoveryStaysBounded:
         The dense and sparse paths share one bucket-encode loop, so one
         handler bounds both - but only while both actually route through
         it. This asserts that routing directly: an encode path either
-        handles the CUDA OOM itself or calls a function that does, so an
+        classifies accelerator OOM itself or calls a function that does, so an
         OOM on either path always meets the bounded recovery the floor
         test pins.
 
@@ -979,7 +981,9 @@ class TestEncodeRecoveryStaysBounded:
             "this scan went stale"
         )
         handling = {
-            name for name, function in functions.items() if _cuda_oom_handlers(function)
+            name
+            for name, function in functions.items()
+            if _accelerator_oom_handlers(function)
         }
 
         def reaches_handling(function: ast.FunctionDef) -> bool:
@@ -995,7 +999,7 @@ class TestEncodeRecoveryStaysBounded:
             if path not in handling and not reaches_handling(functions[path])
         ]
         assert not uncovered, (
-            f"encode paths {uncovered} neither handle a CUDA OOM nor "
+            f"encode paths {uncovered} neither classify an accelerator OOM nor "
             "call a function that does; an OOM there would escape the "
             "bounded bucket recovery"
         )

@@ -2,15 +2,17 @@
 
 Plain-English definitions for terms used across the vaultspec-rag docs. Consult this page when you hit an unfamiliar word. Each entry gives a one-paragraph explanation and a pointer to the doc that defines the term.
 
-**Ad-hoc**. A single CLI command that starts its own short-lived process, loads the GPU models, does the work, and exits. Each invocation pays the model-loading cost again, which is convenient for a one-off search or index but slow for repeated calls. See [the service-mode guide](service-mode.md).
+**Ad-hoc**. A single CLI command that starts its own short-lived process, loads the accelerator models, does the work, and exits. Each invocation pays the model-loading cost again, which is convenient for a one-off search or index but slow for repeated calls. See [the service-mode guide](service-mode.md).
 
-**Backend**. The storage layer that holds the index. vaultspec-rag has two backend implementations: the managed Qdrant server and the local-only on-disk store. The active backend is chosen once and reported by `server doctor`. See [the backends guide](backends.md).
+**Accelerator**. A supported compute device used for every dense, sparse, and reranker forward pass. vaultspec-rag resolves CUDA first, then Apple silicon MPS, and never selects CPU. See [the architecture overview](architecture.md).
+
+**Backend**. One selected implementation behind a stable interface. The compute backend is CUDA or MPS; the storage backend is the managed Qdrant server or the local-only on-disk store. `server doctor` reports both independently. See [the architecture overview](architecture.md) and [backends guide](backends.md).
 
 **Chunk**. A small slice of a vault document or source file, a few hundred tokens long, that the indexer stores as one searchable unit. Search results point back to specific chunks rather than whole files. See [the architecture overview](architecture.md).
 
 **Codebase index**. The on-disk record of chunks cut from your source files, kept alongside the vault index but searched separately through the code search type. See [the indexing guide](indexing.md).
 
-**CUDA**. NVIDIA's GPU runtime. vaultspec-rag requires it because all embedding and re-ranking runs on the GPU; CPU-only machines are not supported. See [the installation guide](installation.md).
+**CUDA**. NVIDIA's GPU runtime and the supported accelerator on Linux and Windows. CUDA devices use discrete video memory (VRAM). Apple silicon uses MPS instead; CPU-only machines remain unsupported. See [the installation guide](installation.md).
 
 **Dense vector (embedding)**. A numeric representation of a piece of text as a list of numbers, arranged so that texts with similar meaning end up with similar numbers. The dense vector captures overall meaning and is what makes semantic search possible. See [the architecture overview](architecture.md).
 
@@ -34,11 +36,13 @@ Plain-English definitions for terms used across the vaultspec-rag docs. Consult 
 
 **MCP (Model Context Protocol)**. An open protocol that lets AI clients, such as Claude Code, call tools running in a separate server process. vaultspec-rag exposes search and indexing as MCP tools. See [the MCP guide](mcp.md).
 
+**MPS (Metal Performance Shaders)**. PyTorch's accelerator backend for Apple silicon. vaultspec-rag uses it only with CPU fallback disabled and reports its memory as unified rather than as VRAM. See [the installation guide](installation.md).
+
 **Project root**. The directory vaultspec-rag treats as the project boundary, the folder holding `.vault`. It is resolved from `--target`, then `VAULTSPEC_RAG_ROOT`, then the current working directory. See [the configuration guide](configuration.md).
 
-**Provisioning**. The one-time setup, run during `install`, that obtains the three external dependencies vaultspec-rag needs. These are the CUDA PyTorch build, the search models cached from Hugging Face, and the managed Qdrant server binary. See [the installation guide](installation.md).
+**Provisioning**. The one-time setup, run during `install`, that obtains the external dependencies vaultspec-rag needs: platform-appropriate PyTorch, search models cached from Hugging Face, and the managed Qdrant server binary. CUDA uses the configured cu130 source; macOS uses the standard MPS-capable wheel. See [the installation guide](installation.md).
 
-**Readiness**. Whether the service can serve requests: torch sees CUDA, the models are cached, and the active backend is present and usable. The `server doctor` command reports it. See [the service-mode guide](service-mode.md).
+**Readiness**. Whether the service can serve requests: torch sees a supported accelerator, the models are cached, and the active storage backend is present and usable. The `server doctor` command reports it. See [the service-mode guide](service-mode.md).
 
 **Reciprocal rank fusion (RRF)**. The method that merges the dense and sparse result lists into one ranking. It scores each result by its rank position in each list rather than by raw scores, so the two signals combine fairly. See [the search guide](search-and-index.md).
 
@@ -48,13 +52,15 @@ Plain-English definitions for terms used across the vaultspec-rag docs. Consult 
 
 **Semantic search**. Search that ranks results by meaning rather than exact word matches, using vectors to compare the query against indexed chunks. See [the search guide](search-and-index.md).
 
-**Service**. The long-running background process that keeps the GPU models loaded, so requests skip the per-call model-loading cost. It also supervises the managed Qdrant server. Running as a service is the default. See [the service-mode guide](service-mode.md).
+**Service**. The long-running background process that keeps the accelerator models loaded, so requests skip the per-call model-loading cost. It also supervises the managed Qdrant server. Running as a service is the default. See [the service-mode guide](service-mode.md).
 
 **Slot**. A reserved seat for one project in the running service. The service keeps a fixed number of slots warm; opening a new project may evict the least recently used one. See [the service-mode guide](service-mode.md).
 
 **Sparse vector (SPLADE)**. A numeric representation that records which specific terms a piece of text emphasizes, produced by the SPLADE model. The sparse vector captures exact wording and pairs with the dense vector in hybrid search. See [the architecture overview](architecture.md).
 
 **stdio transport**. The MCP transport where the client launches the server as a subprocess and exchanges messages over standard input and output. It is the default for local AI clients. See [the MCP guide](mcp.md).
+
+**Unified memory**. Memory shared by the CPU, GPU, and system on Apple silicon. MPS allocator and recommended-working-set readings describe this shared pool; they are not discrete VRAM and must not be presented as such. See [the architecture overview](architecture.md).
 
 **Vault**. The `.vault/` directory in a project containing structured Markdown documents (ADRs, research, plans, audits, and exec records) that vaultspec-rag indexes for semantic search. See [the architecture overview](architecture.md).
 

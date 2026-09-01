@@ -1,102 +1,145 @@
-"""Centralized, GPU-gated torch loader for local (in-process) mode.
+"""Centralized accelerator-gated torch loader for local compute paths.
 
-vaultspec-rag is a GPU-only project. Service-mode code paths never load
-torch - they call a running daemon over HTTP and must stay torch-free.
-Every local-mode site that needs torch for *compute* must obtain it through
-``load_torch()`` so there is exactly one place that imports torch, asserts a
-CUDA device is present, and fails hard when only a CPU-only build is
-installed. Never write a naked ``import torch`` on a compute path; route it
-through this function so who, when, and how torch loads stays controlled.
-
-The torch import is function-local, so importing this module never pulls
-torch into ``sys.modules`` - the service-mode torch-freedom invariant holds
-even for modules that import this one.
-
-Read-only probes that must tolerate a CPU-only or torch-absent host (the
-``/health`` and ``/metrics`` reporters, the readiness diagnosis, the memory
-probe) are the deliberate exception: they report ``cuda=False`` rather than
-raise, so they keep their own guarded function-local import and do not call
-``load_torch()``.
+Service-mode clients never load torch. Every in-process compute site resolves
+its accelerator here, where CUDA wins over MPS and CPU is never a candidate.
+The import remains function-local so importing this module is torch-free.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import os
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from types import ModuleType
 
+AcceleratorBackend = Literal["cuda", "mps"]
+MemoryKind = Literal["vram", "unified"]
+
 __all__ = [
-    "CUDA_REQUIRED_MESSAGE",
+    "ACCELERATOR_REQUIRED_MESSAGE",
+    "MPS_FALLBACK_MESSAGE",
     "TORCH_MISSING_MESSAGE",
-    "is_cuda_out_of_memory",
-    "load_torch",
+    "AcceleratorBackend",
+    "AcceleratorContext",
+    "MemoryKind",
+    "detect_accelerator_backend",
+    "load_accelerator",
+    "resolve_accelerator",
 ]
 
 TORCH_MISSING_MESSAGE = (
     "GPU RAG dependencies not installed: torch is missing. Install "
     "`vaultspec-rag[gpu]`, then run `vaultspec-rag install --sync` to "
-    "provision the cu130 CUDA torch wheel."
+    "provision torch for this platform."
 )
 
-CUDA_REQUIRED_MESSAGE = (
-    "CUDA GPU required: no CUDA device is available. vaultspec-rag is a "
-    "GPU-only project and never runs inference on CPU. The installed torch is "
-    "a CPU-only build, or no NVIDIA GPU is present - install the cu130 torch "
-    "wheel with `vaultspec-rag install` on a CUDA-capable machine."
+ACCELERATOR_REQUIRED_MESSAGE = (
+    "Supported accelerator required: neither CUDA nor Apple MPS is available. "
+    "vaultspec-rag never runs inference on CPU. Install the supported torch "
+    "build on a CUDA-capable or Apple silicon machine."
+)
+
+MPS_FALLBACK_MESSAGE = (
+    "Apple MPS CPU fallback must be disabled: "
+    "PYTORCH_ENABLE_MPS_FALLBACK=1 can move unsupported operators to CPU, but "
+    "vaultspec-rag never runs inference on CPU. Unset it or set it to 0."
 )
 
 
-def is_cuda_out_of_memory(exc: BaseException) -> bool:
-    """Classify a Torch allocator failure without importing Torch elsewhere."""
-    try:
-        import torch
-    except ImportError:
-        return False
-    return isinstance(exc, torch.cuda.OutOfMemoryError)
+@dataclass(frozen=True, slots=True)
+class AcceleratorContext:
+    """The selected accelerator and the backend operations callers need."""
+
+    torch: ModuleType
+    backend: AcceleratorBackend
+    device: str
+    name: str
+    memory_kind: MemoryKind
+
+    def is_out_of_memory(self, exc: BaseException) -> bool:
+        """Return whether *exc* is this backend's allocator exhaustion."""
+        error_type = (
+            getattr(self.torch.cuda, "OutOfMemoryError", None)
+            if self.backend == "cuda"
+            else getattr(self.torch, "OutOfMemoryError", None)
+        )
+        return isinstance(error_type, type) and isinstance(exc, error_type)
+
+    def release_cache(self) -> None:
+        """Return unused allocator blocks to the selected backend."""
+        getattr(self.torch, self.backend).empty_cache()
 
 
-def load_torch() -> ModuleType:
-    """Import torch for a local-mode compute path, asserting CUDA, or fail hard.
-
-    The single gate every local-mode torch *compute* load must pass through.
-    Returns the imported ``torch`` module. Raises ``ImportError`` when torch is
-    not installed, ``RuntimeError`` when torch is installed but exposes no CUDA
-    device (a CPU-only build, or no GPU) - it never silently degrades to CPU
-    compute - and ``RuntimeError`` when the device cannot take a load: a card
-    with no room for a model stack is refused instead of starved, and so is one
-    that answers as present and has then refused the memory query for long
-    enough that a transient fault is no longer the explanation.
-
-    The device is checked once per process, before the first successful load,
-    and the verdict is latched: a later call is exactly as cheap as it was
-    before the check existed, and - the load-bearing half - the admitted
-    workload's remaining components come up without re-interrogation. A release
-    of resident models retires the latch; the fresh verdict a reload then takes
-    credits whatever this process still holds, so its own residency is never
-    read back as foreign pressure.
-    """
-    from ._gpu_admission import admit_gpu_load
-
-    return admit_gpu_load(_import_torch_for_compute)
+def _mps_fallback_enabled() -> bool:
+    """Whether PyTorch's documented MPS-to-CPU fallback switch is enabled."""
+    return os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "").strip() == "1"
 
 
-def _import_torch_for_compute() -> ModuleType:
-    """Import torch, require a CUDA device, and apply the process allocator cap.
+def detect_accelerator_backend(
+    torch_module: ModuleType,
+) -> AcceleratorBackend | None:
+    """Return the first available supported backend without changing state."""
+    if torch_module.cuda.is_available():
+        return "cuda"
+    mps = getattr(getattr(torch_module, "backends", None), "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return None
 
-    The load itself, separated from the admission that precedes it so the two
-    concerns stay legible: this function answers "can torch run compute here at
-    all", and the admission gate answers "is there room for it right now".
-    """
+
+def resolve_accelerator(torch_module: ModuleType) -> AcceleratorContext:
+    """Resolve CUDA first, then MPS, and refuse an accelerator-less host."""
+    backend = detect_accelerator_backend(torch_module)
+    if backend == "cuda":
+        return AcceleratorContext(
+            torch=torch_module,
+            backend="cuda",
+            device="cuda",
+            name=str(torch_module.cuda.get_device_name(0)),
+            memory_kind="vram",
+        )
+
+    if backend == "mps":
+        if _mps_fallback_enabled():
+            raise RuntimeError(MPS_FALLBACK_MESSAGE)
+        return AcceleratorContext(
+            torch=torch_module,
+            backend="mps",
+            device="mps",
+            name="Apple MPS",
+            memory_kind="unified",
+        )
+
+    raise RuntimeError(ACCELERATOR_REQUIRED_MESSAGE)
+
+
+def _import_accelerator_for_compute() -> AcceleratorContext:
+    """Import torch and resolve the supported accelerator for compute."""
     try:
         import torch
     except ImportError as exc:
         raise ImportError(TORCH_MISSING_MESSAGE) from exc
-    if not torch.cuda.is_available():
-        raise RuntimeError(CUDA_REQUIRED_MESSAGE)
-    from .config._settings import get_config
+    return resolve_accelerator(torch)
 
-    torch.cuda.set_per_process_memory_fraction(  # pyright: ignore[reportUnknownMemberType] - torch stub gap
-        get_config().index_cuda_allocator_fraction,
+
+def load_accelerator() -> AcceleratorContext:
+    """Resolve and admit the accelerator for a local compute path."""
+    from ._gpu_admission import admit_accelerator_load
+
+    accelerator = _import_accelerator_for_compute()
+
+    def configure() -> AcceleratorContext:
+        if accelerator.backend == "cuda":
+            from .config._settings import get_config
+
+            accelerator.torch.cuda.set_per_process_memory_fraction(  # pyright: ignore[reportUnknownMemberType] - torch stub gap
+                get_config().index_cuda_allocator_fraction,
+            )
+        return accelerator
+
+    return admit_accelerator_load(
+        configure,
+        backend=accelerator.backend,
     )
-    return torch

@@ -2,11 +2,11 @@
 
 By the end of this tutorial you have vaultspec-rag installed, a search service running, your project indexed, and a first result on screen. Run the steps in order.
 
-This needs an NVIDIA GPU with CUDA support and roughly 3 GB of free GPU memory. Without one, vaultspec-rag does not run, and you cannot complete the rest of this tutorial. You also need [uv](https://docs.astral.sh/uv/) and CPython 3.13 or 3.14. The [requirements](../README.md#requirements) section lists the full set. For deeper detail, see the [installation guide](installation.md) and the [architecture overview](architecture.md).
+This needs a supported accelerator: an NVIDIA GPU with CUDA and roughly 3 GB of free VRAM on Linux or Windows, or Apple silicon with MPS on macOS. The measured Apple silicon floor is 8 GiB of unified memory. CPU-only and AMD GPU hosts cannot complete the tutorial. You also need [uv](https://docs.astral.sh/uv/) and CPython 3.13 or 3.14. For deeper detail, see the [installation guide](installation.md) and the [architecture overview](architecture.md).
 
 ## Step 1: Install and provision
 
-Add the package, provision its dependencies, and fetch the GPU build:
+Add the package and provision its dependencies:
 
 ```
 uv add "vaultspec-rag[gpu]"
@@ -14,7 +14,7 @@ uv run vaultspec-rag install
 uv sync
 ```
 
-`install` pauses once to confirm a config edit; type `y` to proceed. The first run downloads a few gigabytes of model files, so it is slow. The [installation guide](installation.md) covers the prompt, the `uv sync` step, and what to do if any of this fails.
+`install` pauses once on every platform to confirm the managed PyTorch config edit; type `y` to proceed. On Linux and Windows the entry selects the CUDA source. On macOS its platform marker makes that source inactive, and the standard PyTorch wheel installed by `uv sync` supplies MPS. The first run downloads a few gigabytes of model files, so it is slow. The [installation guide](installation.md) covers the platform differences and what to do if any step fails.
 
 Confirm the result:
 
