@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from .._store_models import CodeChunk
+from ..indexer._codebase_indexer import _FullStaleReconciliation
 from ..indexer._content_policy import (
+    AdmissionReason,
     ContentKind,
     RootContentPolicy,
     SourceProfileVersion,
@@ -35,6 +37,7 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_policy import RunPolicy
 from ..indexer._streaming_types import CodeFileSegment
+from ..job_control import NO_RUN_CONTROL
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -92,6 +95,7 @@ def _open(
     *,
     configuration: CodeRunConfiguration | None = None,
     operation: RunOperation = RunOperation.FULL,
+    clean: bool = False,
 ) -> CodeRunCheckpoint:
     policy = resolve_index_policy(
         tmp_path,
@@ -106,7 +110,7 @@ def _open(
             policy=policy,
             run_policy=RunPolicy(no_progress_timeout_seconds=30.0),
             operation=operation,
-            clean=False,
+            clean=clean,
             model_identity="model-v1",
             dense_dimensions=8,
             configuration=configuration or _configuration(),
@@ -233,7 +237,11 @@ def test_paths_without_indexed_evidence_are_never_reported_as_drifted(
 ) -> None:
     checkpoint = _open(tmp_path)
     rejected_digest = _digest("an empty source")
-    checkpoint.record_empty_source("src/empty.py", content_hash=rejected_digest)
+    checkpoint.record_policy_rejection(
+        "src/empty.py",
+        AdmissionReason.SOURCE_EMPTY,
+        content_hash=rejected_digest,
+    )
     # A path whose first segment was confirmed but never reached its file end
     # carries committed units without an indexed state.
     checkpoint.record_confirmed_segment(
@@ -454,7 +462,7 @@ def test_a_path_rewritten_mid_run_is_superseded_not_fatal(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None)
 
     # The pre-dispatch snapshot observed this path unchanged, so nothing
     # re-opened it. The source is rewritten while the run encodes, and the
@@ -498,7 +506,7 @@ def test_the_pre_record_check_keeps_visible_drift_off_the_signal_path(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None)
     moved = _segments("src/known.py", marker="_moved")
     _publish(drift_store, moved)
 
@@ -507,6 +515,279 @@ def test_the_pre_record_check_keeps_visible_drift_off_the_signal_path(
     assert owner.superseded_paths == ("src/known.py",)
     # The point of the cheap re-check: the ledger never had to refuse a write.
     assert owner.collisions_observed == 0
+
+
+def test_a_clean_generation_is_never_named_after_the_one_it_replaces(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """Generation names must stay one suffix wide, however many rebuilds run.
+
+    Publication makes the new collection the served one. Minting the next
+    generation's name from the served collection therefore appends a suffix to
+    a name that already carries one, and every clean rebuild widens the next -
+    names accumulating a dozen generations of history, with the collections
+    behind them never dropped. The derived name is a function of the root
+    alone, so minting from it is both bounded and still recomputable by a run
+    resuming after a crash.
+    """
+    from .._store_models import generation_code_collection
+    from ..indexer._generation_lifecycle import (
+        CodeGenerationBindings,
+        CodeGenerationLifecycle,
+    )
+
+    derived = drift_store.DERIVED_CODE_TABLE_NAME
+
+    def _lifecycle() -> CodeGenerationLifecycle:
+        return CodeGenerationLifecycle(
+            CodeGenerationBindings(
+                root_dir=tmp_path,
+                data_root=tmp_path / ".state",
+                meta_path=tmp_path / "code_index_meta.json",
+                store=drift_store,
+                load_meta=dict,
+                read_meta_raw=dict,
+            )
+        )
+
+    first = _lifecycle().build_collection(_open(tmp_path, clean=True))
+    assert first is not None
+    assert first.startswith(derived)
+
+    # Publication rebinds the store to the collection it just published
+    # (CodeGenerationLifecycle.publish), so the next run mints against a
+    # served name that already carries a suffix. Reproduce exactly that
+    # rebinding - it is the whole precondition for the defect.
+    drift_store.CODE_TABLE_NAME = first
+    second = _lifecycle().build_collection(_open(tmp_path / "next", clean=True))
+
+    assert second is not None
+    # The exact assertion: the replacement is minted from the derived name,
+    # not from the collection it replaces. Widening by one suffix per rebuild
+    # is what produced 207-character names carrying ten generations.
+    assert second.count("_g") == 1
+    assert len(second) == len(first)
+    assert not second.startswith(first)
+    assert second == generation_code_collection(derived, second.rsplit("_g", 1)[1])
+
+
+def test_superseded_identities_are_reported_for_snapshot_reconciliation(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """Drift retires identities a pre-run snapshot still claims.
+
+    The ingest barrier reconciles the id snapshot taken before a failure-safe
+    rebuild against live storage. Chunk identity embeds a content digest, so a
+    drifted path's replacement points never overwrite the superseded ones -
+    those identities leave storage and never come back. A barrier told only
+    the snapshot and the run's published ids expects the retired identities
+    back, finds them missing, and reports a correct rebuild as a store that
+    acknowledged writes it never applied.
+    """
+    checkpoint = _open(tmp_path)
+    original = _segments("src/racing.py")
+    _index_path(checkpoint, "src/racing.py", _digest("before the edit"))
+    _publish(drift_store, original)
+    _interrupt(checkpoint, "interrupted after one path was indexed")
+
+    resumed = _open(tmp_path)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None)
+    snapshot_before = _identities(original)
+
+    moved = _segments("src/racing.py", marker="_moved")
+    _publish(drift_store, moved)
+    owner.record_segments(moved, {"src/racing.py": _digest("after the edit")})
+
+    published = _identities(moved)
+    retired = owner.superseded_point_ids
+    # Exactly the identities that left storage - no more, no fewer. The
+    # narrow equality is the assertion: reporting a superset would subtract
+    # live points and under-count, a subset leaves the original defect.
+    assert retired == snapshot_before - published
+    assert retired, "drift that retires nothing cannot exercise the barrier"
+
+    # Reconcile the snapshot the way the barrier does, and land on what
+    # storage actually holds.
+    assert len((published | snapshot_before) - (retired - published)) == len(
+        _stored(drift_store, "src/racing.py")
+    )
+    # The union alone - the expectation before this accounting existed -
+    # overshoots by precisely the retired identities.
+    assert len(published | snapshot_before) == len(
+        _stored(drift_store, "src/racing.py")
+    ) + len(retired)
+
+
+def test_clean_generation_drift_never_deletes_the_served_copy(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """A clean generation owns drift only in its own build collection.
+
+    The same old identities exist in the served collection and the incomplete
+    clean generation. A resume must retire only the generation's copy: the
+    served collection remains the fallback until publication, while the build
+    collection is left ready for replacement content.
+    """
+    from ..indexer._generation_lifecycle import (
+        CodeGenerationBindings,
+        CodeGenerationLifecycle,
+        CodeGenerationOpenRequest,
+    )
+    from ..job_control import NO_RUN_CONTROL
+
+    policy = resolve_index_policy(
+        tmp_path,
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
+    )
+    lifecycle = CodeGenerationLifecycle(
+        CodeGenerationBindings(
+            root_dir=tmp_path,
+            data_root=tmp_path / ".state",
+            meta_path=tmp_path / "code_index_meta.json",
+            store=drift_store,
+            load_meta=dict,
+            read_meta_raw=dict,
+        )
+    )
+    checkpoint = lifecycle.open_checkpoint(
+        CodeGenerationOpenRequest(
+            policy=policy,
+            operation=RunOperation.FULL,
+            clean=True,
+            configuration=_configuration(),
+            dense_dimensions=_DENSE_DIM,
+            sparse_enabled=False,
+            run_control=NO_RUN_CONTROL,
+        )
+    )
+    build_target = lifecycle.build_collection(checkpoint)
+    assert build_target is not None
+
+    path = "src/racing.py"
+    old_segments = _segments(path)
+    old_ids = _identities(old_segments)
+    for collection in (drift_store.CODE_TABLE_NAME, build_target):
+        drift_store.ensure_code_table(collection)
+        drift_store.upsert_code_chunks(
+            [
+                replace(chunk, vector=[0.125] * _DENSE_DIM)
+                for segment in old_segments
+                for chunk in segment.chunks
+            ],
+            write_policy=None,
+            collection=collection,
+        )
+    old_digest = _digest("before the edit")
+    for segment in old_segments:
+        checkpoint.record_confirmed_segment(segment, old_digest)
+
+    moved_segments = _segments(path, marker="_moved")
+    drift_store.upsert_code_chunks(
+        [
+            replace(chunk, vector=[0.125] * _DENSE_DIM)
+            for segment in moved_segments
+            for chunk in segment.chunks
+        ],
+        write_policy=None,
+        collection=build_target,
+    )
+    moved_digest = _digest("after the edit")
+
+    assert (
+        lifecycle.drift_owner.record_segments(moved_segments, {path: moved_digest}) == 2
+    )
+
+    assert set(drift_store.get_code_ids_by_paths({path})) == old_ids
+    assert set(
+        drift_store.get_code_ids_by_paths({path}, collection=build_target)
+    ) == _identities(moved_segments)
+    assert all(
+        checkpoint.ledger.unit_committed(
+            checkpoint.generation_id,
+            checkpoint.unit_for(segment, moved_digest),
+        )
+        for segment in moved_segments
+    )
+
+
+def test_clean_generation_stale_reconciliation_never_deletes_the_served_copy(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """The final clean-generation purge is scoped to its build collection."""
+    from ..indexer import CodebaseIndexer
+    from ..indexer._generation_lifecycle import (
+        CodeGenerationBindings,
+        CodeGenerationLifecycle,
+        CodeGenerationOpenRequest,
+    )
+    from ..progress import NullProgressReporter
+
+    policy = resolve_index_policy(
+        tmp_path,
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
+    )
+    lifecycle = CodeGenerationLifecycle(
+        CodeGenerationBindings(
+            root_dir=tmp_path,
+            data_root=tmp_path / ".state",
+            meta_path=tmp_path / "code_index_meta.json",
+            store=drift_store,
+            load_meta=dict,
+            read_meta_raw=dict,
+        )
+    )
+    checkpoint = lifecycle.open_checkpoint(
+        CodeGenerationOpenRequest(
+            policy=policy,
+            operation=RunOperation.FULL,
+            clean=True,
+            configuration=_configuration(),
+            dense_dimensions=_DENSE_DIM,
+            sparse_enabled=False,
+            run_control=NO_RUN_CONTROL,
+        )
+    )
+    build_target = lifecycle.build_collection(checkpoint)
+    assert build_target is not None
+
+    path = "src/removed.py"
+    segments = _segments(path)
+    old_ids = _identities(segments)
+    for collection in (drift_store.CODE_TABLE_NAME, build_target):
+        drift_store.ensure_code_table(collection)
+        drift_store.upsert_code_chunks(
+            [
+                replace(chunk, vector=[0.125] * _DENSE_DIM)
+                for segment in segments
+                for chunk in segment.chunks
+            ],
+            write_policy=None,
+            collection=collection,
+        )
+    indexer = CodebaseIndexer(tmp_path, cast("Any", None), drift_store)
+    indexer._lifecycle = lifecycle
+    assert indexer._reconcile_full_stale_ids(
+        _FullStaleReconciliation(
+            checkpoint=checkpoint,
+            previous_metadata={},
+            metadata={},
+            existing_ids=old_ids,
+            retained_ids=set(),
+            collection=build_target,
+            reporter=NullProgressReporter(),
+        )
+    ) == sorted(old_ids)
+
+    assert set(drift_store.get_code_ids_by_paths({path})) == old_ids
+    assert not drift_store.get_code_ids_by_paths({path}, collection=build_target)
 
 
 def test_a_resubmission_under_the_same_digest_stays_fatal(
@@ -521,7 +802,7 @@ def test_a_resubmission_under_the_same_digest_stays_fatal(
     checkpoint = _open(tmp_path)
     digest = _digest("committed content")
     _index_path(checkpoint, "src/settled.py", digest)
-    owner = CodeDriftOwner(checkpoint, drift_store)
+    owner = CodeDriftOwner(checkpoint, drift_store, collection=None)
 
     resubmitted = _segments("src/settled.py", marker="_again")
     with pytest.raises(RunLedgerIndexedPathCollisionError) as caught:
@@ -545,7 +826,7 @@ def test_a_path_that_keeps_moving_is_deferred_and_says_so(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store, retry_budget=1)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None, retry_budget=1)
 
     # One supersede is all this path gets, and it spends it here.
     second = _segments(hot, marker="_second")
@@ -588,7 +869,7 @@ def test_the_retry_budget_must_be_positive(
 ) -> None:
     """A zero budget defers every drifted path without ever repairing one."""
     with pytest.raises(ValueError, match="retry_budget must be a positive integer"):
-        CodeDriftOwner(_open(tmp_path), drift_store, retry_budget=0)
+        CodeDriftOwner(_open(tmp_path), drift_store, collection=None, retry_budget=0)
 
 
 def test_drift_telemetry_reports_volume_the_breaker_cannot_see(
@@ -607,7 +888,7 @@ def test_drift_telemetry_reports_volume_the_breaker_cannot_see(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store, retry_budget=1)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None, retry_budget=1)
     assert owner.snapshot() == {
         "superseded_paths": 0,
         "deferred_paths": [],
@@ -630,3 +911,108 @@ def test_drift_telemetry_reports_volume_the_breaker_cannot_see(
         "collisions_observed": 0,
         "retry_budget": 1,
     }
+
+
+def test_a_vanished_path_that_owned_nothing_does_not_block_finalization(
+    tmp_path: Path,
+) -> None:
+    """A file created and deleted before it was ever indexed must not wedge a run.
+
+    The sink converges a vanished read so one deleted file cannot end the run,
+    and records the path as ``extract_retryable``. Finalization accepts only
+    ``indexed`` and ``policy_rejected``, and the one route out of
+    ``file_states`` - ``record_path_deleted`` - demands a storage-confirmed
+    deletion unit. A path that never owned points never gets one, so the row
+    outlives every attempt to resolve it and the run dies at finalization
+    instead of at the read, repeatedly, on a tree somebody is working in.
+
+    Mutation: dropped the ``forget_unevidenced_path`` call from
+    ``_record_vanished_source``. Observed this fail with ``RunLedgerStateError:
+    cannot finalize unresolved file state for src/vanished.py`` - verbatim the
+    production failure.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/kept.py", _digest("kept"))
+
+    # Exactly what the sink does for a source that disappeared before the read.
+    checkpoint.record_processing_failure(
+        "src/vanished.py",
+        FileStateKind.EXTRACT_RETRYABLE,
+        "source vanished before it was read",
+        content_hash=None,
+    )
+    assert checkpoint.ledger.forget_unevidenced_path(
+        checkpoint.generation_id, "src/vanished.py"
+    )
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    # The assertion is that finalization completes at all: before the forget,
+    # this raised RunLedgerStateError over the vanished path.
+    checkpoint.publish_metadata(meta_path, published_points=2)
+    assert meta_path.exists()
+
+
+def test_a_path_this_generation_owns_is_never_forgotten(tmp_path: Path) -> None:
+    """Evidence is the gate; forgetting an owned path would strand its points.
+
+    A path with commit units belongs to this generation and must leave through
+    the purge that drops what it owns. Forgetting it here would remove the row
+    while its points stayed in storage, claimed by nothing - which is the
+    orphan the stale reconciliation exists to prevent.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/owned.py", _digest("owned"))
+
+    assert not checkpoint.ledger.forget_unevidenced_path(
+        checkpoint.generation_id, "src/owned.py"
+    ), "a path with commit units must survive the forget"
+    assert any(
+        state.rel_path == "src/owned.py"
+        for state in checkpoint.ledger.iter_file_states(checkpoint.generation_id)
+    )
+
+
+def test_a_preprocessor_skip_resolves_and_finalizes(tmp_path: Path) -> None:
+    """``on_error = "skip"`` must survive the whole run, not just the read.
+
+    The earlier attempt at this converged the skip at the sink and stopped
+    there, recording it through the failure recorder - whose contract is one
+    explicit UNRESOLVED outcome. Finalization admits only ``indexed`` and
+    ``policy_rejected``, so the run got further and died later instead. This
+    asserts the half that was missing: the run finalizes.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/kept.py", _digest("kept"))
+    checkpoint.record_policy_rejection(
+        "src/corpus/corrupt.pdf",
+        AdmissionReason.PREPROCESS_SKIPPED,
+        content_hash=_digest("the bytes that would not parse"),
+    )
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    checkpoint.publish_metadata(meta_path, published_points=2)
+    assert meta_path.exists()
+
+
+def test_a_skip_without_the_hash_that_evidenced_it_stays_unresolved(
+    tmp_path: Path,
+) -> None:
+    """The rejection is only trustworthy against the content it was made on.
+
+    A skip recorded with no content hash cannot be re-evaluated when the file
+    changes, so it would refuse the document forever. Finalization must keep
+    refusing it rather than let an unfalsifiable rejection settle - the same
+    bar ``source_too_large`` and ``source_binary`` are held to.
+    """
+    checkpoint = _open(tmp_path)
+    _index_path(checkpoint, "src/kept.py", _digest("kept"))
+    checkpoint.record_policy_rejection(
+        "src/corpus/corrupt.pdf",
+        AdmissionReason.PREPROCESS_SKIPPED,
+        content_hash=None,
+    )
+
+    with pytest.raises(RunLedgerStateError, match="unresolved file state"):
+        checkpoint.publish_metadata(
+            tmp_path / ".state" / "code_meta.json", published_points=2
+        )

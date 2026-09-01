@@ -766,8 +766,13 @@ class TestResumedCodePublicationClaimsWhatItBuilt:
         assert served is not None
         # Catches the pointer move being dropped from the resumed path: the
         # sidecar would name this generation while the pointer still named
-        # the prior one, which is the live poisoned shape exactly.
-        assert generation_code_collection(prior, claim.generation_id) == served
+        # the prior one, which is the live poisoned shape exactly. Asserted
+        # against the collection this publication actually built rather than
+        # a recomputed name, so the invariant is the two writes agreeing and
+        # not how a generation name happens to be spelled.
+        assert served == build_target
+        assert claim.generation_id == checkpoint.generation_id
+        assert served != prior
         # And no zero claim survives a publication that found its points.
         assert claim.published_points == 3
         assert claim.published_files == 3

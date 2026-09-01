@@ -101,6 +101,7 @@ class _FullStaleReconciliation:
     metadata: dict[str, str]
     existing_ids: set[str]
     retained_ids: set[str]
+    collection: str | None
     reporter: ProgressReporter
 
 
@@ -548,12 +549,16 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     point_ids = tuple(sorted(removed_ids_by_path[rel]))
                     if not point_ids:
                         continue
-                    self.store.delete_code_chunks(list(point_ids))
+                    self.store.delete_code_chunks(
+                        list(point_ids), collection=request.collection
+                    )
                     request.checkpoint.record_confirmed_deletion(rel, point_ids)
                     path_removed_ids.update(point_ids)
                 remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
                 if remaining_stale_ids:
-                    self.store.delete_code_chunks(remaining_stale_ids)
+                    self.store.delete_code_chunks(
+                        remaining_stale_ids, collection=request.collection
+                    )
             except OSError:
                 logger.error(
                     "Failed to purge stale code chunks after successful rebuild - "
@@ -793,20 +798,30 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 computed_not_before_ns=pipeline_started_ns,
                 keep=meta.keys(),
             )
+            published_ids = frozenset(new_ids)
             new_ids.update(
                 existing_ids_before if preserved_ids is None else preserved_ids
             )
             meta.update(preserved_metadata)
 
+            # A drifted path's replacement points carry new identities, so the
+            # drift owner drops the superseded ones mid-run. They are still in
+            # the pre-run snapshot, and expecting them back would report a
+            # correct rebuild as a store that acknowledged writes it never
+            # applied. Subtract exactly those this run retired and did not
+            # republish under the same identity.
+            superseded = self._lifecycle.drift_owner.superseded_point_ids
+            retired_ids = superseded - published_ids
+
             run_control.checkpoint()
             # The rebuild streamed its upserts without the per-slice apply
             # handshake; nothing terminal may proceed until the store has
             # proven every acknowledged point actually applied. Before the
-            # purge the collection must hold exactly the union of the
-            # pre-existing snapshot and everything this run published.
+            # purge the collection must hold exactly the pre-existing snapshot,
+            # less what this run retired, plus everything it published.
             self.store.apply_ingest_barrier(
                 self._code_build_target or self.store.CODE_TABLE_NAME,
-                expected_points=len(new_ids | existing_ids_before),
+                expected_points=len((new_ids | existing_ids_before) - retired_ids),
                 write_policy=checkpoint.run_policy.store_write_policy,
             )
             run_control.checkpoint()
@@ -817,6 +832,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     metadata=meta,
                     existing_ids=existing_ids_before,
                     retained_ids=new_ids,
+                    collection=self._code_build_target,
                     reporter=reporter,
                 )
             )
