@@ -523,6 +523,9 @@ class CodeConsumerPipeline:
         if result.chunks or result.content_hash != _EMPTY_SOURCE_DIGEST:
             return False
         if checkpoint is not None:
+            self._lifecycle.drift_owner.retire_retained_outcome(
+                result.rel_path, remove_path=False
+            )
             checkpoint.record_policy_rejection(
                 result.rel_path,
                 AdmissionReason.SOURCE_EMPTY,
