@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ..._store_models import CodeChunk
     from ..._store_writes import StoreWritePolicy
     from ...indexer import DocumentIndexer
+    from ...indexer._content_policy import RootContentPolicy
     from ...indexer._document_indexer import _DocumentPublishRequest
     from ...indexer._document_meta import DocumentFileMetadata, DocumentIndexMetadata
     from ...indexer._generation_lifecycle import CodeGenerationLifecycle
@@ -69,25 +70,34 @@ def _seed_vault_chunks(store: VaultStore, doc_ids: tuple[str, ...]) -> None:
     )
 
 
-def _seed_document_chunks(store: VaultStore, ids: tuple[str, ...]) -> None:
-    """Upsert one real zero-vector document-native chunk per id."""
+def _seed_document_chunks(
+    store: VaultStore,
+    ids: tuple[str, ...],
+    *,
+    source_paths: tuple[str, ...] | None = None,
+) -> None:
+    """Upsert real zero-vector document-native chunks at their source paths."""
     from ..._store_models import DocumentChunk, DocumentPayload
     from ...config._settings import get_config
 
+    if source_paths is None:
+        source_paths = tuple(f"docs/{chunk_id}.pdf" for chunk_id in ids)
+    if len(source_paths) != len(ids):
+        raise ValueError("document chunk identities and source paths must align")
     dimension = int(get_config().embedding_dimension)
     store.upsert_document_content_chunks(
         [
             DocumentChunk(
                 id=chunk_id,
                 payload=DocumentPayload(
-                    source_path=f"docs/{chunk_id}.pdf",
+                    source_path=source_path,
                     unit_ordinal=0,
                     content_fingerprint=f"fp-{chunk_id}",
                     content=f"content of {chunk_id}",
                 ),
                 vector=[0.0] * dimension,
             )
-            for chunk_id in ids
+            for chunk_id, source_path in zip(ids, source_paths, strict=True)
         ],
         write_policy=None,
     )
@@ -444,7 +454,11 @@ def _code_chunks(ids: tuple[str, ...], *, prefix: str) -> list[CodeChunk]:
     ]
 
 
-def _open_clean_code_generation(root: Path) -> CodeRunCheckpoint:
+def _open_clean_code_generation(
+    root: Path,
+    *,
+    content_policy: RootContentPolicy | None = None,
+) -> CodeRunCheckpoint:
     """Open a real clean code generation against *root*'s run ledger."""
     from ...indexer._content_policy import RootContentPolicy, SourceProfileVersion
     from ...indexer._resolved_policy import (
@@ -462,7 +476,8 @@ def _open_clean_code_generation(root: Path) -> CodeRunCheckpoint:
     policy = resolve_index_policy(
         root,
         IndexPolicyResolutionOptions(
-            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+            content_policy=content_policy
+            or RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
         ),
     )
     return CodeRunCheckpoint.open(
@@ -609,6 +624,87 @@ class TestCleanGenerationCleanupKeepsServing:
             # restoring the lifecycle-derived target makes both assertions pass.
             assert store.count_code(build_target) == 0
             assert store.count_code() == 1
+        finally:
+            store.close()
+
+
+class TestCleanGenerationPublicationKeepsServing:
+    def test_clean_publication_preserves_old_served_code_until_the_swap(
+        self, tmp_path: Path
+    ) -> None:
+        """A private code build reconciles only after its pointer is public.
+
+        The old served collection holds a stale code point, while the document
+        collection holds the prior owner of a path an explicit route now admits
+        as code.  The generation ledger carries exact evidence for the private
+        replacement.  The publication must leave the old code collection whole,
+        publish the replacement's exact breadth, then remove the cross-kind
+        document origin through the now-served replacement.
+        """
+        from ..._index_breadth import read_code_breadth_claim
+        from ..._store_models import read_served_code_collection
+        from ...indexer._content_policy import (
+            ContentKind,
+            ContentRoute,
+            RootContentPolicy,
+            SourceProfileVersion,
+        )
+        from ...store_runtime import VaultStore
+
+        routed_path = "src/unit/route.py"
+        store = VaultStore(tmp_path)
+        try:
+            checkpoint = _open_clean_code_generation(
+                tmp_path,
+                content_policy=RootContentPolicy(
+                    SourceProfileVersion.EXPLICIT_ONLY_V1,
+                    (ContentRoute(routed_path, ContentKind.CODE),),
+                ),
+            )
+            lifecycle = _lifecycle(tmp_path, store)
+            build_target = lifecycle.build_collection(checkpoint)
+            assert build_target is not None
+            served_before = store.CODE_TABLE_NAME
+
+            store.ensure_code_table(served_before)
+            store.upsert_code_chunks(
+                _code_chunks(("stale",), prefix="old"),
+                write_policy=None,
+                collection=served_before,
+            )
+            store.ensure_code_table(build_target)
+            store.upsert_code_chunks(
+                _code_chunks(("route",), prefix="unit"),
+                write_policy=None,
+                collection=build_target,
+            )
+            _seed_document_chunks(
+                store,
+                ("document-origin",),
+                source_paths=(routed_path,),
+            )
+            _name_indexed_files(checkpoint, (routed_path,))
+            _reach_ingestion_complete(checkpoint)
+
+            assert store.count_code(served_before) == 1
+            assert store.count_code(build_target) == 1
+            assert store.document_content_ids_exist(("document-origin",))
+
+            assert lifecycle.publish_pending_finalization(
+                checkpoint, reporter=NullProgressReporter()
+            )
+
+            claim = read_code_breadth_claim(tmp_path)
+            assert claim is not None
+            # Guard proof: moving route reconciliation back before the pointer
+            # swap makes its same-kind purge delete ``served_before`` and leaves
+            # the document origin behind because its replacement is private.
+            assert store.count_code(served_before) == 1
+            assert read_served_code_collection(tmp_path) == build_target
+            assert store.count_code(build_target) == 1
+            assert claim.published_points == 1
+            assert claim.named_files == 1
+            assert not store.document_content_ids_exist(("document-origin",))
         finally:
             store.close()
 
