@@ -184,7 +184,7 @@ def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
             pending.extend(value.values())
         elif isinstance(value, list):
             pending.extend(value)
-        elif isinstance(value, str) and unquote(value) == expected:
+        elif isinstance(value, str) and expected in unquote(value):
             return True
     return False
 
