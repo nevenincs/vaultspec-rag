@@ -558,6 +558,61 @@ def _reach_ingestion_complete(checkpoint: CodeRunCheckpoint) -> None:
     )
 
 
+class TestCleanGenerationCleanupKeepsServing:
+    def test_stale_cleanup_deletes_from_the_build_collection_only(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-publication clean generation never deletes served points."""
+        from ...indexer._codebase_indexer import (
+            CodebaseIndexer,
+            _FullStaleReconciliation,
+        )
+        from ...store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            checkpoint = _open_clean_code_generation(tmp_path)
+            build_target = _lifecycle(tmp_path, store).build_collection(checkpoint)
+            assert build_target is not None
+
+            shared_id = "shared-stale"
+            store.ensure_code_table()
+            store.upsert_code_chunks(
+                _code_chunks(("stale",), prefix="shared"),
+                write_policy=None,
+            )
+            store.ensure_code_table(build_target)
+            store.upsert_code_chunks(
+                _code_chunks(("stale",), prefix="shared"),
+                write_policy=None,
+                collection=build_target,
+            )
+            assert store.count_code() == 1
+            assert store.count_code(build_target) == 1
+
+            indexer = CodebaseIndexer(tmp_path, cast("Any", None), store)
+            removed = indexer._reconcile_full_stale_ids(
+                _FullStaleReconciliation(
+                    checkpoint=checkpoint,
+                    previous_metadata={},
+                    metadata={},
+                    existing_ids={shared_id},
+                    retained_ids=set(),
+                    collection=build_target,
+                    reporter=NullProgressReporter(),
+                )
+            )
+
+            assert removed == [shared_id]
+            # Guard proof: using the implicit collection sent this deletion to
+            # the served collection and made the active-build assertion fail;
+            # restoring the lifecycle-derived target makes both assertions pass.
+            assert store.count_code(build_target) == 0
+            assert store.count_code() == 1
+        finally:
+            store.close()
+
+
 class TestCodeReadsNeverMaterialiseAGhost:
     """A read against an absent code collection must not create it."""
 
