@@ -62,6 +62,7 @@ from ._mode import (
     resolve_rag_mode,
 )
 from ._models import InstallReport
+from ._tool_torch import ToolTorchRepairOutcome, repair_tool_torch
 from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 from ._workspace import (
     _ensure_workspace_dirs,
@@ -822,6 +823,8 @@ class _InstallRunRequest:
     torch_group: str | None = None
     install_mcp: bool = False
     mode: InstallMode | None = None
+    repair_tool_torch: bool = True
+    tool_torch_repair_outcome: ToolTorchRepairOutcome | None = None
 
 
 class _InstallRunOptions(TypedDict, total=False):
@@ -839,13 +842,33 @@ class _InstallRunOptions(TypedDict, total=False):
     torch_group: str | None
     install_mcp: bool
     mode: InstallMode | None
+    repair_tool_torch: bool
 
 
 def install_run(
     path: Path | None = None, **options: Unpack[_InstallRunOptions]
 ) -> InstallReport:
     """Run install behind one required-node topology transaction."""
-    return _install_run(_InstallRunRequest(path=path, **options))
+    return _install_with_tool_repair(_InstallRunRequest(path=path, **options))
+
+
+def _install_with_tool_repair(request: _InstallRunRequest) -> InstallReport:
+    outcome = _tool_repair_outcome(request)
+    if outcome is None or not outcome.blocks_install:
+        return _install_run(
+            replace(
+                request,
+                repair_tool_torch=False,
+                tool_torch_repair_outcome=outcome,
+            )
+        )
+    target = _resolve_target(request.path, bootstrap=False)
+    action = "dry_run" if request.dry_run else "install"
+    report = InstallReport(action=action, target=target, tool_torch_repair=outcome)
+    report.warnings.append(outcome.detail)
+    if outcome.command:
+        report.warnings.append(f"tool CUDA repair command: {outcome.command}")
+    return report
 
 
 def _install_run(request: _InstallRunRequest) -> InstallReport:
@@ -859,6 +882,8 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
     )
     failure = InstallReport(action=action, target=target)
+    repair_outcome = request.tool_torch_repair_outcome
+    failure.tool_torch_repair = repair_outcome
     try:
         topology = inspect_required_mcp_topology(target)
     except Exception as exc:
@@ -878,7 +903,15 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
         return failure
 
     def run() -> InstallReport:
-        return _install_run_unchecked(replace(request, path=target, skip=skip_tokens))
+        return _install_run_unchecked(
+            replace(
+                request,
+                path=target,
+                skip=skip_tokens,
+                repair_tool_torch=False,
+                tool_torch_repair_outcome=repair_outcome,
+            )
+        )
 
     if request.dry_run:
         return run()
@@ -898,6 +931,8 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
                 sync_after=False,
                 confirm=None,
                 provision=False,
+                repair_tool_torch=False,
+                tool_torch_repair_outcome=repair_outcome,
             ),
         )
         topology.capture_expected_projection(replay_target)
@@ -922,6 +957,18 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
     for message in topology_errors:
         record_mcp_failure(report, message)
     return report
+
+
+def _tool_repair_outcome(
+    request: _InstallRunRequest,
+) -> ToolTorchRepairOutcome | None:
+    if not request.repair_tool_torch:
+        return request.tool_torch_repair_outcome
+    return repair_tool_torch(
+        assume_yes=request.assume_yes or request.force,
+        confirm=request.confirm,
+        dry_run=request.dry_run,
+    )
 
 
 def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
@@ -1035,6 +1082,7 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     target, report, fresh_mcp_providers, provider_intent_ready = (
         _prepare_install_target(path, action=action, dry_run=dry_run, skip=skip)
     )
+    report.tool_torch_repair = request.tool_torch_repair_outcome
     if not provider_intent_ready:
         return report
 

@@ -429,6 +429,10 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
         report.mcp_extra_action == "error"
         or report.mcp_sync_failed
         or (
+            report.tool_torch_repair is not None
+            and report.tool_torch_repair.blocks_install
+        )
+        or (
             options.configure_torch
             and report.torch_config_action
             in {

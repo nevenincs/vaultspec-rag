@@ -67,6 +67,7 @@ __all__ = [
     "_resolve_daemon_interpreter",
     "_spawn_service",
     "_terminate_pid",
+    "cuda_probe_is_torch_installation_defect",
 ]
 
 
@@ -476,6 +477,15 @@ def _cuda_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
         code,
         (False, f"the torch pre-flight returned an unexpected exit code {code}"),
     )
+
+
+def cuda_probe_is_torch_installation_defect(detail: str) -> bool:
+    """Whether one documented probe detail is fixed by reinstalling torch."""
+    return detail in {
+        outcome[1]
+        for code in (3, 4)
+        if (outcome := _cuda_probe_exit_outcome(code)) is not None
+    }
 
 
 class _ServiceSpawnOptions(_ServiceChildEnvOptions, total=False):

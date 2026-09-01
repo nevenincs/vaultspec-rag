@@ -19,9 +19,6 @@ if TYPE_CHECKING:
 
 from ..cli._gpu_errors import (
     RuntimeEnvKind,
-    _durable_install_command,
-    _wheel_platform_tag,
-    _wheel_torch_version,
     classify_interpreter_env,
     classify_runtime_env,
     durable_tool_install_command,
@@ -34,6 +31,11 @@ from ..cli._service_start import (
     _tail_daemon_log,
 )
 from ..cli._status_labels import _status_env_label
+from ..commands._tool_torch import (
+    _wheel_platform_tag,
+    _wheel_torch_version,
+    tool_cuda_install_spec,
+)
 from ..torch_config._constants import CU130_INDEX_URL
 
 pytestmark = [pytest.mark.unit]
@@ -250,11 +252,11 @@ class TestRemediationCommands:
         """
         from packaging.tags import Tag
 
-        cmd = _durable_install_command(
+        cmd = tool_cuda_install_spec(
             torch_version="2.9.0",
             tag=Tag("cp314", "cp314t", "win_amd64"),
             platform_tag="win_amd64",
-        )
+        ).command
 
         assert "-cp314-cp314t-" in cmd, (
             f"free-threaded host must be offered the cp314t wheel; command was: {cmd}"
@@ -279,11 +281,11 @@ class TestRemediationCommands:
         """
         from packaging.tags import Tag
 
-        cmd = _durable_install_command(
+        cmd = tool_cuda_install_spec(
             torch_version="2.9.0",
             tag=Tag("cp313", "cp313", "win_amd64"),
             platform_tag="manylinux_2_28_aarch64",
-        )
+        ).command
 
         assert "--python 3.13 " in cmd
         assert "-cp313-cp313-manylinux_2_28_aarch64.whl" in cmd
