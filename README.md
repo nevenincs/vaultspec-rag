@@ -74,6 +74,33 @@ The `--python` request must match the wheel's `cp3XX` tag; without it, uv resolv
 
 See the [installation guide](docs/installation.md) for tool-environment repair and upgrade caveats.
 
+#### Standalone binaries
+
+Every release also publishes standalone binaries through the account channel
+root, `nevenincs/homebrew-tap`, which needs no Python toolchain on the machine:
+
+```powershell
+# Windows x86-64, via Scoop
+scoop bucket add nevenincs https://github.com/nevenincs/homebrew-tap
+scoop install vaultspec-rag
+```
+
+```bash
+# Linux x86-64 and arm64, via Homebrew
+brew tap nevenincs/tap https://github.com/nevenincs/homebrew-tap
+brew install vaultspec-rag
+```
+
+These place `vaultspec-rag` and `vaultspec-search-mcp`. The first launch of
+either resolves the package from PyPI, and the binaries carry the accelerated
+torch pin, so the GPU build arrives without the `--with` dance the tool-install
+path needs above.
+
+The tap is the **account** root rather than this repository, so it is added once
+and carries every vaultspec product. macOS is not served here for the same
+reason it is not supported at all. Linux binaries have a glibc floor - see the
+[installation guide](docs/installation.md).
+
 ### Index and search
 
 1. Start the server:

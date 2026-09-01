@@ -69,3 +69,31 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
             --field tag="${{ steps.release.outputs.tag_name }}"
+
+      # AND the binaries. This step did not exist, and its absence is what cost
+      # this repo its release matrix: vaultspec-rag-v0.4.12 was cut, Publish was
+      # dispatched, and the platform binaries were never built - so `latest`
+      # carried the wheel, the sdist and SHA256SUMS and nothing else, and rag
+      # went from 3/3 to 0/3.
+      #
+      # binaries.yml's `on: push: tags:` does NOT cover this. A tag pushed with
+      # the default GITHUB_TOKEN does not trigger workflows - GitHub's
+      # anti-recursion rule - and release-please pushes with exactly that token.
+      # An explicit dispatch is not a tag push, so the rule does not apply.
+      #
+      # vaultspec-core has dispatched its binaries here since the binary lane
+      # was added. rag dispatched only Publish. That one missing step is the
+      # whole difference between a release with nine assets and one with three.
+      - name: Trigger Binaries workflow
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG}" ]; then
+            echo "::error::release_created is true but tag_name is empty; refusing to dispatch a build with no tag"
+            exit 1
+          fi
+          gh workflow run Binaries --repo "$GITHUB_REPOSITORY" --ref main --field tag="${TAG}"
+          echo "Dispatched Binaries for ${TAG}" >> "$GITHUB_STEP_SUMMARY"
