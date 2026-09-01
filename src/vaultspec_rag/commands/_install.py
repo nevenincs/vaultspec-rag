@@ -866,6 +866,8 @@ def _install_with_tool_repair(request: _InstallRunRequest) -> InstallReport:
     action = "dry_run" if request.dry_run else "install"
     report = InstallReport(action=action, target=target, tool_torch_repair=outcome)
     report.warnings.append(outcome.detail)
+    if outcome.command:
+        report.warnings.append(f"tool CUDA repair command: {outcome.command}")
     return report
 
 
