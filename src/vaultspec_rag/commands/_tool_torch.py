@@ -182,6 +182,15 @@ def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
     while pending:
         value = pending.pop()
         if isinstance(value, dict):
+            name = value.get("name")
+            url = value.get("url")
+            if (
+                isinstance(name, str)
+                and name.lower() == "torch"
+                and isinstance(url, str)
+                and unquote(url) == expected
+            ):
+                return True
             pending.extend(value.values())
         elif isinstance(value, list):
             pending.extend(value)
