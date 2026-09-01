@@ -36,6 +36,7 @@ from ...indexer._resolved_policy import (
 )
 from ...indexer._route_migration import (
     RouteMigrationJournal,
+    RouteScanOptions,
     iter_stored_route_pages,
     purge_unpublished_rows,
     reconcile_checkpoint_routes,
@@ -174,7 +175,7 @@ def test_store_survey_is_bounded_and_freshly_classified(
                 store,
                 _resolved_policy(tmp_path),
                 ContentKind.CODE,
-                page_size=1,
+                options=RouteScanOptions(page_size=1),
             )
         )
         document_pages = list(
@@ -182,7 +183,7 @@ def test_store_survey_is_bounded_and_freshly_classified(
                 store,
                 _resolved_policy(tmp_path),
                 ContentKind.DOCUMENT,
-                page_size=1,
+                options=RouteScanOptions(page_size=1),
             )
         )
 
@@ -316,7 +317,7 @@ def test_missing_sidecar_recovery_retains_ledger_confirmed_points(
             checkpoint,
             _resolved_policy(tmp_path),
             ContentKind.DOCUMENT,
-            page_size=1,
+            options=RouteScanOptions(page_size=1),
         )
 
         assert removed == 2
@@ -355,7 +356,7 @@ def test_same_kind_cleanup_resumes_after_a_real_page_boundary_interruption(
                 interrupted,
                 _resolved_policy(tmp_path),
                 ContentKind.DOCUMENT,
-                page_size=1,
+                options=RouteScanOptions(page_size=1),
             )
         except BaseException as exc:
             caught.append(exc)
@@ -392,7 +393,7 @@ def test_same_kind_cleanup_resumes_after_a_real_page_boundary_interruption(
                 resumed,
                 _resolved_policy(tmp_path),
                 ContentKind.DOCUMENT,
-                page_size=1,
+                options=RouteScanOptions(page_size=1),
             )
             > 0
         )

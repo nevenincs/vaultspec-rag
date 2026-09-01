@@ -36,6 +36,7 @@ __all__ = [
     "RouteMigration",
     "RouteMigrationJournal",
     "RouteMigrationPhase",
+    "RouteScanOptions",
     "StoredRouteRow",
     "iter_stored_route_pages",
     "origin_point_ids",
@@ -260,16 +261,29 @@ class StoredRouteRow:
     admitted: bool
 
 
+@dataclass(frozen=True, slots=True)
+class RouteScanOptions:
+    """Bounded page and optional private code-target selection for a scan."""
+
+    page_size: int = _DEFAULT_PAGE_SIZE
+    code_collection: str | None = None
+
+
+_DEFAULT_ROUTE_SCAN_OPTIONS = RouteScanOptions()
+
+
 def _scroll_stored_route_page(
     store: VaultStore,
     stored_kind: ContentKind,
     *,
     page_size: int,
     offset: PointId | None,
+    code_collection: str | None = None,
 ) -> tuple[list[dict[str, Any]], PointId | None, str, str]:
     """Read one bounded collection page with its payload field names."""
     if stored_kind is ContentKind.CODE:
         rows, next_offset = store.scroll_code_content(
+            collection=code_collection,
             limit=page_size,
             offset=offset,
         )
@@ -317,12 +331,16 @@ def iter_stored_route_pages(
     policy: ResolvedIndexPolicy,
     stored_kind: ContentKind,
     *,
-    page_size: int = _DEFAULT_PAGE_SIZE,
     run_policy: RunPolicy | None = None,
+    options: RouteScanOptions = _DEFAULT_ROUTE_SCAN_OPTIONS,
 ) -> Iterator[tuple[StoredRouteRow, ...]]:
     """Yield freshly classified store rows without trusting a sidecar."""
+    page_size = options.page_size
+    code_collection = options.code_collection
     if isinstance(page_size, bool) or page_size <= 0 or page_size > 1000:
         raise ValueError("route migration page size must be between 1 and 1000")
+    if code_collection is not None and stored_kind is not ContentKind.CODE:
+        raise ValueError("only code route scans accept an explicit collection")
     offset: PointId | None = None
     while True:
         if run_policy is not None:
@@ -332,6 +350,7 @@ def iter_stored_route_pages(
             stored_kind,
             page_size=page_size,
             offset=offset,
+            code_collection=code_collection,
         )
         page = _classify_stored_route_rows(
             rows,
@@ -465,8 +484,8 @@ def reconcile_checkpoint_routes(
         store,
         policy,
         origin_kind,
-        page_size=page_size,
         run_policy=checkpoint.run_policy,
+        options=RouteScanOptions(page_size=page_size),
     ):
         states = _file_states_for_rows(checkpoint, page)
         point_ids_by_path: dict[str, list[str]] = {}
@@ -538,16 +557,21 @@ def purge_unpublished_rows(
     policy: ResolvedIndexPolicy,
     stored_kind: ContentKind,
     *,
-    page_size: int = _DEFAULT_PAGE_SIZE,
+    options: RouteScanOptions = _DEFAULT_ROUTE_SCAN_OPTIONS,
 ) -> int:
-    """Remove stale same-kind or rejected rows through bounded store pages."""
+    """Remove stale same-kind or rejected rows through bounded store pages.
+
+    ``options.code_collection`` makes a clean code build's pre-publication purge name
+    its replacement collection explicitly. Document storage has one canonical
+    collection and rejects that argument.
+    """
     removed = 0
     for page in iter_stored_route_pages(
         store,
         policy,
         stored_kind,
-        page_size=page_size,
         run_policy=checkpoint.run_policy,
+        options=options,
     ):
         states = _file_states_for_rows(checkpoint, page)
         retained_ids = _retained_ids_for_rows(checkpoint, page)
@@ -564,7 +588,12 @@ def purge_unpublished_rows(
         if not stale_ids:
             continue
         checkpoint.run_policy.checkpoint("route purge before stale delete")
-        _delete_kind_points(store, stored_kind, stale_ids)
+        _delete_kind_points(
+            store,
+            stored_kind,
+            stale_ids,
+            code_collection=options.code_collection,
+        )
         removed += len(stale_ids)
         checkpoint.run_policy.checkpoint("route purge after stale delete")
     return removed
@@ -575,18 +604,33 @@ def reconcile_generation_storage(
     checkpoint: DestinationCheckpoint,
     policy: ResolvedIndexPolicy,
     destination_kind: ContentKind,
+    *,
+    include_same_kind: bool = True,
 ) -> tuple[int, int, int]:
-    """Converge replay, same-kind storage, and cross-kind ownership in order."""
+    """Converge the store's selected destination and cross-kind ownership.
+
+    Code reconciliation resolves its destination from ``store.CODE_TABLE_NAME``.
+    A clean code generation first purges its explicit build target, records
+    breadth, then publishes and binds that target before using this operation
+    for route migration. ``include_same_kind=False`` preserves that measured
+    breadth while allowing only destination-confirmed cross-kind cleanup.
+    In-place code and document generations already select their destinations.
+    """
     resumed = resume_pending_migrations(
         store,
         checkpoint.ledger.path.parent,
         run_policy=checkpoint.run_policy,
+        destination_kind=destination_kind,
     )
-    purged = purge_unpublished_rows(
-        store,
-        checkpoint,
-        policy,
-        destination_kind,
+    purged = (
+        purge_unpublished_rows(
+            store,
+            checkpoint,
+            policy,
+            destination_kind,
+        )
+        if include_same_kind
+        else 0
     )
     migrated = reconcile_checkpoint_routes(
         store,
@@ -614,6 +658,7 @@ def resume_pending_migrations(
     data_root: Path,
     *,
     run_policy: RunPolicy | None = None,
+    destination_kind: ContentKind | None = None,
 ) -> int:
     """Replay every destination-confirmed cleanup after interruption."""
     journal_path = data_root.resolve() / _MIGRATION_JOURNAL_FILENAME
@@ -627,6 +672,11 @@ def resume_pending_migrations(
     destination_evidence: dict[tuple[str, ContentKind, str], bool] = {}
     completed = 0
     for migration in journal.pending():
+        if (
+            destination_kind is not None
+            and migration.destination_kind is not destination_kind
+        ):
+            continue
         if run_policy is not None:
             run_policy.checkpoint("route migration replay before origin delete")
         evidence_key = (
@@ -703,9 +753,13 @@ def _delete_kind_points(
     store: VaultStore,
     kind: ContentKind,
     point_ids: list[str],
+    *,
+    code_collection: str | None = None,
 ) -> None:
     if kind is ContentKind.CODE:
-        store.delete_code_chunks(point_ids)
+        store.delete_code_chunks(point_ids, collection=code_collection)
+    elif code_collection is not None:
+        raise ValueError("only code point deletion accepts an explicit collection")
     else:
         store.delete_document_content_chunks(point_ids)
 

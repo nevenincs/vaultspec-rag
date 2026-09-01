@@ -23,7 +23,11 @@ from .._index_breadth import PUBLISHED_POINTS_KEY, parse_reserved_count
 from .._store_models import generation_code_collection, publish_generation_as_served
 from ._content_policy import ContentKind
 from ._drift_owner import CodeDriftOwner
-from ._route_migration import reconcile_generation_storage
+from ._route_migration import (
+    RouteScanOptions,
+    purge_unpublished_rows,
+    reconcile_generation_storage,
+)
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunOpenRequest
 from ._run_ledger_models import (
     CommitUnitKind,
@@ -364,12 +368,6 @@ class CodeGenerationLifecycle:
         """
         reporter.phase_start(phase_label, 1)
         try:
-            reconcile_generation_storage(
-                self._store,
-                checkpoint,
-                checkpoint.policy,
-                ContentKind.CODE,
-            )
 
             def _record_breadth() -> None:
                 checkpoint.publish_metadata(
@@ -379,8 +377,25 @@ class CodeGenerationLifecycle:
                 )
 
             if build_target is None:
+                reconcile_generation_storage(
+                    self._store,
+                    checkpoint,
+                    checkpoint.policy,
+                    ContentKind.CODE,
+                )
                 _record_breadth()
             else:
+                # The complete replacement remains private until its own
+                # stale rows are gone and its breadth has been recorded. This
+                # explicit collection keeps that mutation out of the old
+                # served generation while making the published count exact.
+                purge_unpublished_rows(
+                    self._store,
+                    checkpoint,
+                    checkpoint.policy,
+                    ContentKind.CODE,
+                    options=RouteScanOptions(code_collection=build_target),
+                )
                 # Breadth first, pointer second - a reader must never resolve a
                 # generation whose published figure is missing.
                 publish_generation_as_served(
@@ -394,6 +409,19 @@ class CodeGenerationLifecycle:
                 # index, which is what makes this assignment the swap rather
                 # than a race.
                 self._store.CODE_TABLE_NAME = build_target
+                # Route reconciliation evaluates destination evidence and
+                # deletes code points through the store's selected collection.
+                # It therefore cannot run while that selection still names the
+                # old served generation: its completed replacement is now
+                # published and bound, so every code operation names the build
+                # collection that this checkpoint actually populated.
+                reconcile_generation_storage(
+                    self._store,
+                    checkpoint,
+                    checkpoint.policy,
+                    ContentKind.CODE,
+                    include_same_kind=False,
+                )
             checkpoint.publish_generation()
             reporter.advance(1)
         finally:
