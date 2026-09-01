@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.tags import Tag, cpython_tags
 from packaging.version import InvalidVersion, Version
 
@@ -184,8 +185,17 @@ def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
             pending.extend(value.values())
         elif isinstance(value, list):
             pending.extend(value)
-        elif isinstance(value, str) and expected in unquote(value):
-            return True
+        elif isinstance(value, str):
+            try:
+                requirement = Requirement(value)
+            except InvalidRequirement:
+                continue
+            if (
+                requirement.name.lower() == "torch"
+                and requirement.url is not None
+                and unquote(requirement.url) == expected
+            ):
+                return True
     return False
 
 
