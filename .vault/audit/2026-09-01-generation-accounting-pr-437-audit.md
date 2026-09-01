@@ -5,7 +5,7 @@ tags:
 date: '2026-09-01'
 modified: '2026-09-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:6fc929cad10c877fe766214f011b2f4700da0a15830c1cb318d5e0033a408afc'
+body_hash: 'sha256:02d15320dd0bfc15b2fd1dbc130bf03705378a0c22a84ca94800c20c596e039e'
 related: []
 ---
 
@@ -69,6 +69,14 @@ the root from that manifest. The normal prefix form therefore cannot identify th
 project and can leave resident collection pointers after deletion. Preserve the attributed
 root through deletion and use it for eviction.
 
+### dumb-terminal-live-output | high | Rich live regions can silently suppress operator progress
+
+Rich distinguishes an interactive console from a capable live-rendering console. When
+`TERM=dumb`, both progress surfaces previously entered their live paths, while Rich
+suppressed every frame. The result was no visible startup or indexing progress. One
+shared capability predicate now requires both interactivity and a non-dumb terminal,
+with output-level guards for the live and plain-line branches.
+
 ## Recommendations
 
 - Define one active-collection ownership path for drift cleanup and retirement.
@@ -86,3 +94,5 @@ root through deletion and use it for eviction.
   a lost in-progress target invalidates instead of resuming it.
 - Carry a prefix deletion's root identity into resident-service eviction and cover the
   prefix-addressed deletion path.
+- Use the shared Rich live-capability predicate for every live progress surface; keep
+  dumb terminals on the existing readable plain-line fallback.

@@ -73,6 +73,27 @@ class TestRichProgressReporterFallback:
         reporter = RichProgressReporter(console)
         assert reporter._is_tty is False
 
+    def test_dumb_terminal_falls_back_to_plain_lines(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TERM", "dumb")
+        buf = io.StringIO()
+        reporter = RichProgressReporter(
+            Console(
+                file=buf,
+                force_terminal=True,
+                force_interactive=True,
+                width=120,
+            )
+        )
+
+        reporter.phase_start("hash documents", 1)
+        reporter.advance()
+        reporter.phase_end()
+
+        assert "==> hash documents (1 items)" in buf.getvalue()
+        assert "done (1)" in buf.getvalue()
+
     def test_phase_events_emit_lines(self) -> None:
         console, buf = _make_non_tty_console()
         reporter = RichProgressReporter(console)
@@ -146,9 +167,17 @@ class TestRichProgressReporterFallback:
         reporter = RichProgressReporter(console)
         assert isinstance(reporter, ProgressReporter)
 
-    def test_rich_reporter_rejects_use_outside_context_manager(self) -> None:
+    def test_rich_reporter_rejects_use_outside_context_manager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TERM", "xterm-256color")
         buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True, width=120)
+        console = Console(
+            file=buf,
+            force_terminal=True,
+            force_interactive=True,
+            width=120,
+        )
         reporter = RichProgressReporter(console)
         with pytest.raises(
             RuntimeError,
