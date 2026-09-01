@@ -32,39 +32,34 @@ def _fake_mps_torch() -> ModuleType:
 
 
 def test_install_warning_refuses_enabled_mps_cpu_fallback(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from ..cli import _gpu_errors
 
-    rendered: list[str] = []
     monkeypatch.setitem(sys.modules, "torch", _fake_mps_torch())
     monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-    monkeypatch.setattr(_gpu_errors, "_plain", rendered.append)
 
     _gpu_errors.warn_if_active_torch_not_accelerator()
 
-    assert rendered
-    assert "PYTORCH_ENABLE_MPS_FALLBACK" in rendered[0]
-    assert "must be disabled" in rendered[0]
+    rendered = capsys.readouterr().out
+    assert "PYTORCH_ENABLE_MPS_FALLBACK" in rendered
+    assert "must be disabled" in rendered
 
 
 def test_gpu_error_reports_mps_fallback_refusal_not_missing_mps(
-    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     import typer
 
     from .._gpu import MPS_FALLBACK_MESSAGE
     from ..cli import _gpu_errors
 
-    rendered: list[str] = []
-    monkeypatch.setitem(sys.modules, "torch", _fake_mps_torch())
-    monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(_gpu_errors, "_plain", rendered.append)
-
     with pytest.raises(typer.Exit):
         _gpu_errors._handle_gpu_error(RuntimeError(MPS_FALLBACK_MESSAGE))
 
-    assert rendered == [f"Error: {MPS_FALLBACK_MESSAGE}"]
+    rendered = capsys.readouterr().out
+    assert "Error: Apple MPS CPU fallback must be disabled" in rendered
+    assert "PYTORCH_ENABLE_MPS_FALLBACK=1" in rendered
 
 
 class TestCpuOnlyMessageRendering:

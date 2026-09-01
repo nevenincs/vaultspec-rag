@@ -220,6 +220,7 @@ def _visible(rendered: str) -> str:
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_the_daemons_phase_reaches_the_terminal_during_the_wait(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The phase the daemon publishes is rendered as bytes on the console.
 
@@ -230,8 +231,9 @@ def test_the_daemons_phase_reaches_the_terminal_during_the_wait(
     here is deliberately the rendered output, not the label function: assert on
     bytes written to a real ``Console``, never on a helper's return value.
     """
-    from rich.console import Console
+    from ..cli._core import _build_console
 
+    monkeypatch.setenv("TERM", "xterm-256color")
     port = free_loopback_port()
     # models_loaded false keeps the daemon un-servable, so the wait keeps
     # polling and keeps reporting instead of exiting on the first success.
@@ -246,14 +248,7 @@ def test_the_daemons_phase_reaches_the_terminal_during_the_wait(
             self.wfile.write(payload)
 
     buffer = io.StringIO()
-    console = Console(
-        file=buffer,
-        legacy_windows=False,
-        highlight=False,
-        force_terminal=True,
-        force_interactive=True,
-        width=100,
-    )
+    console = _build_console(interactive=True, file=buffer)
     server = http.server.HTTPServer(("127.0.0.1", port), _Health)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

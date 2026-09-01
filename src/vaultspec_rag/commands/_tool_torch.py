@@ -281,8 +281,8 @@ def repair_tool_torch(
     """Repair a defective persistent tool interpreter and verify its receipt."""
     from ..cli._gpu_errors import RuntimeEnvKind, classify_interpreter_env
     from ..cli._process import (
-        _probe_daemon_cuda,
-        cuda_probe_is_torch_installation_defect,
+        _probe_daemon_accelerator,
+        accelerator_probe_is_torch_installation_defect,
     )
 
     interpreter = interpreter or sys.executable
@@ -291,14 +291,14 @@ def repair_tool_torch(
             ToolTorchRepairAction.NOT_APPLICABLE,
             "active interpreter is not a persistent uv tool environment",
         )
-    probe = _probe_daemon_cuda(interpreter)
+    probe = _probe_daemon_accelerator(interpreter)
     if probe is None:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.ALREADY_READY,
             "tool interpreter already has CUDA-ready torch",
         )
     blocking, detail = probe
-    if not blocking or not cuda_probe_is_torch_installation_defect(detail):
+    if not blocking or not accelerator_probe_is_torch_installation_defect(detail):
         return ToolTorchRepairOutcome(ToolTorchRepairAction.CUDA_UNVERIFIED, detail)
 
     return _repair_defective_tool(
@@ -365,9 +365,9 @@ def _run_tool_reinstall(
 def _verify_tool_repair(
     interpreter: str, spec: ToolCudaInstallSpec, command: str
 ) -> ToolTorchRepairOutcome:
-    from ..cli._process import _probe_daemon_cuda
+    from ..cli._process import _probe_daemon_accelerator
 
-    verified = _probe_daemon_cuda(interpreter)
+    verified = _probe_daemon_accelerator(interpreter)
     if verified is not None:
         _, detail = verified
         return ToolTorchRepairOutcome(

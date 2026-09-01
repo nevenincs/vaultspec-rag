@@ -308,3 +308,21 @@ class TestDeleteRootAddressing:
         assert envelope["data"]["status"] == "removed"
         assert "queried_root" not in envelope["data"]
         assert f"{prefix}vault_docs" not in self._live(storage)
+
+    def test_prefix_deletion_retains_its_root_for_resident_eviction(
+        self, storage: QdrantClient, tmp_path: Path
+    ) -> None:
+        """A prefix teardown keeps its attributed root after manifest removal."""
+        from ...storage_manifest import load_manifest
+        from ...storage_survey_ops import delete_prefix
+
+        root, prefix = self._registered_root(tmp_path, "prefix-eviction")
+        self._create(storage, f"{prefix}vault_docs")
+
+        result = delete_prefix(storage, prefix, dry_run=False)
+
+        assert result.status == "removed"
+        assert prefix not in load_manifest()
+        # The manifest lookup used to happen after its own removal, so prefix
+        # deletion had no root to pass to resident-service eviction.
+        assert result.root == str(root.resolve())

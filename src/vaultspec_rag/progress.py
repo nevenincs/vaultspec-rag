@@ -23,6 +23,8 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from ._rich_console import supports_live
+
 if TYPE_CHECKING:
     from types import TracebackType
 
@@ -113,7 +115,7 @@ class RichProgressReporter:
         # console is built. A bar is a live region, so terminal-but-not-
         # interactive is precisely the case that renders nothing at all - the
         # condition this reporter's non-TTY fallback exists to avoid.
-        self._is_tty = console.is_interactive
+        self._is_tty = supports_live(console)
         self._progress: Progress | None = None
         self._task_id: TaskID | None = None
         self._phase_name: str | None = None

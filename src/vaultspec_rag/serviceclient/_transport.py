@@ -413,9 +413,9 @@ def resolve_timeout(
     operator typo slows nothing down and turns no call into a crash. The
     degrade is logged; see :func:`_warn_unusable_settings`.
 
-    The admin and search bounds resolved this identically, differing only in
-    which setting they read, the word in the warning, and which default they
-    fall back to.
+    The admin, search, and reindex bounds resolve this identically, differing
+    only in which setting they read, the word in the warning, and which default
+    they fall back to.
     """
     resolved = timeout
     if timeout is None:
@@ -877,7 +877,12 @@ def _try_http_reindex(
             port,
             "/reindex",
             payload,
-            timeout=DEFAULT_REINDEX_TIMEOUT_SECONDS,
+            timeout=resolve_timeout(
+                None,
+                setting="service_reindex_timeout_seconds",
+                label="reindex",
+                default=DEFAULT_REINDEX_TIMEOUT_SECONDS,
+            ),
         )
         if res is not None:
             return res

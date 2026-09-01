@@ -310,14 +310,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """Clear per-run donor reuse and drift state at the start of a run."""
         self._reuse_stats = None
         self._lifecycle.forget_open_generation()
-        # Cleared per run so a generation target can never leak from a
-        # finished rebuild into the next job on this indexer.
-        self._code_build_target = None
-
-    #: Collection a clean rebuild is populating, or ``None`` outside one. Held
-    #: on the indexer rather than the store because the store is shared with
-    #: search, while one indexer runs one job at a time behind the writer lock.
-    _code_build_target: str | None = None
 
     def _reuse_snapshot(self) -> dict[str, object] | None:
         """Return this run's reuse telemetry block, or ``None`` when off."""
@@ -635,16 +627,16 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 # A fresh generation name cannot collide with a surviving
                 # directory, so this creates rather than recreates and the
                 # served collection is left alone.
-                self.store.ensure_code_table(self._code_build_target)
+                self.store.ensure_code_table(self._lifecycle.active_build_target)
                 # The generation is new: the snapshot is empty by
                 # construction, and a full id scan of a large local
                 # collection costs minutes of GIL-holding CPU.
                 existing_ids_before: set[str] = set()
             else:
-                self.store.ensure_code_table(self._code_build_target)
+                self.store.ensure_code_table(self._lifecycle.active_build_target)
                 try:
                     existing_ids_before = set(
-                        self.store.get_all_code_ids(self._code_build_target)
+                        self.store.get_all_code_ids(self._lifecycle.active_build_target)
                     )
                 except (OSError, RuntimeError):
                     logger.warning(
@@ -733,13 +725,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             is not None
         )
 
-        # Build beside the served collection, never into it. The served one
-        # keeps answering searches for the whole build, and an interrupted
-        # build leaves this collection unreferenced rather than leaving the
-        # served one truncated. The name is minted by the lifecycle, which is
-        # also what a later run resuming this generation derives it from.
-        self._code_build_target = self._lifecycle.build_collection(checkpoint)
-
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
         # purge only the ids absent from the new corpus afterwards. When
@@ -781,7 +766,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     checkpoint=checkpoint,
                     limits=limits,
                     content_epoch=self._content_epoch,
-                    code_build_target=self._code_build_target,
+                    code_build_target=self._lifecycle.active_build_target,
                     ingest_wait=False,
                     run_control=run_control,
                 ),
@@ -820,7 +805,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             # purge the collection must hold exactly the pre-existing snapshot,
             # less what this run retired, plus everything it published.
             self.store.apply_ingest_barrier(
-                self._code_build_target or self.store.CODE_TABLE_NAME,
+                self._lifecycle.active_build_target or self.store.CODE_TABLE_NAME,
                 expected_points=len((new_ids | existing_ids_before) - retired_ids),
                 write_policy=checkpoint.run_policy.store_write_policy,
             )
@@ -832,14 +817,14 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     metadata=meta,
                     existing_ids=existing_ids_before,
                     retained_ids=new_ids,
-                    collection=self._code_build_target,
+                    collection=self._lifecycle.active_build_target,
                     reporter=reporter,
                 )
             )
 
             self._lifecycle.publish(
                 checkpoint,
-                build_target=self._code_build_target,
+                build_target=self._lifecycle.active_build_target,
                 reporter=reporter,
                 phase_label="write metadata",
             )
@@ -1058,7 +1043,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                         checkpoint=checkpoint,
                         limits=limits,
                         content_epoch=self._content_epoch,
-                        code_build_target=self._code_build_target,
+                        code_build_target=self._lifecycle.active_build_target,
                         run_control=run_control,
                     ),
                 )
@@ -1284,7 +1269,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     checkpoint=checkpoint,
                     limits=limits,
                     content_epoch=self._content_epoch,
-                    code_build_target=self._code_build_target,
+                    code_build_target=self._lifecycle.active_build_target,
                     run_control=run_control,
                 ),
             )

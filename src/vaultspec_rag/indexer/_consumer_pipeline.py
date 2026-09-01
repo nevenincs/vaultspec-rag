@@ -436,6 +436,10 @@ class CodeConsumerPipeline:
         if result.preprocess_status != VANISHED_SOURCE_STATUS:
             return False
         if checkpoint is not None:
+            if self._lifecycle.drift_owner.retire_retained_outcome(
+                result.rel_path, remove_path=True
+            ):
+                return True
             checkpoint.record_processing_failure(
                 result.rel_path,
                 FileStateKind.EXTRACT_RETRYABLE,
@@ -477,6 +481,9 @@ class CodeConsumerPipeline:
         if result.preprocess_status != "skipped":
             return False
         if checkpoint is not None:
+            self._lifecycle.drift_owner.retire_retained_outcome(
+                result.rel_path, remove_path=False
+            )
             checkpoint.record_policy_rejection(
                 result.rel_path,
                 AdmissionReason.PREPROCESS_SKIPPED,
@@ -516,6 +523,9 @@ class CodeConsumerPipeline:
         if result.chunks or result.content_hash != _EMPTY_SOURCE_DIGEST:
             return False
         if checkpoint is not None:
+            self._lifecycle.drift_owner.retire_retained_outcome(
+                result.rel_path, remove_path=False
+            )
             checkpoint.record_policy_rejection(
                 result.rel_path,
                 AdmissionReason.SOURCE_EMPTY,
