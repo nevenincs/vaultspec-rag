@@ -77,7 +77,13 @@ _RAG_LEAK_ADVISORY = dependency_leak_advisory(RAG_DISTRIBUTION_NAME)
 _DEP_LAUNCH = ("uv", ["run", "--no-sync", "python", "-m", RAG_MCP_MODULE])
 _TOOL_LAUNCH = (
     "uvx",
-    ["--from", f"{RAG_DISTRIBUTION_NAME}[mcp]", "python", "-m", RAG_MCP_MODULE],
+    [
+        "--from",
+        f"{RAG_DISTRIBUTION_NAME}[gpu,mcp]",
+        "python",
+        "-m",
+        RAG_MCP_MODULE,
+    ],
 )
 
 _PROJECT_WITH_RAG = (

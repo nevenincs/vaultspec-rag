@@ -40,33 +40,32 @@ explains how it works; the [glossary](docs/glossary.md) defines the terms used a
 
 ## Getting started
 
-vaultspec-rag needs an NVIDIA GPU with CUDA support (about 3 GB free) and CPython 3.13 or 3.14 on Linux or Windows; macOS, AMD GPUs, and Apple Silicon are not supported. See the [architecture overview](docs/architecture.md) for why the hardware floor sits where it does.
+Local indexing and search need an NVIDIA GPU with CUDA support (about 3 GB free) and CPython 3.13 or 3.14 on Linux or Windows; macOS, AMD GPUs, and Apple Silicon are not supported. The bare package is a lightweight control-plane install: it does not download torch, sentence-transformers, or CUDA. Add the `[gpu]` extra before running local inference. See the [architecture overview](docs/architecture.md) for why the hardware floor sits where it does.
 
 ### Install
 
 Try it now with no project setup, straight from PyPI:
 
 ```bash
-uvx vaultspec-rag install
+uvx --from "vaultspec-rag[gpu]" vaultspec-rag install
 ```
 
-Runs `install` in an ephemeral `uv tool` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, asking once before touching any config. Good for a first try. A bare `uvx` run does not pin the GPU torch build across invocations the way the project-dependency and standalone-tool paths do, so switch to one of those once you're keeping vaultspec-rag around.
+Runs `install` in an ephemeral `uv` environment: it enrolls the current directory as a workspace, provisions the GPU PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, asking once before touching any config. Good for a first try. A bare package install has no local inference stack; the `[gpu]` extra makes that choice explicit. Switch to a durable project or tool installation once you're keeping vaultspec-rag around.
 
 Add vaultspec-rag to your project and set it up:
 
 ```bash
-uv add vaultspec-rag
-uv run vaultspec-rag install
-uv sync
+uv add "vaultspec-rag[gpu]"
+uv run vaultspec-rag install --sync
 ```
 
-`install` configures the GPU PyTorch build, downloads the search models, and provisions the managed search server. `uv sync` then pulls in that GPU build. The models total a few gigabytes, so the first download takes several minutes, but it runs only once.
+`install` configures the GPU PyTorch build, downloads the search models, and provisions the managed search server. The `[gpu]` extra carries the local inference libraries, and `--sync` applies the pinned CUDA build. On Linux, expect roughly 5 GB of CUDA packages on the GPU path plus several gigabytes of models; the bare package avoids that CUDA footprint entirely but cannot index or search locally.
 
 To install as a standalone tool instead, pin the GPU torch wheel in the tool receipt so `uv tool upgrade` keeps the CUDA build. A bare `uv tool install` re-resolves torch to a CPU-only wheel on every upgrade, and `--index` is not recorded in tool receipts, so the `--with` pin is the durable fix. The command is environment-specific (python version, ABI, platform, torch release) - `vaultspec-rag server start` and `install` print the exact one for your environment when they detect a CPU-only tool env. Its shape (here Python 3.13, torch 2.13.0, Windows):
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
-uvx vaultspec-rag install
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
+vaultspec-rag install
 ```
 
 The `--python` request must match the wheel's `cp3XX` tag; without it, uv resolves the tool env on its default python, and a default that differs from the wheel's interpreter fails the install on a tag mismatch.
