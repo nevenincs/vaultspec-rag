@@ -50,6 +50,7 @@ import argparse
 import hashlib
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -179,6 +180,164 @@ def asset_name(binary: Binary, target: str) -> str:
     return f"{binary.name}-{target}{suffix}"
 
 
+
+# --- platform floor ---------------------------------------------------------
+#
+# Ported from vaultspec-core's dev/binaries/build_pyapp.py, which settled this
+# for that product. rag had no floor check at all, and the consequence is
+# measurable: vaultspec-rag#409 read `.gnu.version_r` off the PUBLISHED v0.4.11
+# artifacts and found both Linux binaries require GLIBC_2.39 - Ubuntu 24.04 and
+# newer. They do not start on Debian 12 (2.36), Ubuntu 22.04 (2.35), RHEL 9 or
+# Amazon Linux 2023 (2.34), while docs/installation.md promises "Linux" with no
+# floor stated, and neither the Homebrew formula nor the Scoop manifest declares
+# one either.
+#
+# The cause is that the Linux legs built directly on their runners, so each
+# artifact inherited whatever glibc its build host happened to have. The
+# container pins in binaries.yml fix that; this check is what stops it
+# returning silently the next time a runner is upgraded or an image is bumped.
+#
+# Verified against the real published v0.4.14 x86_64 asset before this landed:
+# reports GLIBC_2.39 and refuses it against the 2.28 floor.
+
+GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
+    # Built inside a digest-pinned manylinux_2_28 image, so this is a promise
+    # the build environment enforces rather than one the build host happens to
+    # satisfy. Verified on v0.4.15.
+    "x86_64-unknown-linux-gnu": (2, 28),
+    # 2.28, matching x86_64. This target now builds inside the digest-pinned
+    # manylinux_2_28_aarch64 image on a GitHub-hosted ARM64 runner, so like
+    # x86_64 above this is a promise the build environment enforces rather than
+    # one the build host happens to satisfy.
+    #
+    # It was 2.39 for as long as the only ARM64 Linux host was a colima
+    # container that could not start the image and therefore built natively,
+    # inheriting the guest's glibc. That was declared rather than hidden, at
+    # what it could actually meet, so the check still bound. The divergence was
+    # marked as one that "should not be permanent"; this is it closing.
+    #
+    # Releases built BEFORE this change still require 2.39 - the floor is a
+    # property of each built artifact, not of this line - which is why
+    # docs/installation.md dates the drop rather than restating it flatly.
+    "aarch64-unknown-linux-gnu": (2, 28),
+}
+
+# Section type of the GNU version-requirements table (``.gnu.version_r``).
+SHT_GNU_VERNEED = 0x6FFFFFFE
+
+
+class PlatformFloorError(RuntimeError):
+    """An artifact requires a platform newer than its target triple declares."""
+
+
+
+def _cstring(blob: bytes, offset: int) -> str:
+    """Read the NUL-terminated string starting at *offset*."""
+    end = blob.index(b"\x00", offset)
+    return blob[offset:end].decode("utf-8")
+
+
+def required_symbol_versions(asset: Path) -> set[str]:
+    """Return every versioned symbol requirement recorded in an ELF binary.
+
+    Read from the binary's own ``.gnu.version_r`` table, which is what the
+    dynamic loader consults. A requirement recorded there is fatal at load time
+    when the host's libc does not define that version, whether or not the
+    symbols naming it are weak - so this, not the symbol bindings, is the thing
+    that decides where an artifact can run.
+
+    Parsed here rather than shelled out to ``readelf`` so the check needs
+    nothing on the build machine but the standard library, and runs identically
+    on a maintainer's laptop.
+    """
+    blob = asset.read_bytes()
+    if blob[:4] != b"\x7fELF":
+        raise PlatformFloorError(f"{asset.name} is not an ELF binary")
+    if (blob[4], blob[5]) != (2, 1):
+        raise PlatformFloorError(
+            f"{asset.name} is not little-endian ELF64; "
+            "every Linux target this builder produces is"
+        )
+
+    (section_table,) = struct.unpack_from("<Q", blob, 0x28)
+    entry_size, count = struct.unpack_from("<HH", blob, 0x3A)
+
+    versions: set[str] = set()
+    for index in range(count):
+        header = section_table + index * entry_size
+        (kind,) = struct.unpack_from("<I", blob, header + 0x04)
+        if kind != SHT_GNU_VERNEED:
+            continue
+        (offset,) = struct.unpack_from("<Q", blob, header + 0x18)
+        strings, entries = struct.unpack_from("<II", blob, header + 0x28)
+        # sh_link names the string table the version names live in; sh_info
+        # counts the top-level entries, one per needed shared object.
+        (string_table,) = struct.unpack_from(
+            "<Q", blob, section_table + strings * entry_size + 0x18
+        )
+        versions |= _verneed_names(blob, offset, entries, string_table)
+    return versions
+
+
+def _verneed_names(
+    blob: bytes, offset: int, entries: int, string_table: int
+) -> set[str]:
+    """Walk one ``.gnu.version_r`` table, returning the versions it requires."""
+    names: set[str] = set()
+    for _ in range(entries):
+        auxiliary, next_entry = struct.unpack_from("<II", blob, offset + 0x08)
+        cursor = offset + auxiliary
+        (auxiliary_count,) = struct.unpack_from("<H", blob, offset + 0x02)
+        for _ in range(auxiliary_count):
+            name, next_auxiliary = struct.unpack_from("<II", blob, cursor + 0x08)
+            names.add(_cstring(blob, string_table + name))
+            if not next_auxiliary:
+                break
+            cursor += next_auxiliary
+        if not next_entry:
+            break
+        offset += next_entry
+    return names
+
+
+def glibc_version(requirement: str) -> tuple[int, ...] | None:
+    """Return the numeric version of a ``GLIBC_x.y`` requirement, else None."""
+    prefix = "GLIBC_"
+    if not requirement.startswith(prefix):
+        return None
+    parts = requirement[len(prefix) :].split(".")
+    if not all(part.isdigit() for part in parts):
+        return None
+    return tuple(int(part) for part in parts)
+
+
+def check_platform_floor(asset: Path, target: str) -> None:
+    """Fail the build when *asset* requires a libc newer than *target* allows.
+
+    The build machine's glibc is what an unpinned Linux build ends up
+    advertising, so this runs on the produced artifact rather than on the
+    toolchain: it is the artifact, not the builder, that a user downloads.
+    """
+    floor = GLIBC_FLOOR.get(target)
+    if floor is None:
+        return
+    exceeded = sorted(
+        requirement
+        for requirement in required_symbol_versions(asset)
+        if (version := glibc_version(requirement)) is not None and version > floor
+    )
+    if exceeded:
+        declared = ".".join(str(part) for part in floor)
+        raise PlatformFloorError(
+            f"{asset.name} requires {', '.join(exceeded)} but {target} declares a "
+            f"floor of GLIBC_{declared}. The binary will not load on any host "
+            f"below the versions it requires. Build this target against a libc "
+            f"at or below the declared floor rather than the build machine's."
+        )
+
+
+
+
 def write_checksum(asset: Path) -> Path:
     """Write ``<asset>.sha256`` in ``sha256sum``-compatible format.
 
@@ -230,6 +389,10 @@ def main() -> int:
             shutil.copy2(raw, asset)
             if not target.endswith("windows-msvc"):
                 asset.chmod(0o755)
+            # Refuse the artifact HERE, before it is renamed into place and
+            # long before anything uploads it. A floor violation found after
+            # publication is a user's loader error, not a build failure.
+            check_platform_floor(asset, target)
             checksum = write_checksum(asset)
             produced.extend((asset, checksum))
             print(f"built {asset} ({asset.stat().st_size} bytes)", flush=True)

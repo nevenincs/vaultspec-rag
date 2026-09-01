@@ -128,14 +128,13 @@ VAULTSPEC_RAG = Product(
     # Homebrew runs on macOS, so without this the formula would offer an
     # install that places a binary raising at startup - a worse outcome than
     # not being installable, because it looks like a product defect.
-    # Windows and Linux x86_64 only, which is exactly what binaries.yml builds.
+    # Windows and Linux, x86_64 and aarch64 - exactly what binaries.yml builds.
     # Declaring a target the matrix does not build is not a promise of future
     # coverage: the generator warns and omits it on every single release, and
     # the formula silently lacks a platform the product claims to support.
-    # aarch64-unknown-linux-gnu belongs here the moment a leg builds it - the
-    # runner and its container already exist, matched to the sibling project's
-    # pattern - but the host it runs on stands down on battery, so the leg is
-    # commented out in binaries.yml and this list matches that reality.
+    # aarch64-unknown-linux-gnu is listed because a leg builds it again: its
+    # runner is online and enrolled in the host's fleet scripts, which is the
+    # condition the leg's earlier removal was made against.
     supported_targets=(WINDOWS_X86_64, LINUX_X86_64, LINUX_ARM64),
     notes=(
         # The binaries bootstrap the SAME accelerated torch build the project

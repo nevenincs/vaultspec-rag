@@ -9,7 +9,25 @@ You need:
 - CPython 3.13 or 3.14. The runtime accepts that range and rejects anything outside it at import; 3.15 and later are refused until the test matrix covers them.
 - [uv](https://docs.astral.sh/uv/) for dependency and tool management.
 - An NVIDIA GPU with a working CUDA driver and roughly 3 GB of free video memory (VRAM).
-- Linux or Windows.
+- Linux or Windows. The published Linux binaries state a glibc floor, because
+  a binary links against whatever C library built it and a bare "Linux" is not
+  a promise a download can keep:
+
+  | binary | requires | covers |
+  | --- | --- | --- |
+  | `x86_64-unknown-linux-gnu` | glibc 2.28 | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 |
+  | `aarch64-unknown-linux-gnu` | glibc 2.28, or 2.39 if built before this floor dropped | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 (older builds: Ubuntu 24.04+) |
+
+  On an older distribution the binary does not start, and the error names a
+  missing symbol version rather than the distribution being too old — so it is
+  worth checking `ldd --version` first. Installing from PyPI with `uv` has no
+  such floor and works wherever the Python and CUDA requirements above are met.
+
+  The two floors match from the first release that builds aarch64 in the same
+  pinned image x86_64 uses. Earlier aarch64 downloads were built on a host whose
+  own glibc was 2.39 and still require it, so the floor is a property of the
+  binary you downloaded rather than of the project. If an older aarch64 download
+  refuses to start, that is this difference and a current one will work.
 
 Confirm the GPU is visible before you start:
 
@@ -141,7 +159,7 @@ Check the installed version:
 uv run vaultspec-rag --version
 ```
 
-This reports `vaultspec-rag v0.4.10`. <!-- x-release-please-version -->
+This reports `vaultspec-rag v0.4.21`. <!-- x-release-please-version -->
 
 Run the readiness report, which checks PyTorch CUDA, the model cache, and the Qdrant binary and server:
 
