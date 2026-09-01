@@ -1067,3 +1067,30 @@ assert not loaded, loaded
         assert "install_stdio_lifetime_watchdog" not in inspect.getsource(_lifespan), (
             "service lifespan must not reference the stdio watchdog installer"
         )
+
+
+class TestReindexIsNotBoundedByTheLifecycleTimeout:
+    """``/reindex`` admits every domain before it queues anything."""
+
+    def test_reindex_carries_its_own_bound_not_the_admin_one(self) -> None:
+        """Admission is proportional to the tree, not to a lifecycle round trip.
+
+        The route resolves domain admission before durable job mutation, and
+        code admission scans the whole repository. Bounding that call by the
+        lifecycle timeout means a large tree exhausts the deadline while the
+        service goes on to accept and run the job: the caller reports a
+        failure that did not happen, over work that is still in flight, and
+        the operator is told to retry something already running.
+        """
+        import inspect
+
+        from ..serviceclient import _transport
+
+        assert (
+            _transport.DEFAULT_REINDEX_TIMEOUT_SECONDS
+            > _transport.DEFAULT_ADMIN_TIMEOUT_SECONDS
+        ), "reindex must not inherit the bound meant for prompt lifecycle calls"
+        # Asserts the call site, not just the constant: a bound nothing passes
+        # is the same 30 s deadline with extra documentation.
+        source = inspect.getsource(_transport._try_http_reindex)
+        assert "DEFAULT_REINDEX_TIMEOUT_SECONDS" in source

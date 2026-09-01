@@ -194,7 +194,11 @@ class CodeGenerationLifecycle:
             )
             checkpoint = _open(request)
         self._last_checkpoint = checkpoint
-        self._drift_owner = CodeDriftOwner(checkpoint, self._store)
+        self._drift_owner = CodeDriftOwner(
+            checkpoint,
+            self._store,
+            collection=self.build_collection(checkpoint),
+        )
         return checkpoint
 
     def evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:
@@ -298,20 +302,26 @@ class CodeGenerationLifecycle:
         """Return the collection *checkpoint* populates, or ``None`` for in-place.
 
         A generation opened ``clean`` builds beside the served collection under
-        a name minted from the served one and its own identifier, so the name
-        is a pure function of two things a resuming run still has. Every other
-        generation writes into the served collection and has no build target at
-        all.
+        a name minted from this root's DERIVED name and its own identifier, so
+        the name is a pure function of two things a resuming run still has.
+        Every other generation writes into the served collection and has no
+        build target at all.
 
         Deriving it here rather than remembering it is what lets a run that
         died before publication finish the generation it left behind: the
-        served pointer has not moved - that is precisely what the crash
-        prevented - so the same input yields the same name.
+        derived name is a function of the root alone, so the same input yields
+        the same name no matter what the pointer did meanwhile.
+
+        Minting from the derived name rather than the served one is what keeps
+        the name bounded. Publication makes the new collection the served one,
+        so a served-derived name accumulates one suffix per clean generation
+        and grows without limit - collections whose names carry a dozen
+        generations of history, each rebuild widening the next.
         """
         if not checkpoint.generation.signature.clean:
             return None
         return generation_code_collection(
-            self._store.CODE_TABLE_NAME,
+            self._store.DERIVED_CODE_TABLE_NAME,
             checkpoint.generation_id,
         )
 
