@@ -6,6 +6,7 @@
 
 **Semantic search for vault records, source code, and extracted documents.**
 
+[![install](https://img.shields.io/badge/install-uvx%20vaultspec--rag%20install%20%28NVIDIA%20GPU%29-2E6B45?style=for-the-badge&logo=uv&logoColor=white&labelColor=1b1a16)](#getting-started)
 [![build](https://img.shields.io/github/actions/workflow/status/nevenincs/vaultspec-rag/ci.yml?branch=main&style=for-the-badge&label=build&logo=githubactions&logoColor=white&labelColor=1b1a16)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
 [![release](https://img.shields.io/pypi/v/vaultspec-rag?style=for-the-badge&label=release&logo=pypi&logoColor=white&labelColor=1b1a16&color=8A72B5)](https://pypi.org/project/vaultspec-rag/)
 [![runtime](https://img.shields.io/badge/runtime-Python%203.13%20%7C%203.14%20%7C%20CUDA-3F9AA6?style=for-the-badge&logo=nvidia&logoColor=white&labelColor=1b1a16)](#getting-started)
@@ -140,6 +141,9 @@ See [search and index](docs/search-and-index.md) for the full filter set, [MCP i
 ### Daily use
 
 - [Search and index](docs/search-and-index.md) - run searches and refresh the index.
+- [Writing a query that finds it](docs/query-craft.md) - phrasing, the full filter surface, and what to do when a result looks wrong.
+- [Retrieval recipes](docs/examples.md) - worked searches for the questions it answers well, and the ones it answers badly.
+- [Verify the index](docs/verification.md) - confirm the service is healthy, the index is current, and it covers the tree you meant.
 - [Service mode](docs/service-mode.md) - keep models warm in a background service for faster queries.
 - [Backends](docs/backends.md) - the managed Qdrant server versus local-only mode.
 - [MCP integration](docs/mcp.md) - wire search into Claude Code and other MCP clients.
