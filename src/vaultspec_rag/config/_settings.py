@@ -288,6 +288,12 @@ class VaultSpecConfigWrapper:
         # admin bound covers lifecycle calls that should answer promptly.
         "service_search_timeout_seconds": 300.0,
         "service_admin_timeout_seconds": 30.0,
+        # Reindex admits a domain before it queues, and code admission scans
+        # the whole tree. That work is proportional to the repository, not to
+        # a lifecycle round trip, so it cannot share the admin bound: a large
+        # tree blows a 30 s deadline while the service goes on to accept and
+        # run the job, and the caller reports a failure that did not happen.
+        "service_reindex_timeout_seconds": 900.0,
         # Readiness bound for the managed qdrant child. A large store was
         # measured opening in ~131 s, so this is generous by design; operators
         # with larger stores raise it rather than patching the supervisor.
@@ -1009,6 +1015,7 @@ class VaultSpecConfigWrapper:
     service_max_projects: int
     service_search_timeout_seconds: float
     service_admin_timeout_seconds: float
+    service_reindex_timeout_seconds: float
     qdrant_ready_timeout_seconds: float
     managed_log_max_bytes: int
     managed_log_backup_count: int

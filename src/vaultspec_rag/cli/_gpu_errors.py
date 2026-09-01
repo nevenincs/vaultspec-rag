@@ -175,15 +175,17 @@ def _cpu_only_message() -> str:
     return (
         "Error: PyTorch was installed without CUDA support "
         "(CPU-only wheel). Your GPU is fine.\n\n"
-        "  uv run vaultspec-rag install patches your pyproject.toml "
+        "  Install vaultspec-rag with its [gpu] extra, then run "
+        "uv run vaultspec-rag install; it patches your pyproject.toml "
         "with the cu130 torch index and adds torch>=2.4 as a direct "
         "dependency when needed. After patching, rerun "
         "uv sync --reinstall-package torch.\n\n"
         "  If install has already run and you are still here, verify:\n"
         "    1. pyproject.toml has [[tool.uv.index]] "
         'name = "pytorch-cu130" and [tool.uv.sources] torch = ...\n'
-        "    2. pyproject.toml has torch>=2.4 as a direct dependency "
-        "in [project].dependencies or [dependency-groups].dev\n"
+        "    2. pyproject.toml requests vaultspec-rag[gpu] and has "
+        "torch>=2.4 as a direct dependency in [project].dependencies "
+        "or [dependency-groups].dev\n"
         "    3. uv.lock has a torch entry with source = "
         '{ registry = "https://download.pytorch.org/whl/cu130" } '
         "(not pypi.org/simple)\n"
@@ -197,7 +199,7 @@ def _no_torch_message() -> str:
     """Return the NO_TORCH remediation copy as plain text."""
     return (
         "Error: PyTorch is not installed.\n\n"
-        "  uv add vaultspec-rag && uv run vaultspec-rag install "
+        '  uv add "vaultspec-rag[gpu]" && uv run vaultspec-rag install '
         "configures the cu130 torch index and installs the GPU build."
     )
 

@@ -22,12 +22,12 @@ A **pinned binary** is a specific version whose contents are known ahead of time
 
 Local-only is a first-class, single-flag choice, not a degraded mode. Pick it when:
 
-- You're running in continuous integration (CI), where a per-run binary download is wasteful.
-- You're on an air-gapped machine that can't reach the download host.
+- You're running on a CUDA-capable continuous-integration (CI) worker, where a per-run binary download is wasteful.
+- You're on an air-gapped machine with a pre-provisioned GPU runtime and model cache that cannot reach the download host.
 - Your use is single-user or low-concurrency, so the server's parallelism adds little.
 - Your environment forbids downloading and running an external binary.
 
-The trade-off you accept is lower throughput under concurrent load. For one developer running occasional searches, that trade-off is usually invisible.
+The trade-off you accept is lower throughput under concurrent load. For one developer running occasional searches, that trade-off is usually invisible. Local-only changes the Qdrant backend only: it does not remove the GPU runtime or model requirements. A GPU-less CI host can use the bare package for control-plane operations, but local indexing and search remain CUDA-only.
 
 ## How provisioning and verification work
 

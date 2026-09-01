@@ -8,12 +8,19 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import subprocess
+import sys
 from importlib.resources import files
+from typing import TYPE_CHECKING
+from zipfile import ZipFile
 
 import pytest
 from packaging.requirements import Requirement
 
 pytestmark = [pytest.mark.unit]
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _requirements() -> list[Requirement]:
@@ -51,6 +58,79 @@ def test_mcp_is_declared_in_the_mcp_extra() -> None:
     )
 
 
+def test_inference_dependencies_are_only_in_the_gpu_extra() -> None:
+    """Keep ordinary package installs free of the local inference stack."""
+    core_names = {req.name for req in _requirements() if _is_core(req)}
+    gpu_names = {req.name for req in _requirements() if _in_extra(req, "gpu")}
+    inference_names = {"sentence-transformers", "torch", "transformers"}
+    assert core_names.isdisjoint(inference_names), (
+        "base metadata must not pull local inference dependencies; found "
+        f"{sorted(core_names & inference_names)}"
+    )
+    assert inference_names <= gpu_names, (
+        "the GPU extra must carry the complete local inference stack; found "
+        f"{sorted(gpu_names)}"
+    )
+
+
+def test_published_base_wheel_has_no_linux_cuda_resolution(tmp_path: Path) -> None:
+    """Inspect built metadata and resolve it without workspace-only sources.
+
+    This catches a base torch requirement even when a checkout source mapping
+    makes local development resolve a different wheel. It fails at the metadata
+    assertion when a base torch requirement is reintroduced.
+    """
+    dist_dir = tmp_path / "dist"
+    build = subprocess.run(
+        [
+            "uv",
+            "build",
+            "--wheel",
+            "--no-sources",
+            "--out-dir",
+            str(dist_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert build.returncode == 0, build.stderr
+    wheel = next(dist_dir.glob("vaultspec_rag-*.whl"))
+    with ZipFile(wheel) as archive:
+        metadata_name = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        requirements = [
+            Requirement(line.removeprefix("Requires-Dist: "))
+            for line in archive.read(metadata_name).decode().splitlines()
+            if line.startswith("Requires-Dist: ")
+        ]
+    core_names = {req.name for req in requirements if _is_core(req)}
+    assert core_names.isdisjoint({"sentence-transformers", "torch", "transformers"})
+
+    resolution = subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--dry-run",
+            "--python",
+            sys.executable,
+            "--python-platform",
+            "x86_64-unknown-linux-gnu",
+            "--target",
+            str(tmp_path / "target"),
+            str(wheel),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resolution.returncode == 0, resolution.stderr
+    resolver_output = resolution.stdout + resolution.stderr
+    assert "nvidia-" not in resolver_output.lower()
+
+
 def test_mcp_console_entry_point_targets_server_main() -> None:
     """The installed console metadata exposes the supported stdio server."""
     entry_points = {
@@ -68,7 +148,7 @@ def test_canonical_mcp_builtin_is_installed() -> None:
         "args": ["@@VAULTSPEC_INSTALL_MODE_ARGS@@"],
         "_vaultspec_mode_package": "vaultspec-rag",
         "_vaultspec_mode_module": "vaultspec_rag.server",
-        "_vaultspec_mode_tool_spec": "vaultspec-rag[mcp]",
+        "_vaultspec_mode_tool_spec": "vaultspec-rag[gpu,mcp]",
     }
 
 
