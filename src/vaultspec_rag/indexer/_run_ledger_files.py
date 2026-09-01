@@ -51,6 +51,13 @@ class _PointIdRow(TypedDict):
     point_id: str
 
 
+class _UpsertEvidenceRow(TypedDict):
+    """One persisted digest and optional point ID from an upsert unit."""
+
+    source_digest: str
+    point_id: str | None
+
+
 class RunLedgerFileMethods:
     if TYPE_CHECKING:
         path: Path
@@ -253,6 +260,46 @@ class RunLedgerFileMethods:
                 ),
             )
         return tuple(str(row["point_id"]) for row in rows)
+
+    def retained_upsert_evidence(
+        self,
+        generation_id: str,
+        rel_path: str,
+    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """Return every current-generation upsert digest and its exact IDs.
+
+        This deliberately reads commit units rather than the file-state row.
+        A storage deletion can be durably recorded before the old units and
+        state are retired; a resume in that narrow interval must rediscover
+        the same evidence and complete the ledger half without guessing from
+        live storage.
+        """
+        validate_rel_path(rel_path)
+        with ledger_connection(self.path) as connection:
+            rows: list[_UpsertEvidenceRow] = fetch_all(
+                connection,
+                """
+                SELECT units.source_digest, points.point_id
+                FROM commit_units AS units
+                LEFT JOIN commit_point_ids AS points
+                  ON points.generation_id = units.generation_id
+                 AND points.unit_id = units.unit_id
+                WHERE units.generation_id = ? AND units.rel_path = ?
+                  AND units.unit_kind = ?
+                ORDER BY units.source_digest, units.segment_ordinal,
+                         points.point_ordinal, points.point_id
+                """,
+                (generation_id, rel_path, CommitUnitKind.UPSERT.value),
+            )
+        evidence: dict[str, list[str]] = {}
+        for row in rows:
+            point_ids = evidence.setdefault(str(row["source_digest"]), [])
+            point_id = row["point_id"]
+            if point_id is not None:
+                point_ids.append(str(point_id))
+        return tuple(
+            (digest, tuple(point_ids)) for digest, point_ids in evidence.items()
+        )
 
     def reopen_drifted_path(
         self,

@@ -460,7 +460,7 @@ def test_a_path_rewritten_mid_run_is_superseded_not_fatal(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None)
 
     # The pre-dispatch snapshot observed this path unchanged, so nothing
     # re-opened it. The source is rewritten while the run encodes, and the
@@ -504,7 +504,7 @@ def test_the_pre_record_check_keeps_visible_drift_off_the_signal_path(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None)
     moved = _segments("src/known.py", marker="_moved")
     _publish(drift_store, moved)
 
@@ -591,7 +591,7 @@ def test_superseded_identities_are_reported_for_snapshot_reconciliation(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None)
     snapshot_before = _identities(original)
 
     moved = _segments("src/racing.py", marker="_moved")
@@ -630,7 +630,7 @@ def test_a_resubmission_under_the_same_digest_stays_fatal(
     checkpoint = _open(tmp_path)
     digest = _digest("committed content")
     _index_path(checkpoint, "src/settled.py", digest)
-    owner = CodeDriftOwner(checkpoint, drift_store)
+    owner = CodeDriftOwner(checkpoint, drift_store, collection=None)
 
     resubmitted = _segments("src/settled.py", marker="_again")
     with pytest.raises(RunLedgerIndexedPathCollisionError) as caught:
@@ -654,7 +654,7 @@ def test_a_path_that_keeps_moving_is_deferred_and_says_so(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store, retry_budget=1)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None, retry_budget=1)
 
     # One supersede is all this path gets, and it spends it here.
     second = _segments(hot, marker="_second")
@@ -697,7 +697,7 @@ def test_the_retry_budget_must_be_positive(
 ) -> None:
     """A zero budget defers every drifted path without ever repairing one."""
     with pytest.raises(ValueError, match="retry_budget must be a positive integer"):
-        CodeDriftOwner(_open(tmp_path), drift_store, retry_budget=0)
+        CodeDriftOwner(_open(tmp_path), drift_store, collection=None, retry_budget=0)
 
 
 def test_drift_telemetry_reports_volume_the_breaker_cannot_see(
@@ -716,7 +716,7 @@ def test_drift_telemetry_reports_volume_the_breaker_cannot_see(
     _interrupt(checkpoint, "interrupted after one path was indexed")
 
     resumed = _open(tmp_path)
-    owner = CodeDriftOwner(resumed, drift_store, retry_budget=1)
+    owner = CodeDriftOwner(resumed, drift_store, collection=None, retry_budget=1)
     assert owner.snapshot() == {
         "superseded_paths": 0,
         "deferred_paths": [],
