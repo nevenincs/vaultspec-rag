@@ -80,6 +80,7 @@ class TestRichProgressReporterFallback:
             file=buf,
             force_terminal=True,
             force_interactive=False,
+            color_system=None,
             width=120,
         )
         reporter = RichProgressReporter(console)
