@@ -36,12 +36,14 @@ class DeleteResult:
         status: ``removed`` / ``would_remove`` / ``skipped`` / ``failed``.
         collections: Collections affected (or that would be).
         reason: Why the op was skipped or failed, else ``None``.
+        root: Manifest-attributed root retained for successful teardown follow-up.
     """
 
     prefix: str
     status: str
     collections: list[str] = field(default_factory=list)
     reason: str | None = None
+    root: str | None = None
 
 
 @dataclass(frozen=True)
@@ -394,6 +396,8 @@ def delete_prefix(
         return DeleteResult(prefix, "skipped", targets, reason="unknown_namespace")
     if dry_run:
         return DeleteResult(prefix, "would_remove", targets)
+    entry = manifest.get(prefix)
+    root = entry.root if entry is not None and entry.root else None
     removed: list[str] = []
     for name in targets:
         try:
@@ -401,11 +405,10 @@ def delete_prefix(
             removed.append(name)
         except (OSError, RuntimeError) as exc:
             return DeleteResult(prefix, "failed", removed, reason=str(exc))
-    entry = manifest.get(prefix)
-    if entry is not None and entry.root:
-        forget_root_index_claims(entry.root)
+    if root is not None:
+        forget_root_index_claims(root)
     remove_prefix(prefix)
-    return DeleteResult(prefix, "removed", removed)
+    return DeleteResult(prefix, "removed", removed, root=root)
 
 
 def prune_orphaned(

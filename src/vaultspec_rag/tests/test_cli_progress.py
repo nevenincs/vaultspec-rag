@@ -201,6 +201,13 @@ class TestJsonMode:
         assert buffer.getvalue() == ""
 
 
+@pytest.fixture
+def interactive_term(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model a capable terminal for assertions that require a live frame."""
+    monkeypatch.setenv("TERM", "xterm-256color")
+
+
+@pytest.mark.usefixtures("interactive_term")
 class TestTerminalStream:
     """The live region on the console the CLI builds for a real terminal."""
 
@@ -294,6 +301,28 @@ class TestTerminalStream:
         assert "Waiting for readiness" in _ANSI_RE.sub("", buffer.getvalue())
 
 
+class TestDumbTerminalStream:
+    """A terminal that cannot render a live region still gets readable lines."""
+
+    def test_dumb_terminal_falls_back_to_plain_lines(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TERM", "dumb")
+        buffer = io.StringIO()
+        reporter = StartupStatusReporter(
+            json_mode=False,
+            console=_build_console(interactive=True, file=buffer),
+            interactive=True,
+        )
+
+        with reporter:
+            reporter.stage("Loading models")
+
+        rendered = buffer.getvalue()
+        assert "Loading models" in _ANSI_RE.sub("", rendered)
+        assert _SPINNER_RE.search(rendered) is None
+
+
 class TestStreamPlacement:
     """Where each mode's output lands, with no console supplied."""
 
@@ -339,7 +368,12 @@ class TestSharedConsoleWiring:
         """Neither hardcoded on nor hardcoded off."""
         assert _cli.console.is_interactive == _stdout_is_tty()
 
-    def test_the_factory_honours_the_interactivity_it_is_given(self):
+    def test_the_factory_honours_the_interactivity_it_is_given(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Both modes are reachable through the one construction site."""
-        assert _build_console(interactive=True, file=io.StringIO()).is_interactive
+        monkeypatch.setenv("TERM", "dumb")
+        terminal = _build_console(interactive=True, file=io.StringIO())
+        assert terminal.is_interactive
+        assert terminal.is_dumb_terminal
         assert not _build_console(interactive=False, file=io.StringIO()).is_interactive

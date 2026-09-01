@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from .._store_models import CodeChunk
+from ..indexer._chunk_worker import VANISHED_SOURCE_STATUS, FileChunkResult
 from ..indexer._codebase_indexer import _FullStaleReconciliation
+from ..indexer._consumer_pipeline import CodeConsumerPipeline
 from ..indexer._content_policy import (
     AdmissionReason,
     ContentKind,
@@ -18,6 +20,11 @@ from ..indexer._content_policy import (
 )
 from ..indexer._drift_owner import CodeDriftOwner
 from ..indexer._file_state import FileState, FileStateKind
+from ..indexer._generation_lifecycle import (
+    CodeGenerationBindings,
+    CodeGenerationLifecycle,
+    CodeGenerationOpenRequest,
+)
 from ..indexer._resolved_policy import (
     IndexPolicyResolutionOptions,
     resolve_index_policy,
@@ -28,6 +35,7 @@ from ..indexer._run_checkpoint import (
     CodeRunOpenRequest,
 )
 from ..indexer._run_ledger_models import (
+    CommitUnitKind,
     FinalizationPhase,
     RunLedgerCompatibilityError,
     RunLedgerIndexedPathCollisionError,
@@ -131,6 +139,46 @@ def _configuration() -> CodeRunConfiguration:
         encode_batch_size=2,
         flush_slices=4,
     )
+
+
+def _open_generation_lifecycle(
+    tmp_path: Path,
+    store: VaultStore,
+) -> tuple[CodeGenerationLifecycle, CodeGenerationOpenRequest]:
+    """Create a live lifecycle and its compatible open request."""
+    policy = resolve_index_policy(
+        tmp_path,
+        IndexPolicyResolutionOptions(
+            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+        ),
+    )
+    lifecycle = CodeGenerationLifecycle(
+        CodeGenerationBindings(
+            root_dir=tmp_path,
+            data_root=tmp_path / ".state",
+            meta_path=tmp_path / "code_meta.json",
+            store=store,
+            load_meta=dict,
+            read_meta_raw=dict,
+        )
+    )
+    request = CodeGenerationOpenRequest(
+        policy=policy,
+        operation=RunOperation.FULL,
+        clean=False,
+        configuration=_configuration(),
+        dense_dimensions=_DENSE_DIM,
+        sparse_enabled=False,
+        run_control=NO_RUN_CONTROL,
+    )
+    return lifecycle, request
+
+
+def _outcome_pipeline(lifecycle: CodeGenerationLifecycle) -> CodeConsumerPipeline:
+    """Bind only the production collaborator used by outcome convergence."""
+    pipeline = object.__new__(CodeConsumerPipeline)
+    pipeline._lifecycle = lifecycle
+    return pipeline
 
 
 def test_checkpoint_resumes_only_unconfirmed_segments(tmp_path: Path) -> None:
@@ -911,6 +959,139 @@ def test_drift_telemetry_reports_volume_the_breaker_cannot_see(
         "collisions_observed": 0,
         "retry_budget": 1,
     }
+
+
+@pytest.mark.parametrize(
+    ("preprocess_status", "remove_path", "deletion_kind"),
+    [
+        ("skipped", False, CommitUnitKind.DELETE_STALE),
+        (VANISHED_SOURCE_STATUS, True, CommitUnitKind.DELETE_PATH),
+    ],
+    ids=("preprocessor-skipped", "vanished"),
+)
+def test_resumed_retained_outcomes_retire_storage_before_finalization(
+    tmp_path: Path,
+    drift_store: VaultStore,
+    preprocess_status: str,
+    remove_path: bool,
+    deletion_kind: CommitUnitKind,
+) -> None:
+    """Resumed outcomes must replace their retained upserts through storage.
+
+    Mutation: bypassed the retained-outcome retirement call in each consumer
+    handler. Both parameter cases then failed the exact ``_stored`` assertion
+    below because the original point identities remained in the real store;
+    restoring the calls made both cases pass before this test was committed.
+    """
+    rel_path = "src/resumed.py"
+    original = _segments(rel_path)
+    lifecycle, request = _open_generation_lifecycle(tmp_path, drift_store)
+    checkpoint = lifecycle.open_checkpoint(request)
+    _index_path(checkpoint, rel_path, _digest("content before interruption"))
+    _publish(drift_store, original)
+    _interrupt(checkpoint, "interrupted after storage-confirmed upsert")
+
+    resumed = lifecycle.open_checkpoint(request)
+    assert resumed.generation_id == checkpoint.generation_id
+    pipeline = _outcome_pipeline(lifecycle)
+    result = FileChunkResult(
+        rel_path=rel_path,
+        content_hash=_digest("outcome content"),
+        chunks=[],
+        preprocess_status=preprocess_status,
+    )
+
+    if remove_path:
+        assert pipeline._record_vanished_source(result, resumed)
+    else:
+        assert pipeline._record_skipped_source(result, resumed)
+
+    # This is storage-first: a replacement ledger outcome is unacceptable
+    # while a retained point remains in the active collection.
+    assert _stored(drift_store, rel_path) == set()
+    assert resumed.retained_upsert_evidence(rel_path) == ()
+    units = tuple(
+        unit
+        for unit in resumed.ledger.iter_units(resumed.generation_id)
+        if unit.rel_path == rel_path
+    )
+    assert len(units) == 1
+    assert units[0].kind is deletion_kind
+    assert units[0].point_ids == tuple(sorted(_identities(original)))
+
+    states = tuple(
+        state
+        for state in resumed.ledger.iter_file_states(resumed.generation_id)
+        if state.rel_path == rel_path
+    )
+    if remove_path:
+        assert states == ()
+    else:
+        assert len(states) == 1
+        assert states[0].state is FileStateKind.POLICY_REJECTED
+        assert states[0].admission_reason is AdmissionReason.PREPROCESS_SKIPPED
+        assert states[0].content_hash == result.content_hash
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    resumed.publish_metadata(meta_path, published_points=0)
+    assert meta_path.exists()
+
+
+def test_retained_empty_source_outcome_retires_storage_and_finalizes(
+    tmp_path: Path,
+    drift_store: VaultStore,
+) -> None:
+    """An empty resumed source retires its previous upsert before rejection.
+
+    Mutation: bypassed ``retire_retained_outcome`` in ``_record_empty_source``.
+    This then failed the exact ``_stored`` assertion below because the retained
+    points were still live; restoring the production retirement made the test
+    and finalization pass before this test was committed.
+    """
+    rel_path = "src/resumed-empty.py"
+    original = _segments(rel_path)
+    lifecycle, request = _open_generation_lifecycle(tmp_path, drift_store)
+    checkpoint = lifecycle.open_checkpoint(request)
+    _index_path(checkpoint, rel_path, _digest("content before interruption"))
+    _publish(drift_store, original)
+    _interrupt(checkpoint, "interrupted after storage-confirmed upsert")
+
+    resumed = lifecycle.open_checkpoint(request)
+    assert resumed.generation_id == checkpoint.generation_id
+    result = FileChunkResult(
+        rel_path=rel_path,
+        content_hash=_digest(""),
+        chunks=[],
+    )
+
+    assert _outcome_pipeline(lifecycle)._record_empty_source(result, resumed)
+
+    # Storage is the first durable fact: without its exact retirement, a
+    # policy-rejection row would falsely declare the retained points converged.
+    assert _stored(drift_store, rel_path) == set()
+    assert resumed.retained_upsert_evidence(rel_path) == ()
+    units = tuple(
+        unit
+        for unit in resumed.ledger.iter_units(resumed.generation_id)
+        if unit.rel_path == rel_path
+    )
+    assert len(units) == 1
+    assert units[0].kind is CommitUnitKind.DELETE_STALE
+    assert units[0].point_ids == tuple(sorted(_identities(original)))
+
+    states = tuple(
+        state
+        for state in resumed.ledger.iter_file_states(resumed.generation_id)
+        if state.rel_path == rel_path
+    )
+    assert len(states) == 1
+    assert states[0].state is FileStateKind.POLICY_REJECTED
+    assert states[0].admission_reason is AdmissionReason.SOURCE_EMPTY
+    assert states[0].content_hash == result.content_hash
+
+    meta_path = tmp_path / ".state" / "code_meta.json"
+    resumed.publish_metadata(meta_path, published_points=0)
+    assert meta_path.exists()
 
 
 def test_a_vanished_path_that_owned_nothing_does_not_block_finalization(

@@ -181,6 +181,39 @@ class CodeDriftOwner:
             )
         return len(drifted)
 
+    def retire_retained_outcome(self, rel_path: str, *, remove_path: bool) -> bool:
+        """Retire retained upserts before recording a replacement outcome.
+
+        Storage is the authority for a deletion, so every exact point ID is
+        removed first.  Only after that call confirms do we write one durable
+        deletion unit and remove the upsert units and their indexed state.
+        If a process stops between those stages, the retained units remain
+        discoverable and replay the same idempotent deletion on resume.
+
+        Args:
+            rel_path: Path whose prior current-generation outcome is replaced.
+            remove_path: Whether the source disappeared and must leave the
+                manifest rather than receive a replacement policy outcome.
+
+        Returns:
+            Whether the path held current-generation upsert evidence.
+        """
+        evidence = self._checkpoint.retained_upsert_evidence(rel_path)
+        if not evidence:
+            return False
+        point_ids = tuple(
+            sorted({point_id for _digest, ids in evidence for point_id in ids})
+        )
+        if point_ids:
+            self._store.delete_code_chunks(list(point_ids), collection=self._collection)
+        self._checkpoint.retire_retained_upserts(
+            rel_path,
+            point_ids,
+            remove_path=remove_path,
+        )
+        self._superseded_ids.update(point_ids)
+        return True
+
     def record_segments(
         self,
         segments: tuple[CodeFileSegment, ...],

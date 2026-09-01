@@ -428,10 +428,7 @@ def _render_delete(
         typer.echo(f"Failed {result.prefix}: {result.reason}")
 
 
-def _evict_torn_down_root(
-    prefix: str,
-    queried_root: dict[str, str] | None,
-) -> None:
+def _evict_torn_down_root(root: str | None) -> None:
     """Drop a torn-down root from the running service, if one is running.
 
     The teardown runs against Qdrant directly, so a service already holding
@@ -445,12 +442,6 @@ def _evict_torn_down_root(
     from ..serviceclient._discovery import _default_service_port
     from ..serviceclient._transport import _try_http_admin
 
-    root = queried_root.get("root") if queried_root else None
-    if root is None:
-        from ..storage_manifest import load_manifest
-
-        entry = load_manifest().get(prefix)
-        root = entry.root if entry is not None and entry.root else None
     if root is None:
         return
     port = _default_service_port()
@@ -538,7 +529,9 @@ def storage_delete(  # noqa: PLR0913 - Typer exposes the stable public CLI optio
         # harness should retry.
         result = dataclasses.replace(result, status="already_absent", reason=None)
     if result.status == "removed":
-        _evict_torn_down_root(result.prefix, queried_root)
+        _evict_torn_down_root(
+            result.root or (queried_root.get("root") if queried_root else None)
+        )
     _render_delete(result, json_mode, queried_root)
     # A non-dry preview that found a target exits non-zero to signal "not applied".
     if not dry_run and not yes and result.status == "would_remove":
