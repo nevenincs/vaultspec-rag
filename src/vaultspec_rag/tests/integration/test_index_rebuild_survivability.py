@@ -458,6 +458,7 @@ def _open_clean_code_generation(
     root: Path,
     *,
     content_policy: RootContentPolicy | None = None,
+    lifecycle: CodeGenerationLifecycle | None = None,
 ) -> CodeRunCheckpoint:
     """Open a real clean code generation against *root*'s run ledger."""
     from ...indexer._content_policy import RootContentPolicy, SourceProfileVersion
@@ -480,6 +481,33 @@ def _open_clean_code_generation(
             or RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
         ),
     )
+    configuration = CodeRunConfiguration(
+        segment_max_chunks=1,
+        segment_max_bytes=1024,
+        queue_max_chunks=2,
+        queue_max_bytes=2048,
+        slice_max_chunks=2,
+        slice_max_bytes=2048,
+        sparse_enabled=False,
+        sparse_dimension=1,
+        encode_batch_size=2,
+        flush_slices=4,
+    )
+    if lifecycle is not None:
+        from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
+        from ...job_control import NO_RUN_CONTROL
+
+        return lifecycle.open_checkpoint(
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=True,
+                configuration=configuration,
+                dense_dimensions=_embedding_dimension(),
+                sparse_enabled=False,
+                run_control=NO_RUN_CONTROL,
+            )
+        )
     return CodeRunCheckpoint.open(
         CodeRunOpenRequest(
             data_root=root / ".state",
@@ -490,18 +518,7 @@ def _open_clean_code_generation(
             clean=True,
             model_identity="model-v1",
             dense_dimensions=_embedding_dimension(),
-            configuration=CodeRunConfiguration(
-                segment_max_chunks=1,
-                segment_max_bytes=1024,
-                queue_max_chunks=2,
-                queue_max_bytes=2048,
-                slice_max_chunks=2,
-                slice_max_bytes=2048,
-                sparse_enabled=False,
-                sparse_dimension=1,
-                encode_batch_size=2,
-                flush_slices=4,
-            ),
+            configuration=configuration,
         )
     )
 
@@ -705,6 +722,50 @@ class TestCleanGenerationPublicationKeepsServing:
             assert claim.published_points == 1
             assert claim.named_files == 1
             assert not store.document_content_ids_exist(("document-origin",))
+        finally:
+            store.close()
+
+
+class TestResumedCleanGenerationStorageEvidence:
+    def test_lost_private_build_invalidates_before_it_can_resume(
+        self, tmp_path: Path
+    ) -> None:
+        """A missing private build cannot borrow the old served collection."""
+        from ...indexer._run_ledger_models import RunTerminalState
+        from ...store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            lifecycle = _lifecycle(tmp_path, store)
+            checkpoint = _open_clean_code_generation(tmp_path, lifecycle=lifecycle)
+            build_target = lifecycle.build_collection(checkpoint)
+            assert build_target is not None
+            old_generation = checkpoint.generation_id
+
+            store.ensure_code_table()
+            store.upsert_code_chunks(
+                _code_chunks(("served",), prefix="old"),
+                write_policy=None,
+            )
+            store.ensure_code_table(build_target)
+            _name_indexed_files(checkpoint, ("src/private/build.py",))
+            assert store.code_collection_exists(build_target)
+            assert store.count_code() == 1
+
+            store.drop_code_table(build_target)
+            assert not store.code_collection_exists(build_target)
+            assert store.count_code() == 1
+
+            resumed = _open_clean_code_generation(tmp_path, lifecycle=lifecycle)
+
+            # Catches the implicit served probe: it would retain
+            # ``old_generation`` because the old served table still exists.
+            assert resumed.generation_id != old_generation
+            retired = checkpoint.ledger.generation(old_generation)
+            assert retired.terminal_state is RunTerminalState.INVALIDATED
+            assert lifecycle.active_build_target is not None
+            assert lifecycle.active_build_target != build_target
+            assert not store.code_collection_exists(build_target)
         finally:
             store.close()
 
