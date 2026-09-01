@@ -22,6 +22,8 @@ def test_receipt_requires_the_exact_cuda_wheel(tmp_path: Path) -> None:
     )
     assert _tool_torch._receipt_has_cuda_requirement(receipt, wheel)
     assert not _tool_torch._receipt_has_cuda_requirement(receipt, wheel + "-other")
+    receipt.write_text('[tool]\nnote = "' + wheel + '"\n', encoding="utf-8")
+    assert not _tool_torch._receipt_has_cuda_requirement(receipt, wheel)
 
 
 def test_declined_confirmation_blocks_without_a_reinstall() -> None:
