@@ -9,7 +9,7 @@ This needs an NVIDIA GPU with CUDA support and roughly 3 GB of free GPU memory. 
 Add the package, provision its dependencies, and fetch the GPU build:
 
 ```
-uv add vaultspec-rag
+uv add "vaultspec-rag[gpu]"
 uv run vaultspec-rag install
 uv sync
 ```

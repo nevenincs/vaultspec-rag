@@ -184,7 +184,7 @@ class TestRemediationCommands:
         cmd = durable_tool_install_command()
         assert CU130_INDEX_URL in cmd
         assert "uv tool install" in cmd
-        assert "vaultspec-rag[mcp]" in cmd
+        assert "vaultspec-rag[gpu,mcp]" in cmd
         # --index is NOT recorded in uv tool receipts (verified on uv 0.11.x),
         # so the durable form must be the --with direct wheel URL.
         assert "--with" in cmd
