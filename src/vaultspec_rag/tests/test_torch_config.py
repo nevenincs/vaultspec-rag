@@ -332,18 +332,21 @@ def test_remove_on_no_project_file(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("cuda", "available", "expected"),
+    ("cuda", "cuda_available", "mps_available", "expected"),
     [
-        (None, False, _constants.TorchDiagnosis.CPU_ONLY),
-        (None, True, _constants.TorchDiagnosis.CPU_ONLY),  # anomaly → safer message
-        ("13.0", False, _constants.TorchDiagnosis.NO_GPU),
-        ("13.0", True, _constants.TorchDiagnosis.WORKING),
+        (None, False, False, _constants.TorchDiagnosis.CPU_ONLY),
+        (None, False, True, _constants.TorchDiagnosis.WORKING),
+        ("13.0", False, False, _constants.TorchDiagnosis.NO_GPU),
+        ("13.0", True, False, _constants.TorchDiagnosis.WORKING),
     ],
 )
 def test_diagnose_torch(
-    cuda: str | None, available: bool, expected: _constants.TorchDiagnosis
+    cuda: str | None,
+    cuda_available: bool,
+    mps_available: bool,
+    expected: _constants.TorchDiagnosis,
 ) -> None:
-    assert _diagnose.diagnose_torch(cuda, available) == expected
+    assert _diagnose.diagnose_torch(cuda, cuda_available, mps_available) == expected
 
 
 # ---------------------------------------------------------------------------

@@ -63,7 +63,7 @@ __all__ = [
     "_call_interruptibly",
     "_is_our_service",
     "_port_is_available",
-    "_probe_daemon_cuda",
+    "_probe_daemon_accelerator",
     "_resolve_daemon_interpreter",
     "_spawn_service",
     "_terminate_pid",
@@ -410,22 +410,22 @@ def _resolve_daemon_interpreter() -> str:
     return sys.executable
 
 
-def _probe_daemon_cuda(
+def _probe_daemon_accelerator(
     interpreter: str, timeout: float = 60.0
 ) -> tuple[bool, str] | None:
-    """Probe the resolved daemon interpreter for a working CUDA torch.
+    """Probe the resolved daemon interpreter for a supported accelerator.
 
     The service runs in ``interpreter`` (it inherits the launcher's env and does
     not provision its own python), and it is GPU-only, so a pre-flight here turns
     a background model-load crash into a fast, legible refusal. Runs the probe in
     a subprocess so the torch-free CLI never imports torch itself.
 
-    Returns ``None`` when the interpreter has a CUDA-capable torch (the service
+    Returns ``None`` when the interpreter has a usable CUDA or MPS device (the service
     can run). Otherwise returns ``(blocking, reason)``:
 
     - ``blocking=True`` for definitive misconfigurations - torch absent, a
-      CPU-only wheel, no visible GPU, or the interpreter missing - where spawning
-      would only produce a doomed daemon;
+      CPU-only environment, no visible accelerator, or the interpreter missing
+      - where spawning would only produce a doomed daemon;
     - ``blocking=False`` for ambiguous outcomes (the probe timed out or failed
       opaquely) where the caller should warn and proceed rather than block on an
       inconclusive signal, leaving the spawn-and-detect path as the backstop.
@@ -436,12 +436,18 @@ def _probe_daemon_cuda(
         "    import torch\n"
         "except Exception:\n"
         "    sys.exit(3)\n"
+        "cuda_available = False\n"
+        "mps_available = False\n"
+        "cuda_build = None\n"
         "try:\n"
-        "    avail = bool(torch.cuda.is_available())\n"
-        "    cuda = torch.version.cuda\n"
+        "    from vaultspec_rag._gpu import resolve_accelerator\n"
+        "    cuda_available = bool(torch.cuda.is_available())\n"
+        "    mps_available = bool(torch.backends.mps.is_available())\n"
+        "    cuda_build = torch.version.cuda\n"
+        "    resolve_accelerator(torch)\n"
         "except Exception:\n"
-        "    sys.exit(6)\n"
-        "sys.exit(0 if avail else (5 if cuda else 4))\n"
+        "    sys.exit(7 if mps_available else (5 if cuda_build else 4))\n"
+        "sys.exit(0)\n"
     )
     try:
         proc = subprocess.run(
@@ -459,18 +465,28 @@ def _probe_daemon_cuda(
         )
     except OSError as exc:
         return (False, f"could not probe the service interpreter ({exc})")
-    return _cuda_probe_exit_outcome(proc.returncode)
+    return _accelerator_probe_exit_outcome(proc.returncode)
 
 
-def _cuda_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
+def _accelerator_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
     """Map the isolated torch probe's documented exit contract."""
     outcomes = {
         0: None,
         3: (True, "torch is not installed in the service interpreter"),
-        4: (True, "the service interpreter has a CPU-only torch wheel (no CUDA)"),
+        4: (
+            True,
+            "the service interpreter has no supported accelerator "
+            "(CUDA and MPS are unavailable)",
+        ),
         5: (
             True,
-            "torch is a CUDA build but no CUDA device is visible (driver/GPU)",
+            "torch is a CUDA build but no supported accelerator is visible "
+            "(driver/GPU)",
+        ),
+        7: (
+            True,
+            "Apple MPS is visible but its accelerator policy was refused; "
+            "ensure PYTORCH_ENABLE_MPS_FALLBACK is unset or 0",
         ),
     }
     return outcomes.get(

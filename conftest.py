@@ -146,6 +146,7 @@ def pytest_configure(config: pytest.Config) -> None:
             across worker processes.
     """
     from vaultspec_rag.tests._tier_gate import (
+        MPS,
         enforce_serial_gpu_lane,
         selectable_slow_tiers,
     )
@@ -159,7 +160,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
     raw_markexpr = config.option.markexpr
     markexpr = raw_markexpr if isinstance(raw_markexpr, str) else ""
-    if selectable_slow_tiers(markexpr):
+    if set(selectable_slow_tiers(markexpr)) - {MPS}:
         from vaultspec_rag.cli._gpu_lease import capture_borrower_service_target
 
         _gpu_borrower_target = capture_borrower_service_target()
@@ -312,6 +313,7 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
     from vaultspec_rag.cli._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
     from vaultspec_rag.tests._tier_gate import (
         GPU_MARKERS,
+        MPS,
         SLOW_TIERS,
         SUBPROCESS_GPU,
         selected_tiers,
@@ -326,6 +328,10 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
         return True
 
     tiers = selected_tiers(session.items)
+    if MPS in tiers:
+        # The MPS guard owns its backend and cache preconditions. It must not
+        # enter the CUDA runner's resident-service borrower protocol.
+        return None
     if tiers & (GPU_MARKERS | {SUBPROCESS_GPU}) and not _has_hf_token():
         pytest.exit(
             "Hugging Face authentication is required for GPU "

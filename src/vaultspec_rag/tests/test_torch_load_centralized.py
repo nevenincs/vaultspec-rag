@@ -1,18 +1,18 @@
-"""Guard: torch loads only through the centralized ``_gpu.load_torch`` gate.
+"""Guard: torch loads only through the centralized accelerator gate.
 
 vaultspec-rag is GPU-only. Every local-mode compute path that needs torch must
-obtain it through ``vaultspec_rag._gpu.load_torch`` - never a naked
+obtain it through ``vaultspec_rag._gpu.load_accelerator`` - never a naked
 module-scope ``import torch`` - so the import is controlled in one place and a
 CPU-only build fails hard rather than degrading to CPU compute. These guards
 lock that invariant:
 
 * importing the local-mode modules must not pull torch into ``sys.modules``
-  (the import is function-local, deferred to ``load_torch``);
+  (the import is function-local, deferred to ``load_accelerator``);
 * no compute module declares a module-scope ``import torch``;
 * the entry points that resolve index policy without a model must not load
   torch when they run, not merely when they are imported; and
-* ``load_torch`` honours its contract on the real interpreter (returns torch
-  when a CUDA device is present, raises hard otherwise) - asserted without
+* ``load_accelerator`` honours its contract on the real interpreter (returns
+  CUDA or MPS context, raises hard otherwise) - asserted without
   mocks against whatever torch state the host actually has.
 """
 
@@ -23,8 +23,13 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 _PKG_ROOT = Path(__file__).resolve().parents[1]
 
@@ -175,8 +180,77 @@ def test_preflight_paths_load_no_model() -> None:
 
 
 @pytest.mark.unit
-def test_load_torch_contract_holds_for_the_real_interpreter() -> None:
-    """``load_torch`` returns torch under CUDA, else fails hard - no mocks.
+def test_resolver_prefers_cuda_over_mps() -> None:
+    """CUDA wins deterministically when both supported backends answer.
+
+    Mutation: returned MPS from the CUDA-available branch. This test failed on
+    the backend equality below, then passed after restoring CUDA precedence.
+    """
+    from .._gpu import resolve_accelerator
+
+    fake = SimpleNamespace(
+        cuda=SimpleNamespace(
+            is_available=lambda: True,
+            get_device_name=lambda _index: "test CUDA",  # pyright: ignore[reportUnknownLambdaType] - synthetic module
+        ),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
+    )
+    accelerator = resolve_accelerator(cast("ModuleType", fake))
+    assert accelerator.backend == "cuda"
+    assert accelerator.device == "cuda"
+    assert accelerator.memory_kind == "vram"
+
+
+@pytest.mark.unit
+def test_resolver_selects_mps_without_cpu_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MPS is selected after CUDA when its CPU fallback remains disabled."""
+    from .._gpu import resolve_accelerator
+
+    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+    fake = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
+    )
+    accelerator = resolve_accelerator(cast("ModuleType", fake))
+    assert accelerator.backend == "mps"
+    assert accelerator.device == "mps"
+    assert accelerator.memory_kind == "unified"
+
+
+@pytest.mark.unit
+def test_resolver_refuses_mps_cpu_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An enabled MPS fallback is rejected before compute can move to CPU."""
+    from .._gpu import MPS_FALLBACK_MESSAGE, resolve_accelerator
+
+    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    fake = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
+    )
+    with pytest.raises(RuntimeError, match="CPU fallback") as raised:
+        resolve_accelerator(cast("ModuleType", fake))
+    assert str(raised.value) == MPS_FALLBACK_MESSAGE
+
+
+@pytest.mark.unit
+def test_resolver_refuses_cpu_only_torch() -> None:
+    """CPU never appears as a final resolver candidate."""
+    from .._gpu import ACCELERATOR_REQUIRED_MESSAGE, resolve_accelerator
+
+    fake = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
+    )
+    with pytest.raises(RuntimeError) as raised:
+        resolve_accelerator(cast("ModuleType", fake))
+    assert str(raised.value) == ACCELERATOR_REQUIRED_MESSAGE
+
+
+@pytest.mark.unit
+def test_load_accelerator_contract_holds_for_the_real_interpreter() -> None:
+    """The gate returns a supported accelerator or fails hard, without mocks.
 
     Exercises whichever real state the host has: GPU torch returns the module;
     a CPU-only torch build raises ``RuntimeError``; absent torch raises
@@ -191,38 +265,42 @@ def test_load_torch_contract_holds_for_the_real_interpreter() -> None:
     a refusal that is not the contention one, or anything returned that is not
     the torch module.
     """
-    from .._gpu import load_torch
+    from .._gpu import detect_accelerator_backend, load_accelerator
 
     if importlib.util.find_spec("torch") is None:
         with pytest.raises(ImportError):
-            load_torch()
+            load_accelerator()
         return
 
     import torch
 
-    if not torch.cuda.is_available():
+    backend = detect_accelerator_backend(torch)
+    if backend is None:
         with pytest.raises(RuntimeError):
-            load_torch()
+            load_accelerator()
         return
 
     try:
-        loaded = load_torch()
+        loaded = load_accelerator()
     except RuntimeError as exc:
         assert "too contended" in str(exc), exc
         return
-    assert loaded is torch
+    assert loaded.torch is torch
+    assert loaded.backend == backend
 
 
 @pytest.mark.cuda
-def test_load_torch_applies_configured_process_allocator_fraction(
+def test_load_accelerator_applies_configured_process_allocator_fraction(
     clean_config: None,
 ) -> None:
     """The real centralized gate applies headroom before callers load models."""
     del clean_config
-    from .._gpu import load_torch
+    from .._gpu import load_accelerator
     from ..config._settings import get_config
 
     configured = 0.73
     get_config({"index_cuda_allocator_fraction": configured})
-    torch = load_torch()
-    assert torch.cuda.get_per_process_memory_fraction() == pytest.approx(configured)
+    accelerator = load_accelerator()
+    assert accelerator.torch.cuda.get_per_process_memory_fraction() == pytest.approx(
+        configured
+    )
