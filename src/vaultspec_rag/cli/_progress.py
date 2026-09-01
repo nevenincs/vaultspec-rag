@@ -47,6 +47,7 @@ from rich.spinner import Spinner
 
 import vaultspec_rag.cli as _cli
 
+from .._rich_console import supports_live
 from ._core import _build_console, _stdout_is_tty, logger
 
 if TYPE_CHECKING:
@@ -121,7 +122,12 @@ class StartupStatusReporter:
         """Open the live region on the outermost entry."""
         with self._lock:
             self._depth += 1
-            if self._depth == 1 and not self._json_mode and self._interactive:
+            if (
+                self._depth == 1
+                and not self._json_mode
+                and self._interactive
+                and supports_live(self._target_console())
+            ):
                 self._start_live()
         return self
 
