@@ -10,7 +10,7 @@ import tomllib
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import unquote
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -59,8 +59,7 @@ class ToolCudaInstallSpec:
     def command(self) -> str:
         """Render the request for an operator without reparsing it later."""
         return " ".join(
-            f'"{part}"' if " " in part or "[" in part else part
-            for part in self.args
+            f'"{part}"' if " " in part or "[" in part else part for part in self.args
         )
 
 
@@ -182,8 +181,9 @@ def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
     while pending:
         value = pending.pop()
         if isinstance(value, dict):
-            name = value.get("name")
-            url = value.get("url")
+            record = cast("dict[str, object]", value)
+            name = record.get("name")
+            url = record.get("url")
             if (
                 isinstance(name, str)
                 and name.lower() == "torch"
@@ -191,9 +191,9 @@ def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
                 and unquote(url) == expected
             ):
                 return True
-            pending.extend(value.values())
+            pending.extend(record.values())
         elif isinstance(value, list):
-            pending.extend(value)
+            pending.extend(cast("list[object]", value))
         elif isinstance(value, str):
             try:
                 requirement = Requirement(value)
@@ -281,8 +281,8 @@ def repair_tool_torch(
     """Repair a defective persistent tool interpreter and verify its receipt."""
     from ..cli._gpu_errors import RuntimeEnvKind, classify_interpreter_env
     from ..cli._process import (
-        _cuda_probe_is_torch_installation_defect,
         _probe_daemon_cuda,
+        cuda_probe_is_torch_installation_defect,
     )
 
     interpreter = interpreter or sys.executable
@@ -298,7 +298,7 @@ def repair_tool_torch(
             "tool interpreter already has CUDA-ready torch",
         )
     blocking, detail = probe
-    if not blocking or not _cuda_probe_is_torch_installation_defect(detail):
+    if not blocking or not cuda_probe_is_torch_installation_defect(detail):
         return ToolTorchRepairOutcome(ToolTorchRepairAction.CUDA_UNVERIFIED, detail)
 
     return _repair_defective_tool(
