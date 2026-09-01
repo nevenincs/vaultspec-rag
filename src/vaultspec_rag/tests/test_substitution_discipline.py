@@ -91,6 +91,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "these replaced read main(), a two-line dispatcher containing neither "
         "contract, and passed against a real load added one frame down",
     ),
+    "test_tool_torch_repair.py": (
+        8,
+        "the persistent uv tool interpreter and machine singleton cannot be "
+        "safely forced through a defective-CUDA reinstall during a test: that "
+        "would replace the developer's installed tool and can disrupt a live "
+        "machine service. The tests retain the real repair transaction and "
+        "substitute only its externally-owned observations, with sentinels "
+        "that fail if a holder, no-device diagnosis, CUDA re-probe, or receipt "
+        "postcondition is bypassed",
+    ),
 }
 
 
