@@ -280,7 +280,10 @@ def repair_tool_torch(
 ) -> ToolTorchRepairOutcome:
     """Repair a defective persistent tool interpreter and verify its receipt."""
     from ..cli._gpu_errors import RuntimeEnvKind, classify_interpreter_env
-    from ..cli._process import _probe_daemon_cuda
+    from ..cli._process import (
+        _cuda_probe_is_torch_installation_defect,
+        _probe_daemon_cuda,
+    )
 
     interpreter = interpreter or sys.executable
     if classify_interpreter_env(interpreter) is not RuntimeEnvKind.UV_TOOL:
@@ -295,7 +298,7 @@ def repair_tool_torch(
             "tool interpreter already has CUDA-ready torch",
         )
     blocking, detail = probe
-    if not blocking:
+    if not blocking or not _cuda_probe_is_torch_installation_defect(detail):
         return ToolTorchRepairOutcome(ToolTorchRepairAction.CUDA_UNVERIFIED, detail)
 
     return _repair_defective_tool(
