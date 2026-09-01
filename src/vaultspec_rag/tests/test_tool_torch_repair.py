@@ -83,3 +83,76 @@ def test_service_holder_refuses_before_reinstall(monkeypatch: MonkeyPatch) -> No
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.SERVICE_HELD
     assert outcome.blocks_install
+
+
+def test_cuda_build_without_a_visible_device_never_reinstalls(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A driver/device problem is diagnostic, not a reason to rewrite the tool."""
+    from ..cli import _gpu_errors, _process
+
+    monkeypatch.setattr(
+        _gpu_errors,
+        "classify_interpreter_env",
+        lambda _interpreter: _gpu_errors.RuntimeEnvKind.UV_TOOL,
+    )
+    monkeypatch.setattr(
+        _process,
+        "_probe_daemon_cuda",
+        lambda _interpreter: (
+            True,
+            "torch is a CUDA build but no CUDA device is visible (driver/GPU)",
+        ),
+    )
+
+    def _unexpected_repair(
+        *_args: object, **_kwargs: object
+    ) -> _tool_torch.ToolTorchRepairOutcome:
+        raise AssertionError("a CUDA build without a device must not be reinstalled")
+
+    monkeypatch.setattr(_tool_torch, "_repair_defective_tool", _unexpected_repair)
+
+    outcome = _tool_torch.repair_tool_torch(
+        assume_yes=True, confirm=None, dry_run=False, interpreter="ignored"
+    )
+
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.CUDA_UNVERIFIED
+    assert outcome.blocks_install
+
+
+def test_verify_repair_requires_cuda_and_structured_receipt(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """A successful repair is durable only after both required postconditions hold."""
+    from ..cli import _process
+
+    wheel = "https://example.test/torch-2.9.0%2Bcu130.whl"
+    spec = _tool_torch.ToolCudaInstallSpec(("uv",), wheel)
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+    receipt = tmp_path / "uv-receipt.toml"
+    receipt.write_text(
+        '[tool]\nrequirements = [{ name = "torch", url = "' + wheel + '" }]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(_process, "_probe_daemon_cuda", lambda _interpreter: None)
+
+    outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
+
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.REPAIRED
+
+    monkeypatch.setattr(
+        _process,
+        "_probe_daemon_cuda",
+        lambda _interpreter: (
+            True,
+            "the service interpreter has a CPU-only torch wheel",
+        ),
+    )
+    outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.CUDA_UNVERIFIED
+
+    monkeypatch.setattr(_process, "_probe_daemon_cuda", lambda _interpreter: None)
+    receipt.unlink()
+    outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.RECEIPT_UNVERIFIED
