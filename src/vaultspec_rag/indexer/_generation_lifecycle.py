@@ -194,7 +194,11 @@ class CodeGenerationLifecycle:
             )
             checkpoint = _open(request)
         self._last_checkpoint = checkpoint
-        self._drift_owner = CodeDriftOwner(checkpoint, self._store)
+        self._drift_owner = CodeDriftOwner(
+            checkpoint,
+            self._store,
+            collection=self.build_collection(checkpoint),
+        )
         return checkpoint
 
     def evidence_lost(self, checkpoint: CodeRunCheckpoint) -> bool:

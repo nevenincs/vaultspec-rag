@@ -60,6 +60,7 @@ class CodeDriftOwner:
         checkpoint: CodeRunCheckpoint,
         store: VaultStore,
         *,
+        collection: str | None,
         retry_budget: int = DEFAULT_DRIFT_RETRY_BUDGET,
     ) -> None:
         """Bind one generation's authority to the storage it publishes into.
@@ -67,6 +68,8 @@ class CodeDriftOwner:
         Args:
             checkpoint: The generation whose evidence may be superseded.
             store: Storage the superseded points are dropped from.
+            collection: Code collection the generation writes into, or ``None``
+                when it writes in place to the served collection.
             retry_budget: How many supersedes one path may consume before it is
                 deferred to the next generation.
 
@@ -77,6 +80,7 @@ class CodeDriftOwner:
             raise ValueError("retry_budget must be a positive integer")
         self._checkpoint = checkpoint
         self._store = store
+        self._collection = collection
         self._retry_budget = retry_budget
         self._attempts: dict[str, int] = {}
         self._superseded: set[str] = set()
@@ -163,7 +167,11 @@ class CodeDriftOwner:
             self._supersede(
                 rel_path,
                 superseded_digest,
-                tuple(self._store.get_code_ids_by_paths({rel_path})),
+                tuple(
+                    self._store.get_code_ids_by_paths(
+                        {rel_path}, collection=self._collection
+                    )
+                ),
             )
         if drifted:
             logger.info(
@@ -277,7 +285,7 @@ class CodeDriftOwner:
         left to drop.
         """
         if stale_ids:
-            self._store.delete_code_chunks(list(stale_ids))
+            self._store.delete_code_chunks(list(stale_ids), collection=self._collection)
             self._superseded_ids.update(stale_ids)
         self._checkpoint.reopen_drifted_path(rel_path, superseded_digest)
         self._superseded.add(rel_path)
