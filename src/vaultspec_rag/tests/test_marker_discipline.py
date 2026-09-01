@@ -18,6 +18,8 @@ its own docstring.
 from __future__ import annotations
 
 import argparse
+import ast
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -25,6 +27,7 @@ import pytest
 from ._tier_gate import (
     SLOW_TIERS,
     coscheduled_device_tiers,
+    coscheduled_mps_tiers,
     distributed_worker_count,
     enforce_device_tier_isolation,
     enforce_serial_gpu_lane,
@@ -93,6 +96,7 @@ class TestTierClassification:
             "unit",
             "integration",
             "cuda",
+            "mps",
             "subprocess_gpu",
             "performance",
             "quality",
@@ -232,7 +236,7 @@ class TestSelectedTiers:
 #: rather than one invented to pass.
 _DISTRIBUTED_LANE_EXCLUSION = (
     "not (integration or quality or performance or robustness "
-    "or subprocess_gpu or cuda)"
+    "or subprocess_gpu or cuda or mps)"
 )
 
 
@@ -317,7 +321,7 @@ class TestParallelGpuBan:
         # naming the excluded one would read as a refusal for the wrong reason.
         listing = str(excinfo.value).split("tier(s) ")[1].split(".")[0]
 
-        assert listing == "cuda, performance, quality, robustness, subprocess_gpu"
+        assert listing == "cuda, mps, performance, quality, robustness, subprocess_gpu"
 
 
 class TestDistributionReading:
@@ -360,6 +364,10 @@ class TestSelectableSlowTiers:
     def test_a_union_with_a_slow_tier_reaches_it(self) -> None:
         """Mutation it catches: reading only the leading term of a union."""
         assert selectable_slow_tiers("unit or cuda") == ["cuda"]
+
+    def test_an_mps_selection_is_a_slow_hardware_tier(self) -> None:
+        """Mutation it catches: omitting MPS from the slow-tier vocabulary."""
+        assert selectable_slow_tiers("mps") == ["mps"]
 
     def test_an_empty_expression_reaches_every_slow_tier(self) -> None:
         """Nothing selected means everything selected."""
@@ -454,3 +462,51 @@ class TestDeviceTierIsolation:
 
         assert subprocess_ids == ["t.py::test_spawns"]
         assert resident_ids == []
+
+    def test_mps_cannot_share_a_selection_with_cuda_tiers(self) -> None:
+        """The Apple hardware guard must never enter a CUDA-coordinated run."""
+        items = [
+            _FakeItem("t.py::test_apple", "mps"),
+            _FakeItem("t.py::test_nvidia", "cuda"),
+        ]
+
+        with pytest.raises(pytest.UsageError) as refusal:
+            enforce_device_tier_isolation(items)
+
+        assert "MPS tests must run in their own hardware tier" in str(refusal.value)
+
+    def test_mps_lane_alone_runs(self) -> None:
+        """A correctly isolated MPS selection remains executable."""
+        items = [_FakeItem("t.py::test_apple", "mps")]
+
+        enforce_device_tier_isolation(items)
+        assert coscheduled_mps_tiers(items) == (["t.py::test_apple"], [])
+
+
+def test_mps_acceptance_proves_each_model_parameter_device() -> None:
+    """Dense, sparse, and reranker placement must be checked independently."""
+    source = (Path(__file__).parent / "integration" / "test_mps_backend.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    labels = {
+        call.args[0].value
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "_assert_parameters_on_mps"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+    }
+    assert labels == {"dense model", "sparse model", "reranker"}
+
+
+def test_main_push_runs_the_prepublication_mps_gate() -> None:
+    """The support guard must run before a later release advertises MPS."""
+    workflow = (
+        Path(__file__).parents[3] / ".github" / "workflows" / "ci.yml"
+    ).read_text(encoding="utf-8")
+    macos_job = workflow.split("  tests-macos:", 1)[1].split("  gpu-tests:", 1)[0]
+    assert "github.event_name == 'push'" in macos_job
+    assert "run: just test mps" in macos_job

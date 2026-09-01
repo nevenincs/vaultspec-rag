@@ -409,9 +409,9 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
         # loudly if it is CPU-only or absent - a GPU-only project must never
         # report success over a CPU torch. An explicit opt-out is respected.
         if options.configure_torch:
-            from ._gpu_errors import warn_if_active_torch_not_gpu
+            from ._gpu_errors import warn_if_active_torch_not_accelerator
 
-            warn_if_active_torch_not_gpu()
+            warn_if_active_torch_not_accelerator()
 
     # Issue #83 finding 3 ("Bonus: exit non-zero when the patch was
     # wanted but couldn't be applied"). The configure_torch=True path
@@ -428,6 +428,10 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     if (
         report.mcp_extra_action == "error"
         or report.mcp_sync_failed
+        or (
+            report.tool_torch_repair is not None
+            and report.tool_torch_repair.blocks_install
+        )
         or (
             options.configure_torch
             and report.torch_config_action

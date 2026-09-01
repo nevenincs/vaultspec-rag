@@ -7,14 +7,13 @@ from typing import TYPE_CHECKING
 
 import typer
 
+from ..commands._tool_torch import tool_cuda_install_spec
 from ._core import logger
 from ._render import _plain
 
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import NoReturn
-
-    from packaging.tags import Tag
 
     from ..torch_config._constants import TorchDiagnosis
 
@@ -28,7 +27,7 @@ __all__ = [
     "classify_runtime_env",
     "durable_tool_install_command",
     "gpu_escape_hatch_command",
-    "warn_if_active_torch_not_gpu",
+    "warn_if_active_torch_not_accelerator",
 ]
 
 
@@ -168,76 +167,7 @@ def durable_tool_install_command() -> str:
     diverge, and uv records ``python`` in the tool receipt, so upgrades keep
     resolving on the matching interpreter.
     """
-    import importlib.metadata
-    import platform
-    import sys
-
-    from packaging.tags import cpython_tags
-
-    try:
-        installed = importlib.metadata.version("torch")
-    except importlib.metadata.PackageNotFoundError:
-        installed = None
-
-    return _durable_install_command(
-        torch_version=_wheel_torch_version(installed),
-        tag=next(iter(cpython_tags())),
-        platform_tag=_wheel_platform_tag(sys.platform, platform.machine()),
-    )
-
-
-def _wheel_torch_version(installed: str | None) -> str:
-    """The cu130 release to pin for an env whose torch reports *installed*.
-
-    The local suffix is stripped: an env resolved ``+cpu``, and the index
-    names the same release ``+cu130``. An absent or unparseable version falls
-    back to the pin, which is the only case a constant is right for.
-    """
-    from packaging.version import InvalidVersion, Version
-
-    from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
-
-    if installed is None:
-        return TORCH_TOOL_PIN_VERSION
-    try:
-        return Version(installed).base_version
-    except InvalidVersion:
-        return TORCH_TOOL_PIN_VERSION
-
-
-def _wheel_platform_tag(platform_name: str, machine: str) -> str:
-    """The wheel's platform segment for a host reporting *platform_name*.
-
-    The manylinux level is hand-picked to match what PyTorch publishes; only
-    the architecture is read from the host, since that level is published per
-    architecture.
-    """
-    if platform_name == "win32":
-        return "win_amd64"
-    return f"manylinux_2_28_{machine.lower()}"
-
-
-def _durable_install_command(*, torch_version: str, tag: Tag, platform_tag: str) -> str:
-    """Assemble the pinned reinstall for one interpreter tag and platform.
-
-    The ``--python`` request is derived from the same tag as the wheel name so
-    the two cannot name different interpreters.
-    """
-    from ..torch_config._constants import CU130_INDEX_URL
-
-    # tag.interpreter is ``cp<major><minor>`` (single-digit major); uv's
-    # free-threaded request form is ``X.Yt``, signalled by the abi suffix.
-    python_request = f"{tag.interpreter[2]}.{tag.interpreter[3:]}"
-    if tag.abi.endswith("t"):
-        python_request += "t"
-    wheel = (
-        f"{CU130_INDEX_URL}/torch-{torch_version}%2Bcu130"
-        f"-{tag.interpreter}-{tag.abi}-{platform_tag}.whl"
-    )
-    return (
-        f"uv tool install --force --python {python_request} "
-        f'"vaultspec-rag[gpu,mcp]" --with "torch @ {wheel}"'
-    )
+    return tool_cuda_install_spec().command
 
 
 def _cpu_only_message() -> str:
@@ -267,6 +197,14 @@ def _cpu_only_message() -> str:
 
 def _no_torch_message() -> str:
     """Return the NO_TORCH remediation copy as plain text."""
+    import sys
+
+    if sys.platform == "darwin":
+        return (
+            "Error: PyTorch is not installed.\n\n"
+            "  Install vaultspec-rag in this interpreter to provision the "
+            "macOS torch build with Apple MPS support."
+        )
     return (
         "Error: PyTorch is not installed.\n\n"
         '  uv add "vaultspec-rag[gpu]" && uv run vaultspec-rag install '
@@ -293,6 +231,20 @@ def _no_gpu_message() -> str:
     )
 
 
+def _no_mps_message() -> str:
+    """Return MPS remediation copy for a macOS host."""
+    return (
+        "Error: No Apple Metal accelerator detected.\n"
+        "  PyTorch is installed, but MPS is unavailable. vaultspec-rag never "
+        "runs inference on CPU.\n\n"
+        "  Quick checks:\n"
+        "    1. Confirm this is an Apple silicon Mac running macOS 12.3 or later.\n"
+        '    2. python -c "import torch; print(torch.backends.mps.is_built(), '
+        'torch.backends.mps.is_available())"\n'
+        "    3. Reinstall the supported macOS torch wheel if MPS is not built in."
+    )
+
+
 def _active_torch_diagnosis() -> TorchDiagnosis:
     """Diagnose torch in the *running* interpreter - the installed wheel.
 
@@ -308,17 +260,21 @@ def _active_torch_diagnosis() -> TorchDiagnosis:
     except ImportError:
         return TorchDiagnosis.NO_TORCH
     try:
-        return diagnose_torch(torch.version.cuda, torch.cuda.is_available())
+        return diagnose_torch(
+            torch.version.cuda,
+            torch.cuda.is_available(),
+            torch.backends.mps.is_available(),
+        )
     except Exception as exc:
         logger.debug("active torch diagnosis failed: %s", exc, exc_info=True)
         return TorchDiagnosis.NO_TORCH
 
 
-def warn_if_active_torch_not_gpu() -> None:
-    """Loudly warn when the running interpreter's torch is not a CUDA build.
+def warn_if_active_torch_not_accelerator() -> None:
+    """Warn when the running interpreter cannot use a supported accelerator.
 
     vaultspec-rag is GPU-only. A configured ``pyproject.toml`` does not
-    guarantee a GPU wheel in the active interpreter - a ``uv tool`` / ``pip``
+    guarantee a usable accelerator in the active interpreter - a ``uv tool`` / ``pip``
     install resolves torch from PyPI (CPU), since the cu130 source pin is
     project-scoped and is not part of the published wheel metadata. This probes
     the actual wheel and, when it is CPU-only, absent, or GPU-less, prints a
@@ -331,9 +287,30 @@ def warn_if_active_torch_not_gpu() -> None:
 
     diag = _active_torch_diagnosis()
     if diag == TorchDiagnosis.WORKING:
+        try:
+            import torch
+
+            from .._gpu import resolve_accelerator
+
+            resolve_accelerator(torch)
+        except RuntimeError as exc:
+            _plain(f"\nWARNING: {exc}")
         return
 
-    lines = ["", "WARNING: the active interpreter's torch is not GPU-ready."]
+    lines = [
+        "",
+        "WARNING: the active interpreter's torch has no supported accelerator.",
+    ]
+    if sys.platform == "darwin":
+        lines += [
+            "  MPS is unavailable. vaultspec-rag requires Apple silicon with a "
+            "PyTorch build that supports Metal; CPU fallback is not accepted.",
+            "  Check the active interpreter:",
+            '    python -c "import torch; print(torch.backends.mps.is_built(), '
+            'torch.backends.mps.is_available())"',
+        ]
+        _plain("\n".join(lines))
+        return
     if diag == TorchDiagnosis.NO_TORCH:
         lines.append("  No torch is installed in the active interpreter.")
     elif diag == TorchDiagnosis.CPU_ONLY:
@@ -344,8 +321,8 @@ def warn_if_active_torch_not_gpu() -> None:
         )
     else:  # NO_GPU
         lines.append(
-            "  torch is a CUDA build but no CUDA device is visible (driver or "
-            "hardware). Run nvidia-smi to check."
+            "  torch is a CUDA build but no supported accelerator is visible "
+            "(driver or hardware). Run nvidia-smi to check CUDA visibility."
         )
         _plain("\n".join(lines))
         return
@@ -402,6 +379,7 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
     Raises:
         typer.Exit: Always exits with code 1.
     """
+    from .._gpu import MPS_FALLBACK_MESSAGE
     from ..torch_config._constants import TorchDiagnosis
     from ..torch_config._diagnose import diagnose_torch
     from ..torch_config._mutate import manual_snippet
@@ -413,18 +391,32 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
         try:
             import torch
 
-            diagnosis = diagnose_torch(torch.version.cuda, torch.cuda.is_available())
+            diagnosis = diagnose_torch(
+                torch.version.cuda,
+                torch.cuda.is_available(),
+                torch.backends.mps.is_available(),
+            )
         except Exception as _diag_exc:
             # Broad except: torch import succeeded but probing the
             # CUDA state failed in an unexpected way (driver
             # mismatch, opaque ABI error). Treat as "no torch" for
             # diagnosis purposes; debug-log so the swallow stays
             # observable.
-            logger.debug("torch CUDA diagnosis failed: %s", _diag_exc, exc_info=True)
+            logger.debug(
+                "torch accelerator diagnosis failed: %s",
+                _diag_exc,
+                exc_info=True,
+            )
             diagnosis = TorchDiagnosis.NO_TORCH
 
-    if diagnosis == TorchDiagnosis.NO_TORCH:
+    import sys
+
+    if MPS_FALLBACK_MESSAGE in str(exc):
+        _plain(f"Error: {MPS_FALLBACK_MESSAGE}")
+    elif diagnosis == TorchDiagnosis.NO_TORCH:
         _plain(_no_torch_message())
+    elif sys.platform == "darwin":
+        _plain(_no_mps_message())
     elif diagnosis == TorchDiagnosis.CPU_ONLY:
         _plain(_cpu_only_message())
         _plain(manual_snippet())

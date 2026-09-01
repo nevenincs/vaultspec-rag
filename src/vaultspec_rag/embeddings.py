@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer, SparseEncoder
     from torch import Tensor
 
+    from ._gpu import AcceleratorContext
     from .config._settings import VaultSpecConfigWrapper
 
 logger = logging.getLogger(__name__)
@@ -284,7 +285,7 @@ def _shrink_after_bucket_oom(
     bucket = buckets[index]
     budget = ceiling.record_oom(bucket.estimated_tokens)
     logger.warning(
-        "CUDA OOM during %s encoding; discarding the failing %d-item bucket "
+        "Accelerator OOM during %s encoding; discarding the failing %d-item bucket "
         "and replanning %d remaining items under token budget %d",
         kind,
         bucket.end - bucket.start,
@@ -297,6 +298,7 @@ def _shrink_after_bucket_oom(
 def _joined_bucket_outputs(
     outputs: list[object],
     *,
+    accelerator: AcceleratorContext,
     retain_on_device: bool,
 ) -> object:
     """Join per-bucket encode outputs into one result in the caller's mode.
@@ -307,9 +309,9 @@ def _joined_bucket_outputs(
     if len(outputs) == 1:
         return outputs[0]
     if retain_on_device:
-        import torch
-
-        return torch.cat([cast("Tensor", output) for output in outputs], dim=0)
+        return accelerator.torch.cat(  # pyright: ignore[reportUnknownMemberType] - runtime torch module
+            [cast("Tensor", output) for output in outputs], dim=0
+        )
     import numpy as np
 
     return np.concatenate(
@@ -423,19 +425,19 @@ def _raise_for_hf_access(model_id: str, exc: Exception) -> None:
     ) from exc
 
 
-def _check_rag_deps() -> None:
+def _check_rag_deps() -> AcceleratorContext:
     """Verify GPU RAG dependencies are installed.
 
     Raises:
         ImportError: If the CUDA inference dependencies are not installed.
         RuntimeError: If no CUDA GPU device is available.
     """
-    from ._gpu import load_torch
+    from ._gpu import load_accelerator
 
     # The single centralized gate: import torch and assert a CUDA device,
     # failing hard on a CPU-only build rather than degrading to CPU compute.
     try:
-        load_torch()
+        accelerator = load_accelerator()
     except ImportError as exc:
         raise ImportError(_MISSING_COMPUTE_DEPENDENCIES_MESSAGE) from exc
 
@@ -443,9 +445,13 @@ def _check_rag_deps() -> None:
 
     if importlib.util.find_spec("sentence_transformers") is None:
         raise ImportError(_MISSING_COMPUTE_DEPENDENCIES_MESSAGE) from None
+    return accelerator
 
 
-def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
+def _sparse_tensor_to_results(
+    sparse_tensor: object,
+    accelerator: AcceleratorContext,
+) -> list[SparseResult]:
     """Convert a batch of SPLADE sparse tensors to SparseResult list.
 
     SparseEncoder.encode() returns a sparse COO-like tensor. Each row
@@ -464,7 +470,7 @@ def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
         List of SparseResult, one per input row, with non-zero
         indices and their corresponding values.
     """
-    import torch
+    torch = accelerator.torch
 
     tocsr = getattr(sparse_tensor, "tocsr", None)
     if tocsr is not None:
@@ -479,24 +485,23 @@ def _sparse_tensor_to_results(sparse_tensor: object) -> list[SparseResult]:
         return results
 
     if isinstance(sparse_tensor, torch.Tensor):
+        tensor = cast("Tensor", sparse_tensor)
         # One coalesced pass and a single device-to-host transfer for
         # the whole batch. Densifying a [batch x vocab] tensor and
         # looping per row costs a GPU sync per row and runs inside the
         # GPU lock on the indexing path.
-        n_rows = int(sparse_tensor.shape[0])
-        if sparse_tensor.is_sparse or sparse_tensor.is_sparse_csr:
+        n_rows = int(tensor.shape[0])
+        if tensor.is_sparse or tensor.is_sparse_csr:
             coo = (
-                sparse_tensor.to_sparse_coo()
-                if sparse_tensor.is_sparse_csr
-                else sparse_tensor
+                tensor.to_sparse_coo() if tensor.is_sparse_csr else tensor
             ).coalesce()
             joint = coo.indices().cpu()
             rows = cast("list[int]", joint[0].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
             cols = cast("list[int]", joint[1].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
             vals = cast("list[float]", coo.values().cpu().tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
         else:
-            nz = sparse_tensor.nonzero(as_tuple=False)
-            picked = sparse_tensor[nz[:, 0], nz[:, 1]]
+            nz = tensor.nonzero(as_tuple=False)
+            picked = tensor[nz[:, 0], nz[:, 1]]
             nz_cpu = nz.cpu()
             rows = cast("list[int]", nz_cpu[:, 0].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
             cols = cast("list[int]", nz_cpu[:, 1].tolist())  # pyright: ignore[reportUnknownMemberType]  # torch Tensor.tolist() stub is incomplete
@@ -575,6 +580,7 @@ class EmbeddingModel:
         model_kwargs: dict[str, object],
         cfg: object,
         *,
+        device: str,
         local_files_only: bool,
     ) -> SentenceTransformer:
         """Construct the dense SentenceTransformer for the configured backend.
@@ -593,7 +599,7 @@ class EmbeddingModel:
         from sentence_transformers import SentenceTransformer
 
         backend = str(getattr(cfg, "dense_backend", "torch") or "torch").lower()
-        if backend == "onnx":
+        if backend == "onnx" and device == "cuda":
             onnx_file = str(getattr(cfg, "dense_onnx_file", "onnx/model_O4.onnx"))
             try:
                 try:
@@ -632,6 +638,7 @@ class EmbeddingModel:
         try:
             return SentenceTransformer(
                 dense_name,
+                device=device,
                 local_files_only=local_files_only,
                 model_kwargs=model_kwargs,
                 processor_kwargs={"padding_side": "left"},
@@ -662,9 +669,9 @@ class EmbeddingModel:
             ImportError: If sentence-transformers or torch not installed.
             RuntimeError: If no CUDA GPU is available.
         """
-        _check_rag_deps()
-
-        import torch
+        accelerator = _check_rag_deps()
+        torch = accelerator.torch
+        self._accelerator = accelerator
 
         from .config._settings import get_config
 
@@ -703,6 +710,7 @@ class EmbeddingModel:
             dense_name,
             model_kwargs,
             cfg,
+            device=accelerator.device,
             local_files_only=local_files_only,
         )
         # Cap the model's advertised max sequence length so the
@@ -743,13 +751,12 @@ class EmbeddingModel:
         else:
             self._load_sparse_model(sparse_name, local_files_only=local_files_only)
 
-        self._init_encode_state(cfg, device="cuda")
+        self._init_encode_state(cfg, device=accelerator.device)
 
-        gpu_name = torch.cuda.get_device_name(0)
         logger.info(
             "Embedding models loaded on %s (dense=%s, sparse=%s, dense_dim=%d, "
             "sparse_dim=%s)",
-            gpu_name,
+            accelerator.name,
             dense_name,
             sparse_name if self._sparse_model is not None else "disabled",
             self.dimension,
@@ -809,14 +816,15 @@ class EmbeddingModel:
         local_files_only: bool,
     ) -> None:
         """Load SPLADE onto the GPU and record the width a run will write."""
-        import torch
         from sentence_transformers import SparseEncoder
 
+        accelerator = self._accelerator
+        torch = accelerator.torch
         t0 = time.perf_counter()
         try:
             self._sparse_model = SparseEncoder(
                 sparse_name,
-                device="cuda",
+                device=accelerator.device,
                 local_files_only=local_files_only,
                 model_kwargs={"torch_dtype": torch.float16},
             )
@@ -987,8 +995,6 @@ class EmbeddingModel:
             One ``encode_bucket`` result per successfully encoded
             bucket, in input order.
         """
-        import torch
-
         budget = ceiling.clamp(self._encode_token_budget)
         buckets = context.plan(budget)
         outputs: list[T] = []
@@ -1012,8 +1018,10 @@ class EmbeddingModel:
                 )
             try:
                 encoded = encode_bucket(bucket_texts)
-            except torch.cuda.OutOfMemoryError:
-                torch.cuda.empty_cache()
+            except BaseException as exc:
+                if not self._accelerator.is_out_of_memory(exc):
+                    raise
+                self._accelerator.release_cache()
                 oom_count += 1
                 if bucket.end - bucket.start <= 1:
                     raise
@@ -1111,7 +1119,11 @@ class EmbeddingModel:
             encode_bucket=encode_bucket,
             on_bucket=on_bucket,
         )
-        return _joined_bucket_outputs(outputs, retain_on_device=retain_on_device)
+        return _joined_bucket_outputs(
+            outputs,
+            accelerator=self._accelerator,
+            retain_on_device=retain_on_device,
+        )
 
     #: Task-specific instruction prompts for the dense encoder. Qwen3
     #: embeddings are instruction-tuned: telling the model what kind of
@@ -1288,7 +1300,7 @@ class EmbeddingModel:
             cpu_sparse_tensor = cpu_tensor.to_sparse().coalesce()
             del cpu_tensor
             cpu_tensor = None
-            return _sparse_tensor_to_results(cpu_sparse_tensor)
+            return _sparse_tensor_to_results(cpu_sparse_tensor, self._accelerator)
         finally:
             del accelerator_tensor
             del cpu_tensor
@@ -1311,5 +1323,5 @@ class EmbeddingModel:
             [query[:max_chars]],
             show_progress_bar=False,
         )
-        results = _sparse_tensor_to_results(sparse_tensor)
+        results = _sparse_tensor_to_results(sparse_tensor, self._accelerator)
         return results[0]
