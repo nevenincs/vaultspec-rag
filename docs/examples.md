@@ -18,9 +18,9 @@ uv run vaultspec-rag search "cache control on deployed assets" --type vault --do
 ```
 
 ```
-1. .vault/adr/2026-08-28-docs-site-adr.md
-2. .vault/adr/2026-07-01-neve-deployment-adr.md
-3. .vault/adr/2026-06-28-landing-page-adr.md
+1. Decision record: documentation cache policy
+2. Decision record: deployment cache policy
+3. Decision record: landing-page cache policy
 ```
 
 This is the strongest shape in the tool. You're describing a concept rather than
@@ -35,9 +35,9 @@ uv run vaultspec-rag search "cache control on deployed assets" --type vault --fe
 ```
 
 ```
-1. .vault/plan/2026-08-28-docs-site-plan.md
-2. .vault/exec/2026-08-28-docs-site/2026-08-28-docs-site-W05-P09-S50.md
-3. .vault/adr/2026-08-28-docs-site-adr.md
+1. Plan record: documentation cache policy
+2. Execution record: cache-control implementation
+3. Decision record: documentation cache policy
 ```
 
 A plan, the execution record that carried out the change, and the decision that
@@ -53,10 +53,10 @@ uv run vaultspec-rag search "vs_page_meta" --type vault --max-results 4 --scores
 ```
 
 ```
-1. .vault/plan/2026-08-28-docs-site-plan.md (score 0.4369)
-2. .vault/exec/2026-08-28-docs-site/2026-08-28-docs-site-W06-P11-S62.md (score 0.3515)
-3. .vault/exec/2026-08-28-docs-site/2026-08-28-docs-site-W06-P11-S63.md (score 0.3457)
-4. .vault/exec/2026-08-28-docs-site/2026-08-28-docs-site-W06-P12-S68.md (score 0.3383)
+1. Plan record: page metadata extension (score 0.4369)
+2. Execution record: metadata implementation (score 0.3515)
+3. Execution record: metadata verification (score 0.3457)
+4. Execution record: metadata publication (score 0.3383)
 ```
 
 `grep -rl` over the same tree returns those four files and no others. Search

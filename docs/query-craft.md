@@ -48,9 +48,9 @@ uv run vaultspec-rag search "cache control on deployed assets" --type vault --do
 ```
 
 ```
-1. .vault/adr/2026-08-28-docs-site-adr.md
-2. .vault/adr/2026-07-01-neve-deployment-adr.md
-3. .vault/adr/2026-06-28-landing-page-adr.md
+1. Decision record: documentation cache policy
+2. Decision record: deployment cache policy
+3. Decision record: landing-page cache policy
 ```
 
 Three decision records, which is the shape you want when you're asking why
@@ -61,9 +61,9 @@ uv run vaultspec-rag search "cache control on deployed assets" --type vault --fe
 ```
 
 ```
-1. .vault/plan/2026-08-28-docs-site-plan.md
-2. .vault/exec/2026-08-28-docs-site/2026-08-28-docs-site-W05-P09-S50.md
-3. .vault/adr/2026-08-28-docs-site-adr.md
+1. Plan record: documentation cache policy
+2. Execution record: cache-control implementation
+3. Decision record: documentation cache policy
 ```
 
 Same query, different question. One asked "what was decided", the other asked
@@ -165,8 +165,8 @@ behind the ordering, which tells you whether the top hit won or merely came
 first among weak matches:
 
 ```
-1. .vault/adr/2026-08-28-docs-site-adr.md (score 0.0260)
-2. .vault/adr/2026-07-01-neve-deployment-adr.md (score 0.0097)
+1. Decision record: documentation cache policy (score 0.0260)
+2. Decision record: deployment cache policy (score 0.0097)
 ```
 
 `--json` gives a script the same results without the human formatting.
