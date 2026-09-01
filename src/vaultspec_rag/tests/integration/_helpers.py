@@ -125,6 +125,7 @@ def cpu_backed_embedding_model(
     from sentence_transformers.sentence_transformer import SentenceTransformer
     from sentence_transformers.sentence_transformer.modules import BoW
 
+    from ..._gpu import load_accelerator
     from ...config._settings import get_config
     from ...embeddings import EmbeddingModel
 
@@ -145,6 +146,7 @@ def cpu_backed_embedding_model(
     # a path reaching sparse here fails the way production would.
     model._sparse_model = None
     model.sparse_dimension = None
+    model._accelerator = load_accelerator()
     model._init_encode_state(cfg, device="cpu")
     return model
 

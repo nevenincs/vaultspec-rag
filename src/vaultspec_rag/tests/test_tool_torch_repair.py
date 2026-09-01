@@ -50,6 +50,28 @@ def _cpu_torch_probe(_interpreter: str, timeout: float = 60.0) -> tuple[bool, st
     return True, "the service interpreter has a CPU-only torch wheel"
 
 
+@pytest.mark.parametrize(
+    ("exit_code", "is_installation_defect"),
+    [(3, True), (4, True), (5, False), (7, False)],
+)
+def test_accelerator_probe_defect_classification_matches_its_exit_contract(
+    exit_code: int, *, is_installation_defect: bool
+) -> None:
+    """Only missing torch and no supported accelerator merit a reinstall."""
+    from ..cli._process import (
+        _accelerator_probe_exit_outcome,
+        accelerator_probe_is_torch_installation_defect,
+    )
+
+    outcome = _accelerator_probe_exit_outcome(exit_code)
+
+    assert outcome is not None
+    assert (
+        accelerator_probe_is_torch_installation_defect(outcome[1])
+        is is_installation_defect
+    )
+
+
 def test_receipt_requires_the_exact_cuda_wheel(tmp_path: Path) -> None:
     receipt = tmp_path / "uv-receipt.toml"
     wheel = "https://example.test/torch-2.9.0%2Bcu130.whl"
@@ -124,7 +146,7 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
     )
     monkeypatch.setattr(
         _process,
-        "_probe_daemon_cuda",
+        "_probe_daemon_accelerator",
         _no_visible_cuda_device,
     )
 
@@ -158,7 +180,7 @@ def test_verify_repair_requires_cuda_and_structured_receipt(
         '[tool]\nrequirements = [{ name = "torch", url = "' + wheel + '" }]\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(_process, "_probe_daemon_cuda", _cuda_ready_probe)
+    monkeypatch.setattr(_process, "_probe_daemon_accelerator", _cuda_ready_probe)
 
     outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
 
@@ -166,13 +188,13 @@ def test_verify_repair_requires_cuda_and_structured_receipt(
 
     monkeypatch.setattr(
         _process,
-        "_probe_daemon_cuda",
+        "_probe_daemon_accelerator",
         _cpu_torch_probe,
     )
     outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
     assert outcome.action is _tool_torch.ToolTorchRepairAction.CUDA_UNVERIFIED
 
-    monkeypatch.setattr(_process, "_probe_daemon_cuda", _cuda_ready_probe)
+    monkeypatch.setattr(_process, "_probe_daemon_accelerator", _cuda_ready_probe)
     receipt.unlink()
     outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
     assert outcome.action is _tool_torch.ToolTorchRepairAction.RECEIPT_UNVERIFIED
