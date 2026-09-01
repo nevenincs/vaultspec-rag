@@ -3,117 +3,67 @@ tags:
   - '#research'
   - '#platform-backend-selection'
 date: '2026-08-28'
-modified: '2026-08-28'
+modified: '2026-09-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:df8b6a367d6961bf8eed53f934ed52df75b3faadb8064b7ad4ba677027e66ca6'
+body_hash: 'sha256:8a27156def1c27bb391a9d30c5c32699be001e3634ef24af5f5874d720d268d9'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
+  - '[[2026-09-01-platform-backend-selection-reference]]'
 ---
-
 # `platform-backend-selection` research: `which accelerator each platform can actually use, and what the install puts there`
 
-`2026-03-06-gpu-rag-stack-adr` records a user mandate: GPU-only inference, no
-CPU fallback. The code enforces it through one gate, and the gate tests for
-CUDA. Two consequences of that follow, and they pull in opposite directions -
-Apple silicon has a working GPU the gate cannot see, and a GPU-less Linux host
-is handed five gigabytes of CUDA it can never use.
+`2026-03-06-gpu-rag-stack-adr` records a user mandate: GPU-only inference, no CPU fallback. The code enforces it through one gate, and the gate tests for CUDA. Two consequences follow in opposite directions: Apple silicon has a working GPU the gate cannot see, and a GPU-less Linux host is handed five gigabytes of CUDA it can never use.
 
-Neither is a case for weakening the mandate. What the evidence below frames is
-narrower: whether "GPU" means "CUDA", and whether the CUDA stack belongs in the
-default dependency set or in the provisioning verb that already exists for the
-platforms where it is not there. The ADR must settle both.
+Neither is a case for weakening the mandate. The evidence favors resolving an explicitly supported accelerator at runtime, refusing CPU, and moving platform-specific CUDA provisioning behind the existing install verb. Direct fleet measurement now closes the original MPS evidence gap: the complete production dense, sparse, and reranker stack runs concurrently on an 8 GiB Apple silicon host with CPU fallback disabled. The ADR must settle MPS admission policy and the Linux migration path.
 
 ## Findings
 
 ### The gate is CUDA-shaped, not accelerator-shaped
 
-`_gpu.py` is the single load-bearing gate: every local-mode compute path
-obtains torch through `load_torch()`, which admits or refuses the process. Its
-refusal message names CUDA specifically, and its check is
-`torch.cuda.is_available()`.
+`_gpu.py` is the single load-bearing gate: every local-mode compute path obtains torch through `load_torch()`, which admits or refuses the process. Its refusal message names CUDA specifically, and its check is `torch.cuda.is_available()`.
 
-That single-gate design is what makes a second backend tractable: the decision
-about which device to use is made in one place rather than at each call site.
-The CUDA assumption, however, has leaked past it. `torch.cuda.*` appears in
-`embeddings.py`, `api.py`, `search/_searcher.py`, `memory_probe.py`,
-`_readiness.py`, `server/_state.py` and `cli/_gpu_errors.py`. The reporting
-path at `api.py:813` is the visible symptom - on a host with no CUDA it reports
-no GPU and 0 VRAM, which on Apple silicon is a false statement about the
-hardware rather than a missing feature.
+That single-gate design makes a second backend tractable. The CUDA assumption has nevertheless leaked past it: `torch.cuda.*` appears in `embeddings.py`, `api.py`, `search/_searcher.py`, `memory_probe.py`, `_readiness.py`, `server/_state.py`, and `cli/_gpu_errors.py`. The report at `api.py:813` is the visible symptom—on Apple silicon it reports no GPU and 0 VRAM, a false statement about unified-memory hardware.
 
-The admission logic is the deepest CUDA coupling. It admits a workload by
-interrogating free VRAM on a discrete device; unified memory has no equivalent
-reading, so admitting an MPS workload is not the same computation with a
-different accessor.
+Admission is the deepest coupling. It interrogates free VRAM on a discrete CUDA device. MPS instead exposes process allocator figures and a recommended working-set limit over unified memory, so it needs a backend-specific admission policy rather than renamed CUDA accessors.
 
-### The macOS gap was accepted knowingly, not overlooked
+### The macOS gap was accepted knowingly, but the original reason no longer holds
 
-`2026-03-06-gpu-rag-stack-adr` lists "cannot run on CPU-only machines or macOS
-without CUDA" among its negative consequences. So macOS falling outside the
-supported set is a recorded consequence of the original decision, not a
-regression.
+`2026-03-06-gpu-rag-stack-adr` lists inability to run on macOS without CUDA among its negative consequences. That was a recorded consequence, not a regression. The mandate's intent is nevertheless to use an accelerator and never silently use CPU; an MPS backend that is measured with fallback disabled satisfies that intent.
 
-What has changed since is only that the platform acquired a usable backend in
-torch. Treating this as a bug misreads the record; treating it as settled
-misses that the mandate's stated intent - use the GPU, never the CPU - is
-satisfied by MPS rather than violated by it. The question the ADR faces is
-whether "GPU-only" was a decision about CUDA or about not running on CPU.
+### The exact production model stack runs concurrently on MPS without CPU fallback
+
+The fleet host `Gergelys-MacBook-Neo.local` ran macOS 26.5.1 build 25F80 on Apple ARM64 with 8 GiB unified memory. A bounded probe used Python 3.13.11, torch 2.13.0, sentence-transformers 5.7.0, transformers 5.16.1, and `PYTORCH_ENABLE_MPS_FALLBACK=0`. The exact production revisions for Qwen dense embedding, SPLADE sparse encoding, and the BGE reranker all loaded together on `mps:0` and completed forward passes with finite outputs.
+
+With all three models resident, torch reported 3,720.1 MiB current MPS allocation and 4,218.5 MiB driver allocation against its 5,461.3 MiB recommended working-set limit. After all forwards the driver allocation was 4,228.7 MiB. This establishes functional support on the fleet's smallest-memory Mac; it does not establish throughput or thermal behavior.
+
+The probe used one cleanup-trapped `/tmp` directory. Package downloads, a virtual environment, and transient gated model copies stayed within it; peak scratch was 4.0 GiB and cleanup was verified. Persistent uv and Hugging Face caches and the runner checkout were unchanged. The implementation surface and exact model revisions are recorded in `2026-09-01-platform-backend-selection-reference`.
 
 ### The CUDA weight on Linux comes from PyPI, not from this project
 
-`pyproject.toml` pins torch to the cu130 index, but under `[tool.uv.sources]`,
-which is workspace-scoped and is not carried in published wheel metadata. An
-installing user therefore resolves torch from PyPI, and what PyPI supplies
-differs sharply by platform. From `torch@2.13.0`:
+`pyproject.toml` pins torch to the cu130 index under `[tool.uv.sources]`, which is workspace-scoped and absent from published wheel metadata. An installing user therefore resolves torch from PyPI. In `torch@2.13.0`, Linux receives a 527 MB wheel plus gated NVIDIA and Triton dependencies, while Windows and macOS wheels carry no CUDA dependencies.
 
-| platform                | wheel  | CUDA dependencies            |
-| ----------------------- | ------ | ---------------------------- |
-| `manylinux_2_28_x86_64` | 527 MB | 5 nvidia/triton requirements |
-| `win_amd64`             | 122 MB | none                         |
-| `macosx_14_0_arm64`     | 111 MB | none                         |
-
-Every CUDA requirement in torch's metadata is gated on
-`platform_system == "Linux"`. So the asymmetry is upstream: PyPI's Linux torch
-is the CUDA build and its Windows and macOS wheels are not.
-
-The consequence is that Linux is the only platform where a plain install
-arrives GPU-capable by accident, and it does so whether or not a GPU exists.
+Linux is consequently the only platform where a plain install arrives CUDA-capable by accident, whether or not a GPU exists.
 
 ### Windows and macOS already depend on a provisioning step
 
-Because their PyPI wheels carry no CUDA, a bare install on Windows produces a
-torch that cannot satisfy the gate at all. The project already knows this:
-`cli/_gpu_errors.py` exists to detect exactly that state and direct the user to
-`vaultspec-rag install`, which configures the cu130 index and installs the GPU
-build.
+Because their PyPI wheels carry no CUDA, a bare Windows install cannot satisfy the current gate. `cli/_gpu_errors.py` already detects that state and directs the user to `vaultspec-rag install`, which configures the cu130 index and installs the GPU build.
 
-This is the finding that reframes the Linux question. Provisioning the CUDA
-stack through the install verb rather than the default dependency set is not a
-new mechanism to be invented - it is what two of the three platforms already
-do, and Linux is the outlier. Moving Linux onto that path changes when the GPU
-build arrives, not whether it is required, so the runtime gate keeps refusing
-CPU exactly as it does now.
+Provisioning CUDA through the install verb on Linux would reuse an existing mechanism and align all platforms. It changes when the GPU build arrives, not whether runtime accepts CPU, so the gate can continue refusing CPU exactly as it does now.
 
-### What was not investigated
+### Remaining unknowns are performance and migration, not MPS correctness
 
-No Apple silicon host was reachable during this work, so no MPS measurement was
-taken: whether the dense and sparse models both run end to end under MPS,
-what `PYTORCH_ENABLE_MPS_FALLBACK` would silently mask, and what throughput
-looks like relative to CUDA are all unmeasured. Everything above about macOS
-comes from torch's published metadata and from this repository's own code, and
-the ADR cannot treat MPS as a supported backend on this evidence alone.
-
-The size of a GPU-less Linux install after moving the CUDA stack behind the
-install verb was not measured, only bounded below by the 527 MB torch wheel
-itself. Whether an already-installed environment migrates cleanly, rather than
-only a fresh one, was not examined.
+No sustained indexing benchmark, battery/thermal run, or long-lived service soak was performed on MPS. The probe establishes exact-model functional compatibility and concurrent residency only. The size of a GPU-less Linux install after packaging changes and the upgrade behavior of an already-provisioned CUDA environment also remain unmeasured.
 
 ## Sources
 
 - `src/vaultspec_rag/_gpu.py`
+- `src/vaultspec_rag/_gpu_admission.py`
 - `src/vaultspec_rag/api.py:813`
 - `src/vaultspec_rag/cli/_gpu_errors.py`
 - `pyproject.toml`
+- `2026-09-01-platform-backend-selection-reference`
 - `torch@2.13.0` PyPI metadata and wheel listing
 - https://docs.pytorch.org/docs/stable/notes/mps.html
-- https://docs.astral.sh/uv/concepts/projects/dependencies/
+- https://docs.pytorch.org/docs/stable/mps_environment_variables.html
+- https://huggingface.co/naver/splade-v3
+- https://huggingface.co/BAAI/bge-reranker-v2-m3

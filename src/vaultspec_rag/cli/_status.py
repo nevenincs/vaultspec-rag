@@ -200,22 +200,37 @@ def _render_status_text(
     target: object,
     service_port: int | None = None,
 ) -> None:
-    cuda_available = bool(status["cuda"])
-    gpu_name = status["gpu_name"]
-    vram_mib = count(status["vram_mib"]) or 0
+    raw_backend = status.get("accelerator_backend")
+    backend = (
+        str(raw_backend) if raw_backend else ("cuda" if status.get("cuda") else None)
+    )
+    accelerator_name = status.get("accelerator_name", status.get("gpu_name"))
+    memory_mib = count(status.get("memory_mib", status.get("vram_mib")))
+    memory_measure = status.get("memory_measure")
     index_data_path = _human_index_data_location(
         status["storage_path"],
         service_port=service_port,
     )
     vault_count, code_count, document_count = _status_counts(status)
-    device = (
-        # vram_mib is produced by bytes_to_mib, so it is mebibytes; rendering it
-        # as "MB" both mislabelled it and left the operator converting five
-        # digits to work out whether a model fits.
-        f"GPU - {gpu_name} ({_format_mib(vram_mib)} VRAM)"
-        if cuda_available
-        else "CPU only (no supported GPU detected)"
-    )
+    if backend == "cuda":
+        memory = (
+            f"{_format_mib(memory_mib)} VRAM"
+            if memory_mib is not None
+            else "VRAM not reported"
+        )
+        device = f"CUDA - {accelerator_name} ({memory})"
+    elif backend == "mps":
+        memory = "unified memory"
+        if memory_mib is not None:
+            qualifier = (
+                " recommended working set"
+                if memory_measure == "recommended_working_set"
+                else ""
+            )
+            memory = f"{_format_mib(memory_mib)}{qualifier}, unified memory"
+        device = f"MPS - {accelerator_name} ({memory})"
+    else:
+        device = "Unavailable (no CUDA or MPS accelerator; CPU is unsupported)"
     lines = [
         "Project index",
         f"Project: {target}",
@@ -248,8 +263,16 @@ def _emit_status_json(
     vault_count, code_count, document_count = _status_counts(status)
     data: dict[str, object] = {
         "cuda": bool(status["cuda"]),
-        "gpu_name": status["gpu_name"],
-        "vram_mib": count(status["vram_mib"]) or 0,
+        "accelerator_available": bool(
+            status.get("accelerator_available", status["cuda"])
+        ),
+        "accelerator_backend": status.get("accelerator_backend"),
+        "accelerator_name": status.get("accelerator_name", status.get("gpu_name")),
+        "memory_kind": status.get("memory_kind"),
+        "memory_mib": count(status.get("memory_mib")),
+        "memory_measure": status.get("memory_measure"),
+        "gpu_name": status.get("gpu_name"),
+        "vram_mib": count(status.get("vram_mib")),
         "storage_path": str(status["storage_path"]),
         "vault_documents": vault_count,
         "codebase_chunks": code_count,

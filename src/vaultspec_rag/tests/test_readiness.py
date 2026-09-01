@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -23,6 +25,7 @@ from .._readiness import (
     DependencyReadiness,
     ReadinessReport,
     ReadinessStatus,
+    _torch_readiness,
     compute_readiness,
 )
 from ..config._settings import reset_config
@@ -156,22 +159,48 @@ class TestComputeReadinessShape:
 
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestTorchDimension:
-    def test_torch_dimension_reflects_the_real_cuda_state(self) -> None:
-        # The reporter must mirror the host's actual CUDA state: ready with
-        # a real device (the GPU dev host), not-ready without one (a CPU-only
-        # CI runner). Asserting against the live value keeps the test
-        # hermetic on either host rather than requiring a GPU.
+    def test_torch_dimension_reflects_the_real_accelerator_state(self) -> None:
+        # The reporter mirrors whichever supported accelerator this host has.
         import torch
 
-        available = torch.cuda.is_available()
+        cuda_available = torch.cuda.is_available()
+        mps_available = torch.backends.mps.is_available()
         report = compute_readiness()
         torch_dep = report.dimension("torch")
         assert torch_dep is not None
         assert torch_dep.info["installed"] is True
-        assert torch_dep.info["cuda_available"] is available
-        assert torch_dep.status == (
-            ReadinessStatus.READY if available else ReadinessStatus.NOT_READY
+        assert torch_dep.info["cuda_available"] is cuda_available
+        assert torch_dep.info["mps_available"] is mps_available
+        assert torch_dep.info["backend"] == (
+            "cuda" if cuda_available else "mps" if mps_available else None
         )
+        assert torch_dep.status == (
+            ReadinessStatus.READY
+            if (cuda_available or mps_available)
+            else ReadinessStatus.NOT_READY
+        )
+
+    def test_mps_dimension_reports_unified_memory_without_cuda(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_torch = ModuleType("torch")
+        fake_torch.__dict__.update(
+            version=SimpleNamespace(cuda=None),
+            cuda=SimpleNamespace(is_available=lambda: False),
+            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
+            mps=SimpleNamespace(),
+        )
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+        monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+
+        torch_dep = _torch_readiness()
+
+        assert torch_dep.status is ReadinessStatus.READY
+        assert torch_dep.info["backend"] == "mps"
+        assert torch_dep.info["memory_kind"] == "unified"
+        assert torch_dep.info["cuda_available"] is False
+        assert torch_dep.info["mps_available"] is True
+        assert "MPS available" in torch_dep.detail
 
     def test_torch_dimension_does_not_force_a_model_load(self) -> None:
         # Computing readiness must not allocate the embedding/reranker
