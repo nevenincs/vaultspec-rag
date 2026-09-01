@@ -242,6 +242,13 @@ class CodeRunCheckpoint(RunCheckpointBase):
             source_digest=superseded_digest,
         )
 
+    def retained_upsert_evidence(
+        self,
+        rel_path: str,
+    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """Return current-generation upsert evidence for one retained path."""
+        return self.ledger.retained_upsert_evidence(self.generation_id, rel_path)
+
     def reopen_drifted_path(self, rel_path: str, superseded_digest: str) -> int:
         """Clear stale indexed evidence so one path can be ingested again."""
         removed = self.ledger.reopen_drifted_path(
