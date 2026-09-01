@@ -205,12 +205,11 @@ class CodeDriftOwner:
         )
         if point_ids:
             self._store.delete_code_chunks(list(point_ids), collection=self._collection)
-        if remove_path:
-            self._checkpoint.record_confirmed_deletion(rel_path, point_ids)
-        else:
-            self._checkpoint.record_confirmed_stale_deletion(rel_path, point_ids)
-        for digest, _ids in evidence:
-            self._checkpoint.reopen_drifted_path(rel_path, digest)
+        self._checkpoint.retire_retained_upserts(
+            rel_path,
+            point_ids,
+            remove_path=remove_path,
+        )
         self._superseded_ids.update(point_ids)
         return True
 

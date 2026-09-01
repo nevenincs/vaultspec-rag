@@ -249,6 +249,31 @@ class CodeRunCheckpoint(RunCheckpointBase):
         """Return current-generation upsert evidence for one retained path."""
         return self.ledger.retained_upsert_evidence(self.generation_id, rel_path)
 
+    def retire_retained_upserts(
+        self,
+        rel_path: str,
+        point_ids: tuple[str, ...],
+        *,
+        remove_path: bool,
+    ) -> bool:
+        """Replace retired code upserts with their confirmed deletion evidence."""
+        kind = (
+            CommitUnitKind.DELETE_PATH if remove_path else CommitUnitKind.DELETE_STALE
+        )
+        unit = self._deletion_unit(rel_path, kind, point_ids)
+        inserted = self.ledger.retire_retained_upserts(self.generation_id, unit)
+        if inserted:
+            label = (
+                f"code deletion {rel_path}"
+                if remove_path
+                else f"stale code deletion {rel_path}"
+            )
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=label,
+            )
+        return inserted
+
     def reopen_drifted_path(self, rel_path: str, superseded_digest: str) -> int:
         """Clear stale indexed evidence so one path can be ingested again."""
         removed = self.ledger.reopen_drifted_path(

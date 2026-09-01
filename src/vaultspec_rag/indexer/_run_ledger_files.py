@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, TypedDict
 
 from ._content_policy import AdmissionReason, ContentKind
 from ._file_state import FileState, FileStateKind, validate_rel_path
 from ._run_ledger_models import (
     FETCH_BATCH,
+    CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
     RunLedgerCorruptionError,
@@ -74,6 +76,15 @@ class RunLedgerFileMethods:
 
         @staticmethod
         def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
+
+        def _record_storage_confirmed_unit(
+            self,
+            connection: sqlite3.Connection,
+            generation_id: str,
+            unit: CommitUnit,
+            *,
+            now: float,
+        ) -> int: ...
 
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
@@ -300,6 +311,80 @@ class RunLedgerFileMethods:
         return tuple(
             (digest, tuple(point_ids)) for digest, point_ids in evidence.items()
         )
+
+    def retire_retained_upserts(
+        self,
+        generation_id: str,
+        unit: CommitUnit,
+    ) -> bool:
+        """Replace a path's retained upserts with confirmed deletion evidence.
+
+        The caller has already removed ``unit.point_ids`` from storage. This
+        transaction releases the identities claimed by the retained upsert
+        units before recording the deletion unit that replaces them, then
+        withdraws the stale manifest state. Keeping those changes together
+        makes an interruption replay either the storage deletion or a fully
+        converged ledger transition; it cannot leave a deletion unit competing
+        with the upsert units for the same identities.
+        """
+        if unit.kind is CommitUnitKind.UPSERT:
+            raise ValueError("retirement requires a deletion unit")
+
+        def body(connection: sqlite3.Connection) -> bool:
+            generation = self._require_mutable_generation(connection, generation_id)
+            if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
+                raise RunLedgerStateError(
+                    "cannot retire retained upserts after finalization begins"
+                )
+            rows: list[_PointIdRow] = fetch_all(
+                connection,
+                """
+                SELECT points.point_id
+                FROM commit_point_ids AS points
+                JOIN commit_units AS units
+                  ON units.generation_id = points.generation_id
+                 AND units.unit_id = points.unit_id
+                WHERE units.generation_id = ? AND units.rel_path = ?
+                  AND units.unit_kind = ?
+                """,
+                (generation_id, unit.rel_path, CommitUnitKind.UPSERT.value),
+            )
+            retained_ids = tuple(sorted(str(row["point_id"]) for row in rows))
+            if not retained_ids:
+                return False
+            if retained_ids != unit.point_ids:
+                raise RunLedgerStateError(
+                    "retirement deletion must name every retained upsert point"
+                )
+            connection.execute(
+                """
+                DELETE FROM commit_units
+                WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
+                """,
+                (generation_id, unit.rel_path, CommitUnitKind.UPSERT.value),
+            )
+            now = time.time()
+            inserted = self._record_storage_confirmed_unit(
+                connection,
+                generation_id,
+                unit,
+                now=now,
+            )
+            if inserted:
+                connection.execute(
+                    "UPDATE generations SET updated_at = ? WHERE generation_id = ?",
+                    (now, generation_id),
+                )
+            connection.execute(
+                """
+                DELETE FROM file_states
+                WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, unit.rel_path),
+            )
+            return True
+
+        return in_ledger_transaction(self.path, body)
 
     def reopen_drifted_path(
         self,
