@@ -73,6 +73,27 @@ class TestRichProgressReporterFallback:
         reporter = RichProgressReporter(console)
         assert reporter._is_tty is False
 
+    def test_dumb_terminal_falls_back_to_plain_lines(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TERM", "dumb")
+        buf = io.StringIO()
+        reporter = RichProgressReporter(
+            Console(
+                file=buf,
+                force_terminal=True,
+                force_interactive=True,
+                width=120,
+            )
+        )
+        reporter.phase_start("hash documents", 1)
+        reporter.advance()
+        reporter.phase_end()
+
+        assert reporter._is_tty is False
+        assert "==> hash documents (1 items)" in buf.getvalue()
+        assert "done (1)" in buf.getvalue()
+
     def test_forced_terminal_without_interactivity_emits_plain_lines(self) -> None:
         """FORCE_COLOR must not turn a non-interactive stream into a live region."""
         buf = io.StringIO()
@@ -91,6 +112,7 @@ class TestRichProgressReporterFallback:
 
         assert reporter._is_tty is False
         assert "==> hash documents (1 items)" in buf.getvalue()
+        assert "done (1)" in buf.getvalue()
 
     def test_phase_events_emit_lines(self) -> None:
         console, buf = _make_non_tty_console()
@@ -165,7 +187,10 @@ class TestRichProgressReporterFallback:
         reporter = RichProgressReporter(console)
         assert isinstance(reporter, ProgressReporter)
 
-    def test_rich_reporter_rejects_use_outside_context_manager(self) -> None:
+    def test_rich_reporter_rejects_use_outside_context_manager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TERM", "xterm-256color")
         buf = io.StringIO()
         console = Console(
             file=buf,

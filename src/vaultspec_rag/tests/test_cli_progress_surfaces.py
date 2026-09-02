@@ -156,7 +156,9 @@ def _drive_snapshot_bars(
 class TestModelWarmupProgress:
     """``server warmup``: the hub's own counters, rendered as one line."""
 
-    def test_a_terminal_gets_a_painted_frame_carrying_both_counts(self):
+    def test_a_terminal_gets_a_painted_frame_carrying_both_counts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """The determinate numbers reach the terminal inside a live frame.
 
         Three assertions, none redundant. The byte fragment proves the byte
@@ -164,6 +166,7 @@ class TestModelWarmupProgress:
         and the spinner glyph proves a live frame - not a plain fallback line -
         is what carried them.
         """
+        monkeypatch.setenv("TERM", "xterm-256color")
         buffer = io.StringIO()
         reporter = _reporter(buffer, interactive=True)
         with (
@@ -222,7 +225,9 @@ class TestModelWarmupProgress:
         assert "8.0 MiB" not in plain
         assert "11.0 MiB" not in plain
 
-    def test_a_whole_download_writes_nothing_to_the_real_streams(self):
+    def test_a_whole_download_writes_nothing_to_the_real_streams(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """tqdm's own frames never reach the terminal the reporter owns.
 
         End-to-end over all three bars. Two mechanisms defend this - the bars
@@ -230,6 +235,7 @@ class TestModelWarmupProgress:
         so removing either one alone leaves this green; the single-bar case
         below is the one that binds to the buffer.
         """
+        monkeypatch.setenv("TERM", "xterm-256color")
         buffer = io.StringIO()
         out, err = io.StringIO(), io.StringIO()
         reporter = _reporter(buffer, interactive=True)

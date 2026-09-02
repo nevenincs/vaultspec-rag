@@ -8,7 +8,7 @@ before a runtime failure rather than after one.
 
 It reports, per dependency, whether it is provisioned and usable:
 
-- **torch**: is the CUDA compute path available? Read from the already
+- **torch**: is a supported accelerator compute path available? Read from the already
   imported torch's observable attributes, never by loading a model onto
   the GPU.
 - **models**: are the configured dense, sparse, and reranker repos
@@ -85,7 +85,7 @@ class DependencyReadiness:
         info: Dimension-specific structured facts that a human render
             or JSON consumer can surface without re-deriving them (e.g.
             the qdrant resolution source, the per-repo cache hits, the
-            CUDA device name). Always JSON-serialisable.
+            accelerator backend and device name). Always JSON-serialisable.
     """
 
     name: str
@@ -177,7 +177,7 @@ class ReadinessReport:
 def compute_readiness() -> ReadinessReport:
     """Aggregate the bounded per-dependency readiness snapshot.
 
-    Read-only: probes torch's observable CUDA attributes, the Hugging
+    Read-only: probes torch's observable accelerator attributes, the Hugging
     Face cache, and the qdrant runtime/resolution state without loading
     a model, touching the GPU, downloading, or mutating any state.
 
@@ -201,12 +201,11 @@ def compute_readiness() -> ReadinessReport:
 
 
 def _torch_readiness() -> DependencyReadiness:
-    """Report CUDA availability without forcing a model load.
+    """Report supported accelerator availability without forcing a model load.
 
-    Reads ``torch.version.cuda`` and ``torch.cuda.is_available()`` only
-    - the same observable attributes the torch diagnosis classifier
-    consumes - so the GPU compute path is reported without allocating
-    anything on the device.
+    The guarded function-local import keeps this read-only probe valid on a
+    torch-free service client. Device resolution delegates to the canonical
+    CUDA-first, MPS-second contract and never allocates a model.
     """
     try:
         import torch
@@ -214,53 +213,75 @@ def _torch_readiness() -> DependencyReadiness:
         return DependencyReadiness(
             name="torch",
             status=ReadinessStatus.NOT_READY,
-            detail="torch is not installed; run install to configure the cu130 wheel",
-            info={"installed": False, "cuda_available": False},
+            detail=(
+                "torch is not installed; run install to provision an accelerator build"
+            ),
+            info={
+                "installed": False,
+                "accelerator_available": False,
+                "backend": None,
+                "memory_kind": None,
+                "cuda_available": False,
+                "mps_available": False,
+            },
         )
 
+    from ._gpu import resolve_accelerator
     from .torch_config._constants import TorchDiagnosis
     from .torch_config._diagnose import diagnose_torch
 
     cuda_build = getattr(torch.version, "cuda", None)
-    available = bool(torch.cuda.is_available())
-    diagnosis = diagnose_torch(cuda_build, available)
+    cuda_available = bool(torch.cuda.is_available())
+    mps_available = bool(torch.backends.mps.is_available())
+    diagnosis = diagnose_torch(cuda_build, cuda_available, mps_available)
 
-    device_name: str | None = None
-    if available:
-        try:
-            device_name = torch.cuda.get_device_name(0)
-        except Exception as exc:
-            logger.debug("torch.cuda.get_device_name failed: %s", exc)
+    accelerator = None
+    resolution_error: str | None = None
+    try:
+        accelerator = resolve_accelerator(torch)
+    except RuntimeError as exc:
+        resolution_error = str(exc)
 
     info: dict[str, object] = {
         "installed": True,
+        "accelerator_available": accelerator is not None,
+        "backend": accelerator.backend if accelerator is not None else None,
+        "memory_kind": accelerator.memory_kind if accelerator is not None else None,
         "cuda_build": cuda_build,
-        "cuda_available": available,
+        "cuda_available": cuda_available,
+        "mps_available": mps_available,
         "diagnosis": str(diagnosis),
-        "device_name": device_name,
+        "device_name": accelerator.name if accelerator is not None else None,
     }
 
-    if diagnosis == TorchDiagnosis.WORKING:
+    if accelerator is not None:
         return DependencyReadiness(
             name="torch",
             status=ReadinessStatus.READY,
-            detail=(
-                f"CUDA available on {device_name}" if device_name else "CUDA available"
-            ),
+            detail=f"{accelerator.backend.upper()} available on {accelerator.name}",
+            info=info,
+        )
+    if resolution_error is not None and diagnosis == TorchDiagnosis.WORKING:
+        return DependencyReadiness(
+            name="torch",
+            status=ReadinessStatus.NOT_READY,
+            detail=resolution_error,
             info=info,
         )
     if diagnosis == TorchDiagnosis.CPU_ONLY:
         return DependencyReadiness(
             name="torch",
             status=ReadinessStatus.NOT_READY,
-            detail="torch is the CPU-only build; reinstall the cu130 wheel for GPU",
+            detail=(
+                "torch has no usable CUDA or MPS accelerator; CPU inference is disabled"
+            ),
             info=info,
         )
-    # NO_GPU: a CUDA wheel is installed but no usable device is visible.
+    # NO_GPU: a CUDA wheel is installed but no supported device is visible.
     return DependencyReadiness(
         name="torch",
         status=ReadinessStatus.NOT_READY,
-        detail="cu130 torch is installed but no CUDA device is available",
+        detail="CUDA torch is installed but no supported accelerator is available",
         info=info,
     )
 

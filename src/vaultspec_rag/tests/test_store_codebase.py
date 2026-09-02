@@ -41,6 +41,48 @@ class TestStoreCodebase:
             tmp_vault_store.CODE_TABLE_NAME,
         )
 
+    def test_targeted_code_mutations_never_prepare_served_collection(
+        self,
+        tmp_vault_store: VaultStore,
+    ) -> None:
+        """Build-target mutations must leave an absent served table absent."""
+        from .._store_models import generation_code_collection
+
+        build_target = generation_code_collection(
+            tmp_vault_store.CODE_TABLE_NAME,
+            "a" * 32,
+        )
+        chunk = CodeChunk(
+            id="src/build.py:1-1",
+            path="src/build.py",
+            language="python",
+            content="build_target = True",
+            line_start=1,
+            line_end=1,
+            vector=[0.0] * 1024,
+        )
+
+        tmp_vault_store.upsert_code_chunks(
+            [chunk],
+            write_policy=None,
+            collection=build_target,
+        )
+        assert tmp_vault_store._client is not None
+        assert tmp_vault_store._client.collection_exists(build_target)
+        assert not tmp_vault_store._client.collection_exists(
+            tmp_vault_store.CODE_TABLE_NAME,
+        )
+        assert tmp_vault_store.count_code(collection=build_target) == 1
+
+        tmp_vault_store.delete_code_chunks([chunk.id], collection=build_target)
+
+        assert tmp_vault_store.count_code(collection=build_target) == 0
+        # Catches either table-preparation path falling back to the served
+        # collection: the old implementation creates it before the point call.
+        assert not tmp_vault_store._client.collection_exists(
+            tmp_vault_store.CODE_TABLE_NAME,
+        )
+
     def test_upsert_code_chunks(
         self,
         tmp_vault_store: VaultStore,

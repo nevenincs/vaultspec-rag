@@ -10,11 +10,13 @@ This is the retrieval that the R in RAG refers to. vaultspec-rag finds and ranks
 
 Indexing splits every document and source file into self-contained chunks. Each chunk is encoded as two vectors. A dense vector captures meaning, and a sparse vector captures exact terms. Both vectors are stored in a local vector database. At search time, vaultspec-rag encodes the query the same two ways. It fuses the two signals into one ranking by how closely each chunk matches, and a reranking model reorders the top results.
 
-Results are ranked rather than exhaustive. A query always returns its closest matches, so an exact string can rank below a looser conceptual hit. Encoding and reranking both run on the GPU, and loading those models is slow, so a [background service](service-mode.md) keeps them resident between searches. The [indexing internals](indexing.md) page names the specific models and explains how the pipeline fits together.
+Results are ranked rather than exhaustive. A query always returns its closest matches, so an exact string can rank below a looser conceptual hit. Encoding and reranking both run on the selected accelerator, and loading those models is slow, so a [background service](service-mode.md) keeps them resident between searches. The [indexing internals](indexing.md) page names the specific models and explains how the pipeline fits together.
 
-## Why a GPU is required
+## Why an accelerator is required
 
-Encoding and reranking run on the GPU, and on a CPU they are too slow to be usable. vaultspec-rag has no CPU fallback. When no GPU is present it refuses to start and reports why. The hardware floor is an NVIDIA card with CUDA support and roughly 3 GB of free GPU memory. The [installation guide](installation.md) and [configuration reference](configuration.md) carry the exact specifics.
+Encoding and reranking run on an accelerator, and vaultspec-rag has no CPU fallback. It resolves CUDA first and then Apple silicon MPS; if neither is available, startup refuses with an accelerator-required error. MPS is also refused when `PYTORCH_ENABLE_MPS_FALLBACK` enables CPU execution.
+
+CUDA uses discrete VRAM, with a load-time free-memory admission check and roughly 3 GB free as the practical floor. Apple silicon uses unified memory shared by the CPU, GPU, and the rest of the system. MPS therefore reports unified-memory allocator and recommended-working-set evidence rather than pretending it has a discrete free-VRAM value. The configured dense, sparse, and reranker models have been validated concurrently on an 8 GiB Apple silicon Mac; this is functional support, not a claim of CUDA-equivalent throughput, battery life, or thermal behavior. The [installation guide](installation.md) and [configuration reference](configuration.md) carry the exact specifics.
 
 ## Server mode versus local-only mode
 

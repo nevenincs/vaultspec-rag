@@ -52,11 +52,13 @@ if TYPE_CHECKING:
 __all__ = [
     "FAST_TIER",
     "GPU_MARKERS",
+    "MPS",
     "SLOW_TIERS",
     "SUBPROCESS_GPU",
     "TIER_MARKERS",
     "coscheduled_device_tiers",
     "coscheduled_gpu_failure_message",
+    "coscheduled_mps_tiers",
     "distributed_worker_count",
     "enforce_device_tier_isolation",
     "enforce_serial_gpu_lane",
@@ -95,6 +97,11 @@ def _is_object_list(value: object) -> TypeIs[list[object]]:
 #: Tiers whose tests require exclusive GPU access.
 GPU_MARKERS = frozenset({"integration", "quality", "performance", "robustness"})
 
+#: Real-model tests that require Apple silicon through PyTorch MPS. This is a
+#: separate hardware lane: it neither borrows the CUDA runner's resident service
+#: nor shares a selection with tests sized and coordinated for discrete VRAM.
+MPS = "mps"
+
 #: CLI subprocess tests that load their own GPU models. These must NOT
 #: co-schedule with GPU_MARKERS tests - combined VRAM exceeds 16 GB on RTX 4080.
 #: Enforced twice, because stating it beside the marker is what failed: a test
@@ -106,7 +113,7 @@ SUBPROCESS_GPU = "subprocess_gpu"
 FAST_TIER = "unit"
 
 #: Everything that does. Derived, so a new tier is named in one place.
-SLOW_TIERS = GPU_MARKERS | {SUBPROCESS_GPU, "cuda"}
+SLOW_TIERS = GPU_MARKERS | {SUBPROCESS_GPU, "cuda", MPS}
 
 #: Every collected test must declare one side of that split.
 TIER_MARKERS = SLOW_TIERS | {FAST_TIER}
@@ -325,6 +332,27 @@ def coscheduled_device_tiers(
     return subprocess_ids, resident_ids
 
 
+def coscheduled_mps_tiers(
+    items: Sequence[TieredItem],
+) -> tuple[list[str], list[str]]:
+    """Return selected MPS and non-MPS hardware test ids.
+
+    An MPS selection runs a real model stack on unified-memory Apple silicon.
+    Every other slow tier is coordinated for the CUDA fleet and must remain in
+    its own pytest session.
+    """
+    mps_ids: list[str] = []
+    other_hardware_ids: list[str] = []
+    other_hardware_tiers = SLOW_TIERS - {MPS}
+    for item in items:
+        names = _marker_names(item)
+        if MPS in names:
+            mps_ids.append(item.nodeid)
+        if names & other_hardware_tiers:
+            other_hardware_ids.append(item.nodeid)
+    return mps_ids, other_hardware_ids
+
+
 def coscheduled_gpu_failure_message(
     subprocess_ids: list[str], resident_ids: list[str]
 ) -> str:
@@ -350,13 +378,23 @@ def enforce_device_tier_isolation(items: Sequence[TieredItem]) -> None:
     """Abort the session when one selection reaches both device tiers.
 
     Raises:
-        pytest.UsageError: When the selection holds subprocess-tier and
-            resident-tier tests at once.
+        pytest.UsageError: When the selection mixes incompatible CUDA tiers,
+            or mixes the MPS tier with another hardware tier.
     """
     subprocess_ids, resident_ids = coscheduled_device_tiers(items)
     if subprocess_ids and resident_ids:
         raise pytest.UsageError(
             coscheduled_gpu_failure_message(subprocess_ids, resident_ids)
+        )
+    mps_ids, other_hardware_ids = coscheduled_mps_tiers(items)
+    if mps_ids and other_hardware_ids:
+        raise pytest.UsageError(
+            "refusing this selection: Apple silicon MPS tests must run in their "
+            "own hardware tier, separate from CUDA-coordinated tests.\n\n"
+            f"MPS tier, first few:\n{_listing(mps_ids[:3])}\n"
+            "Other hardware tier, first few:\n"
+            f"{_listing(other_hardware_ids[:3])}\n\n"
+            f"Run the MPS guard alone with `-m {MPS}`."
         )
 
 

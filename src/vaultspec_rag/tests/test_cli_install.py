@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -17,6 +19,47 @@ if TYPE_CHECKING:
     from ..commands._models import InstallReport, UninstallReport
 
 pytestmark = [pytest.mark.unit]
+
+
+def _fake_mps_torch() -> ModuleType:
+    fake_torch = ModuleType("torch")
+    fake_torch.__dict__.update(
+        version=SimpleNamespace(cuda=None),
+        cuda=SimpleNamespace(is_available=lambda: False),
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
+    )
+    return fake_torch
+
+
+def test_install_warning_refuses_enabled_mps_cpu_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from ..cli import _gpu_errors
+
+    monkeypatch.setitem(sys.modules, "torch", _fake_mps_torch())
+    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+    _gpu_errors.warn_if_active_torch_not_accelerator()
+
+    rendered = capsys.readouterr().out
+    assert "PYTORCH_ENABLE_MPS_FALLBACK" in rendered
+    assert "must be disabled" in rendered
+
+
+def test_gpu_error_reports_mps_fallback_refusal_not_missing_mps(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import typer
+
+    from .._gpu import MPS_FALLBACK_MESSAGE
+    from ..cli import _gpu_errors
+
+    with pytest.raises(typer.Exit):
+        _gpu_errors._handle_gpu_error(RuntimeError(MPS_FALLBACK_MESSAGE))
+
+    rendered = capsys.readouterr().out
+    assert "Error: Apple MPS CPU fallback must be disabled" in rendered
+    assert "PYTORCH_ENABLE_MPS_FALLBACK=1" in rendered
 
 
 class TestCpuOnlyMessageRendering:

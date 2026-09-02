@@ -17,7 +17,7 @@ def test_missing_torch_explains_cuda_provisioning(
     def missing_torch() -> object:
         raise ImportError("torch is absent")
 
-    monkeypatch.setattr(_gpu, "load_torch", missing_torch)
+    monkeypatch.setattr(_gpu, "load_accelerator", missing_torch)
 
     with pytest.raises(ImportError) as raised:
         embeddings._check_rag_deps()
@@ -44,7 +44,7 @@ def test_missing_sentence_transformers_explains_cuda_provisioning(
             return None
         return original_find_spec(name, package)
 
-    monkeypatch.setattr(_gpu, "load_torch", lambda: object())
+    monkeypatch.setattr(_gpu, "load_accelerator", lambda: object())
     monkeypatch.setattr(importlib.util, "find_spec", find_spec)
 
     with pytest.raises(ImportError) as raised:

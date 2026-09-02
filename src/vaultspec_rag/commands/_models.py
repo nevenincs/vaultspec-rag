@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from vaultspec_core.core.types import SyncResult
 
     from ._provision import ProvisionOutcome
+    from ._tool_torch import ToolTorchRepairOutcome
 
 ConfirmFn = Callable[[str], bool]
 
@@ -193,6 +194,7 @@ class InstallReport:
     # per considered dependency for the renderer to surface honestly,
     # including torch's two-phase "configured, sync pending" state.
     provision_outcome: ProvisionOutcome | None = None
+    tool_torch_repair: ToolTorchRepairOutcome | None = None
 
     @property
     def mcp_sync_failed(self) -> bool:
@@ -221,6 +223,11 @@ class InstallReport:
             "torch_direct_dep_location": self.torch_direct_dep_location,
             "torch_sync_action": self.torch_sync_action,
             "mcp_extra_action": self.mcp_extra_action,
+            "tool_torch_repair": (
+                self.tool_torch_repair.to_dict()
+                if self.tool_torch_repair is not None
+                else None
+            ),
             "provisioning": (
                 self.provision_outcome.to_dict()
                 if self.provision_outcome is not None

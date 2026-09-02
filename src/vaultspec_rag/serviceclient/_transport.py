@@ -75,6 +75,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_HEALTH_TIMEOUT_SECONDS",
+    "DEFAULT_REINDEX_TIMEOUT_SECONDS",
     "DEFAULT_SEARCH_TIMEOUT_SECONDS",
     "MAX_SERVICE_RESPONSE_BYTES",
     "ServiceUnavailableError",
@@ -119,6 +120,12 @@ DEFAULT_SEARCH_TIMEOUT_SECONDS: float = _default_seconds(
     "service_search_timeout_seconds"
 )
 DEFAULT_ADMIN_TIMEOUT_SECONDS: float = _default_seconds("service_admin_timeout_seconds")
+#: Bound for ``/reindex``. The route admits every requested domain before it
+#: queues, and code admission scans the whole tree, so this call is bounded by
+#: repository size rather than by a lifecycle round trip.
+DEFAULT_REINDEX_TIMEOUT_SECONDS: float = _default_seconds(
+    "service_reindex_timeout_seconds"
+)
 #: Bound for the health probe. Matches the command-line probe it replaces, so
 #: repointed call sites wait exactly as long as they did before.
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 5.0
@@ -406,9 +413,9 @@ def resolve_timeout(
     operator typo slows nothing down and turns no call into a crash. The
     degrade is logged; see :func:`_warn_unusable_settings`.
 
-    The admin and search bounds resolved this identically, differing only in
-    which setting they read, the word in the warning, and which default they
-    fall back to.
+    The admin, search, and reindex bounds resolve this identically, differing
+    only in which setting they read, the word in the warning, and which default
+    they fall back to.
     """
     resolved = timeout
     if timeout is None:
@@ -866,7 +873,17 @@ def _try_http_reindex(
             "project_root": project_root,
             "initiator_kind": initiator_kind,
         }
-        res = _do_http_call(port, "/reindex", payload)
+        res = _do_http_call(
+            port,
+            "/reindex",
+            payload,
+            timeout=resolve_timeout(
+                None,
+                setting="service_reindex_timeout_seconds",
+                label="reindex",
+                default=DEFAULT_REINDEX_TIMEOUT_SECONDS,
+            ),
+        )
         if res is not None:
             return res
         return {}
