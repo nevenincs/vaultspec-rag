@@ -465,26 +465,44 @@ jobs:
         continue-on-error: true
         run: just test python
 
+      # The guard below reads the machine's model cache with the Hub switched
+      # off, deliberately, so that a missing snapshot fails as a runner problem
+      # instead of quietly downloading gigabytes mid-gate. That contract needs
+      # the cache to exist, and nothing was populating it: the gate failed as
+      # "outgoing traffic has been disabled", which reads like a network
+      # outage and is really the offline read finding an empty cache.
+      #
+      # Warming it here keeps the guard's offline discipline intact and makes
+      # the precondition self-provisioning rather than a manual step somebody
+      # has to remember on a long-lived machine. The download is idempotent -
+      # a warm cache is a no-op - and the model set is read from the shipped
+      # configuration so it cannot drift from what the guard then loads.
+      - name: Warm the model cache the MPS guard reads
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          from huggingface_hub import snapshot_download
+
+          from vaultspec_rag.config._settings import get_config
+
+          config = get_config()
+          for model in (
+              config.embedding_model,
+              config.sparse_model,
+              config.reranker_model,
+          ):
+              print(f"warming {model}", flush=True)
+              snapshot_download(model)
+          PY
+
       # This is the support gate for Apple silicon. It is deliberately
       # separate from the advisory cross-platform unit result: selecting it
       # runs the configured dense, sparse, and reranker models together on
       # MPS and fails if any operation falls back to CPU or cannot run.
-      # This gate resolves the configured dense, sparse, and reranker models
-      # from the Hub, so it states its own Hub preconditions rather than
-      # inheriting whatever the persistent self-hosted machine happens to
-      # export. The offline switches are pinned off explicitly: the runner had
-      # one of them set globally, which makes the loaders pass
-      # local_files_only=True, and with nothing cached the gate failed as
-      # "outgoing traffic has been disabled" - a machine-state failure wearing
-      # the costume of a network outage. The token matches what the GPU tier
-      # already declares; the models are public, so it buys rate limit rather
-      # than access.
       - name: Run MPS acceptance guard
         env:
           PYTORCH_ENABLE_MPS_FALLBACK: "0"
-          HF_HUB_OFFLINE: "0"
-          TRANSFORMERS_OFFLINE: "0"
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: just test mps
 
   gpu-tests:
