@@ -628,8 +628,16 @@ class TestServiceDaemonHelpers:
         host answered unknown and the identity fallback had nothing to read.
         The probe must recover a distinctive token from a real child's argv
         on whichever platform this suite runs.
+
+        The witness is polled to a deadline rather than read once. ``Popen``
+        returns as soon as the child exists, which is before it has execed,
+        and the probe answers ``""`` for a process observed in that window -
+        a real answer about a real state, not unknown. Reading once races the
+        exec, and under a loaded parallel run it loses: this failed on three
+        platforms at once as ``assert 'cmdline-witness-e5b1' in ''``.
         """
         import subprocess
+        import time
 
         from .._process_probe import pid_cmdline
 
@@ -640,7 +648,13 @@ class TestServiceDaemonHelpers:
             stderr=subprocess.DEVNULL,
         )
         try:
+            deadline = time.monotonic() + 30.0
             cmdline = pid_cmdline(child.pid)
+            while (cmdline is None or token not in cmdline) and (
+                time.monotonic() < deadline
+            ):
+                time.sleep(0.05)
+                cmdline = pid_cmdline(child.pid)
             assert cmdline is not None
             assert token in cmdline
         finally:
