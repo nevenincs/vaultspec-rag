@@ -5,21 +5,31 @@ from __future__ import annotations
 import os
 import platform
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
     from pytest import MonkeyPatch
 
 pytestmark = [pytest.mark.mps, pytest.mark.timeout(600)]
 
 
+class _ResidentParameter(Protocol):
+    """The one attribute this file needs off a torch parameter."""
+
+    @property
+    def device(self) -> object: ...
+
+
 def _assert_parameters_on_mps(label: str, module: object) -> None:
     """Prove a resident model's parameters, not just its wrapper, use MPS."""
-    parameters = getattr(module, "parameters", None)
-    assert callable(parameters), f"{label} exposes no parameter iterator"
+    attribute = getattr(module, "parameters", None)
+    assert callable(attribute), f"{label} exposes no parameter iterator"
+    parameters = cast("Callable[[], Iterable[_ResidentParameter]]", attribute)
     devices = {str(parameter.device) for parameter in parameters()}
     assert devices, f"{label} exposes no resident parameters"
     assert all(device.startswith("mps") for device in devices), (
@@ -85,7 +95,7 @@ def test_configured_model_stack_runs_together_on_mps(
         _assert_parameters_on_mps("reranker", reranker.model)
         dense = model.encode_query("accelerator backend selection")
         sparse = model.encode_query_sparse("accelerator backend selection")
-        scores = reranker.predict(
+        scores = reranker.predict(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers stubs incomplete
             [("accelerator backend", "Apple silicon uses the MPS backend.")],
             batch_size=1,
             show_progress_bar=False,
