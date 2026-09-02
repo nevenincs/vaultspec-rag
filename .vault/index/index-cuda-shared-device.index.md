@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#index-cuda-shared-device'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:3aa767c50a81dbc9ec4b2e526d7ffe3fb5654f638270e641f45a0b8c08d3e028'
 related:
   - '[[2026-07-24-index-cuda-shared-device-P01-S01]]'

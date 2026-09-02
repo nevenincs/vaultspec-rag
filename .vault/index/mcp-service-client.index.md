@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#mcp-service-client'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:6959be502180054cd32d7e32c44d5bb20a66ee4473ea20f704417fee3ec7dadf'
 related:
   - '[[2026-06-18-mcp-service-client-P01-S01]]'

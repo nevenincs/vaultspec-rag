@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#jobs-tui'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:0702df6fec656033055b3e7bc449ba78b6abce3e40f7fa86f2886323c837c345'
 related:
   - '[[2026-07-27-jobs-tui-adr]]'

@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#server-first-default'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:a28a8f8d546758c202a30ba416bfe68db3a0a203b2dee6242c53f0ed63f10c6e'
 related:
   - '[[2026-06-13-server-first-default-W01-P01-S01]]'

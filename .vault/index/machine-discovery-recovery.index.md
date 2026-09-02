@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#machine-discovery-recovery'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:002481814a6b49e1950ccf95b83b2ae859d82e2fe1e069ce307b289777614f18'
 related:
   - '[[2026-07-21-machine-discovery-recovery-W01-P01-S01]]'

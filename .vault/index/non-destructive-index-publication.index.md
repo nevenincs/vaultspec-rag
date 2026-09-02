@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#non-destructive-index-publication'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:726a29efeacc6da986ee77201e76d8bac35b4410fb3ae019673d0448b594ea7c'
 related:
   - '[[2026-07-25-non-destructive-index-publication-P01-S01]]'

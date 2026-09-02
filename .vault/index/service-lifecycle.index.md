@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-lifecycle'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:557fe7b60d2d5f6c0ddb2a7f9096bbd75022d4bdcd3b761b58eb767d8f5bec4b'
 related:
   - '[[2026-05-30-service-lifecycle-adr]]'

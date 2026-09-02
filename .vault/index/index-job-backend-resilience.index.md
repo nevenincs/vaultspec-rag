@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#index-job-backend-resilience'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:d3b5314862066d007de9d7c8d82ced7c5e9bbb5c1c38d9264df13c66dbb41d0d'
 related:
   - '[[2026-07-23-index-job-backend-resilience-S01]]'

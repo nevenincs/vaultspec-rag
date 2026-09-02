@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#qdrant-store-resilience'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:177bc9d3d56838bb3f007d5b8bca2924e9be8014aa3ce06d7a12d969d09f620f'
 related:
   - '[[2026-06-30-qdrant-store-resilience-P01-S01]]'

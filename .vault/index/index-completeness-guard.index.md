@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#index-completeness-guard'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:c45a5c0d0e2bfd592ea59f4165a0b3058f9d59c6cb0ff32282eb6a4892223a00'
 related:
   - '[[2026-07-25-index-completeness-guard-P01-S01]]'

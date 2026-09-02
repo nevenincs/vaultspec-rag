@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:5432a82b4eafd11121e413be49627670f8d6b92348460c0f0ccc14220743cf5a'
 related:
   - '[[2026-08-28-platform-backend-selection-adr]]'

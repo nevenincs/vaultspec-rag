@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#runtime-performance-audit'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:4ede377e1b10be2bdc8c11f498a6b42b40ecdc9f273ba4dbd741af0108c6df86'
 related:
   - '[[2026-07-21-runtime-performance-audit-codebase-hot-paths-reference]]'

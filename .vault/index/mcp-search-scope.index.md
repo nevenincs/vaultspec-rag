@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#mcp-search-scope'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:11503233fba9f1372013776d678646d0ad98e9cd35f1493043ccdab6f0265ecb'
 related:
   - '[[2026-06-30-mcp-search-scope-adr]]'

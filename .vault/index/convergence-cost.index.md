@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#convergence-cost'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
-body_hash: 'sha256:de3abb1f736069a759c3c7861689fba9fbed110e1495af89190d7fd02106524a'
+modified: '2026-09-02'
+body_schema: 'body-v2'
+body_hash: 'sha256:09f4d0db7be25beebe0f1639959ced492f65a744b6317cb500e7747157a05c9b'
 related:
   - '[[2026-07-28-convergence-cost-P01-S01]]'
   - '[[2026-07-28-convergence-cost-P01-S02]]'
@@ -33,7 +33,7 @@ Auto-generated index of all documents tagged with `#convergence-cost`.
 
 ### audit
 
-- `2026-07-28-convergence-cost-audit` - `convergence-cost` audit: `Verification of the stat gate and scoped convergence retention`
+- `2026-07-28-convergence-cost-audit` - 2026-07-28-convergence-cost-audit
 
 ### exec
 

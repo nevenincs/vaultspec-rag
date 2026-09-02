@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-status-convergence'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:81aa3671d0efed07767853ffbf92192846b9a6dbbfd396f7bc22b78605d76105'
 related:
   - '[[2026-06-11-service-status-convergence-adr]]'

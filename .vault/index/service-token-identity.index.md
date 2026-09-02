@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-token-identity'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:711897b2756407cfb85053297697fe1b4f886beb510f570aeec39e3b04a01778'
 related:
   - '[[2026-05-31-service-token-identity-adr]]'

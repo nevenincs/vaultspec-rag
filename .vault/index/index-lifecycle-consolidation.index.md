@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#index-lifecycle-consolidation'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:2a815781f87476cbd42adf471f65c038b23da052e7c9f503d7d025d133bde515'
 related:
   - '[[2026-07-25-index-lifecycle-consolidation-S01]]'

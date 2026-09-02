@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#graceful-windows-service-stop'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:b23b37c5d199b38d8e1aa73684d36b9c714acba2877b0caf91e910d1d49a2998'
 related:
   - '[[2026-07-23-graceful-windows-service-stop-research]]'

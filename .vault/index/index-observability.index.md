@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#index-observability'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:2bac1f677d17be36d2c05505aa41b2ea7edcbd456e7dd5552b9e4f99e84cc2c1'
 related:
   - '[[2026-07-28-index-observability-adr]]'
