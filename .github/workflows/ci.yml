@@ -618,11 +618,43 @@ jobs:
       #
       # Waiting on `running` rather than sleeping a fixed interval is what
       # makes this reliable on a machine that loads its model stack at start.
+      # The service loads the configured model stack as it comes up, so it
+      # needs the same warm cache the MPS gate needs. This runner executes as
+      # SYSTEM, whose profile carries its own Hugging Face cache, and nothing
+      # was populating it - the daemon spawned and died (`start_died`) before
+      # it could report ready.
+      - name: Warm the model cache the resident service loads
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          from huggingface_hub import snapshot_download
+
+          from vaultspec_rag.config._settings import get_config
+
+          config = get_config()
+          for model in (
+              config.embedding_model,
+              config.sparse_model,
+              config.reranker_model,
+          ):
+              print(f"warming {model}", flush=True)
+              snapshot_download(model)
+          PY
+
       - name: Start the resident service the GPU tier borrows from
         shell: pwsh
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           uv run --no-sync vaultspec-rag server start --json
-          if ($LASTEXITCODE -ne 0) { throw "server start failed with $LASTEXITCODE" }
+          # A dead daemon says only `start_died` on stdout; the reason is in its
+          # own log, so surface that here rather than leaving the next reader to
+          # go and find a file on a machine they may not have.
+          if ($LASTEXITCODE -ne 0) {
+            uv run --no-sync vaultspec-rag server logs --limit 80
+            throw "server start failed with $LASTEXITCODE"
+          }
           $deadline = (Get-Date).AddMinutes(10)
           while ((Get-Date) -lt $deadline) {
             $raw = uv run --no-sync vaultspec-rag server status --json
@@ -633,6 +665,7 @@ jobs:
             if ($state -eq 'running') { exit 0 }
             Start-Sleep -Seconds 5
           }
+          uv run --no-sync vaultspec-rag server logs --limit 80
           throw "the resident service never reported running; the GPU tier cannot borrow"
 
       - name: Run GPU test tier through guarded coordinator
