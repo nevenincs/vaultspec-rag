@@ -126,7 +126,7 @@ deps target='sync':
 # Run static analysis and documentation checks.
 lint target='all':
   switch ("{{target}}") { \
-    "python" { {{uvr}} ruff check src tools ; break } \
+    "python" { {{uvr}} ruff check src tools ; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; {{uvr}} ruff format --check src tools ; break } \
     "type" { {{uvr}} python -m ty check src/vaultspec_rag tools ; break } \
     "links" { \
       if (Get-Command lychee -ErrorAction SilentlyContinue) { \
@@ -413,7 +413,7 @@ audit target='all':
 # Run project test suites.
 test target='all':
   switch ("{{target}}") { \
-    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda or mps)" ; break } \
+    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ tools -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda or mps)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "(integration or quality or robustness or cuda) and not performance and not subprocess_gpu" ; \

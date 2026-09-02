@@ -155,11 +155,22 @@ class TestInstallTorchConfig:
     def test_install_warns_when_hf_token_missing(
         self, consumer_workspace: Path, tmp_path: Path
     ) -> None:
+        # HF_TOKEN is set to the empty string rather than removed. Removing
+        # it does not survive the subprocess: ``install_run`` imports
+        # ``cli._core``, whose module body calls ``load_dotenv()``, and
+        # python-dotenv resolves ``.env`` by walking up from ``_core.py``'s
+        # own location - so a developer checkout with a populated ``.env``
+        # re-injects the real token and the warning under test never fires.
+        # ``load_dotenv`` defaults to ``override=False``, so a key that is
+        # already present is left alone, and ``huggingface_hub`` cleans the
+        # empty value to ``None``. Absent for the code under test, immovable
+        # by dotenv. CI passed either way because a fresh checkout has no
+        # ``.env``; only developer machines saw the failure.
         env: dict[str, str] = {
             **os.environ,
             "HF_HOME": str(tmp_path / "empty-hf-home"),
+            "HF_TOKEN": "",
         }
-        env.pop("HF_TOKEN", None)
         cmd: list[str] = [
             sys.executable,
             "-c",
