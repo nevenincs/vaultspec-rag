@@ -149,13 +149,20 @@ class TestPendingControl:
         self, control_service: _JobService
     ) -> None:
         # The service holds the request rather than answering it, so the test
-        # observes the window between asking and acknowledgement.
-        control_service.control_delay = 0.5
+        # observes the window between asking and acknowledgement. The hold is
+        # an event, not a delay: a window that lasts a fixed half second is one
+        # the test loses on a loaded machine, because delivering the keystroke
+        # pumps the event loop hard enough to outrun it and the stage is over
+        # before the first readable frame. Released on the observation that
+        # proves it, the window cannot close early however busy the box is.
+        answered = threading.Event()
+        control_service.control_gate = answered
         app = _app(control_service, [_job("abc123def456")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
             await pilot.press("p")
             painted = await _await_painted(pilot, app, "pause requested")
+            answered.set()
             await _settle(pilot)
 
         assert "pause requested" in painted, (

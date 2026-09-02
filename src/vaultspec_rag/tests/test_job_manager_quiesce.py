@@ -78,16 +78,31 @@ class TestGpuLockWaitTelemetry:
         assert created.job is not None
         gpu_lock = threading.Lock()
 
+        # The hold has to outlast the waiter's measurement by a known margin,
+        # and a timer started before the wait cannot promise that: every
+        # scheduling delay between starting it and blocking is subtracted from
+        # what the waiter measures, so a loaded parallel run drove the
+        # observed wait under the bound. Arming the hold from the waiter's own
+        # signal means load can only lengthen the measured wait, never shorten
+        # it, so the lower bound holds however busy the machine is.
+        about_to_wait = threading.Event()
+
+        def hold_then_release() -> None:
+            about_to_wait.wait(timeout=10.0)
+            time.sleep(0.2)
+            gpu_lock.release()
+
         def runner(context: JobAttemptContext) -> JobExecutionResult:
             del context
             gpu_lock.acquire()
-            releaser = threading.Timer(0.2, gpu_lock.release)
+            releaser = threading.Thread(target=hold_then_release, daemon=True)
             releaser.start()
             try:
+                about_to_wait.set()
                 with timed_gpu_lock(gpu_lock):
                     time.sleep(0.05)
             finally:
-                releaser.cancel()
+                releaser.join(timeout=10.0)
             return JobExecutionResult(summary="encoded")
 
         assert manager.bind_dispatch(created.job.id, runner).code == "dispatch_bound"
