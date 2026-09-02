@@ -19,12 +19,15 @@ Complete reference for the `vaultspec-rag` command line. For task-oriented walkt
 - [status](#status)
 - [install](#install)
 - [uninstall](#uninstall)
-- [test](#test)
 - [server start](#server-start)
 - [server stop](#server-stop)
 - [server status](#server-status)
 - [server doctor](#server-doctor)
 - [server warmup](#server-warmup)
+- [server pause](#server-pause)
+- [server resume](#server-resume)
+- [server preflight](#server-preflight)
+- [server reconcile](#server-reconcile)
 - [server jobs](#server-jobs)
 - [server job](#server-job)
 - [server logs](#server-logs)
@@ -42,6 +45,8 @@ Complete reference for the `vaultspec-rag` command line. For task-oriented walkt
 - [server storage prune](#server-storage-prune)
 - [server storage reconcile](#server-storage-reconcile)
 - [server storage delete](#server-storage-delete)
+- [server storage migrate](#server-storage-migrate)
+- [server storage restore](#server-storage-restore)
 - [preprocess list](#preprocess-list)
 - [preprocess check](#preprocess-check)
 - [preprocess run-one](#preprocess-run-one)
@@ -98,23 +103,23 @@ Arguments: none.
 
 Options:
 
-| Flag               | Type                              | Default | Description                                                                                                                                                                                        |
-| ------------------ | --------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--type`           | `vault\|code\|document\|combined` | `all`   | What to index: vault documentation, source code, extracted documents, or all three with `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. `--rebuild` scopes to this type. |
-| `--rebuild`        | flag                              | off     | Delete the selected index data before rebuilding. Requires an explicit `--type`; a bare `index --rebuild` is rejected.                                                                             |
-| `--dry-run`        | flag                              | off     | List the files that would be indexed without indexing them. Available for `--type code`, `--type document`, and `--type combined`; rejected for `--type vault`.                                    |
-| `--dry-run-limit`  | integer                           | `50`    | Maximum file paths shown in human dry-run output. JSON output always lists all paths. Negative values are rejected.                                                                                |
-| `--model`          | text                              | unset   | Override the embedding model name.                                                                                                                                                                 |
-| `--exclude`        | text                              | unset   | Ad-hoc exclusion pattern in gitignore syntax. Repeatable. Ignored when delegating to the service.                                                                                                  |
-| `--port`           | integer                           | unset   | Delegate to a running service on this port.                                                                                                                                                        |
-| `--allow-fallback` | flag                              | off     | Index in-process when the targeted service is unreachable instead of failing.                                                                                                                      |
-| `--no-preprocess`  | flag                              | off     | For an in-process run, load no preprocess rules (`VAULTSPEC_RAG_PREPROCESS=off`). No effect when delegating to a running service, which uses the mode it was started with.                         |
-| `--verbose`        | flag                              | off     | Show model-loading and progress output for in-process indexing.                                                                                                                                    |
-| `--json`           | flag                              | off     | Emit one JSON envelope to stdout.                                                                                                                                                                  |
+| Flag              | Type                              | Default | Description                                                                                                                                                                                        |
+| ----------------- | --------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--type`          | `vault\|code\|document\|combined` | `all`   | What to index: vault documentation, source code, extracted documents, or all three with `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. `--rebuild` scopes to this type. |
+| `--rebuild`       | flag                              | off     | Delete the selected index data before rebuilding. Requires an explicit `--type`; a bare `index --rebuild` is rejected.                                                                             |
+| `--dry-run`       | flag                              | off     | List the files that would be indexed without indexing them. Available for `--type code`, `--type document`, and `--type combined`; rejected for `--type vault`.                                    |
+| `--dry-run-limit` | integer                           | `50`    | Maximum file paths shown in human dry-run output. JSON output always lists all paths. Negative values are rejected.                                                                                |
+| `--model`         | text                              | unset   | Override the embedding model name.                                                                                                                                                                 |
+| `--exclude`       | text                              | unset   | Ad-hoc exclusion pattern in gitignore syntax. Repeatable. Ignored when delegating to the service.                                                                                                  |
+| `--port`          | integer                           | unset   | Delegate to a running service on this port.                                                                                                                                                        |
+| `--borrow-gpu`    | flag                              | off     | Acquire a borrower lease, pause a compatible running service, run this index locally, then resume the service.                                                                                     |
+| `--no-preprocess` | flag                              | off     | For an in-process run, load no preprocess rules (`VAULTSPEC_RAG_PREPROCESS=off`). No effect when delegating to a running service, which uses the mode it was started with.                         |
+| `--verbose`       | flag                              | off     | Show model-loading and progress output for in-process indexing.                                                                                                                                    |
+| `--json`          | flag                              | off     | Emit one JSON envelope to stdout.                                                                                                                                                                  |
 
 With `--port` unset, the command auto-detects a running service and delegates with fallback. Service delegation queues an async reindex job and prints `Check progress with: vaultspec-rag server jobs`. In-process indexing is incremental unless `--rebuild` is set.
 
-Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable `--port` without `--allow-fallback`; `2` for `rebuild_requires_explicit_type`, `dry_run_requires_supported_type`, `invalid_dry_run_limit`, or `preprocess_flags_conflict`. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable service (`index` has no in-process fallback flag); `2` for `rebuild_requires_explicit_type`, `dry_run_requires_supported_type`, `invalid_dry_run_limit`, or `preprocess_flags_conflict`. With `--json`, the result is one envelope on stdout.
 
 ## clean
 
@@ -151,29 +156,33 @@ Arguments:
 
 Options:
 
-| Flag                       | Type                               | Default | Description                                                                                                                                                       |
-| -------------------------- | ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--type`                   | `vault\|code\|document\|combined`  | `vault` | Search source: vault documentation, source code, extracted documents, or all three with `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. |
-| `--max-results`, `--limit` | integer                            | `10`    | Maximum number of results to return.                                                                                                                              |
-| `--scores`                 | flag                               | off     | Show numeric relevance scores on each result.                                                                                                                     |
-| `--language`               | text                               | unset   | Code filter: programming language.                                                                                                                                |
-| `--path`                   | text                               | unset   | Code filter: exact project-relative file path.                                                                                                                    |
-| `--include-path`           | text                               | unset   | Code filter: path pattern to keep matching results; a plain pattern matches that path and everything under it. Repeatable.                                        |
-| `--exclude-path`           | text                               | unset   | Code filter: path pattern to drop matching results; a plain pattern matches that path and everything under it. Repeatable.                                        |
-| `--structure`              | text                               | unset   | Code filter: parse-tree node type, for example `function_definition`.                                                                                             |
-| `--function-name`          | text                               | unset   | Code filter: function or method name.                                                                                                                             |
-| `--class-name`             | text                               | unset   | Code filter: class or struct name.                                                                                                                                |
-| `--dedup-locales`          | flag                               | off     | Code post-process: collapse near-tie locale variants into one canonical result.                                                                                   |
-| `--prefer`                 | `production\|tests\|documentation` | unset   | Code post-process: nudge matching results up after reranking.                                                                                                     |
-| `--doc-type`               | text                               | unset   | Vault filter: document type, for example `adr` or `plan`.                                                                                                         |
-| `--feature`                | text                               | unset   | Vault filter: feature tag in kebab-case.                                                                                                                          |
-| `--date`                   | text                               | unset   | Vault filter: exact ISO date (`yyyy-mm-dd`).                                                                                                                      |
-| `--tag`                    | text                               | unset   | Vault filter: tag without the leading `#`.                                                                                                                        |
-| `--port`                   | integer                            | unset   | Search through the service on this port.                                                                                                                          |
-| `--allow-fallback`         | flag                               | off     | Search in-process when the targeted service is unreachable instead of failing.                                                                                    |
-| `--timeout`                | float                              | `300`   | Connection and read budget for service-handled searches, in seconds.                                                                                              |
-| `--verbose`                | flag                               | off     | Show model-loading and progress output for in-process search.                                                                                                     |
-| `--json`                   | flag                               | off     | Emit one JSON envelope to stdout.                                                                                                                                 |
+| Flag                                    | Type                               | Default               | Description                                                                                                                                                       |
+| --------------------------------------- | ---------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--type`                                | `vault\|code\|document\|combined`  | `vault`               | Search source: vault documentation, source code, extracted documents, or all three with `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. |
+| `--max-results`, `--limit`              | integer                            | `10`                  | Maximum number of results to return.                                                                                                                              |
+| `--scores`                              | flag                               | off                   | Show numeric relevance scores on each result.                                                                                                                     |
+| `--language`                            | text                               | unset                 | Code filter: programming language.                                                                                                                                |
+| `--path`                                | text                               | unset                 | Code filter: exact project-relative file path.                                                                                                                    |
+| `--include-path`                        | text                               | unset                 | Code filter: path pattern to keep matching results; a plain pattern matches that path and everything under it. Repeatable.                                        |
+| `--exclude-path`                        | text                               | unset                 | Code filter: path pattern to drop matching results; a plain pattern matches that path and everything under it. Repeatable.                                        |
+| `--structure`                           | text                               | unset                 | Code filter: parse-tree node type, for example `function_definition`.                                                                                             |
+| `--function-name`                       | text                               | unset                 | Code filter: function or method name.                                                                                                                             |
+| `--class-name`                          | text                               | unset                 | Code filter: class or struct name.                                                                                                                                |
+| `--dedup-locales`, `--no-dedup-locales` | flag                               | configured value (on) | Code post-process: collapse matching locale files into one representative result. Pass `--no-dedup-locales` to keep them all.                                     |
+| `--prefer`                              | `production\|tests\|documentation` | unset                 | Code post-process: nudge matching results up after reranking.                                                                                                     |
+| `--doc-type`                            | text                               | unset                 | Vault filter: document type, for example `adr` or `plan`.                                                                                                         |
+| `--feature`                             | text                               | unset                 | Vault filter: feature tag in kebab-case.                                                                                                                          |
+| `--date`                                | text                               | unset                 | Vault filter: exact ISO date (`yyyy-mm-dd`).                                                                                                                      |
+| `--tag`                                 | text                               | unset                 | Vault filter: tag without the leading `#`.                                                                                                                        |
+| `--source-path`                         | text                               | unset                 | Document filter: only extracted-document results from this source path.                                                                                           |
+| `--extractor-id`                        | text                               | unset                 | Document filter: only results emitted by this extractor.                                                                                                          |
+| `--extractor-version`                   | text                               | unset                 | Document filter: only results from this extractor version.                                                                                                        |
+| `--locator-kind`                        | text                               | unset                 | Document filter: only results with this locator kind.                                                                                                             |
+| `--port`                                | integer                            | unset                 | Search through the service on this port.                                                                                                                          |
+| `--allow-fallback`                      | flag                               | off                   | Search in-process when the targeted service is unreachable instead of failing.                                                                                    |
+| `--timeout`                             | float                              | `300`                 | Connection and read budget for service-handled searches, in seconds.                                                                                              |
+| `--verbose`                             | flag                               | off                   | Show model-loading and progress output for in-process search.                                                                                                     |
+| `--json`                                | flag                               | off                   | Emit one JSON envelope to stdout.                                                                                                                                 |
 
 Output is a list of readable records, each showing a rank, a location, and the matched text. Scores appear only with `--scores`. With `--port` unset, the command auto-detects a running service and routes to it with fallback; each result carries a `via` label of `service` or `in-process`.
 
@@ -218,6 +227,7 @@ Options:
 | `--yes`, `-y`                          | flag                    | off                       | Skip the PyTorch config prompt. Required for non-interactive installs unless `--no-torch-config` is set.                                                                                                                                                                                                                                                                                                                                   |
 | `--sync`                               | flag                    | off                       | Run `uv sync --reinstall-package torch` after the torch source is configured.                                                                                                                                                                                                                                                                                                                                                              |
 | `--provision` / `--no-provision`       | flag                    | `--provision`             | Provision external dependencies after enrollment. `--no-provision` sets up the workspace only.                                                                                                                                                                                                                                                                                                                                             |
+| `--mcp` / `--no-mcp`                   | flag                    | `--mcp`                   | Enroll the agent-facing MCP search surface and reconcile its optional dependency. `--no-mcp` sets up a CLI-only workspace without the `mcp` dependency, and on Windows without `pywin32`.                                                                                                                                                                                                                                                  |
 | `--local-only`                         | flag                    | off                       | Use the on-disk store: skips the Qdrant binary download and persists the local backend so a later `server start` honors it.                                                                                                                                                                                                                                                                                                                |
 | `--skip-torch`                         | flag                    | off                       | Skip the PyTorch provisioning step.                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--skip-models`                        | flag                    | off                       | Skip the model provisioning step.                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -290,10 +300,11 @@ Arguments: none.
 
 Options:
 
-| Flag     | Type    | Default | Description                                                                                                                                                    |
-| -------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--port` | integer | unset   | Stop the service answering on this port, resolving its identity from `/health` instead of the status file (for a non-default port or a divergent status file). |
-| `--json` | flag    | off     | Emit one machine-readable outcome envelope per exit path.                                                                                                      |
+| Flag        | Type    | Default | Description                                                                                                                                                                                                                                                                                 |
+| ----------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--port`    | integer | unset   | Stop the service answering on this port, resolving its identity from `/health` instead of the status file (for a non-default port or a divergent status file).                                                                                                                              |
+| `--orphans` | flag    | off     | Also reap surplus daemons that lost the machine-singleton race and linger holding no port, lock, or discovery pointer, invisible to a normal stop. Confirm-then-reap, scoped to this singleton's port; the live singleton, isolated-config, and foreign-worktree daemons are always spared. |
+| `--json`    | flag    | off     | Emit one machine-readable outcome envelope per exit path.                                                                                                                                                                                                                                   |
 
 Exit/JSON: `0` for every satisfied outcome - `stopped`, `already_stopped` (nothing to stop; the idempotent success), `cleaned` (a stale status file for a confirmed-dead PID was removed), and `reclaimed` (a lock holder without a status file was terminated); `1` for `identity_unconfirmed`, the one failure - a live recorded process whose identity could not be confirmed is left running, in both output modes.
 
@@ -432,6 +443,84 @@ Act on one job by id - the singular `job`, distinct from the plural `server jobs
 | `delete <job-id>` |               | Delete one terminal job from retained history.                                                                                             |
 
 Exit/JSON: `0` on success; non-zero when the target job id is unknown or ambiguous, or the service is not running. With `--json`, each subcommand emits one envelope on stdout.
+
+## server pause
+
+`vaultspec-rag server pause`
+
+Hold the running service at safe checkpoints without stopping it. In-flight work
+reaches a checkpoint and waits there, so nothing races a maintenance operation.
+Use it before maintenance that must not overlap indexing.
+
+Arguments: none.
+
+Options:
+
+| Flag     | Type    | Default | Description                       |
+| -------- | ------- | ------- | --------------------------------- |
+| `--port` | integer | unset   | Target a specific service port.   |
+| `--json` | flag    | off     | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` on success; non-zero when the service is not running. Release the
+hold with [`server resume`](#server-resume).
+
+## server resume
+
+`vaultspec-rag server resume`
+
+Release a service paused by [`server pause`](#server-pause) and let checkpointed
+work continue.
+
+Arguments: none.
+
+Options:
+
+| Flag     | Type    | Default | Description                       |
+| -------- | ------- | ------- | --------------------------------- |
+| `--port` | integer | unset   | Target a specific service port.   |
+| `--json` | flag    | off     | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` on success; non-zero when the service is not running.
+
+## server preflight
+
+`vaultspec-rag server preflight`
+
+Report whether the service is quiet and what capacity the device has, without
+authorizing any GPU work. Reading it changes nothing, which is what separates it
+from the commands that acquire a lease.
+
+Arguments: none.
+
+Options:
+
+| Flag     | Type    | Default | Description                       |
+| -------- | ------- | ------- | --------------------------------- |
+| `--port` | integer | unset   | Target a specific service port.   |
+| `--json` | flag    | off     | Emit one JSON envelope to stdout. |
+
+Exit/JSON: `0` on success; non-zero when the service is not running.
+
+## server reconcile
+
+`vaultspec-rag server reconcile`
+
+Wait for the running service to republish its discovery records. Nothing is
+written, deleted, stopped, or restarted, so it is safe to run against a live
+service. Reach for it when discovery looks stale and you want to know whether it
+settles on its own before intervening.
+
+Arguments: none.
+
+Options:
+
+| Flag        | Type  | Default | Description                                                              |
+| ----------- | ----- | ------- | ------------------------------------------------------------------------ |
+| `--timeout` | float | `35.0`  | Seconds to wait for convergence before reporting the records unresolved. |
+| `--json`    | flag  | off     | Emit one JSON envelope to stdout. Exit codes are unchanged.              |
+
+Exit/JSON: `0` once discovery agrees; `1` if it does not converge within the
+timeout. See the [service discovery guide](service-discovery.md).
 
 ## server logs
 
@@ -715,11 +804,12 @@ Arguments: none.
 
 Options:
 
-| Flag        | Type | Default | Description                                                                            |
-| ----------- | ---- | ------- | -------------------------------------------------------------------------------------- |
-| `--dry-run` | flag | off     | Preview the exact target namespaces without deleting anything.                         |
-| `--yes`     | flag | off     | Apply the prune. Without it the command prints the preview.                            |
-| `--json`    | flag | off     | Emit one JSON envelope to stdout. Requires `--yes` (no prompt may corrupt the stream). |
+| Flag        | Type | Default | Description                                                                                                                                |
+| ----------- | ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--dry-run` | flag | off     | Preview the exact target namespaces without deleting anything.                                                                             |
+| `--yes`     | flag | off     | Apply the prune. Without it the command prints the preview.                                                                                |
+| `--debris`  | flag | off     | Also remove config-less collection directories left behind by crashes. These are unloadable by the server, so this is a filesystem delete. |
+| `--json`    | flag | off     | Emit one JSON envelope to stdout. Requires `--yes` (no prompt may corrupt the stream).                                                     |
 
 Exit/JSON: `0` on success; `2` when server mode is off or `--json` lacks `--yes`; `3` when the managed server is unreachable.
 
@@ -766,6 +856,59 @@ Options:
 | `--json`          | flag | off     | Emit one JSON envelope to stdout. Requires `--yes`.                                                                                     |
 
 Exit/JSON: `0` on success, an `already_absent` no-op, or a skipped target; `1` when a non-dry-run preview finds a target but `--yes` was not given; `2` when server mode is off, both/neither of `PREFIX` and `--root` were given, or `--json` lacks `--yes`; `3` when the managed server is unreachable.
+
+## server storage migrate
+
+`vaultspec-rag server storage migrate <root> --to <backend>`
+
+Move one root's index between the managed server and the local on-disk store.
+Switching the backend selection does not move existing data; this is what
+carries it across.
+
+Arguments:
+
+| Name   | Required | Description                                |
+| ------ | -------- | ------------------------------------------ |
+| `root` | yes      | The workspace root whose index to migrate. |
+
+Options:
+
+| Flag          | Type            | Default  | Description                                         |
+| ------------- | --------------- | -------- | --------------------------------------------------- |
+| `--to`        | `server\|local` | required | Target backend.                                     |
+| `--yes`, `-y` | flag            | off      | Apply the migration. Without it, nothing is copied. |
+| `--dry-run`   | flag            | off      | Preview without copying.                            |
+| `--json`      | flag            | off      | Emit one JSON envelope to stdout.                   |
+
+Migration copies rather than moves, so the source data survives the run. See the
+[storage and maintenance guide](storage-maintenance.md).
+
+## server storage restore
+
+`vaultspec-rag server storage restore <archive> --root <path>`
+
+Restore an archived namespace into a named destination root. The destination
+must hold no collections, and there is no override, so a restore can never
+overwrite a live index.
+
+Arguments:
+
+| Name      | Required | Description                                                  |
+| --------- | -------- | ------------------------------------------------------------ |
+| `archive` | yes      | Path to the archive directory holding the snapshot manifest. |
+
+Options:
+
+| Flag          | Type | Default  | Description                                               |
+| ------------- | ---- | -------- | --------------------------------------------------------- |
+| `--root`      | text | required | Destination root path the restored namespace is keyed to. |
+| `--yes`, `-y` | flag | off      | Apply the restore.                                        |
+| `--dry-run`   | flag | off      | Preview the destination collections without writing.      |
+| `--json`      | flag | off      | Emit one JSON envelope to stdout.                         |
+
+This is the counterpart to the archives that reclamation writes before deleting
+a data-bearing namespace. See the
+[storage and maintenance guide](storage-maintenance.md).
 
 ## preprocess list
 
