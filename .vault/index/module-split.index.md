@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#module-split'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:ce2aaf727163fee8f64c29e77130dc2b4164a4735295a08fc0596786112fb5fe'
 related:
   - '[[2026-06-01-module-split-P07-S07]]'

@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#code-stands-alone-boundary'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:6d90b734410a5c50809f55eca4d2824b05180fa2d63167157b2192cfe7019916'
 related:
   - '[[2026-07-22-code-stands-alone-boundary-plan]]'

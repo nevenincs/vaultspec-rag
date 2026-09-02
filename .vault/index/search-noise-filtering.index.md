@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#search-noise-filtering'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:1de8c4ee1e905c4b4a62dddf68d3dd2ce0921c1353ddce229751b2ff37f29f5f'
 related:
   - '[[2026-06-30-search-noise-filtering-P01-S01]]'

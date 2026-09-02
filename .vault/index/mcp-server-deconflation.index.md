@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#mcp-server-deconflation'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:2742e85a233c6b86b89d82fec6de647a030c621bf3db255731c3c854db0e760e'
 related:
   - '[[2026-06-07-mcp-server-deconflation-P01-S01]]'

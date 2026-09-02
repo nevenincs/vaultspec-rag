@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#install-cuda'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:915f20175a32498f2aabd70bbc0f9b19cb41f3be355019b0dbb951314e241731'
 related:
   - '[[2026-04-22-install-cuda-adr]]'

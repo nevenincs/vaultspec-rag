@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#index-perf-hardening'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:7cb040da62abfd35ca85021bebb7a48603b2c898706bae18657808dffde99082'
 related:
   - '[[2026-06-02-index-perf-hardening-P01-S01]]'

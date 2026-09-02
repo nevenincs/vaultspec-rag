@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-first-search-fallback'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:53703f635986eeee58937596099861f534d8c614b17266bd788287922b92631c'
 related:
   - '[[2026-06-21-service-first-search-fallback-S01]]'

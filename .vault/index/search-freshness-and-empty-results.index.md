@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#search-freshness-and-empty-results'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:ad79f28f96a506623815ecc975fdaef391ea217be9a2a24bc76e14b6cf93726d'
 related:
   - '[[2026-06-11-search-freshness-and-empty-results-adr]]'

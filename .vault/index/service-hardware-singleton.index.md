@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-hardware-singleton'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:d43699afc0aaefee7283909710dd90180f506662f2edebc7c9ea73b0ea27cfc7'
 related:
   - '[[2026-06-24-service-hardware-singleton-W01-P01-S01]]'

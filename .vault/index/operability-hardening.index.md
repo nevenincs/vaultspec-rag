@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#operability-hardening'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:9b89038813a578262f644ec3a522191af99da45fefbdd277aa454270e2029100'
 related:
   - '[[2026-06-09-operability-hardening-W01-P01-S01]]'
