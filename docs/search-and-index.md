@@ -8,6 +8,13 @@ This guide assumes the workspace is installed and provisioned. If it isn't, see 
 
 ## Run a search
 
+Nothing is searchable until the index exists. If this is a new project, run
+[Build and refresh the index](#build-and-refresh-the-index) first.
+
+How you phrase a query matters more than any filter here: pair a short
+description of the behavior with the concrete words the target would contain.
+[Writing a query](query-craft.md) covers it properly.
+
 Search defaults to your vault documents:
 
 ```
@@ -29,7 +36,7 @@ uv run vaultspec-rag search "where is this policy implemented" --type combined
 ```
 
 `docs` remains an alias for `vault`, `codebase` remains an alias for `code`, and `all`
-remains an alias for `combined`. Unknown source types are rejected rather than falling
+remains an alias for `combined`. The command rejects unknown source types rather than falling
 back to another corpus. A combined response preserves an outcome for every domain. If
 only some domains fail, successful results return with `partial=true`; if all three fail,
 the command reports a failure instead of an empty success.
@@ -61,13 +68,15 @@ uv run vaultspec-rag search "lock ordering" --type code \
 
 A pattern with no glob character names a location, and matches that path and everything beneath it, so `--include-path src/vaultspec_rag/indexer` and `--include-path "src/vaultspec_rag/indexer/**"` select the same subtree. Repeating a pattern unions the selections.
 
-The same narrowing is available inside the query string as a `path:` token, which is the form to reach for when the search travels as one string - through an agent, or the MCP tools:
+The query string takes the same narrowing as a `path:` token. Reach for that form
+when the search travels as one string, through an agent or the Model Context
+Protocol (MCP) tools:
 
 ```
 uv run vaultspec-rag search "reopen a drifted indexed path path:src/vaultspec_rag/indexer/" --type code
 ```
 
-Patterns are matched against indexed project-relative paths, not against files on disk. When a pattern excludes every candidate the query matched, the empty result says so and names the pattern rather than reporting a plain no-match.
+Patterns match indexed project-relative paths, not files on disk. When a pattern excludes every candidate the query matched, the empty result says so and names the pattern rather than reporting a plain no-match.
 
 These flags apply to code only. Passing them with a vault search is a usage error.
 
@@ -113,67 +122,6 @@ uv run vaultspec-rag search "concurrency" --tag adr
 
 Pass `--date` as `yyyy-mm-dd`, and pass `--tag` without the leading `#`.
 
-## Filter code noise by category
-
-Every code chunk is assigned a noise *category* from its path. This is the axis
-you use to cut noise within the code domain:
-
-| Category    | What it covers                                                        |
-| ----------- | --------------------------------------------------------------------- |
-| `prod`      | Production source - what a search usually wants                       |
-| `tests`     | Test files and directories (`tests/`, `*_test.*`, `conftest.py`, ...) |
-| `docs`      | Documentation (`docs/`, `README*`, `*.md`/`*.rst`)                    |
-| `locale`    | Localisation tables (`locales/`, `i18n/`, `<lang>.yml`, ...)          |
-| `generated` | Machine-emitted files (`*_pb2.py`, `*.min.js`, `__generated__/`, ...) |
-| `vendored`  | Third-party trees (`vendor/`, `dist/`, `node_modules/`, ...)          |
-| `worktree`  | Agent worktree clones that duplicate the real source                  |
-
-By default the search keeps production first: it hides the duplicate and
-derivative trees (`generated` output and `worktree` clones - clones are also
-skipped at index time), demotes `tests`, `docs`, `locale`, and `vendored` so
-they sit below production rather than crowding it, and collapses locale
-duplicates. When a query still returns noise, narrow by category rather than
-raising `--max-results` and reading past the noise.
-
-Steer a single search with inline query tokens. They ride in the query string,
-so they need no flags and pass through the running service unchanged; values are
-comma-separated and repeatable.
-
-```
-# Hide one noise category for this search
-uv run vaultspec-rag search "retry backoff policy exclude:tests" --type code
-
-# Hide several at once (comma-separated, or repeat the token)
-uv run vaultspec-rag search "payment capture flow exclude:tests,docs,vendored" --type code
-
-# Restrict to one or more categories - e.g. find only the tests for a behaviour
-uv run vaultspec-rag search "fixture setup helpers only:tests" --type code
-
-# Re-admit a category the profile hides or demotes by default
-uv run vaultspec-rag search "translation table lookup include:locale" --type code
-```
-
-Category tokens compose with the path and locale controls, so you can
-scope precisely:
-
-```
-# Production code under one subtree, with the legacy tree removed
-uv run vaultspec-rag search "auth handler exclude:tests" --type code \
-  --include-path "src/**" --exclude-path "**/legacy/**"
-
-# Bias toward tests while still showing production below them
-uv run vaultspec-rag search "encode batch" --type code --prefer tests
-
-# Keep every locale variant for a translation audit
-uv run vaultspec-rag search "greeting string include:locale" --type code --no-dedup-locales
-```
-
-The `search_codebase` MCP tool exposes the same control as typed
-`exclude_domains` / `only_domains` / `include_domains` parameters. Set the
-per-project defaults - which categories hide, which demote, and how hard - with the
-`code_noise_hide_domains`, `code_noise_demote_domains`, and
-`code_noise_demote_penalty` configuration knobs (see the configuration guide).
-
 ## Collapse locale duplicates
 
 Locale-variant collapse is on by default. Turn it off for a search with
@@ -191,46 +139,88 @@ To bias a code search toward one kind of file, use `--prefer` with `production`,
 uv run vaultspec-rag search "encode batch" --type code --prefer production
 ```
 
-## Filter flag summary
+## Filter noise by domain
 
-| Flag                                        | Applies to | What it does                                               |
-| ------------------------------------------- | ---------- | ---------------------------------------------------------- |
-| `--type vault\|code\|document\|combined`    | all        | Chooses one domain or all three; defaults to vault         |
-| `--max-results` / `--limit`                 | all        | Sets how many results return; defaults to 10               |
-| `--scores`                                  | all        | Shows numeric relevance scores beside each record          |
-| `--include-path`                            | code       | Keeps only paths matching a pattern; repeatable            |
-| `--exclude-path`                            | code       | Drops paths matching a pattern; repeatable                 |
-| `--language`                                | code       | Keeps results in one programming language                  |
-| `--structure`                               | code       | Keeps results matching one parse-tree node type            |
-| `--function-name`                           | code       | Keeps results in a function of this name                   |
-| `--class-name`                              | code       | Keeps results in a class of this name                      |
-| `--path`                                    | code       | Keeps results from one exact project-relative path         |
-| `--dedup-locales` / `--no-dedup-locales`    | code       | Forces locale-duplicate collapse on or off (on by default) |
-| `--prefer production\|tests\|documentation` | code       | Biases results toward one kind of file                     |
-| `exclude:<domains>` (query token)           | code       | Hides one or more noise domains for this search            |
-| `only:<domains>` (query token)              | code       | Restricts results to the named domains                     |
-| `include:<domains>` (query token)           | code       | Re-admits a domain the profile hides or demotes by default |
-| `--doc-type`                                | vault      | Keeps documents of one type                                |
-| `--feature`                                 | vault      | Keeps documents tagged with one feature                    |
-| `--date`                                    | vault      | Keeps documents from one `yyyy-mm-dd` date                 |
-| `--tag`                                     | vault      | Keeps documents carrying one tag (no leading `#`)          |
-| `--preprocessor-id`                         | document   | Keeps output from one extractor identity                   |
-| `--extractor-version`                       | document   | Keeps output from one extractor version                    |
+Each code chunk gets a *noise domain* from its path. This is the axis you use to
+cut noise inside the code content domain. The [glossary](glossary.md) covers both
+senses of the word: `--type` selects a content domain, while the tokens here
+select noise domains.
+
+| Noise domain | What it covers                                                          |
+| ------------ | ----------------------------------------------------------------------- |
+| `prod`       | Production source - what a search usually wants                         |
+| `tests`      | Test files and directories, such as `tests/`, `*_test.*`, `conftest.py` |
+| `docs`       | Documentation (`docs/`, `README*`, `*.md`/`*.rst`)                      |
+| `locale`     | Localization tables, such as `locales/`, `i18n/`, `<lang>.yml`          |
+| `generated`  | Machine-emitted files, such as `*_pb2.py`, `*.min.js`, `__generated__/` |
+| `vendored`   | Third-party trees, such as `vendor/`, `dist/`, `node_modules/`          |
+| `worktree`   | Agent worktree clones that duplicate the real source                    |
+
+By default, the search keeps production first. It hides `generated` output and
+`worktree` clones, demotes `tests`, `docs`, `locale`, and `vendored` below
+production, and collapses locale duplicates. Worktree clones are also skipped at
+index time.
+
+When a query still returns noise, narrow by domain rather than raising
+`--max-results` and reading past it.
+
+Steer a single search with inline query tokens. They ride in the query string, so
+they need no flags and pass through the running service unchanged. Values are
+comma-separated and repeatable.
+
+```
+# Hide one noise domain for this search
+uv run vaultspec-rag search "retry backoff policy exclude:tests" --type code
+
+# Hide several at once (comma-separated, or repeat the token)
+uv run vaultspec-rag search "payment capture flow exclude:tests,docs,vendored" --type code
+
+# Restrict to one or more domains - for example, find only the tests for a behavior
+uv run vaultspec-rag search "fixture setup helpers only:tests" --type code
+
+# Re-admit a domain the profile hides or demotes by default
+uv run vaultspec-rag search "translation table lookup include:locale" --type code
+```
+
+Domain tokens compose with the path and locale controls, so you can
+scope precisely:
+
+```
+# Production code under one subtree, with the legacy tree removed
+uv run vaultspec-rag search "auth handler exclude:tests" --type code \
+  --include-path "src/**" --exclude-path "**/legacy/**"
+
+# Bias toward tests while still showing production below them
+uv run vaultspec-rag search "encode batch" --type code --prefer tests
+
+# Keep every locale variant for a translation audit
+uv run vaultspec-rag search "greeting string include:locale" --type code --no-dedup-locales
+```
+
+The `search_codebase` MCP tool exposes the same control as typed
+`exclude_domains` / `only_domains` / `include_domains` parameters. Set the
+per-project defaults, meaning which domains hide, which demote, and how hard, with the
+`code_noise_hide_domains`, `code_noise_demote_domains`, and
+`code_noise_demote_penalty` configuration settings (see the configuration guide).
+
+## Every filter in one place
+
+The [CLI reference](cli.md) lists every search flag with its type, default, and
+which content domain it applies to. The sections here cover the ones you reach
+for most.
 
 ## Use the service and MCP surfaces
 
-The resident service owns the same closed source vocabulary on `POST /search`,
-`POST /reindex`, and `POST /clean`. Send `vault`, `code`, `document`, or `combined` as
-the source; service requests do not accept aliases. `GET /readiness` and the service
-status surface report independent document counts, policy fingerprints, generation
-state, support profiles, and degraded reasons without loading a model on the reporting
-path.
+The running service accepts the same fixed set of source names on `POST /search`,
+`POST /reindex`, and `POST /clean`. Send `vault`, `code`, `document`, or `combined`.
+Service requests don't accept the CLI aliases. `GET /readiness` reports per-domain
+document counts and health without loading a model.
 
-MCP exposes `search_documents`, `search_combined`, `reindex_documents`, `reindex_all`,
-`clean_documents`, `clean_all`, and `get_index_status` alongside the existing vault and
-code tools. Combined operations retain one outcome per domain, including failures. A
-domain admission failure therefore does not erase a valid job or result from another
-domain, while a complete failure remains a visible error.
+An assistant reaches the same operations through MCP.
+Combined operations keep one outcome per content domain, including failures, so a
+failure in one domain never erases a valid result from another. See
+[MCP integration](mcp.md) for the tool list and
+[service mode](service-mode.md) for operating the service.
 
 ## Build and refresh the index
 
@@ -257,7 +247,7 @@ uv run vaultspec-rag index --type code
 uv run vaultspec-rag index --type document
 ```
 
-Code admission is not a recursive “all readable files” scan. It follows the configured
+Code admission is not a recursive "all readable files" scan. It follows the configured
 source profile and explicit project routing. Configure non-source extraction and its
 owner in [preprocessing hooks](preprocessing-hooks.md).
 
@@ -284,7 +274,7 @@ uv run vaultspec-rag clean document --yes
 uv run vaultspec-rag clean combined --yes
 ```
 
-The target is required, so no corpus is removed unless you name it. `clean` doesn't load models or touch the GPU.
+The target is required, so `clean` removes a corpus only when you name it. `clean` doesn't load models or touch the GPU.
 
 ## Where to go next
 
@@ -292,4 +282,6 @@ The target is required, so no corpus is removed unless you name it. `clean` does
 - Every command, flag, and exit code: [CLI reference](cli.md).
 - Tune defaults like result counts, batch sizes, and the data directory: [configuration](configuration.md).
 
-For more help, see [support and help](../README.md#status-and-help).
+## Getting help
+
+The [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues) takes questions as well as bug reports.
