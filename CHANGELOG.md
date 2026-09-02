@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.4.22](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.21...vaultspec-rag-v0.4.22) (2026-09-02)
+
+
+### Features
+
+* **accelerator:** add Apple silicon MPS support ([1e0bd90](https://github.com/nevenincs/vaultspec-rag/commit/1e0bd90d5f22aba2bcef9878fab4a495729d1ce4))
+* **accelerator:** add Apple silicon MPS support ([a262513](https://github.com/nevenincs/vaultspec-rag/commit/a262513745274a497c69c861a332c92cded378d6))
+
+
+### Bug Fixes
+
+* **accelerator:** complete canonical preflight migration ([1804666](https://github.com/nevenincs/vaultspec-rag/commit/18046663a9c24c4ea33b47e20974a7e0b1ccb6f6))
+* **ci:** close the three blind spots that hid the tools collection crash ([730c084](https://github.com/nevenincs/vaultspec-rag/commit/730c084b09c934bc055190e890a24f1fe1c07588))
+* **ci:** close the three blind spots that hid the tools collection crash ([78c4061](https://github.com/nevenincs/vaultspec-rag/commit/78c4061e4181b58e86a4f1e80f7f37ca4d8b4bbe))
+* **ci:** give the GPU tier the resident service it borrows the card from ([b71b281](https://github.com/nevenincs/vaultspec-rag/commit/b71b2819db08f0b5246feb0fb35a89e65baf68c7))
+* **ci:** make the MPS gate declare its own Hub preconditions ([bc85e48](https://github.com/nevenincs/vaultspec-rag/commit/bc85e48ddeac8c2207b7c06f30cc171ec9af23d6))
+* **ci:** provision the MPS model cache and close two timing races ([553dd91](https://github.com/nevenincs/vaultspec-rag/commit/553dd91423bae3a87654523033249deac3ae347e))
+* **ci:** provision the Qdrant binary the GPU tier refuses to run without ([06e2995](https://github.com/nevenincs/vaultspec-rag/commit/06e2995af0ff101d2b3bf36b0b05926bd5658b51))
+* **ci:** repair the three gates the docs pass and its new suite left red ([3ad42ce](https://github.com/nevenincs/vaultspec-rag/commit/3ad42ce8db59c700e8e4e57258bb9a6e72344c65))
+* complete durable CUDA tool repair ([e193a6e](https://github.com/nevenincs/vaultspec-rag/commit/e193a6e3392ce923206773798752c406f2fb15d8))
+* derive durable tool repair from builtin spec ([edf4e13](https://github.com/nevenincs/vaultspec-rag/commit/edf4e13f7f7d6643429e5685fb0adce635df7f3c))
+* **docs:** clear the citation gate and vault markdown gates on main ([804b8ae](https://github.com/nevenincs/vaultspec-rag/commit/804b8ae255d554c38481863fb08a756378288936))
+* durable CUDA in uv tool installs ([#443](https://github.com/nevenincs/vaultspec-rag/issues/443)) ([bb5f053](https://github.com/nevenincs/vaultspec-rag/commit/bb5f0532c8681a0640e06aa9745a63f41b1e8250))
+* **indexer:** account for superseded points in ingest barrier ([a6d6a0c](https://github.com/nevenincs/vaultspec-rag/commit/a6d6a0c2286eeb87c63f234f01dd967a668cb937))
+* **indexer:** atomically retire retained outcomes ([432c335](https://github.com/nevenincs/vaultspec-rag/commit/432c335602e282a89b6609a47a4f7526c5cf925b))
+* **indexer:** bind cleanup to generation target ([2281097](https://github.com/nevenincs/vaultspec-rag/commit/2281097216af76dcd4c688f67ca3f30b0807e7cb))
+* **indexer:** forget a vanished path this generation never gathered evidence for ([4ae3c54](https://github.com/nevenincs/vaultspec-rag/commit/4ae3c54efa4d412e37086d8e3b8d9c33b7bc8217))
+* **indexer:** forget a vanished path this generation never gathered evidence for ([9845699](https://github.com/nevenincs/vaultspec-rag/commit/98456995377bac5c256cd63c652cbe3ed61cff50))
+* **indexer:** generation accounting — recovered from an unpushed local branch ([111aa46](https://github.com/nevenincs/vaultspec-rag/commit/111aa462514c7558d225ac7ed3127a48cf8754a8))
+* **indexer:** honour on_error=skip instead of ending the run on a skip ([7e82ed3](https://github.com/nevenincs/vaultspec-rag/commit/7e82ed32fc0cf68c448b493c5acc3cdfda08a25d))
+* **indexer:** honour on_error=skip instead of ending the run on a skip ([6e69906](https://github.com/nevenincs/vaultspec-rag/commit/6e69906b42db92dfc9fc03735f6f87605b9746f6))
+* **indexer:** make on_error=skip survive the run, from one rule stated once ([7f056dc](https://github.com/nevenincs/vaultspec-rag/commit/7f056dcce3764ff431b0302b45c90b4d618f08fd))
+* **indexer:** make on_error=skip survive the run, from one rule stated once ([d80cfef](https://github.com/nevenincs/vaultspec-rag/commit/d80cfef76800ab1008f39e8c51719f46ced50a31))
+* **indexer:** retire retained empty sources ([59e4fcd](https://github.com/nevenincs/vaultspec-rag/commit/59e4fcd3dff140ba6185308763c8493c519fd6a6))
+* **indexer:** retire retained outcomes before finalization ([a5d6d4a](https://github.com/nevenincs/vaultspec-rag/commit/a5d6d4abd08dbb68e8dc04316adac328771a2b3b))
+* **indexer:** scope clean generation cleanup ([4ac5f3b](https://github.com/nevenincs/vaultspec-rag/commit/4ac5f3bb2448515eb26fb8e66405309bf53248eb))
+* **indexer:** scope clean generation reconciliation ([fb48283](https://github.com/nevenincs/vaultspec-rag/commit/fb48283fb37a3cfa0621ef16e2bc151369450c1f))
+* **indexer:** survive a file deleted before the support measurement stats it ([2540b9f](https://github.com/nevenincs/vaultspec-rag/commit/2540b9f73b5179e55d4d544bcada186e016a2351))
+* **indexer:** survive a file deleted before the support measurement stats it ([03dbb46](https://github.com/nevenincs/vaultspec-rag/commit/03dbb46d8d118987127a0f78e6b8570236285b57))
+* **indexer:** validate resumed build target ([27c3807](https://github.com/nevenincs/vaultspec-rag/commit/27c3807d6eaf3308018037070e05c4fb42335b80))
+* **indexer:** withdraw the skip convergence; it moved the failure, not fixed it ([c5bdc18](https://github.com/nevenincs/vaultspec-rag/commit/c5bdc1853f0b3bb70c1a00026c0fbea7568f86e2))
+* **indexer:** withdraw the skip convergence; it moved the failure, not fixed it ([acd2396](https://github.com/nevenincs/vaultspec-rag/commit/acd239617ccc8fd030515d5095f566a2ec9859f3))
+* limit tool CUDA repair to torch defects ([364ecc0](https://github.com/nevenincs/vaultspec-rag/commit/364ecc0f4020a708f7fe5fc5b767308c8bc2f13c))
+* parse durable CUDA tool receipts ([8456fad](https://github.com/nevenincs/vaultspec-rag/commit/8456fad1fa84cc1a3496b4dbbfcb34f706d0a73a))
+* **progress:** fall back on dumb terminals ([d20b335](https://github.com/nevenincs/vaultspec-rag/commit/d20b335e36a4d517bd1ac4d43050639f26944fe3))
+* reconcile remaining GPU-less install footprint change ([ad993a8](https://github.com/nevenincs/vaultspec-rag/commit/ad993a84992edeabdcd6e2fd3a2ff5a152e043a4))
+* reduce GPU-less install footprint ([55457f7](https://github.com/nevenincs/vaultspec-rag/commit/55457f7dc324a6f28638f00b8cead6b011bd485b))
+* reduce GPU-less install footprint ([be45e44](https://github.com/nevenincs/vaultspec-rag/commit/be45e44d2b19e09bffa342b654d82f62ff261928))
+* reduce GPU-less install footprint ([b227880](https://github.com/nevenincs/vaultspec-rag/commit/b227880588af11ca3d39a39b68c63a6437ba8bff))
+* repair CUDA torch in uv tool installs ([7438564](https://github.com/nevenincs/vaultspec-rag/commit/743856435eab6b260fac0a76d232900df0a0a5d1))
+* **serviceclient:** resolve reindex timeout at request time ([fdae4b1](https://github.com/nevenincs/vaultspec-rag/commit/fdae4b1cd5a00da667a642550e3db9afced10249))
+* **storage:** retain root through prefix deletion ([06bd048](https://github.com/nevenincs/vaultspec-rag/commit/06bd0484e797dd0a736d9e9f96645a8ad0126fa6))
+* **store:** preserve explicit code collection preparation ([e0232e6](https://github.com/nevenincs/vaultspec-rag/commit/e0232e6a8d776b604651000394a8781cdd369617))
+* **tests:** reclaim session roots without destroying failure evidence ([404e9e2](https://github.com/nevenincs/vaultspec-rag/commit/404e9e2bb82424460138d703246ca84fe334a8e6))
+* **tests:** reclaim session roots without destroying failure evidence ([f7a19bf](https://github.com/nevenincs/vaultspec-rag/commit/f7a19bf9ddab7aea03f451249d2713c6f5249ce0))
+* **tests:** stop tools/packaging shadowing the packaging distribution ([f837bf1](https://github.com/nevenincs/vaultspec-rag/commit/f837bf1e2dedac39842ae714b908e5a250d60f6e))
+* **tests:** stop tools/packaging shadowing the packaging distribution ([8da716e](https://github.com/nevenincs/vaultspec-rag/commit/8da716e6e5c6e4a7d2f3f4723e7f9458c423c0a6))
+* type durable tool CUDA repair ([1bfbab2](https://github.com/nevenincs/vaultspec-rag/commit/1bfbab2ea229af65b23e11a393fd2326d3675383))
+* **types:** satisfy the strict type gate on the MPS acceptance test ([ef7df22](https://github.com/nevenincs/vaultspec-rag/commit/ef7df22bb52e453914269d965533fa7c46567902))
+* validate CUDA tool receipt requirement ([2aadd54](https://github.com/nevenincs/vaultspec-rag/commit/2aadd548dcf10bdd5b22593f060cd6d8f05918a2))
+
 ## [0.4.21](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.20...vaultspec-rag-v0.4.21) (2026-08-30)
 
 
