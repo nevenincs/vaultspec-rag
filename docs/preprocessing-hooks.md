@@ -29,6 +29,11 @@ re-includes files excluded by `.gitignore` or `.vaultragignore`; ignore always w
 
 ## Configure rules
 
+> **A rule is code that runs as you.** vaultspec-rag executes the command a rule
+> names, with your account's privileges, in no sandbox and with no consent
+> prompt. Do not index a repository you would not build. Read
+> [Security posture](#security-posture) before adopting rules you did not write.
+
 Create `.vaultragpreprocess.toml` at the project root:
 
 ```toml
@@ -83,7 +88,7 @@ Rule fields:
   embeds the source path in text, anchors, locators, or metadata.
 - **`max_source_bytes`** (optional) - a positive per-rule input ceiling. The effective
   ceiling is the lower of this value and the active document/source support profile.
-- **`[rule.options]`** (optional) - an opaque table forwarded to your preprocessor for
+- **`[rule.options]`** (optional) - an opaque table forwarded to your extractor for
   its own use.
 
 Both `command` and `entry_point` rules run out-of-process (a subprocess), so they share
@@ -93,7 +98,7 @@ like the [output schema](#output-schema).
 
 ### Inspect and validate your configuration
 
-Three commands cover authoring and debugging. Prefix each with `uv run` in a uv-managed
+Four commands cover authoring and debugging. Prefix each with `uv run` in a uv-managed
 environment:
 
 ```bash
@@ -111,8 +116,8 @@ uv run vaultspec-rag preprocess run-one a.pdf   # trial the matching rule agains
 - `preprocess run-one <path>` runs the matching rule against one file and prints the
   validated output, with no indexing side effect. Routing and migration defects, plus an
   extractor abort under `on_error = "fail"`, are structured errors with a non-zero exit.
-  Other malformed rules use the non-strict loader and may appear as no match; run
-  `preprocess check` first when validating configuration.
+  Other malformed rules use the non-strict loader and may appear as no match. When
+  validating configuration, run `preprocess check` first.
 
 All three accept `--json` for scripting. `preprocess status` adds the effective execution
 mode, schema version, targets, extractor versions, rule count, and whether the kill switch
@@ -120,7 +125,7 @@ prevents hooks from running.
 
 ## Invocation envelope
 
-Every extractor process receives a versioned JSON envelope in the
+Every extractor receives a versioned JSON envelope in the
 `VAULTSPEC_PREPROCESS_INVOCATION` environment variable. Extractors can load and validate
 it with `vaultspec_rag.indexer._preprocess_schema.load_preprocess_invocation()`.
 
@@ -207,7 +212,7 @@ Rules:
 
 ## Batch hooks
 
-One subprocess per file makes cheap hooks dominated by interpreter startup: a bare
+With one subprocess per file, interpreter startup dominates the cost of a cheap extractor: a bare
 `python` noop hook measures **102.7 ms/file** (and **217.3 ms/file** through `uv run`),
 versus **1.2 ms/file** when one spawn handles 100 files. On a first index or a clean
 rebuild that constant is paid for every matched file. A batch hook amortizes it: one
@@ -225,7 +230,7 @@ target = "document"
 extractor_version = "1.0.0"
 batch    = true
 on_error = "skip"
-timeout_s = 5                                     # per-file budget; see scaling below
+timeout_s = 5                                     # per-file budget; see Bounds scale with the batch
 ```
 
 Rules for a batch rule:
@@ -238,7 +243,7 @@ Rules for a batch rule:
 
 The manifest and response contract:
 
-- **Manifest** - `{paths}` is replaced with the path of a temp file holding one absolute
+- **Manifest** - vaultspec-rag replaces `{paths}` with the path of a temp file holding one absolute
   source path per line, UTF-8 encoded. Read it, process each path, and delete nothing
   (vaultspec-rag removes the manifest after the run).
 - **Response** - print **one JSON array** on stdout. Each element is a normal
@@ -285,12 +290,12 @@ members of a valid batch can still succeed.
 
 Batch results are cached per file under the same [cache](#cache-and-incremental-indexing)
 key, so cache hits keep bypassing the hook entirely and a mixed hit/miss set shrinks the
-manifest to just the misses. Matched files are grouped into manifests of at most 64 paths,
+manifest to just the misses. vaultspec-rag groups matched files into manifests of at most 64 paths,
 each group a single spawn.
 
 ## Cache and incremental indexing
 
-Successful extraction output is cached under the data directory. The key binds the source
+vaultspec-rag caches successful extraction output under the data directory. The key binds the source
 path and content hash to the output schema and canonical execution fingerprint, including
 the target, extractor version, command or entry point, and options. An unchanged file is
 not re-extracted on a full or resumed reindex. A changed input or execution fingerprint
@@ -308,7 +313,7 @@ coupling one domain's cleanup to another domain's extractor work.
   or `vaultspec-rag clean document` followed by a fresh index. See
   [rebuild from scratch](search-and-index.md#rebuild-from-scratch) for the full rebuild
   and clean surface.
-- From MCP: use the targeted document or combined reindex and clean tools.
+- From the Model Context Protocol (MCP): use the targeted document or combined reindex and clean tools.
 
 The filesystem watcher routes a changed matched file (an edited `.pdf`, for example)
 through your extractor on the same debounce and cooldown machinery as code changes. See
@@ -326,13 +331,13 @@ Files skipped by an `on_error = "skip"` rule are counted and listed on every pat
   `vaultspec-rag index --json`,
 - and a warning in the service log for every skip.
 
-Success is just as visible. Extractors run in worker subprocesses whose own logging
+Success is equally visible. Extractors run in worker subprocesses whose own logging
 never reaches the service log, so the indexer counts every rule-fed file and surfaces
 the tally where the skips already live: `IndexResult.preprocess_ok`, the
 `preprocess_ok` field in `vaultspec-rag index --json` and on the reindex job record,
 and the `preprocess_rules` / `preprocess_ok` fields on the service log's
 `service.index completed` event. A run whose rules matched nothing reports
-`preprocess_ok=0` there — the discriminating signal when rule-fed content seems to be
+`preprocess_ok=0` there - the discriminating signal when rule-fed content seems to be
 missing from the index.
 
 For a non-interactive client of the resident service, two response fields carry the
@@ -356,7 +361,7 @@ outcome and cannot silently publish the file as converged. See the
 A root's `.vaultragpreprocess.toml` **is code execution with your privileges**. When you
 index a repository, its preprocess rules run as arbitrary local commands under the account
 running the service - the same trust class as running that repo's `make`, `npm install`,
-or any of its build scripts. The rule is simple and load-bearing: **do not index a
+or any of its build scripts. The rule is load-bearing: **do not index a
 repository you would not build.** Indexing a repo is an act of trust in that repo, so its
 hooks run **by default**, with no consent prompt and no OS containment between a
 `/reindex` call and the hook running.
@@ -370,20 +375,21 @@ Two bounds still apply to every hook, and they earn their place at near-zero cos
 than as a security boundary:
 
 - **Secrets** - the child runs under a curated environment stripped of every
-  `VAULTSPEC_RAG_*` knob and every credential (Qdrant API key, HF/cloud tokens, Git
+  `VAULTSPEC_RAG_*` knob and every credential (Qdrant API key, model-registry and cloud tokens, Git
   tokens), so a hook inherits none of the daemon's secrets.
-- **Process, time, and output bounds** - the hook runs out-of-process (a subprocess
-  grandchild, which also keeps it off the GPU worker), with the project root as its
-  working directory (so `uv run`, `npm exec`, and other project launchers resolve the
-  project exactly as they do when you validate a rule with `preprocess run-one`), a
-  wall-clock `timeout_s`, and stdout/stderr caps, so a misbehaving extractor is bounded
-  in time and output rather than left to run away.
+- **Process, time, and output bounds** - the extractor runs out-of-process as a
+  subprocess grandchild, which also keeps it off the GPU worker. Its working directory
+  is the project root, so `uv run`, `npm exec`, and other project launchers resolve the
+  project exactly as they do under `preprocess run-one`. A wall-clock `timeout_s` and
+  stdout and stderr caps bound a misbehaving extractor in time and output.
 
 `vaultspec-rag preprocess status` reports whether a root ships a config, its resolved rule
 count, and the effective mode.
 
-`VAULTSPEC_RAG_PREPROCESS=off` is the **kill switch** and wins over everything: no root's
-rules load, ever. Mirrored as `--no-preprocess` on `server start` and `index`. See the
+`VAULTSPEC_RAG_PREPROCESS=off` is the kill switch and wins over everything: no root's
+rules load, ever. `server start --no-preprocess` disables them for that service. Note
+that `index --no-preprocess` applies to in-process indexing only: when a service is
+already running, `index` hands the work to it and the flag has no effect. See the
 [configuration reference](configuration.md#preprocessing) for the full variable and flag
 inventory.
 
@@ -394,7 +400,7 @@ the next index run - correct, but expensive on a large corpus.
 ## Parser capability is not admission
 
 The indexer has plain-text and HTML-normalization capabilities that explicit routes may
-use for formats without an AST grammar. Those capabilities do not make every readable or
+use for formats without an abstract syntax tree (AST) grammar. Those capabilities do not make every readable or
 supported extension source code. The source profile or an explicit `target` decides
 ownership first; only then does the owning pipeline select a parser or extractor. This
 separation is what keeps arbitrary XML, schemas, workbooks, generated data, and other
@@ -424,7 +430,7 @@ print(json.dumps({"schema_version": 1, "preprocessor_id": "pypdf",
                   "preprocessor_version": "1.0", "source_path": src, "units": units}))
 ```
 
-`PyMuPDF` / `fitz` is faster but **AGPL-3.0**, which infects your project's licence; prefer
+`PyMuPDF` / `fitz` is faster but **AGPL-3.0**, whose terms propagate to your project's license; prefer
 `pypdf` (BSD-3) or `pdfplumber` (MIT) for a licence-clean project.
 
 **XLSX - `openpyxl` (MIT):** iterate worksheets, then rows; the sheet name is the
@@ -439,6 +445,10 @@ tag-path anchor; reach for `lxml` (BSD) only if you need XPath or source line nu
 
 ## See also
 
+- [Getting started](getting-started.md) walks through a first index and search.
+- [Installation](installation.md) covers provisioning the workspace.
+- [Architecture](architecture.md) explains the index domains a rule targets.
+- [Glossary](glossary.md) defines extractor, extracted document, and the domains.
 - [Configuration reference](configuration.md) - every environment variable, including
   the preprocess and HTML-strip knobs.
 - [Search and index your project](search-and-index.md) - build, refresh, rebuild, and
