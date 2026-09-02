@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-doctor-liveness'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:6b27c91cfa9415f6d783aee2b171ed8a8a648f8e0a03ccfac59b0d87784ad7f2'
 related:
   - '[[2026-06-24-service-doctor-liveness-W01-P01-S01]]'

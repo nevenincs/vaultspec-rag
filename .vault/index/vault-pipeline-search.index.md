@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#vault-pipeline-search'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:df0e998f41f961de7522782e9703373f90755c29c123fec118611b8a486cc7d1'
 related:
   - '[[2026-06-24-vault-pipeline-search-W01-P01-S01]]'

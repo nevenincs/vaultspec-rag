@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-jobs-operability'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:826329c2a15b65e0af2162d59cb73a790fdc3db511bdba1c163b70804dba976d'
 related:
   - '[[2026-06-11-service-jobs-operability-adr]]'

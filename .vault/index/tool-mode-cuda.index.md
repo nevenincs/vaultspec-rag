@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#tool-mode-cuda'
 date: '2026-09-01'
-modified: '2026-09-01'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:cbc04f7236108a58a86f69f0dfed8354cfe84cdc640666116c77a21faabc0ac3'
 related:
   - '[[2026-09-01-tool-mode-cuda-plan]]'

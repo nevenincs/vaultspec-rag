@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#rag-broker-affordances'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:388d1ab9366cdb5d94f48fbfc05cd512ed0ac09422d67f0c4f234e4de82cb3cb'
 related:
   - '[[2026-06-27-rag-broker-affordances-P01-S01]]'

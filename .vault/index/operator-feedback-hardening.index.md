@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#operator-feedback-hardening'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:fd22685a68a8e865bcd80c032ff9e99f749e4ea9733b0202084547ed1ab64df2'
 related:
   - '[[2026-07-24-operator-feedback-hardening-P01-S01]]'

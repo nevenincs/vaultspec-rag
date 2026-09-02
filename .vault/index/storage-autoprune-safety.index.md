@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#storage-autoprune-safety'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:0e0339fde86a9e7b899317d996d6e5a2e7b4e9de80c92b288a06ef9b36dccb0e'
 related:
   - '[[2026-07-13-storage-autoprune-safety-research]]'

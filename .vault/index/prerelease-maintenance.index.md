@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#prerelease-maintenance'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:263e73a0fbb4f86d8e9c464ed09dcd90147abee378241a895199f65acd8a786f'
 related:
   - '[[2026-07-17-prerelease-maintenance-audit]]'

@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#qdrant-performance'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:b30281d583d1ed463bd6e185b81d0c5bee0defde01b0212cc206ae8ea72d6db9'
 related:
   - '[[2026-06-05-qdrant-performance-W01-P01-S01]]'

@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-discovery-schema'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:65254e97baf66e4ae58445dc01b69050c7f406f3d592056f152fd0462ebea956'
 related:
   - '[[2026-06-24-service-discovery-schema-P01-S01]]'

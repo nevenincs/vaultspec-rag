@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#index-throughput'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:0a11cbcaf408bd37dc702c15f10c84051f476acc2b1ac99ee810870e8a6a6a4b'
 related:
   - '[[2026-07-24-index-throughput-P01-S01]]'

@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#mcp-stdio-lifetime'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:a362bfe731050d4158da0bf4f4459e10d5f1b436df5384832ee76699c23925b0'
 related:
   - '[[2026-07-16-mcp-stdio-lifetime-P01-S01]]'
