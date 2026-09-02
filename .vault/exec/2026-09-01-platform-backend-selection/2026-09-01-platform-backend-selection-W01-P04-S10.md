@@ -10,6 +10,7 @@ step_id: 'S10'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Place the lazy local reranker and retry path through the accelerator context
 
 ## Scope

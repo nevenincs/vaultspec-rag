@@ -10,6 +10,7 @@ step_id: 'S29'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Make the tutorial prerequisites valid for CUDA and Apple silicon
 
 ## Scope

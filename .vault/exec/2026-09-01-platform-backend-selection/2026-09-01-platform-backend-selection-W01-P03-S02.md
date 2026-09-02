@@ -10,6 +10,7 @@ step_id: 'S02'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Generalize load admission for CUDA memory policy and MPS capability policy under one load window
 
 ## Scope

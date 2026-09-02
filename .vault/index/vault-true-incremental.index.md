@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#vault-true-incremental'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:149193cddf44d235ff1fee968753fc33a356f567a989a275fd31076641f2e3ae'
 related:
   - '[[2026-07-24-vault-true-incremental-adr]]'

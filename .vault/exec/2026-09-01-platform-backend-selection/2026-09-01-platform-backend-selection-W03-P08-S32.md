@@ -10,6 +10,7 @@ step_id: 'S32'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Document service startup and preflight for CUDA and MPS
 
 ## Scope

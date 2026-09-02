@@ -10,6 +10,7 @@ step_id: 'S40'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Guard explicitly selected MPS tests on Apple silicon without CUDA coordination
 
 ## Scope

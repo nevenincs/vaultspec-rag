@@ -10,6 +10,7 @@ step_id: 'S35'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Review the complete implementation for safety, intent, and canonical ownership
 
 ## Scope

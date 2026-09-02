@@ -9,6 +9,7 @@ body_hash: 'sha256:c7290d81f1f30130e4f599d8facdf1bdbe346f98abd7e2dd1c7ffd63d9010
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # `platform-backend-selection` `W03.P07` summary
 
 Added a dedicated real-Mac MPS acceptance tier and blocking CI gate.

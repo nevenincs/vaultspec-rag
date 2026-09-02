@@ -10,6 +10,7 @@ step_id: 'S01'
 related:
   - "[[2026-09-01-gpu-less-install-footprint-plan]]"
 ---
+
 # Move local inference dependencies behind the explicit compute boundary
 
 ## Scope

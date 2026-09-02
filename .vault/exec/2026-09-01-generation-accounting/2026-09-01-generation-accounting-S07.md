@@ -10,6 +10,7 @@ step_id: 'S07'
 related:
   - "[[2026-09-01-generation-accounting-plan]]"
 ---
+
 # Retire retained empty-source outcomes through the canonical storage-confirmed path
 
 ## Scope

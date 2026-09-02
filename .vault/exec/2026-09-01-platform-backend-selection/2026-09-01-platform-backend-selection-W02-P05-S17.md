@@ -10,6 +10,7 @@ step_id: 'S17'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Exercise backend-neutral readiness payloads and torch-free probing
 
 ## Scope

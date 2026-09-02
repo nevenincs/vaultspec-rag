@@ -9,6 +9,7 @@ body_hash: 'sha256:c70bcf0d438154b7e6bf1c4dd3aa049fc94077c4885bcd2d48af6a40bc6b7
 related:
   - "[[2026-08-28-platform-backend-selection-research]]"
 ---
+
 # `platform-backend-selection` reference: `published dependency boundary and CUDA provisioning`
 
 ## Summary

@@ -10,6 +10,7 @@ step_id: 'S22'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Generalize torch configuration diagnosis beyond CUDA availability
 
 ## Scope

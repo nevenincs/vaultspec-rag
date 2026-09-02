@@ -10,6 +10,7 @@ step_id: 'S36'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Invoke the canonical supported-accelerator subprocess probe during service startup
 
 ## Scope

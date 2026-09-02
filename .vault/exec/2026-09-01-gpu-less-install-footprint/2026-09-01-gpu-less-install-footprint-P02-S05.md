@@ -10,6 +10,7 @@ step_id: 'S05'
 related:
   - "[[2026-09-01-gpu-less-install-footprint-plan]]"
 ---
+
 # Update no-GPU binary acquisition coverage for the thin published base
 
 ## Scope

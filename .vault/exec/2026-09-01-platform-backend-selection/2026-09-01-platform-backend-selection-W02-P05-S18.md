@@ -10,6 +10,7 @@ step_id: 'S18'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Exercise capability and health payload compatibility for MPS
 
 ## Scope

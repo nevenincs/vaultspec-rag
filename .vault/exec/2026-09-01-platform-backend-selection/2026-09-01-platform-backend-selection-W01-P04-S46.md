@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:5c7c5203a4a0946d0a271c5ea7e73b4afe526c586cb022c80c4b3839e7f9f7e8'
+body_hash: 'sha256:34cce93fac01434d2d16038e976401dffdc324f62b86492fdf1ef7e66364c6f4'
 step_id: 'S46'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Adapt sparse conversion parity fixtures to the canonical accelerator context.
+
+# Adapt sparse conversion parity fixtures to the canonical accelerator context
 
 ## Scope
 

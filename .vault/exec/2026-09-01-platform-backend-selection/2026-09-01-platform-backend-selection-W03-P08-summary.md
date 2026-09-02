@@ -9,6 +9,7 @@ body_hash: 'sha256:e92cc2376a448138b98efd7de7f7b254732ae5adb26033e8000d86b450ec1
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # `platform-backend-selection` `W03.P08` summary
 
 Documented the supported accelerator contract and completed formal review remediation.

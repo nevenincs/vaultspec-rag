@@ -10,6 +10,7 @@ step_id: 'S11'
 related:
   - "[[2026-09-01-generation-accounting-plan]]"
 ---
+
 # Constrain clean-generation reconciliation to the active build collection before publication
 
 ## Scope

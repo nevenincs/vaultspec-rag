@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:8d08b4b64901abe145ce7c1a6f04fb9bc6fcb49db3faa49e17f859f4003186ef'
+body_hash: 'sha256:6cb690a4c70518eea10962855277694816edf652223fba7d8d64996fd6155a51'
 step_id: 'S42'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Update installer accelerator diagnostics to use the canonical backend-neutral warning helper.
+
+# Update installer accelerator diagnostics to use the canonical backend-neutral warning helper
 
 ## Scope
 

@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#vaultragignore'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:e2decbb90f806fc6780df45b4b1078e21caac9f03f2ffeeb523e9457dc53676f'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'

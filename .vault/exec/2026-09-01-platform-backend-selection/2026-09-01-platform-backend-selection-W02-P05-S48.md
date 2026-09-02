@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:3b96a099e3d3cf934adeaa1e4a9b517022b53ef7c897d5fedad3c9c8c6c87e75'
+body_hash: 'sha256:c395156faca2bf76bb07accb9318d55bcba1dab38399f97fbd8b64817d2b5356'
 step_id: 'S48'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Correct benchmark capability reporting for MPS unified memory.
+
+# Correct benchmark capability reporting for MPS unified memory
 
 ## Scope
 

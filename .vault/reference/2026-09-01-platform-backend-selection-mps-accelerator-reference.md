@@ -10,6 +10,7 @@ related:
   - "[[2026-08-28-platform-backend-selection-research]]"
   - "[[2026-08-28-platform-backend-selection-adr]]"
 ---
+
 # `platform-backend-selection` reference: `current accelerator seams and measured MPS support`
 
 The production tree at commit `635747ee` centralizes torch import and load admission, but device identity, allocator handling, model placement, and operator reporting remain CUDA-shaped across several modules. A fleet Apple silicon host now supplies direct MPS evidence for the exact production model stack.

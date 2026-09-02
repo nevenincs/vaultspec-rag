@@ -10,6 +10,7 @@ related:
   - "[[2026-09-01-gpu-less-install-footprint-research]]"
   - "[[2026-09-01-platform-backend-selection-reference]]"
 ---
+
 # `gpu-less-install-footprint` adr: `publish a thin base and provision CUDA explicitly` | (**status:** `accepted`)
 
 ## Problem Statement

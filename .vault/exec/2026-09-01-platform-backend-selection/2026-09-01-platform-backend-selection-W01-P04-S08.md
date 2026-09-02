@@ -10,6 +10,7 @@ step_id: 'S08'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Place dense and sparse models through the accelerator context and use backend-neutral recovery
 
 ## Scope

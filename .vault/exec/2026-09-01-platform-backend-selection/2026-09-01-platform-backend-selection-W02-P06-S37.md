@@ -10,6 +10,7 @@ step_id: 'S37'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Exercise CUDA, MPS, and unavailable torch configuration diagnosis
 
 ## Scope

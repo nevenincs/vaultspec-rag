@@ -10,6 +10,7 @@ related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
   - '[[2026-09-01-platform-backend-selection-reference]]'
 ---
+
 # `platform-backend-selection` research: `which accelerator each platform can actually use, and what the install puts there`
 
 `2026-03-06-gpu-rag-stack-adr` records a user mandate: GPU-only inference, no CPU fallback. The code enforces it through one gate, and the gate tests for CUDA. Two consequences follow in opposite directions: Apple silicon has a working GPU the gate cannot see, and a GPU-less Linux host is handed five gigabytes of CUDA it can never use.

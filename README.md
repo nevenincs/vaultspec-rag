@@ -35,7 +35,7 @@ vaultspec-rag search "file lock concurrent write per-root" --type vault
 ```
 
 ```
-1. .vault/audit/2026-08-13-large-index-resilience-ledger-concurrency-audit.md
+1. .vault/audit/large-index-resilience-ledger-concurrency-audit.md
    audit | feature: large-index-resilience | 2026-08-13
    # `large-index-resilience` audit: `ledger concurrency`
 
@@ -220,9 +220,9 @@ vaultspec-rag search "locking" --type vault
 ```
 
 ```
-1. .vault/adr/2026-03-07-threading-lock-for-singleton-adr.md
-2. .vault/audit/2026-07-22-code-document-index-boundary-s18-document-store-audit.md
-3. .vault/exec/2026-06-24-service-hardware-singleton/...-W04-P07-S23.md
+1. .vault/adr/threading-lock-for-singleton-adr.md
+2. .vault/audit/code-document-index-boundary-s18-document-store-audit.md
+3. .vault/exec/service-hardware-singleton/...-service-lock-step.md
 ```
 
 Describe what happens, and name the specifics:
@@ -232,9 +232,9 @@ vaultspec-rag search "file lock concurrent write per-root" --type vault
 ```
 
 ```
-1. .vault/audit/2026-08-13-large-index-resilience-ledger-concurrency-audit.md
-2. .vault/research/2026-06-12-service-concurrency-research.md
-3. .vault/adr/2026-04-12-store-eviction-log-rotation-adr.md
+1. .vault/audit/large-index-resilience-ledger-concurrency-audit.md
+2. .vault/research/service-concurrency-research.md
+3. .vault/adr/store-eviction-log-rotation-adr.md
 ```
 
 Same topic. The first scatters across unrelated features that merely mention locks. The

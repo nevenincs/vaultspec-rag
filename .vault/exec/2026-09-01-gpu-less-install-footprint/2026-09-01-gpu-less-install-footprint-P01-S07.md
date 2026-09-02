@@ -10,6 +10,7 @@ step_id: 'S07'
 related:
   - "[[2026-09-01-gpu-less-install-footprint-plan]]"
 ---
+
 # Update tool and CLI remediation for the explicit GPU runtime
 
 ## Scope

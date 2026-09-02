@@ -9,6 +9,7 @@ body_hash: 'sha256:1a68feb43e62ae2fbcaadafd37999d2811a004127ee01570bbb79bffd0f7b
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # `platform-backend-selection` `W02.P06` summary
 
 Updated operator surfaces for CUDA and MPS without weakening refusal behavior.

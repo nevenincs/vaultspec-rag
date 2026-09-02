@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:9fafba7616865fa8db167435b9cc0be0327a313dca1fa5af7d4f6c938bf7c323'
+body_hash: 'sha256:88d24601f9548767ac981ea3c81f7322379799806b283368805e91f96aca3ad5'
 step_id: 'S53'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Clarify the managed torch prompt and inactive macOS source marker.
+
+# Clarify the managed torch prompt and inactive macOS source marker
 
 ## Scope
 

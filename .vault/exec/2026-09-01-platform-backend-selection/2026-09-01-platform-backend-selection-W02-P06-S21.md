@@ -10,6 +10,7 @@ step_id: 'S21'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Render accelerator backend and memory semantics in human status output
 
 ## Scope

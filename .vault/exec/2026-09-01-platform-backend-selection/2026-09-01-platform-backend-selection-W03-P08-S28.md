@@ -10,6 +10,7 @@ step_id: 'S28'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Describe accelerator selection and unified-memory behavior
 
 ## Scope

@@ -10,6 +10,7 @@ step_id: 'S01'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Implement the resolved accelerator context, fallback refusal, OOM classification, and cache release
 
 ## Scope
