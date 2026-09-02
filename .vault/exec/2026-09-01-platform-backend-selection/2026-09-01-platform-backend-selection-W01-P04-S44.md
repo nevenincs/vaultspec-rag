@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:5d42f027d16aa96fa2084472e9bfbcd2715105b41ef404a3518a4e678adfb728'
+body_hash: 'sha256:6f3b88948f2380eedacbc44a0c58d9724071b7e67092c408fa9d0cdbb5f34ef8'
 step_id: 'S44'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Update resilience benchmarks to consume the canonical accelerator context.
+
+# Update resilience benchmarks to consume the canonical accelerator context
 
 ## Scope
 

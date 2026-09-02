@@ -10,6 +10,7 @@ step_id: 'S04'
 related:
   - "[[2026-09-01-gpu-less-install-footprint-plan]]"
 ---
+
 # Document base, CUDA-provisioned, and local-only install costs and behavior
 
 ## Scope

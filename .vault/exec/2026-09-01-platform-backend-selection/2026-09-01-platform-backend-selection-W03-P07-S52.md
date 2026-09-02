@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:9560b00848cf1199ef2ac7ea864811d11f073c027f054817c75de67b54091b0d'
+body_hash: 'sha256:1fbf399a457d27cadf0909d07f3de7e34bb78f67b8856a219cdf4d24dd4f54ae'
 step_id: 'S52'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Run the required MPS support gate on main before publication.
+
+# Run the required MPS support gate on main before publication
 
 ## Scope
 

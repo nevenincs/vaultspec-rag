@@ -10,6 +10,7 @@ step_id: 'S31'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Describe dense, sparse, and reranker execution on the selected accelerator
 
 ## Scope

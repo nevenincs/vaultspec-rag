@@ -9,6 +9,7 @@ body_hash: 'sha256:83bfda169b787dc0617bcdfc9da25b859757dc4a9638884f8d77df3e847f8
 related:
   - "[[2026-09-01-gpu-less-install-footprint-plan]]"
 ---
+
 # `gpu-less-install-footprint` audit: `implementation-review`
 
 ## Scope

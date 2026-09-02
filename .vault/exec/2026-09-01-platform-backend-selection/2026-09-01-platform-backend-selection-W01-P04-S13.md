@@ -10,6 +10,7 @@ step_id: 'S13'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Exercise shared reranker construction on resolved accelerators
 
 ## Scope

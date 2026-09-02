@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#win-shutdown-log'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:973d7300e54a0e287d3c3d8300c1db68adb77bdc9e9f1e0e1af6189a6d43ebc6'
 related:
   - '[[2026-05-31-win-shutdown-log-adr]]'

@@ -10,6 +10,7 @@ related:
   - "[[2026-08-28-platform-backend-selection-adr]]"
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # `platform-backend-selection` audit: MPS production support
 
 ## Scope

@@ -9,6 +9,7 @@ body_hash: 'sha256:1806b4eb6621db95d6dd77bf280cff593896f3b3a08a7d6a568fde9536b9f
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # `platform-backend-selection` `W01.P03` summary
 
 Implemented the backend-neutral accelerator contract and admission boundary.

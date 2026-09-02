@@ -10,6 +10,7 @@ step_id: 'S06'
 related:
   - "[[2026-09-01-gpu-less-install-footprint-plan]]"
 ---
+
 # Request the GPU runtime for MCP and standalone binary compute launchers
 
 ## Scope

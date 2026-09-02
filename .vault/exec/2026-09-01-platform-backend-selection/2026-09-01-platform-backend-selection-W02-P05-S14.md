@@ -10,6 +10,7 @@ step_id: 'S14'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Report resolved backend identity and memory kind in the public capability snapshot
 
 ## Scope

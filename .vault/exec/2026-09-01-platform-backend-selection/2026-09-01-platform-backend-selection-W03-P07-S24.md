@@ -10,6 +10,7 @@ step_id: 'S24'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Add a real-model concurrent-residency MPS integration guard
 
 ## Scope

@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:7aae1195265e86753cd5dd796b54e8610e66e44893fe2177969e635578252632'
+body_hash: 'sha256:230833ae85449f1dd1111ddd47f4d43306f6577403d7d6e31bcba4f5e04ca843'
 step_id: 'S45'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Verify CLI status renders and serializes truthful MPS unified-memory capability data.
+
+# Verify CLI status renders and serializes truthful MPS unified-memory capability data
 
 ## Scope
 

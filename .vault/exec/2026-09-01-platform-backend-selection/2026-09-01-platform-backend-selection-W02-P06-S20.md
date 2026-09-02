@@ -10,6 +10,7 @@ step_id: 'S20'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Probe the service interpreter for any supported accelerator without importing torch into the caller
 
 ## Scope

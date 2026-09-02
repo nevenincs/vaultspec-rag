@@ -10,6 +10,7 @@ step_id: 'S15'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Diagnose torch and accelerator readiness for CUDA, MPS, and unavailable hosts
 
 ## Scope

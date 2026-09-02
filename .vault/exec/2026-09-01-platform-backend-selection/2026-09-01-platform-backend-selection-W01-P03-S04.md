@@ -10,6 +10,7 @@ step_id: 'S04'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Prove accelerator resolution order, CPU refusal, fallback refusal, and centralized torch loading
 
 ## Scope

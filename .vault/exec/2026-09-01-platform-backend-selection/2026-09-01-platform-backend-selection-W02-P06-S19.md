@@ -10,6 +10,7 @@ step_id: 'S19'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Classify missing, CUDA, MPS, and CPU-only torch environments
 
 ## Scope

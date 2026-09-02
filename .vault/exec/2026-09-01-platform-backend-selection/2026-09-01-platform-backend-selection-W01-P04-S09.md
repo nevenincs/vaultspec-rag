@@ -10,6 +10,7 @@ step_id: 'S09'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Place the shared resident reranker through the accelerator context
 
 ## Scope

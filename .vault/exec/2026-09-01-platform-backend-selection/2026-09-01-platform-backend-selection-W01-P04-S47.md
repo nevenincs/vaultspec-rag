@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:e67269939404de88ce5cf22356aee3d66913b1b967ca58bb11610ef46de8a6fd'
+body_hash: 'sha256:ed0d9b95f4e5df55ef7e8569f277b12ffef107404d4f965a99a7c782cadc754a'
 step_id: 'S47'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Retarget bounded encode-recovery architecture guards to backend-neutral OOM classification.
+
+# Retarget bounded encode-recovery architecture guards to backend-neutral OOM classification
 
 ## Scope
 

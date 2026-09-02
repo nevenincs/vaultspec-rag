@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#worktree-index-reuse'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:e4d8650838d6f2843e23895325defec210a680b6f715b3cd623150836513dc06'
 related:
   - '[[2026-07-24-worktree-index-reuse-W01-P01-S01]]'

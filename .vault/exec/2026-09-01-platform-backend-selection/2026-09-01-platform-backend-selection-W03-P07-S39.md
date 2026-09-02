@@ -10,6 +10,7 @@ step_id: 'S39'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Declare MPS as a distinct hardware tier without CUDA lease assumptions
 
 ## Scope

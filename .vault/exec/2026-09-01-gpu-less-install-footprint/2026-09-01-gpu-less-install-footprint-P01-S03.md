@@ -10,6 +10,7 @@ step_id: 'S03'
 related:
   - "[[2026-09-01-gpu-less-install-footprint-plan]]"
 ---
+
 # Prove built package metadata and Linux resolution exclude the CUDA stack from the base install
 
 ## Scope

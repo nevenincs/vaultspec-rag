@@ -10,6 +10,7 @@ step_id: 'S27'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # State CUDA and Apple silicon requirements in the project overview
 
 ## Scope

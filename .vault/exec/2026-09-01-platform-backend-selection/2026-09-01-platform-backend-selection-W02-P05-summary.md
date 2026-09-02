@@ -9,6 +9,7 @@ body_hash: 'sha256:b48cfeecd80599336e63d52f20c4661653dcf749fad822bdeff2ec6b793b4
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # `platform-backend-selection` `W02.P05` summary
 
 Made the public API and benchmark output report accelerator capability truthfully.

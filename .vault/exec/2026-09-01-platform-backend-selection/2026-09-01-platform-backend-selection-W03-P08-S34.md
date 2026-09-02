@@ -10,6 +10,7 @@ step_id: 'S34'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Define accelerator, CUDA, MPS, and unified-memory terms
 
 ## Scope

@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:24b2c7341ab4f4880e350977648c0eaa77740fa3725c2f37c9c592f8fe6e5163'
+body_hash: 'sha256:43d45f9141522f83a5f21257cc43dedc2a53a6d46c8abb5a0cce6a3a4e23e4c1'
 step_id: 'S50'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Route production device-load evidence through the detected MPS backend.
+
+# Route production device-load evidence through the detected MPS backend
 
 ## Scope
 

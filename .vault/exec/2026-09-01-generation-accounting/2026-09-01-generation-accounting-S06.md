@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#generation-accounting'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:ae11547c4821b45676d3ef2334945ae88e8786c4d15d6142731f3a89b821e129'
+body_hash: 'sha256:d1590e7e1fe7f9a727c18c94e56729b726b040419890f0e3d3674eacbd2dccad'
 step_id: 'S06'
 related:
   - "[[2026-09-01-generation-accounting-plan]]"
@@ -36,7 +36,4 @@ restored direction passes.
 
 ## Notes
 
-`uv run --no-sync ruff check src/vaultspec_rag`, `uv run --no-sync ruff format --check
-src/vaultspec_rag/tests/test_search_timeout.py`, `uv run --no-sync ty check
-src/vaultspec_rag/tests/test_search_timeout.py`, and `uv run --no-sync pytest
-src/vaultspec_rag/tests/test_search_timeout.py -q` passed.
+`uv run --no-sync ruff check src/vaultspec_rag`, `uv run --no-sync ruff format --check src/vaultspec_rag/tests/test_search_timeout.py`, `uv run --no-sync ty check src/vaultspec_rag/tests/test_search_timeout.py`, and `uv run --no-sync pytest src/vaultspec_rag/tests/test_search_timeout.py -q` passed.

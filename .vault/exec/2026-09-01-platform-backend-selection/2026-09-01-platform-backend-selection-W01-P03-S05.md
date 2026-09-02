@@ -10,6 +10,7 @@ step_id: 'S05'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Prove CUDA and MPS admission semantics including the shared load window
 
 ## Scope

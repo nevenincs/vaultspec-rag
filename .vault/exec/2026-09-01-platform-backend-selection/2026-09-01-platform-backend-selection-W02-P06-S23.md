@@ -10,6 +10,7 @@ step_id: 'S23'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Exercise supported-accelerator subprocess preflight and remediation
 
 ## Scope

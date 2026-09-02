@@ -11,6 +11,7 @@ related:
   - '[[2026-09-01-platform-backend-selection-reference]]'
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
 ---
+
 # `platform-backend-selection` adr: `admit measured accelerators and keep platform provisioning separate` | (**status:** `accepted`)
 
 ## Problem Statement

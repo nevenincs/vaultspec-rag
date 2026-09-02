@@ -10,6 +10,7 @@ step_id: 'S30'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Document macOS installation, MPS fallback refusal, and platform-specific provisioning
 
 ## Scope

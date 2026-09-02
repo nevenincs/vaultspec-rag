@@ -10,6 +10,7 @@ step_id: 'S02'
 related:
   - "[[2026-09-01-gpu-less-install-footprint-plan]]"
 ---
+
 # Preserve actionable missing-compute remediation at the lazy inference boundary
 
 ## Scope

@@ -10,6 +10,7 @@ step_id: 'S03'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Expose backend-neutral device readings while preserving CUDA allocator evidence
 
 ## Scope

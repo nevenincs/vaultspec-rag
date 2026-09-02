@@ -9,6 +9,7 @@ body_hash: 'sha256:db85739b1146dc751d2f00a3d07fb505c5c5c202b80b95dcd58166f73d731
 related:
   - "[[2026-08-28-platform-backend-selection-research]]"
 ---
+
 # `gpu-less-install-footprint` research: `separate package installation from CUDA inference provisioning`
 
 A GPU-less Linux host currently receives the full CUDA stack during a normal package install even though local inference is intentionally unavailable there. The evidence supports a thin base distribution plus explicit CUDA provisioning, not CPU inference and not a CUDA extra whose resolver cannot select the required index.

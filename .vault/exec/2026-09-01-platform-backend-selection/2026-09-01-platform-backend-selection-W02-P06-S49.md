@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:b5bc7ae4774c8c41d5b5305a56bfdfbdaa88c16d766e6f9199eaac4fba1df048'
+body_hash: 'sha256:7ef22d8d42e5d5cf063cc15295f65f3622d8d0efee0655490a96c4608fb667b2'
 step_id: 'S49'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Correct CLI fallback diagnosis and unavailable accelerator wording.
+
+# Correct CLI fallback diagnosis and unavailable accelerator wording
 
 ## Scope
 

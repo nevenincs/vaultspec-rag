@@ -10,6 +10,7 @@ step_id: 'S33'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Update readiness and model-download command contracts for supported accelerators
 
 ## Scope

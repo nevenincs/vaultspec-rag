@@ -3,14 +3,15 @@ tags:
   - '#exec'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-02'
 body_schema: 'body-v1'
-body_hash: 'sha256:cb409f216f9c66fae135f48e59709fe45fa7da6e8fd00482ae2e36bd62eb1cfc'
+body_hash: 'sha256:9daa5e35dc1e2ffcca2c731d31b333aa8cb29bb7c860d9c871ef13f80808a852'
 step_id: 'S43'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
-# Update service lifecycle preflight to call the canonical accelerator loader.
+
+# Update service lifecycle preflight to call the canonical accelerator loader
 
 ## Scope
 

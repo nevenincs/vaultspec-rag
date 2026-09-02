@@ -10,6 +10,7 @@ step_id: 'S26'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Run the MPS guard only on the self-hosted Apple silicon job
 
 ## Scope

@@ -10,6 +10,7 @@ step_id: 'S12'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Exercise backend-neutral embedding retry and cache behavior
 
 ## Scope

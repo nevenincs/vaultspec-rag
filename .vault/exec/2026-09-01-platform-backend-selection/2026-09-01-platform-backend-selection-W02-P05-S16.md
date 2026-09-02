@@ -10,6 +10,7 @@ step_id: 'S16'
 related:
   - "[[2026-09-01-platform-backend-selection-plan]]"
 ---
+
 # Report resident accelerator memory without labeling unified memory as VRAM
 
 ## Scope
