@@ -1,12 +1,18 @@
-# Writing a query that finds it
+# Writing a query that finds the right result
 
-Search returns the closest matches it can rank, never an exhaustive list. That
-one property drives everything on this page. A query that finds nothing useful
-is usually not badly worded. It's aimed at a corpus that doesn't hold the
-answer, or it's asking for more than one thing at once.
+Search returns the closest matches it can rank, never an exhaustive list. So when
+a query finds nothing useful, the wording is rarely the cause. Usually the corpus
+doesn't hold the answer, or the query asks two things at once.
 
-For how the ranking works, read the [architecture overview](architecture.md) and
-the [indexing internals](indexing.md). This page is about what to type.
+This page shows you how to tell those apart, what to type, and what to change
+when a result looks wrong. For how the ranking works underneath, read the
+[architecture overview](architecture.md) and the
+[indexing internals](indexing.md).
+
+Examples use the `uv run` prefix, which runs the command inside a project
+environment. If you installed vaultspec-rag as a standalone tool, drop the prefix
+and call `vaultspec-rag` directly; see the
+[installation guide](installation.md).
 
 ## Check coverage before you blame the query
 
@@ -27,10 +33,11 @@ Admission summary:
 
 Read the count, not the sample. Ninety-three files out of nearly a thousand
 considered is the number to weigh against the tree you have in mind. The five
-paths a dry run prints are the head of the list rather than the most important
-files, so a sample full of vendored tool scripts doesn't mean the whole set is.
+paths a dry run prints are the head of the list, not the most important files. A
+sample full of vendored tool scripts doesn't mean the rest of the set is vendored
+too.
 
-If the count is far off what you expect, fix admission before spending the
+If the count is far off what you expect, fix admission before you pay for a full
 indexing run. [Verify the index](verification.md) covers this check and the two
 that go with it, and [indexing](indexing.md) covers how admission is decided.
 
@@ -108,33 +115,31 @@ Asked without one, that query answers from JavaScript. Asked with
 2. src/vaultspec_marketing/__main__.py:1
 ```
 
-Both sets were admitted all along. The filter decided which one you were asking
+The index holds both sets. The filter decided which one you were asking
 about.
 
 ## Name the nouns, and ask one thing
 
-Each chunk is encoded twice, and so is your query. The dense half matches
-meaning and handles paraphrase well. The sparse half matches terms and catches
-a rare identifier the dense half would smooth over. A query written as pure
-natural language gives the sparse half little to work with.
-
-So describe the behaviour and name the concrete nouns the target would use, in
-the same breath:
+Search matches your query two ways at once: by meaning, and by exact term. Pure
+natural language gives the second half little to work with. So describe the
+behavior and name the concrete nouns the target would use, in the same breath:
 
 ```
 uv run vaultspec-rag search "immutable cache-control on non-hashed assets" --type vault
 ```
 
-Plain questions do work. Against a current index, `why did we change how caching works` returned the right execution record first. Treat naming the nouns as
-sharpening a query rather than rescuing one.
+Plain questions work. Against a current index, `why did we change how caching works` returned the right execution record first. Name the nouns when a rare
+identifier, symbol, or spelling is involved, where the exact half has something
+to catch.
 
 Ask one thing at a time. A query carrying two concepts ranks against both and
 matches the middle, which is usually neither. Run two searches.
 
 ## The filter surface
 
-Filters split by what they narrow. Mixing classes is allowed and does nothing:
-a code filter on `--type vault` has no candidates to act on.
+`--type` picks the content domain first: `vault`, `code`, `document`, or
+`combined`. The filters below then split by what they narrow, so a code filter on
+`--type vault` has no candidates to act on.
 
 Code results:
 
@@ -149,39 +154,102 @@ Code results:
 
 Document and vault results:
 
-| Filter          | Narrows to                                              |
-| --------------- | ------------------------------------------------------- |
-| `--doc-type`    | `adr`, `plan`, `exec`, `audit`, `research`, `reference` |
-| `--feature`     | one feature tag                                         |
-| `--date`        | one date                                                |
-| `--tag`         | one frontmatter tag                                     |
-| `--source-path` | one originating file, for extracted documents           |
+| Filter          | Narrows to                                                                     |
+| --------------- | ------------------------------------------------------------------------------ |
+| `--doc-type`    | `adr` (decision), `plan`, `exec` (execution), `audit`, `research`, `reference` |
+| `--feature`     | one feature tag                                                                |
+| `--date`        | one date                                                                       |
+| `--tag`         | one frontmatter tag                                                            |
+| `--source-path` | one originating file, for extracted documents                                  |
 
-Filters also work inline, so `type:adr` in the query text does what
-`--doc-type adr` does.
+### Query markers
 
-Two flags matter outside those classes. `--scores` shows the numeric relevance
-behind the ordering, which tells you whether the top hit won or merely came
-first among weak matches:
+Write markers anywhere in the query text. Most mirror a flag, so `type:adr` does
+what `--doc-type adr` does. Five have no flag equivalent and can only be written
+this way.
+
+| Group            | Markers                                      |
+| ---------------- | -------------------------------------------- |
+| Documents        | `type:` `feature:` `date:` `tag:`            |
+| Code             | `lang:` `path:` `func:` `class:` `nodetype:` |
+| Noise, no flag   | `only:` `exclude:` `include:`                |
+| Ranking, no flag | `status:` `intent:`                          |
+
+The noise markers take one or more domains from `prod`, `tests`, `docs`,
+`locale`, `generated`, `vendored`, and `worktree`. Everything except `prod` is
+treated as noise by default, so `only:prod` keeps production code and
+`exclude:tests` drops the test tree. Comma-separated sets accumulate when
+repeated.
+
+`status:` takes `all`, `active`, or a comma-separated set such as
+`accepted,proposed`. `intent:` takes `orientation`, the default, or `debugging`,
+which reorders results for tracking down a fault rather than getting your
+bearings.
 
 ```
-1. Decision record: documentation cache policy (score 0.0260)
-2. Decision record: deployment cache policy (score 0.0097)
+uv run vaultspec-rag search "auth token validation only:prod" --type code
+uv run vaultspec-rag search "gpu lock decision type:adr status:active"
 ```
+
+`path:` is the in-query spelling of `--include-path`: it takes a pattern, and a
+plain one matches that path and everything under it. `--path` is a different,
+exact-path filter.
+
+### Telling a weak result from an empty corpus
+
+Search always returns its ten closest chunks, so a query with nothing to match
+looks the same as one with a poor answer. `--scores` separates them.
+
+A query the corpus genuinely answers scores in the tenths:
+
+```
+1. .vault/audit/2026-08-13-large-index-resilience-ledger-concurrency-audit.md (score 0.7836)
+2. .vault/research/2026-06-12-service-concurrency-research.md (score 0.7180)
+3. .vault/adr/2026-04-12-store-eviction-log-rotation-adr.md (score 0.4746)
+```
+
+A query with nothing relevant scores in the thousandths, and still returns ten
+rows:
+
+```
+1. .vault/adr/2026-07-31-rate-collapse-baseline-adr.md (score 0.0013)
+2. .vault/audit/2026-07-29-encode-batch-adaptivity-audit.md (score 0.0008)
+3. .vault/adr/2026-04-02-service-graph-adr.md (score 0.0002)
+```
+
+Three orders of magnitude separate them. Absolute scores aren't comparable
+between different queries, but that gap is: a top score in the thousandths means
+the corpus holds no answer, and rewording won't produce one. Index the right
+content instead.
 
 `--json` gives a script the same results without the human formatting.
 
 ## When a result looks wrong
 
-Work down this list rather than rewording repeatedly.
+Work down this list rather than rewording repeatedly. Rewording is the last step,
+not the first.
 
-Check with `--scores` that the top result didn't merely win a weak field. Check
-coverage with a dry run if you're searching code. Add the filter that states
-which kind of thing you want, and exclude a mirrored tree if results arrive
-doubled. Split the query if it carries two ideas. Then reword.
+1. Run `--scores`. If the top score sits in the thousandths, the corpus holds no
+   answer and no wording will find one.
+1. If you're searching code, check coverage with a dry run.
+1. Add the filter that states which kind of thing you want.
+1. If results arrive doubled, exclude the mirrored tree with `exclude:worktree`
+   or an `--exclude-path` pattern.
+1. If the query carries two ideas, split it into two searches.
+1. Reword, naming the concrete nouns the target would contain.
+
+If none of that helps, the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues)
+takes questions as well as bug reports. Include the query, the flags, and the
+`--scores` output.
 
 ## Related documentation
 
+- [Retrieval recipes](examples.md) shows worked searches, including the questions
+  this tool answers badly.
+- [Search and index](search-and-index.md) covers running searches and refreshing
+  the index.
+- [CLI reference](cli.md) lists every flag with its type and default.
 - [Verify the index](verification.md) covers health, currency, and coverage.
 - [Indexing](indexing.md) covers profiles, admission, and the encoders.
 - [Architecture](architecture.md) covers how the two signals are fused.
+- [Glossary](glossary.md) defines the vocabulary used here.
