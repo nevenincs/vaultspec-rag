@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import atexit
 import os
-import shutil
+import sys
 import tempfile
 import time
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -36,6 +35,10 @@ _SINGLETON_ENV_NAMES = (
 _singleton_prior_env: dict[str, str | None] | None = None
 _singleton_root: Path | None = None
 _singleton_root_owned = False
+_singleton_pair_owned = False
+#: Set by pytest_sessionfinish. Teardown keeps this session's basetemp when a
+#: test failed, so ``tmp_path_retention_policy = "failed"`` actually delivers.
+_session_failed = False
 
 if TYPE_CHECKING:
     from vaultspec_rag.cli._gpu_lease import BorrowerServiceTarget
@@ -154,7 +157,7 @@ def pytest_configure(config: pytest.Config) -> None:
     enforce_serial_gpu_lane(config.option)
 
     global _gpu_borrower_target, _singleton_prior_env
-    global _singleton_root, _singleton_root_owned
+    global _singleton_root, _singleton_root_owned, _singleton_pair_owned
     if _singleton_root is not None:
         return
 
@@ -179,6 +182,11 @@ def pytest_configure(config: pytest.Config) -> None:
     config.option.basetemp = str(root / pytest_temp_name)
     base_name = "machine-singleton" if not worker else f"machine-singleton-{worker}"
     base = root / base_name
+    # A nested pytest subprocess inherits the root and PYTEST_XDIST_WORKER, so
+    # it derives the same directory pair as the live parent that spawned it.
+    # Only the process that created the pair may reclaim it; otherwise the
+    # child's teardown deletes the parent's basetemp mid-session.
+    _singleton_pair_owned = not base.exists()
     status_dir = base / "status"
     qdrant_storage_dir = base / "qdrant-server" / "storage"
     status_dir.mkdir(parents=True, exist_ok=True)
@@ -206,6 +214,13 @@ def pytest_configure(config: pytest.Config) -> None:
         sweep_orphaned_singleton_roots(keep=root, now=time.time())
 
 
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Record whether this session failed, before teardown decides what to keep."""
+    del exitstatus
+    global _session_failed
+    _session_failed = bool(getattr(session, "testsfailed", 0))
+
+
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Restore ambient configuration after the complete pytest session."""
     del config
@@ -224,14 +239,25 @@ def pytest_unconfigure(config: pytest.Config) -> None:
         os.environ.pop(_PYTEST_SINGLETON_BOOTSTRAP_ENV, None)
     else:
         os.environ[_PYTEST_SINGLETON_BOOTSTRAP_ENV] = _PRIOR_PYTEST_SINGLETON_BOOTSTRAP
-    if _singleton_root_owned and root is not None:
-        try:
-            shutil.rmtree(root)
-        except OSError as exc:
-            warnings.warn(
-                f"could not remove pytest singleton root {root}: {exc}",
-                ResourceWarning,
-                stacklevel=1,
+    if root is not None:
+        from vaultspec_rag._test_isolation import (
+            reclaim_singleton_paths,
+            singleton_child_names,
+        )
+
+        worker = os.environ.get("PYTEST_XDIST_WORKER")
+        reclaim_singleton_paths(
+            root,
+            owned_root=_singleton_root_owned,
+            owned_pair=_singleton_pair_owned,
+            keep_diagnostics=_session_failed,
+            worker=worker,
+        )
+        if _session_failed:
+            _, basetemp = singleton_child_names(worker)
+            print(
+                f"pytest: retained failure artifacts under {root / basetemp}",
+                file=sys.stderr,
             )
     _singleton_prior_env = None
     _singleton_root = None
@@ -249,8 +275,16 @@ def _atexit_reclaim_singleton_root() -> None:
     reclaim the leftover.
     """
     root = _singleton_root
-    if _singleton_root_owned and root is not None:
-        shutil.rmtree(root, ignore_errors=True)
+    if root is not None:
+        from vaultspec_rag._test_isolation import reclaim_singleton_paths
+
+        reclaim_singleton_paths(
+            root,
+            owned_root=_singleton_root_owned,
+            owned_pair=_singleton_pair_owned,
+            keep_diagnostics=_session_failed,
+            worker=os.environ.get("PYTEST_XDIST_WORKER"),
+        )
 
 
 def _has_hf_token() -> bool:
