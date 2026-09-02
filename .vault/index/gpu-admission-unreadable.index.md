@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#gpu-admission-unreadable'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:9142b38b1004cc6c9ac72a6c57a98d27c39045ac6219c95f5d0088058a8b2a02'
 related:
   - '[[2026-08-14-gpu-admission-unreadable-S01]]'

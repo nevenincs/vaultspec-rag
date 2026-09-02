@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#control-plane-affordances'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:b59df9081ff14f5c1db1c8182fd0b1fc665e068c5b45cc018231fad08e6d1324'
 related:
   - '[[2026-07-13-control-plane-affordances-P01-S01]]'

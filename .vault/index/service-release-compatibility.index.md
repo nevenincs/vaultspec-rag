@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-release-compatibility'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:7dcf08c87d02f1800757b0f90b7cff8a18a4fb250222d99c3b91c740b61a3c4c'
 related:
   - '[[2026-07-25-service-release-compatibility-P03-S18]]'

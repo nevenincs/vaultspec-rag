@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#service-quiesce'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:b7f3a75b2f006b784dd2794b8c6cd494aedeace1df3b04faac7c552a4cc7db02'
 related:
   - '[[2026-07-24-service-quiesce-P01-S01]]'

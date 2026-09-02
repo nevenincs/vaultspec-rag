@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#serviceclient-admin-errors'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:6c2f9877a305e5ad6052a9ec70a418fee160591d4c2d5b7fb0aae531c87ef259'
 related:
   - '[[2026-06-24-serviceclient-admin-errors-S01]]'

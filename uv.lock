@@ -2561,7 +2561,7 @@ wheels = [
 
 [[package]]
 name = "vaultspec-core"
-version = "0.1.56"
+version = "0.1.73"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mcp" },
@@ -2578,9 +2578,9 @@ dependencies = [
     { name = "typer" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/4c/ff0be2d8b8a6989a5d2e8cbfeae83588822bac375ad13bca17511a39f852/vaultspec_core-0.1.56.tar.gz", hash = "sha256:2249ed9a093d1ccaeda234ef51114c19685d91b7e93122c4a834c3eb668f741f", size = 5915498, upload-time = "2026-08-01T22:11:40.658Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ab/31/36092110b348e620227efcac5323f63a1cfa6be364597bd4f9061b38c267/vaultspec_core-0.1.73.tar.gz", hash = "sha256:6ff74ca56cbbe285d5a486747104d6acb0343bece9fb5fba32e29e53bd1b87c9", size = 5845976, upload-time = "2026-08-30T21:16:12.97Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0a/4f/c0c760ae3adfd609b4354aa25c51b0feb4f9ed2881d3732529d52fb45138/vaultspec_core-0.1.56-py3-none-any.whl", hash = "sha256:01dd53cd18acdf7e7e7ef3ead101c049a0cd805bab3b8f0f0a0dbe412ffe7198", size = 915021, upload-time = "2026-08-01T22:11:38.164Z" },
+    { url = "https://files.pythonhosted.org/packages/04/c1/9abe9596b4ce13b3f32b57a1384abb48e1e89fb0a4dd21f4837d95da1fee/vaultspec_core-0.1.73-py3-none-any.whl", hash = "sha256:02ddcfd35bf0141f678d963f3d634351a98a0bdf5e7d8dedb5af4952b5141413", size = 984224, upload-time = "2026-08-30T21:16:11.398Z" },
 ]
 
 [[package]]

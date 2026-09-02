@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#preprocess-batch-hooks'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:d5222c88e5ea7a321090098a216d67693df1ce9799835373aedc6f220eb2dc54'
 related:
   - '[[2026-07-21-preprocess-batch-hooks-adr]]'

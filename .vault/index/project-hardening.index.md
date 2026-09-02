@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#project-hardening'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:93ff83acc71380ff6c9ba474cba4be401bb37b0e5ddf8415e3b34a6af1206e81'
 related:
   - '[[2026-05-03-discoverability-research]]'

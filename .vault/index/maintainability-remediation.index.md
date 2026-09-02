@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#maintainability-remediation'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:cad86fd12b4295a6c23210ccd4dcb4c043616d9822c34fbd8ea63296a1dc4be7'
 related:
   - '[[2026-07-27-maintainability-remediation-W01-P01-S01]]'

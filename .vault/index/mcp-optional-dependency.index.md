@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#mcp-optional-dependency'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:1077bb18fbe61fa2d19b9600e824ee15b5caa6c970c90eefc1acb081b7b7e632'
 related:
   - '[[2026-06-30-mcp-optional-dependency-S01]]'

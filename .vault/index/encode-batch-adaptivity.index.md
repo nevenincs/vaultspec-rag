@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#encode-batch-adaptivity'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:b88489f58b6f040febcf2086d5842418c3be378608aa569df3e4010fdba01844'
 related:
   - '[[2026-07-29-encode-batch-adaptivity-P01-S01]]'

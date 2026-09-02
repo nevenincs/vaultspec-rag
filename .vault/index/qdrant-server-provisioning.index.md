@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#qdrant-server-provisioning'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:ce2bd12b3ff5f64260c52944f78deb26c69d6703b6e05d5046694bae8e05fb6f'
 related:
   - '[[2026-06-12-qdrant-server-provisioning-P01-S01]]'

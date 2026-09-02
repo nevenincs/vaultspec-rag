@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#index-progress-bars'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:688f161124b27cbb09a87e4cf398bde62771728b869f55d793feed6ba4649075'
 related:
   - '[[2026-04-12-index-progress-bars-adr]]'

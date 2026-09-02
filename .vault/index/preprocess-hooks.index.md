@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#preprocess-hooks'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:3635358c900db535503381a012b6ade8a80c82f2a3c2f4e0bd8960cb31ce1a86'
 related:
   - '[[2026-06-10-preprocess-hooks-W01-P01-S01]]'

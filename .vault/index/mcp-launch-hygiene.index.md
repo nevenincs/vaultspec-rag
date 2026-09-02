@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#mcp-launch-hygiene'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:12378974bb1a649a264c5311f14c1a9e0fb7ff634fdaee1d00cda69f44e81fcf'
 related:
   - '[[2026-07-17-mcp-launch-hygiene-S01]]'

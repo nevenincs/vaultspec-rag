@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#lint-defaults'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:e6b9fb557d13001c6fa1219b8be436031c0c81a6b9a81bf27ed0fac1aefb79dd'
 related:
   - '[[2026-07-27-lint-defaults-P01-S01]]'

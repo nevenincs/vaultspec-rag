@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#storage-lifecycle'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:1a707460f4a24f49d9eb1d7c7e0b330bb5564e46fe309c585d57054814f257e7'
 related:
   - '[[2026-06-18-storage-lifecycle-W01-P01-S01]]'

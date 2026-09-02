@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#install-mcp-dependency-fix'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:30721b6b001790bf1ef2da1dd2eb27351f9fcc09e9300dae78c758ba4e6fc667'
 related:
   - '[[2026-06-10-install-mcp-dependency-fix-S01]]'

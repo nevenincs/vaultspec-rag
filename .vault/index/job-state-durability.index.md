@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#job-state-durability'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-02'
+body_schema: 'body-v2'
 body_hash: 'sha256:d631cde3519081af5020f3ebba94f1ad2d6654e61edfe7d49ef497bfaf561ed6'
 related:
   - '[[2026-07-31-job-state-durability-adr]]'
