@@ -11,8 +11,8 @@ This page covers installing the package, provisioning its dependencies, verifyin
 **Hardware and operating system**
 
 - **A GPU:** on Linux and Windows, an NVIDIA card with a working CUDA driver and roughly 3 GB of free video memory. On macOS, Apple silicon with at least 8 GiB of unified memory (the tested minimum), which PyTorch reaches through Metal Performance Shaders (MPS).
-- **16 GiB of system RAM:** indexing refuses to start below this rather than running slowly. That's the floor for the default `managed-service` profile; the `embedded` profile lowers it to 8 GiB.
-- **8 GiB of free disk:** on the volume holding the search index, not the volume holding the model cache. The `embedded` profile lowers this to 5 GiB.
+- **16 GiB of system RAM:** indexing refuses to start below this rather than running slowly. That's the floor for the default `managed-service` profile; the `embedded-local` profile lowers it to 8 GiB.
+- **8 GiB of free disk:** on the volume holding the search index, not the volume holding the model cache. The `embedded-local` profile lowers this to 5 GiB.
 - **Linux, Windows, or Apple silicon macOS.**
 
 Memory and disk figures use binary units (GiB); download sizes use decimal units (GB).
