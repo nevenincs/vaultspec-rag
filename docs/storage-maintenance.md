@@ -17,6 +17,8 @@ One caveat on scope: this all applies to the shared server-mode store. A `--loca
 | orphaned          | The recorded root is gone, and its drive or share is reachable - a true deletion.                                                                   |
 | unknown           | The store holds the namespace, but no root can be attributed to it. Never touched automatically.                                                    |
 | unverifiable      | The root's volume or network share is offline, so existence cannot be checked. Never touched automatically.                                         |
+| debris            | A half-written collection directory the server cannot load, left behind by a crash. Removable only with `prune --debris`, and never archived.       |
+| temp_rooted       | A survey flag marking a namespace whose root lives under an operating-system temp directory. Subject to the extra idle clock.                       |
 | dangling data     | Namespaces whose source root no longer exists. They occupy disk but can never serve a useful search.                                                |
 | grace window      | The continuous time a root must stay orphaned before automatic reclamation may act. The clock survives restarts and resets when the root reappears. |
 | maintenance cycle | One scheduled pass of the service's storage maintenance: classify, advance grace clocks, reclaim, sweep archives, report.                           |
@@ -26,7 +28,7 @@ One caveat on scope: this all applies to the shared server-mode store. A `--loca
 
 Creating a namespace preallocates a large block of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. One development machine accumulated 79 dead namespaces totalling 167.9 GB, all holding zero documents.
 
-That preallocation is why disk usage tracks the *number* of roots you have indexed far more closely than the amount of code and documents in them. It also means there are two different ways to get space back: removing namespaces you no longer need, and shrinking the ones you are keeping. Both are covered below, and the service does both on its own.
+That preallocation is why disk usage tracks the *number* of roots you have indexed far more closely than the amount of code and documents in them. It also means there are two different ways to get space back: removing namespaces you no longer need, and shrinking the ones you are keeping. Both have their own sections, Reclaim space manually and Shrinking collections you keep, and the service does both on its own.
 
 The store lives at `~/.vaultspec-rag/qdrant-server/storage` by default; `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` relocates it. Any location works, including deeply nested ones - on Windows the service hands the storage engine extended-length paths, so the classic 260-character path limit does not constrain where the store lives.
 
@@ -70,7 +72,7 @@ A namespace is only ever reclaimed automatically when all of the following hold:
 
 Reclamation is tiered. A namespace holding zero documents is dropped after 24 hours of continuous orphan-hood. A namespace holding data waits 7 days, then each of its collections is written to a snapshot archive, and the namespace is dropped only if every snapshot succeeded - a failed archive always cancels the drop.
 
-The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unplugged drive looks exactly like a deleted root, so it is never treated as one), or - with one exception below - anything `live`. At most 16 namespaces are reclaimed per cycle; the remainder waits for the next one.
+The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unplugged drive looks exactly like a deleted root, so it is never treated as one), or - with one exception, temp-rooted namespaces - anything `live`. At most 16 namespaces are reclaimed per cycle; the remainder waits for the next one.
 
 The exception is temp-rooted namespaces. A harness temp directory that still exists classifies `live` and would otherwise survive every prune forever, which is exactly how leaked harness namespaces once filled a disk. A namespace whose root lives under an OS temp directory therefore runs on an additional clock: every successful index run stamps a persisted `last_indexed` time, and once that stamp is older than the ephemeral idle TTL (72 hours by default) the namespace is treated as dangling even though its root exists. The same tiers then apply - empty ones drop, data-bearing ones are archived first - under the same per-cycle cap, with ordinary orphans taking priority. An actively re-indexed temp root keeps refreshing its stamp and is never touched; set `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS=0` to disable the tier.
 
@@ -98,7 +100,7 @@ Reconciled 6 collections (23.4 GiB reclaimed); 0 still converging.
   reconciled       r45b56789f389_vault_docs         8->1 segments, 1.0 GiB freed
 ```
 
-Merging is a background operation, so the command waits for each collection to settle before reporting what it saved. That wait matters: while the engine restructures a collection, both its segment count and its on-disk size briefly rise *above* where they started before falling well below. A figure read mid-merge would report a reclamation in progress as growth, so `vaultspec-rag` only ever reports a size it has watched stop changing — and it waits for the merge to actually *begin* before it starts watching, because a merge still queued behind a busy engine looks exactly as motionless as a finished one.
+Merging is a background operation, so the command waits for each collection to settle before reporting what it saved. That wait matters: while the engine restructures a collection, both its segment count and its on-disk size briefly rise *above* where they started before falling well below. A figure read mid-merge would report a reclamation in progress as growth, so `vaultspec-rag` only ever reports a size it has watched stop changing - and it waits for the merge to actually *begin* before it starts watching, because a merge still queued behind a busy engine looks exactly as motionless as a finished one.
 
 Pass `--no-wait` to issue the changes and return immediately; the collections still converge on their own, but that run reports no reclaimed bytes, because at that moment there is no honest number to give. `--limit` bounds how many collections one run touches.
 
@@ -112,23 +114,28 @@ One residue is left behind deliberately. The write-ahead log size is fixed when 
 
 Snapshot archives land in `~/.vaultspec-rag/qdrant-server/archive/<prefix>/`, one subdirectory per reclaimed namespace and one `.snapshot` file per collection. Each maintenance cycle deletes archives older than 30 days, then evicts oldest-first if the archive directory exceeds 20 GB; both bounds are configurable.
 
-The simplest restore is usually to reindex: the index is derived data, so if the root itself still exists (or came back from your own backup), indexing it rebuilds everything. To recover the archived index directly instead, use Qdrant's snapshot recovery against the managed server:
+Reindex first. The index is derived data, so if the root still exists, or came back from your own backup, indexing it rebuilds everything.
 
-```python
-from qdrant_client import QdrantClient
+To restore the archived index directly, use the storage command. Point it at the archive directory holding the snapshot manifest, and name the root the restored namespace is keyed to:
 
-client = QdrantClient(url="http://127.0.0.1:8765")
-client.recover_snapshot(
-    collection_name="r0123456789ab_vault_docs",
-    location="file:///C:/Users/me/.vaultspec-rag/qdrant-server/archive/r0123456789ab/r0123456789ab_vault_docs-....snapshot",
-)
+```
+uv run vaultspec-rag server storage restore ~/.vaultspec-rag/qdrant-server/archive/r0123456789ab --root /path/to/project --dry-run
+uv run vaultspec-rag server storage restore ~/.vaultspec-rag/qdrant-server/archive/r0123456789ab --root /path/to/project --yes
 ```
 
-The snapshot path must be readable by the Qdrant server process, which it is on the machine that wrote it.
+The destination root must hold no collections. There is no override, so restore into a root you have already pruned or one you have not indexed. Preview with `--dry-run` to see the destination collections before anything is written.
 
 ## Reclaim space manually
 
-Manual pruning removes every orphaned namespace immediately - no grace window applies, because the operator running the command is the confirmation. Preview first, then apply:
+**Manual pruning deletes; it does not archive.** Automatic reclamation snapshots a data-bearing namespace before dropping it. `prune` and `delete` do not: they remove the namespace outright, with no grace window, because the operator running the command is the confirmation. If you want a copy, take one before you run these.
+
+Work in this order:
+
+1. Survey the store to see what is there.
+1. Prune the orphaned namespaces.
+1. Delete a single namespace only when prune will not remove it.
+
+Preview first, then apply:
 
 ```
 uv run vaultspec-rag server storage prune --dry-run
@@ -145,9 +152,11 @@ Prune targets only `orphaned` namespaces; `unknown` and `unverifiable` are never
 uv run vaultspec-rag server storage delete r0123456789ab_ --yes
 ```
 
-`delete` refuses a prefix the manifest cannot attribute to a root unless you pass `--allow-unknown`. The sensible order is survey, then prune, and delete only when you must remove one namespace the prune would not.
+`delete` refuses a prefix the manifest cannot attribute to a root unless you pass `--allow-unknown`.
 
-A crash can leave a half-written collection directory that the server cannot load (its config file never landed); the server skips it at startup and it would otherwise sit on disk forever. The survey lists such directories with status `debris`, and `prune --debris` removes them - a plain filesystem delete, since Qdrant cannot snapshot or drop a collection it never loaded. Debris removal is never automatic: it has no manifest attribution, so it stays behind the explicit flag plus the prune confirmation.
+A crash can leave a half-written collection directory whose config file never landed. The server cannot load it, skips it at startup, and it sits on disk indefinitely. The survey lists such directories with status `debris`.
+
+> **`prune --debris` is an unrecoverable filesystem delete.** Qdrant cannot snapshot or drop a collection it never loaded, so there is no archive and no restore path. Debris removal is never automatic: it has no manifest attribution, so it stays behind the explicit flag as well as the prune confirmation.
 
 ```
 uv run vaultspec-rag server storage prune --debris --dry-run
@@ -160,7 +169,7 @@ You can also address a namespace by its root path instead of its prefix - the sa
 uv run vaultspec-rag server storage delete --root C:\Temp\my-throwaway-root --yes --json
 ```
 
-The path is resolved and hashed exactly as indexing does, so it removes precisely the namespace that root's indexing created. Deletion is idempotent: an already-absent namespace reports `already_absent` and exits `0`, so a teardown hook can run unconditionally. A harness that instead simply deletes its temp roots is also fine - the automatic reclamation above removes the leftover namespaces once their grace window passes.
+The path is resolved and hashed exactly as indexing does, so it removes precisely the namespace that root's indexing created. Deletion is idempotent: an already-absent namespace reports `already_absent` and exits `0`, so a teardown hook can run unconditionally. A harness that deletes its temp roots instead also works - the scheduled reclamation removes the leftover namespaces once their grace window passes.
 
 ### Harnesses must isolate or tear down
 
@@ -197,7 +206,7 @@ uv run vaultspec-rag server storage migrate C:\code\my-project --to server --dry
 uv run vaultspec-rag server storage migrate C:\code\my-project --to server --yes
 ```
 
-`--dry-run` previews the migration without copying, `--yes` applies it, and `--json` emits a machine-readable outcome for scripts.
+Migration copies. The source store keeps its collections, so a failed or half-finished run leaves the origin index intact and you can retry. Once the destination works, reclaim the old copy yourself: migration does not do it for you.
 
 ## Observe maintenance
 
