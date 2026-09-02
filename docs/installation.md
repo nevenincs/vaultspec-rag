@@ -1,176 +1,198 @@
 # Installation
 
-This guide covers how to install the package, provision its dependencies, verify the install, recover from setup failures, and uninstall. For what vaultspec-rag is and why it needs an accelerator, see the [architecture overview](architecture.md). For a guided first run afterward, see the [getting started guide](getting-started.md).
+vaultspec-rag searches your source code, and the decision records your project keeps in `.vault/`, by meaning rather than by keyword. The [project overview](../README.md) covers what it is and why it exists.
 
-## Before you begin
+**It needs a supported GPU.** Processor-only machines and AMD cards cannot run it, and no fallback exists. If that rules you out, stop here rather than reading on.
 
-You need:
+This page covers installing the package, provisioning its dependencies, verifying the result, recovering when a step fails, upgrading, and removing it. For a guided first run once it's installed, see the [getting started guide](getting-started.md).
 
-- CPython 3.13 or 3.14. The runtime accepts that range and rejects anything outside it at import; 3.15 and later are refused until the test matrix covers them.
+## What you need before you start
 
-- [uv](https://docs.astral.sh/uv/) for dependency and tool management.
+**Hardware and operating system**
 
-- A supported accelerator: an NVIDIA GPU with a working CUDA driver and roughly 3 GB of free video memory (VRAM), or Apple silicon with MPS. The measured Apple silicon floor is 8 GiB of unified memory. CPU-only and AMD GPU hosts are unsupported.
+- **A GPU:** on Linux and Windows, an NVIDIA card with a working CUDA driver and roughly 3 GB of free video memory. On macOS, Apple silicon with at least 8 GiB of unified memory (the tested minimum), which PyTorch reaches through Metal Performance Shaders (MPS).
+- **16 GiB of system RAM:** indexing refuses to start below this rather than running slowly. That's the floor for the default `managed-service` profile; the `embedded` profile lowers it to 8 GiB.
+- **8 GiB of free disk:** on the volume holding the search index, not the volume holding the model cache. The `embedded` profile lowers this to 5 GiB.
+- **Linux, Windows, or Apple silicon macOS.**
 
-- Linux, Windows, or Apple silicon macOS for Python installs. The published Linux binaries state a glibc floor, because
-  a binary links against whatever C library built it and a bare "Linux" is not
-  a promise a download can keep:
+Memory and disk figures use binary units (GiB); download sizes use decimal units (GB).
 
-  | binary                      | requires                                               | covers                                                                              |
-  | --------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-  | `x86_64-unknown-linux-gnu`  | glibc 2.28                                             | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023                               |
-  | `aarch64-unknown-linux-gnu` | glibc 2.28, or 2.39 if built before this floor dropped | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 (older builds: Ubuntu 24.04+) |
+The GPU requirement isn't a preference: the embedding, sparse, and reranker models are too slow to be useful on a processor. The [architecture overview](architecture.md) explains the design.
 
-  On an older distribution the binary does not start, and the error names a
-  missing symbol version rather than the distribution being too old — so it is
-  worth checking `ldd --version` first. Installing from PyPI with `uv` has no
-  such floor and works wherever the Python and accelerator requirements above are met.
+**Network access.** Every route downloads from at least one of the Python package index, the Hugging Face model host, and the search-server release host. On a machine with restricted egress, confirm those before you start.
 
-  The two floors match from the first release that builds aarch64 in the same
-  pinned image x86_64 uses. Earlier aarch64 downloads were built on a host whose
-  own glibc was 2.39 and still require it, so the floor is a property of the
-  binary you downloaded rather than of the project. If an older aarch64 download
-  refuses to start, that is this difference and a current one will work.
+**Python toolchain.** Install [uv](https://docs.astral.sh/uv/) and CPython 3.13 or 3.14. The runtime rejects anything outside that range at import; 3.15 and later are refused until the test matrix covers them. This applies to the Python routes only. On a machine with no Python toolchain, use [Install without Python](#install-without-python).
 
-On Linux or Windows, confirm the NVIDIA GPU is visible before you start:
+## Confirm your GPU is visible
+
+On Linux or Windows:
 
 ```bash
 nvidia-smi
 ```
 
-If that command lists your card and a driver version, the driver is loaded. On Apple silicon, macOS supplies the GPU driver and PyTorch's standard macOS wheel exposes MPS; no CUDA install is involved. vaultspec-rag refuses to start if neither CUDA nor MPS is available, and it refuses MPS when `PYTORCH_ENABLE_MPS_FALLBACK` enables CPU execution. For the accelerator-only design, see the [architecture overview](architecture.md).
+If that lists your card and a driver version, the driver is loaded. On Apple silicon, macOS supplies the driver and the standard PyTorch wheel exposes MPS, so nothing needs checking and no CUDA install is involved.
 
-## Install the package
+vaultspec-rag refuses to start when neither CUDA nor MPS is available, and it refuses MPS when `PYTORCH_ENABLE_MPS_FALLBACK` enables processor execution. Neither platform falls back.
 
-Try GPU setup now, directly from PyPI:
+## Choose an install route
+
+Four routes. Pick one.
+
+### Trying it without commitment
+
+Runs in a throwaway environment and leaves nothing in your project:
 
 ```bash
 uvx --from "vaultspec-rag[gpu]" vaultspec-rag install
 ```
 
-Runs `install` in an ephemeral `uv` environment: it enrolls the current directory as a workspace, provisions the platform PyTorch build, downloads the search models, and fetches the pinned Qdrant server binary, prompting before it edits any config (see [Provision dependencies with the install command](#provision-dependencies-with-the-install-command) below). The `[gpu]` extra is required for local inference; a bare package deliberately omits that stack. Linux and Windows select the CUDA source, while its marker leaves macOS on the standard MPS-capable wheel. For a lasting install, use one of the paths below.
+### Adding it to a project
 
-To add vaultspec-rag as a dependency of an existing project, run:
+Choose this when the project itself should carry the dependency, so teammates and continuous integration (CI) resolve the same version:
 
 ```bash
 uv add "vaultspec-rag[gpu]"
 ```
 
-On Linux or Windows, install it as a standalone tool by pinning the CUDA torch wheel as a `--with` requirement. The command is environment-specific - the wheel names a python version, ABI, platform, and torch release - so do not copy it from documentation: `vaultspec-rag server start` and `vaultspec-rag install` print the exact command derived from your interpreter and installed torch whenever they detect a CPU-only tool environment. For orientation, the shape it takes (here Python 3.13, torch 2.13.0, Windows) is:
+### Installing it as a standalone tool
+
+Choose this when you want one copy on your machine to use across several projects, and no project should list it as a dependency. This route needs a pinned GPU build:
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
-The `--python` request must match the wheel's `cp3XX` tag (both are recorded in the tool receipt): without it, uv resolves the tool env on its default python, and a default that differs from the wheel's interpreter - a newer version, or a free-threaded build - fails the install on a tag mismatch. The `--with` pin matters: uv records it in the tool receipt and re-applies it on every `uv tool upgrade`, so torch keeps resolving to the GPU (cu130) wheel. Without it, every upgrade or forced reinstall re-resolves torch from PyPI and silently replaces the GPU build with a CPU-only wheel that the service refuses to start with. Do not rely on `--index` instead: current uv (verified on 0.11.x) does not record `--index` in the tool receipt, so an upgrade silently drops it. The project-scoped pin that `vaultspec-rag install` writes into `pyproject.toml` never reaches tool environments, and uv's `--torch-backend` selector is `uv pip`-only.
+### Installing a prebuilt binary
 
-If a tool environment has already lost its GPU torch, repair it in place (this is undone by the next upgrade; the `--with` pin above is the durable fix):
+Choose this when the machine has no Python toolchain at all. See [Install without Python](#install-without-python).
 
-```bash
-uv pip install --python "<tool-env python>" --reinstall --torch-backend=cu130 torch
-```
+### Which sections you still need
 
-On Apple silicon, install the standalone tool normally. The standard macOS
-PyTorch wheel supplies MPS and no CUDA receipt pin is needed:
+The first three routes can install the bare package instead of `[gpu]`. That control-plane-only install runs service and diagnostic commands but cannot index or search locally, because it omits PyTorch and the model stack. It avoids roughly 5 GB of dependencies. The binary route always carries the GPU build.
 
-```bash
-uv tool install --python 3.13 "vaultspec-rag[mcp]"
-vaultspec-rag install
-```
+| Your route                         | Sections you still need                                                                                                                 |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Trying it without commitment       | [What the install command provisions](#what-the-install-command-provisions), [Verify the install](#verify-the-install)                  |
+| Adding it to a project             | [Install with Python](#install-with-python) in full, [Verify the install](#verify-the-install)                                          |
+| Installing it as a standalone tool | [Install with Python](#install-with-python) in full, including [the pin](#pin-the-gpu-build), [Verify the install](#verify-the-install) |
+| Installing a prebuilt binary       | [Install without Python](#install-without-python), [Verify the install](#verify-the-install)                                            |
 
-Two tool-lifecycle warnings:
+## Install without Python
 
-- Stop the service before `uv tool install --force` or an upgrade that replaces the environment. The running service's executable holds the tool's `Scripts` directory, so a forced reinstall fails half-way ("Access is denied") and leaves the environment broken.
-- After such a partial failure, `uvx vaultspec-rag` can silently fall back to a cached ephemeral environment (a `uv` cache path containing `archive-v0`) instead of the installed tool. `server start` warns loudly when it detects this; reinstall the tool with the service stopped to recover.
+**Windows and Linux only.** The lane publishes `x86_64` Windows, and `x86_64` and `aarch64` Linux. It publishes no macOS artifact and no macOS formula, so on Apple silicon use one of the Python routes. The GPU requirement is unchanged.
 
-The commands in this guide use the `uv run` prefix, which runs the command-line interface (CLI) inside the project's environment. If you installed the standalone tool, drop the prefix and call `vaultspec-rag` directly.
+On Linux, first check [which binary your distribution can run](#which-linux-binary-your-distribution-can-run). The binaries carry a C library floor that installing from the package index does not.
 
-## Install the standalone binaries
+`vaultspec-rag` and `vaultspec-search-mcp` ship as standalone binaries that need no Python toolchain. They're published through the account channel root, `nevenincs/homebrew-tap`, which carries every vaultspec product, so you add it once.
 
-Once a binaries release has published, `vaultspec-rag` and `vaultspec-search-mcp` are also available as standalone binaries that need no Python toolchain on the machine:
+On Windows:
 
 ```powershell
-scoop bucket add vaultspec-rag https://github.com/nevenincs/vaultspec-rag
+scoop bucket add nevenincs https://github.com/nevenincs/homebrew-tap
 scoop install vaultspec-rag
 ```
 
+On Linux:
+
 ```sh
-brew tap nevenincs/vaultspec-rag https://github.com/nevenincs/vaultspec-rag
+brew tap nevenincs/tap https://github.com/nevenincs/homebrew-tap
 brew install vaultspec-rag
 ```
 
-**Windows and Linux only, and the accelerator requirement is unchanged.** The standalone packaging lane does not currently publish a macOS artifact or offer a macOS formula. Apple silicon users install the Python project or tool described above; MPS runtime support does not imply a standalone macOS binary.
+The binaries bootstrap the same GPU PyTorch build this project resolves, pinned from the lockfile, so a binary cannot drift onto a different build than a Python install would get.
 
-The binaries bootstrap the **same accelerated torch build this project resolves** - the `cu130` wheel, pinned from `uv.lock`, so the binary cannot drift onto a different torch than `uv sync` installs. That pin is load-bearing rather than cosmetic: `tool.uv.sources` is a workspace setting, not wheel metadata, so it does not survive into an install of the published wheel from PyPI. Without it the bootstrap resolves plain PyPI torch, which on Windows declares no CUDA dependency at all - and the service then refuses to start, exactly as it does for a CPU-only tool environment.
+First launch downloads that build. On Windows that's about 1.9 GB and self-contained. On Linux the wheel itself is about 500 MB, but it pulls the CUDA runtime packages as dependencies, so budget several gigabytes there too.
 
-First launch is a large download: about 1.8 GB on Windows, 500 MB on Linux. That is the same download `uv tool install` with the torch pin performs; the binary does not add to it, it just does it on first run.
+Nothing in [Install with Python](#install-with-python) applies to this route. Go to [Verify the install](#verify-the-install).
 
-## Provision dependencies with the install command
+## Install with Python
 
-The `install` command enrolls the workspace and provisions three external dependencies:
+The following steps run in order. Each says which routes it applies to.
+
+### What the install command provisions
+
+*All Python routes.*
 
 ```bash
 uv run vaultspec-rag install
 ```
 
-By default it does three things:
+It provisions three things:
 
-- Configures the CUDA (cu130) PyTorch build as a Linux/Windows-only package source in `pyproject.toml`. This reports `configured, sync pending`. The source marker is inactive on macOS, where normal dependency resolution installs the MPS-capable standard wheel.
-- Ensures the dense, sparse, and reranker model files are present in the Hugging Face cache.
-- Downloads and verifies the pinned Qdrant server binary.
+- The CUDA (`cu130`) PyTorch build, which it records as a Linux and Windows package source in `pyproject.toml`. This reports `configured, sync pending`. The source marker is inactive on macOS, where normal resolution installs the MPS-capable standard wheel.
+- The dense, sparse, and reranker model files, in the Hugging Face cache.
+- The pinned Qdrant search-server binary, downloaded and checksum-verified.
 
-The PyTorch config step prompts before it edits `pyproject.toml`. For non-interactive installs, pass `--yes` to skip the prompt, unless you also pass `--no-torch-config`. The resulting entry is harmless on macOS because its platform marker excludes Darwin.
+The PyTorch step asks before editing `pyproject.toml`, and **the prompt defaults to no**. Type `y` to accept. For an unattended run, pass `--yes` to accept it, or `--no-torch-config` to skip that step and manage PyTorch yourself.
 
-Read the per-dependency outcome report using the shared sync vocabulary: `created` (downloaded), `updated`, `unchanged` (already present), `skipped`, and `failed`. The run is idempotent, so re-running a satisfied dependency reports `unchanged` with no network call.
+Each dependency reports its outcome as `created`, `updated`, `unchanged`, `skipped`, or `failed`. The run is idempotent: re-running a satisfied dependency reports `unchanged` and makes no network call.
 
-## Choose a provisioning mode
+### Install less than the default
 
-The `install` command records how vaultspec-rag is placed in your workspace and, from that, how its integration server is launched. Pass `--mode` to choose one of three placements:
+*All Python routes. These are decisions you make when you run `install`, not afterwards.*
+
+- `--local-only` selects the embedded on-disk store, skips the Qdrant download, and persists the choice so a later `server start` honors it. Throughput drops under concurrent load. It doesn't change Python dependencies, CUDA, or model downloads. See [backends](backends.md).
+- `--skip-torch`, `--skip-models`, `--skip-qdrant` each drop one dependency. `--skip-qdrant` is redundant under `--local-only`.
+- `--no-torch-config` leaves `pyproject.toml` untouched.
+- `--dry-run` reports `preview only` for every step, writes nothing, and never prompts.
+
+The [command-line reference](cli.md) has the complete flag set.
+
+### Choose where vaultspec-rag lives
+
+*Project and standalone tool routes.*
+
+`install` records where vaultspec-rag sits in your workspace. That placement decides how vaultspec-rag launches its Model Context Protocol (MCP) server, which exposes search to AI assistants. See [MCP integration](mcp.md) for the server itself.
 
 ```bash
 uv run vaultspec-rag install --mode tool
 ```
 
-- `tool` is the standalone placement. The integration server launches through an ephemeral `uvx` invocation, independent of any project environment. This is the default when your project does not depend on vaultspec-rag.
-- `dependency` is for a project that lists vaultspec-rag in its runtime dependencies. The server launches through `uv run` inside the project environment. A runtime dependency ships with your project's published distribution.
-- `dev` is for a project that keeps vaultspec-rag in its default development dependency group. It launches exactly like `dependency` but records that the placement is development-only and will not ship with a published distribution.
+- `tool` launches the server through an ephemeral `uvx` invocation, independent of any project environment. This is the default when your project doesn't depend on vaultspec-rag.
+- `dependency` launches it through `uv run` inside the project environment. A runtime dependency ships with your project's published distribution.
+- `dev` launches identically to `dependency` but records the placement as development-only, so it doesn't ship.
 
-With no `--mode` flag, the placement is detected from your `pyproject.toml`: a runtime dependency resolves to `dependency`, a default dev-group entry resolves to `dev`, and anything else falls through to the `tool` default. An explicit `--mode dependency` or `--mode dev` with no `pyproject.toml` to declare against is refused rather than guessed.
+With no `--mode`, `install` detects the placement from `pyproject.toml`: a runtime dependency resolves to `dependency`, a default dev-group entry to `dev`, anything else to `tool`. It refuses an explicit `--mode dependency` or `--mode dev` when no `pyproject.toml` exists to declare against, rather than guessing.
 
-The chosen placement is committed to `.vaultspec/workspace.json`, a per-package declaration shared with vaultspec-core. Each package records its own mode there, so a workspace that installs vaultspec-core in one placement and vaultspec-rag in another keeps both choices side by side without one overwriting the other.
+`install` commits the choice to `.vaultspec/workspace.json`, per package, so a workspace holding both vaultspec-rag and vaultspec-core keeps each placement without one overwriting the other. Placement is independent of `--local-only`: placement decides where the tool lives, the backend flag decides where the index is stored.
 
-The `--mode` placement is independent of the `--local-only` backend choice covered below: `--mode` selects where vaultspec-rag lives and how its server launches, while `--local-only` selects the storage backend. You can combine any mode with or without `--local-only`.
+### Complete the install with a sync
 
-## Install the platform PyTorch build
+*Project and standalone tool routes.*
 
-The install is not complete until you run `uv sync`. The `[gpu]` extra supplies the local inference libraries. On Linux and Windows, `install` records the cu130 PyTorch source; on macOS, the same sync resolves the standard MPS-capable wheel. Until the environment has a supported accelerator build, it cannot run searches:
+The install isn't finished until the environment resolves the platform build. Until it does, searches cannot run:
 
 ```bash
 uv sync
 ```
 
-To fold the sync into setup, pass `install --sync`, which runs `uv sync --reinstall-package torch` after the config step.
+To fold this into the install step, pass `install --sync`, which runs `uv sync --reinstall-package torch` after the config step.
 
-## Choose a lighter setup
+### Pin the GPU build
 
-The defaults provision the supervised Qdrant server for higher throughput under concurrent load. To trim or opt out of the provisioning steps, use these conditional flags.
+*Standalone tool route only.*
 
-- If you want a lighter, server-free install, pass `--local-only`. It selects the embedded on-disk store, skips the Qdrant binary download, and persists the local backend so a later `server start` honors it. It does not change Python dependencies, CUDA, or model downloads. Throughput is lower under concurrent load. See the [backends guide](backends.md) for the trade-offs.
-- To skip an individual dependency, pass `--skip-torch`, `--skip-models`, or `--skip-qdrant`. Each maps onto the `install` command's skip set; `--skip-qdrant` is redundant under `--local-only`, which already drops the Qdrant step.
-- If you manage PyTorch yourself, pass `--no-torch-config` to leave `pyproject.toml` untouched.
-- To preview the full provisioning report without writing anything, pass `--dry-run`. The dry run reports `preview only` for each step and never prompts, so it's independent of the confirmation prompt.
+A tool environment must pin the CUDA wheel in its receipt. Without the pin, every `uv tool upgrade` re-resolves PyTorch from the package index and silently replaces the GPU build with a processor-only one. The service then refuses to start.
 
-For the complete `install` flag set, see the [CLI reference](cli.md).
+The exact command depends on your interpreter, platform, and PyTorch release, so don't copy one from documentation. Both `vaultspec-rag server start` and `vaultspec-rag install` print the correct command for your machine whenever they detect a processor-only tool environment. Run either to get it. Its shape, for Python 3.13 and torch 2.13.0 on Windows, is:
 
-## Choose the package footprint
+```bash
+uv tool install --force --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
+```
 
-A bare `uv add vaultspec-rag` or `uv tool install vaultspec-rag` installs the control plane only. It does not resolve torch, sentence-transformers, transformers, or Linux NVIDIA packages, so it avoids the roughly 5 GB CUDA footprint reported for a GPU install. It can run service-control and diagnostic commands, but it cannot index or search locally.
+The `--python` request must match the wheel's `cp3XX` tag, or the install fails on a tag mismatch. Two alternatives look equivalent and are not:
 
-For local GPU inference, install `vaultspec-rag[gpu]` and run `install --sync`. On Linux this intentionally resolves the CUDA stack; budget roughly 5 GB for those packages and several additional gigabytes for the first model download. `--local-only` is independent of this choice: it saves the managed Qdrant binary only.
+- `--index` is not recorded in the tool receipt, so an upgrade drops it.
+- The project-scoped pin that `install` writes into `pyproject.toml` never reaches tool environments.
+
+On Apple silicon no pin is needed, because the standard macOS wheel already supplies MPS.
+
+If a tool environment has already lost its GPU build, see [When something goes wrong](#when-something-goes-wrong).
 
 ## Verify the install
 
-Check the installed version:
+Check the version:
 
 ```bash
 uv run vaultspec-rag --version
@@ -178,66 +200,118 @@ uv run vaultspec-rag --version
 
 This reports `vaultspec-rag v0.4.21`. <!-- x-release-please-version -->
 
-Run the readiness report, which checks PyTorch and the resolved accelerator, the model cache, and the Qdrant binary and server:
+Run the readiness report, which checks PyTorch and the resolved GPU backend, the model cache, and the Qdrant binary and server:
 
 ```bash
 uv run vaultspec-rag server doctor
 ```
 
-A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode, the `qdrant` line is ready once a binary resolves and the supervised child is running. In local-only mode, an absent binary is reported ready because no server is needed. Add `--json` for a machine-readable envelope.
+A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode the `qdrant` line is ready once a binary resolves and the supervised child is running. In local-only mode it reports an absent binary as ready, because no server is needed. Add `--json` for a machine-readable envelope.
 
-When a workspace has a committed provisioning mode, `server doctor` also reports a `Provisioning (vaultspec-rag)` block naming the declared mode, whether the deployed integration server matches it, and whether the running vaultspec-core meets the version floor your declaration requires. A deployed server that no longer matches the declared mode is a warning; a vaultspec-core below the required floor is an error. Re-run `install --mode` (or `install --upgrade`) to bring the deployed launch back into line.
+Where a workspace has a committed placement, `server doctor` also prints a `Provisioning (vaultspec-rag)` block naming the declared mode and whether the deployed launch matches it. A mismatch is a warning; a vaultspec-core below the required version floor is an error. Re-run `install --mode` or `install --upgrade` to bring the deployed launch back into line.
 
-Check the project's index location and compute device:
+Check the index location and GPU backend:
 
 ```bash
 uv run vaultspec-rag status
 ```
 
-A healthy result names `cuda` or `mps` as the compute backend and shows the index data location, even before you've indexed anything. CUDA memory is reported as discrete VRAM; MPS memory is reported as unified memory and is never represented as zero VRAM.
+A healthy result names `cuda` or `mps`, and shows the index location, even before you've indexed anything. It reports CUDA memory as discrete video memory and MPS memory as unified memory, never as zero.
 
-## Troubleshooting
+## When something goes wrong
 
-If `server doctor` reports the `torch` line as not ready and CPU-only on Linux or Windows, run `uv sync` (or `uv run vaultspec-rag install --sync`). On Apple silicon, sync the standard wheel and check that `torch.backends.mps.is_available()` is true.
+### Telling two lookalikes apart
 
-If `nvidia-smi` shows no GPU, the NVIDIA driver is not loaded. Fix it before installing. On Apple silicon, an unavailable MPS backend or `PYTORCH_ENABLE_MPS_FALLBACK=1` is an explicit startup failure. Neither platform falls back to CPU.
+A missing driver and a processor-only environment both end in a refusal to start. `nvidia-smi` distinguishes them. If it doesn't list your card, the driver isn't loaded, and reinstalling PyTorch doesn't help. If it does list your card but `server doctor` reports the `torch` line as not ready, the driver is fine and your environment holds the wrong build.
 
-If the PyTorch step needs consent it does not have, install refuses to edit `pyproject.toml` and exits non-zero. Re-run with `--yes` to approve the edit, or with `--no-torch-config` to skip it and manage PyTorch yourself.
+### The driver isn't loaded
 
-If `server start` fails because the Qdrant server binary is missing, provision it:
+Fix that before installing anything further. On Apple silicon, an unavailable MPS backend or `PYTORCH_ENABLE_MPS_FALLBACK=1` is an explicit startup failure, not a fallback.
+
+### The environment has a processor-only build
+
+On Linux or Windows run `uv sync`, or `uv run vaultspec-rag install --sync`. On Apple silicon, sync the standard wheel and check that `torch.backends.mps.is_available()` is true.
+
+### A tool environment lost its GPU build
+
+Repair it in place:
+
+```bash
+uv pip install --python "<tool-env python>" --reinstall --torch-backend=cu130 torch
+```
+
+The next upgrade undoes this. [The receipt pin](#pin-the-gpu-build) is the durable fix.
+
+Two things break tool environments in the first place:
+
+- A forced reinstall while the service is running. The running executable holds the tool's `Scripts` directory, so the reinstall fails half-way.
+- After such a failure, `uvx vaultspec-rag` silently falls back to a cached ephemeral environment instead of the installed tool. `server start` warns when it detects that fallback.
+
+Stop the service before any forced reinstall or upgrade.
+
+### `install` refused to edit `pyproject.toml`
+
+It needs consent it doesn't have, and exits non-zero. Re-run with `--yes` to approve, or `--no-torch-config` to manage PyTorch yourself.
+
+### `server start` cannot find the Qdrant binary
+
+Provision it, or run without the server:
 
 ```bash
 uv run vaultspec-rag server qdrant install
-```
-
-Or run the service without the server:
-
-```bash
 uv run vaultspec-rag server start --local-only
 ```
 
-If the Qdrant download fails with a checksum mismatch, the archive didn't match the committed digest and the partial file is deleted. Retry the download. On an air-gapped host, register your own executable with `server qdrant install --binary PATH`.
+### The Qdrant download failed a checksum
 
-## First run notes
+The archive didn't match the committed digest, and the command deleted the partial file. Retry. On an air-gapped host, register your own executable with `server qdrant install --binary PATH`.
 
-The first index or search downloads the dense, sparse, and reranker model files once, so it runs slower than later searches. If accelerator memory is exhausted, see [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed). On MPS, memory is unified with the rest of the system rather than dedicated VRAM. If models appear to re-download every run, point the Hugging Face cache (`HF_HOME`) at a persistent location. See the [configuration guide](configuration.md) for the relevant variables.
+Every recovery on this page is safe to run more than once. `install` reports `unchanged` for satisfied dependencies, and the repair commands re-resolve from scratch, so if you've already tried one, you haven't made anything worse.
+
+For anything not covered here, the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues) takes questions as well as bug reports. It's the only support channel.
+
+## The model cache and its first download
+
+The first index or search downloads the dense, sparse, and reranker model files once, so it runs slower than later work. The files land in the Hugging Face cache. If they appear to re-download every run, point `HF_HOME` at a persistent location; see the [configuration guide](configuration.md).
+
+If a run exhausts GPU memory, that's a runtime concern rather than an install one: see [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed). On MPS, memory is unified with the rest of the system rather than dedicated.
 
 ## Upgrade
 
-To move to a new release, bump the dependency and sync:
+Bump the dependency and sync:
 
 ```bash
 uv add --upgrade vaultspec-rag
 uv sync
 ```
 
-`uv sync` refetches the platform PyTorch build if it changed. Two optional follow-ups apply only when a release changes bundled content. Run `uv run vaultspec-rag install --upgrade` to refresh the bundled rules and integration files. If the release pins a newer Qdrant version, run `uv run vaultspec-rag server qdrant install --upgrade`. There is no migration step and no automatic reindex. If a release notes a changed embedding or reranker model, reindex by hand with `index --rebuild`.
+`uv sync` refetches the platform PyTorch build if it changed. Two follow-ups apply only when a release changes bundled content. Run `uv run vaultspec-rag install --upgrade` to refresh the bundled rules and integration files. If a release pins a newer Qdrant, run `uv run vaultspec-rag server qdrant install --upgrade`.
 
-One refresh matters for MCP launch hygiene: workspaces set up before the tokenized launch format still carry a static MCP seed (`.vaultspec/mcps/vaultspec-rag.builtin.json` with a literal `uv run vaultspec-search-mcp` entry) that bypasses vaultspec-core's launch renderer. `install --upgrade` rewrites that seed to the tokenized form, which the renderer turns into a side-effect-free launch for the workspace's declared mode (including the `[mcp]` extra spec that tool mode needs). If an assistant's MCP config predates the refresh, re-run the client's MCP setup afterwards so the rendered entry lands in its config.
+Nothing migrates and nothing reindexes automatically. If a release notes a changed embedding or reranker model, reindex by hand with `index --rebuild`.
 
-The `server updates` commands are unrelated to upgrades. They control the automatic-reindex watcher, covered in the [service mode guide](service-mode.md).
+One refresh matters for AI-assistant integrations. Workspaces set up before the tokenized launch format still carry a static MCP seed that bypasses vaultspec-core's launch renderer. `install --upgrade` rewrites it to the tokenized form, which renders a launch matching the workspace's declared placement. If an assistant's MCP config predates that refresh, re-run the client's MCP setup afterwards.
 
-## Uninstall
+The `server updates` commands are unrelated to upgrades; they control the automatic-reindex watcher, covered in [service mode](service-mode.md).
+
+## Remove it
+
+Run these in order. The first two need the command-line interface, so removing the package has to come last.
+
+Remove the workspace setup:
+
+```bash
+uv run vaultspec-rag uninstall --force
+```
+
+This reverts the PyTorch entry in `pyproject.toml`, removes vaultspec-rag's bundled files from `.vaultspec/`, and removes its MCP registration. **Without `--force` it only previews what it would remove.** It leaves your indexed data alone unless you add `--remove-data`, which deletes `.vault/data/`.
+
+Delete the managed Qdrant installs:
+
+```bash
+uv run vaultspec-rag server qdrant clean --yes
+```
+
+`--yes` is required; without it the command prints a preview only. Pass `--keep-current` to preserve the pinned version. This step never touches index data.
 
 Remove the package:
 
@@ -245,23 +319,25 @@ Remove the package:
 uv remove vaultspec-rag
 ```
 
-Revert the project-config change that install made to `pyproject.toml`:
+## Which Linux binary your distribution can run
 
-```bash
-uv run vaultspec-rag uninstall
-```
+A binary links against whatever C library built it, so a download labelled only "Linux" may not run on your distribution.
 
-Delete the managed Qdrant installs (index data is never touched):
+| Binary                      | Requires   | Covers                                                |
+| --------------------------- | ---------- | ----------------------------------------------------- |
+| `x86_64-unknown-linux-gnu`  | glibc 2.28 | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 |
+| `aarch64-unknown-linux-gnu` | glibc 2.28 | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 |
 
-```bash
-uv run vaultspec-rag server qdrant clean --yes
-```
+Check yours with `ldd --version`. On an older distribution the binary doesn't start, and the error names a missing symbol version rather than saying the distribution is too old.
 
-The `--yes` flag is required to delete; without it the command prints a preview only. Pass `--keep-current` to preserve the pinned version. For the full flag set, see the [CLI reference](cli.md).
+Every currently offered download meets the 2.28 floor. Older `aarch64` binaries, built before that floor dropped, require glibc 2.39; if one refuses to start, take the current binary instead.
+
+Installing from the package index has no such floor and works wherever the Python and GPU requirements are met.
 
 ## Where to go next
 
 - [Getting started](getting-started.md) walks through your first index and search.
-- [Search and index](search-and-index.md) covers query syntax, filters, and indexing.
-- [Backends](backends.md) compares the supervised server and the embedded store.
-- For support channels, see [support and help](../README.md#support-and-help).
+- [Search and index](search-and-index.md) answers how ranking works and what the filters do.
+- [Backends](backends.md) answers when to choose the on-disk store over the managed server.
+- [Configuration](configuration.md) answers which environment variables and settings exist.
+- [Project overview](../README.md) answers what vaultspec-rag is, if you're still deciding.
