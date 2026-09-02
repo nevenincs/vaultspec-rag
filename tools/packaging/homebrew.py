@@ -163,8 +163,7 @@ def _glibc_caveats(available: tuple[str, ...]) -> list[str]:
     # requirement on one architecture or overstate it on the other, so each
     # target states its own.
     return [
-        f"{target} requires glibc "
-        f"{'.'.join(str(part) for part in floor)} or newer."
+        f"{target} requires glibc {'.'.join(str(part) for part in floor)} or newer."
         for target, floor in sorted(floors.items())
     ]
 
