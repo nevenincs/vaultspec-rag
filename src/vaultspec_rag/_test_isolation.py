@@ -33,8 +33,10 @@ __all__ = [
     "enforce_pytest_singleton_containment",
     "pytest_singleton_bootstrap_window",
     "pytest_singleton_containment_active",
+    "reclaim_singleton_paths",
     "register_pytest_singleton_root",
     "require_pytest_singleton_root_registration",
+    "singleton_child_names",
     "sweep_orphaned_singleton_roots",
 ]
 
@@ -199,6 +201,59 @@ def _root_recently_touched(root: Path, *, now: float) -> bool:
     except OSError:
         return True
     return (now - newest) < _ORPHAN_SWEEP_LIVENESS_WINDOW_SECONDS
+
+
+def singleton_child_names(worker: str | None) -> tuple[str, str]:
+    """Return the (machine-singleton, basetemp) names *worker* writes under a root.
+
+    The xdist controller and each worker place their own pair side by side in one
+    session root, so reclaiming must address the caller's own pair by name rather
+    than the root wholesale.
+    """
+    if not worker:
+        return "machine-singleton", "pytest-temp"
+    return f"machine-singleton-{worker}", f"pytest-temp-{worker}"
+
+
+def reclaim_singleton_paths(
+    root: str | PathLike[str],
+    *,
+    owned_root: bool,
+    owned_pair: bool,
+    keep_diagnostics: bool,
+    worker: str | None = None,
+) -> None:
+    """Reclaim what this process wrote under *root*, sparing failure evidence.
+
+    Three things make a blanket ``rmtree(root)`` wrong.
+
+    The machine-singleton tree - the isolated status dir and Qdrant storage - is
+    the bulk of a run's footprint and holds no per-test diagnostics, so it always
+    goes. Under an inherited root it is reclaimed here too: an xdist worker
+    created the pair it writes even though it did not create the root, and
+    nothing reclaimed those before.
+
+    ``basetemp`` sits inside the same root, so removing the root wholesale also
+    destroyed the ``tmp_path`` directories pytest deliberately retained under
+    ``tmp_path_retention_policy = "failed"``. A failing run's evidence is the one
+    thing cleanup must not take, so it survives when *keep_diagnostics*.
+
+    Both removals are gated on *owned_pair*, and the root itself additionally on
+    *owned_root*. A nested pytest subprocess inherits the root **and**
+    ``PYTEST_XDIST_WORKER``, so it derives the same pair names as the live parent
+    that spawned it; reclaiming on name alone deletes the parent's basetemp
+    mid-session and its next fixture fails on a missing path.
+    """
+    root_path = Path(root)
+    if not owned_pair:
+        return
+    machine_singleton, basetemp = singleton_child_names(worker)
+    shutil.rmtree(root_path / machine_singleton, ignore_errors=True)
+    if keep_diagnostics:
+        return
+    shutil.rmtree(root_path / basetemp, ignore_errors=True)
+    if owned_root:
+        shutil.rmtree(root_path, ignore_errors=True)
 
 
 def sweep_orphaned_singleton_roots(
