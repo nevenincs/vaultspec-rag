@@ -1,8 +1,10 @@
 # Run the background service
 
-Run vaultspec-rag as a long-lived background service to keep the accelerator models loaded and the managed Qdrant server running. This is the standard server-backed path. The first query pays the model-loading cost once, and every later query reuses the already-loaded models instead of reloading them.
+Run vaultspec-rag as a long-lived background service to keep the models loaded and the managed server running. The first query pays the model-loading cost once, and every later query reuses the already-loaded models.
 
-This guide assumes the workspace is already installed and provisioned. "Provisioned" means the `install` command has fetched the model files and the Qdrant server binary, and the service environment has a PyTorch build for CUDA or MPS. If you haven't done that yet, start with the [installation guide](installation.md). For the difference between the managed server and the on-disk store, see the [backends guide](backends.md). For how the service, the accelerator consumer, and the vector store fit together, see the [architecture overview](architecture.md).
+This guide assumes the workspace is already installed and provisioned. "Provisioned" means `install` has fetched the model files and the Qdrant binary. It also means the environment has a PyTorch build for CUDA or Metal Performance Shaders (MPS). If you haven't done that, start with the [installation guide](installation.md).
+
+For the choice between the managed server and the local-only store, see the [backends guide](backends.md). For the vocabulary used here, see the [glossary](glossary.md).
 
 ## Start the service
 
@@ -12,49 +14,48 @@ Run:
 uv run vaultspec-rag server start
 ```
 
-The command starts the managed Qdrant server on loopback at `http://127.0.0.1:8765` and warms the models. It then binds the service on port 8766, writes a status file, and polls until the service reports ready. When the poll succeeds, the service is serving requests.
+The command starts the managed Qdrant server on loopback at `http://127.0.0.1:8765` and warms the models. It then binds the service on port 8766, writes a status file, and polls until the service reports ready.
 
-If you don't want a managed server, run the service local-only instead:
+If you don't want a managed server, run local-only instead:
 
 ```
 uv run vaultspec-rag server start --local-only
 ```
 
-"Local-only" means an on-disk store with no separate server process. The on-disk store skips the Qdrant binary, so it's the path to use on a machine where the binary isn't provisioned. See the [backends guide](backends.md) for the trade-offs.
+Start it from the project. The service runs in whatever Python environment launched it, which is why `uv run` is the documented form; see [Which Python environment runs the service](#which-python-environment-runs-the-service).
 
-Other start flags control the port, automatic updates, update timing, and the managed Qdrant server. The relevant sections of this guide describe them in context, and the [CLI reference](cli.md) carries the full list.
+Other start flags control the port, automatic updates, update timing, and the managed server. The [CLI reference](cli.md) carries the full list.
 
-## The service runs in your Python environment
-
-`server start` does not create or provision a Python environment of its own. It spawns the daemon - `python -m vaultspec_rag.server` - using the interpreter of the environment you launched the command from. **The service runs in whatever Python environment started it**, and it inherits that environment's packages, including PyTorch.
-
-This coupling matters because vaultspec-rag is accelerator-only. The service resolves CUDA first and Apple silicon MPS second, loads every model on that device, and never runs inference on CPU. On Linux and Windows, the environment must contain the CUDA (cu130) PyTorch wheel; `vaultspec-rag install` configures its source and `uv sync` installs it. On macOS, the standard PyTorch wheel supplies MPS. The service does not install or repair PyTorch while starting.
-
-That is why the documented way to start the service is from the project:
+## Confirm it is running
 
 ```
-uv run vaultspec-rag server start
+uv run vaultspec-rag server status
 ```
 
-`uv run` resolves the project's virtual environment, which carries the platform-appropriate PyTorch. On Linux and Windows, a globally installed CLI is a fine *client* but is not a suitable service launcher unless its tool receipt pins the CUDA wheel; the cu130 source lives in project configuration that a bare tool install cannot read. On Apple silicon, the standard macOS wheel is MPS-capable, so a normal tool environment can launch the service after its model and storage dependencies are provisioned.
+`status` shows whether the service is up, its address, uptime, queue, processed jobs, and a suggested next action. Its `Service env:` line names the Python environment running the service.
 
-**See which environment runs the service.** `server status` reports the daemon's interpreter on its `Service env:` line, and `GET /health` returns the `executable` and `prefix` of the running daemon. Use these to confirm the service is running in the GPU environment you expect.
+Its exit codes:
 
-**Starting from an environment without a supported accelerator fails fast.** Before it spawns the daemon, `server start` probes the resolved interpreter for CUDA or MPS. If that environment has no torch, no supported accelerator, or MPS CPU fallback is enabled, the command refuses immediately - naming the interpreter and the reason - rather than spawning a daemon that crashes during model load. Provision the correct PyTorch build or disable `PYTORCH_ENABLE_MPS_FALLBACK`, then start again.
+- `0` running
+- `3` stopped
+- `4` crashed or divergent
+- `5` warming, meaning the daemon holds the machine lock and is loading models; retry shortly
 
-## Warm models before serving
+"Divergent" means the status file disagrees with the live process, for example naming a process ID that is no longer alive. If `status` reports crashed or divergent, see [Troubleshooting](#troubleshooting).
 
-The first search after a cold start downloads the model files if they aren't cached yet, which delays that query. To pull the model files ahead of time, run:
+To check each dependency rather than the process, run:
 
 ```
-uv run vaultspec-rag server warmup
+uv run vaultspec-rag server doctor
 ```
 
-Warmup is optional. `server start` already warms the models as part of startup; run `warmup` separately when you want the model files downloaded before you start serving.
+`doctor` reports PyTorch and accelerator readiness, the compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, which names either a provision step or an install step.
+
+Both accept `--json`, and `status` accepts `--verbose`. For every field and exit code, see the [CLI reference](cli.md).
 
 ## Route commands at the service
 
-When a service is running, `search` and `index` detect it and route through it. No `--port` is needed:
+When a service is running, `search` and `index` detect it and route through it. You don't need `--port`:
 
 ```
 uv run vaultspec-rag search "retry backoff"
@@ -68,62 +69,75 @@ uv run vaultspec-rag search "retry backoff" --port 8766
 uv run vaultspec-rag search "retry backoff" --allow-fallback
 ```
 
-Without `--allow-fallback`, an unreachable service fails with an error and a suggested fix, rather than silently running in the current process. That keeps a stopped or stale service from quietly running searches in-process with a cold model load. For more on searching and indexing, see the [search and index guide](search-and-index.md).
-
-## Check readiness and status
-
-If a search fails or you're unsure the service is healthy, run the two diagnostic commands and act on what they report.
-
-To check whether each dependency is ready, run:
-
-```
-uv run vaultspec-rag server doctor
-```
-
-`doctor` reports PyTorch and accelerator readiness, the selected compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, usually a provision or install step. Add `--json` for a machine-readable report.
-
-To check the running service, run:
-
-```
-uv run vaultspec-rag server status
-```
-
-`status` shows whether the server is up, its address, the Python environment running the service (its `Service env:` line - see [The service runs in your Python environment](#the-service-runs-in-your-python-environment)), uptime, queue, processed jobs, and a suggested next action. Its exit codes are `0` running, `3` stopped, `4` crashed or divergent, and `5` warming (the daemon holds the machine lock and is loading models; retry shortly). "Divergent" means the status file disagrees with the live process. For example, the file names a process ID that is no longer alive. If `status` reports crashed or divergent, see the [troubleshooting](#troubleshooting) section.
-
-Both commands accept `--json`, and `status` accepts `--verbose` for extra detail. For the full meaning of every field and exit code, see the [CLI reference](cli.md).
+Without `--allow-fallback`, an unreachable service fails with an error and a suggested fix. That keeps a stopped or stale service from quietly running searches in-process with a cold model load. See the [search and index guide](search-and-index.md).
 
 ## Observe activity
 
-To see recent and in-flight indexing work, run:
+To see recent and in-flight indexing work:
 
 ```
 uv run vaultspec-rag server jobs
 ```
 
-To inspect recent service and Qdrant logs, run:
+To inspect recent service and Qdrant logs:
 
 ```
 uv run vaultspec-rag server logs
 ```
 
-The command prints separate `[service]` and `[qdrant]` sections. To inspect one source, run:
+`server logs` prints separate `[service]` and `[qdrant]` sections rather than combining the two timelines. To inspect one source:
 
 ```
 uv run vaultspec-rag server logs --source service
 uv run vaultspec-rag server logs --source qdrant
 ```
 
-If the service has stopped or crashed, run the same command. It reads retained logs from the configured status directory. Source selection, filters, limits, and JSON output work the same way.
+If the service has stopped or crashed, run `server logs` anyway. It reads retained logs from the status directory, and source selection, filters, limits, and JSON output work the same way.
 
-Both `server jobs` and `server logs` accept `--json`. The logs command returns source groups instead of combining the two timelines.
+Both commands accept `--json`.
 
-A failed job carries a stable `error_kind` (`disk_full`, `timeout`, `unavailable`, or `other`) in `--json` and on `GET /jobs`, classified once by the service so every surface agrees; the human feed renders the matching remediation (for example "not enough disk space; free disk space and retry"). A running job whose progress has not moved for five minutes is flagged `stalled` on `/jobs`, in the `server status` current-job detail, and in the `/health` jobs rollup - "progress never moves" is a first-class signal, never something an operator has to infer. If the service process dies mid-job, the next startup restores the jobs it was running as `interrupted`, with their last progress and who started them, so killed work never silently vanishes from `server jobs`.
+Three job signals are worth knowing. A failed job carries a stable `error_kind` in `--json` and on `GET /jobs`, classified once by the service so every surface agrees, and the human feed renders the matching remediation. A running job whose progress hasn't moved for five minutes is flagged `stalled`, so you never have to infer it. If the service process dies mid-job, the next startup restores what it was running as `interrupted`, with the last progress and who started it.
 
-An index job that reused vectors from an already-indexed sibling worktree - see [reusing vectors across worktrees](indexing.md#reusing-vectors-across-worktrees) - carries a `reuse` block in `--json` and on `GET /jobs` describing what the run avoided re-encoding. Read `reuse_hits` and `reuse_misses` as the chunk counts served from a donor versus freshly encoded, `hit_rate` as the fraction served from a donor, and `gpu_seconds_saved` as the estimated encode time the adopted vectors avoided. `donor_collections` lists the sibling namespaces consulted, in order, and `donor_absent` is `true` when no eligible donor existed so the run encoded everything. The block is `null` when reuse is disabled or the run never reached the encode stage.
+An index job that reused vectors from an already-indexed sibling worktree carries a `reuse` block describing what it avoided re-encoding. See [reusing vectors across worktrees](indexing.md#reusing-vectors-across-worktrees) for the mechanism, and the [CLI reference](cli.md) for the block's fields.
+
+## Pause and resume
+
+To hold the running service at safe checkpoints without stopping it:
+
+```
+uv run vaultspec-rag server pause
+uv run vaultspec-rag server resume
+```
+
+Pause before maintenance that shouldn't race with indexing. To observe whether the service is quiet and what capacity the device has, without authorizing any GPU work:
+
+```
+uv run vaultspec-rag server preflight
+```
+
+## Stop and restart the service
+
+```
+uv run vaultspec-rag server stop
+```
+
+To restart, stop and start again. No single restart command exists.
+
+Stopping is safe on both platforms, and the vector store recovers either way. The platforms differ in how the stop reaches the daemon.
+
+On Unix, `server stop` sends `SIGTERM`, which drives the daemon's own graceful shutdown. It removes the status file and stops the Qdrant child last, so the store stays reachable until the service is down. The stop escalates to `SIGKILL` if the drain window expires.
+
+On Windows, the daemon runs detached from any console, so a separate process cannot deliver `CTRL_BREAK` to it. The stop degrades to a bounded force-kill. The daemon runs none of its own teardown, so the CLI reaps the managed Qdrant child and clears the discovery pointer itself. The result is abrupt but safe.
+
+`server stop --json` emits one outcome envelope per exit path for scripting. Every termination writes a shutdown audit line naming the initiating process, so you can always answer who stopped the service. On Windows the CLI writes that line itself, because the force-killed daemon never runs its own shutdown record.
+
+## Running it automatically
+
+vaultspec-rag ships no service-manager integration. No systemd unit, launchd agent, or Windows service ships with it, and `server start` installs none. To run the service at login or boot, wrap `uv run vaultspec-rag server start` in your own unit, and point it at the project directory so it inherits the right Python environment.
 
 ## Keep the index fresh automatically
 
-Automatic updates are on by default: the service watches your files and reindexes changes for you, so you rarely need to index by hand. Manage updates on a running service with four commands:
+Automatic updates are on by default: the service watches your files and reindexes changes, so you rarely index by hand. Manage updates on a running service:
 
 ```
 uv run vaultspec-rag server updates status
@@ -134,27 +148,37 @@ uv run vaultspec-rag server updates timing <project>
 
 To re-time updates for a project, pass `--update-delay-ms` or `--repeat-update-delay-s` to `server updates timing`. A value of `0` on either delay means "no delay", not "disabled".
 
-The single off switch is `--no-updates` at start time, or `VAULTSPEC_RAG_WATCH_ENABLED=0`. For the full behavior - debounce, cooldown, and how changes are batched - see the [automation guide](automation.md).
+The single off switch is `--no-updates` at start time, or `VAULTSPEC_RAG_WATCH_ENABLED=0`. For debounce, cooldown, and how changes are batched, see the [automation guide](automation.md).
 
 ## Manage projects
 
-One service serves many projects. To list the loaded project slots, run:
+One service serves many projects. To list the loaded project slots:
 
 ```
 uv run vaultspec-rag server projects list
 ```
 
-To unload a project's slot, run:
+To unload one:
 
 ```
 uv run vaultspec-rag server projects unload <project>
 ```
 
-Idle projects are evicted over time, so you don't normally need to unload by hand. Unload when you want to free a slot right away.
+The service evicts idle projects over time, so you don't normally need to unload by hand. Unload when you want to free a slot right away.
+
+## Which Python environment runs the service
+
+`server start` spawns the daemon using the interpreter of the environment you launched it from, and the daemon inherits that environment's packages, including PyTorch. So the environment decides which accelerator the service can use.
+
+To see which environment is running the service, read the `Service env:` line in `server status`.
+
+Starting from an environment without a supported accelerator fails immediately. `server start` refuses if the environment has no torch, has no supported accelerator, or has MPS CPU fallback enabled. It names the interpreter and the reason rather than spawning a daemon that crashes during model load.
+
+A globally installed CLI is a fine client but is not a suitable service launcher unless its tool receipt pins the CUDA wheel. The [installation guide](installation.md) covers that pin, and the [architecture overview](architecture.md) covers why the accelerator is required at all.
 
 ## HTTP monitoring routes
 
-The running service exposes read-only HTTP routes on loopback for monitoring:
+The running service exposes read-only HTTP routes on loopback:
 
 - `GET /health` - service health. Ungated.
 - `GET /readiness` - dependency readiness. Requires the service token.
@@ -162,52 +186,60 @@ The running service exposes read-only HTTP routes on loopback for monitoring:
 - `GET /jobs` - indexing activity. Requires the service token.
 - `GET /metrics` - Prometheus metrics. Requires the service token.
 
-Token-gated routes need the service token as a bearer: `Authorization: Bearer <service_token>`. The token is in the status file at `~/.vaultspec-rag/service.json` and is also returned by `/health`.
+Token-gated routes take the service token as a bearer: `Authorization: Bearer <service_token>`. The token is in the status file at `~/.vaultspec-rag/service.json`, and `/health` also returns it.
 
-The token plus loopback binding is a monitoring gate, not an authentication boundary. Keep the service loopback-bound. The MCP server is a **separate** stdio process, not mounted on this HTTP service - it delegates to these same REST routes over loopback. See the [MCP guide](mcp.md).
+The token plus loopback binding is a monitoring gate, not an authentication boundary. Keep the service loopback-bound.
 
-## Manage the managed Qdrant server
+The Model Context Protocol (MCP) server is a separate stdio process, not mounted on this HTTP service. It delegates to these same routes over loopback. See the [MCP guide](mcp.md).
 
-Installing, inspecting, and cleaning the managed Qdrant server is covered separately. Use `server qdrant install`, `server qdrant status`, and `server qdrant clean`; see the [backends guide](backends.md) for the workflow.
+## Manage the Qdrant server
 
-## Storage stays healthy on its own
+Use `server qdrant install`, `server qdrant status`, and `server qdrant clean`. The [backends guide](backends.md) covers the workflow.
 
-Once running, the service maintains its own storage: an hourly maintenance cycle reclaims namespaces whose source roots are confirmed gone, archives data-bearing ones first, and reports disk health. Each cycle appears in `server jobs` and the `/metrics` gauges. The full model - what qualifies as reclaimable, the grace windows, the archives, and manual pruning - lives in the [storage and maintenance guide](storage-maintenance.md).
+## Storage maintenance
 
-## Stop the service
+Once running, the service maintains its own storage. An hourly cycle reclaims namespaces whose source roots have gone, archives data-bearing ones first, and reports disk health. Each cycle appears in `server jobs` and the `/metrics` gauges.
 
-To stop the service, run:
-
-```
-uv run vaultspec-rag server stop
-```
-
-How the stop reaches the daemon depends on the platform. On **Unix**, `server stop` delivers `SIGTERM`, which drives the daemon's own graceful lifespan shutdown: it removes the status file and stops the Qdrant child last, so the vector store stays reachable until the service itself is down (the stop escalates to `SIGKILL` if the drain window expires). On **Windows**, the daemon is spawned detached from any console, so a separate stop process cannot deliver a `CTRL_BREAK` to it; the stop degrades to a bounded `TerminateProcess` force-kill. The daemon runs none of its own teardown, so the CLI itself reaps the daemon's managed Qdrant child and clears its discovery pointer. That force-kill is abrupt but safe - the vector store recovers from an abrupt stop - though it is not a graceful in-daemon shutdown.
-
-`server stop --json` emits one outcome envelope per exit path for scripting (see the [CLI reference](cli.md#server-stop)), and every termination writes a shutdown audit line naming the initiating process, so "who stopped the service" is always answerable from the log. On Windows the CLI writes that mirror line itself, since the force-killed daemon never runs its own shutdown record.
+For what qualifies as reclaimable, the grace windows, the archives, and manual pruning, see the [storage maintenance guide](storage-maintenance.md).
 
 ## Troubleshooting
 
-**Port already in use.** If `server start` reports the port is taken, another process is bound there. Use one port consistently - pass `--port N` or set `VAULTSPEC_RAG_PORT` - so commands and the service agree.
+### Port already in use
 
-**Status reports crashed or divergent (exit 4).** The status file disagrees with the live process. Re-run `server start` to overwrite the status file cleanly. If that doesn't clear it, delete the status file at `~/.vaultspec-rag/service.json` and start again.
+Another process is bound there. Use one port consistently: pass `--port N` or set `VAULTSPEC_RAG_PORT`, so commands and the service agree.
 
-**The service won't stop.** A stale process ID can keep `server stop` from completing. Kill the process by its ID, then remove the status file at `~/.vaultspec-rag/service.json`.
+### Status reports crashed or divergent (exit 4)
 
-**The server can't start.** Server mode needs the managed Qdrant binary. Provision it with `uv run vaultspec-rag server qdrant install`, or run the service local-only with `uv run vaultspec-rag server start --local-only`.
+The status file disagrees with the live process. Re-run `server start` to overwrite it cleanly. If that doesn't clear it, delete the status file at `~/.vaultspec-rag/service.json` and start again.
 
-**`server start` says the environment cannot run the accelerator-only service.** The Python environment you launched it from has no supported accelerator. On Linux or Windows, run `vaultspec-rag install`, then `uv sync`, to install the cu130 wheel. On Apple silicon, install the standard macOS PyTorch wheel and ensure `PYTORCH_ENABLE_MPS_FALLBACK` is unset or `0`. CPU-only execution is never accepted. See [The service runs in your Python environment](#the-service-runs-in-your-python-environment).
+### The service won't stop
 
-**The index seems stale.** Check `server updates status` and `server jobs` before reindexing. Automatic updates may be catching up, or an update may be in flight. Don't reindex by hand while updates are running. Manual reindexing competes for the single-writer accelerator and Qdrant path.
+A stale process ID can keep `server stop` from completing. Kill the process by its ID, then remove the status file at `~/.vaultspec-rag/service.json`.
+
+### The managed server can't start
+
+Server mode needs the Qdrant binary. Provision it with `server qdrant install`, or run local-only with `server start --local-only`.
+
+### `server start` says the environment cannot run the service
+
+The Python environment you launched it from has no supported accelerator. On Linux or Windows, run `vaultspec-rag install`, then `uv sync`, to install the CUDA wheel. On Apple silicon, install the standard macOS PyTorch wheel and make sure `PYTORCH_ENABLE_MPS_FALLBACK` is unset or `0`. The service never runs on the CPU. See [Which Python environment runs the service](#which-python-environment-runs-the-service).
+
+### The index seems stale
+
+Check `server updates status` and `server jobs` before reindexing. Automatic updates may be catching up, or an update may be in flight. Don't reindex by hand while updates are running: manual reindexing competes for the single-writer accelerator and Qdrant path.
+
+### Something else
+
+Capture `server doctor --json`, `server status --json`, and `server logs`, then open an issue on the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues). Those three outputs are what a maintainer needs to reproduce a service fault. The tracker takes questions as well as bug reports.
 
 ## Where to go next
 
-- [Installation guide](installation.md) - install and provision the workspace.
-- [Backends guide](backends.md) - managed server vs local-only, and managing the Qdrant binary.
-- [Architecture overview](architecture.md) - how the service, accelerator consumer, and store fit together.
-- [Automation guide](automation.md) - how automatic updates behave.
-- [Search and index guide](search-and-index.md) - searching and indexing through the service.
-- [MCP guide](mcp.md) - the MCP tools on the running service.
-- [CLI reference](cli.md) - every command, flag, field, and exit code.
-
-For help, see the [support section](../README.md#support-and-help).
+- [Getting started](getting-started.md) walks through a first index and search.
+- [Installation](installation.md) answers how to install and provision the workspace.
+- [Backends](backends.md) answers how the managed server compares with the local-only store.
+- [Architecture](architecture.md) answers how the service, the models, and the store fit together.
+- [Automation](automation.md) answers how automatic updates behave.
+- [Search and index](search-and-index.md) answers how to search and index through the service.
+- [Storage maintenance](storage-maintenance.md) answers how to survey and reclaim index storage.
+- [MCP integration](mcp.md) answers how to reach the service from an AI assistant.
+- [CLI reference](cli.md) catalogues every command, flag, field, and exit code.
