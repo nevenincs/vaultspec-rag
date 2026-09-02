@@ -70,6 +70,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
 
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
+
       - name: Lint GitHub Actions workflows
         run: |
           bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
@@ -98,6 +103,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -145,6 +155,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -314,6 +329,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
 
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -383,38 +403,13 @@ jobs:
       # storage instead. TMP and TEMP cover Python's tempfile, which is where
       # the pytest session roots are created.
     steps:
-      # This runner's agent is a Windows service, so its account is SYSTEM and
-      # every user-scoped path resolves inside
-      # C:\WINDOWS\system32\config\systemprofile - the operating system's own
-      # directory, written by a process holding administrative rights. Pin all
-      # of them to runner-owned storage BEFORE any tool runs, which is why this
-      # is the first step: uv reads its cache location during setup, and Python
-      # resolves the suite's temp roots from TMP/TEMP.
-      - name: Contain all writes to runner-owned storage
-        shell: pwsh
-        run: |
-          $temp = "${{ runner.temp }}"
-          $tools = "${{ runner.tool_cache }}"
-          $pinned = [ordered]@{
-            TMP                              = $temp
-            TEMP                             = $temp
-            HF_HOME                          = (Join-Path $tools 'huggingface')
-            UV_CACHE_DIR                     = (Join-Path $tools 'uv-cache')
-            UV_PYTHON_INSTALL_DIR            = (Join-Path $tools 'uv-python')
-            CARGO_HOME                       = (Join-Path $tools 'cargo')
-            RUSTUP_HOME                      = (Join-Path $tools 'rustup')
-            VAULTSPEC_RAG_STATUS_DIR         = (Join-Path $temp 'vaultspec-rag-status')
-            VAULTSPEC_RAG_QDRANT_STORAGE_DIR = (Join-Path $temp 'vaultspec-rag-qdrant')
-          }
-          foreach ($name in $pinned.Keys) {
-            $value = $pinned[$name]
-            New-Item -ItemType Directory -Force -Path $value | Out-Null
-            Write-Host "$name -> $value"
-            "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          }
-
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -440,44 +435,6 @@ jobs:
 
       - name: Install dependencies
         run: just deps sync
-
-      # Same refusal the GPU lane carries: this agent is a Windows service, so
-      # an unset or mis-set path here puts the suite's temp roots inside the
-      # operating system's own directory under administrative rights.
-      - name: Verify nothing is written into the Windows install
-        shell: pwsh
-        run: |
-          $windows = [Environment]::GetFolderPath('Windows')
-          $paths = @{
-            'TEMP'                             = $env:TEMP
-            'TMP'                              = $env:TMP
-            'HF_HOME'                          = $env:HF_HOME
-            'UV_CACHE_DIR'                     = $env:UV_CACHE_DIR
-            'UV_PYTHON_INSTALL_DIR'            = $env:UV_PYTHON_INSTALL_DIR
-            'CARGO_HOME'                       = $env:CARGO_HOME
-            'RUSTUP_HOME'                      = $env:RUSTUP_HOME
-            'VAULTSPEC_RAG_STATUS_DIR'         = $env:VAULTSPEC_RAG_STATUS_DIR
-            'VAULTSPEC_RAG_QDRANT_STORAGE_DIR' = $env:VAULTSPEC_RAG_QDRANT_STORAGE_DIR
-            'python tempfile'                  = (uv run --no-sync python -c "import tempfile; print(tempfile.gettempdir())")
-          }
-          $bad = @()
-          foreach ($name in $paths.Keys | Sort-Object) {
-            $value = $paths[$name]
-            if ([string]::IsNullOrWhiteSpace($value)) {
-              $bad += "$name is unset, so it falls back to the SYSTEM profile"
-              continue
-            }
-            $full = [IO.Path]::GetFullPath($value)
-            Write-Host "$name -> $full"
-            if ($full.StartsWith($windows, [StringComparison]::OrdinalIgnoreCase)) {
-              $bad += "$name resolves inside the Windows install: $full"
-            }
-          }
-          if ($bad) {
-            $bad | ForEach-Object { Write-Host "REFUSED: $_" }
-            throw "this job would write into the Windows install; refusing to run"
-          }
-          Write-Host "all writable paths are runner-owned"
 
       - name: Run tests
         run: just test python
@@ -514,6 +471,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
 
       # The runner's environment does not necessarily carry Homebrew's prefix:
       # a non-login shell omits /opt/homebrew/bin, which is where uv lives, and
@@ -650,38 +612,13 @@ jobs:
       # path is pinned to runner-owned storage; nothing this job creates is
       # allowed inside the Windows install.
     steps:
-      # This runner's agent is a Windows service, so its account is SYSTEM and
-      # every user-scoped path resolves inside
-      # C:\WINDOWS\system32\config\systemprofile - the operating system's own
-      # directory, written by a process holding administrative rights. Pin all
-      # of them to runner-owned storage BEFORE any tool runs, which is why this
-      # is the first step: uv reads its cache location during setup, and Python
-      # resolves the suite's temp roots from TMP/TEMP.
-      - name: Contain all writes to runner-owned storage
-        shell: pwsh
-        run: |
-          $temp = "${{ runner.temp }}"
-          $tools = "${{ runner.tool_cache }}"
-          $pinned = [ordered]@{
-            TMP                              = $temp
-            TEMP                             = $temp
-            HF_HOME                          = (Join-Path $tools 'huggingface')
-            UV_CACHE_DIR                     = (Join-Path $tools 'uv-cache')
-            UV_PYTHON_INSTALL_DIR            = (Join-Path $tools 'uv-python')
-            CARGO_HOME                       = (Join-Path $tools 'cargo')
-            RUSTUP_HOME                      = (Join-Path $tools 'rustup')
-            VAULTSPEC_RAG_STATUS_DIR         = (Join-Path $temp 'vaultspec-rag-status')
-            VAULTSPEC_RAG_QDRANT_STORAGE_DIR = (Join-Path $temp 'vaultspec-rag-qdrant')
-          }
-          foreach ($name in $pinned.Keys) {
-            $value = $pinned[$name]
-            New-Item -ItemType Directory -Force -Path $value | Out-Null
-            Write-Host "$name -> $value"
-            "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          }
-
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -708,58 +645,6 @@ jobs:
       - name: Install dependencies
         run: just deps sync
 
-      # Refuse to run at all if anything this job will write still resolves
-      # inside the Windows install. The containment above is environment
-      # configuration, and environment configuration is exactly the kind of
-      # thing that goes missing in an edit without anyone noticing until the
-      # OS directory has gigabytes in it. Asserted before the first write.
-      - name: Verify nothing is written into the Windows install
-        shell: pwsh
-        run: |
-          $windows = [Environment]::GetFolderPath('Windows')
-          $paths = @{
-            'TEMP'                             = $env:TEMP
-            'TMP'                              = $env:TMP
-            'HF_HOME'                          = $env:HF_HOME
-            'UV_CACHE_DIR'                     = $env:UV_CACHE_DIR
-            'UV_PYTHON_INSTALL_DIR'            = $env:UV_PYTHON_INSTALL_DIR
-            'CARGO_HOME'                       = $env:CARGO_HOME
-            'RUSTUP_HOME'                      = $env:RUSTUP_HOME
-            'VAULTSPEC_RAG_STATUS_DIR'         = $env:VAULTSPEC_RAG_STATUS_DIR
-            'VAULTSPEC_RAG_QDRANT_STORAGE_DIR' = $env:VAULTSPEC_RAG_QDRANT_STORAGE_DIR
-            'python tempfile'                  = (uv run --no-sync python -c "import tempfile; print(tempfile.gettempdir())")
-          }
-          $bad = @()
-          foreach ($name in $paths.Keys | Sort-Object) {
-            $value = $paths[$name]
-            if ([string]::IsNullOrWhiteSpace($value)) {
-              $bad += "$name is unset, so it falls back to the SYSTEM profile"
-              continue
-            }
-            $full = [IO.Path]::GetFullPath($value)
-            Write-Host "$name -> $full"
-            if ($full.StartsWith($windows, [StringComparison]::OrdinalIgnoreCase)) {
-              $bad += "$name resolves inside the Windows install: $full"
-            }
-          }
-          if ($bad) {
-            $bad | ForEach-Object { Write-Host "REFUSED: $_" }
-            throw "this job would write into the Windows install; refusing to run"
-          }
-          Write-Host "all writable paths are runner-owned"
-
-      # Prerequisite: the pinned, manifest-verified Qdrant binary. The pytest
-      # coordinator only ever verifies it read-only and refuses the tier when
-      # it is absent, which is what kept this lane from running a single test -
-      # it exited on the missing prerequisite with everything deselected, and
-      # nothing was installing it.
-      #
-      # Installing it through the product's own provisioner keeps the pin the
-      # authority: the command verifies the download against the committed
-      # SHA256 before it lands, refuses to silently replace a divergent
-      # install, and is a no-op with zero network I/O once the version on disk
-      # matches. The coordinator's read-only re-verification before execution
-      # is unchanged, so the binary is still checked twice by two owners.
       - name: Provision the pinned Qdrant binary the GPU tier requires
         run: uv run --no-sync vaultspec-rag server qdrant install
 
@@ -847,6 +732,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
 
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -879,6 +769,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -919,6 +814,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
         uses: actions/setup-python@v6
