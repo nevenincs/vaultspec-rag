@@ -9,7 +9,8 @@ tools:
 - WebFetch
 - WebSearch
 - Bash
-model: claude-sonnet-4-6
+- SendMessage
+model: claude-sonnet-5
 ---
 
 # Persona: Research Agent
