@@ -1,0 +1,162 @@
+name: Contain writes to runner-owned storage
+description: >-
+  Pin every path a build would otherwise write into a system location, then
+  refuse to continue if any of them still resolves inside one.
+
+# A build writes to more than its workspace: interpreter and package caches,
+# toolchain homes, temporary directories, and this project's own managed
+# service state. Each of those resolves from the account the runner agent
+# happens to run as, and self-hosted agents are commonly registered as
+# services - LocalSystem on Windows resolves to
+# C:\WINDOWS\system32\config\systemprofile, NETWORK SERVICE to
+# C:\Windows\ServiceProfiles\NetworkService. Both are inside the operating
+# system's own directory, and one of them carries administrative rights.
+#
+# So the rule is not "clean up afterwards", it is that a build never addresses
+# a system location at all. This action states every such path explicitly,
+# points it at runner-owned storage, and then asserts the result - including
+# the temporary directory the language runtime actually reports, rather than
+# the variable it is supposed to read it from. The assertion runs before the
+# first build step, because the cost of finding out late is measured in
+# gigabytes inside the OS install.
+
+runs:
+  using: composite
+  steps:
+    - name: Contain writes (POSIX)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        temp="${RUNNER_TEMP}"
+        tools="${RUNNER_TOOL_CACHE}"
+        pin() {
+          mkdir -p "$2"
+          printf '%s=%s\n' "$1" "$2" >> "$GITHUB_ENV"
+          printf '  %-34s -> %s\n' "$1" "$2"
+        }
+        echo "pinning writable paths to runner-owned storage"
+        pin TMPDIR                           "$temp"
+        pin XDG_CACHE_HOME                   "$tools/xdg-cache"
+        pin HF_HOME                          "$tools/huggingface"
+        pin UV_CACHE_DIR                     "$tools/uv-cache"
+        pin UV_PYTHON_INSTALL_DIR            "$tools/uv-python"
+        pin CARGO_HOME                       "$tools/cargo"
+        pin RUSTUP_HOME                      "$tools/rustup"
+        pin VAULTSPEC_RAG_STATUS_DIR         "$temp/vaultspec-rag-status"
+        pin VAULTSPEC_RAG_QDRANT_STORAGE_DIR "$temp/vaultspec-rag-qdrant"
+
+    - name: Contain writes (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $temp = $env:RUNNER_TEMP
+        $tools = $env:RUNNER_TOOL_CACHE
+        $pinned = [ordered]@{
+          TMP                              = $temp
+          TEMP                             = $temp
+          HF_HOME                          = (Join-Path $tools 'huggingface')
+          UV_CACHE_DIR                     = (Join-Path $tools 'uv-cache')
+          UV_PYTHON_INSTALL_DIR            = (Join-Path $tools 'uv-python')
+          CARGO_HOME                       = (Join-Path $tools 'cargo')
+          RUSTUP_HOME                      = (Join-Path $tools 'rustup')
+          VAULTSPEC_RAG_STATUS_DIR         = (Join-Path $temp 'vaultspec-rag-status')
+          VAULTSPEC_RAG_QDRANT_STORAGE_DIR = (Join-Path $temp 'vaultspec-rag-qdrant')
+        }
+        Write-Host "pinning writable paths to runner-owned storage"
+        foreach ($name in $pinned.Keys) {
+          $value = $pinned[$name]
+          New-Item -ItemType Directory -Force -Path $value | Out-Null
+          Write-Host ("  {0,-34} -> {1}" -f $name, $value)
+          "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        }
+
+    - name: Refuse to write into a system location (POSIX)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -uo pipefail
+        # Roots an operating system owns. A build that addresses one of these
+        # is a defect regardless of whether the write happens to succeed.
+        if [ "$RUNNER_OS" = "macOS" ]; then
+          protected="/System /Library /usr /bin /sbin /private/etc"
+        else
+          protected="/usr /etc /var /opt /bin /sbin /lib /lib64 /boot /root"
+        fi
+        runtime_temp="$(python3 -c 'import tempfile; print(tempfile.gettempdir())' 2>/dev/null || echo "$TMPDIR")"
+        bad=0
+        check() {
+          local name="$1" value="$2"
+          if [ -z "$value" ]; then
+            echo "REFUSED: $name is unset, so it falls back to the service account's profile"
+            bad=1
+            return
+          fi
+          local full
+          full="$(cd "$value" 2>/dev/null && pwd -P || echo "$value")"
+          echo "  $name -> $full"
+          for root in $protected; do
+            case "$full/" in
+              "$root"/*) echo "REFUSED: $name resolves inside $root: $full"; bad=1 ;;
+            esac
+          done
+        }
+        check TMPDIR                           "${TMPDIR:-}"
+        check XDG_CACHE_HOME                   "${XDG_CACHE_HOME:-}"
+        check HF_HOME                          "${HF_HOME:-}"
+        check UV_CACHE_DIR                     "${UV_CACHE_DIR:-}"
+        check UV_PYTHON_INSTALL_DIR            "${UV_PYTHON_INSTALL_DIR:-}"
+        check CARGO_HOME                       "${CARGO_HOME:-}"
+        check RUSTUP_HOME                      "${RUSTUP_HOME:-}"
+        check VAULTSPEC_RAG_STATUS_DIR         "${VAULTSPEC_RAG_STATUS_DIR:-}"
+        check VAULTSPEC_RAG_QDRANT_STORAGE_DIR "${VAULTSPEC_RAG_QDRANT_STORAGE_DIR:-}"
+        check "runtime temp"                   "$runtime_temp"
+        if [ "$bad" -ne 0 ]; then
+          echo "this job would write into a system location; refusing to run"
+          exit 1
+        fi
+        echo "all writable paths are runner-owned"
+
+    - name: Refuse to write into a system location (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $protected = @(
+          [Environment]::GetFolderPath('Windows')
+          $env:ProgramData
+          [Environment]::GetFolderPath('ProgramFiles')
+          [Environment]::GetFolderPath('ProgramFilesX86')
+        ) | Where-Object { $_ }
+        $runtimeTemp = try { python -c "import tempfile; print(tempfile.gettempdir())" } catch { $env:TEMP }
+        $paths = [ordered]@{
+          'TEMP'                             = $env:TEMP
+          'TMP'                              = $env:TMP
+          'HF_HOME'                          = $env:HF_HOME
+          'UV_CACHE_DIR'                     = $env:UV_CACHE_DIR
+          'UV_PYTHON_INSTALL_DIR'            = $env:UV_PYTHON_INSTALL_DIR
+          'CARGO_HOME'                       = $env:CARGO_HOME
+          'RUSTUP_HOME'                      = $env:RUSTUP_HOME
+          'VAULTSPEC_RAG_STATUS_DIR'         = $env:VAULTSPEC_RAG_STATUS_DIR
+          'VAULTSPEC_RAG_QDRANT_STORAGE_DIR' = $env:VAULTSPEC_RAG_QDRANT_STORAGE_DIR
+          'runtime temp'                     = $runtimeTemp
+        }
+        $bad = @()
+        foreach ($name in $paths.Keys) {
+          $value = $paths[$name]
+          if ([string]::IsNullOrWhiteSpace($value)) {
+            $bad += "$name is unset, so it falls back to the service account's profile"
+            continue
+          }
+          $full = [IO.Path]::GetFullPath($value)
+          Write-Host ("  {0,-34} -> {1}" -f $name, $full)
+          foreach ($root in $protected) {
+            if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+              $bad += "$name resolves inside ${root}: $full"
+            }
+          }
+        }
+        if ($bad) {
+          $bad | ForEach-Object { Write-Host "REFUSED: $_" }
+          throw "this job would write into a system location; refusing to run"
+        }
+        Write-Host "all writable paths are runner-owned"
