@@ -5,7 +5,10 @@ into a searchable index, and why each part of the retrieval path is shaped the
 way it is. This page is for operators who want to understand the trade-offs
 behind the defaults, tune performance, or diagnose index health. For the
 commands that drive indexing and search, see the
-[search and index guide](search-and-index.md). For the system-level picture,
+[search and index guide](search-and-index.md). If you have not run vaultspec-rag yet, start with the
+[installation guide](installation.md) and the
+[getting started tutorial](getting-started.md). For the vocabulary used here, see
+the [glossary](glossary.md). For the system-level picture,
 see the [architecture overview](architecture.md).
 
 ## Overview
@@ -24,20 +27,74 @@ Dense retrieval is strong on paraphrase and weak on rare tokens; sparse
 retrieval is the inverse. Keeping both is what lets one query satisfy both kinds
 of intent.
 
-At query time, both representations of the query are computed, and the results
-from each channel are merged by reciprocal rank fusion. This is a rank-based
-blend that rewards items ranked highly by either channel without needing the two
-score scales to agree. A cross-encoder reranker then refines the final ordering.
-A cross-encoder reads the query and a candidate together rather than comparing
-precomputed vectors. For vault documents, a graph-aware score boost applied after
-reranking promotes documents that are well-connected in the wiki-link graph.
+At query time vaultspec-rag encodes the query both ways, merges the two result
+lists, and reorders the top of the merged list with a slower model. See
+[hybrid search with fusion](#hybrid-search-with-fusion) for how that works.
+
+## Indexing pipeline
+
+The pipeline is shaped around two hard constraints: tree-sitter holds the GIL
+(global interpreter lock), and the project has one GPU. Each of the following stages exists to honor one of those.
+
+The vault indexer scans every `.md` file under `.vault/` through core's
+`scan_vault`, reads the frontmatter and H1 heading, and embeds the title and
+body together. It records each file's blake2b content hash in `index_meta.json`,
+so an unchanged file is skipped on the next run by comparing hashes alone. A
+writer lock serializes concurrent `full_index` and `incremental_index` calls,
+because MCP, CLI, and the automatic-update watcher can all trigger indexing at
+once and must not race each other's metadata snapshots.
+
+Code and document discovery share one immutable, versioned policy snapshot. Ignore rules
+win first. Ordered project rules can then explicitly assign a path to `code` or
+`document`; otherwise the named source profile admits only its conventional source
+formats. Directory names are not ownership signals, and parser capability alone does not
+admit a file. This keeps arbitrary data and binary inputs out of `--type code` unless the
+project deliberately routes extractor output there.
+
+Where an admitted code format has a tree-sitter grammar, an AST (abstract syntax tree)
+chunker splits source into top-level declarations so a chunk is a function or class
+rather than an arbitrary window. Conventional text source without a grammar uses a
+structure-aware splitter. Extractor-owned document input bypasses the source decoder and
+enters the independent document pipeline only after versioned output validation.
+
+The policy names its source-admission behavior so upgrades cannot silently widen a scan:
+
+| Source profile     | Admission without an explicit route                                |
+| ------------------ | ------------------------------------------------------------------ |
+| `conventional-v1`  | Known conventional source extensions enter the `code` domain       |
+| `explicit-only-v1` | Nothing enters code or document unless the caller assigns an owner |
+
+`conventional-v1` is the compatibility default. The selected profile, ordered routes,
+preprocessing targets and versions, ignores, decoder policy, and schema versions are
+fingerprinted independently for code and document generations. Invalid profiles,
+targetless legacy rules, unknown targets, or conflicting ownership fail before mutable
+index resources are opened.
+
+Chunking runs in a spawn-based, CPU-only process pool because tree-sitter holds
+the GIL for both parse and traverse, so threads give no speedup - separate
+processes do. The workers import only the chunking modules and never initialise
+torch or an accelerator, which keeps the selected device free for encoding and
+avoids multi-second per-worker startup. In auto mode the pool only activates once the total source size crosses
+8 MiB, the measured point where parallelism starts to pay for its process
+overhead; below that, chunking stays in-process.
+
+Encoding runs on a single accelerator consumer thread that owns the compute lock
+and drains a bounded queue the chunk producers refill. One thread is correct
+because a single selected device has no useful compute-to-compute overlap to
+exploit here - a second consumer would only contend with the first. The real
+parallelism is CPU-produce against accelerator-consume, and that is exactly what the
+queue captures. Each content kind has independent metadata and generation identity over a
+shared durable run ledger. A file is published as converged only after its chunks,
+deletions, metadata, schema evidence, and generation finalization are durable. Interrupted
+runs resume from the final unconfirmed unit; retryable extraction and decode/chunk
+failures remain visible obligations instead of being hidden behind a content hash.
 
 ## Models
 
 vaultspec-rag loads three models on the accelerator selected at startup: CUDA
 when available, otherwise Apple silicon MPS. All three stay resident together
 and run their forward passes on that device; CPU is never a placement or
-fallback target. Each model is paired below with the reason its bounds and
+fallback target. Each model that follows is paired with the reason its bounds and
 toggles are set the way they are; pure tuning numbers live in the
 [configuration knobs](#configuration-knobs) table.
 
@@ -46,7 +103,7 @@ toggles are set the way they are; pure tuning numbers live in the
 The dense encoder is
 [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B),
 loaded through `sentence-transformers` on the selected accelerator in fp16. It produces
-1024-dimensional, L2-normalised embeddings.
+1024-dimensional, L2-normalized embeddings.
 
 Documents and queries are encoded asymmetrically because the model was trained
 that way. Document encoding calls `encode` with no prompt; query encoding calls
@@ -143,7 +200,7 @@ choosing between the two and operating the managed server.
 Locking is backend-aware. The embedded store takes one reentrant lock per
 collection plus a lifecycle lock for open, close, and collection create or drop,
 because the collections are independent and a single store-wide mutex would
-serialise unrelated searches. A second writer to the embedded store hits an
+serialize unrelated searches. A second writer to the embedded store hits an
 exclusive file lock and raises rather than corrupting the index. Server mode
 takes no point-operation locks at all. The remote server handles its own
 concurrency, so client-side locking there only caps throughput.
@@ -154,68 +211,10 @@ path, applied only in server mode, so two roots indexed against one server never
 collide. Optional vector quantization (`scalar`, `turbo`, or `product`) trades
 some recall for lower VRAM and disk.
 
-## Indexing pipeline
-
-The pipeline is shaped around two hard constraints: tree-sitter holds the GIL
-(global interpreter lock), and the project has one GPU. Each stage below exists to honour one of those.
-
-The vault indexer scans every `.md` file under `.vault/` through core's
-`scan_vault`, reads the frontmatter and H1 heading, and embeds the title and
-body together. It records each file's blake2b content hash in `index_meta.json`,
-so an unchanged file is skipped on the next run by comparing hashes alone. A
-writer lock serialises concurrent `full_index` and `incremental_index` calls,
-because MCP, CLI, and the automatic-update watcher can all trigger indexing at
-once and must not race each other's metadata snapshots.
-
-Code and document discovery share one immutable, versioned policy snapshot. Ignore rules
-win first. Ordered project rules can then explicitly assign a path to `code` or
-`document`; otherwise the named source profile admits only its conventional source
-formats. Directory names are not ownership signals, and parser capability alone does not
-admit a file. This keeps arbitrary data and binary inputs out of `--type code` unless the
-project deliberately routes extractor output there.
-
-Where an admitted code format has a tree-sitter grammar, an AST (abstract syntax tree)
-chunker splits source into top-level declarations so a chunk is a function or class
-rather than an arbitrary window. Conventional text source without a grammar uses a
-structure-aware splitter. Extractor-owned document input bypasses the source decoder and
-enters the independent document pipeline only after versioned output validation.
-
-The policy names its source-admission behavior so upgrades cannot silently widen a scan:
-
-| Source profile     | Admission without an explicit route                                |
-| ------------------ | ------------------------------------------------------------------ |
-| `conventional-v1`  | Known conventional source extensions enter the `code` domain       |
-| `explicit-only-v1` | Nothing enters code or document unless the caller assigns an owner |
-
-`conventional-v1` is the compatibility default. The selected profile, ordered routes,
-preprocessing targets and versions, ignores, decoder policy, and schema versions are
-fingerprinted independently for code and document generations. Invalid profiles,
-targetless legacy rules, unknown targets, or conflicting ownership fail before mutable
-index resources are opened.
-
-Chunking runs in a spawn-based, CPU-only process pool because tree-sitter holds
-the GIL for both parse and traverse, so threads give no speedup - separate
-processes do. The workers import only the chunking modules and never initialise
-torch or an accelerator, which keeps the selected device free for encoding and
-avoids multi-second per-worker startup. In auto mode the pool only activates once the total source size crosses
-8 MiB, the measured point where parallelism starts to pay for its process
-overhead; below that, chunking stays in-process.
-
-Encoding runs on a single accelerator consumer thread that owns the compute lock
-and drains a bounded queue the chunk producers refill. One thread is correct
-because a single selected device has no useful compute-to-compute overlap to
-exploit here - a second consumer would only contend with the first. The real
-parallelism is CPU-produce against accelerator-consume, and that is exactly what the
-queue captures. Each content kind has independent metadata and generation identity over a
-shared durable run ledger. A file is published as converged only after its chunks,
-deletions, metadata, schema evidence, and generation finalization are durable. Interrupted
-runs resume from the final unconfirmed unit; retryable extraction and decode/chunk
-failures remain visible obligations instead of being hidden behind a content hash.
-
-### Reusing vectors across worktrees
+## Reusing vectors across worktrees
 
 Indexing a fresh git worktree of a branch you have already indexed does not have
-to pay the accelerator cost a second time. Before the encoder runs, the index looks for
+to pay the accelerator cost a second time. Before the encoder runs, the indexer looks for
 each chunk in the already-indexed sibling namespaces on the same machine and, on
 a match, adopts that chunk's stored dense and sparse vectors instead of encoding
 it again. For a near-identical fork the encode stage all but disappears, so the
@@ -226,22 +225,21 @@ Reuse applies only within one machine's shared server-mode storage, only from
 sibling roots that are already indexed, and only when the content matches
 exactly. A donor must clear every eligibility gate first: same collection kind,
 identical vector dimensions and layout, a matching embedding-schema marker, and
-the same content epoch, so vectors produced under a different model or schema are
+the same content epoch. Vectors produced under a different model or schema are
 never adopted. The match itself is exact, never similarity-based: the candidate
 point id must match, and the donor's stored content must verify byte-for-byte
-against the chunk being indexed before its vectors are reused. Anything that does
-not match - a changed line, an absent donor, a failed gate - is simply a miss and
-is encoded exactly as it would have been without reuse, so the index a run
-produces is identical whether a vector was reused or freshly encoded.
+against the chunk being indexed before its vectors are reused. Anything else counts as
+a miss: a changed line, an absent donor, a failed gate. A miss encodes exactly as
+it would have without reuse, so a run produces the same index either way.
 
 Reuse is on by default and can be turned off end to end. Set the config key
 `index_reuse_enabled` to `false`, or the environment variable
-`VAULTSPEC_RAG_INDEX_REUSE` to a falsey value, and every chunk encodes as before.
-Each run records its reuse outcome - hits, misses, hit rate, estimated GPU time
+`VAULTSPEC_RAG_INDEX_REUSE` to `0`, `false`, or `no`, and every chunk encodes as before.
+Each run records its reuse outcome - hits, misses, hit rate, estimated accelerator time
 saved, and which donor collections were consulted - on the job record; see
 [observing activity](service-mode.md#observe-activity) for how to read it.
 
-### Incremental versus rebuild
+## Incremental versus rebuild
 
 Indexing is incremental by default: it hashes every file, skips the unchanged
 ones, embeds new and modified content, and purges chunks for deleted files. This
@@ -262,24 +260,38 @@ destination points are published before old ownership is removed, so route chang
 restarts do not create a searchable gap. See [automation](automation.md) for watcher
 operation.
 
+## Diagnosing index health
+
+Three surfaces carry the evidence when an index behaves unexpectedly.
+
+`vaultspec-rag status` reports the index generation for each domain, the index
+location, and the compute device. A domain that says it is not indexed yet has no
+searchable content, whatever the store contains.
+
+`vaultspec-rag server jobs` reports every index run and how it ended. A `failed`
+run carries a stable `error_kind`; a run whose progress has not moved for five
+minutes is flagged `stalled`; a run cut short by a dying process is restored as
+`interrupted` on the next startup. Those three are the signals worth acting on.
+
+A run that reused vectors carries a `reuse` block with hits, misses, hit rate,
+and the donors it consulted. A hit rate near zero on a worktree you expected to
+match usually means an eligibility gate rejected the donor rather than that the
+content changed.
+
+`vaultspec-rag server doctor` reports whether the models and the store are ready
+at all, which separates "the index is wrong" from "nothing can index". For how to
+read these surfaces, see the [service mode guide](service-mode.md).
+
 ## Configuration knobs
 
-A handful of knobs shape the chunking and encoding pipeline this page describes.
-The [configuration reference](configuration.md) holds every variable with its
-default and precedence; the ones specific to this pipeline are:
+The knobs that shape this pipeline are the sparse channel toggle, the vault chunk
+budget, the per-document truncation limit, the chunk worker count and its
+activation threshold, the reuse switch, the reranker token bound, and vector
+quantization. The [configuration reference](configuration.md) gives each one its
+exact name, type, default, and precedence, which is the single place they are
+maintained.
 
-| Variable                                 | Controls                                                       |
-| ---------------------------------------- | -------------------------------------------------------------- |
-| `VAULTSPEC_RAG_SPARSE_ENABLED`           | SPLADE sparse channel; off falls back to dense-only            |
-| `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`        | Character budget per vault chunk                               |
-| `VAULTSPEC_RAG_MAX_EMBED_CHARS`          | Character truncation limit per document before encoding        |
-| `VAULTSPEC_RAG_INDEX_CHUNK_WORKERS`      | Chunk worker processes; auto-sizes by default, 1 forces serial |
-| `VAULTSPEC_RAG_INDEX_PARALLEL_MIN_BYTES` | Source-size threshold before the process pool activates        |
-| `VAULTSPEC_RAG_INDEX_REUSE`              | Vector reuse across worktrees; falsey encodes every chunk      |
-| `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`      | Reranker token bound on candidate content                      |
-| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`      | Vector quantization: `scalar`, `turbo`, or `product`           |
-
-For "my accelerator memory is limited" or "indexing is slow" tuning, see
+If accelerator memory is tight or indexing is slow, see
 [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed).
 
 ## Where to go next
