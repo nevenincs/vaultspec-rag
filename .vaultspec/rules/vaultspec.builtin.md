@@ -27,10 +27,10 @@ The workflow persists the following documents, bound by a single feature tag:
 - `.vault/exec/yyyy-mm-dd-<feature>/...-summary.md`: The `<Phase Summary>`.
 
 - `.vault/audit/yyyy-mm-dd-<feature>-audit.md`: The `<Audit>` report. A feature with
-  multiple audits, references, or research documents disambiguates each with an optional
-  narrative infix - `yyyy-mm-dd-<feature>-<topic>-<type>.md` - scaffolded through the
-  owning verb's `--topic` flag (`vault add` for audit, reference, and research only),
-  never by hand-picking a filename.
+  multiple ADRs, audits, references, or research documents disambiguates each with an
+  optional topic infix - `yyyy-mm-dd-<feature>-<topic>-<type>.md` - scaffolded through
+  the owning verb's `--topic` flag (`vaultspec-core vault add` for adr, audit,
+  reference, and research only), never by hand-picking a filename.
 
 - `.vault/index/<feature>.index.md`: The auto-generated `<Feature Index>` linking every
   document for a feature. The index regenerates as a side effect of the `create` and
@@ -86,6 +86,11 @@ git commit trailers are the sanctioned linkage channel).
 
   - *Depends on:* Plans.
   - *References:* The Plan being executed.
+  - *Content:* A mechanical log, not a narrative. One `A`/`M`/`D`/`R` line per path
+    touched under `## Changes`, plus the machine-filled `## Scope`. No prose: the Step
+    row states the intent and the commit carries the diff. A `## Notes` section is added
+    only on exception (data loss, skipped work, a scaffold left in code, a persistent
+    failure) and is otherwise omitted.
   - *Location:* Inside feature-specific folder.
   - *Filename:* `{yyyy-mm-dd-feature-{phase}-{step}}.md` where `{phase}` and `{step}`
     are the canonical container identifiers (`P##`, `S##`) from the plan, zero-padded to
@@ -102,6 +107,8 @@ git commit trailers are the sanctioned linkage channel).
 
   - *Depends on:* Execution Records.
   - *References:* The Plan and key Artifacts produced.
+  - *Content:* The deduplicated union of the Phase's Step Record `## Changes` lines, in
+    the same mechanical grammar. Not a retelling of the Step Records.
   - *Location:* Inside feature-specific folder.
   - *Filename:* `{yyyy-mm-dd-feature-{phase}-summary}.md` where `{phase}` is the
     canonical Phase identifier (`P##`).
@@ -182,6 +189,7 @@ tags:
   - '#feature-name'
 date: '2026-02-06'
 modified: '2026-02-06'
+body_hash: 'sha256:...'
 related:
   - '[[related-file]]'
 ---
@@ -190,6 +198,14 @@ related:
 `modified:` is a CLI-maintained last-modified stamp: set equal to `date:` at scaffold,
 refreshed by every mutating verb and by `vaultspec-core vault check all --fix`, parsed
 leniently but rewritten to the canonical quoted `yyyy-mm-dd` form, never hand-edited.
+
+`body_hash:` is the machine-filled fingerprint of the document body that `modified:`
+attests, written beside the stamp by the same verbs. It is what makes an unstamped body
+edit detectable: the reconciliation check compares the live body against this value, and
+file timestamps are never consulted. Never hand-write or hand-edit it - a value the
+author did not compute is the only way the field can lie. A document that carries no
+`body_hash:` simply makes no claim about its body and is reported clean until a verb or
+migration seeds it.
 
 **Examples:**
 
@@ -258,6 +274,11 @@ instead.
 | `{scope_block}`   | `vaultspec-core vault add exec`      | A Scope section listing the Step's scoped files |
 | `{document_list}` | `vaultspec-core vault feature index` | The feature's full document list                |
 
+The frontmatter fields `modified:` and `body_hash:` belong to the same machine-filled
+class but carry no template placeholder: their values are derived at write time - from
+the clock and from the rendered body - so they are injected by the owning verb rather
+than substituted into a template token.
+
 ### General Rules
 
 - **YAML frontmatter**: Always lowercase, kebab-case
@@ -276,7 +297,7 @@ instead.
   - Top-level docs: `yyyy-mm-dd-{feature}-{type}.md` (e.g.,
     `2026-02-04-editor-demo-plan.md`)
 
-  - Narrative infix (audit, reference, research only):
+  - Optional topic infix (adr, audit, reference, research only):
     `yyyy-mm-dd-{feature}-{topic}-{type}.md` (e.g.,
     `2026-02-04-editor-demo-engine-wire-reference.md`), scaffolded with the owning
     verb's `--topic` flag

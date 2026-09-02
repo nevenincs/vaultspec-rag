@@ -7,7 +7,11 @@ tools:
 - Grep
 - Read
 - Bash
-model: claude-sonnet-4-6
+- SendMessage
+- TaskCreate
+- TaskList
+- TaskUpdate
+model: claude-sonnet-5
 ---
 
 # Persona: Project coordinator

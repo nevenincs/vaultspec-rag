@@ -1,26 +1,62 @@
 # Configuration reference
 
-This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag declares. It gives the matching CLI flag where one exists and the rules for parsing values.
+This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag declares. It gives the matching command-line interface (CLI) flag where one exists, and the rules for parsing values.
 
-Every variable name, type, and default below is checked against the shipped settings object by a test in the suite, so a knob cannot be added, renamed, or re-defaulted without this page failing until it is updated.
+A test in the suite checks every variable name, type, and default on this page against the shipped settings object. Adding, renaming, or re-defaulting a knob fails that test until this page is updated.
 
-See also:
+## On this page
 
-- the [installation guide](installation.md) for where to set variables before first run
-- the [CLI reference](cli.md) for the full flag context
-- the [storage backends guide](backends.md) for the server-first backend model
-- the [architecture overview](architecture.md) for the runtime concepts named here
-- the [preprocessing hooks guide](preprocessing-hooks.md) for the `.vaultragpreprocess.toml` rule format
+- [Resolution order](#resolution-order) - which source wins when more than one sets a value
+- [Type coercion](#type-coercion) - how values are parsed, and what a rejected value does
+- [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - the four that resolve differently
+- [Core variables](#core-variables) - every variable resolved through the standard chain, grouped by what it affects
+- [Config-only keys](#config-only-keys) - settings with no environment variable
+- [Hugging Face cache](#hugging-face-cache) - the third-party variables that govern model downloads
+- [Renamed and removed variables](#renamed-and-removed-variables) - old names and what replaced them
+- [Tuning for memory and speed](#tuning-for-memory-and-speed) - task guidance rather than reference
+- [Examples](#examples)
+
+Related guides: the [installation guide](installation.md) for where to set variables before first run, the [CLI reference](cli.md) for the full flag context, the [storage backends guide](backends.md) for the server-first backend model, the [architecture overview](architecture.md) for the runtime concepts named here, the [glossary](glossary.md) for the vocabulary, and the [preprocessing hooks guide](preprocessing-hooks.md) for the `.vaultragpreprocess.toml` rule format.
 
 ## Resolution order
 
-Each setting resolves through a fixed precedence: CLI flag > environment variable > persisted local-only marker > built-in default.
+Each setting resolves through a fixed precedence, highest first: CLI flag, environment variable, persisted local-only marker, then the built-in default.
 
 The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only` - `server start --local-only` applies to that run without persisting. A later `server start` with no flag and no environment variable then still selects the on-disk store.
 
-Four variables sit outside this chain and resolve their values their own way; they have their own section below.
+Four variables sit outside this chain and resolve their values their own way. See [Variables with their own parsing rules](#variables-with-their-own-parsing-rules).
 
-## Backend selection
+## Type coercion
+
+The loader parses and validates every value when the settings are built, so a rejected value is reported once at startup rather than when the setting it belongs to happens to be read. One unusable value anywhere makes the whole settings object unbuildable.
+
+- Booleans: `1`, `true`, `yes` and `on` parse as true; `0`, `false`, `no` and `off` parse as false (case-insensitive). These spellings are the same for **every** boolean vaultspec-rag reads, including the ones in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - no variable reads `off` as on. Any other value is rejected with a message naming the variable and listing the accepted spellings, so a typo such as `treu` is refused instead of silently reading as false and turning the feature off.
+- Integers and floats: parsed with `int()` and `float()`; a non-numeric value is rejected the same way.
+- Paths: relative paths resolve against the project root; absolute paths are used as given. Use forward slashes on Windows.
+- Empty values: for a setting whose default is a string or a path, an empty or whitespace-only value is treated as unset and falls back to the default. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory. A boolean does **not** share that protection: an empty value reads as false, so an unexpanded `VAR="$UNSET"` on a boolean turns that setting off rather than leaving its default in place. `VAULTSPEC_RAG_STDIO_WATCHDOG` is the single exception, and says why in its own row.
+
+An unset variable falls back to the built-in default.
+
+The four variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) are resolved at their own call sites. The boolean *spellings* above still apply to the two booleans among them; what those two decide differently is how an empty or unrecognised value resolves, which their section states individually.
+
+## Variables with their own parsing rules
+
+These four do not resolve through the chain above. Each is read at its own call site with the rule stated here. One of them is not an operator knob at all.
+
+The two booleans among them accept the same spellings as every other boolean - that part does not vary anywhere in vaultspec-rag. What they resolve differently is everything *else*: an empty value, and a word that spells neither state. The Controls column below states each one's rule, and the reason for it.
+
+| Variable                       | Type    | Default           | Controls                                                                                                                                                                                                                                                     | CLI flag          |
+| ------------------------------ | ------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `VAULTSPEC_RAG_PREPROCESS`     | string  | unset             | `off` disables all preprocessing and wins over every other source; any other value, including unset, leaves rules enabled                                                                                                                                    | `--no-preprocess` |
+| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, empty, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes      | -                 |
+| `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and empty leave it off, and an unrecognised word is rejected rather than guessed at                                                                          | -                 |
+| `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so the variable is stripped from its environment at spawn | `--target`        |
+
+## Core variables
+
+The tables in this section list every `VAULTSPEC_RAG_*` variable resolved through the standard chain.
+
+### Backend selection
 
 These variables choose between the supervised Qdrant server (the default) and the on-disk store. They also configure a remote or managed server.
 
@@ -35,10 +71,6 @@ These variables choose between the supervised Qdrant server (the default) and th
 | `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                       | -                          |
 | `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                  | -                          |
 | `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds the supervisor waits for the managed server to accept requests | -                          |
-
-## Core variables
-
-The tables in this section, together with the backend selection table, list every `VAULTSPEC_RAG_*` variable resolved through the standard chain.
 
 ### Project and data locations
 
@@ -130,23 +162,7 @@ Changing a model against an index built with another one is an operator decision
 
 ### Index resource bounds and memory ceilings
 
-These bound one index run's segment/queue geometry, its memory use, and its liveness. The defaults suit a managed multi-root service; lower them on a smaller host.
-
-Every memory figure here is mebibytes, and the three ceiling variables spell that unit `MIB`. The former `MB` spelling is no longer read at all, so a stale name sets nothing and its ceiling silently falls back to the default instead of failing loudly. Rename these keys wherever they are set — an `.env` file, a supervisor unit, a CI job:
-
-- `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB` is now `VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB`
-- `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB` is now `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`
-- `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB` is now `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`
-
-The same rename applies to the JSON any script reads off the health, status, jobs, and diagnostics surfaces: every `_mb` field is now `_mib`, `gpu_memory_used_mb`, `gpu_memory_total_mb`, `rss_ceiling_mb`, and `cuda_ceiling_mb` among them. No value changed — these were always mebibytes, and only the spelling moved.
-
-The CUDA ceiling is derived from the real device by default rather than fixed: at `0` the ceiling is the device's total memory minus `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`, so a larger card gets a larger budget without any tuning. Setting a positive value is an authoritative override that raises or lowers the effective ceiling.
-
-The ceilings bound the work an already-resident process does. `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB` answers the question before it: whether this process may bring a model stack up at all. It is read once, before the first load, and a card with less free memory than the floor refuses the load with the reading and the floor in the message, rather than loading into a device it will starve.
-
-Like the ceiling above it, the floor derives by default rather than shipping a fixed figure: at `0` it comes from the CUDA demand the configured support profile declares, so it tracks the workload instead of asserting one machine's measurements. It does not read the device — model weights occupy what they occupy on any card, so what a load needs is a property of the models rather than of the hardware, and a shipped figure calibrated to one card would refuse every load on a smaller one and under-protect a larger. A positive value overrides the derivation for your own device.
-
-Whatever the floor is, it has to cover the resident stack a load creates *plus* the largest demand that stack then places on top of its own residency. Sizing it to the resident stack alone is the trap: on a card already holding one tenant, the free memory left over still clears such a floor, so a second stack is admitted onto a device that cannot hold both — the arrangement the gate exists to refuse. Setting it too high refuses loads the card could have served, and a floor above a small card's total memory refuses every load.
+These bound the segment and queue geometry of one index run, its memory use, and its liveness. The defaults suit a managed multi-root service; lower them on a smaller host. Every memory figure here is in mebibytes (MiB).
 
 | Variable                                          | Type    | Default               | Controls                                                                   | CLI flag |
 | ------------------------------------------------- | ------- | --------------------- | -------------------------------------------------------------------------- | -------- |
@@ -162,6 +178,16 @@ Whatever the floor is, it has to cover the resident stack a load creates *plus* 
 | `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`                 | Fraction of CUDA memory the index allocator may reserve                    | -        |
 | `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB`           | integer | `0` (auto-derive)     | Free device memory required before this process loads model stacks (MiB)   | -        |
 | `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service                           | -        |
+
+#### How the CUDA ceiling and admission floor derive
+
+The CUDA ceiling derives from the real device rather than shipping fixed. At `0` the ceiling is the device's total memory minus `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`, so a larger card gets a larger budget without tuning. A positive value overrides that.
+
+The ceilings bound the work an already-resident process does. `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB` answers the question before it: whether this process may bring a model stack up at all. The process reads the floor once, before the first load. If the card has less free memory than the floor, the load is refused, and the message names both the reading and the floor.
+
+The floor also derives by default. At `0` it comes from the CUDA demand the configured support profile declares, so it tracks the workload rather than one machine's measurements. It does not read the device. Model weights occupy what they occupy on any card, so what a load needs is a property of the models, not the hardware. A figure calibrated to one card would refuse every load on a smaller one and under-protect a larger. A positive value overrides the derivation.
+
+A floor has to cover the resident stack a load creates, plus the largest demand that stack then places on top of its own residency. Sizing it to the resident stack alone is not enough: on a card already holding one tenant, the leftover free memory still clears such a floor, so a second stack is admitted onto a device that cannot hold both. Setting it too high refuses loads the card could have served, and a floor above a small card's total memory refuses every load.
 
 ### Concurrency limits
 
@@ -228,19 +254,6 @@ The daemon's scheduled storage-maintenance cycle - see the [storage and maintena
 | `VAULTSPEC_RAG_PREPROCESS_MAX_EMITTED_BYTES` | integer | `10485760` (10 MiB) | Cap on text a preprocess hook may emit per file, in bytes | -        |
 | `VAULTSPEC_RAG_HTML_STRIP`                   | boolean | `1` (true)          | Strip tags from `.html` to plain text before chunking     | -        |
 
-## Variables with their own parsing rules
-
-These four do not resolve through the chain above. Each is read at its own call site with the rule stated here. One of them is not an operator knob at all.
-
-The two booleans among them accept the same spellings as every other boolean - that part does not vary anywhere in vaultspec-rag. What they resolve differently is everything *else*: an empty value, and a word that spells neither state. The Controls column below states each one's rule, and the reason for it.
-
-| Variable                       | Type    | Default           | Controls                                                                                                                                                                                                                                                     | CLI flag          |
-| ------------------------------ | ------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `VAULTSPEC_RAG_PREPROCESS`     | string  | unset             | `off` disables all preprocessing and wins over every other source; any other value, including unset, leaves rules enabled                                                                                                                                    | `--no-preprocess` |
-| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, empty, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes      | -                 |
-| `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and empty leave it off, and an unrecognised word is rejected rather than guessed at                                                                          | -                 |
-| `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so the variable is stripped from its environment at spawn | `--target`        |
-
 ## Config-only keys
 
 These keys exist in the configuration loader and read no environment variable of their own. Set them through a config source, not the environment.
@@ -248,19 +261,6 @@ These keys exist in the configuration loader and read no environment variable of
 | Config key                       | Type    | Default   | Controls                                                                                                                  |
 | -------------------------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `preprocess_mode`                | string  | `default` | Two-state preprocessing mode; the environment reaches it through `VAULTSPEC_RAG_PREPROCESS` rather than a direct override |
-
-## Type coercion
-
-The loader parses and validates every value when the settings are built, so a rejected value is reported once at startup rather than when the setting it belongs to happens to be read. One unusable value anywhere makes the whole settings object unbuildable.
-
-- Booleans: `1`, `true`, `yes` and `on` parse as true; `0`, `false`, `no` and `off` parse as false (case-insensitive). These spellings are the same for **every** boolean vaultspec-rag reads, including the ones in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - no variable reads `off` as on. Any other value is rejected with a message naming the variable and listing the accepted spellings, so a typo such as `treu` is refused instead of silently reading as false and turning the feature off.
-- Integers and floats: parsed with `int()` and `float()`; a non-numeric value is rejected the same way.
-- Paths: relative paths resolve against the project root; absolute paths are used as given. Use forward slashes on Windows.
-- Empty values: for a setting whose default is a string or a path, an empty or whitespace-only value is treated as unset and falls back to the default. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory. A boolean does **not** share that protection: an empty value reads as false, so an unexpanded `VAR="$UNSET"` on a boolean turns that setting off rather than leaving its default in place. `VAULTSPEC_RAG_STDIO_WATCHDOG` is the single exception, and says why in its own row.
-
-An unset variable falls back to the built-in default.
-
-The four variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) are resolved at their own call sites. The boolean *spellings* above still apply to the two booleans among them; what those two decide differently is how an empty or unrecognised value resolves, which their section states individually.
 
 ## Hugging Face cache
 
@@ -278,6 +278,18 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 `HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set to `1`, `true`, `yes`, or `on` it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 
 Searches additionally quiet the Hub and Transformers loggers by defaulting `HF_HUB_DISABLE_PROGRESS_BARS`, `TRANSFORMERS_NO_ADVISORY_WARNINGS`, and `TRANSFORMERS_VERBOSITY` when they are unset. Set them yourself to keep the library output.
+
+## Renamed and removed variables
+
+If a setting stopped taking effect after an upgrade, look for its old name here. A stale name sets nothing: the value falls back to the default rather than failing loudly, so nothing tells you at startup.
+
+Three memory ceilings changed their unit suffix from `MB` to `MIB`. The old spellings are no longer read at all. Rename them wherever they are set, in an `.env` file, a supervisor unit, or a continuous integration job:
+
+- `VAULTSPEC_RAG_INDEX_RSS_CEILING_MB` is now `VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB`
+- `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MB` is now `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`
+- `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MB` is now `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`
+
+The same rename applies to the JSON any script reads off the health, status, jobs, and diagnostics surfaces. Every `_mb` field is now `_mib`, including `gpu_memory_used_mb`, `gpu_memory_total_mb`, `rss_ceiling_mb`, and `cuda_ceiling_mb`. No value changed. These were always mebibytes, and only the spelling moved.
 
 ## Tuning for memory and speed
 
