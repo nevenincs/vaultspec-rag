@@ -3,10 +3,12 @@ tags:
   - '#adr'
   - '#tool-env-gpu-continuity'
 date: '2026-07-14'
-modified: '2026-07-21'
-body_hash: 'sha256:419aa691f8c7de68ab0a81403d1a77a8bf64e5d07310d405633a9092b4975fe5'
+modified: '2026-09-02'
+body_hash: 'sha256:75b441bb4af67c597f9add10a47afd5ff9ac305a5ed7e4340c17e13bd5f00e6f'
 related:
-  - "[[2026-07-14-tool-env-gpu-continuity-research]]"
+  - '[[2026-07-14-tool-env-gpu-continuity-research]]'
+  - '[[2026-09-01-tool-mode-cuda-research]]'
+  - '[[2026-09-01-tool-mode-cuda-reference]]'
 ---
 
 # `tool-env-gpu-continuity` adr: `GPU-torch continuity across uv tool upgrades and env-aware start diagnostics` | (**status:** `accepted`)
@@ -16,9 +18,9 @@ related:
 A field report from a GPU (cu130) Windows box running v0.2.28 as a uv tool showed the
 GPU contract is unmanaged across the tool lifecycle: every `uv tool upgrade` (or
 `install --force`) re-resolves torch to the CPU PyPI wheel because the cu130 pin is
-project-scoped and absent from published wheel metadata; the CPU-wheel refusal's
-remediation (`vaultspec-rag install`) cannot repair a tool env and only re-prints the
-escape hatch; and after a partially-failed forced reinstall (the running service exe
+project-scoped and absent from published wheel metadata; the project-mode repair in
+`vaultspec-rag install` cannot repair a tool env; and after a partially-failed forced
+reinstall (the running service exe
 locks `Scripts\`), `uvx` silently runs a cached ephemeral CPU env (`archive-v0`) with
 nothing indicating the interpreter is not the installed tool. Two adjacent UX gaps:
 `server status` reports "stopped" during model warmup while `server start` reports
@@ -46,24 +48,29 @@ already exists but is underdiscoverable). Grounded in
   `broker-facing-cli-outcomes-are-structured-and-idempotent` (lifecycle envelopes);
   `operator-views-are-bounded` (jobs rendering).
 - The service cannot intercept `uv tool install --force` while running (no uv hook);
-  the achievable surface is detection, exact-command remediation, and documentation.
+  the installer must detect and refuse before it invokes the replacement.
+- The repair scope and safety evidence are grounded in
+  `2026-09-01-tool-mode-cuda-research` and
+  `2026-09-01-tool-mode-cuda-reference`.
 
 ## Considered options
 
-- **O-A1 (chosen) - canonical receipt-carrying install command via `--index`.**
-  Document and emit `uv tool install "vaultspec-rag[mcp]" --index https://download.pytorch.org/whl/cu130` as the canonical tool install; the receipt
-  re-applies it on every upgrade and the torch version floats with the release.
-- **O-A2 - `--with` direct-URL wheel pin as canonical.** Rejected as primary: it
-  hard-pins torch version, python ABI, and platform, going stale on every torch or
-  python bump; kept as the documented fallback because it sidesteps the Windows
-  pytorch `--index` breakage (uv issue 11532) if that surfaces on `uv tool`.
+- **O-A1 (chosen) - canonical receipt-carrying direct CUDA wheel requirement.**
+  Keep the existing ABI-aware `--with "torch @ <cu130 wheel>"` request as the
+  durable tool input and verify the receipt semantically after installation.
+- **O-A2 - index-only receipt configuration.** Rejected: uv receipt handling for
+  index options has varied across releases, while a direct CUDA requirement does
+  not depend on that serialization.
 - **O-B1 (chosen) - exact-command remediation in the refusal itself.** The CPU-wheel
   refusal prints the immediate repair (`uv pip install --python "{interpreter}" --reinstall --torch-backend=cu130 torch`) plus the durable receipt fix (O-A1),
   env-classified; `vaultspec-rag install` stops being the advertised remediation on
   non-project envs.
-- **O-B2 - an active `install --repair-env` that runs the escape hatch.** Deferred:
-  mutating an arbitrary resolved interpreter is a new failure surface; exact-command
-  emission removes the reported friction without it. Pathway left open.
+- **O-B2 (chosen) - an active tool-mode repair in `install`.** Detect a defective
+  persistent tool environment, obtain consent, refuse unsafe ownership evidence,
+  run the receipt-carrying reinstall, and verify both wheel and receipt.
+- **O-B3 - automatic service stop or a non-durable `uv pip` fallback.** Rejected:
+  the installer must not terminate a service or report a temporary wheel change as a
+  durable repair.
 - **O-C1 (chosen) - runtime env classifier + loud ephemeral warning.** Classify the
   daemon interpreter (installed-tool / uvx-ephemeral / project-venv / other) from
   `sys.prefix` path shape; `server start` and the refusal warn loudly on
@@ -105,20 +112,24 @@ already exists but is underdiscoverable). Grounded in
   research U1 - if a future uv changes receipt semantics the documented command
   degrades to today's behaviour, never worse.
 - Verification of O-A1 on real Windows (uv issue 11532 risk) is an execution-phase
-  gate: if `--index` misresolves on `uv tool`, the documented canonical form flips
-  to the O-A2 fallback before release.
+  gate: run the active self-reinstall with its service stopped and verify that the
+  current CLI process does not itself prevent replacement. A failure remains explicit;
+  it cannot fall back to `uv pip`.
+- A live or unverifiable service holder blocks the repair before any `uv` child starts.
+  Consent follows the existing default-no interactive and non-TTY installer contract.
 
 ## Implementation
 
-**A - durable pin.** README/install docs make the receipt-carrying command the
-canonical tool install; `warn_if_active_torch_not_gpu()` and the start refusal emit
-it as the "make upgrades safe" line. Command strings derive from one helper next to
-the existing cu130 constants.
+**A - durable pin.** The CUDA tool request stays derived from the current canonical
+command builder and tool-mode package declaration. Documentation and refusal surfaces
+continue to render it, but the installer consumes a structured representation instead
+of parsing rendered text.
 
-**B - single-step remediation.** `_preflight_daemon_cuda`'s failure text drops the
-`vaultspec-rag install` indirection for non-project envs and prints, for the resolved
-interpreter: the immediate escape hatch, then the durable receipt fix, selected by
-the env classification.
+**B - installer-owned repair.** Before workspace or project mutation, `install`
+uses the existing torch-free probe and environment classifier. A broken persistent tool
+environment asks for consent, obtains conservative service ownership evidence, invokes
+the receipt-carrying uv reinstall only when safe, then verifies CUDA readiness and the
+uv-owned receipt. It returns a structured, truthful action for every terminal branch.
 
 **C - env classifier.** A small pure function (beside `_running_in_uv_tool_env()`)
 returns installed-tool / uvx-ephemeral / project-venv / other for a given prefix or
@@ -136,19 +147,22 @@ the port-only renderer gain a `warming` branch (pid, since, distinct exit code);
 **E - jobs signposting.** The human jobs summary/help mentions `--json`; envelope
 shape unchanged.
 
-Tests extend the no-mock homes named in research F6 (env pre-flight, status states,
-lifespan-lock ordering, jobs unit, install torch-config), plus a manual persona pass
-on the real GPU box per `manual-cli-persona-required`.
+Tests extend the existing classifier, probe, installer-report, and service-identity
+homes with guards that prove unsafe and declined paths launch no uv process; success
+proves both CUDA postcondition and a cu130 direct requirement in the receipt.
 
 ## Rationale
 
-The receipt (U1) is the only mechanism uv offers that survives re-resolution, so the
-durable fix is necessarily a documented/emitted install spec, not code (U4). Given
-that, the highest-leverage code change is making every failure surface print the
-exact two commands - repair now, survive upgrades - for the actual interpreter, which
-the pre-flight already resolves (F1). The ephemeral trap (R2) is fully covered by a
-pure-path classifier (U5, F3) because the harmful case (CPU ephemeral env) already
-fails the pre-flight - it just fails illegibly today. The warming stamp is the
+The receipt is the only mechanism that survives tool re-resolution. The earlier
+emitted-command remedy was a useful intermediate surface but leaves a required
+operator mutation and cannot prove receipt persistence.
+`2026-09-01-tool-mode-cuda-research` shows that the installer can close that gap
+without accepting the larger risks of automatic service control or a second
+wheel-install path. The existing
+classifier, isolated probe, and ownership detector keep the repair bounded and
+testable. The ephemeral trap remains covered by a pure-path classifier because the
+harmful case already fails the pre-flight - it is now eligible for repair only when it
+is a persistent tool environment. The warming stamp is the
 bounded fix to a real structural gap (F4): the daemon owns the transition because
 only it knows when warmup starts and when serving begins, and sidecar rendering is
 already how status reads daemon state. Jobs needs no envelope change - the report's
@@ -157,7 +171,8 @@ premise was partially wrong (F5) - so the fix is discoverability only.
 ## Consequences
 
 - **Gains.** `uv tool upgrade` stops silently breaking GPU boxes once installed via
-  the canonical command; every refusal is self-remediating with copy-paste commands;
+  the canonical command; installer repair can make an existing tool durable with
+  affirmative consent; every refusal remains self-remediating with copy-paste commands;
   the uvx-ephemeral trap becomes a labelled, explained state; the warmup window
   reports `warming` instead of the contradictory "stopped"; scripted job waits have
   a signposted structured path.
@@ -167,9 +182,8 @@ premise was partially wrong (F5) - so the fix is discoverability only.
   (acceptable because the pytorch index only serves torch adjacents, PyPI remains
   fallback); a new status state (`warming`, new exit code) is a minor contract
   change consumers must learn.
-- **Pathways.** An active `install --repair-env` (O-B2) over the same classifier;
-  extending the classifier into `server doctor`; a `/health` warming phase if a
-  later decision reorders the lifespan.
+- **Pathways.** Extending repair evidence into `server doctor`; a `/health` warming
+  phase if a later decision reorders the lifespan.
 - **Pitfalls.** Scattering the cu130 URL across message literals (must stay
   derived); classifying by substring on forward slashes only (Windows paths);
   stamping `warming` from the CLI parent (races the daemon); treating absent phase
