@@ -10,7 +10,10 @@ real file that owns the other half of the contract.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import re
+import textwrap
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -20,10 +23,12 @@ if TYPE_CHECKING:
 
 from tools.binaries.build_pyapp import (
     BINARIES,
+    PROJECT_FEATURES,
     PROJECT_NAME,
     PYTHON_VERSION,
     Binary,
     asset_name,
+    build_one,
     version_from_tag,
     write_checksum,
 )
@@ -137,6 +142,27 @@ def test_project_name_matches_the_distribution_pyapp_installs(
 ) -> None:
     """PyApp resolves ``PROJECT_NAME`` from PyPI, so a rename must reach here."""
     assert pyproject["project"]["name"] == PROJECT_NAME
+
+
+def test_standalone_binaries_install_mcp_and_gpu_features() -> None:
+    """The PyApp build receives both its protocol and compute runtime features.
+
+    Mutation proof: renaming the ``PYAPP_PROJECT_FEATURES`` environment key
+    failed at the wiring assertion; restored, this test passed.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(build_one)))
+    name_assignments = {
+        (key.value, value.id)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values, strict=True)
+        if isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and isinstance(value, ast.Name)
+    }
+
+    assert ("PYAPP_PROJECT_FEATURES", "PROJECT_FEATURES") in name_assignments
+    assert set(PROJECT_FEATURES.split(",")) == {"gpu", "mcp"}
 
 
 def test_binary_names_match_the_console_scripts_they_stand_in_for(
