@@ -100,6 +100,27 @@ Three job signals are worth knowing. A failed job carries a stable `error_kind` 
 
 An index job that reused vectors from an already-indexed sibling worktree carries a `reuse` block describing what it avoided re-encoding. See [reusing vectors across worktrees](indexing.md#reusing-vectors-across-worktrees) for the mechanism, and the [CLI reference](cli.md) for the block's fields.
 
+## Control one job
+
+`server jobs` shows the feed. To act on a single job, address it by id with
+`server job`, which accepts a unique prefix in human output:
+
+```
+uv run vaultspec-rag server job show <job-id>
+```
+
+Five more verbs act on one job:
+
+- `server job pause` requests a cooperative pause.
+- `server job resume` resumes a paused job through reconciliation.
+- `server job stop` requests cancellation without disabling automatic updates.
+- `server job retry` creates a linked retry for a retryable terminal job.
+- `server job delete` removes one terminal job from retained history.
+
+Pausing a single job differs from pausing the service: `server pause` holds
+everything at safe checkpoints, while `server job pause` affects only the job
+you name.
+
 ## Pause and resume
 
 To hold the running service at safe checkpoints without stopping it:
