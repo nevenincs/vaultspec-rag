@@ -403,10 +403,11 @@ class VaultSearcher:
                 return self._reranker
             from sentence_transformers import CrossEncoder
 
-            from .._gpu import load_torch
+            from .._gpu import load_accelerator
             from ..config._settings import get_config
 
-            torch = load_torch()
+            accelerator = load_accelerator()
+            torch = accelerator.torch
             # Hold the shared GPU lock across the model load. Constructing the
             # CrossEncoder materialises weights on the device, and that CUDA work
             # must not run concurrently with another root's forward pass (or a
@@ -416,14 +417,14 @@ class VaultSearcher:
             with self._gpu_section():
                 self._reranker = CrossEncoder(
                     self._reranker_model_name,
-                    device="cuda",
+                    device=accelerator.device,
                     activation_fn=torch.nn.Sigmoid(),
                     max_length=int(get_config().reranker_max_length),
                     local_files_only=self._local_files_only,
                 )
             logger.info(
                 "CrossEncoder reranker loaded on %s: %s",
-                torch.cuda.get_device_name(0),
+                accelerator.name,
                 self._reranker_model_name,
             )
             return self._reranker
@@ -457,10 +458,10 @@ class VaultSearcher:
         """
         if not self._reranker_enabled or len(results) <= 1:
             return results[:top_k]
-        import torch
-
+        from .._gpu import load_accelerator
         from ..config._settings import get_config
 
+        accelerator = load_accelerator()
         cfg = get_config()
         reranker = self._get_reranker()
         # Score the real candidate content, not the 200-char display
@@ -487,13 +488,16 @@ class VaultSearcher:
                         show_progress_bar=False,
                     )
                     break
-                except torch.cuda.OutOfMemoryError:
-                    torch.cuda.empty_cache()
+                except BaseException as exc:
+                    if not accelerator.is_out_of_memory(exc):
+                        raise
+                    accelerator.release_cache()
                     if batch_size <= 1:
                         raise
                     batch_size = max(1, batch_size // 2)
                     logger.warning(
-                        "CUDA OOM during reranking, retrying with batch_size=%d",
+                        "%s OOM during reranking, retrying with batch_size=%d",
+                        accelerator.backend.upper(),
                         batch_size,
                     )
         scores = [float(s) for s in raw_scores]

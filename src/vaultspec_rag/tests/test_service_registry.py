@@ -136,14 +136,14 @@ class TestClosingReleasesTheResidentBaseline:
         # Requested for its residency rather than its value: the session model
         # is the figure the rebased baseline must come back down to.
         del embedding_model
-        from .._gpu import load_torch
+        from .._gpu import load_accelerator
         from ..memory_probe import (
             current_cuda_mib,
             resident_cuda_baseline_mib,
             sample_resident_cuda_baseline,
         )
 
-        torch = load_torch()
+        torch = load_accelerator().torch
         resident_mib = sample_resident_cuda_baseline()
         assert resident_mib > 0.0, (
             "premise: the session embedding model must be resident on the device"

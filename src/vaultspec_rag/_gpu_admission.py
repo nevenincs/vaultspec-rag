@@ -74,6 +74,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from ._anchor_claim import AnchorClaim
+    from ._gpu import AcceleratorBackend
     from .memory_probe import CudaDeviceMemory
 
 logger = logging.getLogger(__name__)
@@ -89,8 +90,8 @@ __all__ = [
     "UNREADABLE_ADMISSION_LIMIT",
     "DeviceAdmission",
     "admission_from_reading",
-    "admit_gpu_load",
-    "clear_gpu_admission_latch",
+    "admit_accelerator_load",
+    "clear_accelerator_admission_latch",
     "device_load_reading",
     "device_load_window",
     "device_load_wire",
@@ -198,6 +199,7 @@ class DeviceAdmission:
     own_mib: int | None
     floor_mib: int
     reason: str
+    capability_evaluated: bool = False
 
 
 def device_refusal_message(admission: DeviceAdmission) -> str:
@@ -487,7 +489,9 @@ def judge_device_reading(reading: CudaDeviceMemory) -> DeviceAdmission:
     )
 
 
-def evaluate_device_admission() -> DeviceAdmission:
+def evaluate_device_admission(
+    backend: AcceleratorBackend = "cuda",
+) -> DeviceAdmission:
     """Return one verdict on the device's present capacity to take a load.
 
     The single predicate every surface reads. It never raises and never
@@ -499,6 +503,16 @@ def evaluate_device_admission() -> DeviceAdmission:
     one, which is why this belongs to load admission and operator pre-flight
     and not to a probe on a hot serving path.
     """
+    if backend == "mps":
+        return DeviceAdmission(
+            admitted=True,
+            free_mib=None,
+            total_mib=None,
+            own_mib=None,
+            floor_mib=0,
+            reason="",
+            capability_evaluated=True,
+        )
     try:
         from .memory_probe import cuda_device_memory
 
@@ -528,8 +542,16 @@ def device_load_reading() -> dict[str, object] | None:
     cadence (the jobs listing) cache the result themselves; this function
     always takes a fresh reading.
     """
+    backend: AcceleratorBackend = "cuda"
     try:
-        admission = evaluate_device_admission()
+        import torch
+
+        from ._gpu import detect_accelerator_backend
+
+        detected = detect_accelerator_backend(torch)
+        if detected is not None:
+            backend = detected
+        admission = evaluate_device_admission(backend)
     except Exception:
         logger.warning(
             "device-load admission probe failed; reporting it absent",
@@ -580,6 +602,7 @@ def _warn_unserialised_window(claim: AnchorClaim) -> None:
 @contextmanager
 def device_load_window(
     *,
+    backend: AcceleratorBackend = "cuda",
     anchor: Path | None = None,
     reading: CudaDeviceMemory | None = None,
 ) -> Generator[DeviceAdmission]:
@@ -593,7 +616,7 @@ def device_load_window(
     it.
 
     Exactly one thread of this process may be inside the window at a time.
-    :func:`admit_gpu_load` guarantees that, and has to: the OS lock is taken per
+    :func:`admit_accelerator_load` guarantees that, and has to: the OS lock is taken per
     descriptor, so a second thread of the same process would be refused by this
     process's own hold and read it as foreign contention.
 
@@ -624,7 +647,7 @@ def device_load_window(
         _warn_unserialised_window(claim)
     try:
         yield (
-            evaluate_device_admission()
+            evaluate_device_admission(backend)
             if reading is None
             else judge_device_reading(reading)
         )
@@ -647,10 +670,10 @@ def _floor_was_evaluated(admission: DeviceAdmission) -> bool:
     them carries a free figure, so the figure's presence is the discriminator
     rather than a second flag that could disagree with it.
     """
-    return admission.free_mib is not None
+    return admission.free_mib is not None or admission.capability_evaluated
 
 
-def clear_gpu_admission_latch() -> None:
+def clear_accelerator_admission_latch() -> None:
     """Retire this process's standing admission after a resident release.
 
     A verdict describes the device as it stood when it was taken, so a release
@@ -666,10 +689,11 @@ def clear_gpu_admission_latch() -> None:
         _admitted = False
 
 
-def admit_gpu_load[T](
+def admit_accelerator_load[T](
     load: Callable[[], T],
     *,
-    window: Callable[[], AbstractContextManager[DeviceAdmission]] = device_load_window,
+    backend: AcceleratorBackend = "cuda",
+    window: Callable[[], AbstractContextManager[DeviceAdmission]] | None = None,
 ) -> T:
     """Run *load* under one device admission per process, latched on success.
 
@@ -703,7 +727,7 @@ def admit_gpu_load[T](
     protection, and permanently is the worst way for it to do so.
 
     The retry that opens costs at most one further window entry per load site.
-    ``load_torch`` is called once per model construction and each site is behind
+    ``load_accelerator`` is called once per model construction and each site is behind
     its own already-constructed guard, so a process makes a handful of these
     calls in total; the device probe caches its torch lookup, so a repeat costs
     a memory query and an uncontended lock claim rather than an import.
@@ -724,7 +748,12 @@ def admit_gpu_load[T](
     with _admission_guard:
         if _admitted:
             return load()
-        with window() as admission:
+        selected_window = (
+            window
+            if window is not None
+            else lambda: device_load_window(backend=backend)
+        )
+        with selected_window() as admission:
             if admission.reason in _REFUSING_REASONS:
                 raise RuntimeError(device_refusal_message(admission))
             result = load()
