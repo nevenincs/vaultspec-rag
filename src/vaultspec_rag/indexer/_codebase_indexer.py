@@ -101,6 +101,7 @@ class _FullStaleReconciliation:
     metadata: dict[str, str]
     existing_ids: set[str]
     retained_ids: set[str]
+    collection: str | None
     reporter: ProgressReporter
 
 
@@ -309,14 +310,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """Clear per-run donor reuse and drift state at the start of a run."""
         self._reuse_stats = None
         self._lifecycle.forget_open_generation()
-        # Cleared per run so a generation target can never leak from a
-        # finished rebuild into the next job on this indexer.
-        self._code_build_target = None
-
-    #: Collection a clean rebuild is populating, or ``None`` outside one. Held
-    #: on the indexer rather than the store because the store is shared with
-    #: search, while one indexer runs one job at a time behind the writer lock.
-    _code_build_target: str | None = None
 
     def _reuse_snapshot(self) -> dict[str, object] | None:
         """Return this run's reuse telemetry block, or ``None`` when off."""
@@ -548,12 +541,16 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     point_ids = tuple(sorted(removed_ids_by_path[rel]))
                     if not point_ids:
                         continue
-                    self.store.delete_code_chunks(list(point_ids))
+                    self.store.delete_code_chunks(
+                        list(point_ids), collection=request.collection
+                    )
                     request.checkpoint.record_confirmed_deletion(rel, point_ids)
                     path_removed_ids.update(point_ids)
                 remaining_stale_ids = sorted(set(stale_ids) - path_removed_ids)
                 if remaining_stale_ids:
-                    self.store.delete_code_chunks(remaining_stale_ids)
+                    self.store.delete_code_chunks(
+                        remaining_stale_ids, collection=request.collection
+                    )
             except OSError:
                 logger.error(
                     "Failed to purge stale code chunks after successful rebuild - "
@@ -630,16 +627,16 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 # A fresh generation name cannot collide with a surviving
                 # directory, so this creates rather than recreates and the
                 # served collection is left alone.
-                self.store.ensure_code_table(self._code_build_target)
+                self.store.ensure_code_table(self._lifecycle.active_build_target)
                 # The generation is new: the snapshot is empty by
                 # construction, and a full id scan of a large local
                 # collection costs minutes of GIL-holding CPU.
                 existing_ids_before: set[str] = set()
             else:
-                self.store.ensure_code_table(self._code_build_target)
+                self.store.ensure_code_table(self._lifecycle.active_build_target)
                 try:
                     existing_ids_before = set(
-                        self.store.get_all_code_ids(self._code_build_target)
+                        self.store.get_all_code_ids(self._lifecycle.active_build_target)
                     )
                 except (OSError, RuntimeError):
                     logger.warning(
@@ -728,13 +725,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             is not None
         )
 
-        # Build beside the served collection, never into it. The served one
-        # keeps answering searches for the whole build, and an interrupted
-        # build leaves this collection unreferenced rather than leaving the
-        # served one truncated. The name is minted by the lifecycle, which is
-        # also what a later run resuming this generation derives it from.
-        self._code_build_target = self._lifecycle.build_collection(checkpoint)
-
         # Failure-safe rebuild (mirrors VaultIndexer.full_index): snapshot the
         # existing chunk ids BEFORE streaming, keep the old chunks live, and
         # purge only the ids absent from the new corpus afterwards. When
@@ -776,7 +766,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     checkpoint=checkpoint,
                     limits=limits,
                     content_epoch=self._content_epoch,
-                    code_build_target=self._code_build_target,
+                    code_build_target=self._lifecycle.active_build_target,
                     ingest_wait=False,
                     run_control=run_control,
                 ),
@@ -793,20 +783,30 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 computed_not_before_ns=pipeline_started_ns,
                 keep=meta.keys(),
             )
+            published_ids = frozenset(new_ids)
             new_ids.update(
                 existing_ids_before if preserved_ids is None else preserved_ids
             )
             meta.update(preserved_metadata)
 
+            # A drifted path's replacement points carry new identities, so the
+            # drift owner drops the superseded ones mid-run. They are still in
+            # the pre-run snapshot, and expecting them back would report a
+            # correct rebuild as a store that acknowledged writes it never
+            # applied. Subtract exactly those this run retired and did not
+            # republish under the same identity.
+            superseded = self._lifecycle.drift_owner.superseded_point_ids
+            retired_ids = superseded - published_ids
+
             run_control.checkpoint()
             # The rebuild streamed its upserts without the per-slice apply
             # handshake; nothing terminal may proceed until the store has
             # proven every acknowledged point actually applied. Before the
-            # purge the collection must hold exactly the union of the
-            # pre-existing snapshot and everything this run published.
+            # purge the collection must hold exactly the pre-existing snapshot,
+            # less what this run retired, plus everything it published.
             self.store.apply_ingest_barrier(
-                self._code_build_target or self.store.CODE_TABLE_NAME,
-                expected_points=len(new_ids | existing_ids_before),
+                self._lifecycle.active_build_target or self.store.CODE_TABLE_NAME,
+                expected_points=len((new_ids | existing_ids_before) - retired_ids),
                 write_policy=checkpoint.run_policy.store_write_policy,
             )
             run_control.checkpoint()
@@ -817,13 +817,14 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     metadata=meta,
                     existing_ids=existing_ids_before,
                     retained_ids=new_ids,
+                    collection=self._lifecycle.active_build_target,
                     reporter=reporter,
                 )
             )
 
             self._lifecycle.publish(
                 checkpoint,
-                build_target=self._code_build_target,
+                build_target=self._lifecycle.active_build_target,
                 reporter=reporter,
                 phase_label="write metadata",
             )
@@ -1042,7 +1043,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                         checkpoint=checkpoint,
                         limits=limits,
                         content_epoch=self._content_epoch,
-                        code_build_target=self._code_build_target,
+                        code_build_target=self._lifecycle.active_build_target,
                         run_control=run_control,
                     ),
                 )
@@ -1268,7 +1269,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     checkpoint=checkpoint,
                     limits=limits,
                     content_epoch=self._content_epoch,
-                    code_build_target=self._code_build_target,
+                    code_build_target=self._lifecycle.active_build_target,
                     run_control=run_control,
                 ),
             )

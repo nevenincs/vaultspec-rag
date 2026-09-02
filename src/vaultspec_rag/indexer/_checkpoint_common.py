@@ -236,14 +236,7 @@ class RunCheckpointBase:
         point_ids: tuple[str, ...],
     ) -> bool:
         """Checkpoint one idempotent path deletion after storage confirmation."""
-        unit = CommitUnit(
-            rel_path=rel_path,
-            kind=CommitUnitKind.DELETE_PATH,
-            source_digest=None,
-            segment_ordinal=0,
-            is_file_end=True,
-            point_ids=tuple(sorted(point_ids)),
-        )
+        unit = self._deletion_unit(rel_path, CommitUnitKind.DELETE_PATH, point_ids)
         inserted = self.ledger.record_storage_confirmed_unit(
             self.generation_id,
             unit,
@@ -262,14 +255,7 @@ class RunCheckpointBase:
         point_ids: tuple[str, ...],
     ) -> bool:
         """Checkpoint removal of superseded points while retaining the path."""
-        unit = CommitUnit(
-            rel_path=rel_path,
-            kind=CommitUnitKind.DELETE_STALE,
-            source_digest=None,
-            segment_ordinal=0,
-            is_file_end=True,
-            point_ids=tuple(sorted(point_ids)),
-        )
+        unit = self._deletion_unit(rel_path, CommitUnitKind.DELETE_STALE, point_ids)
         inserted = self.ledger.record_storage_confirmed_unit(
             self.generation_id,
             unit,
@@ -280,6 +266,22 @@ class RunCheckpointBase:
                 label=f"stale {self._kind_label} deletion {rel_path}",
             )
         return inserted
+
+    @staticmethod
+    def _deletion_unit(
+        rel_path: str,
+        kind: CommitUnitKind,
+        point_ids: tuple[str, ...],
+    ) -> CommitUnit:
+        """Build the one canonical ledger unit for a confirmed deletion."""
+        return CommitUnit(
+            rel_path=rel_path,
+            kind=kind,
+            source_digest=None,
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=tuple(sorted(point_ids)),
+        )
 
     def record_processing_failure(
         self,

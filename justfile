@@ -357,8 +357,9 @@ audit target='all':
 
 # Excludes the exact marker set conftest.py's own pytest_runtestloop guard
 # checks before requiring HF_TOKEN (_GPU_MARKERS | {"subprocess_gpu"} =
-# integration/quality/performance/robustness/subprocess_gpu), plus "cuda" for
-# tests that need a real GPU but carry no HF-auth dependency. Excluding only
+# integration/quality/performance/robustness/subprocess_gpu), plus "cuda" and
+# "mps" for tests that target one real accelerator without the shared CUDA
+# model fixtures. Excluding only
 # "integration" here let a quality/performance/robustness/subprocess_gpu/cuda
 # test slip through gateless and hard-abort this recipe on a GPU-less runner;
 # matching conftest's own needs-real-infra set here is the durable fix so a
@@ -412,7 +413,7 @@ audit target='all':
 # Run project test suites.
 test target='all':
   switch ("{{target}}") { \
-    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda)" ; break } \
+    "python" { {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -n auto --dist loadfile -m "not (integration or quality or performance or robustness or subprocess_gpu or cuda or mps)" ; break } \
     "fast" { {{uvr}} pytest src/vaultspec_rag/tests/ -x -q --tb=short -m unit ; break } \
     "gpu" { \
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "(integration or quality or robustness or cuda) and not performance and not subprocess_gpu" ; \
@@ -424,10 +425,15 @@ test target='all':
       {{uvr}} pytest src/vaultspec_rag/tests/ -q --tb=short -m "performance" ; \
       break \
     } \
+    "mps" { \
+      $env:PYTORCH_ENABLE_MPS_FALLBACK = "0" ; \
+      {{uvr}} pytest src/vaultspec_rag/tests/integration/test_mps_backend.py -q --tb=short -m "mps" ; \
+      break \
+    } \
     "all" { just test python ; break } \
     default { \
       Write-Host "unknown test target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python fast gpu perf all" -ForegroundColor Red ; \
+      Write-Host "  targets: python fast gpu perf mps all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }

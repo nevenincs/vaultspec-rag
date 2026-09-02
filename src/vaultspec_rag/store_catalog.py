@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Unpack, cast
 
 if TYPE_CHECKING:
@@ -403,18 +404,20 @@ class _VaultCatalogMixin:
     def scroll_code_content(
         self,
         *,
+        collection: str | None = None,
         limit: int = 100,
         offset: PointId | None = None,
         source_paths: set[str] | None = None,
         with_vectors: bool = False,
     ) -> tuple[list[dict[str, Any]], PointId | None]:
-        """Return one bounded page from the code collection."""
+        """Return one bounded page from the selected code collection."""
+        _target = self._code_collection(collection)
         return self._scroll_content(
             _ContentScrollRequest(
-                self.CODE_TABLE_NAME,
+                _target,
                 "path",
                 "code",
-                self.ensure_code_table,
+                partial(self.ensure_code_table, _target),
                 limit,
                 offset,
                 source_paths,

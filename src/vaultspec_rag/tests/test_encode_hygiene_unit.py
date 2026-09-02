@@ -1,10 +1,12 @@
 """Unit tests for sparse-tensor conversion parity and the query cache."""
 
 from concurrent.futures import ThreadPoolExecutor
+from types import ModuleType
 from typing import ClassVar
 
 import pytest
 
+from .._gpu import AcceleratorContext
 from ..embeddings import (
     QueryEmbeddingCache,
     SparseResult,
@@ -32,6 +34,17 @@ _ROWS = [
 ]
 
 
+def _test_accelerator(torch: ModuleType) -> AcceleratorContext:
+    """Provide the canonical context used by tensor conversion."""
+    return AcceleratorContext(
+        torch=torch,
+        backend="cuda",
+        device="cuda",
+        name="test accelerator",
+        memory_kind="vram",
+    )
+
+
 class TestSparseTensorConversionParity:
     pytestmark: ClassVar = [pytest.mark.unit]
 
@@ -46,25 +59,31 @@ class TestSparseTensorConversionParity:
         import torch
 
         tensor = torch.tensor(_ROWS, dtype=torch.float32)
-        self._assert_matches_reference(_sparse_tensor_to_results(tensor))
+        self._assert_matches_reference(
+            _sparse_tensor_to_results(tensor, _test_accelerator(torch))
+        )
 
     def test_sparse_coo_path(self):
         import torch
 
         tensor = torch.tensor(_ROWS, dtype=torch.float32).to_sparse()
-        self._assert_matches_reference(_sparse_tensor_to_results(tensor))
+        self._assert_matches_reference(
+            _sparse_tensor_to_results(tensor, _test_accelerator(torch))
+        )
 
     def test_sparse_csr_path(self):
         import torch
 
         tensor = torch.tensor(_ROWS, dtype=torch.float32).to_sparse_csr()
-        self._assert_matches_reference(_sparse_tensor_to_results(tensor))
+        self._assert_matches_reference(
+            _sparse_tensor_to_results(tensor, _test_accelerator(torch))
+        )
 
     def test_all_zero_batch_yields_empty_results(self):
         import torch
 
         tensor = torch.zeros((3, 7), dtype=torch.float32)
-        converted = _sparse_tensor_to_results(tensor)
+        converted = _sparse_tensor_to_results(tensor, _test_accelerator(torch))
         assert len(converted) == 3
         assert all(r.indices == [] and r.values == [] for r in converted)
 

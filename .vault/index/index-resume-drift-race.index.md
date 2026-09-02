@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#index-resume-drift-race'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
-body_hash: 'sha256:1708b49e0cff25dc3efa50e7f8995732a4103e64ea061ba89da891da813e87c5'
+modified: '2026-09-01'
+body_schema: 'body-v2'
+body_hash: 'sha256:af5f634c96cf6a4ae3fbb52b15476c4bb8b3f23732e768e65e2525a7d3997ca9'
 related:
   - '[[2026-07-25-index-resume-drift-race-W01-P01-S01]]'
   - '[[2026-07-25-index-resume-drift-race-W01-P01-S02]]'
@@ -25,6 +25,7 @@ related:
   - '[[2026-07-25-index-resume-drift-race-adr]]'
   - '[[2026-07-25-index-resume-drift-race-plan]]'
   - '[[2026-07-25-index-resume-drift-race-research]]'
+  - '[[2026-09-01-index-resume-drift-race-ingest-barrier-target-audit]]'
 ---
 
 # `index-resume-drift-race` feature index
@@ -36,6 +37,10 @@ Auto-generated index of all documents tagged with `#index-resume-drift-race`.
 ### adr
 
 - `2026-07-25-index-resume-drift-race-adr` - `index-resume-drift-race` adr: `seam the codebase indexer and give drift a single owner` | (**status:** `accepted`)
+
+### audit
+
+- `2026-09-01-index-resume-drift-race-ingest-barrier-target-audit` - 2026-09-01-index-resume-drift-race-ingest-barrier-target-audit
 
 ### exec
 

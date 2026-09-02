@@ -34,15 +34,18 @@ reranking promotes documents that are well-connected in the wiki-link graph.
 
 ## Models
 
-vaultspec-rag loads three models on CUDA. Each one is paired below with the
-reason its bounds and toggles are set the way they are; pure tuning numbers live
-in the [configuration knobs](#configuration-knobs) table.
+vaultspec-rag loads three models on the accelerator selected at startup: CUDA
+when available, otherwise Apple silicon MPS. All three stay resident together
+and run their forward passes on that device; CPU is never a placement or
+fallback target. Each model is paired below with the reason its bounds and
+toggles are set the way they are; pure tuning numbers live in the
+[configuration knobs](#configuration-knobs) table.
 
 ### Dense encoder - `Qwen/Qwen3-Embedding-0.6B`
 
 The dense encoder is
 [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B),
-loaded through `sentence-transformers` on CUDA in fp16. It produces
+loaded through `sentence-transformers` on the selected accelerator in fp16. It produces
 1024-dimensional, L2-normalised embeddings.
 
 Documents and queries are encoded asymmetrically because the model was trained
@@ -54,21 +57,22 @@ vectors comparable.
 Text is truncated to 8000 characters and the sequence length is capped at 2048
 tokens before encoding. The cap is deliberate: it stops the model from
 allocating its full 32k context window, which would inflate attention buffers
-on a variable-length corpus and waste VRAM for no recall gain.
+on a variable-length corpus and waste accelerator memory for no recall gain.
 
 If `flash_attn` is installed, the model loads it as `flash_attention_2` for
 faster attention; otherwise it falls back to standard attention with no loss of
 correctness, so the dependency stays optional. An experimental ONNX backend
 (`dense_backend=onnx`) exists for environments with a compatible onnxruntime
-build, but it is opt-in and falls back to torch on any load failure - torch
-remains the supported default.
+CUDA build, but it is opt-in and falls back to the torch implementation on any
+load failure. The torch implementation is the supported default on both CUDA
+and MPS; this model-backend fallback does not mean CPU inference.
 
 ### Sparse encoder - `naver/splade-v3`
 
 The sparse encoder is
 [`naver/splade-v3`](https://huggingface.co/naver/splade-v3), a BERT-based SPLADE
-model that maps text to a sparse vector over its vocabulary. It runs on CUDA in
-fp16 through `sentence-transformers`.
+model that maps text to a sparse vector over its vocabulary. It runs in fp16
+through `sentence-transformers` on the selected accelerator.
 
 SPLADE is also asymmetric: `encode_document` runs for indexing and `encode_query`
 runs for queries, mirroring the dense encoder's split for the same reason. The
@@ -87,16 +91,17 @@ The reranker is
 loaded with a sigmoid activation so its scores lie in `[0, 1]` and read as
 calibrated relevance rather than raw logits. It loads lazily on first use and is
 shared across all searcher instances, because a second copy would duplicate
-roughly 560 MB of VRAM for no benefit.
+roughly 560 MB of accelerator allocation for no benefit.
 
 The reranker scores the full candidate content, bounded by the model's own
 tokenizer at the 1024-token `reranker_max_length`, never a fixed-width display
 snippet. Scoring real content is the point: a snippet would discard most of the
 model's semantic capacity and bias ranking toward whatever happens to appear in
 a candidate's opening characters. The reranker reads `(query, content)` pairs in
-batches of 32; on CUDA out-of-memory it halves the batch and retries down to a
-minimum of 1, so a momentary VRAM spike degrades throughput instead of aborting
-the search. Reranking can be turned off (`reranker_enabled=false`), in which
+batches of 32; on a backend-classified out-of-memory error it halves the batch
+and retries down to a minimum of 1, so a momentary memory spike degrades
+throughput instead of aborting the search. Reranking can be turned off
+(`reranker_enabled=false`), in which
 case results are returned in fusion order.
 
 ## Vector store
@@ -191,16 +196,16 @@ index resources are opened.
 Chunking runs in a spawn-based, CPU-only process pool because tree-sitter holds
 the GIL for both parse and traverse, so threads give no speedup - separate
 processes do. The workers import only the chunking modules and never initialise
-CUDA, which keeps the GPU free for encoding and avoids multi-second per-worker
-startup. In auto mode the pool only activates once the total source size crosses
+torch or an accelerator, which keeps the selected device free for encoding and
+avoids multi-second per-worker startup. In auto mode the pool only activates once the total source size crosses
 8 MiB, the measured point where parallelism starts to pay for its process
 overhead; below that, chunking stays in-process.
 
-Encoding runs on a single GPU consumer thread that owns the GPU lock and drains a
-bounded queue the chunk producers refill. One thread is correct because a single
-GPU has no compute-to-compute overlap to exploit - a second consumer would only
-serialise on the streaming multiprocessors and GIL launch overhead. The real
-parallelism is CPU-produce against GPU-consume, and that is exactly what the
+Encoding runs on a single accelerator consumer thread that owns the compute lock
+and drains a bounded queue the chunk producers refill. One thread is correct
+because a single selected device has no useful compute-to-compute overlap to
+exploit here - a second consumer would only contend with the first. The real
+parallelism is CPU-produce against accelerator-consume, and that is exactly what the
 queue captures. Each content kind has independent metadata and generation identity over a
 shared durable run ledger. A file is published as converged only after its chunks,
 deletions, metadata, schema evidence, and generation finalization are durable. Interrupted
@@ -210,7 +215,7 @@ failures remain visible obligations instead of being hidden behind a content has
 ### Reusing vectors across worktrees
 
 Indexing a fresh git worktree of a branch you have already indexed does not have
-to pay the GPU cost a second time. Before the encoder runs, the index looks for
+to pay the accelerator cost a second time. Before the encoder runs, the index looks for
 each chunk in the already-indexed sibling namespaces on the same machine and, on
 a match, adopts that chunk's stored dense and sparse vectors instead of encoding
 it again. For a near-identical fork the encode stage all but disappears, so the
@@ -241,7 +246,7 @@ saved, and which donor collections were consulted - on the job record; see
 Indexing is incremental by default: it hashes every file, skips the unchanged
 ones, embeds new and modified content, and purges chunks for deleted files. This
 is the right mode for everyday work - it touches only what moved and keeps the
-GPU idle the rest of the time.
+accelerator idle the rest of the time.
 
 A rebuild replaces the named target collection. Reach for it
 when incremental updates can't reconcile the index with reality: after a schema
@@ -252,7 +257,7 @@ For the exact commands, see the [search and index guide](search-and-index.md).
 
 When the resident service runs, a `watchfiles`-based watcher monitors `.vault/` and the
 resolved code/document membership. It retains pending, retry, and circuit state per kind
-under one writer and GPU authority. A policy change schedules every affected kind;
+under one writer and accelerator authority. A policy change schedules every affected kind;
 destination points are published before old ownership is removed, so route changes and
 restarts do not create a searchable gap. See [automation](automation.md) for watcher
 operation.
@@ -274,7 +279,7 @@ default and precedence; the ones specific to this pipeline are:
 | `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`      | Reranker token bound on candidate content                      |
 | `VAULTSPEC_RAG_QDRANT_QUANTIZATION`      | Vector quantization: `scalar`, `turbo`, or `product`           |
 
-For "my GPU is small" or "indexing is slow" tuning, see
+For "my accelerator memory is limited" or "indexing is slow" tuning, see
 [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed).
 
 ## Where to go next

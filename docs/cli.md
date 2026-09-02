@@ -177,7 +177,7 @@ Options:
 
 Output is a list of readable records, each showing a rank, a location, and the matched text. Scores appear only with `--scores`. With `--port` unset, the command auto-detects a running service and routes to it with fallback; each result carries a `via` label of `service` or `in-process`.
 
-Exit/JSON: `0` on success; `1` on GPU error, a service-reported search error, or an unreachable `--port` without `--allow-fallback`; `2` for an invalid `--type`, `--prefer`, or filter (`invalid_search_type`, `invalid_prefer_value`, `invalid_filter_for_search_type`). With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `1` on accelerator error, a service-reported search error, or an unreachable `--port` without `--allow-fallback`; `2` for an invalid `--type`, `--prefer`, or filter (`invalid_search_type`, `invalid_prefer_value`, `invalid_filter_for_search_type`). With `--json`, the result is one envelope on stdout.
 
 ## status
 
@@ -193,13 +193,13 @@ Options:
 | -------- | ---- | ------- | --------------------------------- |
 | `--json` | flag | off     | Emit one JSON envelope to stdout. |
 
-Exit/JSON: `0` on success; `1` on missing GPU dependencies. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `1` when no supported accelerator is available. With `--json`, the result is one envelope on stdout. CUDA reports discrete VRAM; MPS reports unified-memory evidence and never fabricates a zero-VRAM value.
 
 ## install
 
 `vaultspec-rag install`
 
-Enroll a workspace and provision its external dependencies. Enrollment seeds the bundled rules and MCP integration and runs the vaultspec-core sync. By default, install then provisions the cu130 PyTorch source, the dense, sparse, and reranker model snapshots, and the pinned Qdrant server binary.
+Enroll a workspace and provision its external dependencies. Enrollment seeds the bundled rules and MCP integration and runs the vaultspec-core sync. By default, install then provisions the Linux/Windows cu130 PyTorch source, the dense, sparse, and reranker model snapshots, and the pinned Qdrant server binary. The source is platform-marked and inactive on macOS, where the standard PyTorch wheel supplies MPS.
 
 Arguments: none.
 
@@ -213,7 +213,7 @@ Options:
 | `--force`                              | flag                    | off                       | Override existing files. Also bypasses the torch-config prompt (implies `--yes` for that step); `--no-torch-config` still wins.                                                                                                                                                                                                                                                                                                            |
 | `--skip`                               | text                    | unset                     | Skip an enrollment component by token. Repeatable.                                                                                                                                                                                                                                                                                                                                                                                         |
 | `--mode`                               | `tool\|dependency\|dev` | auto-detected             | Provisioning mode. `tool` (launched via uvx), `dependency` (a runtime project dependency resolved through the project's own venv; ships in built distributions), or `dev` (the default dev dependency group; renders like `dependency` but does not ship in built distributions). Auto-detected from `pyproject.toml` when omitted.                                                                                                        |
-| `--torch-config` / `--no-torch-config` | flag                    | `--torch-config`          | Configure the cu130 PyTorch source in `pyproject.toml`. `--no-torch-config` takes precedence over `--force` and `--yes`.                                                                                                                                                                                                                                                                                                                   |
+| `--torch-config` / `--no-torch-config` | flag                    | `--torch-config`          | Configure the Linux/Windows cu130 PyTorch source in `pyproject.toml`. It does not replace the standard MPS wheel on macOS. `--no-torch-config` takes precedence over `--force` and `--yes`.                                                                                                                                                                                                                                                |
 | `--torch-group`                        | text                    | unset                     | Place the managed cu130 torch direct dependency under the PEP 735 `[dependency-groups].NAME` surface instead of `[project].dependencies`, so a dev-only consumer does not leak torch into its published requirements. Defaults the group name to `dev` when passed without a value. Omit the flag to keep the `[project].dependencies` placement. The group must be enabled for the resolve (`uv sync --group NAME`) for the pin to apply. |
 | `--yes`, `-y`                          | flag                    | off                       | Skip the PyTorch config prompt. Required for non-interactive installs unless `--no-torch-config` is set.                                                                                                                                                                                                                                                                                                                                   |
 | `--sync`                               | flag                    | off                       | Run `uv sync --reinstall-package torch` after the torch source is configured.                                                                                                                                                                                                                                                                                                                                                              |
@@ -224,7 +224,7 @@ Options:
 | `--skip-qdrant`                        | flag                    | off                       | Skip the Qdrant binary provisioning step.                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `--json`                               | flag                    | off                       | Emit a JSON report instead of human text.                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-Torch provisioning runs in two phases. Install configures the source in `pyproject.toml` and reports it as `configured, sync pending`. The GPU build lands only after a follow-up `uv sync` or `--sync`. Provisioning reports through the shared sync vocabulary, namely `created`, `updated`, `unchanged`, `skipped`, and `failed`.
+Torch provisioning runs in two phases. Install configures the platform-marked source in `pyproject.toml` and reports it as `configured, sync pending`. A follow-up `uv sync` or `--sync` installs cu130 on Linux/Windows and the standard MPS-capable wheel on macOS. Provisioning reports through the shared sync vocabulary, namely `created`, `updated`, `unchanged`, `skipped`, and `failed`.
 
 Exit/JSON: `0` on success, including the torch-config terminal states `declined`, `conflict`, `absent`, and `disabled`; `1` on install failure; `2` when torch config was requested and ended in `error`, `skipped-eof`, or `skipped-non-tty`. With `--json`, the result is one report on stdout.
 
@@ -321,7 +321,7 @@ Exit/JSON: `0` when `running` (all signals green); `3` when `stopped` (no `servi
 
 `vaultspec-rag server doctor`
 
-Report a read-only readiness snapshot for every external dependency server mode needs. The command provisions nothing. It reports the backend in use, torch CUDA availability, model-snapshot presence, the Qdrant binary's resolution source, and the supervised server's liveness. It also reports a provisioning axis for the `vaultspec-rag` package itself - its declared install mode, any declared-versus-observed mode mismatch, and whether the running package meets its declared version floor. The same snapshot is served over HTTP at the token-gated `GET /readiness` route.
+Report a read-only readiness snapshot for every external dependency server mode needs. The command provisions nothing. It reports the storage backend, torch availability, the resolved compute backend (`cuda`, `mps`, or unavailable), model-snapshot presence, the Qdrant binary's resolution source, and the supervised server's liveness. It also reports a provisioning axis for the `vaultspec-rag` package itself - its declared install mode, any declared-versus-observed mode mismatch, and whether the running package meets its declared version floor. The same snapshot is served over HTTP at the token-gated `GET /readiness` route.
 
 Arguments: none.
 
@@ -337,13 +337,13 @@ Exit/JSON: `0` when everything actionable is in order; `1` for a warning (a daem
 
 `vaultspec-rag server warmup`
 
-Pre-download the GPU model files to the HuggingFace cache without serving requests. The command checks CUDA availability, then downloads the dense, sparse, and reranker repositories if they are not already cached.
+Pre-download the accelerator model files to the HuggingFace cache without serving requests. The command requires CUDA or MPS, then downloads the dense, sparse, and reranker repositories if they are not already cached.
 
 Arguments: none.
 
 Options: none.
 
-Exit: `0` on success; `1` when CUDA is unavailable or `huggingface_hub` is not installed.
+Exit: `0` on success; `1` when no supported accelerator is available, MPS CPU fallback is enabled, or `huggingface_hub` is not installed.
 
 ## server jobs
 

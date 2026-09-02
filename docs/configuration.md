@@ -60,6 +60,7 @@ The tables in this section, together with the backend selection table, list ever
 | `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`              | Seconds an idle project slot stays resident before eviction               | -                                     |
 | `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`                | Maximum simultaneously cached project slots                               | -                                     |
 | `VAULTSPEC_RAG_ADMIN_TIMEOUT`            | float   | `30`                | Client connection and read budget for lifecycle and admin calls (seconds) | -                                     |
+| `VAULTSPEC_RAG_REINDEX_TIMEOUT`          | float   | `900`               | Client budget for `/reindex`, which admits every domain before it queues (seconds) | -                            |
 | `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `2097152` (2 MiB)   | Active-file size threshold for each managed log source                    | -                                     |
 | `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                 | Rotated backups retained for each managed log source                      | -                                     |
 

@@ -17,6 +17,8 @@ from ..embeddings import (
 )
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     import numpy as np
     import torch
     from sentence_transformers import SentenceTransformer, SparseEncoder
@@ -226,7 +228,18 @@ def _model_shell(
     chars_per_token: int = 4,
 ) -> EmbeddingModel:
     """An ``EmbeddingModel`` shell that skips real model loading."""
+    import torch
+
+    from .._gpu import AcceleratorContext
+
     model = object.__new__(EmbeddingModel)
+    model._accelerator = AcceleratorContext(
+        torch=torch,
+        backend="cuda",
+        device="cuda",
+        name="test CUDA",
+        memory_kind="vram",
+    )
     model._dense_batch_ceiling = EncodeBatchCeiling()
     model._sparse_batch_ceiling = EncodeBatchCeiling()
     model._encode_token_budget = token_budget
@@ -243,10 +256,16 @@ class _BucketRecordingDenseModel:
     can prove row-to-input alignment across bucket boundaries.
     """
 
-    def __init__(self, oom_on_first: list[list[str]] | None = None) -> None:
+    def __init__(
+        self,
+        oom_on_first: list[list[str]] | None = None,
+        *,
+        oom_error: type[BaseException] | None = None,
+    ) -> None:
         self.calls: list[list[str]] = []
         self.batch_sizes: list[int] = []
         self._oom_pending = [list(entry) for entry in (oom_on_first or [])]
+        self._oom_error = oom_error
 
     def encode(
         self,
@@ -267,6 +286,8 @@ class _BucketRecordingDenseModel:
         self.batch_sizes.append(batch_size)
         if list(texts) in self._oom_pending:
             self._oom_pending.remove(list(texts))
+            if self._oom_error is not None:
+                raise self._oom_error("simulated allocator OOM")
             raise torch.cuda.OutOfMemoryError("simulated CUDA OOM")
         return np.array([[float(len(t))] * 2 for t in texts], dtype=np.float32)
 
@@ -390,6 +411,43 @@ class TestBucketedDenseEncode:
         # dense double above returns, so each row is genuinely `list[float]`.
         rows = cast("list[list[float]]", result.tolist())
         assert [row[0] for row in rows] == [200.0] * 6
+
+    def test_mps_oom_retries_and_releases_the_mps_cache(self):
+        from types import SimpleNamespace
+
+        from .._gpu import AcceleratorContext
+
+        class MpsOutOfMemoryError(RuntimeError):
+            pass
+
+        cache_releases: list[None] = []
+        mps = SimpleNamespace(
+            OutOfMemoryError=MpsOutOfMemoryError,
+            empty_cache=lambda: cache_releases.append(None),
+        )
+        texts = _distinct_texts(4)
+        fake = _BucketRecordingDenseModel(
+            oom_on_first=[texts[2:4]],
+            oom_error=MpsOutOfMemoryError,
+        )
+        model = _model_shell(token_budget=100)
+        model._accelerator = AcceleratorContext(
+            torch=cast(
+                "ModuleType",
+                SimpleNamespace(mps=mps, OutOfMemoryError=MpsOutOfMemoryError),
+            ),
+            backend="mps",
+            device="mps",
+            name="Apple MPS",
+            memory_kind="unified",
+        )
+        model._dense_model = cast("SentenceTransformer", fake)
+
+        result = model.encode_documents(texts)
+
+        assert result.shape == (4, 2)
+        assert cache_releases == [None]
+        assert fake.calls == [texts[0:2], texts[2:4], [texts[2]], [texts[3]]]
 
     def test_single_text_bucket_oom_reraises(self):
         import torch
