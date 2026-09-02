@@ -27,7 +27,7 @@ __all__ = [
     "classify_runtime_env",
     "durable_tool_install_command",
     "gpu_escape_hatch_command",
-    "warn_if_active_torch_not_gpu",
+    "warn_if_active_torch_not_accelerator",
 ]
 
 
@@ -175,15 +175,17 @@ def _cpu_only_message() -> str:
     return (
         "Error: PyTorch was installed without CUDA support "
         "(CPU-only wheel). Your GPU is fine.\n\n"
-        "  uv run vaultspec-rag install patches your pyproject.toml "
+        "  Install vaultspec-rag with its [gpu] extra, then run "
+        "uv run vaultspec-rag install; it patches your pyproject.toml "
         "with the cu130 torch index and adds torch>=2.4 as a direct "
         "dependency when needed. After patching, rerun "
         "uv sync --reinstall-package torch.\n\n"
         "  If install has already run and you are still here, verify:\n"
         "    1. pyproject.toml has [[tool.uv.index]] "
         'name = "pytorch-cu130" and [tool.uv.sources] torch = ...\n'
-        "    2. pyproject.toml has torch>=2.4 as a direct dependency "
-        "in [project].dependencies or [dependency-groups].dev\n"
+        "    2. pyproject.toml requests vaultspec-rag[gpu] and has "
+        "torch>=2.4 as a direct dependency in [project].dependencies "
+        "or [dependency-groups].dev\n"
         "    3. uv.lock has a torch entry with source = "
         '{ registry = "https://download.pytorch.org/whl/cu130" } '
         "(not pypi.org/simple)\n"
@@ -195,9 +197,17 @@ def _cpu_only_message() -> str:
 
 def _no_torch_message() -> str:
     """Return the NO_TORCH remediation copy as plain text."""
+    import sys
+
+    if sys.platform == "darwin":
+        return (
+            "Error: PyTorch is not installed.\n\n"
+            "  Install vaultspec-rag in this interpreter to provision the "
+            "macOS torch build with Apple MPS support."
+        )
     return (
         "Error: PyTorch is not installed.\n\n"
-        "  uv add vaultspec-rag && uv run vaultspec-rag install "
+        '  uv add "vaultspec-rag[gpu]" && uv run vaultspec-rag install '
         "configures the cu130 torch index and installs the GPU build."
     )
 
@@ -221,6 +231,20 @@ def _no_gpu_message() -> str:
     )
 
 
+def _no_mps_message() -> str:
+    """Return MPS remediation copy for a macOS host."""
+    return (
+        "Error: No Apple Metal accelerator detected.\n"
+        "  PyTorch is installed, but MPS is unavailable. vaultspec-rag never "
+        "runs inference on CPU.\n\n"
+        "  Quick checks:\n"
+        "    1. Confirm this is an Apple silicon Mac running macOS 12.3 or later.\n"
+        '    2. python -c "import torch; print(torch.backends.mps.is_built(), '
+        'torch.backends.mps.is_available())"\n'
+        "    3. Reinstall the supported macOS torch wheel if MPS is not built in."
+    )
+
+
 def _active_torch_diagnosis() -> TorchDiagnosis:
     """Diagnose torch in the *running* interpreter - the installed wheel.
 
@@ -236,17 +260,21 @@ def _active_torch_diagnosis() -> TorchDiagnosis:
     except ImportError:
         return TorchDiagnosis.NO_TORCH
     try:
-        return diagnose_torch(torch.version.cuda, torch.cuda.is_available())
+        return diagnose_torch(
+            torch.version.cuda,
+            torch.cuda.is_available(),
+            torch.backends.mps.is_available(),
+        )
     except Exception as exc:
         logger.debug("active torch diagnosis failed: %s", exc, exc_info=True)
         return TorchDiagnosis.NO_TORCH
 
 
-def warn_if_active_torch_not_gpu() -> None:
-    """Loudly warn when the running interpreter's torch is not a CUDA build.
+def warn_if_active_torch_not_accelerator() -> None:
+    """Warn when the running interpreter cannot use a supported accelerator.
 
     vaultspec-rag is GPU-only. A configured ``pyproject.toml`` does not
-    guarantee a GPU wheel in the active interpreter - a ``uv tool`` / ``pip``
+    guarantee a usable accelerator in the active interpreter - a ``uv tool`` / ``pip``
     install resolves torch from PyPI (CPU), since the cu130 source pin is
     project-scoped and is not part of the published wheel metadata. This probes
     the actual wheel and, when it is CPU-only, absent, or GPU-less, prints a
@@ -259,9 +287,30 @@ def warn_if_active_torch_not_gpu() -> None:
 
     diag = _active_torch_diagnosis()
     if diag == TorchDiagnosis.WORKING:
+        try:
+            import torch
+
+            from .._gpu import resolve_accelerator
+
+            resolve_accelerator(torch)
+        except RuntimeError as exc:
+            _plain(f"\nWARNING: {exc}")
         return
 
-    lines = ["", "WARNING: the active interpreter's torch is not GPU-ready."]
+    lines = [
+        "",
+        "WARNING: the active interpreter's torch has no supported accelerator.",
+    ]
+    if sys.platform == "darwin":
+        lines += [
+            "  MPS is unavailable. vaultspec-rag requires Apple silicon with a "
+            "PyTorch build that supports Metal; CPU fallback is not accepted.",
+            "  Check the active interpreter:",
+            '    python -c "import torch; print(torch.backends.mps.is_built(), '
+            'torch.backends.mps.is_available())"',
+        ]
+        _plain("\n".join(lines))
+        return
     if diag == TorchDiagnosis.NO_TORCH:
         lines.append("  No torch is installed in the active interpreter.")
     elif diag == TorchDiagnosis.CPU_ONLY:
@@ -272,8 +321,8 @@ def warn_if_active_torch_not_gpu() -> None:
         )
     else:  # NO_GPU
         lines.append(
-            "  torch is a CUDA build but no CUDA device is visible (driver or "
-            "hardware). Run nvidia-smi to check."
+            "  torch is a CUDA build but no supported accelerator is visible "
+            "(driver or hardware). Run nvidia-smi to check CUDA visibility."
         )
         _plain("\n".join(lines))
         return
@@ -330,6 +379,7 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
     Raises:
         typer.Exit: Always exits with code 1.
     """
+    from .._gpu import MPS_FALLBACK_MESSAGE
     from ..torch_config._constants import TorchDiagnosis
     from ..torch_config._diagnose import diagnose_torch
     from ..torch_config._mutate import manual_snippet
@@ -341,18 +391,32 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
         try:
             import torch
 
-            diagnosis = diagnose_torch(torch.version.cuda, torch.cuda.is_available())
+            diagnosis = diagnose_torch(
+                torch.version.cuda,
+                torch.cuda.is_available(),
+                torch.backends.mps.is_available(),
+            )
         except Exception as _diag_exc:
             # Broad except: torch import succeeded but probing the
             # CUDA state failed in an unexpected way (driver
             # mismatch, opaque ABI error). Treat as "no torch" for
             # diagnosis purposes; debug-log so the swallow stays
             # observable.
-            logger.debug("torch CUDA diagnosis failed: %s", _diag_exc, exc_info=True)
+            logger.debug(
+                "torch accelerator diagnosis failed: %s",
+                _diag_exc,
+                exc_info=True,
+            )
             diagnosis = TorchDiagnosis.NO_TORCH
 
-    if diagnosis == TorchDiagnosis.NO_TORCH:
+    import sys
+
+    if MPS_FALLBACK_MESSAGE in str(exc):
+        _plain(f"Error: {MPS_FALLBACK_MESSAGE}")
+    elif diagnosis == TorchDiagnosis.NO_TORCH:
         _plain(_no_torch_message())
+    elif sys.platform == "darwin":
+        _plain(_no_mps_message())
     elif diagnosis == TorchDiagnosis.CPU_ONLY:
         _plain(_cpu_only_message())
         _plain(manual_snippet())

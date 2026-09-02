@@ -5,8 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from ._content_policy import AdmissionReason
-from ._file_state import FileStateKind
+from ._file_state import FileStateKind, stable_rejection_reasons
 from ._run_ledger_models import (
     FINALIZATION_ORDER,
     CommitUnitKind,
@@ -157,19 +156,25 @@ class RunLedgerFinalizationMethods:
                 "cannot finalize a deleted path retained in the manifest: "
                 f"{undeleted_manifest['rel_path']}"
             )
+        # One question, asked here in SQL and in FileState.stable_policy_rejection
+        # in Python: has this rejection enough stable evidence to converge? The
+        # membership comes from that definition rather than being restated, so
+        # a reason added to one cannot go missing from the other.
+        config_stable, evidence_stable = stable_rejection_reasons()
+        config_marks = ", ".join("?" * len(config_stable))
+        evidence_marks = ", ".join("?" * len(evidence_stable))
         unresolved: _RelPathRow | None = fetch_one(
             connection,
-            """
+            f"""
             SELECT rel_path FROM file_states
             WHERE generation_id = ? AND (
                 state NOT IN (?, ?)
                 OR (
-                    state = ? AND (
-                        admission_reason = ?
-                        OR admission_reason IS NULL
+                    state = ? AND NOT (
+                        admission_reason IN ({config_marks})
                         OR (
-                            admission_reason IN (?, ?)
-                            AND content_hash IS NULL
+                            admission_reason IN ({evidence_marks})
+                            AND content_hash IS NOT NULL
                         )
                     )
                 )
@@ -181,9 +186,8 @@ class RunLedgerFinalizationMethods:
                 FileStateKind.INDEXED.value,
                 FileStateKind.POLICY_REJECTED.value,
                 FileStateKind.POLICY_REJECTED.value,
-                AdmissionReason.SOURCE_PROBE_FAILED.value,
-                AdmissionReason.SOURCE_TOO_LARGE.value,
-                AdmissionReason.SOURCE_BINARY.value,
+                *config_stable,
+                *evidence_stable,
             ),
         )
         if unresolved is not None:

@@ -8,13 +8,13 @@ direct API consumers as well as MCP tool handlers.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from ._source_types import PublicSourceType, parse_source_type
-from ._units import bytes_to_mib
 from .progress import NullProgressReporter
 from .registry import get_registry
 from .search._result_shaping import PHASE_MODEL_LOAD, PHASE_PROJECT_LEASE
@@ -810,16 +810,39 @@ def _get_status(root: pathlib.Path, registry: ServiceRegistry) -> dict[str, obje
     except ImportError:
         pass
 
-    cuda_available = torch is not None and torch.cuda.is_available()
-    if cuda_available and torch is not None:
-        gpu_name = torch.cuda.get_device_name(0)
-        props = torch.cuda.get_device_properties(0)
-        vram_mib = int(bytes_to_mib(props.total_memory))
-        vram_gb = round(props.total_memory / 1e9, 2)
-    else:
-        gpu_name = None
-        vram_mib = 0
-        vram_gb = 0.0
+    accelerator = None
+    if torch is not None:
+        from ._gpu import resolve_accelerator
+
+        with contextlib.suppress(RuntimeError):
+            accelerator = resolve_accelerator(torch)
+
+    backend = accelerator.backend if accelerator is not None else None
+    accelerator_name = accelerator.name if accelerator is not None else None
+    memory_kind = accelerator.memory_kind if accelerator is not None else None
+    cuda_available = backend == "cuda"
+    memory_mib: int | None = None
+    memory_measure: str | None = None
+    if accelerator is not None:
+        from .memory_probe import accelerator_memory
+
+        reading = accelerator_memory()
+        if backend == "cuda":
+            if reading.total_mib is not None:
+                memory_mib = int(reading.total_mib)
+                memory_measure = "total"
+        elif reading.recommended_max_mib is not None:
+            memory_mib = int(reading.recommended_max_mib)
+            memory_measure = "recommended_working_set"
+
+    # Compatibility fields retain their CUDA meaning. Unified memory is never
+    # projected as zero VRAM; it is carried by the backend-neutral fields.
+    vram_mib = memory_mib if cuda_available else None
+    vram_gb = (
+        round(memory_mib * (1024**2) / 1e9, 2)
+        if cuda_available and memory_mib is not None
+        else None
+    )
 
     from .capabilities import backend_capabilities_dict
     from .config._settings import get_config
@@ -837,7 +860,13 @@ def _get_status(root: pathlib.Path, registry: ServiceRegistry) -> dict[str, obje
 
     return {
         "cuda": cuda_available,
-        "gpu_name": gpu_name,
+        "accelerator_available": accelerator is not None,
+        "accelerator_backend": backend,
+        "accelerator_name": accelerator_name,
+        "memory_kind": memory_kind,
+        "memory_mib": memory_mib,
+        "memory_measure": memory_measure,
+        "gpu_name": accelerator_name,
         "vram_mib": vram_mib,
         "vram_gb": vram_gb,
         "storage_path": storage_path,
@@ -959,20 +988,27 @@ def run_benchmark(
         mean = statistics.mean(latencies)
         stdev = statistics.stdev(latencies) if len(latencies) > 1 else 0.0
 
+        accelerator = None
         try:
             import torch
 
-            gpu_name = (
-                torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
-            )
-            vram_mib = (
-                bytes_to_mib(torch.cuda.memory_allocated(0))
-                if torch.cuda.is_available()
-                else 0.0
-            )
-        except ImportError:
-            gpu_name = "N/A"
-            vram_mib = 0.0
+            from ._gpu import resolve_accelerator
+
+            accelerator = resolve_accelerator(torch)
+        except (ImportError, RuntimeError):
+            pass
+
+        memory = None
+        if accelerator is not None:
+            from .memory_probe import accelerator_memory
+
+            memory = accelerator_memory()
+        allocated_mib = memory.allocated_mib if memory is not None else None
+        vram_mib = (
+            allocated_mib
+            if accelerator is not None and accelerator.memory_kind == "vram"
+            else None
+        )
 
         benchmark = {
             "p50": p50,
@@ -982,7 +1018,14 @@ def run_benchmark(
             "stdev": stdev,
             "vault_count": vault_count,
             "code_count": code_count,
-            "gpu": gpu_name,
+            "gpu": accelerator.name if accelerator is not None else "N/A",
+            "accelerator_backend": (
+                accelerator.backend if accelerator is not None else None
+            ),
+            "memory_kind": (
+                accelerator.memory_kind if accelerator is not None else None
+            ),
+            "memory_allocated_mib": allocated_mib,
             "vram_mib": vram_mib,
         }
     if benchmark is None:

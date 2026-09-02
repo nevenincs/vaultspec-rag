@@ -14,12 +14,10 @@ name: Acquisition check
 # WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT
 #
 # It asserts the loader accepts the binary. It does NOT assert the product
-# works, and that is not laziness: the binary is a PyApp bootstrapper that
-# resolves `vaultspec-rag[mcp]` from PyPI on first launch, pulling torch cu130
-# and ~15 `nvidia-*` wheels - three to five gigabytes - and the Linux build
-# host carries no GPU. Nothing past startup is assertable here, so this checks
-# the thing that IS: that the artifact is loadable on the platforms its floor
-# claims, and that any failure is not a loader failure.
+# works, and that is not laziness: the binary is a PyApp bootstrapper whose
+# explicit GPU runtime download is both multi-gigabyte and unusable on these
+# no-GPU hosts. `ldd` answers the loader question without triggering that
+# download, which is the only claim this workflow can exercise honestly.
 #
 # It cannot run before publication, so it runs after. Note that
 # `release: published` is INERT for releases this repository cuts: GitHub raises
@@ -178,37 +176,6 @@ jobs:
             echo "ok: ${name} resolves every required symbol version here"
           done
           [ "${failed}" -eq 0 ] || exit 1
-
-      - name: Starting up must not be a loader failure
-        run: |
-          set -eu
-          # A second, independent probe. `ldd` reads the binary; this runs it.
-          #
-          # The run is NOT expected to succeed. `--version` makes the PyApp
-          # bootstrapper resolve the distribution from PyPI, which is gigabytes
-          # and needs a GPU-capable environment to be meaningful. So the exit
-          # code is deliberately not asserted - only that whatever went wrong
-          # was not the dynamic loader refusing the binary.
-          #
-          # Asserting success here would be a check that fails for reasons
-          # unrelated to acquisition, and a check that cries wolf gets disabled.
-          export HOME=/tmp/fresh-home
-          rm -rf "$HOME"; mkdir -p "$HOME"
-
-          for name in vaultspec-rag vaultspec-search-mcp; do
-            set +e
-            out=$(timeout 120 "/opt/acq/${name}" --version 2>&1)
-            rc=$?
-            set -e
-            printf '%s exited %s\n' "${name}" "${rc}"
-
-            if printf '%s' "${out}" | grep -qE 'GLIBC_[0-9]+\.[0-9]+|version .GLIBC|cannot execute binary file|No such file or directory.*ld-linux'; then
-              printf '::error::%s failed to LOAD on %s, not merely to run:\n%s\n' \
-                "${name}" "${{ matrix.image }}" "${out}"
-              exit 1
-            fi
-            printf '  no loader diagnostic in output; any failure above is downstream of startup\n'
-          done
 
       - name: Return the workspace to the runner's user
         if: always()

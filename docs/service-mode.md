@@ -1,8 +1,8 @@
 # Run the background service
 
-Run vaultspec-rag as a long-lived background service to keep the GPU models loaded and the managed Qdrant server running. This is the standard server-backed path. The first query pays the model-loading cost once, and every later query reuses the already-loaded models instead of reloading them.
+Run vaultspec-rag as a long-lived background service to keep the accelerator models loaded and the managed Qdrant server running. This is the standard server-backed path. The first query pays the model-loading cost once, and every later query reuses the already-loaded models instead of reloading them.
 
-This guide assumes the workspace is already installed and provisioned. "Provisioned" means the `install` command has fetched the GPU model files and the Qdrant server binary. If you haven't done that yet, start with the [installation guide](installation.md). For the difference between the managed server and the on-disk store, see the [backends guide](backends.md). For how the service, the GPU consumer, and the vector store fit together, see the [architecture overview](architecture.md).
+This guide assumes the workspace is already installed and provisioned. "Provisioned" means the `install` command has fetched the model files and the Qdrant server binary, and the service environment has a PyTorch build for CUDA or MPS. If you haven't done that yet, start with the [installation guide](installation.md). For the difference between the managed server and the on-disk store, see the [backends guide](backends.md). For how the service, the accelerator consumer, and the vector store fit together, see the [architecture overview](architecture.md).
 
 ## Start the service
 
@@ -28,7 +28,7 @@ Other start flags control the port, automatic updates, update timing, and the ma
 
 `server start` does not create or provision a Python environment of its own. It spawns the daemon - `python -m vaultspec_rag.server` - using the interpreter of the environment you launched the command from. **The service runs in whatever Python environment started it**, and it inherits that environment's packages, including PyTorch.
 
-This coupling matters because vaultspec-rag is GPU-only. The service loads the embedding and reranker models on CUDA at startup and never runs inference on CPU, so the environment that starts the service must contain the CUDA (cu130) PyTorch wheel. The service does not - and will not - install or repair PyTorch for you. Provisioning the GPU torch wheel is a one-time, project-level step (see the [installation guide](installation.md)): `vaultspec-rag install` patches your project's `pyproject.toml` with the cu130 index, and `uv sync` installs the GPU wheel into that project's virtual environment.
+This coupling matters because vaultspec-rag is accelerator-only. The service resolves CUDA first and Apple silicon MPS second, loads every model on that device, and never runs inference on CPU. On Linux and Windows, the environment must contain the CUDA (cu130) PyTorch wheel; `vaultspec-rag install` configures its source and `uv sync` installs it. On macOS, the standard PyTorch wheel supplies MPS. The service does not install or repair PyTorch while starting.
 
 That is why the documented way to start the service is from the project:
 
@@ -36,15 +36,15 @@ That is why the documented way to start the service is from the project:
 uv run vaultspec-rag server start
 ```
 
-`uv run` resolves the project's virtual environment, which carries the cu130 GPU torch. A globally installed CLI (for example `uv tool install vaultspec-rag`) is a fine *client* - `search`, `status`, and the other commands make HTTP calls to the running service and never load PyTorch - but it is *not* a suitable launcher for the service itself: a bare tool or `pip` install resolves PyTorch from PyPI as a CPU-only wheel, and the cu130 pin lives in project configuration that a tool install cannot read.
+`uv run` resolves the project's virtual environment, which carries the platform-appropriate PyTorch. On Linux and Windows, a globally installed CLI is a fine *client* but is not a suitable service launcher unless its tool receipt pins the CUDA wheel; the cu130 source lives in project configuration that a bare tool install cannot read. On Apple silicon, the standard macOS wheel is MPS-capable, so a normal tool environment can launch the service after its model and storage dependencies are provisioned.
 
 **See which environment runs the service.** `server status` reports the daemon's interpreter on its `Service env:` line, and `GET /health` returns the `executable` and `prefix` of the running daemon. Use these to confirm the service is running in the GPU environment you expect.
 
-**Starting from an environment without GPU torch fails fast.** Before it spawns the daemon, `server start` probes the resolved interpreter for a working CUDA PyTorch. If that environment has no torch, a CPU-only wheel, or no visible GPU, the command refuses immediately - naming the interpreter and the reason - rather than spawning a daemon that crashes during model load. Provision the GPU wheel into that environment and start again.
+**Starting from an environment without a supported accelerator fails fast.** Before it spawns the daemon, `server start` probes the resolved interpreter for CUDA or MPS. If that environment has no torch, no supported accelerator, or MPS CPU fallback is enabled, the command refuses immediately - naming the interpreter and the reason - rather than spawning a daemon that crashes during model load. Provision the correct PyTorch build or disable `PYTORCH_ENABLE_MPS_FALLBACK`, then start again.
 
 ## Warm models before serving
 
-The first search after a cold start downloads the GPU model files if they aren't cached yet, which delays that query. To pull the model files ahead of time, run:
+The first search after a cold start downloads the model files if they aren't cached yet, which delays that query. To pull the model files ahead of time, run:
 
 ```
 uv run vaultspec-rag server warmup
@@ -80,7 +80,7 @@ To check whether each dependency is ready, run:
 uv run vaultspec-rag server doctor
 ```
 
-`doctor` reports the readiness of PyTorch CUDA, the models, and Qdrant. It names the active backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, usually a provision or install step. Add `--json` for a machine-readable report.
+`doctor` reports PyTorch and accelerator readiness, the selected compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, usually a provision or install step. Add `--json` for a machine-readable report.
 
 To check the running service, run:
 
@@ -196,15 +196,15 @@ How the stop reaches the daemon depends on the platform. On **Unix**, `server st
 
 **The server can't start.** Server mode needs the managed Qdrant binary. Provision it with `uv run vaultspec-rag server qdrant install`, or run the service local-only with `uv run vaultspec-rag server start --local-only`.
 
-**`server start` says the environment cannot run the GPU-only service.** The Python environment you launched `server start` from has no GPU PyTorch - no torch, a CPU-only wheel, or no visible GPU. The service runs in that environment and does not provision its own, so install the cu130 GPU wheel into it (`vaultspec-rag install`, then `uv sync`) and start again from that environment with `uv run vaultspec-rag server start`. See [The service runs in your Python environment](#the-service-runs-in-your-python-environment).
+**`server start` says the environment cannot run the accelerator-only service.** The Python environment you launched it from has no supported accelerator. On Linux or Windows, run `vaultspec-rag install`, then `uv sync`, to install the cu130 wheel. On Apple silicon, install the standard macOS PyTorch wheel and ensure `PYTORCH_ENABLE_MPS_FALLBACK` is unset or `0`. CPU-only execution is never accepted. See [The service runs in your Python environment](#the-service-runs-in-your-python-environment).
 
-**The index seems stale.** Check `server updates status` and `server jobs` before reindexing. Automatic updates may be catching up, or an update may be in flight. Don't reindex by hand while updates are running. Manual reindexing competes for the single-writer GPU and Qdrant path.
+**The index seems stale.** Check `server updates status` and `server jobs` before reindexing. Automatic updates may be catching up, or an update may be in flight. Don't reindex by hand while updates are running. Manual reindexing competes for the single-writer accelerator and Qdrant path.
 
 ## Where to go next
 
 - [Installation guide](installation.md) - install and provision the workspace.
 - [Backends guide](backends.md) - managed server vs local-only, and managing the Qdrant binary.
-- [Architecture overview](architecture.md) - how the service, GPU consumer, and store fit together.
+- [Architecture overview](architecture.md) - how the service, accelerator consumer, and store fit together.
 - [Automation guide](automation.md) - how automatic updates behave.
 - [Search and index guide](search-and-index.md) - searching and indexing through the service.
 - [MCP guide](mcp.md) - the MCP tools on the running service.

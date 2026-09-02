@@ -187,7 +187,7 @@ class TestFreshInstall:
         codex_entry = read_codex_mcp(fresh_workspace)["vaultspec-rag"]
         expected_args = [
             "--from",
-            "vaultspec-rag[mcp]",
+            "vaultspec-rag[gpu,mcp]",
             "python",
             "-m",
             "vaultspec_rag.server",

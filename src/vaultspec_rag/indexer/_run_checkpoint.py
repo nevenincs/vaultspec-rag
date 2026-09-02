@@ -242,6 +242,38 @@ class CodeRunCheckpoint(RunCheckpointBase):
             source_digest=superseded_digest,
         )
 
+    def retained_upsert_evidence(
+        self,
+        rel_path: str,
+    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """Return current-generation upsert evidence for one retained path."""
+        return self.ledger.retained_upsert_evidence(self.generation_id, rel_path)
+
+    def retire_retained_upserts(
+        self,
+        rel_path: str,
+        point_ids: tuple[str, ...],
+        *,
+        remove_path: bool,
+    ) -> bool:
+        """Replace retired code upserts with their confirmed deletion evidence."""
+        kind = (
+            CommitUnitKind.DELETE_PATH if remove_path else CommitUnitKind.DELETE_STALE
+        )
+        unit = self._deletion_unit(rel_path, kind, point_ids)
+        inserted = self.ledger.retire_retained_upserts(self.generation_id, unit)
+        if inserted:
+            label = (
+                f"code deletion {rel_path}"
+                if remove_path
+                else f"stale code deletion {rel_path}"
+            )
+            self.run_policy.record_durable_progress(
+                kind=DurableProgressKind.LEDGER_UNIT_COMMITTED,
+                label=label,
+            )
+        return inserted
+
     def reopen_drifted_path(self, rel_path: str, superseded_digest: str) -> int:
         """Clear stale indexed evidence so one path can be ingested again."""
         removed = self.ledger.reopen_drifted_path(
@@ -256,13 +288,19 @@ class CodeRunCheckpoint(RunCheckpointBase):
             )
         return removed
 
-    def record_empty_source(
+    def record_policy_rejection(
         self,
         rel_path: str,
+        reason: AdmissionReason,
         *,
         content_hash: str | None = None,
     ) -> None:
-        """Converge a source that carried no content to index."""
+        """Converge a source policy declined to index, under one stated reason.
+
+        Every rejection a run resolves goes through here. Splitting it per
+        reason would put the same three lines behind several names and let one
+        copy drift into recording a state finalization cannot accept.
+        """
         self.ledger.record_file_state(
             self.generation_id,
             FileState.policy_rejected(
@@ -270,7 +308,7 @@ class CodeRunCheckpoint(RunCheckpointBase):
                 AdmissionDisposition(
                     kind=ContentKind.CODE,
                     admitted=False,
-                    reason=AdmissionReason.SOURCE_EMPTY,
+                    reason=reason,
                 ),
                 content_hash=content_hash,
             ),

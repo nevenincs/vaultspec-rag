@@ -191,6 +191,47 @@ def test_the_production_sink_converges_a_vanished_source(tmp_path: Path) -> None
     assert by_path["present.py"].chunks, "the surviving file still indexes"
 
 
+def test_the_production_sink_converges_a_preprocessor_skipped_source(
+    tmp_path: Path,
+) -> None:
+    """``on_error = "skip"`` must not end the run it was configured to survive.
+
+    ``skipped`` is the operator's disposition already applied - the rule
+    failed and the configuration said carry on - so raising here defeats the
+    setting, and raising under a ``retryable`` label a permanently
+    unparseable file can never satisfy makes every later run die on the same
+    document.
+
+    Mutation: restored the ``skipped`` branch in ``_code_result_failure``.
+    Observed this fail with ``JobError: extract_retryable: preprocessor exited
+    1`` escaping the call below - verbatim the production failure.
+    """
+    from .._job_errors import JobError
+
+    pipeline = _chunk_only_indexer(tmp_path)._consumer_pipeline
+
+    skipped = _chunk_worker.FileChunkResult(
+        rel_path="corpus/corrupt.pdf",
+        content_hash="a" * 64,
+        chunks=[],
+        preprocess_status="skipped",
+        preprocess_reason="preprocessor exited 1: Data-loss while decompressing",
+    )
+    # Must return rather than raise.
+    pipeline.raise_code_result_failure(skipped, None)
+
+    # And a genuine defect must still end the run, or the convergence above is
+    # just a blanket "never raise".
+    unindexable = _chunk_worker.FileChunkResult(
+        rel_path="src/unindexable.py",
+        content_hash="b" * 64,
+        chunks=[],
+        preprocess_status="ok",
+    )
+    with pytest.raises(JobError):
+        pipeline.raise_code_result_failure(unindexable, None)
+
+
 def _chunk_only_indexer(root: Path) -> CodebaseIndexer:
     """Build a CodebaseIndexer for chunk-only use without a model or store.
 

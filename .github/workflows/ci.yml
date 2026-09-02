@@ -407,9 +407,10 @@ jobs:
         run: just test python
 
   tests-macos:
-    name: Tests (macOS, advisory)
-    # Releases and manual dispatch only - NOT every push to main, and this is
-    # about availability rather than cost. The macOS runner is a laptop under
+    name: Tests (macOS units advisory, MPS required)
+    # Main pushes, releases, and explicit dispatches only. The main-push result
+    # is the pre-publication support gate; pull requests from this public repo
+    # never execute their code on a self-hosted workstation. The macOS runner is a laptop under
     # an AC-power policy: on battery it is deliberately booted out of the
     # fleet, so it is absent for long stretches by design.
     #
@@ -420,13 +421,13 @@ jobs:
     # of the label-with-no-runner bug this workflow was just cleaned of, and
     # equally invisible.
     #
-    # A release is a deliberate act, taken at a moment when the machine can be
-    # plugged in, which makes it the honest place to ask for a macOS verdict.
+    # Main integration and a release are deliberate acts. The machine must be
+    # plugged in before either is allowed to advertise MPS support.
     if: >-
+      github.event_name == 'push' ||
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
        (inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'))
-    continue-on-error: true
     timeout-minutes: 60
     concurrency:
       group: ci-tests-macos-${{ github.ref }}
@@ -461,7 +462,17 @@ jobs:
         run: just deps sync
 
       - name: Run tests
+        continue-on-error: true
         run: just test python
+
+      # This is the support gate for Apple silicon. It is deliberately
+      # separate from the advisory cross-platform unit result: selecting it
+      # runs the configured dense, sparse, and reranker models together on
+      # MPS and fails if any operation falls back to CPU or cannot run.
+      - name: Run MPS acceptance guard
+        env:
+          PYTORCH_ENABLE_MPS_FALLBACK: "0"
+        run: just test mps
 
   gpu-tests:
     name: GPU Tests

@@ -88,6 +88,7 @@ _REJECTION_REASONS: Final = frozenset(
         AdmissionReason.SOURCE_BINARY,
         AdmissionReason.SOURCE_EMPTY,
         AdmissionReason.SOURCE_PROBE_FAILED,
+        AdmissionReason.PREPROCESS_SKIPPED,
     }
 )
 
@@ -109,8 +110,33 @@ _EVIDENCE_STABLE_REJECTION_REASONS: Final = frozenset(
         # genuinely empty file keeps that hash and stays converged, so neither
         # case retries forever.
         AdmissionReason.SOURCE_EMPTY,
+        # A preprocessor's refusal is a fact about the bytes it read: the same
+        # rule may parse the file happily once its content changes, so the
+        # rejection may only be trusted against the hash that evidenced it.
+        AdmissionReason.PREPROCESS_SKIPPED,
     }
 )
+
+
+def stable_rejection_reasons() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the reason tokens a rejection may converge on, by evidence class.
+
+    ``FileState.stable_policy_rejection`` is the definition; this exposes the
+    same two sets for callers that cannot evaluate a Python property - the
+    ledger's finalization gate asks SQL the identical question and would
+    otherwise hand-copy the membership, which is how it came to demand a hash
+    for ``source_too_large`` and ``source_binary`` while letting
+    ``source_empty`` through without one.
+
+    Returns:
+        ``(config_stable, evidence_stable)`` reason values. The first converge
+        on their own; the second only alongside a content hash.
+    """
+    return (
+        tuple(sorted(r.value for r in _CONFIG_STABLE_REJECTION_REASONS)),
+        tuple(sorted(r.value for r in _EVIDENCE_STABLE_REJECTION_REASONS)),
+    )
+
 
 _CONTENT_HASH_RE = re.compile(r"[0-9a-f]{128}\Z")
 

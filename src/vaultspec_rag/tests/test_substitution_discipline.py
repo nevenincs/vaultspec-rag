@@ -53,6 +53,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "every run, which the suite's mirror-the-installed-binary design "
         "exists to avoid",
     ),
+    "test_embeddings_dependencies.py": (
+        3,
+        "the two package-absence paths must be exercised without uninstalling "
+        "the GPU development runtime from the shared test interpreter; the "
+        "central torch gate and importlib lookup are substituted only to "
+        "produce those otherwise destructive dependency states",
+    ),
     "test_gpu_admission.py": (
         3,
         "asserts the shared device-load reading's raise-swallowing behaviour "

@@ -290,7 +290,7 @@ class TestProviderLifecycleAcceptance:
         codex_entry = json.loads(codex.stdout)
         assert codex_entry["name"] == "vaultspec-rag"
         assert codex_entry["transport"]["command"] == "uvx"
-        assert "vaultspec-rag[mcp]" in codex_entry["transport"]["args"]
+        assert "vaultspec-rag[gpu,mcp]" in codex_entry["transport"]["args"]
 
 
 class TestSymmetricRoundTrip:

@@ -200,7 +200,7 @@ class ServiceRegistry(
         """Load the shared embedding model after admission is already held."""
         from .config._types import hf_cache_only
         from .embeddings import EmbeddingModel
-        from .memory_probe import sample_resident_cuda_baseline
+        from .memory_probe import sample_resident_accelerator_baseline
 
         if self._model is not None:
             return
@@ -227,7 +227,7 @@ class ServiceRegistry(
             # The indexing budget subtracts the resident-model baseline;
             # record it while the freshly-loaded stack is idle so ceilings
             # describe indexing headroom rather than pre-consumed capacity.
-            sample_resident_cuda_baseline()
+            sample_resident_accelerator_baseline()
 
     @property
     def model(self) -> EmbeddingModel:
@@ -283,16 +283,17 @@ class ServiceRegistry(
                 return self._reranker
             from sentence_transformers import CrossEncoder
 
-            from ._gpu import load_torch
+            from ._gpu import load_accelerator
             from .config._settings import get_config
             from .config._types import hf_cache_only
 
-            torch = load_torch()
+            accelerator = load_accelerator()
+            torch = accelerator.torch
             cfg = get_config()
             local_files_only = hf_cache_only()
             self._reranker = CrossEncoder(
                 cfg.reranker_model,
-                device="cuda",
+                device=accelerator.device,
                 activation_fn=torch.nn.Sigmoid(),
                 max_length=int(cfg.reranker_max_length),
                 local_files_only=local_files_only,
@@ -310,7 +311,7 @@ class ServiceRegistry(
                 )
             logger.info(
                 "Shared CrossEncoder loaded on %s: %s (cache-only=%s)",
-                torch.cuda.get_device_name(0),
+                accelerator.name,
                 cfg.reranker_model,
                 local_files_only,
             )
@@ -318,9 +319,9 @@ class ServiceRegistry(
             # the resident baseline so a late load raises it rather than
             # leaving indexing budgets constructed against an understated
             # figure.
-            from .memory_probe import sample_resident_cuda_baseline
+            from .memory_probe import sample_resident_accelerator_baseline
 
-            sample_resident_cuda_baseline()
+            sample_resident_accelerator_baseline()
             return self._reranker
 
     @contextlib.contextmanager

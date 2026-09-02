@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ..._store_models import CodeChunk
     from ..._store_writes import StoreWritePolicy
     from ...indexer import DocumentIndexer
+    from ...indexer._content_policy import RootContentPolicy
     from ...indexer._document_indexer import _DocumentPublishRequest
     from ...indexer._document_meta import DocumentFileMetadata, DocumentIndexMetadata
     from ...indexer._generation_lifecycle import CodeGenerationLifecycle
@@ -69,25 +70,34 @@ def _seed_vault_chunks(store: VaultStore, doc_ids: tuple[str, ...]) -> None:
     )
 
 
-def _seed_document_chunks(store: VaultStore, ids: tuple[str, ...]) -> None:
-    """Upsert one real zero-vector document-native chunk per id."""
+def _seed_document_chunks(
+    store: VaultStore,
+    ids: tuple[str, ...],
+    *,
+    source_paths: tuple[str, ...] | None = None,
+) -> None:
+    """Upsert real zero-vector document-native chunks at their source paths."""
     from ..._store_models import DocumentChunk, DocumentPayload
     from ...config._settings import get_config
 
+    if source_paths is None:
+        source_paths = tuple(f"docs/{chunk_id}.pdf" for chunk_id in ids)
+    if len(source_paths) != len(ids):
+        raise ValueError("document chunk identities and source paths must align")
     dimension = int(get_config().embedding_dimension)
     store.upsert_document_content_chunks(
         [
             DocumentChunk(
                 id=chunk_id,
                 payload=DocumentPayload(
-                    source_path=f"docs/{chunk_id}.pdf",
+                    source_path=source_path,
                     unit_ordinal=0,
                     content_fingerprint=f"fp-{chunk_id}",
                     content=f"content of {chunk_id}",
                 ),
                 vector=[0.0] * dimension,
             )
-            for chunk_id in ids
+            for chunk_id, source_path in zip(ids, source_paths, strict=True)
         ],
         write_policy=None,
     )
@@ -444,7 +454,12 @@ def _code_chunks(ids: tuple[str, ...], *, prefix: str) -> list[CodeChunk]:
     ]
 
 
-def _open_clean_code_generation(root: Path) -> CodeRunCheckpoint:
+def _open_clean_code_generation(
+    root: Path,
+    *,
+    content_policy: RootContentPolicy | None = None,
+    lifecycle: CodeGenerationLifecycle | None = None,
+) -> CodeRunCheckpoint:
     """Open a real clean code generation against *root*'s run ledger."""
     from ...indexer._content_policy import RootContentPolicy, SourceProfileVersion
     from ...indexer._resolved_policy import (
@@ -462,9 +477,37 @@ def _open_clean_code_generation(root: Path) -> CodeRunCheckpoint:
     policy = resolve_index_policy(
         root,
         IndexPolicyResolutionOptions(
-            content_policy=RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
+            content_policy=content_policy
+            or RootContentPolicy(SourceProfileVersion.CONVENTIONAL_V1)
         ),
     )
+    configuration = CodeRunConfiguration(
+        segment_max_chunks=1,
+        segment_max_bytes=1024,
+        queue_max_chunks=2,
+        queue_max_bytes=2048,
+        slice_max_chunks=2,
+        slice_max_bytes=2048,
+        sparse_enabled=False,
+        sparse_dimension=1,
+        encode_batch_size=2,
+        flush_slices=4,
+    )
+    if lifecycle is not None:
+        from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
+        from ...job_control import NO_RUN_CONTROL
+
+        return lifecycle.open_checkpoint(
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=True,
+                configuration=configuration,
+                dense_dimensions=_embedding_dimension(),
+                sparse_enabled=False,
+                run_control=NO_RUN_CONTROL,
+            )
+        )
     return CodeRunCheckpoint.open(
         CodeRunOpenRequest(
             data_root=root / ".state",
@@ -475,18 +518,7 @@ def _open_clean_code_generation(root: Path) -> CodeRunCheckpoint:
             clean=True,
             model_identity="model-v1",
             dense_dimensions=_embedding_dimension(),
-            configuration=CodeRunConfiguration(
-                segment_max_chunks=1,
-                segment_max_bytes=1024,
-                queue_max_chunks=2,
-                queue_max_bytes=2048,
-                slice_max_chunks=2,
-                slice_max_bytes=2048,
-                sparse_enabled=False,
-                sparse_dimension=1,
-                encode_batch_size=2,
-                flush_slices=4,
-            ),
+            configuration=configuration,
         )
     )
 
@@ -556,6 +588,186 @@ def _reach_ingestion_complete(checkpoint: CodeRunCheckpoint) -> None:
         checkpoint.generation_id,
         FinalizationPhase.STALE_RECONCILED,
     )
+
+
+class TestCleanGenerationCleanupKeepsServing:
+    def test_stale_cleanup_deletes_from_the_build_collection_only(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-publication clean generation never deletes served points."""
+        from ...indexer._codebase_indexer import (
+            CodebaseIndexer,
+            _FullStaleReconciliation,
+        )
+        from ...store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            checkpoint = _open_clean_code_generation(tmp_path)
+            build_target = _lifecycle(tmp_path, store).build_collection(checkpoint)
+            assert build_target is not None
+
+            shared_id = "shared-stale"
+            store.ensure_code_table()
+            store.upsert_code_chunks(
+                _code_chunks(("stale",), prefix="shared"),
+                write_policy=None,
+            )
+            store.ensure_code_table(build_target)
+            store.upsert_code_chunks(
+                _code_chunks(("stale",), prefix="shared"),
+                write_policy=None,
+                collection=build_target,
+            )
+            assert store.count_code() == 1
+            assert store.count_code(build_target) == 1
+
+            indexer = CodebaseIndexer(tmp_path, cast("Any", None), store)
+            removed = indexer._reconcile_full_stale_ids(
+                _FullStaleReconciliation(
+                    checkpoint=checkpoint,
+                    previous_metadata={},
+                    metadata={},
+                    existing_ids={shared_id},
+                    retained_ids=set(),
+                    collection=build_target,
+                    reporter=NullProgressReporter(),
+                )
+            )
+
+            assert removed == [shared_id]
+            # Guard proof: using the implicit collection sent this deletion to
+            # the served collection and made the active-build assertion fail;
+            # restoring the lifecycle-derived target makes both assertions pass.
+            assert store.count_code(build_target) == 0
+            assert store.count_code() == 1
+        finally:
+            store.close()
+
+
+class TestCleanGenerationPublicationKeepsServing:
+    def test_clean_publication_preserves_old_served_code_until_the_swap(
+        self, tmp_path: Path
+    ) -> None:
+        """A private code build reconciles only after its pointer is public.
+
+        The old served collection holds a stale code point, while the document
+        collection holds the prior owner of a path an explicit route now admits
+        as code.  The generation ledger carries exact evidence for the private
+        replacement.  The publication must leave the old code collection whole,
+        publish the replacement's exact breadth, then remove the cross-kind
+        document origin through the now-served replacement.
+        """
+        from ..._index_breadth import read_code_breadth_claim
+        from ..._store_models import read_served_code_collection
+        from ...indexer._content_policy import (
+            ContentKind,
+            ContentRoute,
+            RootContentPolicy,
+            SourceProfileVersion,
+        )
+        from ...store_runtime import VaultStore
+
+        routed_path = "src/unit/route.py"
+        store = VaultStore(tmp_path)
+        try:
+            checkpoint = _open_clean_code_generation(
+                tmp_path,
+                content_policy=RootContentPolicy(
+                    SourceProfileVersion.EXPLICIT_ONLY_V1,
+                    (ContentRoute(routed_path, ContentKind.CODE),),
+                ),
+            )
+            lifecycle = _lifecycle(tmp_path, store)
+            build_target = lifecycle.build_collection(checkpoint)
+            assert build_target is not None
+            served_before = store.CODE_TABLE_NAME
+
+            store.ensure_code_table(served_before)
+            store.upsert_code_chunks(
+                _code_chunks(("stale",), prefix="old"),
+                write_policy=None,
+                collection=served_before,
+            )
+            store.ensure_code_table(build_target)
+            store.upsert_code_chunks(
+                _code_chunks(("route",), prefix="unit"),
+                write_policy=None,
+                collection=build_target,
+            )
+            _seed_document_chunks(
+                store,
+                ("document-origin",),
+                source_paths=(routed_path,),
+            )
+            _name_indexed_files(checkpoint, (routed_path,))
+            _reach_ingestion_complete(checkpoint)
+
+            assert store.count_code(served_before) == 1
+            assert store.count_code(build_target) == 1
+            assert store.document_content_ids_exist(("document-origin",))
+
+            assert lifecycle.publish_pending_finalization(
+                checkpoint, reporter=NullProgressReporter()
+            )
+
+            claim = read_code_breadth_claim(tmp_path)
+            assert claim is not None
+            # Guard proof: moving route reconciliation back before the pointer
+            # swap makes its same-kind purge delete ``served_before`` and leaves
+            # the document origin behind because its replacement is private.
+            assert store.count_code(served_before) == 1
+            assert read_served_code_collection(tmp_path) == build_target
+            assert store.count_code(build_target) == 1
+            assert claim.published_points == 1
+            assert claim.named_files == 1
+            assert not store.document_content_ids_exist(("document-origin",))
+        finally:
+            store.close()
+
+
+class TestResumedCleanGenerationStorageEvidence:
+    def test_lost_private_build_invalidates_before_it_can_resume(
+        self, tmp_path: Path
+    ) -> None:
+        """A missing private build cannot borrow the old served collection."""
+        from ...indexer._run_ledger_models import RunTerminalState
+        from ...store_runtime import VaultStore
+
+        store = VaultStore(tmp_path)
+        try:
+            lifecycle = _lifecycle(tmp_path, store)
+            checkpoint = _open_clean_code_generation(tmp_path, lifecycle=lifecycle)
+            build_target = lifecycle.build_collection(checkpoint)
+            assert build_target is not None
+            old_generation = checkpoint.generation_id
+
+            store.ensure_code_table()
+            store.upsert_code_chunks(
+                _code_chunks(("served",), prefix="old"),
+                write_policy=None,
+            )
+            store.ensure_code_table(build_target)
+            _name_indexed_files(checkpoint, ("src/private/build.py",))
+            assert store.code_collection_exists(build_target)
+            assert store.count_code() == 1
+
+            store.drop_code_table(build_target)
+            assert not store.code_collection_exists(build_target)
+            assert store.count_code() == 1
+
+            resumed = _open_clean_code_generation(tmp_path, lifecycle=lifecycle)
+
+            # Catches the implicit served probe: it would retain
+            # ``old_generation`` because the old served table still exists.
+            assert resumed.generation_id != old_generation
+            retired = checkpoint.ledger.generation(old_generation)
+            assert retired.terminal_state is RunTerminalState.INVALIDATED
+            assert lifecycle.active_build_target is not None
+            assert lifecycle.active_build_target != build_target
+            assert not store.code_collection_exists(build_target)
+        finally:
+            store.close()
 
 
 class TestCodeReadsNeverMaterialiseAGhost:
@@ -766,8 +978,13 @@ class TestResumedCodePublicationClaimsWhatItBuilt:
         assert served is not None
         # Catches the pointer move being dropped from the resumed path: the
         # sidecar would name this generation while the pointer still named
-        # the prior one, which is the live poisoned shape exactly.
-        assert generation_code_collection(prior, claim.generation_id) == served
+        # the prior one, which is the live poisoned shape exactly. Asserted
+        # against the collection this publication actually built rather than
+        # a recomputed name, so the invariant is the two writes agreeing and
+        # not how a generation name happens to be spelled.
+        assert served == build_target
+        assert claim.generation_id == checkpoint.generation_id
+        assert served != prior
         # And no zero claim survives a publication that found its points.
         assert claim.published_points == 3
         assert claim.published_files == 3

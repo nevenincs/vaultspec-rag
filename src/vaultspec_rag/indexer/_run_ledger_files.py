@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, TypedDict
 
 from ._content_policy import AdmissionReason, ContentKind
 from ._file_state import FileState, FileStateKind, validate_rel_path
 from ._run_ledger_models import (
     FETCH_BATCH,
+    CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
     RunLedgerCorruptionError,
@@ -51,6 +53,13 @@ class _PointIdRow(TypedDict):
     point_id: str
 
 
+class _UpsertEvidenceRow(TypedDict):
+    """One persisted digest and optional point ID from an upsert unit."""
+
+    source_digest: str
+    point_id: str | None
+
+
 class RunLedgerFileMethods:
     if TYPE_CHECKING:
         path: Path
@@ -67,6 +76,15 @@ class RunLedgerFileMethods:
 
         @staticmethod
         def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
+
+        def _record_storage_confirmed_unit(
+            self,
+            connection: sqlite3.Connection,
+            generation_id: str,
+            unit: CommitUnit,
+            *,
+            now: float,
+        ) -> int: ...
 
     def record_file_state(self, generation_id: str, state: FileState) -> None:
         """Upsert the latest explicit per-file convergence outcome."""
@@ -161,6 +179,58 @@ class RunLedgerFileMethods:
 
         in_ledger_transaction(self.path, body)
 
+    def forget_unevidenced_path(self, generation_id: str, rel_path: str) -> bool:
+        """Drop a path's state when this generation holds no evidence for it.
+
+        The counterpart to :meth:`record_path_deleted` for a path that never
+        owned anything. A file created and deleted between the walk that
+        enumerated it and the read that would have chunked it produces no
+        commit unit, so no storage-confirmed deletion can ever be recorded for
+        it - and ``record_path_deleted`` demands exactly one. Any state row it
+        left behind is therefore unresolvable, and finalization, which admits
+        only ``indexed`` and ``policy_rejected``, refuses the whole generation
+        over a file that contributed nothing to it.
+
+        Evidence is the gate: a path with any commit unit is owned by this
+        generation and must go through the purge that drops its points, never
+        through here.
+
+        Returns:
+            True when a state row was removed.
+        """
+        validate_rel_path(rel_path)
+
+        def body(connection: sqlite3.Connection) -> bool:
+            generation = self._require_mutable_generation(connection, generation_id)
+            if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
+                raise RunLedgerStateError(
+                    "cannot change file state after finalization begins"
+                )
+            evidence: _DeletionEvidenceRow | None = fetch_one(
+                connection,
+                """
+                SELECT COUNT(*) AS unit_count, SUM(is_file_end) AS end_count
+                FROM commit_units
+                WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, rel_path),
+            )
+            assert evidence is not None
+            if int(evidence["unit_count"]) != 0:
+                return False
+            return (
+                connection.execute(
+                    """
+                    DELETE FROM file_states
+                    WHERE generation_id = ? AND rel_path = ?
+                    """,
+                    (generation_id, rel_path),
+                ).rowcount
+                > 0
+            )
+
+        return in_ledger_transaction(self.path, body)
+
     def superseded_point_ids(
         self,
         generation_id: str,
@@ -201,6 +271,120 @@ class RunLedgerFileMethods:
                 ),
             )
         return tuple(str(row["point_id"]) for row in rows)
+
+    def retained_upsert_evidence(
+        self,
+        generation_id: str,
+        rel_path: str,
+    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """Return every current-generation upsert digest and its exact IDs.
+
+        This deliberately reads commit units rather than the file-state row.
+        A storage deletion can be durably recorded before the old units and
+        state are retired; a resume in that narrow interval must rediscover
+        the same evidence and complete the ledger half without guessing from
+        live storage.
+        """
+        validate_rel_path(rel_path)
+        with ledger_connection(self.path) as connection:
+            rows: list[_UpsertEvidenceRow] = fetch_all(
+                connection,
+                """
+                SELECT units.source_digest, points.point_id
+                FROM commit_units AS units
+                LEFT JOIN commit_point_ids AS points
+                  ON points.generation_id = units.generation_id
+                 AND points.unit_id = units.unit_id
+                WHERE units.generation_id = ? AND units.rel_path = ?
+                  AND units.unit_kind = ?
+                ORDER BY units.source_digest, units.segment_ordinal,
+                         points.point_ordinal, points.point_id
+                """,
+                (generation_id, rel_path, CommitUnitKind.UPSERT.value),
+            )
+        evidence: dict[str, list[str]] = {}
+        for row in rows:
+            point_ids = evidence.setdefault(str(row["source_digest"]), [])
+            point_id = row["point_id"]
+            if point_id is not None:
+                point_ids.append(str(point_id))
+        return tuple(
+            (digest, tuple(point_ids)) for digest, point_ids in evidence.items()
+        )
+
+    def retire_retained_upserts(
+        self,
+        generation_id: str,
+        unit: CommitUnit,
+    ) -> bool:
+        """Replace a path's retained upserts with confirmed deletion evidence.
+
+        The caller has already removed ``unit.point_ids`` from storage. This
+        transaction releases the identities claimed by the retained upsert
+        units before recording the deletion unit that replaces them, then
+        withdraws the stale manifest state. Keeping those changes together
+        makes an interruption replay either the storage deletion or a fully
+        converged ledger transition; it cannot leave a deletion unit competing
+        with the upsert units for the same identities.
+        """
+        if unit.kind is CommitUnitKind.UPSERT:
+            raise ValueError("retirement requires a deletion unit")
+
+        def body(connection: sqlite3.Connection) -> bool:
+            generation = self._require_mutable_generation(connection, generation_id)
+            if generation["finalization_phase"] != FinalizationPhase.INGESTING.value:
+                raise RunLedgerStateError(
+                    "cannot retire retained upserts after finalization begins"
+                )
+            rows: list[_PointIdRow] = fetch_all(
+                connection,
+                """
+                SELECT points.point_id
+                FROM commit_point_ids AS points
+                JOIN commit_units AS units
+                  ON units.generation_id = points.generation_id
+                 AND units.unit_id = points.unit_id
+                WHERE units.generation_id = ? AND units.rel_path = ?
+                  AND units.unit_kind = ?
+                """,
+                (generation_id, unit.rel_path, CommitUnitKind.UPSERT.value),
+            )
+            retained_ids = tuple(sorted(str(row["point_id"]) for row in rows))
+            if not retained_ids:
+                return False
+            if retained_ids != unit.point_ids:
+                raise RunLedgerStateError(
+                    "retirement deletion must name every retained upsert point"
+                )
+            connection.execute(
+                """
+                DELETE FROM commit_units
+                WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
+                """,
+                (generation_id, unit.rel_path, CommitUnitKind.UPSERT.value),
+            )
+            now = time.time()
+            inserted = self._record_storage_confirmed_unit(
+                connection,
+                generation_id,
+                unit,
+                now=now,
+            )
+            if inserted:
+                connection.execute(
+                    "UPDATE generations SET updated_at = ? WHERE generation_id = ?",
+                    (now, generation_id),
+                )
+            connection.execute(
+                """
+                DELETE FROM file_states
+                WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, unit.rel_path),
+            )
+            return True
+
+        return in_ledger_transaction(self.path, body)
 
     def reopen_drifted_path(
         self,

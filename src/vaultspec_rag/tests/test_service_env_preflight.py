@@ -24,7 +24,10 @@ from ..cli._gpu_errors import (
     durable_tool_install_command,
     gpu_escape_hatch_command,
 )
-from ..cli._process import _probe_daemon_cuda
+from ..cli._process import (
+    _accelerator_probe_exit_outcome,
+    _probe_daemon_accelerator,
+)
 from ..cli._service_start import (
     _caller_ephemeral_warning,
     _ephemeral_env_warning,
@@ -40,15 +43,16 @@ from ..torch_config._constants import CU130_INDEX_URL
 
 pytestmark = [pytest.mark.unit]
 
-# Independent torch/cuda truth for an interpreter, evaluated in its OWN
+# Independent supported-accelerator truth for an interpreter, evaluated in its OWN
 # subprocess so this (torch-free) test process never imports torch - the same
-# discipline the probe itself follows. Exit 0 == working CUDA torch.
+# discipline the probe itself follows. Exit 0 means CUDA or MPS is usable.
 _TRUTH = (
     "import importlib.util, sys\n"
     "if importlib.util.find_spec('torch') is None:\n"
     "    sys.exit(3)\n"
     "import torch\n"
-    "sys.exit(0 if torch.cuda.is_available() else 1)\n"
+    "sys.exit(0 if (torch.cuda.is_available() or "
+    "torch.backends.mps.is_available()) else 1)\n"
 )
 
 
@@ -57,7 +61,7 @@ def test_probe_agrees_with_independent_truth_for_the_current_interpreter() -> No
 
     Both the probe and the truth-check run in subprocesses, so this test process
     never imports torch (importing torch in-process is exactly what the probe
-    avoids). A working CUDA torch must yield ``None``; anything else must yield a
+    avoids). A working accelerator must yield ``None``; anything else must yield a
     blocking verdict.
     """
     truth = subprocess.run(
@@ -66,7 +70,7 @@ def test_probe_agrees_with_independent_truth_for_the_current_interpreter() -> No
         timeout=120,
         check=False,
     ).returncode
-    result = _probe_daemon_cuda(sys.executable)
+    result = _probe_daemon_accelerator(sys.executable)
     if truth == 0:
         assert result is None
     else:
@@ -77,11 +81,23 @@ def test_probe_agrees_with_independent_truth_for_the_current_interpreter() -> No
 
 
 def test_probe_missing_interpreter_blocks_with_a_clear_reason() -> None:
-    result = _probe_daemon_cuda("this-interpreter-does-not-exist-xyz")
+    result = _probe_daemon_accelerator("this-interpreter-does-not-exist-xyz")
     assert result is not None
     blocking, reason = result
     assert blocking is True
     assert "does not exist" in reason
+
+
+def test_probe_exit_contract_accepts_mps_or_cuda_success() -> None:
+    assert _accelerator_probe_exit_outcome(0) is None
+    outcome = _accelerator_probe_exit_outcome(4)
+    assert outcome is not None
+    assert outcome[0] is True
+    assert "CUDA and MPS are unavailable" in outcome[1]
+    fallback = _accelerator_probe_exit_outcome(7)
+    assert fallback is not None
+    assert fallback[0] is True
+    assert "PYTORCH_ENABLE_MPS_FALLBACK" in fallback[1]
 
 
 def test_tail_daemon_log_returns_last_nonempty_lines(tmp_path: Path) -> None:
@@ -186,7 +202,7 @@ class TestRemediationCommands:
         cmd = durable_tool_install_command()
         assert CU130_INDEX_URL in cmd
         assert "uv tool install" in cmd
-        assert "vaultspec-rag[mcp]" in cmd
+        assert "vaultspec-rag[gpu,mcp]" in cmd
         # --index is NOT recorded in uv tool receipts (verified on uv 0.11.x),
         # so the durable form must be the --with direct wheel URL.
         assert "--with" in cmd

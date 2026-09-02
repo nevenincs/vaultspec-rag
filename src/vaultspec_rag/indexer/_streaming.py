@@ -77,20 +77,21 @@ _WRITER_SHUTDOWN_TIMEOUT_S = 300.0
 # Conservative 64-bit CPython lifetime estimates. A dense element exists once
 # in the float32 encode output and once as a Python float/list slot while the
 def _release_cuda_cache() -> None:
-    """Return unused CUDA caching-allocator blocks to the driver.
+    """Return unused accelerator caching-allocator blocks to the backend.
 
     Called between embedding slices to prevent the allocator from
     growing unboundedly as per-batch activation buffers accumulate -
     the root cause of the 24 GB RSS leak documented in issue #68.
     Safe no-op when torch is unavailable.
     """
+    from .._gpu import load_accelerator
+
     try:
-        import torch
-    except ImportError as exc:
-        logger.debug("torch unavailable; CUDA cache flush skipped: %s", exc)
+        accelerator = load_accelerator()
+    except (ImportError, RuntimeError) as exc:
+        logger.debug("accelerator cache flush skipped: %s", exc)
         return
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    accelerator.release_cache()
 
 
 def _transfer_to_cpu(value: object) -> object:
@@ -288,9 +289,17 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
                 len(chunks),
             )
     except Exception as exc:
-        from .._gpu import is_cuda_out_of_memory
+        from .._gpu import load_accelerator
 
-        if request.on_cuda_oom is not None and is_cuda_out_of_memory(exc):
+        try:
+            accelerator = load_accelerator()
+        except (ImportError, RuntimeError):
+            accelerator = None
+        if (
+            request.on_cuda_oom is not None
+            and accelerator is not None
+            and accelerator.is_out_of_memory(exc)
+        ):
             request.on_cuda_oom(exc)
         raise
     finally:
