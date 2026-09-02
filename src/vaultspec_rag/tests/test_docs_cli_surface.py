@@ -25,13 +25,17 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import typer.main
 
 if TYPE_CHECKING:
-    import click
+    # Typer vendors its own copy of Click, so the command tree this module
+    # walks is built from ``typer._click``, not the top-level ``click``. Naming
+    # the vendored class is what keeps the annotations true to what
+    # ``typer.main.get_command`` actually returns.
+    from typer._click.core import Command
 
 from ..cli._app import app
 
@@ -66,12 +70,12 @@ pytestmark.append(
 )
 
 
-def _command_tree() -> click.Command:
+def _command_tree() -> Command:
     """Return the root Click command for the Typer application."""
     return typer.main.get_command(app)
 
 
-def _resolve(root: click.Command, words: list[str]) -> tuple[click.Command | None, int]:
+def _resolve(root: Command, words: list[str]) -> tuple[Command | None, int]:
     """Resolve the longest command path in *words*.
 
     Returns the resolved command and how many words it consumed. A ``None``
@@ -80,7 +84,7 @@ def _resolve(root: click.Command, words: list[str]) -> tuple[click.Command | Non
     current = root
     consumed = 0
     for word in words:
-        children = getattr(current, "commands", None)
+        children = _subcommands(current)
         if not children:
             break
         candidate = children.get(word)
@@ -93,7 +97,17 @@ def _resolve(root: click.Command, words: list[str]) -> tuple[click.Command | Non
     return current, consumed
 
 
-def _option_names(command: click.Command) -> set[str]:
+def _subcommands(command: Command) -> dict[str, Command]:
+    """Return *command*'s subcommands, empty for a leaf.
+
+    Only a Group carries ``commands``, and the attribute is untyped where it
+    exists, so both walks below read it through this one typed accessor rather
+    than each repeating the lookup and inheriting an unknown element type.
+    """
+    return cast("dict[str, Command]", getattr(command, "commands", None) or {})
+
+
+def _option_names(command: Command) -> set[str]:
     """Return every long option string the *command* accepts."""
     names: set[str] = set(_ALWAYS_ALLOWED)
     for param in command.params:
@@ -178,7 +192,7 @@ def test_documented_commands_exist() -> None:
         if command is None or consumed == 0:
             failures.append(f"{path.name}: unknown command 'vaultspec-rag {words[0]}'")
             continue
-        if consumed < len(words) and getattr(command, "commands", None):
+        if consumed < len(words) and _subcommands(command):
             unknown = words[consumed]
             failures.append(
                 f"{path.name}: 'vaultspec-rag {' '.join(words[:consumed])}' "
@@ -200,7 +214,7 @@ def test_documented_options_exist() -> None:
         if command is None:
             continue  # the command test owns this failure
         accepted = _option_names(command)
-        if not getattr(command, "commands", None):
+        if not _subcommands(command):
             accepted |= _option_names(root)
         for option in options:
             if option not in accepted:
@@ -263,9 +277,9 @@ def _every_option() -> set[str]:
     """Every long option the application accepts on any command."""
     names: set[str] = set()
 
-    def walk(command: click.Command) -> None:
+    def walk(command: Command) -> None:
         names.update(_option_names(command))
-        for child in (getattr(command, "commands", None) or {}).values():
+        for child in _subcommands(command).values():
             walk(child)
 
     walk(_command_tree())
@@ -284,12 +298,14 @@ def test_documented_bare_flags_exist() -> None:
     assert not failures, "documented flags the CLI does not define: " + joined
 
 
-def _leaf_paths(command, prefix=()):
+def _leaf_paths(
+    command: Command, prefix: tuple[str, ...] = ()
+) -> list[tuple[str, ...]]:
     """Return every leaf command path in the application."""
-    children = getattr(command, "commands", None) or {}
+    children = _subcommands(command)
     if not children:
         return [prefix]
-    out = []
+    out: list[tuple[str, ...]] = []
     for name, child in children.items():
         out += _leaf_paths(child, (*prefix, name))
     return out

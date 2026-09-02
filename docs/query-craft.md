@@ -203,18 +203,18 @@ looks the same as one with a poor answer. `--scores` separates them.
 A query the corpus genuinely answers scores in the tenths:
 
 ```
-1. .vault/audit/2026-08-13-large-index-resilience-ledger-concurrency-audit.md (score 0.7836)
-2. .vault/research/2026-06-12-service-concurrency-research.md (score 0.7180)
-3. .vault/adr/2026-04-12-store-eviction-log-rotation-adr.md (score 0.4746)
+1. .vault/audit/large-index-resilience-ledger-concurrency-audit.md (score 0.7836)
+2. .vault/research/service-concurrency-research.md (score 0.7180)
+3. .vault/adr/store-eviction-log-rotation-adr.md (score 0.4746)
 ```
 
 A query with nothing relevant scores in the thousandths, and still returns ten
 rows:
 
 ```
-1. .vault/adr/2026-07-31-rate-collapse-baseline-adr.md (score 0.0013)
-2. .vault/audit/2026-07-29-encode-batch-adaptivity-audit.md (score 0.0008)
-3. .vault/adr/2026-04-02-service-graph-adr.md (score 0.0002)
+1. .vault/adr/rate-collapse-baseline-adr.md (score 0.0013)
+2. .vault/audit/encode-batch-adaptivity-audit.md (score 0.0008)
+3. .vault/adr/service-graph-adr.md (score 0.0002)
 ```
 
 Three orders of magnitude separate them. Absolute scores aren't comparable

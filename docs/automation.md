@@ -46,8 +46,8 @@ Success, with most per-hit fields elided:
     "request_id": "fccd0f1fb63343078dbc8f683aa314be",
     "results": [
       {
-        "id": "audit/2026-03-09-graph-embedding-round36-audit",
-        "path": ".vault/audit/2026-03-09-graph-embedding-round36-audit.md",
+        "id": "audit/graph-embedding-round36-audit",
+        "path": ".vault/audit/graph-embedding-round36-audit.md",
         "title": "Round 36: Graph/Embedding Domain Audit",
         "score": 0.8315700888633728,
         "snippet": "...",
