@@ -609,10 +609,44 @@ jobs:
       - name: Provision the pinned Qdrant binary the GPU tier requires
         run: uv run --no-sync vaultspec-rag server qdrant install
 
+      # The tier does not own the card, it BORROWS it: the coordinator captures
+      # a live, health-verified, version-compatible resident service before
+      # pytest isolates its managed paths, and refuses the whole tier when
+      # there is none - every test deselected, nothing run. That capture has to
+      # see a service that is fully ready, not merely started, because a
+      # warming daemon has no health identity to match yet.
+      #
+      # Waiting on `running` rather than sleeping a fixed interval is what
+      # makes this reliable on a machine that loads its model stack at start.
+      - name: Start the resident service the GPU tier borrows from
+        shell: pwsh
+        run: |
+          uv run --no-sync vaultspec-rag server start --json
+          if ($LASTEXITCODE -ne 0) { throw "server start failed with $LASTEXITCODE" }
+          $deadline = (Get-Date).AddMinutes(10)
+          while ((Get-Date) -lt $deadline) {
+            $raw = uv run --no-sync vaultspec-rag server status --json
+            # The operator state is nested under `data`; reading it off the
+            # envelope root yields $null on every poll and times out silently.
+            $state = ($raw | ConvertFrom-Json).data.state
+            Write-Host "service state: $state"
+            if ($state -eq 'running') { exit 0 }
+            Start-Sleep -Seconds 5
+          }
+          throw "the resident service never reported running; the GPU tier cannot borrow"
+
       - name: Run GPU test tier through guarded coordinator
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: just test gpu
+
+      # Always: a tier that failed mid-borrow still leaves a daemon holding the
+      # card, and the next run's capture would then contend with a service this
+      # one was supposed to own the lifetime of.
+      - name: Stop the resident service
+        if: always()
+        shell: pwsh
+        run: uv run --no-sync vaultspec-rag server stop --json
 
   vault-audit:
     name: Vault Audit
