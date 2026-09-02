@@ -594,9 +594,21 @@ jobs:
       - name: Install dependencies
         run: just deps sync
 
-      # Prerequisite: the self-hosted GPU runner image contains the pinned,
-      # manifest-verified Qdrant binary. The pytest coordinator verifies it
-      # read-only and refuses this tier if it is absent; CI never installs it.
+      # Prerequisite: the pinned, manifest-verified Qdrant binary. The pytest
+      # coordinator only ever verifies it read-only and refuses the tier when
+      # it is absent, which is what kept this lane from running a single test -
+      # it exited on the missing prerequisite with everything deselected, and
+      # nothing was installing it.
+      #
+      # Installing it through the product's own provisioner keeps the pin the
+      # authority: the command verifies the download against the committed
+      # SHA256 before it lands, refuses to silently replace a divergent
+      # install, and is a no-op with zero network I/O once the version on disk
+      # matches. The coordinator's read-only re-verification before execution
+      # is unchanged, so the binary is still checked twice by two owners.
+      - name: Provision the pinned Qdrant binary the GPU tier requires
+        run: uv run --no-sync vaultspec-rag server qdrant install
+
       - name: Run GPU test tier through guarded coordinator
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
