@@ -401,6 +401,8 @@ jobs:
             HF_HOME                          = (Join-Path $tools 'huggingface')
             UV_CACHE_DIR                     = (Join-Path $tools 'uv-cache')
             UV_PYTHON_INSTALL_DIR            = (Join-Path $tools 'uv-python')
+            CARGO_HOME                       = (Join-Path $tools 'cargo')
+            RUSTUP_HOME                      = (Join-Path $tools 'rustup')
             VAULTSPEC_RAG_STATUS_DIR         = (Join-Path $temp 'vaultspec-rag-status')
             VAULTSPEC_RAG_QDRANT_STORAGE_DIR = (Join-Path $temp 'vaultspec-rag-qdrant')
           }
@@ -452,6 +454,8 @@ jobs:
             'HF_HOME'                          = $env:HF_HOME
             'UV_CACHE_DIR'                     = $env:UV_CACHE_DIR
             'UV_PYTHON_INSTALL_DIR'            = $env:UV_PYTHON_INSTALL_DIR
+            'CARGO_HOME'                       = $env:CARGO_HOME
+            'RUSTUP_HOME'                      = $env:RUSTUP_HOME
             'VAULTSPEC_RAG_STATUS_DIR'         = $env:VAULTSPEC_RAG_STATUS_DIR
             'VAULTSPEC_RAG_QDRANT_STORAGE_DIR' = $env:VAULTSPEC_RAG_QDRANT_STORAGE_DIR
             'python tempfile'                  = (uv run --no-sync python -c "import tempfile; print(tempfile.gettempdir())")
@@ -664,6 +668,8 @@ jobs:
             HF_HOME                          = (Join-Path $tools 'huggingface')
             UV_CACHE_DIR                     = (Join-Path $tools 'uv-cache')
             UV_PYTHON_INSTALL_DIR            = (Join-Path $tools 'uv-python')
+            CARGO_HOME                       = (Join-Path $tools 'cargo')
+            RUSTUP_HOME                      = (Join-Path $tools 'rustup')
             VAULTSPEC_RAG_STATUS_DIR         = (Join-Path $temp 'vaultspec-rag-status')
             VAULTSPEC_RAG_QDRANT_STORAGE_DIR = (Join-Path $temp 'vaultspec-rag-qdrant')
           }
@@ -717,6 +723,8 @@ jobs:
             'HF_HOME'                          = $env:HF_HOME
             'UV_CACHE_DIR'                     = $env:UV_CACHE_DIR
             'UV_PYTHON_INSTALL_DIR'            = $env:UV_PYTHON_INSTALL_DIR
+            'CARGO_HOME'                       = $env:CARGO_HOME
+            'RUSTUP_HOME'                      = $env:RUSTUP_HOME
             'VAULTSPEC_RAG_STATUS_DIR'         = $env:VAULTSPEC_RAG_STATUS_DIR
             'VAULTSPEC_RAG_QDRANT_STORAGE_DIR' = $env:VAULTSPEC_RAG_QDRANT_STORAGE_DIR
             'python tempfile'                  = (uv run --no-sync python -c "import tempfile; print(tempfile.gettempdir())")
