@@ -292,4 +292,4 @@ The target is required, so no corpus is removed unless you name it. `clean` does
 - Every command, flag, and exit code: [CLI reference](cli.md).
 - Tune defaults like result counts, batch sizes, and the data directory: [configuration](configuration.md).
 
-For more help, see [support and help](../README.md#status-help-and-license).
+For more help, see [support and help](../README.md#status-and-help).
