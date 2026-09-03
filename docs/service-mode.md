@@ -51,6 +51,8 @@ uv run vaultspec-rag server doctor
 
 `doctor` reports PyTorch and accelerator readiness, the compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, which names either a provision step or an install step.
 
+One failure has a detail line that cannot tell you what to do, because the fix is not an install or a provision step: a corrupt collection in the managed store stops the server from starting at all. `server qdrant quarantine` moves it aside so the server starts again, listing the store's collections when you run it with no name and requiring `--yes` to move one. Nothing is deleted and the affected root re-indexes on its next use. To keep working while you investigate, `server start --local-only` skips the managed store entirely. The [backends guide](backends.md) covers both.
+
 Both accept `--json`, and `status` accepts `--verbose`. For every field and exit code, see the [CLI reference](cli.md).
 
 ## Route commands at the service
