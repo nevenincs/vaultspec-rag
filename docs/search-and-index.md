@@ -52,8 +52,33 @@ uv run vaultspec-rag search "rerank inputs" --max-results 25
 To see numeric relevance scores beside each record, add `--scores`:
 
 ```
-uv run vaultspec-rag search "rerank inputs" --scores
+uv run vaultspec-rag search "why the service publishes a heartbeat" --type vault --scores --max-results 5
 ```
+
+That run, cut to the first two of its five records:
+
+```text
+1. .vault/adr/2026-07-21-machine-discovery-recovery-adr.md (score 0.6004)
+   adr | feature: machine-discovery-recovery | 2026-07-21
+   ## Implementation
+
+   **D1 — Machine-pointer mutation is owner-only.** The machine-lock domain owns publication
+   and deletion primitives. A caller may mutate the pointer only while presenting the active
+2. .vault/adr/2026-05-30-service-lifecycle-adr.md (score 0.2748)
+   adr | feature: service-lifecycle | 2026-05-30
+   ## Rationale
+
+   A daemon-side atexit + SIGTERM handler is the smallest cut that
+   turns "the log went quiet" into "the log explicitly says I died
+   and how". The heartbeat exists for the unreachable case (
+```
+
+Two things to read there. The second line of each record is the document's own
+type, feature, and date, so a vault result says what kind of decision it is
+before you open it. And the passages are cut where the chunk ends rather than at
+a sentence, which is what a chunk is: the unit the index stores and scores, not
+a summary written for you. [Writing a query](query-craft.md) covers what the gap
+between 0.6004 and 0.2748 tells you.
 
 If nothing comes back, the index may be empty or still building. Build it first; see [Build and refresh the index](#build-and-refresh-the-index). With a running service, an index job may still be in flight, so wait for it to finish, then search again.
 
