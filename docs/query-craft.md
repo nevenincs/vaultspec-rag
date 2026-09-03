@@ -32,8 +32,10 @@ Admission summary:
 ```
 
 Read the count, not the sample. Ninety-three files out of nearly a thousand
-considered is the number to weigh against the tree you have in mind. The five
-paths a dry run prints are the head of the list, not the most important files. A
+considered is the number to weigh against the tree you have in mind. The paths a
+dry run prints - fifty by default, five in the run above because
+`--dry-run-limit 5` asked for five - are the head of the list, not the most
+important files. A
 sample full of vendored tool scripts doesn't mean the rest of the set is vendored
 too.
 
@@ -176,9 +178,11 @@ this way.
 | Ranking, no flag | `status:` `intent:`                          |
 
 The noise markers take one or more domains from `prod`, `tests`, `docs`,
-`locale`, `generated`, `vendored`, and `worktree`. Everything except `prod` is
-treated as noise by default, so `only:prod` keeps production code and
-`exclude:tests` drops the test tree. Comma-separated sets accumulate when
+`locale`, `generated`, `vendored`, and `worktree`. The default profile treats
+them unequally: `generated` and `worktree` are hidden outright, while `tests`,
+`docs`, `locale` and `vendored` stay visible and are demoted below production.
+So `only:prod` keeps production code, and `exclude:tests` drops a test tree that
+would otherwise still be returned, lower down. Comma-separated sets accumulate when
 repeated.
 
 `status:` takes `all`, `active`, or a comma-separated set such as
