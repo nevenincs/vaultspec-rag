@@ -105,6 +105,7 @@ environment:
 uv run vaultspec-rag preprocess list            # show resolved rules, in precedence order
 uv run vaultspec-rag preprocess check           # validate the config; non-zero exit on a bad config
 uv run vaultspec-rag preprocess run-one a.pdf   # trial the matching rule against one file
+uv run vaultspec-rag preprocess status          # mode, config presence, and rule count
 ```
 
 - `preprocess list` prints each resolved rule with its target, extractor version,
@@ -119,9 +120,11 @@ uv run vaultspec-rag preprocess run-one a.pdf   # trial the matching rule agains
   Other malformed rules use the non-strict loader and may appear as no match. When
   validating configuration, run `preprocess check` first.
 
-All three accept `--json` for scripting. `preprocess status` adds the effective execution
-mode, schema version, targets, extractor versions, rule count, and whether the kill switch
-prevents hooks from running.
+- `preprocess status` reports the effective execution mode, schema version, targets,
+  extractor versions, rule count, and whether the kill switch prevents hooks from
+  running.
+
+All four accept `--json` for scripting.
 
 ## Invocation envelope
 
