@@ -26,7 +26,7 @@ One caveat on scope: this all applies to the shared server-mode store. A `--loca
 
 ## Why disk usage grows
 
-Creating a namespace preallocates a large block of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. One development machine accumulated 79 dead namespaces totalling 167.9 GB, all holding zero documents.
+Creating a namespace preallocates a large block of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. One development machine accumulated 79 dead namespaces totalling 167.9 GiB, all holding zero documents.
 
 That preallocation is why disk usage tracks the *number* of roots you have indexed far more closely than the amount of code and documents in them. It also means there are two different ways to get space back: removing namespaces you no longer need, and shrinking the ones you are keeping. Both have their own sections, Reclaim space manually and Shrinking collections you keep, and the service does both on its own.
 
@@ -82,7 +82,7 @@ The interval, both grace windows, the ephemeral idle TTL, the per-cycle cap, and
 
 Reclamation removes namespaces you no longer need. Geometry reconcile is the other half: it shrinks the preallocation of namespaces you are keeping.
 
-A collection's on-disk cost is dominated by a fixed floor rather than by its contents - the storage engine preallocates a set of memory-mapped pages per segment, and it sizes the segment count from the host's CPU count unless told otherwise. On a 24-core machine that meant eight segments and roughly 1.2 GB for a collection holding zero documents. Newer versions cap this at creation, but a collection carries the geometry it was created with for its whole life, so upgrading does not shrink anything that already exists.
+A collection's on-disk cost is dominated by a fixed floor rather than by its contents - the storage engine preallocates a set of memory-mapped pages per segment, and it sizes the segment count from the host's CPU count unless told otherwise. On a 24-core machine that meant eight segments and roughly 1.2 GiB for a collection holding zero documents. Newer versions cap this at creation, but a collection carries the geometry it was created with for its whole life, so upgrading does not shrink anything that already exists.
 
 The service converges them for you. Each maintenance cycle reconciles up to four drifted collections onto the bounded geometry, so a backend full of oversized collections shrinks over the following few hours without any action. Measured across collection sizes from empty to 20,000 documents, this reclaims 63-84% of each collection's footprint.
 
@@ -112,7 +112,9 @@ One residue is left behind deliberately. The write-ahead log size is fixed when 
 
 ## Archives and how to restore them
 
-Snapshot archives land in `~/.vaultspec-rag/qdrant-server/archive/<prefix>/`, one subdirectory per reclaimed namespace and one `.snapshot` file per collection. Each maintenance cycle deletes archives older than 30 days, then evicts oldest-first if the archive directory exceeds 20 GB; both bounds are configurable.
+Snapshot archives land in `~/.vaultspec-rag/qdrant-server/archive/<prefix>/`, one subdirectory per reclaimed namespace and one `.snapshot` file per collection. Each maintenance cycle deletes archives older than 30 days, then evicts oldest-first if the archive directory exceeds 20 GiB; both bounds are configurable. The setting for the second is named
+`VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`, and the number you give it is
+multiplied by 1024 three times, so it is read as GiB despite the name.
 
 Reindex first. The index is derived data, so if the root still exists, or came back from your own backup, indexing it rebuilds everything.
 
@@ -178,7 +180,7 @@ resident service mints a real namespace in the shared backend - often gigabytes
 once fully indexed - and as long as the temp directory still exists it
 classifies `live` and survives every prune. Left alone, leaked harness
 namespaces can exhaust the disk (the issue-242 incident: 36 temp-rooted
-namespaces, ~74 GB). Every harness must do one of these, in order of
+namespaces, ~74 GiB). Every harness must do one of these, in order of
 preference:
 
 1. **Isolate**: point `VAULTSPEC_RAG_STATUS_DIR` and
@@ -210,7 +212,7 @@ Migration copies. The source store keeps its collections, so a failed or half-fi
 
 ## Observe maintenance
 
-Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage maintenance cycle` with a result summary like `removed=2 failed=0 pending=5 reclaimed_bytes=4508876800`. Every cycle also writes one structured `service.maintenance` log line with the same counts plus archive activity and free disk, and logs an explicit `disk_low` warning when the store's volume drops under 10 GB free - only a few namespaces of headroom, so treat the warning as a prompt to prune or add capacity.
+Every cycle is a job: `uv run vaultspec-rag server jobs` lists it as a `storage maintenance cycle` with a result summary like `removed=2 failed=0 pending=5 reclaimed_bytes=4508876800`. Every cycle also writes one structured `service.maintenance` log line with the same counts plus archive activity and free disk, and logs an explicit `disk_low` warning when the store's volume drops under 10 GiB free - only a few namespaces of headroom, so treat the warning as a prompt to prune or add capacity.
 
 The token-gated `/metrics` route exports the rollup in Prometheus text format. All names carry the `vaultspec_rag_` prefix:
 
