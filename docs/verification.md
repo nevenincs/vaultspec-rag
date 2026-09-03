@@ -175,9 +175,12 @@ generation goes stale.
 
 ## Gating a script on these checks
 
-Gate on the exit code. The JSON body is not enough: `server doctor --json`
-returns `ok: true` with `data.ready: true` on the run above and still exits `1`,
-and no field in that JSON carries the provisioning mismatch that caused it.
+Gate on the exit code. The top of the JSON body is not enough: `server doctor
+--json` returns `ok: true` with `data.ready: true` on the run above and still
+exits `1`. The mismatch that caused it is in the payload, but further down than
+a health check usually looks - `data.mode.mode_mismatch` reads `mismatch` on
+that run - so a script that gates on `ok` alone calls a failing workspace
+healthy.
 
 ```bash
 if ! vaultspec-rag server doctor --json >/dev/null 2>&1; then
