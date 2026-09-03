@@ -78,7 +78,7 @@ A code-search flag, `--dedup-locales`, that collapses near-duplicate translated 
 
 ## Local-only mode
 
-A local-only store that needs no separate server process. It runs Qdrant inside the process against files under `.vault/data/search-data/`, Select it with `--local-only`. See [the backends guide](backends.md).
+A local-only store that needs no separate server process. It runs Qdrant inside the process against files under `.vault/data/search-data/qdrant/`. Select it with `--local-only`. See [the backends guide](backends.md).
 
 ## Managed Qdrant server
 
