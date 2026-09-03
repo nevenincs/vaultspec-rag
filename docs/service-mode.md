@@ -32,7 +32,26 @@ Other start flags control the port, automatic updates, update timing, and the ma
 uv run vaultspec-rag server status
 ```
 
-`status` shows whether the service is up, its address, uptime, queue, processed jobs, and a suggested next action. Its `Service env:` line names the Python environment running the service.
+On a service that has been up for a while, that reads, with the environment path
+shortened to its last three segments:
+
+```text
+Server: running
+Requests: ready for requests
+Busy: idle
+Address: http://127.0.0.1:8766
+Service env: main\.venv\Scripts\python.exe
+Uptime: 13 hours 19 minutes
+Queue: nothing waiting
+Processed jobs: 259 finished, 0 active, 0 waiting, 1 failed
+  Last failure: job 9ab3eb6b (timeout), 3 hours 58 minutes ago
+  Review failures: vaultspec-rag server jobs --failed
+Current job: none active
+Next action:
+  vaultspec-rag search "<query>" --type code --timeout 120
+```
+
+`status` shows whether the service is up, its address, uptime, queue, processed jobs, and a suggested next action. Its `Service env:` line names the Python environment running the service. A failure that has already been retired to the history, as above, does not stop the service being ready: the count is there so a failure cannot pass unseen, and the line below it names the command that shows what happened.
 
 Its exit codes:
 
@@ -48,6 +67,32 @@ To check each dependency rather than the process, run:
 ```
 uv run vaultspec-rag server doctor
 ```
+
+```text
+Service readiness
+Backend: server
+Readiness: ready for requests
+Live service:
+  status: running (running)
+  process: pid 57856 (alive)
+  network: port 8766 (listening)
+  heartbeat: 12s ago
+  release: 0.4.21 (matches this client)
+Installed dependencies: ready
+  torch: ready - CUDA available on NVIDIA GeForce RTX 4080 SUPER
+  models: ready - all 3 model repos present in the cache
+  qdrant: ready - qdrant binary resolves from provisioned
+Provisioning (vaultspec-rag):
+  declared mode: tool
+  install mode: mismatch - .mcp.json launch shape disagrees with the declared mode
+  version floor: ok
+```
+
+That capture is a healthy service with one thing to fix, which is the useful case
+to see: every dependency reads `ready`, and the last section still reports a
+`mismatch` because the `.mcp.json` entry launches the server a different way than
+the recorded mode. Search keeps working throughout. Readiness and provisioning are
+separate questions, and only the first one decides whether a query returns.
 
 `doctor` reports PyTorch and accelerator readiness, the compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, which names either a provision step or an install step.
 
