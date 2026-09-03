@@ -139,9 +139,11 @@ vaultspec-rag search "medieval falconry glove stitching patterns" --type code --
 3. src/vaultspec_rag/indexer/_ignore_specs.py (score 0.0009)
 ```
 
-Ten rows came back for that query regardless. No threshold filters results out,
-so a search never reports "nothing found". A top score in the thousandths is how
-you tell.
+Three rows came back because `--max-results 3` asked for three; without the cap
+that query returns the default ten, none of them relevant. No threshold filters
+results out on relevance, so a search does not report "nothing found" when the
+corpus simply has no answer - a hard filter matching nothing, or an empty index,
+still can. A top score in the thousandths is how you tell the first case.
 
 ## What it answers badly
 
