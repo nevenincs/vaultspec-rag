@@ -119,7 +119,7 @@ Options:
 
 With `--port` unset, the command auto-detects a running service and delegates with fallback. Service delegation queues an async reindex job and prints `Check progress with: vaultspec-rag server jobs`. In-process indexing is incremental unless `--rebuild` is set.
 
-Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable service (`index` has no in-process fallback flag); `2` for `rebuild_requires_explicit_type`, `dry_run_requires_supported_type`, `invalid_dry_run_limit`, or `preprocess_flags_conflict`. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `1` on GPU error, a busy index, a service-reported reindex error, or an unreachable service (`port_unreachable`; `index` has no in-process fallback flag); `2` for `rebuild_requires_explicit_type`, `dry_run_requires_supported_type`, `invalid_dry_run_limit`, or `preprocess_flags_conflict`. With `--json`, the result is one envelope on stdout.
 
 ## clean
 
@@ -186,7 +186,7 @@ Options:
 
 Output is a list of readable records, each showing a rank, a location, and the matched text. Scores appear only with `--scores`. With `--port` unset, the command auto-detects a running service and routes to it with fallback; each result carries a `via` label of `service` or `in-process`.
 
-Exit/JSON: `0` on success; `1` on accelerator error, a service-reported search error, or an unreachable `--port` without `--allow-fallback`; `2` for an invalid `--type`, `--prefer`, or filter (`invalid_search_type`, `invalid_prefer_value`, `invalid_filter_for_search_type`). With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `1` on accelerator error, a service-reported search error, a local store already open in this run (`local_store_locked`), or an unreachable `--port` without `--allow-fallback` (`port_unreachable`); `2` for an invalid `--type`, `--prefer`, or filter (`invalid_search_type`, `invalid_prefer_value`, `invalid_filter_for_search_type`). With `--json`, the result is one envelope on stdout.
 
 ## status
 
