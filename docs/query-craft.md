@@ -109,8 +109,9 @@ uv run vaultspec-rag search "detect antipatterns in the page DOM" --type code --
 ```
 
 `--language` steers the same question into a different part of the project.
-Asked without one, that query answers from JavaScript. Asked with
-`--language python`, it answers from the project's own Python:
+Asked without one, that query answers from JavaScript. Add `--language python`
+to the command above and the same question answers from the project's own
+Python instead:
 
 ```
 1. src/vaultspec_marketing/scrape/__init__.py:1
@@ -204,6 +205,9 @@ exact-path filter.
 Search always returns its ten closest chunks, so a query with nothing to match
 looks the same as one with a poor answer. `--scores` separates them.
 
+Both blocks below come from `--scores` runs against this project's vault, cut
+to their top three rows; each full run returned the ten described above.
+
 A query the corpus genuinely answers scores in the tenths:
 
 ```
@@ -212,7 +216,7 @@ A query the corpus genuinely answers scores in the tenths:
 3. .vault/adr/store-eviction-log-rotation-adr.md (score 0.4746)
 ```
 
-A query with nothing relevant scores in the thousandths, and still returns ten
+A query with nothing relevant scores in the thousandths, and still fills all ten
 rows:
 
 ```
