@@ -84,6 +84,11 @@ runs:
           protected="/usr /etc /var /opt /bin /sbin /lib /lib64 /boot /root"
         fi
         runtime_temp="$(python3 -c 'import tempfile; print(tempfile.gettempdir())' 2>/dev/null || echo "$TMPDIR")"
+        # Runner-owned roots come first and win. A hosted runner puts its tool
+        # cache at /opt/hostedtoolcache, which is runner storage that happens to
+        # sit under a protected prefix - the question is who owns the path, not
+        # which string it starts with.
+        owned="${RUNNER_TEMP:-} ${RUNNER_TOOL_CACHE:-} ${RUNNER_WORKSPACE:-} ${GITHUB_WORKSPACE:-}"
         bad=0
         check() {
           local name="$1" value="$2"
@@ -94,6 +99,12 @@ runs:
           fi
           local full
           full="$(cd "$value" 2>/dev/null && pwd -P || echo "$value")"
+          for root in $owned; do
+            [ -n "$root" ] || continue
+            case "$full/" in
+              "$root"/*|"$root") echo "  $name -> $full (runner-owned)"; return ;;
+            esac
+          done
           echo "  $name -> $full"
           for root in $protected; do
             case "$full/" in
@@ -140,6 +151,10 @@ runs:
           'VAULTSPEC_RAG_QDRANT_STORAGE_DIR' = $env:VAULTSPEC_RAG_QDRANT_STORAGE_DIR
           'runtime temp'                     = $runtimeTemp
         }
+        # Runner-owned roots win over the protected prefixes: a runner may place
+        # its own storage under one, and ownership is the actual question.
+        $owned = @($env:RUNNER_TEMP, $env:RUNNER_TOOL_CACHE, $env:RUNNER_WORKSPACE, $env:GITHUB_WORKSPACE) |
+          Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath($_) }
         $bad = @()
         foreach ($name in $paths.Keys) {
           $value = $paths[$name]
@@ -148,6 +163,11 @@ runs:
             continue
           }
           $full = [IO.Path]::GetFullPath($value)
+          $isOwned = $false
+          foreach ($root in $owned) {
+            if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $isOwned = $true; break }
+          }
+          if ($isOwned) { Write-Host ("  {0,-34} -> {1} (runner-owned)" -f $name, $full); continue }
           Write-Host ("  {0,-34} -> {1}" -f $name, $full)
           foreach ($root in $protected) {
             if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
