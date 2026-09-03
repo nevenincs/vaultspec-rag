@@ -98,7 +98,7 @@ The per-root prefix that keeps one project's collections separate from another's
 
 ## Noise domain
 
-How code search classifies a source file's role: `prod`, `tests`, `docs`, `locale`, `generated`, `vendored`, or `worktree`. Everything except `prod` counts as noise by default. Filter on it with the inline `exclude:`, `only:`, and `include:` tokens. See [writing a query](query-craft.md).
+How code search classifies a source file's role: `prod`, `tests`, `docs`, `locale`, `generated`, `vendored`, or `worktree`. The default profile treats the other six in two ways rather than one: `worktree` and `generated` are hidden, and `tests`, `docs`, `locale` and `vendored` are kept but score-penalised so production ranks above them. A demoted result still comes back. Filter on it with the inline `exclude:`, `only:`, and `include:` tokens. See [writing a query](query-craft.md).
 
 ## Preprocessing hook
 
