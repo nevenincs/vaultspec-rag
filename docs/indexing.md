@@ -285,6 +285,12 @@ run carries a stable `error_kind`; a run whose progress has not moved for five
 minutes is flagged `stalled`; a run cut short by a dying process is restored as
 `interrupted` on the next startup. Those three are the signals worth acting on.
 
+`stalled` is a report, not a verdict: it says nothing has moved for five minutes
+and the run is still going. A second, longer clock ends it - the run fails once
+progress has stopped for `index_no_progress_timeout_seconds`, fifteen minutes by
+default. So a job can sit at `stalled` for ten minutes and then finish, and a job
+that is truly wedged shows `stalled` first and `failed` later.
+
 A run that reused vectors carries a `reuse` block with hits, misses, hit rate,
 and the donors it consulted. A hit rate near zero on a worktree you expected to
 match usually means an eligibility gate rejected the donor rather than that the
