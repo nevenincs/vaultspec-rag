@@ -22,6 +22,10 @@ The how-to sections stay thin on purpose. For the full flag list on any command,
 | Needs network at setup | Yes                                              | No                                                |
 | GPU and models         | Required                                         | Required                                          |
 
+The network row is about the pinned binary and nothing else. Both backends need
+the models, so a machine without them already cached reaches a host either way:
+choosing the local-only store removes a download, not the requirement for one.
+
 ## Why the managed server is the default
 
 The local-only store serializes work through a single process. Concurrent load means several searches arriving together, or a search competing with an index job. Under that load, requests queue behind one another and throughput drops. The managed server removes that limit: it accepts many requests at once.
