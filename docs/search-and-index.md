@@ -32,9 +32,9 @@ uv run vaultspec-rag search "how does the watcher debounce changes"
 
 That run is against this project's own vault. Each result is the document, then
 its type and feature, then the passage that matched; ten came back and the first
-two are shown, with each passage cut to its first line. The rest of this page
-varies that one command rather than introducing new shapes, so this is what
-every example below prints.
+two are shown, with each passage cut to its first line. That is the shape every
+example on this page returns, with one addition: `--scores` puts a relevance
+figure after the path, which the section on it shows.
 
 To search source code instead, add `--type code`:
 
