@@ -134,19 +134,23 @@ vaultspec-rag index --type code --dry-run --dry-run-limit 5
 lists every path regardless.
 
 ```
-Dry run: 714 source-code files would be indexed.
+Dry run: 717 source-code files would be indexed.
 Admission summary:
   - unowned/rejected/ignored: 12
-  - code/rejected/source_profile_excluded: 180
-  - code/admitted/source_profile: 714
+  - code/rejected/source_profile_excluded: 181
+  - code/admitted/source_profile: 717
 Files shown:
   - conftest.py
   - src/vaultspec_rag/__init__.py
   - src/vaultspec_rag/__main__.py
   - src/vaultspec_rag/_anchor_claim.py
   - src/vaultspec_rag/_atomic_write.py
-709 more files not shown. Use --dry-run-limit 714 or --json for the full list.
+712 more files not shown. Use --dry-run-limit 717 or --json for the full list.
 ```
+
+That run is this project's own source. Another page shows the same command
+against a smaller repository and reports a different admitted count, which is
+the point of running it: the numbers describe the tree in front of you.
 
 The admission summary is the answer: 714 files admitted out of the 906
 considered (714 admitted, 180 rejected, 12 ignored). A gap that size is not a

@@ -24,14 +24,25 @@ uv run vaultspec-rag index --type code --dry-run --dry-run-limit 5
 ```
 
 ```
-Dry run: 93 source-code files would be indexed.
+Dry run: 110 source-code files would be indexed.
 Admission summary:
-  - unowned/rejected/ignored: 12
-  - code/rejected/source_profile_excluded: 865
-  - code/admitted/source_profile: 93
+  - unowned/rejected/ignored: 16
+  - code/rejected/source_profile_excluded: 911
+  - code/admitted/source_profile: 110
+Files shown:
+  - .agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js
+  - .agents/skills/impeccable/scripts/live-browser-dom.js
+  - .agents/skills/impeccable/scripts/live-browser-session.js
+  - .agents/skills/impeccable/scripts/live-browser.js
+  - .agents/skills/impeccable/scripts/modern-screenshot.umd.js
+105 more files not shown. Use --dry-run-limit 110 or --json for the full list.
 ```
 
-Read the count, not the sample. Ninety-three files out of nearly a thousand
+That run is a documentation project, not this one, and the verification guide
+runs the same command against this repository and reports several hundred more.
+The count is about the tree in front of you, which is the reason to run it.
+
+Read the count, not the sample. A hundred and ten files out of a thousand-odd
 considered is the number to weigh against the tree you have in mind. The paths a
 dry run prints - fifty by default, five in the run above because
 `--dry-run-limit 5` asked for five - are the head of the list, not the most
