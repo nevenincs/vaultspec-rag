@@ -174,7 +174,14 @@ Restart Claude Desktop after editing the file.
 
 ### Claude Code
 
-Create or edit `.mcp.json` at the project root:
+Claude Code reads `.mcp.json` at the project root. Check whether one is already
+there before you write it: on a project where `vaultspec-core` is installed,
+that file belongs to its installer, which has written an entry for this server
+already. Keep the written one. Pasting the block below over it does not hold:
+the next `vaultspec-core spec mcps sync` reports the entry as skipped because it
+differs from its definition, and the sync after that rewrites it back to the
+installer's shape, so the edit is gone within two ordinary runs. Use this only
+where nothing has written the file for you:
 
 ```json
 {
