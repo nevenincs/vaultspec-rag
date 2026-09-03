@@ -295,6 +295,10 @@ The same rename applies to the JSON any script reads off the health, status, job
 
 On a small GPU, the dense and sparse encoders halve their batch size and retry on a CUDA out-of-memory error, down to a batch of one. Most cards work without tuning. The knobs below reduce memory pressure before that automatic backoff has to engage, or raise throughput.
 
+The two ceilings behave differently from that backoff, and it is worth knowing which is which. `VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB` and `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB` are not throttles: they are checked at index checkpoints, and a reading above one fails the run with `rss_memory_ceiling` or `cuda_memory_ceiling`. The first breach is latched, so the outcome does not change if a later sample recovers.
+
+Their defaults are single-tenant. The resident-memory ceiling ships at 16384 MiB, which is the same 16 GiB the [installation guide](installation.md) states as the minimum for the default profile, so on a machine sized to that floor one index run may claim all of it. On a host shared with anything else - another tenant, a build, a second project's run - set both ceilings to what you can actually spare rather than leaving the defaults.
+
 To fit a smaller GPU:
 
 - Lower the inner encode sub-batches: `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` and `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` (32 each), and `VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE` (12, smaller because document fragments fill the model's whole window).
