@@ -590,7 +590,7 @@ Exit/JSON: `0` on success; `3` when the service is not running. With `--json`, t
 
 `vaultspec-rag server projects unload <project>`
 
-Unload a project slot on a running service. This is the renamed `evict` verb. The matching MCP tool keeps the name `evict_project`.
+Unload a project slot on a running service. This is the renamed `evict` verb. The service's own admin route keeps the older name, `evict_project`; it is an HTTP route this command calls, not a tool an MCP client can reach.
 
 Arguments:
 
@@ -674,7 +674,7 @@ Exit/JSON: `0` when the request is handled; `3` when the service is not running.
 
 `vaultspec-rag server updates timing <project>`
 
-Change the automatic-update timing for a project. This is the renamed `watcher reconfigure` verb; it restarts the project's watcher with new debounce and cooldown values. The matching MCP tool keeps the name `reconfigure_watcher`.
+Change the automatic-update timing for a project. This is the renamed `watcher reconfigure` verb; it restarts the project's watcher with new debounce and cooldown values. The service's admin route keeps the older name, `reconfigure_watcher`, and like the one above it is reachable over the daemon's HTTP admin surface rather than over MCP.
 
 Arguments:
 
