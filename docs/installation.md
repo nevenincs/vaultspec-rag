@@ -250,7 +250,23 @@ Check the index location and GPU backend:
 uv run vaultspec-rag status
 ```
 
-A healthy result names `cuda` or `mps`, and shows the index location, even before you've indexed anything. It reports CUDA memory as discrete video memory and MPS memory as unified memory, never as zero.
+On a machine that has indexed a vault and no code yet, the first lines read:
+
+```text
+Project index
+Project: /home/you/project
+Index data: /home/you/project/.vault/data/search-data
+Vault documents: 1876
+Source code sections: 0
+Document sections: 0
+Compute: CUDA - NVIDIA GeForce RTX 4080 SUPER (16.0 GiB VRAM)
+```
+
+The capture is cut there; the profile block below it is shown under
+[what you need](#what-you-need-before-you-start), and paths are written in the
+POSIX form because this run was made on Windows.
+
+A healthy result names `cuda` or `mps`, and shows the index location, even before you've indexed anything. It reports CUDA memory as discrete video memory and MPS memory as unified memory, never as zero. The zeroes above are the normal reading before an index exists, not a failure.
 
 ## When something goes wrong
 
