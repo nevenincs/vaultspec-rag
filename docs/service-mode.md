@@ -94,6 +94,24 @@ to see: every dependency reads `ready`, and the last section still reports a
 the recorded mode. Search keeps working throughout. Readiness and provisioning are
 separate questions, and only the first one decides whether a query returns.
 
+The `release:` line reads `(matches this client)` above because it did. When it
+does not, the client refuses the request rather than answering it:
+
+```text
+Refusing to search against the running service.
+This vaultspec-rag client is 0.4.21 but the running service is 0.4.22.
+A daemon from another release drops request fields it does not know rather than
+rejecting them, so the answer would be computed over a different candidate set
+with nothing to show it.
+Next actions:
+  1. Restart the service: vaultspec-rag server stop, then vaultspec-rag server start
+  2. Confirm the release:  vaultspec-rag server status
+```
+
+That happens after an upgrade that left an older daemon running, and the two
+next actions are the whole fix. The wrapping above is unwrapped from the
+terminal's; nothing else is changed.
+
 `doctor` reports PyTorch and accelerator readiness, the compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, which names either a provision step or an install step.
 
 One failure has a detail line that cannot tell you what to do, because the fix is not an install or a provision step: a corrupt collection in the managed store stops the server from starting at all. `server qdrant quarantine` moves it aside so the server starts again, listing the store's collections when you run it with no name and requiring `--yes` to move one. Nothing is deleted and the affected root re-indexes on its next use. To keep working while you investigate, `server start --local-only` skips the managed store entirely. The [backends guide](backends.md) covers both.
