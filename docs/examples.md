@@ -155,9 +155,10 @@ No. Search ranks; it does not enumerate.
 vaultspec-rag search "body_hash" --type vault --max-results 100
 ```
 
-That returned 24 results. `grep -rl body_hash .vault/` matches 2,397 files.
-Asking for a hundred did not produce a hundred, and no flag turns ranking into a
-complete list.
+That returned 24 results, where `grep -rl body_hash .vault/` matches 2,397 files.
+The rows are not printed here because the count is the whole argument: asking for
+a hundred did not produce a hundred, and no flag turns ranking into a complete
+list.
 
 So never answer "how many places do this?" or "have I changed every caller?"
 with a search. Use `grep` or `rg`, which are exhaustive by construction. Search
