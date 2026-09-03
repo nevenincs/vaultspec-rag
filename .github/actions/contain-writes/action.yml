@@ -30,10 +30,20 @@ runs:
         set -euo pipefail
         temp="${RUNNER_TEMP}"
         tools="${RUNNER_TOOL_CACHE}"
+        # Defer to a value the runner's own `.env` already set. That file is
+        # host-level and covers every repo on the runner, so it is the source of
+        # truth; setting a second value here would win by running later and
+        # quietly split one shared cache into a per-repo copy of itself.
         pin() {
+          local current=""
+          eval "current=\${$1:-}"
+          if [ -n "$current" ]; then
+            printf '  %-34s -> %s (runner .env)\n' "$1" "$current"
+            return
+          fi
           mkdir -p "$2"
           printf '%s=%s\n' "$1" "$2" >> "$GITHUB_ENV"
-          printf '  %-34s -> %s\n' "$1" "$2"
+          printf '  %-34s -> %s (default)\n' "$1" "$2"
         }
         echo "pinning writable paths to runner-owned storage"
         pin TMPDIR                           "$temp"
@@ -65,9 +75,17 @@ runs:
         }
         Write-Host "pinning writable paths to runner-owned storage"
         foreach ($name in $pinned.Keys) {
+          # The runner's own `.env` is host-level and covers every repo on that
+          # runner, so a value already set there wins. Overriding it here would
+          # split one shared cache into a per-repo copy of itself.
+          $current = [Environment]::GetEnvironmentVariable($name)
+          if (-not [string]::IsNullOrWhiteSpace($current)) {
+            Write-Host ("  {0,-34} -> {1} (runner .env)" -f $name, $current)
+            continue
+          }
           $value = $pinned[$name]
           New-Item -ItemType Directory -Force -Path $value | Out-Null
-          Write-Host ("  {0,-34} -> {1}" -f $name, $value)
+          Write-Host ("  {0,-34} -> {1} (default)" -f $name, $value)
           "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         }
 
