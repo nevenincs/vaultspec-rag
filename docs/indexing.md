@@ -95,9 +95,17 @@ vaultspec-rag loads three models on the accelerator selected at startup: CUDA
 when available, otherwise Apple silicon MPS. They do not all arrive at once. The
 dense model loads when the embedder is built; the sparse model loads with it
 unless sparse vectors are disabled, in which case it is never placed on the
-device at all; and the reranker loads on its first use, which is why the first
-search of a session can run several seconds longer than the ones after it. Once
-loaded they stay resident together and run their forward passes on that device.
+device at all; and the reranker is lazy, loading on its first use.
+
+Where that lands depends on how you run. The background service pays all three
+at startup - it loads the encoders and then calls the reranker explicitly, which
+is the `loading the reranker` stage its start spinner names - so searches after
+that are uniformly warm. Run a command in-process instead, without a service,
+and the reranker arrives on the first search that needs one, which is why that
+search can take several seconds longer than the ones after it.
+
+Once loaded they stay resident together and run their forward passes on that
+device.
 CPU is never a placement or fallback target. Each model that follows is paired with the reason its bounds and
 toggles are set the way they are; pure tuning numbers live in the
 [configuration knobs](#configuration-knobs) table.
