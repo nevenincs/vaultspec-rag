@@ -103,8 +103,16 @@ Six mutate:
 - `clean_documents` deletes the extracted-document index for a project, and
   `clean_all` deletes the vault, code, and document indexes.
 
-Search filters mirror the CLI, so the [CLI reference](cli.md) documents the
-filter values in full.
+The search filters mostly mirror the CLI, so the [CLI reference](cli.md)
+documents their values. Three parameters do not appear there, and a client
+written from the CLI alone will miss them. The result count is `top_k`, where
+the CLI spells it `--max-results`; the default is 10 either way. And
+`like_ids` and `unlike_ids` take point ids from earlier results and steer the
+dense half of the query toward or away from them, which the CLI has no flag
+for at all. Feedback ids are accepted by `search_vault` and `search_codebase`
+only: `search_documents` and `search_combined` refuse them with
+`unsupported_feedback_for_search_type`, because their results carry no
+cross-collection point identity to resolve the ids against.
 
 Service administration is not exposed over MCP: jobs, logs, project slots, the
 file watcher, service state, and starting or stopping the service all go through
