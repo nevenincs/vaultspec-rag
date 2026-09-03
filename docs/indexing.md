@@ -92,9 +92,13 @@ failures remain visible obligations instead of being hidden behind a content has
 ## Models
 
 vaultspec-rag loads three models on the accelerator selected at startup: CUDA
-when available, otherwise Apple silicon MPS. All three stay resident together
-and run their forward passes on that device; CPU is never a placement or
-fallback target. Each model that follows is paired with the reason its bounds and
+when available, otherwise Apple silicon MPS. They do not all arrive at once. The
+dense model loads when the embedder is built; the sparse model loads with it
+unless sparse vectors are disabled, in which case it is never placed on the
+device at all; and the reranker loads on its first use, which is why the first
+search of a session can run several seconds longer than the ones after it. Once
+loaded they stay resident together and run their forward passes on that device.
+CPU is never a placement or fallback target. Each model that follows is paired with the reason its bounds and
 toggles are set the way they are; pure tuning numbers live in the
 [configuration knobs](#configuration-knobs) table.
 
