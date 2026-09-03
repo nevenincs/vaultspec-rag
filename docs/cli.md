@@ -57,7 +57,7 @@ Complete reference for the `vaultspec-rag` command line. For task-oriented walkt
 
 Run the CLI as `vaultspec-rag <command>` when the package is on your `PATH`. In uv-managed projects, run `uv run vaultspec-rag <command>`. The same binary also runs as `python -m vaultspec_rag`.
 
-Most commands accept `--json` for scripting. `test` and `server warmup` produce human-readable output only. When `--json` is set, the command writes one JSON envelope to stdout shaped `{"ok": bool, "command": str, ...}`. The payload appears under `data` on success, and under `error` and `message` on failure. The full envelope contract lives in the [scripting and automation guide](automation.md).
+Most commands accept `--json` for scripting. `server warmup` produces human-readable output only. When `--json` is set, the command writes one JSON envelope to stdout shaped `{"ok": bool, "command": str, ...}`. The payload appears under `data` on success, and under `error` and `message` on failure. The full envelope contract lives in the [scripting and automation guide](automation.md).
 
 RAG behavior is also configurable through `VAULTSPEC_RAG_*` environment variables. See the [configuration reference](configuration.md) for the complete inventory and defaults.
 
@@ -76,7 +76,7 @@ Pass these before the subcommand. They apply to every invocation.
 | `--log-file`      | text | `service.log`             | Service log filename inside `--status-dir`.                                        |
 | `--version`, `-V` | flag | off                       | Print the version and exit.                                                        |
 
-The `test`, `server`, `install`, and `uninstall` commands skip workspace resolution; every other command resolves a workspace from `--target`.
+The `server`, `install`, and `uninstall` commands skip workspace resolution; every other command resolves a workspace from `--target`.
 
 ## Exit codes
 
