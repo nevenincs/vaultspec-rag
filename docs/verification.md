@@ -39,11 +39,16 @@ Provisioning (vaultspec-rag):
   version floor: ok
 ```
 
-Every line above says ready or ok except one, and that run exits `1`.
+One line above reports a failure state, and that run exits `1`.
 
 So do not gate on the word `ready`. A service can be running, reachable, on a
 matching release, and still fail this check. Scan the lines rather than the
-summary: the first one that does not say `ready` or `ok` names the fault.
+summary - but scan the state each one reports, not the words it happens to use.
+Most of these lines never say `ready` or `ok` at all: `Backend: server`,
+`heartbeat: 13s ago` and `declared mode: tool` are all healthy, and taking the
+first line without those words would stop at the first of them. The fault is
+the line whose state is a problem, and it says so with a dash and an
+explanation after it. Above, that is `install mode: mismatch`.
 
 Two common failures and their fixes. A `release: ... (INCOMPATIBLE)` line means
 the running service is an older build than the client asking for it. Stop and
