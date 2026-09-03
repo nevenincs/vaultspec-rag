@@ -17,6 +17,34 @@ This page covers installing the package, provisioning its dependencies, verifyin
 
 Memory and disk figures use binary units (GiB); download sizes use decimal units (GB).
 
+Both floors belong to the default `managed-service` profile. `vaultspec-rag status`
+reports which one you are on, and what it permits:
+
+```text
+Support profile: managed-service
+Accepted backends: server
+Minimum RAM: 16.0 GiB
+Minimum free disk: 8.0 GiB
+Code support: 500000 files, 128.0 GiB of source, 5000000 sections generated,
+512.0 GiB weighted
+Document support: 100000 files, 512.0 GiB of source, 5000000 sections generated,
+1.0 TiB weighted
+```
+
+Switching to `embedded-local` is a configuration setting rather than a flag:
+`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`, which [configuration](configuration.md) lists
+with the rest of the environment. Indexing runs inside the service, so the variable has
+to be set in the environment the service starts in; exporting it in the shell you type
+a query into changes nothing, and `status` will still report the profile the running
+service was started with.
+
+What it buys in floor it takes off the ceiling, by a factor of ten rather than the two
+the memory figures suggest: 50,000 source files against 500,000, and 500,000 sections
+against five million. It also widens the backend choice rather than narrowing it, as
+the capture above shows - `managed-service` accepts only the managed server, while
+`embedded-local` accepts that and the on-disk store. The trade suits a smaller project
+on a smaller machine, not a large project on one you would like to squeeze.
+
 The GPU requirement isn't a preference: the embedding, sparse, and reranker models are too slow to be useful on a processor. The [architecture overview](architecture.md) explains the design.
 
 **Network access.** Every route downloads from at least one of the Python package index, the Hugging Face model host, and the search-server release host. On a machine with restricted egress, confirm those before you start.
