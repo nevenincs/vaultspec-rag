@@ -165,7 +165,7 @@ case results are returned in fusion order.
 
 The store keeps three independent collections, regardless of backend:
 
-- `vault_docs` - one point per indexed vault document
+- `vault_docs` - one point per vault chunk, heading-aware and capped at `vault_chunk_chars`, so a document usually contributes several
 - `codebase_docs` - one point per source-code chunk
 - `document_docs` - one point per extracted-document chunk
 
