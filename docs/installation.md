@@ -1,4 +1,4 @@
-# Installation
+# Installing vaultspec-rag
 
 vaultspec-rag searches your source code, and the decision records your project keeps in `.vault/`, by meaning rather than by keyword. The [project overview](../README.md) covers what it is and why it exists.
 
