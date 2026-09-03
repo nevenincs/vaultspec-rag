@@ -31,10 +31,14 @@ Every `--json` response is one JSON object with `ok`, `command`, and then
 either `data` on success or `error` and `message` on failure. Error envelopes
 may carry extras such as `port` or a `remediation` array.
 
-`command` is a stable identifier for the operation, not the command path you
-typed. `search` reports `search`, but `index` reports `indexing` and
-`server jobs` reports `service.jobs`. Match on it only against a value you have
-observed.
+`command` is an identifier for the operation rather than the command path you
+typed, and it is not always the subcommand's name: `search` reports `search`,
+but `server jobs` reports `service.jobs`. It is not stable across a single
+command's outcomes either. `index` reports `index` on the dry-run envelope, and
+one of its failure paths - an unreachable service port - reports `indexing`
+instead. So match on it only against a value you have observed for the exact
+command and outcome you are handling, and never assume the success and error
+envelopes of one command agree.
 
 Success, with most per-hit fields elided:
 
