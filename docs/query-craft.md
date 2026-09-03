@@ -50,32 +50,45 @@ ranking rather than competing with it.
 
 ### Narrowing document results
 
-The same query against a vault of 555 sections, narrowed two ways:
+The same query against one project's vault, narrowed two ways:
 
 ```
 uv run vaultspec-rag search "cache control on deployed assets" --type vault --doc-type adr
 ```
 
-```
-1. Decision record: documentation cache policy
-2. Decision record: deployment cache policy
-3. Decision record: landing-page cache policy
+```text
+1. .vault/adr/2026-08-28-docs-site-adr.md
+   adr | feature: docs-site | 2026-08-28
+2. .vault/adr/2026-07-01-neve-deployment-adr.md
+   adr | feature: neve-deployment | 2026-07-01
+3. .vault/adr/2026-06-28-landing-page-adr.md
+   adr | feature: landing-page | 2026-06-28
+4. .vault/adr/2026-09-02-docs-site-version-truth-adr.md
+   adr | feature: docs-site | 2026-09-02
 ```
 
-Three decision records, which is the shape you want when you're asking why
-something was decided. Ask instead for everything on one feature:
+Every result is an `adr`, which is the filter doing its work and the shape you
+want when you're asking why something was decided. The matching passage that
+prints under each result is cut from the blocks here; the ranks, the paths, and
+the type-and-feature lines are as printed. Ask instead for everything on one
+feature:
 
 ```
 uv run vaultspec-rag search "cache control on deployed assets" --type vault --feature docs-site
 ```
 
-```
-1. Plan record: documentation cache policy
-2. Execution record: cache-control implementation
-3. Decision record: documentation cache policy
+```text
+1. .vault/plan/2026-08-28-docs-site-plan.md
+   plan | feature: docs-site | 2026-08-28
+2. .vault/exec/2026-08-28-docs-site/2026-08-28-docs-site-W05-P09-S50.md
+   exec | feature: docs-site | 2026-08-28
+3. .vault/adr/2026-08-28-docs-site-adr.md
+   adr | feature: docs-site | 2026-08-28
 ```
 
-Same query, different question. One asked "what was decided", the other asked
+Nine came back and the first three are shown. A plan, an execution record, and
+the decision behind them: the document type is no longer fixed, and the feature
+is. Same query, different question. One asked "what was decided", the other asked
 "what happened on this feature". Neither needed better wording.
 
 ### Narrowing code results

@@ -88,30 +88,40 @@ vaultspec-rag keeps your code and your `.vault/` records in separate *domains* a
 Write a query that pairs the concept with the concrete words the code itself contains, such as symbol and type names:
 
 ```
-uv run vaultspec-rag search "authentication middleware session token" --type code
+uv run vaultspec-rag search "parse the query text into filters" --type code
 ```
 
-Each search returns up to 10 results, each with a rank, a file location, and the matching lines. Yours name your own files:
+Each search returns up to 10 results, each with a rank, a file location, and the
+matching lines. The capture below is that command run against this project's own
+source, so yours will name your files instead. Each result's matching lines are
+cut here to the first one; on your terminal they run to a dozen lines or more:
 
+```text
+1. src/vaultspec_rag/search/_parsing.py:51
+   def parse_query(raw_query: str) -> ParsedQuery:
+2. src/vaultspec_rag/search/_searcher.py:1129
+           """Search documents from one already encoded query."""
+3. src/vaultspec_rag/search/_parsing.py:1
+   """Query parsing: extract metadata filter tokens from raw queries.
 ```
-1. src/auth/middleware.py:42
-   def authenticate(request): ...
-2. src/auth/session.py:118
-   class SessionManager: ...
-```
+
+Ten came back; three are shown. The ranking is the point: the function that
+does the thing you asked for is first, and one file can hold several of the
+results because a result is a passage rather than a file.
 
 ## Step 4: Narrow the search to part of your project
 
 Run the same query again with a path filter:
 
 ```
-uv run vaultspec-rag search "authentication middleware session token" --type code --include-path 'src/auth/**'
+uv run vaultspec-rag search "parse the query text into filters" --type code --include-path 'src/vaultspec_rag/search/_parsing.py'
 ```
 
 Only the filter changed, so any difference in what comes back is the filter's
-doing. Expect fewer hits, all under `src/auth/`; if the path does not exist in
-your tree, expect none, which is the filter working rather than the search
-failing.
+doing. Narrowing to that one file takes the same search from ten results to
+three, all of them inside it. Point the filter at a path your own tree has; if
+it does not exist, expect none, which is the filter working rather than the
+search failing.
 
 ## When you are finished
 
