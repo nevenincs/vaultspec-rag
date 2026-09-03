@@ -64,9 +64,18 @@ Executable: ~/.vaultspec-rag/bin/qdrant/1.19.0/qdrant
 Address: http://127.0.0.1:8765
 Connection: accepting requests
 Process: running, started by vaultspec-rag
+Process ID: 36348
+Process port: 8765
+Available installs:
+  1.19.0 - downloaded release (current)
+  1.18.2 - downloaded release
 ```
 
-The version and paths reflect the release you have installed.
+The version and paths reflect the release you have installed. The executable
+path is written above in its short form; the tool prints it in full, with the
+platform's file extension. `Available installs` is every managed binary still
+on disk rather than only the one in use, which is what the next paragraph's
+`--keep-current` preserves one of.
 
 **Remove installs.** `server qdrant clean` deletes managed Qdrant installs. Deletion requires `--yes`; without it the command prints a preview. Pass `--keep-current` to preserve the pinned version in use. It never touches index data.
 
