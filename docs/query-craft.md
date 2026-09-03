@@ -229,24 +229,32 @@ exact-path filter.
 Search always returns its ten closest chunks, so a query with nothing to match
 looks the same as one with a poor answer. `--scores` separates them.
 
-Both blocks below come from `--scores` runs against this project's vault, cut
-to their top three rows; each full run returned the ten described above.
+Both runs below are against this project's vault, cut to their top three rows;
+each returned the full ten.
 
 A query the corpus genuinely answers scores in the tenths:
 
 ```
-1. .vault/audit/large-index-resilience-ledger-concurrency-audit.md (score 0.7836)
-2. .vault/research/service-concurrency-research.md (score 0.7180)
-3. .vault/adr/store-eviction-log-rotation-adr.md (score 0.4746)
+uv run vaultspec-rag search "graph rebuild race" --type vault --scores
+```
+
+```text
+1. .vault/audit/2026-03-09-graph-embedding-round36-audit.md (score 0.8316)
+2. .vault/research/2026-04-02-service-graph-research.md (score 0.8267)
+3. .vault/audit/2026-04-02-release-readiness-audit.md (score 0.7379)
 ```
 
 A query with nothing relevant scores in the thousandths, and still fills all ten
 rows:
 
 ```
-1. .vault/adr/rate-collapse-baseline-adr.md (score 0.0013)
-2. .vault/audit/encode-batch-adaptivity-audit.md (score 0.0008)
-3. .vault/adr/service-graph-adr.md (score 0.0002)
+uv run vaultspec-rag search "medieval falconry glove stitching patterns" --type vault --scores
+```
+
+```text
+1. .vault/audit/2026-03-07-test-compliance-round2-audit.md (score 0.0044)
+2. .vault/plan/2026-04-04-vaultragignore-plan.md (score 0.0008)
+3. .vault/audit/2026-03-08-test-mandate-audit.md (score 0.0007)
 ```
 
 Three orders of magnitude separate them. Absolute scores aren't comparable
