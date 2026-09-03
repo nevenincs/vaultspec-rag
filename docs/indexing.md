@@ -64,7 +64,7 @@ The policy names its source-admission behavior so upgrades cannot silently widen
 | `conventional-v1`  | Known conventional source extensions enter the `code` domain       |
 | `explicit-only-v1` | Nothing enters code or document unless the caller assigns an owner |
 
-`conventional-v1` is the compatibility default. The selected profile, ordered routes,
+`conventional-v1` is the compatibility default, and today it is the only profile a shipped install runs: nothing in the configuration surface selects `explicit-only-v1`, which the indexer honours when a caller supplies a policy and no environment variable, flag, or config key sets one. The table describes the admission contract the fingerprint records, not a choice available at the command line. The selected profile, ordered routes,
 preprocessing targets and versions, ignores, decoder policy, and schema versions are
 fingerprinted independently for code and document generations. Invalid profiles,
 targetless legacy rules, unknown targets, or conflicting ownership fail before mutable
