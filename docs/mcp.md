@@ -138,8 +138,12 @@ watcher, which keeps the index current without being asked.
 ## Configure a client by hand
 
 `install` does not write configs for every client. If yours is one it misses,
-copy an example below. Both use the console-script shape, which matches `tool`
-mode; for `dependency` or `dev` mode, set `command` to `uv` and `args` to
+copy an example below. Both use the console-script shape, which runs wherever
+`vaultspec-search-mcp` is on your PATH - a standalone tool install or a prebuilt
+binary. It is not what the installer writes for `tool` mode: that renders
+`uvx --from vaultspec-rag[mcp] python -m vaultspec_rag.server`, which fetches
+the extra rather than requiring it to be installed already. For `dependency` or
+`dev` mode, set `command` to `uv` and `args` to
 `["run", "--no-sync", "python", "-m", "vaultspec_rag.server"]`.
 
 Add `"args": ["--read-only"]` to either example to withhold the mutating tools.
