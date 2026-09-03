@@ -63,6 +63,13 @@ Both views carry the same payload. "Presence" says when a field is absent.
 | `package_version`      | string  | always              | Release of the daemon that wrote the record.                                                              |
 | `python_version`       | string  | always              | Python running the daemon.                                                                                |
 | `phase`                | string  | always              | Lifecycle phase, for example `running` or `warming`.                                                      |
+| `phase_detail`         | string  | always              | Human-readable detail beside `phase`, empty once running; during start-up it names the stage, for example `loading the reranker`. |
+| `parent_pid`           | integer | always              | PID of the process that spawned the daemon.                                                               |
+| `launch_token`         | string  | spawned services    | Per-spawn identifier the launcher passes in and matches back, so it can tell the process it started from another that was already coming up. |
+| `executable`           | string  | always              | Absolute path to the interpreter running the daemon.                                                      |
+| `prefix`               | string  | always              | Environment prefix of that interpreter.                                                                   |
+| `base_prefix`          | string  | always              | Base installation prefix, which differs from `prefix` inside a virtual environment.                       |
+| `virtual_env`          | string  | always              | Active virtual-environment path, or `null` when the daemon runs outside one.                              |
 | `qdrant_pid`           | integer | managed server only | PID of the managed Qdrant process.                                                                        |
 | `qdrant_alive`         | boolean | managed server only | Whether the daemon last observed that process alive.                                                      |
 | `qdrant_port`          | integer | managed server only | Port the managed Qdrant serves on.                                                                        |
