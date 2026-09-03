@@ -296,7 +296,23 @@ Another process is bound there. Use one port consistently: pass `--port N` or se
 
 ### Status reports crashed or divergent (exit 4)
 
-The status file disagrees with the live process. Re-run `server start` to overwrite it cleanly. If that doesn't clear it, delete the status file at `~/.vaultspec-rag/service.json` and start again.
+Exit `4` covers two different faults, and the fix for one is the wrong move for
+the other. Read the label `status` printed beside it rather than the code alone.
+
+**`crashed (port silent)` or `crashed (heartbeat stale)`, or a divergent status
+file.** No daemon is serving. The status file disagrees with the live process -
+naming a process id that is no longer alive, for instance. Re-run `server start`
+to overwrite it cleanly, and if that does not clear it, delete the status file at
+`~/.vaultspec-rag/service.json` and start again.
+
+**`degraded`, which reads as "a service (PID N) holds the machine singleton but
+has not published its address".** A daemon is alive and holding the lock; what is
+missing or unreadable is the pointer it should have published. Deleting the file
+does not help - the holder is the only writer of canonical discovery, so nothing
+you delete makes it publish - and starting a second daemon only loses the race
+for the lock. Run `server reconcile` and give it time to converge. If it exits
+without converging, the holder is wedged: stop it (`server stop`, and on a
+resistant process by its own PID, which the label names) and start again.
 
 ### The service won't stop
 
