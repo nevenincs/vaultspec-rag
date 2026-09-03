@@ -57,8 +57,8 @@ Both views carry the same payload. "Presence" says when a field is absent.
 | `port`                 | integer | always              | TCP port the daemon serves on.                                                                            |
 | `started_at`           | string  | always              | ISO-8601 timestamp of the first publication.                                                              |
 | `last_heartbeat`       | string  | always              | ISO-8601 timestamp of the most recent heartbeat.                                                          |
-| `heartbeat_interval_s` | integer | always              | Seconds between heartbeats.                                                                               |
-| `stale_after_s`        | integer | always              | Seconds after which a consumer treats the record as stale.                                                |
+| `heartbeat_interval_s` | integer | always              | Seconds between heartbeats. Fixed at 15; see below.                                                       |
+| `stale_after_s`        | integer | always              | Seconds after which a consumer treats the record as stale. Fixed at 60; see below.                        |
 | `service_token`        | string  | always              | Bearer token for the daemon's token-gated HTTP routes.                                                    |
 | `package_version`      | string  | always              | Release of the daemon that wrote the record.                                                              |
 | `python_version`       | string  | always              | Python running the daemon.                                                                                |
@@ -138,6 +138,8 @@ The verdict also preserves `holder_pid`, `pointer_pid`, `port`, `service_token`,
 The daemon rewrites `last_heartbeat` every `heartbeat_interval_s` seconds. Treat the daemon as stale, and not live, when `now - last_heartbeat > stale_after_s`.
 
 Read both thresholds from the record rather than hard-coding them. If the payload predates `stale_after_s`, fall back to a 60-second window.
+
+Today the daemon publishes 15 and 60. Neither is configurable - there is no environment variable, flag, or config key for either - so a consumer that wants a different window enforces it on its own side rather than looking for a setting that does not exist. Reading them from the record is what keeps that true if the daemon's values ever change.
 
 **PID-reuse caveat.** After a crash without clean shutdown, a recorded `pid` may belong to an unrelated process. Don't treat a live `pid` alone as proof the daemon is up. Combine it with a fresh `last_heartbeat`. Where you need stronger proof, verify the `service_token` against the target port's `/health` response.
 
