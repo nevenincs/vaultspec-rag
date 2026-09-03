@@ -976,7 +976,7 @@ Options:
 | -------- | ---- | ------- | --------------------------------- |
 | `--json` | flag | off     | Emit one JSON envelope to stdout. |
 
-Human output lists the `mode` (`default` or `off`), whether a config is present and valid, the rule count, and an `Effect` line summarising whether hooks will run. The `--json` envelope carries `mode`, `root`, `config_present`, `config_valid`, `rule_count`, and `would_run`.
+Human output lists the `mode` (`default` or `off`), whether a config is present and valid, the rule count, and an `Effect` line summarising whether hooks will run. The `--json` envelope carries twelve fields: `mode`, `root`, `config_present`, `config_valid`, `config_error_kind`, `config_error_message`, `rule_count`, `schema_version`, `targets`, `extractor_versions`, `path_independent_rules`, and `would_run`. On a root with no config the two error fields are `null`, `targets` and `extractor_versions` are empty, and `would_run` is `false`.
 
 Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
 

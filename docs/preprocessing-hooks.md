@@ -122,7 +122,8 @@ uv run vaultspec-rag preprocess status          # mode, config presence, and rul
 
 - `preprocess status` reports the effective execution mode, schema version, targets,
   extractor versions, rule count, and whether the kill switch prevents hooks from
-  running.
+  running. Its `--json` envelope carries more than that human summary shows; the
+  [CLI reference](cli.md) names every field.
 
 All four accept `--json` for scripting.
 
