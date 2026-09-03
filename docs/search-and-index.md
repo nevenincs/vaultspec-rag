@@ -21,6 +21,21 @@ Search defaults to your vault documents:
 uv run vaultspec-rag search "how does the watcher debounce changes"
 ```
 
+```text
+1. .vault/adr/2026-06-02-watcher-targeted-reindex-adr.md
+   adr | feature: watcher-targeted-reindex | 2026-06-02
+   # `watcher-targeted-reindex` adr: `watcher targeted reindex contract` | (**status:** `accepted`)
+2. .vault/adr/2026-06-18-watcher-targeted-reindex-adr.md
+   adr | feature: watcher-targeted-reindex | 2026-06-18
+   ## Consequences
+```
+
+That run is against this project's own vault. Each result is the document, then
+its type and feature, then the passage that matched; ten came back and the first
+two are shown, with each passage cut to its first line. The rest of this page
+varies that one command rather than introducing new shapes, so this is what
+every example below prints.
+
 To search source code instead, add `--type code`:
 
 ```
