@@ -177,7 +177,7 @@ These bound the segment and queue geometry of one index run, its memory use, and
 | `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`           | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB)                             | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`                 | Fraction of CUDA memory the index allocator may reserve                                                | -        |
 | `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB`           | integer | `0` (auto-derive)     | Free device memory required before this process loads model stacks (MiB)                               | -        |
-| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service                                                       | -        |
+| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service; `managed-service` or `embedded-local`                 | -        |
 
 #### How the CUDA ceiling and admission floor derive
 
