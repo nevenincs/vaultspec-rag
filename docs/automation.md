@@ -60,6 +60,16 @@ Success, with most per-hit fields elided:
 }
 ```
 
+`data` carries more than the hits, and two of its fields answer questions a
+script would otherwise shell out for. `via` names what served the query, so a
+run that quietly fell back to the local store is visible without checking the
+service separately. `index_state` describes the index the query actually ran
+against: `indexed_count`, the root it was built from, and `target_matches`,
+which is false when the index belongs to a different tree than the one you
+asked about. `search_type`, `query` and `summary` echo the request, and
+`timing` breaks the run into phases. Measured on one run against this project's
+vault: `via` was `service`, `indexed_count` 5140, `target_matches` true.
+
 Error:
 
 ```json
