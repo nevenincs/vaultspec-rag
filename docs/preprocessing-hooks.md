@@ -135,8 +135,13 @@ All four accept `--json` for scripting.
 ## Invocation envelope
 
 Every extractor receives a versioned JSON envelope in the
-`VAULTSPEC_PREPROCESS_INVOCATION` environment variable. Extractors can load and validate
-it with `vaultspec_rag.indexer._preprocess_schema.load_preprocess_invocation()`.
+`VAULTSPEC_PREPROCESS_INVOCATION` environment variable. Rules run as a subprocess, so an
+extractor in any language reads that variable and parses the JSON below; nothing about
+this contract is Python-specific. A Python extractor may instead call
+`vaultspec_rag.indexer._preprocess_schema.load_preprocess_invocation()`, which validates
+the envelope for you - but the leading underscore is not decoration. That module is
+internal, nothing re-exports it, and it can move between releases, so an extractor you
+intend to keep is better off parsing the documented shape.
 
 ```json
 {
