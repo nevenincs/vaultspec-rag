@@ -15,7 +15,7 @@ This page covers installing the package, provisioning its dependencies, verifyin
 - **8 GiB of free disk:** on the volume holding the search index, not the volume holding the model cache. The `embedded-local` profile lowers this to 5 GiB.
 - **Linux, Windows, or Apple silicon macOS.**
 
-Memory and disk figures use binary units (GiB); download sizes use decimal units (GB).
+System memory and disk figures use binary units (GiB); download sizes use decimal units (GB). Video memory is the exception on both counts: the figure above is decimal, because that is the unit the tool reports it in - its `vram_gb` field converts the card's mebibytes to gigabytes - and card capacities are advertised the same way.
 
 Both floors belong to the default `managed-service` profile. `vaultspec-rag status`
 reports which one you are on, and what it permits:
@@ -146,11 +146,15 @@ The following steps run in order. Each says which routes it applies to.
 uv run vaultspec-rag install
 ```
 
-It provisions three things:
+It provisions three things and enrols a fourth:
 
 - The CUDA (`cu130`) PyTorch build, which it records as a Linux and Windows package source in `pyproject.toml`. This reports `configured, sync pending`. The source marker is inactive on macOS, where normal resolution installs the MPS-capable standard wheel.
 - The dense, sparse, and reranker model files, in the Hugging Face cache.
 - The pinned Qdrant search-server binary, downloaded and checksum-verified.
+
+It also enrols the agent-facing MCP search surface, which is on by default and
+writes an entry your coding agent can call. `--no-mcp` opts out and leaves a
+workspace with the command line only. See [use with MCP clients](mcp.md).
 
 The PyTorch step asks before editing `pyproject.toml`, and **the prompt defaults to no**. Type `y` to accept. For an unattended run, pass `--yes` to accept it, or `--no-torch-config` to skip that step and manage PyTorch yourself.
 
@@ -163,6 +167,8 @@ Each dependency reports its outcome as `created`, `updated`, `unchanged`, `skipp
 - `--local-only` selects the embedded on-disk store, skips the Qdrant download, and persists the choice so a later `server start` honors it. Throughput drops under concurrent load. It doesn't change Python dependencies, CUDA, or model downloads. See [backends](backends.md).
 - `--skip-torch`, `--skip-models`, `--skip-qdrant` each drop one dependency. `--skip-qdrant` is redundant under `--local-only`.
 - `--no-torch-config` leaves `pyproject.toml` untouched.
+- `--no-mcp` skips the MCP enrolment and its optional dependency, leaving a
+  CLI-only workspace. On Windows it also skips `pywin32`.
 - `--dry-run` reports `preview only` for every step, writes nothing, and never prompts.
 
 The [command-line reference](cli.md) has the complete flag set.
