@@ -5,10 +5,12 @@ the ones it answers badly. Every command and every number on this page came from
 a real run against this repository, whose index holds 5,140 vault documents and
 11,279 code passages.
 
-Searches return ten results by default. Raise that with `--max-results` when you
-are surveying rather than looking something up. Result snippets below are
-shortened, and example filenames are shown without their date prefix; the paths,
-counts, and scores are as the tool reported them.
+Ten results is the default, and it is a ceiling rather than a quota: a query
+that matches fewer passages returns fewer, so a block below with two or three
+rows is the whole answer and not an abridged one. Raise the cap with
+`--max-results` when you are surveying rather than looking something up. Result
+snippets below are shortened, and example filenames are shown without their date
+prefix; the paths, the ordering, and the scores are as the tool reported them.
 
 [Writing a query that finds it](query-craft.md) covers phrasing and the full
 filter surface. This page covers what to reach for and when.
