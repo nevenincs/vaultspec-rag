@@ -105,6 +105,14 @@ if ! echo "$out" | jq -e '.ok' >/dev/null; then
 fi
 ```
 
+That gate is right for the commands that answer a question, such as `search`
+and `index`. It is not the whole verdict for the diagnostics. `server doctor`
+sets `ok` from whether the dependencies and the service are ready, and computes
+its exit code from a second axis - a dead daemon, a declared-versus-observed
+mode mismatch, a version floor - so a host whose dependencies are all ready and
+whose install mode has drifted reports `ok: true` and exits `1`. Gate a
+diagnostic on its exit code, and read `ok` for what it says.
+
 The `message` field is written for people and gets reworded. Branch on the
 `error` code:
 
