@@ -67,7 +67,7 @@ uv run vaultspec-rag server jobs
 ```
 Jobs
 Address: http://127.0.0.1:8766
-Displayed: 20 jobs
+Displayed: 3 jobs
 Total: 262 jobs
 Displayed jobs: 0 active, 0 waiting, 3 finished, 0 failed
 Showing: active, waiting, failed, then latest finished
