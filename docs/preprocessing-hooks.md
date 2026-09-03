@@ -87,7 +87,12 @@ Rule fields:
   different paths to share an extraction-cache entry. Enable it only when output never
   embeds the source path in text, anchors, locators, or metadata.
 - **`max_source_bytes`** (optional) - a positive per-rule input ceiling. The effective
-  ceiling is the lower of this value and the active document/source support profile.
+  ceiling is the lower of this value and the document source limit of the active
+  support profile, which `vaultspec-rag status` prints as the `Document support`
+  line: 512 GiB under the default `managed-service` profile and 64 GiB under
+  `embedded-local`. Those are whole-corpus figures applied per file, so unless you
+  are extracting something extraordinary this rule's own value is the one that
+  binds.
 - **`[rule.options]`** (optional) - an opaque table forwarded to your extractor for
   its own use.
 
