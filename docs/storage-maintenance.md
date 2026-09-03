@@ -41,12 +41,12 @@ uv run vaultspec-rag server storage survey
 ```
 
 ```
-144 namespaces  (orphaned=79 unknown=0 unverifiable=0 live=65)  300.8 GiB on disk
-  orphaned r02c5d80096c3_         0 pts   2.1 GiB  C:\Users\me\AppData\Local\Temp\.tmpMum3wV
-  live     r45b56789f389_     12408 pts   3.4 GiB  C:\projects\my-project
+34 namespaces  (orphaned=10 unknown=0 unverifiable=0 live=24)  33.4 GiB on disk  [19 temp-rooted]
+  orphaned r02c5d80096c3_         2 pts  318.6 MiB  C:\Users\me\AppData\Local\Temp\.tmpMum3wV  [temp]
+  live     r45b56789f389_     12322 pts  1020.3 MiB  C:\projects\my-project
 ```
 
-Each row reads left to right as the classification, the namespace prefix, the document count, the on-disk footprint, and the attributed root path; a namespace no root can be attributed to shows `(unattributable)` in the final column. `--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
+Two of the thirty-four rows are shown, and the namespace prefixes and root paths are stand-ins; the classifications, counts, and footprints are as the tool reported them, and the two progress lines it prints while it works are cut. Each row reads left to right as the classification, the namespace prefix, the document count, the on-disk footprint, and the attributed root path; a namespace no root can be attributed to shows `(unattributable)` in the final column. A row whose root lives under an operating-system temp directory carries a trailing `[temp]`, and the summary line counts those separately. `--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
 
 A running daemon answers from a cached survey snapshot rather than re-measuring every namespace per call, so the survey stays fast (sub-second) no matter how many namespaces the store holds. The snapshot is computed shortly after startup and refreshed by every maintenance cycle; the response carries `computed_at` (when the underlying survey ran) and `source` (`cache` or `fresh`) so a consumer can see exactly how old the data is. Survey data is therefore eventually-consistent, up to one maintenance interval behind. When you need up-to-the-second truth - for example immediately after indexing or deleting a namespace - pass `--fresh` (HTTP: `?fresh=true`), which recomputes the survey and reseeds the cache.
 
