@@ -108,7 +108,10 @@ Run the same query again with a path filter:
 uv run vaultspec-rag search "authentication middleware session token" --type code --include-path 'src/auth/**'
 ```
 
-Only the filter changed, so the shorter list is its doing.
+Only the filter changed, so any difference in what comes back is the filter's
+doing. Expect fewer hits, all under `src/auth/`; if the path does not exist in
+your tree, expect none, which is the filter working rather than the search
+failing.
 
 ## When you are finished
 
