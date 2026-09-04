@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
 modified: '2026-09-04'
 body_schema: body-v2
-body_hash: 'sha256:17fba721472c2088ef0b579159beefc008bdae381a995d09d0ef1d95b5cbf55d'
+body_hash: 'sha256:5e9695aca044fbd9fdcf6ef3be9077b98a7ea00bab0a1bd414500fa4291e9880'
 ---
 
 # `cuda-provisioning` plan
@@ -58,7 +58,7 @@ Stage hostile provisioning conditions against real uv without touching a live in
 Build the redirected environment, the loopback wheel index, and the holder subprocess helper, then prove they reproduce the real failures.
 
 - [x] `W02.P02.S03` - Add the redirected uv environment fixture, a loopback wheel index serving stand-in distributions, and a holder subprocess helper; `src/vaultspec_rag/tests/_uv_env_harness.py`.
-- [ ] `W02.P02.S04` - Prove the harness reproduces the held-environment destruction, the resolve-stage safe failure, and a real uv receipt the matcher accepts; `src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py`.
+- [x] `W02.P02.S04` - Prove the harness reproduces the held-environment destruction, the resolve-stage safe failure, and a real uv receipt the matcher accepts; `src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py`.
 
 ## Wave `W03` - repair transaction
 
