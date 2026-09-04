@@ -6,7 +6,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:79eda9a1a8b21ee15f5c46382fc2b2b887f10b0e0bc691c33ed3ec3195cc280f'
+body_hash: 'sha256:96a882ba4ed3802fb745f50c92b55d10ce25403d783323c4f3ca75def25d0c80'
 related:
   - '[[2026-09-04-cuda-provisioning-W01-P01-S01]]'
   - '[[2026-09-04-cuda-provisioning-W01-P01-S02]]'
@@ -20,6 +20,7 @@ related:
   - '[[2026-09-04-cuda-provisioning-W04-P04-S10]]'
   - '[[2026-09-04-cuda-provisioning-W04-P04-S11]]'
   - '[[2026-09-04-cuda-provisioning-W05-P05-S12]]'
+  - '[[2026-09-04-cuda-provisioning-W05-P05-S13]]'
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-04-cuda-provisioning-plan]]'
   - '[[2026-09-04-cuda-provisioning-research]]'
@@ -49,6 +50,7 @@ Auto-generated index of all documents tagged with `#cuda-provisioning`.
 - `2026-09-04-cuda-provisioning-W04-P04-S10` - Collapse the torch pin version to the single lockfile-backed derivation
 - `2026-09-04-cuda-provisioning-W04-P04-S11` - Report environment holders as an informational readiness dimension
 - `2026-09-04-cuda-provisioning-W05-P05-S12` - Add the hosted Windows pull-request leg covering the provisioning proof class
+- `2026-09-04-cuda-provisioning-W05-P05-S13` - Correct the installation account of what a blocked reinstall does, what a bad wheel URL returns, and how a repair is refused
 
 ### plan
 
