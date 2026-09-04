@@ -283,9 +283,12 @@ uv run vaultspec-rag search "greeting string include:locale" --type code --no-de
 
 The `search_codebase` MCP tool exposes the same control as typed
 `exclude_domains` / `only_domains` / `include_domains` parameters. Set the
-per-project defaults, meaning which domains hide, which demote, and how hard, with the
-`code_noise_hide_domains`, `code_noise_demote_domains`, and
-`code_noise_demote_penalty` configuration settings (see the configuration guide).
+per-project defaults, meaning which domains hide, which demote, and how hard, with
+`VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`, `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS`, and
+`VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY`, which the
+[configuration guide](configuration.md) carries as rows. Through a config source they are
+the same three names with the prefix stripped, but the guide is keyed on the variables,
+so those are the names to search for there.
 
 ## Every filter in one place
 
