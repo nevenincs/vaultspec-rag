@@ -339,6 +339,7 @@ def repair_tool_torch(
     from ..cli._gpu_errors import RuntimeEnvKind, classify_interpreter_env
     from ..cli._process import (
         _probe_daemon_accelerator,
+        accelerator_probe_is_torch_absent_by_design,
         accelerator_probe_is_torch_installation_defect,
     )
 
@@ -355,6 +356,12 @@ def repair_tool_torch(
             "tool interpreter already has CUDA-ready torch",
         )
     blocking, detail = probe
+    if accelerator_probe_is_torch_absent_by_design(detail):
+        return ToolTorchRepairOutcome(
+            ToolTorchRepairAction.NOT_APPLICABLE,
+            "torch was never requested in this environment; install the GPU "
+            "extra to run searches locally",
+        )
     if not blocking or not accelerator_probe_is_torch_installation_defect(detail):
         return ToolTorchRepairOutcome(ToolTorchRepairAction.CUDA_UNVERIFIED, detail)
 

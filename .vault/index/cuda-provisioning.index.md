@@ -6,7 +6,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:1c60af289e2f294b83896555f4e8d865dc86bdd3257477d693332da200e17e3d'
+body_hash: 'sha256:1ca5b2a6568fcfb014aaa73c8fba0ba774ece9aee2b56aa550a10cfcfc03e1d8'
 related:
   - '[[2026-09-04-cuda-provisioning-W01-P01-S01]]'
   - '[[2026-09-04-cuda-provisioning-W01-P01-S02]]'
@@ -16,6 +16,7 @@ related:
   - '[[2026-09-04-cuda-provisioning-W03-P03-S06]]'
   - '[[2026-09-04-cuda-provisioning-W03-P03-S07]]'
   - '[[2026-09-04-cuda-provisioning-W03-P03-S08]]'
+  - '[[2026-09-04-cuda-provisioning-W04-P04-S09]]'
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-04-cuda-provisioning-plan]]'
   - '[[2026-09-04-cuda-provisioning-research]]'
@@ -41,6 +42,7 @@ Auto-generated index of all documents tagged with `#cuda-provisioning`.
 - `2026-09-04-cuda-provisioning-W03-P03-S06` - Separate repair consent from the file-overwrite flag and constrain repair scope to the torch wheel, preserving installed version and receipt extras
 - `2026-09-04-cuda-provisioning-W03-P03-S07` - Render every repair outcome in human mode, not only under JSON
 - `2026-09-04-cuda-provisioning-W03-P03-S08` - Prove repair safety and receipt postconditions, including that a refusal launches no uv child
+- `2026-09-04-cuda-provisioning-W04-P04-S09` - Treat torch absent by design as a state rather than an installation defect
 
 ### plan
 
