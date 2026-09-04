@@ -19,10 +19,10 @@ from tools.binaries.torch_channel import (
     TORCH_PLATFORM_TAGS,
     TorchChannelError,
     index_url,
-    locked_version,
     pip_extra_args,
     wheel_url,
 )
+from vaultspec_rag.torch_config._lockfile import locked_torch_version
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +56,10 @@ def test_every_accelerated_target_pins_the_locked_build(target: str) -> None:
 
     assert url is not None
     # `+` is URL-encoded in a PEP 427 filename served over HTTP.
-    assert locked_version().replace("+", "%2B") in url
+    assert (
+        locked_torch_version(Path(__file__).resolve().parents[3]).replace("+", "%2B")
+        in url
+    )
     assert url.endswith(f"-{TORCH_PLATFORM_TAGS[target]}.whl")
 
 
@@ -108,7 +111,7 @@ def test_the_pin_tracks_the_project_config_rather_than_restating_it() -> None:
         if package["name"] == "torch"
         and package.get("source", {}).get("registry") == index_url()
     }
-    assert accelerated == {locked_version()}
+    assert accelerated == {locked_torch_version(Path(__file__).resolve().parents[3])}
 
 
 def test_the_pinned_targets_match_the_projects_own_platform_markers() -> None:

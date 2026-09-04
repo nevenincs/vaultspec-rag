@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
 modified: '2026-09-04'
 body_schema: body-v2
-body_hash: 'sha256:f2c3f8a2dc35ed88a52e037cb89b6dad3c33272ca9b8cec02e699f1e17bf0bbb'
+body_hash: 'sha256:4180c2cd1926bf1cac9dfcc6c366daacd939cdfa9c371e3a5b81144c040dcd6f'
 ---
 
 # `cuda-provisioning` plan
@@ -82,7 +82,7 @@ Stop reading a deliberate torch-free install as defective, collapse the duplicat
 Correct defect classification, the pin version source, and readiness reporting.
 
 - [x] `W04.P04.S09` - Treat torch absent by design as a state rather than an installation defect; `src/vaultspec_rag/cli/_process.py`.
-- [ ] `W04.P04.S10` - Collapse the torch pin version to the single lockfile-backed derivation; `src/vaultspec_rag/torch_config/_constants.py and tools/binaries/torch_channel.py`.
+- [x] `W04.P04.S10` - Collapse the torch pin version to the single lockfile-backed derivation; `src/vaultspec_rag/torch_config/_constants.py and tools/binaries/torch_channel.py`.
 - [ ] `W04.P04.S11` - Report environment holders as an informational readiness dimension; `src/vaultspec_rag/_readiness.py`.
 
 ## Wave `W05` - operator surfaces

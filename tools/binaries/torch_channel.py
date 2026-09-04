@@ -41,6 +41,8 @@ import tomllib
 from pathlib import Path
 from urllib.parse import quote
 
+from vaultspec_rag.torch_config._lockfile import locked_torch_version
+
 #: Rust target triple -> the wheel platform tag torch publishes for it.
 #: A target absent here bootstraps from default PyPI. No such target is
 #: currently built: the matrix covers exactly the CUDA platforms.
@@ -79,30 +81,6 @@ def index_url(root: Path | None = None) -> str:
     )
 
 
-def locked_version(root: Path | None = None) -> str:
-    """Return the torch version locked against the accelerated index.
-
-    Read from ``uv.lock`` rather than written here, so the binary bootstraps
-    the same build the project resolves and a lock bump cannot leave this
-    pin behind.
-    """
-    root = root or _project_root()
-    lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
-    url = index_url(root)
-    versions = {
-        str(package["version"])
-        for package in lock.get("package", [])
-        if package.get("name") == "torch"
-        and str(package.get("source", {}).get("registry", "")).rstrip("/") == url
-    }
-    if len(versions) != 1:
-        raise TorchChannelError(
-            f"expected exactly one torch version locked against {url}; "
-            f"got {sorted(versions)!r}",
-        )
-    return versions.pop()
-
-
 def wheel_url(target: str, python_version: str, root: Path | None = None) -> str | None:
     """Return the accelerated torch wheel URL for one Rust target triple.
 
@@ -118,7 +96,7 @@ def wheel_url(target: str, python_version: str, root: Path | None = None) -> str
     # the embedded interpreter to this same series.
     major, _, minor = python_version.partition(".")
     abi = f"cp{major}{minor}"
-    version = quote(locked_version(root), safe="")
+    version = quote(locked_torch_version(root, index_url(root)), safe="")
     return f"{index_url(root)}/torch-{version}-{abi}-{abi}-{tag}.whl"
 
 

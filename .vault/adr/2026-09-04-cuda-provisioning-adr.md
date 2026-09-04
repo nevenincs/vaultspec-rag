@@ -5,7 +5,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:2cb6a64e65d19696f49034f5fccad9837c9c77431b49c037edb8ae96e694d37c'
+body_hash: 'sha256:abf108faf968d72f80d208151315db09b8c383fff6f39b303bbff8f69c1de3a6'
 related:
   - "[[2026-09-04-cuda-provisioning-research]]"
   - "[[2026-07-14-tool-env-gpu-continuity-adr]]"
@@ -101,9 +101,19 @@ never requested the GPU extra is a state, not a defect; the repair does not fire
 install completes. **O-4b** - keep treating it as defective. Rejected: it makes the
 footprint ADR's install impossible to complete without a terminal.
 
-**D5 - torch pin version source.** **O-5a (chosen)** - one derivation from the lockfile,
-with the hand-maintained constant deleted. **O-5b** - keep both and add a drift test.
-Rejected: two implementations of one fact is what the canonical-code rule forbids.
+**D5 - torch pin version source.** **O-5a (chosen)** - one derivation from the lockfile.
+**O-5b** - keep two independent values and add a drift test. Rejected: two implementations
+of one fact is what the canonical-code rule forbids.
+
+Amended during execution. Deleting the runtime constant outright, as this decision
+originally also required, is not possible: a published wheel ships neither `uv.lock` nor
+`pyproject.toml`, so an installed runtime has nothing to derive from, and the constant is
+the only thing an environment holding no torch can name a wheel by. The derivation is
+therefore singular and lives in the package (`torch_config._lockfile`), the build tooling
+consumes it rather than reimplementing it, and the constant remains as a mirror that a
+test holds to the lockfile's value wherever a checkout is reachable. That is one
+derivation with a mechanically verified copy, not the two hand-maintained values O-5b
+would have kept.
 
 **D6 - proof harness.** **O-6a (chosen)** - real uv against redirected tool, bin and cache
 directories, stand-in wheels served over loopback HTTP, real holder subprocesses, receipts
