@@ -145,6 +145,18 @@ To see recent and in-flight indexing work:
 uv run vaultspec-rag server jobs
 ```
 
+That prints once and exits, which is what you want in a script. Watching an
+index run instead wants the live view:
+
+```
+uv run vaultspec-rag server jobs --watch
+```
+
+`--watch` opens the interactive jobs interface, with per-job controls and a
+refresh you can slow down or speed up with `--interval`. It is the command to
+reach for while a first index is running on a large tree, where the one-shot
+form tells you only what was true at the moment you asked.
+
 To inspect recent service and Qdrant logs:
 
 ```
