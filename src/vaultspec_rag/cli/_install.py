@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         skip: tuple[str, ...]
         mode: str | None
         torch_config: bool
+        tool_repair: bool
         torch_group: str | None
         yes: bool
         sync: bool
@@ -78,6 +79,7 @@ class _InstallOptions:
     skip: tuple[str, ...]
     mode: InstallMode | None
     configure_torch: bool
+    tool_repair: bool
     torch_group: str | None
     yes: bool
     sync_after: bool
@@ -175,6 +177,17 @@ class _InstallCommand(TyperCommand):
                     help=(
                         "Configure the CUDA PyTorch package source in pyproject.toml. "
                         "--no-torch-config takes precedence over --force / --yes."
+                    ),
+                ),
+                TyperOption(
+                    param_decls=["--tool-repair/--no-tool-repair"],
+                    default=True,
+                    is_flag=True,
+                    help=(
+                        "Check whether a persistent uv tool environment holds a "
+                        "processor-only torch build, and report the command that "
+                        "repairs it. Nothing is installed or replaced by this "
+                        "check. --no-tool-repair skips it entirely."
                     ),
                 ),
                 TyperOption(
@@ -294,6 +307,7 @@ class _InstallCommand(TyperCommand):
                 skip=params["skip"],
                 mode=InstallMode(mode) if mode is not None else None,
                 configure_torch=params["torch_config"],
+                tool_repair=params["tool_repair"],
                 torch_group=params["torch_group"],
                 yes=params["yes"],
                 sync_after=params["sync"],
@@ -387,6 +401,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
             torch_group=options.torch_group,
             install_mcp=options.install_mcp,
             mode=options.mode,
+            repair_tool_torch=options.tool_repair,
         )
     except ParseError as exc:
         _plain(f"Install failed: {exc}", soft_wrap=True)

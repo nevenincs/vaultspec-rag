@@ -78,22 +78,28 @@ def test_receipt_requires_the_exact_cuda_wheel(tmp_path: Path) -> None:
     assert not _tool_torch._receipt_has_cuda_requirement(receipt, wheel)
 
 
-def test_declined_confirmation_blocks_without_a_reinstall() -> None:
-    outcome = _tool_torch._confirmation_outcome(
-        lambda _prompt: False, assume_yes=False, command="uv tool install"
-    )
-    assert outcome is not None
-    assert outcome.action is _tool_torch.ToolTorchRepairAction.DECLINED
-    assert outcome.blocks_install
+def test_a_non_interactive_run_reports_the_handoff_instead_of_stopping(
+    tmp_path: Path,
+) -> None:
+    """No terminal is needed to be told what to run.
 
+    The transaction used to demand confirmation for a replacement it performed;
+    without a terminal it refused, which made a defective tool environment
+    impossible to diagnose from a script. Nothing is replaced now, so nothing
+    is asked, and the same report comes back either way.
+    """
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
 
-def test_noninteractive_confirmation_blocks_without_a_reinstall() -> None:
-    outcome = _tool_torch._confirmation_outcome(
-        None, assume_yes=False, command="uv tool install"
+    outcome = _tool_torch._repair_defective_tool(
+        str(interpreter), "CPU-only torch", dry_run=False
     )
-    assert outcome is not None
-    assert outcome.action is _tool_torch.ToolTorchRepairAction.SKIPPED_NON_TTY
-    assert outcome.blocks_install
+
+    assert outcome.action in {
+        _tool_torch.ToolTorchRepairAction.HANDOFF_REQUIRED,
+        _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
+    }
+    assert "uv tool install" in outcome.command
 
 
 def test_a_defective_tool_is_handed_off_rather_than_replaced(
@@ -110,11 +116,7 @@ def test_a_defective_tool_is_handed_off_rather_than_replaced(
     interpreter.parent.mkdir()
 
     outcome = _tool_torch._repair_defective_tool(
-        str(interpreter),
-        "CPU-only torch",
-        assume_yes=True,
-        confirm=None,
-        dry_run=False,
+        str(interpreter), "CPU-only torch", dry_run=False
     )
 
     assert outcome.action in {
@@ -163,9 +165,7 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
 
     monkeypatch.setattr(_tool_torch, "_repair_defective_tool", _unexpected_repair)
 
-    outcome = _tool_torch.repair_tool_torch(
-        assume_yes=True, confirm=None, dry_run=False, interpreter="ignored"
-    )
+    outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.CUDA_UNVERIFIED
     assert outcome.blocks_install
@@ -193,3 +193,43 @@ requirements = [{{ name = "torch", url = "{spec.wheel_url}" }}]
     outcome = _tool_torch._handoff_outcome(str(interpreter), spec, "uv tool install")
 
     assert "the receipt already pins this wheel" in outcome.detail
+
+
+def test_the_handed_over_command_pins_the_version_and_keeps_recorded_extras(
+    tmp_path: Path,
+) -> None:
+    """A repair asks for the tool it found, not the newest one with new extras.
+
+    Guard assertion: a bare package name resolves to whatever is newest, so
+    the command that fixes a torch wheel would also upgrade the tool and
+    impose this build's extras on an operator who chose otherwise.
+    """
+    import importlib.metadata
+
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+    (tmp_path / "uv-receipt.toml").write_text(
+        """[tool]
+requirements = [{ name = "vaultspec-rag", extras = ["mcp"] }]
+""",
+        encoding="utf-8",
+    )
+
+    requirement = _tool_torch._tool_package_requirement(str(interpreter))
+
+    version = importlib.metadata.version("vaultspec-rag")
+    assert requirement == f"vaultspec-rag[mcp]=={version}"
+    assert "gpu" not in requirement
+
+
+def test_a_receipt_without_the_package_falls_back_to_the_bundled_request(
+    tmp_path: Path,
+) -> None:
+    """An environment recording nothing gets the shipped specification."""
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+
+    assert (
+        _tool_torch._tool_package_requirement(str(interpreter))
+        == _tool_torch._tool_package_spec()
+    )

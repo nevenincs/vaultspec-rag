@@ -964,11 +964,7 @@ def _tool_repair_outcome(
 ) -> ToolTorchRepairOutcome | None:
     if not request.repair_tool_torch:
         return request.tool_torch_repair_outcome
-    return repair_tool_torch(
-        assume_yes=request.assume_yes or request.force,
-        confirm=request.confirm,
-        dry_run=request.dry_run,
-    )
+    return repair_tool_torch(dry_run=request.dry_run)
 
 
 def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
