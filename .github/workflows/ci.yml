@@ -142,6 +142,53 @@ jobs:
         if: '!cancelled()'
         run: just test python
 
+  pr-gate-windows-provisioning:
+    name: PR Gate (Windows provisioning)
+    # The provisioning proofs drive real uv against real environments, and the
+    # failure they exist to catch - a forced reinstall removing an
+    # environment's contents and then dying on a file something else holds -
+    # is a Windows file-locking behaviour the Linux gate beside this one
+    # cannot reproduce. Without this leg those tests skip silently in the only
+    # lane that gates a merge, which is how a Windows-only regression reaches
+    # the default branch unseen.
+    #
+    # Hosted, for the same reason pr-gate is: a fork pull request runs here,
+    # so "here" must not be a workstation. The self-hosted Windows job stays
+    # out of the pull-request lane and this leg is not a route into it. It
+    # needs no GPU, no model cache and no Hugging Face token: every test in
+    # the class declares the fast tier, and the token gate applies only to the
+    # GPU tiers.
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 25
+    concurrency:
+      group: ci-pr-gate-windows-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - uses: ./.github/actions/contain-writes
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Install dependencies
+        run: just deps sync
+
+      - name: Provisioning proofs
+        run: just test provisioning
+
   lint-and-type:
     name: Lint, Type, Config, Link, and Markdown Checks
     # Comprehensive tier: everything except the merge gate above. Skipped on

@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
 modified: '2026-09-04'
 body_schema: body-v2
-body_hash: 'sha256:86c1470bfc1466a1f4a650b464be4584be49e2ea8133344670df7b32bd7aee25'
+body_hash: 'sha256:ed6748b4b1c201c45c79c183a02e9d122389ea055199dc6a2d6c06129661935b'
 ---
 
 # `cuda-provisioning` plan
@@ -93,7 +93,7 @@ Give the Windows proofs a pull-request home and correct the operator-facing acco
 
 Add the hosted Windows leg and correct the installation account.
 
-- [ ] `W05.P05.S12` - Add the hosted Windows pull-request leg covering the provisioning proof class; `.github/workflows/ci.yml`.
+- [x] `W05.P05.S12` - Add the hosted Windows pull-request leg covering the provisioning proof class; `.github/workflows/ci.yml`.
 - [ ] `W05.P05.S13` - Correct the installation account of what a blocked reinstall does, what a bad wheel URL returns, and how a repair is refused; `docs/installation.md and README.md`.
 
 ## Parallelization
