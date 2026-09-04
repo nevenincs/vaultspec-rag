@@ -15,7 +15,7 @@ This page covers installing the package, provisioning its dependencies, verifyin
 - **8 GiB of free disk:** on the volume holding the search index, not the volume holding the model cache. The `embedded-local` profile lowers this to 5 GiB.
 - **Linux, Windows, or Apple silicon macOS.**
 
-System memory and disk figures use binary units (GiB); download sizes use decimal units (GB). Video memory is the exception on both counts: the figure above is decimal, because that is the unit the tool reports it in - its `vram_gb` field converts the card's mebibytes to gigabytes - and card capacities are advertised the same way.
+System memory and disk figures use binary units (GiB); download sizes use decimal units (GB). Video memory follows the memory convention rather than the download one: `status` carries the card's capacity as `vram_mib` and prints it as GiB, so a `vram_mib` of 16375 renders as `16.0 GiB VRAM`. That happens to match the number the card is sold under, because video memory advertised as "16 GB" is mebibytes too; the same capacity in true decimal gigabytes would read 17.2.
 
 Both floors belong to the default `managed-service` profile. `vaultspec-rag status`
 reports which one you are on, and what it permits:
