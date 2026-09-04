@@ -118,8 +118,19 @@ uv run vaultspec-rag search "parse the query text into filters" --type code --in
 ```
 
 Only the filter changed, so any difference in what comes back is the filter's
-doing. Narrowing to that one file takes the same search from ten results to
-three, all of them inside it. Point the filter at a path your own tree has; if
+doing. Cut to the first matching line again:
+
+```text
+1. src/vaultspec_rag/search/_parsing.py:51
+   def parse_query(raw_query: str) -> ParsedQuery:
+2. src/vaultspec_rag/search/_parsing.py:1
+   """Query parsing: extract metadata filter tokens from raw queries.
+3. src/vaultspec_rag/search/_parsing.py:31
+   _FILTER_KEY_MAP = {
+```
+
+Ten results became three, every one of them inside the file you named, and the
+same passage that was first before is first again. Point the filter at a path your own tree has; if
 it does not exist, expect none, which is the filter working rather than the
 search failing.
 
