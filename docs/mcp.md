@@ -197,7 +197,7 @@ where nothing has written the file for you:
     "vaultspec-rag": {
       "command": "vaultspec-search-mcp",
       "env": {
-        "VAULTSPEC_RAG_ROOT": "${workspaceFolder}"
+        "VAULTSPEC_RAG_ROOT": "/absolute/path/to/your/project"
       }
     }
   }
