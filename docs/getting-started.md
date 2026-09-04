@@ -8,7 +8,7 @@ By the end of this tutorial you'll have vaultspec-rag installed, a search servic
 
 The search models run on a GPU. Without a supported one you can't complete this tutorial, and the tool has no CPU fallback.
 
-- **A GPU:** on Linux and Windows, an NVIDIA card with CUDA and roughly 3 GB of free video memory. On macOS, Apple silicon with at least 8 GiB of unified memory (the tested minimum). AMD cards aren't supported.
+- **A GPU:** on Linux and Windows, an NVIDIA card with CUDA and roughly 3 GB of free video memory. On macOS, Apple silicon with at least 8 GiB of unified memory (the tested minimum), which on Apple silicon is the same pool as the system RAM below, so a machine at that minimum needs the `embedded-local` profile rather than the default. AMD cards aren't supported.
 - **16 GiB of system RAM:** indexing refuses to start below this rather than running slowly. That's the floor for the default `managed-service` profile; the `embedded-local` profile lowers it to 8 GiB.
 - **8 GiB of free disk:** on the volume holding the search index, and separately room in your Hugging Face cache for the models. The `embedded-local` profile lowers the index figure to 5 GiB.
 - **CPython 3.13 or 3.14**, and [uv](https://docs.astral.sh/uv/).
