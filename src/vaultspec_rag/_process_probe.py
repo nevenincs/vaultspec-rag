@@ -29,7 +29,9 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -44,8 +46,12 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "PROCESS_QUERY_LIMITED_INFORMATION",
     "START_TIME_TOLERANCE_SECONDS",
+    "EnvironmentHolder",
+    "EnvironmentHolders",
+    "HolderRelation",
     "bounded_call",
     "close_process_handle",
+    "environment_holders",
     "iter_process_info",
     "open_process_handle",
     "pid_alive",
@@ -533,6 +539,158 @@ def iter_process_info(attrs: list[str]) -> Iterator[Mapping[str, object]]:
             logger.debug("process scan skipped a process: %s", exc)
             continue
         yield _ProcessInfo(process, requested)
+
+
+class HolderRelation(StrEnum):
+    """How a process was found to hold an environment.
+
+    The witness is carried rather than collapsed into a boolean because the
+    two relations need DIFFERENT remediation: an image-path holder is a
+    process to end, while a working-directory holder is a shell or an editor
+    to move out of the tree, whose own binary may have nothing to do with the
+    environment it is blocking.
+    """
+
+    IMAGE = "image"
+    WORKING_DIRECTORY = "working-directory"
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentHolder:
+    """One live process holding an environment root, and how it was found."""
+
+    pid: int
+    relation: HolderRelation
+    image: str | None
+    working_directory: str | None
+    cmdline: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentHolders:
+    """The holders of one environment root, and the limits of the answer.
+
+    ``uninspectable`` counts the processes whose image and working directory
+    could BOTH not be read - another user's, or one exiting mid-scan. They are
+    not holders and are not reported as such, but they are not evidence of
+    absence either, so a caller that needs to say "nothing holds this" must
+    consult :attr:`certain` rather than an empty holder list. ``complete`` is
+    false when the scan itself could not finish, where the same rule applies
+    with nothing observed at all.
+    """
+
+    root: Path
+    holders: tuple[EnvironmentHolder, ...]
+    uninspectable: int
+    complete: bool
+
+    @property
+    def held(self) -> bool:
+        """Whether at least one holder was positively identified."""
+        return bool(self.holders)
+
+    @property
+    def certain(self) -> bool:
+        """Whether an empty result may be reported as "nothing holds this"."""
+        return self.complete and self.uninspectable == 0
+
+
+def _resolves_under(value: object, root: Path) -> bool:
+    """Whether *value* is a path resolving inside *root*."""
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        return Path(value).resolve().is_relative_to(root)
+    except OSError:
+        return False
+
+
+def _rendered_cmdline(value: object) -> str | None:
+    """Render a process command line for an operator, never for matching."""
+    if isinstance(value, list):
+        parts = [str(part) for part in cast("list[object]", value)]
+        return " ".join(parts) if parts else None
+    return None
+
+
+def environment_holders(
+    root: str | Path,
+    *,
+    exclude_pids: Collection[int] = (),
+    timeout: float | None = 10.0,
+) -> EnvironmentHolders:
+    """Return the live processes holding the environment rooted at *root*.
+
+    A process holds an environment when its image path or its working
+    directory resolves inside that tree. Both relations block a Windows
+    directory removal, and testing only the image path is what lets an
+    environment be reported clear while an unrelated interpreter sitting in it
+    still destroys the operation - so both are asked, and which one matched is
+    carried on the result.
+
+    Only the cheap per-process attributes are read (see :class:`_ProcessInfo`
+    for why that distinction is load-bearing), and the command line is read
+    only for a process that already matched, since it is for the operator to
+    read and never for deciding the match.
+
+    Follows this module's fail-closed rule: a process that cannot be inspected
+    is counted, not silently dropped, and an empty holder list from an
+    incomplete or partly blind scan is NOT a statement that the environment is
+    free (see :attr:`EnvironmentHolders.certain`).
+    """
+    try:
+        resolved = Path(root).resolve()
+    except OSError:
+        resolved = Path(root)
+    excluded = frozenset(exclude_pids)
+
+    def scan() -> tuple[tuple[EnvironmentHolder, ...], int] | None:
+        found: list[EnvironmentHolder] = []
+        blind = 0
+        try:
+            for info in iter_process_info(["pid", "exe", "cwd", "cmdline"]):
+                pid = info["pid"]
+                if not isinstance(pid, int) or pid in excluded:
+                    continue
+                image = info["exe"]
+                working_directory = info["cwd"]
+                if _resolves_under(image, resolved):
+                    relation = HolderRelation.IMAGE
+                elif _resolves_under(working_directory, resolved):
+                    relation = HolderRelation.WORKING_DIRECTORY
+                else:
+                    if image is None and working_directory is None:
+                        blind += 1
+                    continue
+                found.append(
+                    EnvironmentHolder(
+                        pid=pid,
+                        relation=relation,
+                        image=image if isinstance(image, str) else None,
+                        working_directory=(
+                            working_directory
+                            if isinstance(working_directory, str)
+                            else None
+                        ),
+                        cmdline=_rendered_cmdline(info["cmdline"]),
+                    )
+                )
+        except OSError as exc:
+            logger.warning("could not scan for holders of %s: %s", resolved, exc)
+            return None
+        return tuple(found), blind
+
+    outcome = bounded_call(
+        scan, timeout=timeout, fallback=None, label="environment-holders"
+    )
+    if outcome is None:
+        return EnvironmentHolders(
+            root=resolved, holders=(), uninspectable=0, complete=False
+        )
+    holders, blind = outcome
+    return EnvironmentHolders(
+        root=resolved, holders=holders, uninspectable=blind, complete=True
+    )
 
 
 def send_signal(pid: int, sig: int) -> bool:
