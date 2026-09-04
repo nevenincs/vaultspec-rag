@@ -713,6 +713,47 @@ def _render_provider_and_torch_sections(
         _plain(f"  conflict: {conflict}")
 
 
+# What each repair outcome means to an operator reading install output. The
+# transaction never mutates anything, so none of these is a success or a
+# failure of the install itself - they say whether this environment can run
+# the GPU stack, and what to run if it cannot.
+_TOOL_REPAIR_HEADINGS = {
+    "not_applicable": None,
+    "already_ready": None,
+    "cuda_unverified": "Tool environment GPU check inconclusive",
+    "dry_run": "Tool environment needs a CUDA repair (preview)",
+    "handoff_required": "Tool environment needs a CUDA repair",
+    "holder_detected": "Tool environment needs a CUDA repair",
+}
+
+
+def _render_tool_torch_repair(outcome: object) -> None:
+    """Render a tool-environment repair outcome for a human reader.
+
+    The detail is already written as operator-facing lines - one per holder,
+    each naming the remediation its relation needs - so it is emitted as
+    written rather than re-wrapped into a paragraph that would bury the pids
+    and the command underneath it.
+
+    A healthy or inapplicable environment prints nothing: an install that had
+    no tool problem should not grow a section saying so.
+    """
+    if outcome is None:
+        return
+    action = getattr(outcome, "action", None)
+    heading = _TOOL_REPAIR_HEADINGS.get(str(getattr(action, "value", action)))
+    if heading is None:
+        return
+    _plain(heading)
+    for line in str(getattr(outcome, "detail", "")).splitlines():
+        if line.strip():
+            _plain(f"  {line}" if not line.startswith(" ") else line)
+    command = str(getattr(outcome, "command", ""))
+    if command:
+        _plain("  run this from a shell that holds nothing in that environment:")
+        _plain(f"    {command}", soft_wrap=True)
+
+
 def _render_install_report(report: InstallReport) -> None:
     """Render an install report as plain CLI lines."""
     title = {
@@ -745,6 +786,7 @@ def _render_install_report(report: InstallReport) -> None:
     if tsync not in ("skipped",):
         _plain(f"uv sync --reinstall-package torch: {tsync}")
     _render_provisioning_outcome(getattr(report, "provision_outcome", None))
+    _render_tool_torch_repair(getattr(report, "tool_torch_repair", None))
     for warning in report.warnings:
         _print_warning_or_note(warning)
 

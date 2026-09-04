@@ -233,3 +233,72 @@ def test_a_receipt_without_the_package_falls_back_to_the_bundled_request(
         _tool_torch._tool_package_requirement(str(interpreter))
         == _tool_torch._tool_package_spec()
     )
+
+
+def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -> None:
+    """The operator sees the refusal, the holders and the command in plain output.
+
+    Guard assertion: this outcome used to reach `--json` only, so an operator
+    running the install normally was told nothing at all about an environment
+    that cannot run the GPU stack.
+    """
+    from ..cli._render import _render_tool_torch_repair
+
+    outcome = _tool_torch.ToolTorchRepairOutcome(
+        _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
+        "tool CUDA repair must run from outside C:/tools/vaultspec-rag"
+        + chr(10)
+        + "  holders to clear first:"
+        + chr(10)
+        + "    pid 4321 (end this process): C:/tools/vaultspec-rag/Scripts/python.exe",
+        "uv tool install --force ...",
+    )
+
+    _render_tool_torch_repair(outcome)
+
+    printed = capsys.readouterr().out
+    assert "Tool environment needs a CUDA repair" in printed
+    assert "pid 4321" in printed
+    assert "uv tool install --force" in printed
+
+
+def test_a_healthy_tool_environment_prints_no_repair_section(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An install with no tool problem does not grow a section saying so."""
+    from ..cli._render import _render_tool_torch_repair
+
+    _render_tool_torch_repair(
+        _tool_torch.ToolTorchRepairOutcome(
+            _tool_torch.ToolTorchRepairAction.ALREADY_READY, "fine", ""
+        )
+    )
+    _render_tool_torch_repair(None)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_the_install_report_itself_carries_the_repair_section(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The section reaches plain install output, not just the helper.
+
+    Guard assertion: the defect this closes was a renderer that never read
+    `tool_torch_repair` at all, so proving the helper works in isolation
+    proves nothing about what an operator sees. This renders the whole report.
+    """
+    from ..cli._render import _render_install_report
+    from ..commands._models import InstallReport
+
+    report = InstallReport(action="install", target=tmp_path)
+    report.tool_torch_repair = _tool_torch.ToolTorchRepairOutcome(
+        _tool_torch.ToolTorchRepairAction.HANDOFF_REQUIRED,
+        "tool CUDA repair must run from outside " + str(tmp_path),
+        "uv tool install --force ...",
+    )
+
+    _render_install_report(report)
+
+    printed = capsys.readouterr().out
+    assert "Tool environment needs a CUDA repair" in printed
+    assert "uv tool install --force" in printed
