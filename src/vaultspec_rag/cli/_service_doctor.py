@@ -56,7 +56,7 @@ def service_doctor(
     daemon is expected (no discovery file), ``ready`` reflects installed
     dependencies so a pre-install ``doctor`` still works. Mutates nothing.
     """
-    report = get_readiness()
+    report = get_readiness(include_holders=True)
     service = _live_service_axis()
     mode = _mode_floor_axis(Path.cwd())
     overall_ready, status = _overall_readiness(report, service)
