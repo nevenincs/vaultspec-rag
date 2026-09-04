@@ -446,6 +446,12 @@ this project's own namespace is `1.3 GiB`, and the store holds
 `35 namespaces  (orphaned=10 unknown=0 unverifiable=0 live=25)  33.1 GiB on
 disk`. Ten of those are indexes for projects that no longer exist.
 
+That is a different run from the survey shown on
+[storage and maintenance](storage-maintenance.md), which reports 34 namespaces
+and 33.4 GiB: the same store, measured on another day, with one namespace fewer
+and slightly more on disk. Read either as the shape of the answer rather than as
+a figure to match against your own.
+
 Run [storage and maintenance](storage-maintenance.md) first if you want the
 survey before you delete, or `server storage prune --dry-run` to see every
 orphaned namespace at once rather than this one project's.
