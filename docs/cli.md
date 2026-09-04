@@ -80,7 +80,7 @@ The `server`, `install`, and `uninstall` commands skip workspace resolution; eve
 
 ## Exit codes
 
-These codes are consistent across commands.
+These codes are consistent across commands, with one exception worth knowing before you gate on them: `server doctor` reads `1` and `2` as severities of its own report - `1` a warning, `2` an error - rather than as the generic failure and usage error below. Its own section states that scale.
 
 | Code | Meaning                                                                                                                                                                     |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
