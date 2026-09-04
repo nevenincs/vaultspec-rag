@@ -252,6 +252,32 @@ Run the readiness report, which checks PyTorch and the resolved GPU backend, the
 uv run vaultspec-rag server doctor
 ```
 
+On a machine where everything is in place it prints:
+
+```text
+Service readiness
+Backend: server
+Readiness: ready for requests
+Live service:
+  status: running (running)
+  process: pid 46936 (alive)
+  network: port 8766 (listening)
+  heartbeat: 10s ago
+  release: 0.4.22 (matches this client)
+Installed dependencies: ready
+  torch: ready - CUDA available on NVIDIA GeForce RTX 4080 SUPER
+  models: ready - all 3 model repos present in the cache
+  qdrant: ready - qdrant binary resolves from provisioned
+Provisioning (vaultspec-rag):
+  declared mode: dependency
+  install mode: ok - artifacts match the declared mode
+  version floor: ok
+```
+
+Nothing is cut from that capture. The pid, the heartbeat and the card are this
+machine's; every other line reads the same wherever the install is healthy, and
+the command exits 0.
+
 A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode the `qdrant` line is ready once a binary resolves and the supervised child is running. In local-only mode it reports an absent binary as ready, because no server is needed. Add `--json` for a machine-readable envelope.
 
 Where a workspace has a committed placement, `server doctor` also prints a `Provisioning (vaultspec-rag)` block naming the declared mode and whether the deployed launch matches it. A mismatch is a warning; a vaultspec-core below the required version floor is an error. Re-run `install --mode` or `install --upgrade` to bring the deployed launch back into line.
