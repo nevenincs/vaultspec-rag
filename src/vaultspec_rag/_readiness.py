@@ -39,8 +39,20 @@ from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
+#: A full process-table walk costs 4-6.5s on a developer machine with ~1700
+#: processes (measured 2026-09-04). That is affordable for an operator who
+#: typed a diagnostic and waited for it, and not for a route a broker polls,
+#: which is why holder scanning is opt-in rather than budget-limited: a
+#: budget short enough for the route would report "cannot tell" every time
+#: and teach an operator to ignore the dimension.
+_HOLDER_SCAN_BUDGET_SECONDS = 20.0
+
+#: An operator clears holders one at a time; a census helps nobody.
+_HOLDER_REPORT_LIMIT = 10
+
 __all__ = [
     "DependencyReadiness",
+    "EnvironmentHoldersReadiness",
     "ReadinessReport",
     "ReadinessStatus",
     "compute_readiness",
@@ -104,6 +116,45 @@ class DependencyReadiness:
 
 
 @dataclass
+class EnvironmentHoldersReadiness:
+    """Who is running out of this interpreter's environment, if anyone.
+
+    Deliberately NOT a dependency node. Nothing here can make the service
+    unhealthy: a held environment serves requests perfectly well, and the
+    holders matter only to an operator about to replace it, for whom a forced
+    reinstall would remove the packages and then fail on the held files. Adding
+    it to :attr:`ReadinessReport.dependencies` would fold that into the
+    aggregate ``ready`` boolean and turn a healthy machine red.
+
+    Attributes:
+        held: Whether at least one holder was positively identified.
+        scanned: Whether a scan was performed at all. False means nobody
+            asked, which is neither "held" nor "clear".
+        certain: Whether an empty list may be read as "nothing holds this".
+            False when a process could not be inspected or the scan could not
+            finish - absence of evidence, not evidence of absence.
+        holders: Bounded holder facts: pid, relation and image path. Command
+            lines are deliberately omitted; this snapshot is also served over
+            HTTP, and an argument vector can carry material the readiness
+            route has no business republishing.
+    """
+
+    scanned: bool = True
+    held: bool = False
+    certain: bool = True
+    holders: list[dict[str, object]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-serialisable view of the holder snapshot."""
+        return {
+            "scanned": self.scanned,
+            "held": self.held,
+            "certain": self.certain,
+            "holders": self.holders,
+        }
+
+
+@dataclass
 class ReadinessReport:
     """Bounded readiness snapshot across the known dependency set.
 
@@ -124,6 +175,9 @@ class ReadinessReport:
 
     dependencies: list[DependencyReadiness] = field(default_factory=list)
     server_mode: bool = False
+    environment_holders: EnvironmentHoldersReadiness = field(
+        default_factory=lambda: EnvironmentHoldersReadiness()
+    )
 
     @property
     def ready(self) -> bool:
@@ -166,6 +220,7 @@ class ReadinessReport:
             "server_mode": self.server_mode,
             "dependencies": [dep.to_dict() for dep in self.dependencies],
             "degraded_reasons": degraded_reasons,
+            "environment_holders": self.environment_holders.to_dict(),
             "support_profile": index_support_profile_status(
                 get_config().index_support_profile
             ),
@@ -174,12 +229,18 @@ class ReadinessReport:
         }
 
 
-def compute_readiness() -> ReadinessReport:
+def compute_readiness(*, include_holders: bool = False) -> ReadinessReport:
     """Aggregate the bounded per-dependency readiness snapshot.
 
     Read-only: probes torch's observable accelerator attributes, the Hugging
     Face cache, and the qdrant runtime/resolution state without loading
     a model, touching the GPU, downloading, or mutating any state.
+
+    Args:
+        include_holders: Scan for processes running out of this interpreter's
+            environment. Off by default because the walk costs seconds and
+            every caller pays it; an operator diagnosing a machine wants it,
+            a polled route does not.
 
     Returns:
         A :class:`ReadinessReport` with one node per known dependency
@@ -197,6 +258,38 @@ def compute_readiness() -> ReadinessReport:
             _qdrant_readiness(server_mode=server_mode),
         ],
         server_mode=server_mode,
+        environment_holders=(
+            _environment_holders_readiness()
+            if include_holders
+            else EnvironmentHoldersReadiness(scanned=False, certain=False)
+        ),
+    )
+
+
+def _environment_holders_readiness() -> EnvironmentHoldersReadiness:
+    """Report the live processes running out of this interpreter's environment.
+
+    Bounded twice over: the scan carries a short budget because this reporter
+    also answers an HTTP route, and the reported list is capped because an
+    operator acts on holders one at a time rather than reading a census.
+    """
+    import sys
+    from pathlib import Path
+
+    from ._process_probe import environment_holders
+
+    found = environment_holders(Path(sys.prefix), timeout=_HOLDER_SCAN_BUDGET_SECONDS)
+    return EnvironmentHoldersReadiness(
+        held=found.held,
+        certain=found.certain,
+        holders=[
+            {
+                "pid": holder.pid,
+                "relation": str(holder.relation),
+                "image": holder.image,
+            }
+            for holder in found.holders[:_HOLDER_REPORT_LIMIT]
+        ],
     )
 
 

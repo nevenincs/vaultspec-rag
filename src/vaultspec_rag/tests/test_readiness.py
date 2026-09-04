@@ -137,11 +137,17 @@ class TestComputeReadinessShape:
         # display field - a client refuses to drive a service whose release does
         # not match its own, so the value has to reach a direct consumer of this
         # report and not only /health.
+        # ``environment_holders`` is the one non-dependency member, and it is
+        # deliberately outside ``dependencies`` so it cannot enter ``ready``:
+        # a held environment is healthy, and the holders matter only to an
+        # operator about to replace it. It is empty unless a caller opts into
+        # the process-table walk that fills it.
         assert set(restored.keys()) == {
             "ready",
             "server_mode",
             "dependencies",
             "degraded_reasons",
+            "environment_holders",
             "support_profile",
             "schema",
             "package_version",

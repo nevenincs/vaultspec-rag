@@ -6,7 +6,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:801003af4c9a98bfbfcbfb6975b38d843c256d8f9777989029d6a2766c55e2db'
+body_hash: 'sha256:5fbf7f05475f0ad3b334e408363e610233ab01325daa050cc42576a89771f62a'
 related:
   - '[[2026-09-04-cuda-provisioning-W01-P01-S01]]'
   - '[[2026-09-04-cuda-provisioning-W01-P01-S02]]'
@@ -18,6 +18,7 @@ related:
   - '[[2026-09-04-cuda-provisioning-W03-P03-S08]]'
   - '[[2026-09-04-cuda-provisioning-W04-P04-S09]]'
   - '[[2026-09-04-cuda-provisioning-W04-P04-S10]]'
+  - '[[2026-09-04-cuda-provisioning-W04-P04-S11]]'
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-04-cuda-provisioning-plan]]'
   - '[[2026-09-04-cuda-provisioning-research]]'
@@ -45,6 +46,7 @@ Auto-generated index of all documents tagged with `#cuda-provisioning`.
 - `2026-09-04-cuda-provisioning-W03-P03-S08` - Prove repair safety and receipt postconditions, including that a refusal launches no uv child
 - `2026-09-04-cuda-provisioning-W04-P04-S09` - Treat torch absent by design as a state rather than an installation defect
 - `2026-09-04-cuda-provisioning-W04-P04-S10` - Collapse the torch pin version to the single lockfile-backed derivation
+- `2026-09-04-cuda-provisioning-W04-P04-S11` - Report environment holders as an informational readiness dimension
 
 ### plan
 
