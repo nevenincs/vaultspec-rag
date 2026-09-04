@@ -74,7 +74,10 @@ asked about. `search_type`, `query` and `summary` echo the request, and
 `timing` breaks the run into phases. Measured on one run against this project's
 vault: `via` was `service`, `indexed_count` 5140, `target_matches` true.
 
-Error:
+Error. The capture below was taken against a service on port 8799, which is
+not the default: an unreachable service on a stock install reports 8766.
+The `port` field always echoes the port the CLI tried, so read it as the
+one your own run used rather than as a number to copy.
 
 ```json
 {
