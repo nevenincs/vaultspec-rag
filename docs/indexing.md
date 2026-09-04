@@ -163,7 +163,7 @@ shared across all searcher instances, because a second copy would duplicate
 roughly 560 MB of accelerator allocation for no benefit.
 
 The reranker scores the full candidate content, bounded by the model's own
-tokenizer at the 1024-token `reranker_max_length`, never a fixed-width display
+tokenizer at the 1024-token `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`, never a fixed-width display
 snippet. Scoring real content is the point: a snippet would discard most of the
 model's semantic capacity and bias ranking toward whatever happens to appear in
 a candidate's opening characters. The reranker reads `(query, content)` pairs in
@@ -177,7 +177,7 @@ case results are returned in fusion order.
 
 The store keeps three independent collections, regardless of backend:
 
-- `vault_docs` - one point per vault chunk, heading-aware and capped at `vault_chunk_chars`, so a document usually contributes several
+- `vault_docs` - one point per vault chunk, heading-aware and capped at `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`, so a document usually contributes several
 - `codebase_docs` - one point per source-code chunk
 - `document_docs` - one point per extracted-document chunk
 
@@ -290,7 +290,7 @@ minutes is flagged `stalled`; a run cut short by a dying process is restored as
 
 `stalled` is a report, not a verdict: it says nothing has moved for five minutes
 and the run is still going. A second, longer clock ends it - the run fails once
-progress has stopped for `index_no_progress_timeout_seconds`, fifteen minutes by
+progress has stopped for `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS`, fifteen minutes by
 default. So a job can sit at `stalled` for ten minutes and then finish, and a job
 that is truly wedged shows `stalled` first and `failed` later.
 
