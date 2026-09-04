@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING
 
 import pytest
@@ -9,24 +10,11 @@ from pytest import MonkeyPatch
 
 from ..cli._gpu_errors import RuntimeEnvKind
 from ..commands import _tool_torch
-from ..serviceclient._discovery import (
-    DISCOVERY_STATE_READY,
-    MachineResolution,
-)
 
 pytestmark = [pytest.mark.unit]
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-def _ready_machine_resolution() -> MachineResolution:
-    return MachineResolution(
-        state=DISCOVERY_STATE_READY,
-        source="machine_pointer",
-        holder_pid=438,
-        port=7331,
-    )
 
 
 def _persistent_tool_env(_interpreter: str) -> RuntimeEnvKind:
@@ -108,29 +96,47 @@ def test_noninteractive_confirmation_blocks_without_a_reinstall() -> None:
     assert outcome.blocks_install
 
 
-def test_service_holder_refuses_before_reinstall(monkeypatch: MonkeyPatch) -> None:
-    """A live service holder prevents changing the tool interpreter in place."""
-    from ..serviceclient import _discovery
+def test_a_defective_tool_is_handed_off_rather_than_replaced(
+    tmp_path: Path,
+) -> None:
+    """The transaction refuses and hands over the command; it never replaces.
 
-    monkeypatch.setattr(
-        _discovery,
-        "resolve_machine_service",
-        _ready_machine_resolution,
-    )
-
-    def _unexpected_reinstall(
-        _spec: _tool_torch.ToolCudaInstallSpec, _command: str
-    ) -> _tool_torch.ToolTorchRepairOutcome | None:
-        raise AssertionError("service holder must prevent tool reinstall")
-
-    monkeypatch.setattr(_tool_torch, "_run_tool_reinstall", _unexpected_reinstall)
+    The environment being repaired is the one this process runs from, so any
+    replacement issued here would have to remove the interpreter issuing it.
+    The outcome therefore blocks the install and carries the command for a
+    shell that holds nothing.
+    """
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
 
     outcome = _tool_torch._repair_defective_tool(
-        "ignored", "CPU-only torch", assume_yes=True, confirm=None, dry_run=False
+        str(interpreter),
+        "CPU-only torch",
+        assume_yes=True,
+        confirm=None,
+        dry_run=False,
     )
 
-    assert outcome.action is _tool_torch.ToolTorchRepairAction.SERVICE_HELD
+    assert outcome.action in {
+        _tool_torch.ToolTorchRepairAction.HANDOFF_REQUIRED,
+        _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
+    }
     assert outcome.blocks_install
+    assert "uv tool install" in outcome.command
+    assert "must run from outside" in outcome.detail
+
+
+def test_the_repair_module_cannot_launch_a_replacement_at_all() -> None:
+    """Guard assertion: no path in this module spawns uv.
+
+    A refusal that merely avoids the call today is one refactor away from
+    calling it again, so the absence is asserted structurally rather than
+    behaviourally.
+    """
+    source = inspect.getsource(_tool_torch)
+
+    assert "subprocess" not in source
+    assert not hasattr(_tool_torch, "subprocess")
 
 
 def test_cuda_build_without_a_visible_device_never_reinstalls(
@@ -165,36 +171,25 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
     assert outcome.blocks_install
 
 
-def test_verify_repair_requires_cuda_and_structured_receipt(
-    monkeypatch: MonkeyPatch, tmp_path: Path
+def test_the_handoff_reports_a_receipt_that_already_carries_the_pin(
+    tmp_path: Path,
 ) -> None:
-    """A successful repair is durable only after both required postconditions hold."""
-    from ..cli import _process
+    """An operator is told when the receipt is right and the environment is not.
 
-    wheel = "https://example.test/torch-2.9.0%2Bcu130.whl"
-    spec = _tool_torch.ToolCudaInstallSpec(("uv",), wheel)
+    The two drift apart exactly once: after a replacement was interrupted, the
+    receipt describes an environment that no longer exists. Saying so is what
+    separates "run this command" from "your pin is missing".
+    """
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir()
-    receipt = tmp_path / "uv-receipt.toml"
-    receipt.write_text(
-        '[tool]\nrequirements = [{ name = "torch", url = "' + wheel + '" }]\n',
+    spec = _tool_torch.tool_cuda_install_spec()
+    (tmp_path / "uv-receipt.toml").write_text(
+        f"""[tool]
+requirements = [{{ name = "torch", url = "{spec.wheel_url}" }}]
+""",
         encoding="utf-8",
     )
-    monkeypatch.setattr(_process, "_probe_daemon_accelerator", _cuda_ready_probe)
 
-    outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
+    outcome = _tool_torch._handoff_outcome(str(interpreter), spec, "uv tool install")
 
-    assert outcome.action is _tool_torch.ToolTorchRepairAction.REPAIRED
-
-    monkeypatch.setattr(
-        _process,
-        "_probe_daemon_accelerator",
-        _cpu_torch_probe,
-    )
-    outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
-    assert outcome.action is _tool_torch.ToolTorchRepairAction.CUDA_UNVERIFIED
-
-    monkeypatch.setattr(_process, "_probe_daemon_accelerator", _cuda_ready_probe)
-    receipt.unlink()
-    outcome = _tool_torch._verify_tool_repair(str(interpreter), spec, "uv tool")
-    assert outcome.action is _tool_torch.ToolTorchRepairAction.RECEIPT_UNVERIFIED
+    assert "the receipt already pins this wheel" in outcome.detail

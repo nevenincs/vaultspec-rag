@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -17,12 +16,21 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.tags import Tag, cpython_tags
 from packaging.version import InvalidVersion, Version
 
+from .._process_probe import (
+    EnvironmentHolder,
+    HolderRelation,
+    environment_holders,
+)
 from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
 
 if TYPE_CHECKING:
     from ._models import ConfirmFn
 
+#: Holders are listed for an operator to act on, not dumped exhaustively.
+HOLDER_REPORT_LIMIT = 10
+
 __all__ = [
+    "HOLDER_REPORT_LIMIT",
     "ToolCudaInstallSpec",
     "ToolTorchRepairAction",
     "ToolTorchRepairOutcome",
@@ -32,7 +40,14 @@ __all__ = [
 
 
 class ToolTorchRepairAction(StrEnum):
-    """One terminal result for a persistent tool environment repair."""
+    """One terminal result for a persistent tool environment repair.
+
+    There is no success value. A repair replaces the whole environment, and
+    this process runs inside the only environment it ever targets, so its own
+    interpreter is one of the files the replacement must remove. Every path
+    therefore ends in a refusal that hands the operator a command to run from
+    a shell that holds nothing.
+    """
 
     NOT_APPLICABLE = "not_applicable"
     ALREADY_READY = "already_ready"
@@ -40,12 +55,9 @@ class ToolTorchRepairAction(StrEnum):
     DECLINED = "declined"
     SKIPPED_NON_TTY = "skipped_non_tty"
     SKIPPED_EOF = "skipped_eof"
-    SERVICE_HELD = "service_held"
-    UV_UNAVAILABLE = "uv_unavailable"
-    UV_FAILED = "uv_failed"
+    HOLDER_DETECTED = "holder_detected"
+    HANDOFF_REQUIRED = "handoff_required"
     CUDA_UNVERIFIED = "cuda_unverified"
-    RECEIPT_UNVERIFIED = "receipt_unverified"
-    REPAIRED = "repaired"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +82,7 @@ class ToolTorchRepairOutcome:
     action: ToolTorchRepairAction
     detail: str
     command: str = ""
+    holders: tuple[EnvironmentHolder, ...] = ()
 
     @property
     def blocks_install(self) -> bool:
@@ -78,19 +91,26 @@ class ToolTorchRepairOutcome:
             ToolTorchRepairAction.DECLINED,
             ToolTorchRepairAction.SKIPPED_NON_TTY,
             ToolTorchRepairAction.SKIPPED_EOF,
-            ToolTorchRepairAction.SERVICE_HELD,
-            ToolTorchRepairAction.UV_UNAVAILABLE,
-            ToolTorchRepairAction.UV_FAILED,
+            ToolTorchRepairAction.HOLDER_DETECTED,
+            ToolTorchRepairAction.HANDOFF_REQUIRED,
             ToolTorchRepairAction.CUDA_UNVERIFIED,
-            ToolTorchRepairAction.RECEIPT_UNVERIFIED,
         }
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, object]:
         """Return the stable JSON-safe report shape."""
         return {
             "action": self.action.value,
             "detail": self.detail,
             "command": self.command,
+            "holders": [
+                {
+                    "pid": holder.pid,
+                    "relation": holder.relation.value,
+                    "image": holder.image,
+                    "cmdline": holder.cmdline,
+                }
+                for holder in self.holders
+            ],
         }
 
 
@@ -249,26 +269,54 @@ def _confirmation_outcome(
     )
 
 
-def _service_holder_outcome(command: str) -> ToolTorchRepairOutcome | None:
-    from ..serviceclient._discovery import (
-        DISCOVERY_STATE_ABSENT,
-        resolve_machine_service,
+def _holder_summary(holder: EnvironmentHolder) -> str:
+    """One holder line, with the remediation its relation actually needs."""
+    if holder.relation is HolderRelation.IMAGE:
+        action = "end this process"
+    else:
+        action = "move this process out of the directory"
+    return f"    pid {holder.pid} ({action}): {holder.image or 'unknown image'}"
+
+
+def _handoff_outcome(
+    interpreter: str, spec: ToolCudaInstallSpec, command: str
+) -> ToolTorchRepairOutcome:
+    """Refuse to replace this environment, and say what has to happen instead.
+
+    The replacement is never run from here. uv removes an environment's
+    contents before writing the new ones, and a file it cannot remove stops it
+    half-way, leaving nothing runnable behind - so the one process guaranteed
+    to be holding this environment is the one that would be issuing the
+    command. Holders are reported because the operator has to clear them
+    first, and a working-directory holder needs different handling from a
+    process to end.
+    """
+    root = _tool_root(interpreter)
+    found = environment_holders(root)
+    lines = [
+        f"tool CUDA repair must run from outside {root}",
+        "  the environment is replaced wholesale, and this process runs inside it",
+    ]
+    if found.holders:
+        lines.append("  holders to clear first:")
+        lines.extend(
+            _holder_summary(holder) for holder in found.holders[:HOLDER_REPORT_LIMIT]
+        )
+        remaining = len(found.holders) - HOLDER_REPORT_LIMIT
+        if remaining > 0:
+            lines.append(f"    ... and {remaining} more")
+    if not found.certain:
+        lines.append(
+            "  some processes could not be inspected, so this list may be short"
+        )
+    if _receipt_has_cuda_requirement(root / "uv-receipt.toml", spec.wheel_url):
+        lines.append("  the receipt already pins this wheel; the environment does not")
+    action = (
+        ToolTorchRepairAction.HOLDER_DETECTED
+        if found.holders
+        else ToolTorchRepairAction.HANDOFF_REQUIRED
     )
-
-    resolution = resolve_machine_service()
-    if resolution.state == DISCOVERY_STATE_ABSENT:
-        return None
-    return ToolTorchRepairOutcome(
-        ToolTorchRepairAction.SERVICE_HELD,
-        "tool CUDA repair refused because " + resolution.evidence(),
-        command,
-    )
-
-
-def _uv_failure_detail(proc: subprocess.CompletedProcess[bytes]) -> str:
-    output = (proc.stderr or proc.stdout).decode("utf-8", errors="replace").strip()
-    suffix = f": {output[:500]}" if output else ""
-    return f"uv tool reinstall exited with code {proc.returncode}{suffix}"
+    return ToolTorchRepairOutcome(action, "\n".join(lines), command, found.holders)
 
 
 def repair_tool_torch(
@@ -329,61 +377,4 @@ def _repair_defective_tool(
     )
     if confirmation is not None:
         return confirmation
-    service_holder = _service_holder_outcome(command)
-    if service_holder is not None:
-        return service_holder
-    launch = _run_tool_reinstall(spec, command)
-    if launch is not None:
-        return launch
-    return _verify_tool_repair(interpreter, spec, command)
-
-
-def _run_tool_reinstall(
-    spec: ToolCudaInstallSpec, command: str
-) -> ToolTorchRepairOutcome | None:
-    try:
-        proc = subprocess.run(spec.args, capture_output=True, check=False)
-    except FileNotFoundError:
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.UV_UNAVAILABLE,
-            "uv executable is unavailable for tool CUDA repair",
-            command,
-        )
-    except OSError as exc:
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.UV_FAILED,
-            f"could not start uv tool reinstall: {exc}",
-            command,
-        )
-    if proc.returncode:
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.UV_FAILED, _uv_failure_detail(proc), command
-        )
-    return None
-
-
-def _verify_tool_repair(
-    interpreter: str, spec: ToolCudaInstallSpec, command: str
-) -> ToolTorchRepairOutcome:
-    from ..cli._process import _probe_daemon_accelerator
-
-    verified = _probe_daemon_accelerator(interpreter)
-    if verified is not None:
-        _, detail = verified
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.CUDA_UNVERIFIED,
-            f"tool reinstall completed but CUDA verification failed: {detail}",
-            command,
-        )
-    receipt = _tool_root(interpreter) / "uv-receipt.toml"
-    if not _receipt_has_cuda_requirement(receipt, spec.wheel_url):
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.RECEIPT_UNVERIFIED,
-            f"tool reinstall completed but receipt lacks CUDA requirement: {receipt}",
-            command,
-        )
-    return ToolTorchRepairOutcome(
-        ToolTorchRepairAction.REPAIRED,
-        "tool interpreter and receipt both verify the CUDA torch requirement",
-        command,
-    )
+    return _handoff_outcome(interpreter, spec, command)
