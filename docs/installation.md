@@ -99,6 +99,8 @@ Choose this when the machine has no Python toolchain at all. See [Install withou
 
 The first three routes can install the bare package instead of `[gpu]`. That control-plane-only install runs service and diagnostic commands but cannot index or search locally, because it omits PyTorch and the model stack. It avoids roughly 5 GB of dependencies. The binary route always carries the GPU build.
 
+A control-plane-only install is a supported state rather than a broken one: `install` completes, and `server doctor` reports torch as absent without calling the environment defective. The service still refuses to start, because it cannot serve a search without a model. The way out is choosing the `[gpu]` extra, not repairing anything.
+
 | Your route                         | Sections you still need                                                                                                                 |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Trying it without commitment       | [What the install command provisions](#what-the-install-command-provisions), [Verify the install](#verify-the-install)                  |
@@ -318,6 +320,8 @@ the command exits 0.
 
 A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode the `qdrant` line is ready once a binary resolves and the supervised child is running. In local-only mode it reports an absent binary as ready, because no server is needed. Add `--json` for a machine-readable envelope.
 
+`server doctor` also reports the processes running out of this environment, so you learn an environment is held before attempting anything that needs it free rather than at the moment of refusal. The scan walks the process table and costs a few seconds, which is why the diagnostic does it and the readiness route does not.
+
 Where a workspace has a committed placement, `server doctor` also prints a `Provisioning (vaultspec-rag)` block naming the declared mode and whether the deployed launch matches it. A mismatch is a warning; a vaultspec-core below the required version floor is an error. Re-run `install --mode` or `install --upgrade` to bring the deployed launch back into line.
 
 Check the index location and GPU backend:
@@ -371,16 +375,26 @@ The next upgrade undoes this. [The receipt pin](#pin-the-gpu-build) is the durab
 
 Two things break tool environments in the first place:
 
-- A forced reinstall while something still runs out of the environment. The running executable holds the tool's `Scripts` directory, so the reinstall fails half-way. The service is the obvious holder; an editor or agent session with the MCP server connected is the easily missed one.
+- A forced reinstall while something still runs out of the environment. uv removes the installed packages before it writes the replacements, and a file it cannot remove stops it there, so the environment is left unrunnable rather than unchanged. The service is the obvious holder; an editor or agent session with the MCP server connected is the easily missed one.
 - After such a failure, `uvx vaultspec-rag` silently falls back to a cached ephemeral environment instead of the installed tool. `server start` warns when it detects that fallback.
 
+A process holds an environment in either of two ways, and only the first is obvious. Its **executable** may live inside the tree - the service, an MCP server, any `vaultspec-rag` command. Or its **working directory** may sit inside the tree, which blocks removal even when the program itself has nothing to do with vaultspec-rag: a shell left in the tool directory, an editor opened on it. End the first kind; leave the directory for the second.
+
+Only a blocked removal is destructive. A wheel that cannot be fetched, an interpreter tag that matches nothing, an empty cache with no network - each fails before uv replaces anything, and leaves the environment and its receipt exactly as they were. There is no need to fear a bad pin: fear a busy one.
+
 Stop the service and close every MCP client session before any forced reinstall or upgrade.
+
+### `install` refused to repair the tool environment
+
+It printed the pinned command instead of running it, and named the processes holding the environment. That is the whole behaviour: the installer never replaces a tool environment, because it runs inside the only environment it would ever target, and a replacement issued from there has to remove the interpreter issuing it.
+
+Each holder is listed with its pid and what to do about it - end the process, or move it out of the directory. Clear them, then run the printed command from a shell that holds nothing in that tree. `--no-tool-repair` skips the check entirely if you would rather manage the environment yourself; `--no-torch-config` does not, it governs only the `pyproject.toml` step.
 
 ### A tool environment is missing packages after a failed reinstall
 
 The symptom is a `ModuleNotFoundError` on any invocation, naming a package you never installed by hand - a dependency of a dependency, such as `typer`'s `annotated_doc`. The environment holds whatever the interrupted reinstall had already removed and not yet replaced.
 
-The in-place torch repair above does not fix this. It reinstalls torch and torch's dependencies, and the missing packages are not among them. Re-run the [pinned install](#pin-the-gpu-build) instead, with the service stopped and every MCP client session closed, which rebuilds the environment and records the pin in the receipt. Check that it landed:
+The in-place torch repair above does not fix this. It reinstalls torch and torch's dependencies, and the missing packages are not among them. Re-run the [pinned install](#pin-the-gpu-build) instead, with nothing running out of the environment, which rebuilds it and records the pin in the receipt. Check that it landed:
 
 ```bash
 grep -c 'download.pytorch.org' "$(uv tool dir)/vaultspec-rag/uv-receipt.toml"

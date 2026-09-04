@@ -143,10 +143,13 @@ standard wheel, which already supports Apple silicon.
 
 **Install it as a standalone tool.** On Linux and Windows you have to pin the GPU build,
 or `uv tool upgrade` will silently swap in a CPU one. Both `server start` and `install`
-print the exact command for your machine when they spot this. Stop the service and close
-every editor or agent session holding the MCP server before you run it - a forced
-reinstall removes the old packages first, and anything still running out of that
-environment leaves it half-emptied ([the way back](docs/installation.md#a-tool-environment-is-missing-packages-after-a-failed-reinstall)).
+print the exact command for your machine when they spot this, and refuse to run it for
+you - the installer lives inside the environment a replacement would have to remove.
+Clear the environment first: stop the service, close every editor or agent session
+holding the MCP server, and leave any shell whose working directory sits inside the tool
+tree. A forced reinstall removes the old packages before writing the new ones, so
+anything still holding the environment leaves it half-emptied
+([the way back](docs/installation.md#a-tool-environment-is-missing-packages-after-a-failed-reinstall)).
 It looks like this (Python 3.13, torch 2.13.0, Windows):
 
 ```bash
