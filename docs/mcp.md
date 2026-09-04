@@ -149,8 +149,10 @@ watcher, which keeps the index current without being asked.
 copy an example below. Both use the console-script shape, which runs wherever
 `vaultspec-search-mcp` is on your PATH - a standalone tool install or a prebuilt
 binary. It is not what the installer writes for `tool` mode: that renders
-`uvx --from vaultspec-rag[mcp] python -m vaultspec_rag.server`, which fetches
-the extra rather than requiring it to be installed already. For `dependency` or
+`uvx --from vaultspec-rag[gpu,mcp] python -m vaultspec_rag.server`, which
+fetches both extras rather than requiring them to be installed already. It
+writes that pair whichever extras you installed with, so an entry naming only
+`mcp` is not a variant of it - it is a server without the inference stack. For `dependency` or
 `dev` mode, set `command` to `uv` and `args` to
 `["run", "--no-sync", "python", "-m", "vaultspec_rag.server"]`.
 
@@ -183,9 +185,13 @@ Restart Claude Desktop after editing the file.
 ### Claude Code
 
 Claude Code reads `.mcp.json` at the project root. Check whether one is already
-there before you write it: on a project where `vaultspec-core` is installed,
-that file belongs to its installer, which has written an entry for this server
-already. Keep the written one. Pasting the block below over it does not hold:
+there before you write it.
+
+> **Warning.** On a project where `vaultspec-core` is installed, `.mcp.json`
+> belongs to its installer, which has written an entry for this server already.
+> Keep the written one. To withhold the mutating tools from an installed
+> project, add `--read-only` to the entry that is already there rather than
+> replacing it. Pasting the block below over it does not hold:
 the next `vaultspec-core spec mcps sync` reports the entry as skipped because it
 differs from its definition, and the sync after that rewrites it back to the
 installer's shape, so the edit is gone within two ordinary runs. Use this only
