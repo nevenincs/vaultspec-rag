@@ -6,12 +6,13 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:4f6386d854729476416651007d2067a1a0f786f12aabcbb2445b623dc9735e83'
+body_hash: 'sha256:d17c2208cda0ac7044d6047977b687d24f3159b9b89b5fad153abb44fab11048'
 related:
   - '[[2026-09-04-cuda-provisioning-W01-P01-S01]]'
   - '[[2026-09-04-cuda-provisioning-W01-P01-S02]]'
   - '[[2026-09-04-cuda-provisioning-W02-P02-S03]]'
   - '[[2026-09-04-cuda-provisioning-W02-P02-S04]]'
+  - '[[2026-09-04-cuda-provisioning-W03-P03-S05]]'
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-04-cuda-provisioning-plan]]'
   - '[[2026-09-04-cuda-provisioning-research]]'
@@ -33,6 +34,7 @@ Auto-generated index of all documents tagged with `#cuda-provisioning`.
 - `2026-09-04-cuda-provisioning-W01-P01-S02` - Prove the holder query against real image-path, working-directory and uninspectable holders
 - `2026-09-04-cuda-provisioning-W02-P02-S03` - Add the redirected uv environment fixture, a loopback wheel index serving stand-in distributions, and a holder subprocess helper
 - `2026-09-04-cuda-provisioning-W02-P02-S04` - Prove the harness reproduces the held-environment destruction, the resolve-stage safe failure, and a real uv receipt the matcher accepts
+- `2026-09-04-cuda-provisioning-W03-P03-S05` - Replace the in-environment reinstall with a holder preflight that refuses and hands over the exact command
 
 ### plan
 
