@@ -6,9 +6,10 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:c8b7cadcd0e7a0e3aaadef99f74f3491108fe36c2d1d205ed31731f9eceac04b'
+body_hash: 'sha256:5370d996f9ed984c1009dc06a4a427c2300aec00020f9937e35bf555652ff446'
 related:
   - '[[2026-09-04-cuda-provisioning-W01-P01-S01]]'
+  - '[[2026-09-04-cuda-provisioning-W01-P01-S02]]'
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-04-cuda-provisioning-plan]]'
   - '[[2026-09-04-cuda-provisioning-research]]'
@@ -27,6 +28,7 @@ Auto-generated index of all documents tagged with `#cuda-provisioning`.
 ### exec
 
 - `2026-09-04-cuda-provisioning-W01-P01-S01` - Add a fail-closed holder query returning the live processes whose image path or working directory resolves under a given environment root
+- `2026-09-04-cuda-provisioning-W01-P01-S02` - Prove the holder query against real image-path, working-directory and uninspectable holders
 
 ### plan
 
