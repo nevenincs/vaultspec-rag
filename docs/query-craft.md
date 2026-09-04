@@ -226,8 +226,11 @@ exact-path filter.
 
 ### Telling a weak result from an empty corpus
 
-Search always returns its ten closest chunks, so a query with nothing to match
-looks the same as one with a poor answer. `--scores` separates them.
+Search returns up to its ten closest chunks - `--max-results` defaults to ten,
+and that is a ceiling rather than a promise, so a query can come back with fewer.
+What it does not do is come back empty for want of a good answer, so a query with
+nothing to match looks much like one with a poor answer. `--scores` separates
+them.
 
 Both runs below are against this project's vault, cut to their top three rows;
 each returned the full ten.
