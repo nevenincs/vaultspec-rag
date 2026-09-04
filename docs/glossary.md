@@ -132,6 +132,10 @@ The numeric relevance value attached to each search result. Higher is better, bu
 
 Search that ranks results by meaning rather than exact word matches, using vectors to compare the query against indexed chunks. See [the search guide](search-and-index.md).
 
+## Server mode
+
+The storage arrangement in which the index lives in the managed Qdrant server rather than inside the project, which is the default. Its opposite is [local-only mode](#local-only-mode), and the choice is about where the index lives rather than whether the background service runs. Commands that require it report `server_mode_required` and exit `2` when it is off. See [the backends guide](backends.md).
+
 ## Service
 
 The long-running background process that keeps the accelerator models loaded, so requests skip the per-call model-loading cost. It also supervises the managed Qdrant server. Running as a service is the default. See [the service-mode guide](service-mode.md).
