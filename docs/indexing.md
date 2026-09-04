@@ -244,9 +244,12 @@ against the chunk being indexed before its vectors are reused. Anything else cou
 a miss: a changed line, an absent donor, a failed gate. A miss encodes exactly as
 it would have without reuse, so a run produces the same index either way.
 
-Reuse is on by default and can be turned off end to end. Set the config key
-`index_reuse_enabled` to `false`, or the environment variable
+Reuse is on by default and can be turned off end to end. Set
 `VAULTSPEC_RAG_INDEX_REUSE` to `0`, `false`, or `no`, and every chunk encodes as before.
+Through a config source the same switch is `index_reuse_enabled`, which is the one place
+on this page where the two names do not line up by stripping the prefix - the
+[configuration reference](configuration.md) lists these settings by environment
+variable, so that is the name to search for there.
 Each run records its reuse outcome - hits, misses, hit rate, estimated accelerator time
 saved, and which donor collections were consulted - on the job record; see
 [observing activity](service-mode.md#observe-activity) for how to read it.
