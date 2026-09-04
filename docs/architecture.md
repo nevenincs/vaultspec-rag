@@ -44,7 +44,7 @@ Apple silicon has unified memory, shared by the CPU, the GPU, and everything els
 
 The project validates the dense, sparse, and reranker models running concurrently on an 8 GiB Apple silicon machine. That is a statement about function, not about throughput, battery, or thermals. Don't read it as parity with CUDA.
 
-Memory figures use binary units (GiB) and video-memory figures follow the vendor's decimal convention (GB). The [installation guide](installation.md) and [configuration reference](configuration.md) carry the exact numbers.
+Memory figures use binary units (GiB), and video memory follows the same convention rather than the vendor's decimal one: `status` carries the card's capacity as `vram_mib` and prints it as GiB, so a `vram_mib` of 16375 renders as `16.0 GiB VRAM`. Download sizes are the decimal ones. The [installation guide](installation.md) and [configuration reference](configuration.md) carry the exact numbers.
 
 ## Where the models and the index live between searches
 
