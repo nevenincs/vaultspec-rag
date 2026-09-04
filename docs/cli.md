@@ -883,6 +883,10 @@ Options:
 Migration copies rather than moves, so the source data survives the run. See the
 [storage and maintenance guide](storage-maintenance.md).
 
+Exit: `0` on success, including a preview and a run with nothing to move; `2` for
+a usage error such as a `--to` value that is not `server` or `local`; `3` when
+the managed server is unreachable.
+
 ## server storage restore
 
 `vaultspec-rag server storage restore <archive> --root <path>`
@@ -909,6 +913,10 @@ Options:
 This is the counterpart to the archives that reclamation writes before deleting
 a data-bearing namespace. See the
 [storage and maintenance guide](storage-maintenance.md).
+
+Exit: `0` on success, including a preview; `2` for a usage error, which is what a
+path with no archive directory at it returns; `3` when the managed server is
+unreachable.
 
 ## preprocess list
 
