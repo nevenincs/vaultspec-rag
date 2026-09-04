@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
 modified: '2026-09-04'
 body_schema: body-v2
-body_hash: 'sha256:8518f2308b3fa27a01bc0696c0adeff9b7d3b056b5f95d08fdb3aa2e4e31ecf9'
+body_hash: 'sha256:1cd277b050b66f1e1f0c4301a3ddfc548088404186c28ba3ca850af6e4848047'
 ---
 
 # `cuda-provisioning` plan
@@ -47,7 +47,7 @@ Answer which live processes hold a target environment, by image path and working
 Add the holder query and prove it against real holders.
 
 - [x] `W01.P01.S01` - Add a fail-closed holder query returning the live processes whose image path or working directory resolves under a given environment root; `src/vaultspec_rag/_process_probe.py`.
-- [ ] `W01.P01.S02` - Prove the holder query against real image-path, working-directory and uninspectable holders; `src/vaultspec_rag/tests/test_env_holders.py`.
+- [x] `W01.P01.S02` - Prove the holder query against real image-path, working-directory and uninspectable holders; `src/vaultspec_rag/tests/test_env_holders.py`.
 
 ## Wave `W02` - proof harness
 
