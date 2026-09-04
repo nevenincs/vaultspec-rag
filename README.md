@@ -1,27 +1,16 @@
-<div align="center">
-
-<img src="assets/logo.png" alt="vaultspec-rag family logo" width="150" />
+<img src="assets/logo.png" width="150" alt="vaultspec-rag logo">
 
 # vaultspec-rag
 
-**Search your code and your project's decisions by describing them, not by guessing the keyword.**
+The semantic search component for vault and code.
 
-[![install](https://img.shields.io/badge/install-uvx%20vaultspec--rag%20install%20%28NVIDIA%20GPU%29-2E6B45?style=for-the-badge&logo=uv&logoColor=white&labelColor=1b1a16)](#install)
-[![build](https://img.shields.io/github/actions/workflow/status/nevenincs/vaultspec-rag/ci.yml?branch=main&style=for-the-badge&label=build&logo=githubactions&logoColor=white&labelColor=1b1a16)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
-[![release](https://img.shields.io/pypi/v/vaultspec-rag?style=for-the-badge&label=release&logo=pypi&logoColor=white&labelColor=1b1a16&color=8A72B5)](https://pypi.org/project/vaultspec-rag/)
-[![runtime](https://img.shields.io/badge/runtime-Python%203.13%20%7C%203.14%20%7C%20CUDA%20%7C%20MPS-3F9AA6?style=for-the-badge&labelColor=1b1a16)](#what-you-need)
-[![license](https://img.shields.io/github/license/nevenincs/vaultspec-rag?style=for-the-badge&label=license&logo=opensourceinitiative&logoColor=white&labelColor=1b1a16&color=B3823C)](./LICENSE)
+[![build](https://img.shields.io/github/actions/workflow/status/nevenincs/vaultspec-rag/ci.yml?branch=main&style=flat&label=build&logo=githubactions&logoColor=white&labelColor=24292f&color=57606a)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
+[![release](https://img.shields.io/pypi/v/vaultspec-rag?style=flat&label=release&logo=pypi&logoColor=white&labelColor=24292f&color=57606a)](https://pypi.org/project/vaultspec-rag/)
+[![runtime](https://img.shields.io/badge/runtime-Python%203.13%20%7C%203.14%20%7C%20CUDA%20%7C%20MPS-57606a?style=flat&logo=python&logoColor=white&labelColor=24292f)](#what-you-need)
+[![license](https://img.shields.io/github/license/nevenincs/vaultspec-rag?style=flat&label=license&logo=opensourceinitiative&logoColor=white&labelColor=24292f&color=57606a)](./LICENSE)
 
-[![cli](https://img.shields.io/badge/cli-bundled-B5703F?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=1b1a16)](./docs/cli.md)
-[![mcp](https://img.shields.io/badge/mcp-optional-B05A6B?style=for-the-badge&logo=modelcontextprotocol&logoColor=white&labelColor=1b1a16)](#use-it-from-an-ai-assistant)
-
-[What it is](#what-it-is) ·
-[Install](#install) ·
-[Use it](#use-it) ·
-[Docs](#documentation) ·
-[Help](#status-and-help)
-
-</div>
+[What it is](#what-it-is) · [Install](#install) · [Use it](#use-it) ·
+[Docs](#documentation) · [Help](#status-and-help)
 
 ## What it is
 
@@ -154,8 +143,11 @@ standard wheel, which already supports Apple silicon.
 
 **Install it as a standalone tool.** On Linux and Windows you have to pin the GPU build,
 or `uv tool upgrade` will silently swap in a CPU one. Both `server start` and `install`
-print the exact command for your machine when they spot this. It looks like this (Python
-3.13, torch 2.13.0, Windows):
+print the exact command for your machine when they spot this. Stop the service and close
+every editor or agent session holding the MCP server before you run it - a forced
+reinstall removes the old packages first, and anything still running out of that
+environment leaves it half-emptied ([the way back](docs/installation.md#a-tool-environment-is-missing-packages-after-a-failed-reinstall)).
+It looks like this (Python 3.13, torch 2.13.0, Windows):
 
 ```bash
 uv tool install --force --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
@@ -454,15 +446,16 @@ Please include five things: your vaultspec-rag version, your operating system, y
 the command you ran, and the full error output. With those, someone can reproduce the
 problem. Without them, it's guesswork.
 
-## The vaultspec family
+## Related projects
 
-- [vaultspec-core](https://github.com/nevenincs/vaultspec-core) - Beta - the agent
-  harness: the pipeline, the vault, and the CLI that drives them. Optional.
-- **vaultspec-rag** - Beta - semantic search across code, decisions, and documents.
-- [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) - Beta - the
-  application that runs it all as a UI.
-- [vaultspec-a2a](https://github.com/nevenincs/vaultspec-a2a) - Beta - headless
-  agent-to-agent orchestration.
+| Project                                                       | Maturity | Role                                                                      |
+| ------------------------------------------------------------- | -------- | ------------------------------------------------------------------------- |
+| [vaultspec-core](https://github.com/nevenincs/vaultspec-core) | Beta     | The agent harness: the pipeline, the vault, and the CLI that drives them. |
+| **vaultspec-rag**                                             | Beta     | The semantic search component for vault and code.                         |
+
+[vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) is a separate
+project building a dedicated frontend on the same files. It is in early development, in
+the open.
 
 ## For contributors
 

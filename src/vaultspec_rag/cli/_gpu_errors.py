@@ -129,8 +129,10 @@ def durable_tool_install_command() -> str:
     torch keeps resolving to the cu130 wheel. ``--index`` is NOT recorded by
     current uv (verified on 0.11.x: the receipt carried no index options and
     an upgrade re-resolved torch to the CPU wheel), so the direct URL is the
-    only re-resolution-proof pin. The service must be stopped first: a forced
-    reinstall while it runs fails mid-removal on the locked Scripts dir.
+    only re-resolution-proof pin. Nothing may be running out of the target
+    environment first: a forced reinstall fails mid-removal on the locked
+    Scripts dir, and the holder is as often an MCP client session's server
+    process as the service itself.
 
     A direct wheel URL has to name one interpreter and one ABI, so both tags
     are read off the running interpreter rather than written down. Hardcoding
@@ -337,7 +339,10 @@ def warn_if_active_torch_not_accelerator() -> None:
             "re-resolves torch to the CPU wheel.",
             "  Repair this environment now (undone by the next upgrade):",
             f"    {gpu_escape_hatch_command(sys.executable)}",
-            "  Make upgrades keep the GPU wheel (stop the service first):",
+            "  Make upgrades keep the GPU wheel. Stop the service and close "
+            "every editor or agent session holding an MCP server first: a "
+            "held file stops the forced reinstall after it has removed the "
+            "old packages, leaving the environment unrunnable.",
             f"    {durable_tool_install_command()}",
         ]
     elif kind is RuntimeEnvKind.UVX_EPHEMERAL:
@@ -347,8 +352,10 @@ def warn_if_active_torch_not_accelerator() -> None:
             f"({sys.prefix}) - not the installed tool. uvx silently falls "
             "back to it when the installed tool env is broken or the request "
             "does not match it.",
-            "  Reinstall the tool with the service stopped (the Scripts lock "
-            "during a forced reinstall is the running service itself):",
+            "  Reinstall the tool with nothing running out of its "
+            "environment - the service, and every editor or agent session "
+            "holding an MCP server, both take the Scripts lock that stops a "
+            "forced reinstall half-way:",
             f"    {durable_tool_install_command()}",
         ]
     else:

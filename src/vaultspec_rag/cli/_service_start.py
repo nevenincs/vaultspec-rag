@@ -517,8 +517,12 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
             next_actions = (
                 "Repair this environment now (undone by the next tool "
                 f"upgrade): {gpu_escape_hatch_command(interpreter)}",
-                "Make upgrades keep the GPU wheel (stop the service first): "
-                f"{durable_tool_install_command()}",
+                "Before the reinstall below, stop everything running out of "
+                "this environment - the service, and every editor or agent "
+                "session holding an MCP server. A held file stops the forced "
+                "reinstall after it has removed the old packages, and the "
+                "environment is left unrunnable.",
+                f"Make upgrades keep the GPU wheel: {durable_tool_install_command()}",
                 "Confirm the GPU is visible: nvidia-smi",
             )
         raise _fail_start(
