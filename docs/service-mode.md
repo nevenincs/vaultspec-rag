@@ -247,7 +247,7 @@ uv run vaultspec-rag server updates timing <project>
 
 To re-time updates for a project, pass `--update-delay-ms` or `--repeat-update-delay-s` to `server updates timing`. A value of `0` on either delay means "no delay", not "disabled".
 
-The single off switch is `--no-updates` at start time, or `VAULTSPEC_RAG_WATCH_ENABLED=0`. For debounce, cooldown, and how changes are batched, see the [automation guide](automation.md).
+The single off switch is `--no-updates` at start time, or `VAULTSPEC_RAG_WATCH_ENABLED=0`. Debounce and cooldown are `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` (2000 ms) and `VAULTSPEC_RAG_WATCH_COOLDOWN_S` (30 s), with `--update-delay-ms` and `--repeat-update-delay-s` as their flags; the [configuration reference](configuration.md) carries both rows, and `server updates timing` changes them for one project.
 
 ## Manage projects
 
