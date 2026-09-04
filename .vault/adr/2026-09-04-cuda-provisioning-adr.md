@@ -5,7 +5,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:0e648af8a0148b9583ea35939180b3ed3c2e2139563c997d17c51c390f36762c'
+body_hash: 'sha256:2cb6a64e65d19696f49034f5fccad9837c9c77431b49c037edb8ae96e694d37c'
 related:
   - "[[2026-09-04-cuda-provisioning-research]]"
   - "[[2026-07-14-tool-env-gpu-continuity-adr]]"
@@ -82,11 +82,19 @@ structure that makes such proofs repeatable across this repository and vaultspec
 - **O-2d - Windows open-handle enumeration.** Rejected: new platform code, elevation
   questions, and no existing precedent in either repository.
 
-**D3 - scope of an automatic repair.** **O-3a (chosen)** - a repair may change the torch
-wheel only: it preserves the installed version and the receipt's existing extras, and
-carries its own consent flag rather than inheriting file-overwrite `--force`. **O-3b** -
-keep the current latest-version, `[gpu,mcp]`-imposing behaviour under the existing prompt.
-Rejected: it is an unannounced upgrade performed under a prompt about torch.
+**D3 - scope of an automatic repair.** **O-3a (chosen)** - the request a repair hands
+over may change the torch wheel only: it pins the installed version and reuses the
+extras the receipt already records. **O-3b** - keep the current latest-version,
+`[gpu,mcp]`-imposing behaviour. Rejected: it is an unannounced upgrade offered under a
+prompt about torch.
+
+Amended during execution. This decision originally also required the repair to carry its
+own consent flag rather than inherit file-overwrite `--force`. D1 removed the mutation
+that consent authorised, so the prompt was removed rather than re-flagged: asking for
+permission to print a command is friction with no consequence, and demanding it made a
+defective tool environment undiagnosable from a non-interactive run. An opt-out
+(`--no-tool-repair`) skips the check itself, which is the only choice left that changes
+anything.
 
 **D4 - torch absent by design.** **O-4a (chosen)** - absence of torch in an install that
 never requested the GPU extra is a state, not a defect; the repair does not fire and

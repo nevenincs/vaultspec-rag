@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
 modified: '2026-09-04'
 body_schema: body-v2
-body_hash: 'sha256:a90ee9ff98462c70cb328f64722fc2fa56d39c7f435f854096e06e15c6ec81c7'
+body_hash: 'sha256:8ad0fd6bce75f37e11e9f218188839cb9510f12ab6baf7056a229c0c0a2ea497'
 ---
 
 # `cuda-provisioning` plan
@@ -69,7 +69,7 @@ Reshape the repair so it never replaces an environment from inside it, and so it
 Remove the destructive in-environment invocation, constrain consent and scope, and prove every branch.
 
 - [x] `W03.P03.S05` - Replace the in-environment reinstall with a holder preflight that refuses and hands over the exact command; `src/vaultspec_rag/commands/_tool_torch.py`.
-- [ ] `W03.P03.S06` - Separate repair consent from the file-overwrite flag and constrain repair scope to the torch wheel, preserving installed version and receipt extras; `src/vaultspec_rag/commands/_install.py and src/vaultspec_rag/cli/_install.py`.
+- [x] `W03.P03.S06` - Separate repair consent from the file-overwrite flag and constrain repair scope to the torch wheel, preserving installed version and receipt extras; `src/vaultspec_rag/commands/_install.py and src/vaultspec_rag/cli/_install.py`.
 - [ ] `W03.P03.S07` - Render every repair outcome in human mode, not only under JSON; `src/vaultspec_rag/cli/_render.py`.
 - [ ] `W03.P03.S08` - Prove repair safety and receipt postconditions, including that a refusal launches no uv child; `src/vaultspec_rag/tests/test_tool_torch_repair.py`.
 

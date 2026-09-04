@@ -9,7 +9,7 @@ import tomllib
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from urllib.parse import unquote
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -22,9 +22,6 @@ from .._process_probe import (
     environment_holders,
 )
 from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
-
-if TYPE_CHECKING:
-    from ._models import ConfirmFn
 
 #: Holders are listed for an operator to act on, not dumped exhaustively.
 HOLDER_REPORT_LIMIT = 10
@@ -52,9 +49,6 @@ class ToolTorchRepairAction(StrEnum):
     NOT_APPLICABLE = "not_applicable"
     ALREADY_READY = "already_ready"
     DRY_RUN = "dry_run"
-    DECLINED = "declined"
-    SKIPPED_NON_TTY = "skipped_non_tty"
-    SKIPPED_EOF = "skipped_eof"
     HOLDER_DETECTED = "holder_detected"
     HANDOFF_REQUIRED = "handoff_required"
     CUDA_UNVERIFIED = "cuda_unverified"
@@ -88,9 +82,6 @@ class ToolTorchRepairOutcome:
     def blocks_install(self) -> bool:
         """Whether continuing would hide an unresolved tool CUDA failure."""
         return self.action in {
-            ToolTorchRepairAction.DECLINED,
-            ToolTorchRepairAction.SKIPPED_NON_TTY,
-            ToolTorchRepairAction.SKIPPED_EOF,
             ToolTorchRepairAction.HOLDER_DETECTED,
             ToolTorchRepairAction.HANDOFF_REQUIRED,
             ToolTorchRepairAction.CUDA_UNVERIFIED,
@@ -143,11 +134,65 @@ def _tool_package_spec() -> str:
     return value
 
 
+def _receipt_package_extras(receipt: Path, package: str) -> tuple[str, ...] | None:
+    """Return the extras the receipt records for *package*, if it records any.
+
+    The operator chose those extras. A repair that re-specifies the tool has
+    no business widening them, so what is already recorded is what gets asked
+    for again.
+    """
+    try:
+        data = tomllib.loads(receipt.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    tool = data.get("tool")
+    requirements = tool.get("requirements") if isinstance(tool, dict) else None
+    if not isinstance(requirements, list):
+        return None
+    for entry in cast("list[object]", requirements):
+        if not isinstance(entry, dict):
+            continue
+        record = cast("dict[str, object]", entry)
+        name = record.get("name")
+        if not isinstance(name, str) or name.lower() != package.lower():
+            continue
+        extras = record.get("extras")
+        if isinstance(extras, list):
+            return tuple(str(extra) for extra in cast("list[object]", extras))
+        return ()
+    return None
+
+
+def _tool_package_requirement(interpreter: str) -> str:
+    """Render the package request a repair may ask for, and no more.
+
+    A bare name resolves to whatever is newest, so the command that repairs a
+    torch wheel would also upgrade the tool and impose this build's extras on
+    an operator who chose otherwise. The installed version is pinned and the
+    receipt's own extras are reused; the bundled specification is the fallback
+    for an environment that records neither.
+    """
+    fallback = _tool_package_spec()
+    package = Requirement(fallback).name
+    extras = _receipt_package_extras(
+        _tool_root(interpreter) / "uv-receipt.toml", package
+    )
+    if extras is None:
+        return fallback
+    try:
+        version = importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        return fallback
+    rendered = f"{package}[{','.join(sorted(extras))}]" if extras else package
+    return f"{rendered}=={version}"
+
+
 def tool_cuda_install_spec(
     *,
     torch_version: str | None = None,
     tag: Tag | None = None,
     platform_tag: str | None = None,
+    package_spec: str | None = None,
 ) -> ToolCudaInstallSpec:
     """Build the durable CUDA request from the running interpreter's tags."""
     import platform
@@ -175,7 +220,7 @@ def tool_cuda_install_spec(
             "--force",
             "--python",
             python_request,
-            _tool_package_spec(),
+            package_spec or _tool_package_spec(),
             "--with",
             f"torch @ {wheel_url}",
         ),
@@ -226,47 +271,6 @@ def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
             ):
                 return True
     return False
-
-
-def _confirmation_outcome(
-    confirm: ConfirmFn | None,
-    *,
-    assume_yes: bool,
-    command: str,
-) -> ToolTorchRepairOutcome | None:
-    if assume_yes:
-        return None
-    if confirm is None:
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.SKIPPED_NON_TTY,
-            "tool CUDA repair requires confirmation; rerun with --yes",
-            command,
-        )
-    try:
-        approved = confirm(
-            "Reinstall this uv tool environment with the CUDA torch wheel?"
-        )
-    except KeyboardInterrupt:
-        approved = False
-    except EOFError:
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.SKIPPED_EOF,
-            "tool CUDA repair confirmation reached EOF; rerun with --yes",
-            command,
-        )
-    except Exception as exc:
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.DECLINED,
-            f"tool CUDA repair confirmation failed: {type(exc).__name__}",
-            command,
-        )
-    if approved:
-        return None
-    return ToolTorchRepairOutcome(
-        ToolTorchRepairAction.DECLINED,
-        "tool CUDA repair declined by user",
-        command,
-    )
 
 
 def _holder_summary(holder: EnvironmentHolder) -> str:
@@ -321,12 +325,17 @@ def _handoff_outcome(
 
 def repair_tool_torch(
     *,
-    assume_yes: bool,
-    confirm: ConfirmFn | None,
     dry_run: bool,
     interpreter: str | None = None,
 ) -> ToolTorchRepairOutcome:
-    """Repair a defective persistent tool interpreter and verify its receipt."""
+    """Report what a defective persistent tool interpreter needs.
+
+    Nothing is mutated, so nothing is asked. The transaction inspects the
+    environment and returns the command an operator must run from outside it;
+    consent belonged to a replacement this no longer performs, and keeping the
+    prompt would have blocked non-interactive installs on a question with no
+    consequence.
+    """
     from ..cli._gpu_errors import RuntimeEnvKind, classify_interpreter_env
     from ..cli._process import (
         _probe_daemon_accelerator,
@@ -349,32 +358,18 @@ def repair_tool_torch(
     if not blocking or not accelerator_probe_is_torch_installation_defect(detail):
         return ToolTorchRepairOutcome(ToolTorchRepairAction.CUDA_UNVERIFIED, detail)
 
-    return _repair_defective_tool(
-        interpreter, detail, assume_yes=assume_yes, confirm=confirm, dry_run=dry_run
-    )
+    return _repair_defective_tool(interpreter, detail, dry_run=dry_run)
 
 
 def _repair_defective_tool(
-    interpreter: str,
-    detail: str,
-    *,
-    assume_yes: bool,
-    confirm: ConfirmFn | None,
-    dry_run: bool,
+    interpreter: str, detail: str, *, dry_run: bool
 ) -> ToolTorchRepairOutcome:
-    spec = tool_cuda_install_spec()
+    spec = tool_cuda_install_spec(package_spec=_tool_package_requirement(interpreter))
     command = spec.command
     if dry_run:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.DRY_RUN,
-            f"tool CUDA repair would run because {detail}",
+            f"tool CUDA repair is needed because {detail}",
             command,
         )
-    confirmation = _confirmation_outcome(
-        confirm,
-        assume_yes=assume_yes,
-        command=command,
-    )
-    if confirmation is not None:
-        return confirmation
     return _handoff_outcome(interpreter, spec, command)
