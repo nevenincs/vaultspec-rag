@@ -6,7 +6,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:7fb55d4931e905fedfa1d2db47d797c090099fd389aad6b64e0d7bdc61e37d26'
+body_hash: 'sha256:3a90bbe406d07aa69919ac605651a7946c35cf785e294e70677852fa72b6fbd0'
 related:
   - '[[2026-09-04-cuda-provisioning-W01-P01-S01]]'
   - '[[2026-09-04-cuda-provisioning-W01-P01-S02]]'
@@ -14,6 +14,7 @@ related:
   - '[[2026-09-04-cuda-provisioning-W02-P02-S04]]'
   - '[[2026-09-04-cuda-provisioning-W03-P03-S05]]'
   - '[[2026-09-04-cuda-provisioning-W03-P03-S06]]'
+  - '[[2026-09-04-cuda-provisioning-W03-P03-S07]]'
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-04-cuda-provisioning-plan]]'
   - '[[2026-09-04-cuda-provisioning-research]]'
@@ -37,6 +38,7 @@ Auto-generated index of all documents tagged with `#cuda-provisioning`.
 - `2026-09-04-cuda-provisioning-W02-P02-S04` - Prove the harness reproduces the held-environment destruction, the resolve-stage safe failure, and a real uv receipt the matcher accepts
 - `2026-09-04-cuda-provisioning-W03-P03-S05` - Replace the in-environment reinstall with a holder preflight that refuses and hands over the exact command
 - `2026-09-04-cuda-provisioning-W03-P03-S06` - Separate repair consent from the file-overwrite flag and constrain repair scope to the torch wheel, preserving installed version and receipt extras
+- `2026-09-04-cuda-provisioning-W03-P03-S07` - Render every repair outcome in human mode, not only under JSON
 
 ### plan
 
