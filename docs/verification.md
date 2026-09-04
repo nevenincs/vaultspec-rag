@@ -152,10 +152,12 @@ That run is this project's own source. Another page shows the same command
 against a smaller repository and reports a different admitted count, which is
 the point of running it: the numbers describe the tree in front of you.
 
-The admission summary is the answer: 714 files admitted out of the 906
-considered (714 admitted, 180 rejected, 12 ignored). A gap that size is not a
-fault by itself, because the profile exists to keep vendored trees and build
-output out of your results.
+The admission summary is the answer: read it off the three lines above rather
+than off this sentence, because the counts move with the tree. In that run it
+is 717 admitted, 181 rejected by the source profile, and 12 ignored as
+unowned, which is 910 files considered. A gap that size is not a fault by
+itself, because the profile exists to keep vendored trees and build output out
+of your results.
 
 Scan the file list to confirm the profile admitted what you expected. These are
 the project's own modules, which is what you want. If instead the list opens
