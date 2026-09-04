@@ -302,3 +302,131 @@ def test_the_install_report_itself_carries_the_repair_section(
     printed = capsys.readouterr().out
     assert "Tool environment needs a CUDA repair" in printed
     assert "uv tool install --force" in printed
+
+
+def test_a_healthy_tool_interpreter_needs_no_repair(monkeypatch: MonkeyPatch) -> None:
+    """A CUDA-ready environment ends the transaction without a report."""
+    from ..cli import _gpu_errors, _process
+
+    monkeypatch.setattr(_gpu_errors, "classify_interpreter_env", _persistent_tool_env)
+    monkeypatch.setattr(_process, "_probe_daemon_accelerator", _cuda_ready_probe)
+
+    outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
+
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.ALREADY_READY
+    assert not outcome.blocks_install
+
+
+def test_a_project_venv_is_not_this_transaction_s_business(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Only a persistent tool environment is repaired through this path."""
+    from ..cli import _gpu_errors
+
+    monkeypatch.setattr(
+        _gpu_errors,
+        "classify_interpreter_env",
+        lambda _interpreter: RuntimeEnvKind.PROJECT_VENV,
+    )
+
+    outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
+
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.NOT_APPLICABLE
+    assert not outcome.blocks_install
+
+
+def test_a_dry_run_previews_the_command_without_inspecting_holders(
+    tmp_path: Path,
+) -> None:
+    """A preview names what is needed and why, and stops there."""
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+
+    outcome = _tool_torch._repair_defective_tool(
+        str(interpreter), "CPU-only torch", dry_run=True
+    )
+
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.DRY_RUN
+    assert "CPU-only torch" in outcome.detail
+    assert "uv tool install" in outcome.command
+    assert outcome.holders == ()
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
+        _tool_torch.ToolTorchRepairAction.HANDOFF_REQUIRED,
+        _tool_torch.ToolTorchRepairAction.CUDA_UNVERIFIED,
+    ],
+)
+def test_every_unresolved_outcome_stops_the_install(
+    action: _tool_torch.ToolTorchRepairAction,
+) -> None:
+    """An environment that cannot run the stack is never installed over.
+
+    Guard assertion: continuing past any of these would leave the operator with
+    a completed install on top of an environment that cannot serve a request.
+    """
+    outcome = _tool_torch.ToolTorchRepairOutcome(action, "detail", "command")
+
+    assert outcome.blocks_install
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        _tool_torch.ToolTorchRepairAction.NOT_APPLICABLE,
+        _tool_torch.ToolTorchRepairAction.ALREADY_READY,
+        _tool_torch.ToolTorchRepairAction.DRY_RUN,
+    ],
+)
+def test_a_resolved_outcome_lets_the_install_continue(
+    action: _tool_torch.ToolTorchRepairAction,
+) -> None:
+    """Nothing to repair, or nothing asked for, does not block the install."""
+    outcome = _tool_torch.ToolTorchRepairOutcome(action, "detail", "command")
+
+    assert not outcome.blocks_install
+
+
+def test_a_real_holder_is_named_in_the_refusal(tmp_path: Path) -> None:
+    """A live process in the environment is reported, with its pid and relation.
+
+    Real environment, real holder: the refusal an operator reads has to name
+    the process they must actually end, not merely state that one exists.
+    """
+    from ._uv_env_harness import (
+        build_wheel,
+        hold_environment,
+        index_arguments,
+        sandbox_from,
+        serve_wheels,
+    )
+
+    sandbox = sandbox_from(tmp_path)
+    wheels = tmp_path / "wheels"
+    build_wheel(wheels, name="provtool", version="1.0.0")
+    with serve_wheels(wheels) as base_url:
+        installed = sandbox.run(
+            "tool", "install", "provtool", *index_arguments(base_url)
+        )
+        assert installed.returncode == 0, installed.stderr
+
+    root = sandbox.tool_root("provtool")
+    interpreter = root / "Scripts" / "python.exe"
+    if not interpreter.exists():
+        interpreter = root / "bin" / "python"
+
+    with hold_environment(root, by_image=True) as holder:
+        outcome = _tool_torch._handoff_outcome(
+            str(interpreter),
+            _tool_torch.tool_cuda_install_spec(),
+            "uv tool install --force ...",
+        )
+
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED
+    assert any(found.pid == holder.pid for found in outcome.holders)
+    assert f"pid {holder.pid}" in outcome.detail
+    assert "end this process" in outcome.detail
+    assert outcome.blocks_install

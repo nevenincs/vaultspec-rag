@@ -6,7 +6,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:3a90bbe406d07aa69919ac605651a7946c35cf785e294e70677852fa72b6fbd0'
+body_hash: 'sha256:1c60af289e2f294b83896555f4e8d865dc86bdd3257477d693332da200e17e3d'
 related:
   - '[[2026-09-04-cuda-provisioning-W01-P01-S01]]'
   - '[[2026-09-04-cuda-provisioning-W01-P01-S02]]'
@@ -15,6 +15,7 @@ related:
   - '[[2026-09-04-cuda-provisioning-W03-P03-S05]]'
   - '[[2026-09-04-cuda-provisioning-W03-P03-S06]]'
   - '[[2026-09-04-cuda-provisioning-W03-P03-S07]]'
+  - '[[2026-09-04-cuda-provisioning-W03-P03-S08]]'
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-04-cuda-provisioning-plan]]'
   - '[[2026-09-04-cuda-provisioning-research]]'
@@ -39,6 +40,7 @@ Auto-generated index of all documents tagged with `#cuda-provisioning`.
 - `2026-09-04-cuda-provisioning-W03-P03-S05` - Replace the in-environment reinstall with a holder preflight that refuses and hands over the exact command
 - `2026-09-04-cuda-provisioning-W03-P03-S06` - Separate repair consent from the file-overwrite flag and constrain repair scope to the torch wheel, preserving installed version and receipt extras
 - `2026-09-04-cuda-provisioning-W03-P03-S07` - Render every repair outcome in human mode, not only under JSON
+- `2026-09-04-cuda-provisioning-W03-P03-S08` - Prove repair safety and receipt postconditions, including that a refusal launches no uv child
 
 ### plan
 
