@@ -209,6 +209,18 @@ To fold this into the install step, pass `install --sync`, which runs `uv sync -
 
 A tool environment must pin the CUDA wheel in its receipt. Without the pin, every `uv tool upgrade` re-resolves PyTorch from the package index and silently replaces the GPU build with a processor-only one. The service then refuses to start.
 
+Nothing may be running out of the tool environment while the pin is applied. `--force` removes the installed distributions before it writes the replacements, and a held file stops it part-way: on Windows the run dies on the locked `Scripts` directory. What is left is an environment missing most of its packages, and the next `vaultspec-rag` invocation ends in a `ModuleNotFoundError` naming some dependency of a dependency. The service is one holder. Every editor or agent session with the vaultspec-rag MCP server connected is another, each running a `vaultspec_rag.server` of its own, and closing the editor window is what releases it. Stop the service, close those sessions, and confirm nothing is left:
+
+```bash
+vaultspec-rag server stop
+pgrep -af vaultspec_rag
+```
+
+```powershell
+vaultspec-rag server stop
+Get-Process python | Where-Object Path -like '*tools*vaultspec-rag*'
+```
+
 The exact command depends on your interpreter, platform, and PyTorch release, so don't copy one from documentation. Both `vaultspec-rag server start` and `vaultspec-rag install` print the correct command for your machine whenever they detect a processor-only tool environment. Run either to get it. Its shape, for Python 3.13 and torch 2.13.0 on Windows, is:
 
 ```bash
@@ -295,10 +307,22 @@ The next upgrade undoes this. [The receipt pin](#pin-the-gpu-build) is the durab
 
 Two things break tool environments in the first place:
 
-- A forced reinstall while the service is running. The running executable holds the tool's `Scripts` directory, so the reinstall fails half-way.
+- A forced reinstall while something still runs out of the environment. The running executable holds the tool's `Scripts` directory, so the reinstall fails half-way. The service is the obvious holder; an editor or agent session with the MCP server connected is the easily missed one.
 - After such a failure, `uvx vaultspec-rag` silently falls back to a cached ephemeral environment instead of the installed tool. `server start` warns when it detects that fallback.
 
-Stop the service before any forced reinstall or upgrade.
+Stop the service and close every MCP client session before any forced reinstall or upgrade.
+
+### A tool environment is missing packages after a failed reinstall
+
+The symptom is a `ModuleNotFoundError` on any invocation, naming a package you never installed by hand - a dependency of a dependency, such as `typer`'s `annotated_doc`. The environment holds whatever the interrupted reinstall had already removed and not yet replaced.
+
+The in-place torch repair above does not fix this. It reinstalls torch and torch's dependencies, and the missing packages are not among them. Re-run the [pinned install](#pin-the-gpu-build) instead, with the service stopped and every MCP client session closed, which rebuilds the environment and records the pin in the receipt. Check that it landed:
+
+```bash
+grep -c 'download.pytorch.org' "$(uv tool dir)/vaultspec-rag/uv-receipt.toml"
+```
+
+A receipt naming only `vaultspec-rag`, with no wheel URL, is an environment that ran a reinstall without the pin, or one whose pinned run did not finish.
 
 ### `install` refused to edit `pyproject.toml`
 
@@ -346,7 +370,7 @@ The `server updates` commands are unrelated to upgrades; they control the automa
 
 ## Remove it
 
-Run these in order. The first two need the command-line interface, so removing the package has to come last.
+Run these in order. The first three need the command-line interface, so removing the package has to come last.
 
 Remove the workspace setup:
 
@@ -363,6 +387,38 @@ uv run vaultspec-rag server qdrant clean --yes
 ```
 
 `--yes` is required; without it the command prints a preview only. Pass `--keep-current` to preserve the pinned version. This step never touches index data.
+
+Delete this project's index:
+
+```bash
+uv run vaultspec-rag server storage delete --root /path/to/your/project --dry-run
+```
+
+```text
+Queried root: /path/to/your/project  prefix: rea7120f40662_
+Would remove rea7120f40662_ (4 collections). Re-run with --yes.
+```
+
+The root path is substituted above; the prefix is the real one from that run.
+Yours will differ, because the prefix is a hash of your own source root.
+
+This is the step the other three do not cover, and skipping it is the one way
+to remove vaultspec-rag and still be paying for it. On the default
+`managed-service` backend the index does not live in your project: it lives in
+the service's own storage, keyed by a hash of the source root. `--remove-data`
+above deletes `.vault/data/`, which is run metadata, not the index. Deleting
+the project directory afterwards does not reclaim it either - it only turns the
+namespace *orphaned*, meaning the source root it was built from is gone, and
+leaves it on disk.
+
+The sizes are not small. Surveyed on the machine these captures were taken on,
+this project's own namespace is `1.3 GiB`, and the store holds
+`35 namespaces  (orphaned=10 unknown=0 unverifiable=0 live=25)  33.1 GiB on
+disk`. Ten of those are indexes for projects that no longer exist.
+
+Run [storage and maintenance](storage-maintenance.md) first if you want the
+survey before you delete, or `server storage prune --dry-run` to see every
+orphaned namespace at once rather than this one project's.
 
 Remove the package:
 
