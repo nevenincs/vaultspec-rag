@@ -160,6 +160,44 @@ The PyTorch step asks before editing `pyproject.toml`, and **the prompt defaults
 
 Each dependency reports its outcome as `created`, `updated`, `unchanged`, `skipped`, or `failed`. The run is idempotent: re-running a satisfied dependency reports `unchanged` and makes no network call.
 
+Here is the whole of it, on a project that already had a `pyproject.toml`, with
+the prompt left unanswered:
+
+```text
+Patch <project>/pyproject.toml with the cu130 torch index? This lets uv resolve
+the CUDA torch wheel. [y/n] (n): vaultspec-rag installed
+Target: <project>
+created 4 directories
+seeded 3 bundled files:
+  [ADD] rules/vaultspec-rag.builtin.md
+  [ADD] skills/vaultspec-rag-discovery/SKILL.md
+  [ADD] mcps/vaultspec-rag.builtin.json
+tool integrations: added 8
+Claude MCP: added 1
+Codex MCP: added 1
+MCP optional dependency: tool
+PyTorch configuration: needs confirmation
+Provisioning: mixed
+  PyTorch: skipped (torch configuration handled by the dedicated PyTorch step
+  (it patches pyproject.toml; see 'PyTorch configuration' above) - not re-run
+  here)
+  Models: already present (all 3 model repos already cached)
+  Qdrant binary: already present (Verified install already present; nothing to
+  do.)
+Warning: torch-config patch skipped: confirmation prompt hit EOF
+(non-interactive stdin). Re-run with --yes or --force to apply, or
+--no-torch-config to opt out.
+```
+
+Three things about that capture. The absolute path is shortened to `<project>`
+and the two long lines are wrapped; nothing else is cut. The prompt reads as
+though it ran into the next line because the answer never came: this run had no
+terminal on standard input, so it took the default and exited `2`, which is what
+declining looks like. And `Models` and `Qdrant binary` report `already present`
+because that machine had both cached from an earlier install. On a machine
+without them these are the lines that carry the download, and the wait.
+
+
 ### Install less than the default
 
 *All Python routes. These are decisions you make when you run `install`, not afterwards.*
