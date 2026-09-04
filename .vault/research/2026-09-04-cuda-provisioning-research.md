@@ -5,7 +5,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:a8249f37752086c27207e196f60ec1704af9e44c9f6df80090b9ebe7469fb9fe'
+body_hash: 'sha256:e57692e0cce4046b1ec3888715ca13671924ea34184a74341b7ea7b15959cc6b'
 related:
   - "[[2026-07-14-tool-env-gpu-continuity-adr]]"
   - "[[2026-09-01-tool-mode-cuda-research]]"
@@ -37,8 +37,7 @@ contract, the consent and scope of an automatic repair, and which proofs may gat
 `uv tool install --force` removes the installed distributions before writing
 replacements. On Windows a held file aborts the run mid-removal. Reproduced against
 `uv 0.12.8 (68209e5c6)` in a redirected `UV_TOOL_DIR`: with a `<tool>\Scripts\python.exe`
-process alive, the run exits 2 with `error: failed to remove directory ...\Scripts:
-Access is denied. (os error 5)`, `Lib/site-packages` is gone, and `uv-receipt.toml`
+process alive, the run exits 2 with `error: failed to remove directory ...\Scripts: Access is denied. (os error 5)`, `Lib/site-packages` is gone, and `uv-receipt.toml`
 survives naming the old pin - a receipt that lies about an environment that no longer
 exists. The field environment matched this exactly: `pydantic`, `numpy`, `httpx`,
 `fastapi`, `huggingface_hub`, `transformers` and `annotated_doc` removed while their
@@ -76,8 +75,7 @@ these three.
 A process whose current working directory sits inside the tool env blocks removal even
 when its executable is entirely foreign to that env. Reproduced with the repo's own
 `.venv` interpreter chdir'd into the tool directory: exit 2 with a *different* Windows
-error - `The process cannot access the file because it is being used by another process.
-(os error 32)` - and a worse post-state, the tool directory left completely empty. An
+error - `The process cannot access the file because it is being used by another process. (os error 32)` - and a worse post-state, the tool directory left completely empty. An
 image-path prefix test alone would report that machine clear.
 
 The two relations need different remediation text: an image-path holder is a process to
