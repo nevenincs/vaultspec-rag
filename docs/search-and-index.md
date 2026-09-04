@@ -364,7 +364,7 @@ The target is required, so `clean` removes a corpus only when you name it. `clea
 
 - Run searches and indexing through a background daemon: [service mode](service-mode.md).
 - Every command, flag, and exit code: [CLI reference](cli.md).
-- Tune defaults like result counts, batch sizes, and the data directory: [configuration](configuration.md).
+- Tune defaults like batch sizes, chunk budgets, and the data directory: [configuration](configuration.md). The result count is not among them: `--max-results` defaults to 10 and is set per call rather than configured.
 
 ## Getting help
 
