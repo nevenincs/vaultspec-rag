@@ -391,17 +391,20 @@ uv run vaultspec-rag server qdrant clean --yes
 Delete this project's index:
 
 ```bash
-uv run vaultspec-rag server storage delete --root Y:\code\vaultspec-rag-worktrees\main --dry-run
+uv run vaultspec-rag server storage delete --root vaultspec-rag-worktrees/main --dry-run
 ```
 
 ```text
-Queried root: Y:\code\vaultspec-rag-worktrees\main  prefix: rea7120f40662_
+Queried root: vaultspec-rag-worktrees/main  prefix: rea7120f40662_
 Would remove rea7120f40662_ (4 collections). Re-run with --yes.
 ```
 
-That is a whole capture, root and all: pass your own project directory instead.
-The prefix is a hash of the source root, so yours will differ - which is the
-point of running the dry run before the real one.
+One edit to that capture, the same one the status capture above takes: the
+absolute project path is shortened to its last two segments and written with
+POSIX separators, because the run was made on Windows. Nothing else is changed -
+the prefix is the real one that run reported. Pass your own project directory
+instead, and expect a different prefix: it is a hash of the resolved root, which
+is the point of running the dry run before the real one.
 
 This is the step the other three do not cover, and skipping it is the one way
 to remove vaultspec-rag and still be paying for it. On the default
