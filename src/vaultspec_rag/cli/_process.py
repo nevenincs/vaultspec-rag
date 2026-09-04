@@ -67,6 +67,7 @@ __all__ = [
     "_resolve_daemon_interpreter",
     "_spawn_service",
     "_terminate_pid",
+    "accelerator_probe_is_torch_absent_by_design",
     "accelerator_probe_is_torch_installation_defect",
 ]
 
@@ -435,6 +436,11 @@ def _probe_daemon_accelerator(
         "try:\n"
         "    import torch\n"
         "except Exception:\n"
+        "    from importlib.metadata import distribution\n"
+        "    try:\n"
+        "        distribution('sentence-transformers')\n"
+        "    except Exception:\n"
+        "        sys.exit(6)\n"
         "    sys.exit(3)\n"
         "cuda_available = False\n"
         "mps_available = False\n"
@@ -473,6 +479,11 @@ def _accelerator_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
     outcomes = {
         0: None,
         3: (True, "torch is not installed in the service interpreter"),
+        6: (
+            True,
+            "torch is not installed and the GPU extra was never requested "
+            "in this environment",
+        ),
         4: (
             True,
             "the service interpreter has no supported accelerator "
@@ -495,8 +506,25 @@ def _accelerator_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
     )
 
 
+def accelerator_probe_is_torch_absent_by_design(detail: str) -> bool:
+    """Whether torch is missing because this install never asked for it.
+
+    Such an environment cannot serve a search request and still refuses to
+    start, but it is not broken: an install must not fail over it, and a repair
+    has nothing to offer it. Reinstalling changes nothing here - choosing the
+    GPU extra does.
+    """
+    outcome = _accelerator_probe_exit_outcome(6)
+    return outcome is not None and detail == outcome[1]
+
+
 def accelerator_probe_is_torch_installation_defect(detail: str) -> bool:
-    """Whether one documented probe detail is fixed by reinstalling torch."""
+    """Whether one documented probe detail is fixed by reinstalling torch.
+
+    Exit 6 is deliberately absent from the set. Exit 3 remains a defect: the
+    GPU extra IS installed and torch is missing anyway, which is the shape a
+    half-completed replacement leaves behind.
+    """
     return detail in {
         outcome[1]
         for code in (3, 4)

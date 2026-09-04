@@ -430,3 +430,53 @@ def test_a_real_holder_is_named_in_the_refusal(tmp_path: Path) -> None:
     assert f"pid {holder.pid}" in outcome.detail
     assert "end this process" in outcome.detail
     assert outcome.blocks_install
+
+
+def _torch_absent_by_design(_interpreter: str, timeout: float = 60.0):
+    del timeout
+    from ..cli._process import _accelerator_probe_exit_outcome
+
+    return _accelerator_probe_exit_outcome(6)
+
+
+def test_an_install_without_the_gpu_extra_is_not_a_defect(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A deliberately torch-free install completes instead of failing.
+
+    Guard assertion: absence of torch used to classify as an installation
+    defect, whose blocking outcome short-circuited the whole install to exit 2.
+    That made the torch-free install this project deliberately offers
+    impossible to complete without a terminal - a defect introduced by reading
+    a choice as a fault.
+    """
+    from ..cli import _gpu_errors, _process
+
+    monkeypatch.setattr(_gpu_errors, "classify_interpreter_env", _persistent_tool_env)
+    monkeypatch.setattr(_process, "_probe_daemon_accelerator", _torch_absent_by_design)
+
+    outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
+
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.NOT_APPLICABLE
+    assert not outcome.blocks_install
+    assert "GPU extra" in outcome.detail
+
+
+def test_torch_missing_from_a_gpu_install_is_still_a_defect() -> None:
+    """The half-destroyed environment keeps its defect classification.
+
+    Exit 3 means the GPU stack is installed and torch is gone anyway, which is
+    what an interrupted replacement leaves behind - the field failure. It must
+    not be softened by the by-design branch beside it.
+    """
+    from ..cli._process import (
+        _accelerator_probe_exit_outcome,
+        accelerator_probe_is_torch_absent_by_design,
+        accelerator_probe_is_torch_installation_defect,
+    )
+
+    outcome = _accelerator_probe_exit_outcome(3)
+
+    assert outcome is not None
+    assert accelerator_probe_is_torch_installation_defect(outcome[1])
+    assert not accelerator_probe_is_torch_absent_by_design(outcome[1])
