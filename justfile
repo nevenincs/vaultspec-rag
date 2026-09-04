@@ -65,6 +65,7 @@ readme-assets out_dir='assets':
 #   just audit security
 #   just audit dead-code
 #   just test python
+#   just test provisioning
 #   just build python
 #   just health
 # ===========================================================================
@@ -430,10 +431,14 @@ test target='all':
       {{uvr}} pytest src/vaultspec_rag/tests/integration/test_mps_backend.py -q --tb=short -m "mps" ; \
       break \
     } \
+    "provisioning" { \
+      {{uvr}} pytest src/vaultspec_rag/tests/test_env_holders.py src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py src/vaultspec_rag/tests/test_tool_torch_repair.py src/vaultspec_rag/tests/test_torch_pin_single_source.py src/vaultspec_rag/tests/test_readiness_holders.py -q --tb=short ; \
+      break \
+    } \
     "all" { just test python ; break } \
     default { \
       Write-Host "unknown test target: {{target}}" -ForegroundColor Red ; \
-      Write-Host "  targets: python fast gpu perf mps all" -ForegroundColor Red ; \
+      Write-Host "  targets: python fast gpu perf mps provisioning all" -ForegroundColor Red ; \
       exit 1 \
     } \
   }

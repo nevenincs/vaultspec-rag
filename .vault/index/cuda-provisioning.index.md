@@ -6,7 +6,7 @@ tags:
 date: '2026-09-04'
 modified: '2026-09-04'
 body_schema: 'body-v2'
-body_hash: 'sha256:5fbf7f05475f0ad3b334e408363e610233ab01325daa050cc42576a89771f62a'
+body_hash: 'sha256:79eda9a1a8b21ee15f5c46382fc2b2b887f10b0e0bc691c33ed3ec3195cc280f'
 related:
   - '[[2026-09-04-cuda-provisioning-W01-P01-S01]]'
   - '[[2026-09-04-cuda-provisioning-W01-P01-S02]]'
@@ -19,6 +19,7 @@ related:
   - '[[2026-09-04-cuda-provisioning-W04-P04-S09]]'
   - '[[2026-09-04-cuda-provisioning-W04-P04-S10]]'
   - '[[2026-09-04-cuda-provisioning-W04-P04-S11]]'
+  - '[[2026-09-04-cuda-provisioning-W05-P05-S12]]'
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-04-cuda-provisioning-plan]]'
   - '[[2026-09-04-cuda-provisioning-research]]'
@@ -47,6 +48,7 @@ Auto-generated index of all documents tagged with `#cuda-provisioning`.
 - `2026-09-04-cuda-provisioning-W04-P04-S09` - Treat torch absent by design as a state rather than an installation defect
 - `2026-09-04-cuda-provisioning-W04-P04-S10` - Collapse the torch pin version to the single lockfile-backed derivation
 - `2026-09-04-cuda-provisioning-W04-P04-S11` - Report environment holders as an informational readiness dimension
+- `2026-09-04-cuda-provisioning-W05-P05-S12` - Add the hosted Windows pull-request leg covering the provisioning proof class
 
 ### plan
 
