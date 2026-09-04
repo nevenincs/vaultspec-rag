@@ -121,8 +121,17 @@ the `vaultspec-rag server` CLI.
 ## Withholding the mutating tools
 
 `clean_all` deletes every index for the project, and an assistant that can see a
-tool will eventually call it. Launch with `--read-only` to serve only the six
-read tools:
+tool will eventually call it.
+
+Where the flag goes depends on who owns the file. On a project with
+`vaultspec-core` installed, `.mcp.json` belongs to its installer, which has
+already written an entry for this server: add `--read-only` to that entry rather
+than replacing it, or the next two `vaultspec-core spec mcps sync` runs will put
+the installer's shape back. The shape below is for a client you configure
+yourself, and [Configure a client by hand](#configure-a-client-by-hand) covers
+both cases in full.
+
+Launch with `--read-only` to serve only the six read tools:
 
 ```json
 {
