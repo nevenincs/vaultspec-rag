@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import os
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -242,7 +243,18 @@ def tool_cuda_install_spec(
 
 
 def _tool_root(interpreter: str) -> Path:
-    binary = Path(interpreter).resolve()
+    """The environment an interpreter BELONGS to, not the one it resolves to.
+
+    Normalised but never resolved. A tool environment's interpreter is a real
+    file inside the tree on Windows and a symlink to the base interpreter on
+    POSIX, so resolving it walks out of the environment entirely and lands in
+    the shared Python installation. Every consumer here is then wrong in the
+    same direction: the refusal names a directory the operator is not in, the
+    holder scan reports processes belonging to unrelated software using that
+    base interpreter and misses the ones actually holding the tool
+    environment, and the receipt is looked for where no receipt exists.
+    """
+    binary = Path(os.path.abspath(interpreter))
     if binary.parent.name.lower() in {"scripts", "bin"}:
         return binary.parent.parent
     return binary.parent

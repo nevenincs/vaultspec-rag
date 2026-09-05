@@ -89,6 +89,26 @@ def holders() -> Iterator[list[subprocess.Popen[bytes]]]:
             process.wait(timeout=30)
 
 
+def _family(pid: int) -> set[int]:
+    """The process we spawned, plus any interpreter it launched for us.
+
+    A virtual environment's ``python`` can be a launcher that re-executes the
+    real interpreter as a child, so the process that ends up holding the tree
+    is not always the one Popen handed back. Asserting on the spawned pid
+    alone reads that as a detection failure - which is exactly what it looked
+    like on the Windows runner, where the scan had in fact found the holder
+    and reported a different pid for it.
+    """
+    import contextlib
+
+    import psutil
+
+    pids = {pid}
+    with contextlib.suppress(psutil.Error):  # the holder may already have exited
+        pids.update(child.pid for child in psutil.Process(pid).children(recursive=True))
+    return pids
+
+
 def _await_holder(root: Path, pid: int) -> None:
     """Wait until the query sees *pid*, so no test races a starting child.
 
@@ -101,7 +121,8 @@ def _await_holder(root: Path, pid: int) -> None:
     found = environment_holders(root, timeout=_SCAN_TIMEOUT)
     attempts = 1
     while True:
-        if any(holder.pid == pid for holder in found.holders):
+        family = _family(pid)
+        if any(holder.pid in family for holder in found.holders):
             return
         if time.monotonic() >= deadline:
             break
@@ -131,7 +152,7 @@ def test_an_interpreter_running_from_the_environment_is_an_image_holder(
 
     result = environment_holders(environment_root, timeout=_SCAN_TIMEOUT)
 
-    found = [holder for holder in result.holders if holder.pid == child.pid]
+    found = [holder for holder in result.holders if holder.pid in _family(child.pid)]
     assert found, f"the environment's own interpreter was not found: {result.holders}"
     assert found[0].relation in _INTERPRETER_RELATIONS
     assert result.held is True
@@ -151,7 +172,7 @@ def test_a_foreign_process_sitting_in_the_environment_is_a_directory_holder(
 
     result = environment_holders(environment_root, timeout=_SCAN_TIMEOUT)
 
-    found = [holder for holder in result.holders if holder.pid == child.pid]
+    found = [holder for holder in result.holders if holder.pid in _family(child.pid)]
     assert found, f"a process sitting in the tree was not found: {result.holders}"
     assert found[0].relation is HolderRelation.WORKING_DIRECTORY
     assert found[0].image is not None
@@ -165,13 +186,14 @@ def test_a_released_environment_reports_no_holders(
     child = subprocess.Popen([str(_interpreter(environment_root)), "-c", _IDLE])
     holders.append(child)
     _await_holder(environment_root, child.pid)
+    family = _family(child.pid)
     child.terminate()
     child.wait(timeout=30)
 
     deadline = time.monotonic() + _WAIT_SECONDS
     while time.monotonic() < deadline:
         result = environment_holders(environment_root, timeout=_SCAN_TIMEOUT)
-        if not any(holder.pid == child.pid for holder in result.holders):
+        if not any(holder.pid in family for holder in result.holders):
             return
         time.sleep(_POLL_SECONDS)
     pytest.fail("a terminated holder was still reported")
@@ -185,11 +207,12 @@ def test_an_excluded_pid_is_not_reported_as_a_holder(
     holders.append(child)
     _await_holder(environment_root, child.pid)
 
+    family = _family(child.pid)
     result = environment_holders(
-        environment_root, exclude_pids=[child.pid], timeout=_SCAN_TIMEOUT
+        environment_root, exclude_pids=sorted(family), timeout=_SCAN_TIMEOUT
     )
 
-    assert all(holder.pid != child.pid for holder in result.holders)
+    assert all(holder.pid not in family for holder in result.holders)
 
 
 def _table(*rows: Mapping[str, object]) -> Any:
