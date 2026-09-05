@@ -80,7 +80,8 @@ The `server`, `install`, and `uninstall` commands skip workspace resolution; eve
 
 ## Exit codes
 
-These codes are consistent across commands, with one exception worth knowing before you gate on them: `server doctor` reads `1` and `2` as severities of its own report - `1` a warning, `2` an error - rather than as the generic failure and usage error below. Its own section states that scale.
+The table lists common exit-code meanings. [install](#install) and
+[server doctor](#server-doctor) have command-specific meanings.
 
 | Code | Meaning                                                                                                                                                                     |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -236,7 +237,14 @@ Options:
 
 Torch provisioning runs in two phases. Install configures the platform-marked source in `pyproject.toml` and reports it as `configured, sync pending`. A follow-up `uv sync` or `--sync` installs cu130 on Linux/Windows and the standard MPS-capable wheel on macOS. Provisioning reports through the shared sync vocabulary, namely `created`, `updated`, `unchanged`, `skipped`, and `failed`.
 
-Exit/JSON: `0` on success, including the torch-config terminal states `declined`, `conflict`, `absent`, and `disabled`; `1` on install failure; `2` when torch config was requested and ended in `error`, `skipped-eof`, or `skipped-non-tty`. With `--json`, the result is one report on stdout.
+Exit codes:
+
+- `0`: Success, including the torch-config states `declined`, `conflict`, `absent`, and `disabled`.
+- `1`: Install failure.
+- `2`: MCP setup failed or tool-environment PyTorch repair blocked installation.
+  Also returned when requested torch configuration ends in `error`, `skipped-eof`, or `skipped-non-tty`.
+
+With `--json`, the result is one report on stdout.
 
 ## uninstall
 

@@ -7,10 +7,10 @@ silicon with MPS on macOS. CPU inference and AMD GPUs are unsupported.
 
 Choose a service resource profile:
 
-| Profile | Total system RAM | Free index-store space | Free CUDA memory at startup |
-| --- | --- | --- | --- |
-| `managed-service` (default) | 16 GiB | 8 GiB | 12 GiB |
-| `embedded-local` | 8 GiB | 5 GiB | 6 GiB |
+| Profile                     | Total system RAM | Free index-store space | Free CUDA memory at startup |
+| --------------------------- | ---------------- | ---------------------- | --------------------------- |
+| `managed-service` (default) | 16 GiB           | 8 GiB                  | 12 GiB                      |
+| `embedded-local`            | 8 GiB            | 5 GiB                  | 6 GiB                       |
 
 The CUDA figures are the default model-loading admission limits; they do not apply
 to Apple silicon. See [GPU memory settings](configuration.md#index-resource-bounds-and-memory-ceilings).
@@ -168,13 +168,8 @@ Warning: torch-config patch skipped: confirmation prompt hit EOF
 --no-torch-config to opt out.
 ```
 
-Three things about that capture. The absolute path is shortened to `<project>`
-and the two long lines are wrapped; nothing else is cut. The prompt reads as
-though it ran into the next line because the answer never came: this run had no
-terminal on standard input, so it took the default and exited `2`, which is what
-declining looks like. And `Models` and `Qdrant binary` report `already present`
-because that machine had both cached from an earlier install. On a machine
-without them these are the lines that carry the download, and the wait.
+If the other installation steps succeed, answering `n` returns `0`;
+missing confirmation input returns `2`. See the [install exit codes](cli.md#install).
 
 ### Install less than the default
 
@@ -268,61 +263,8 @@ Run the readiness report, which checks PyTorch and the resolved GPU backend, the
 uv run vaultspec-rag server doctor
 ```
 
-On a machine where everything is in place it prints:
-
-```text
-Service readiness
-Backend: server
-Readiness: ready for requests
-Live service:
-  status: running (running)
-  process: pid 46936 (alive)
-  network: port 8766 (listening)
-  heartbeat: 10s ago
-  release: 0.4.22 (matches this client)
-Installed dependencies: ready
-  torch: ready - CUDA available on NVIDIA GeForce RTX 4080 SUPER
-  models: ready - all 3 model repos present in the cache
-  qdrant: ready - qdrant binary resolves from provisioned
-Provisioning (vaultspec-rag):
-  declared mode: dependency
-  install mode: ok - artifacts match the declared mode
-  version floor: ok
-```
-
-Nothing is cut from that capture. The pid, the heartbeat and the card are this
-machine's; every other line reads the same wherever the install is healthy, and
-the command exits 0.
-
-A healthy result reads `Readiness: ready for requests`, with each dependency line showing its status. In server mode the `qdrant` line is ready once a binary resolves and the supervised child is running. In local-only mode it reports an absent binary as ready, because no server is needed. Add `--json` for a machine-readable envelope.
-
-`server doctor` also reports the processes running out of this environment, so you learn an environment is held before attempting anything that needs it free rather than at the moment of refusal. The scan walks the process table and costs a few seconds, which is why the diagnostic does it and the readiness route does not.
-
-Where a workspace has a committed placement, `server doctor` also prints a `Provisioning (vaultspec-rag)` block naming the declared mode and whether the deployed launch matches it. A mismatch is a warning; a vaultspec-core below the required version floor is an error. Re-run `install --mode` or `install --upgrade` to bring the deployed launch back into line.
-
-Check the index location and GPU backend:
-
-```bash
-uv run vaultspec-rag status
-```
-
-On a machine that has indexed a vault and no code yet, the first lines read:
-
-```text
-Project index
-Project: .../vaultspec-rag/main
-Index data: .../vaultspec-rag/main/.vault/data/search-data
-Vault documents: 1876
-Source code sections: 0
-Document sections: 0
-Compute: CUDA - NVIDIA GeForce RTX 4080 SUPER (16.0 GiB VRAM)
-```
-
-The capture omits the profile block. The absolute project path is shortened to its
-last two segments and uses POSIX separators; the run was made on Windows.
-Nothing else is changed.
-
-A healthy result names `cuda` or `mps`, and shows the index location, even before you've indexed anything. It reports CUDA memory as discrete video memory and MPS memory as unified memory, never as zero. The zeroes above are the normal reading before an index exists, not a failure.
+Check `Readiness` and the status of each dependency. To interpret the report and
+check index coverage, follow [verify the index](verification.md).
 
 ## When something goes wrong
 
@@ -470,8 +412,7 @@ leaves it on disk.
 
 The sizes are not small. Surveyed on the machine these captures were taken on,
 this project's own namespace is `1.3 GiB`, and the store holds
-`35 namespaces  (orphaned=10 unknown=0 unverifiable=0 live=25)  33.1 GiB on
-disk`. Ten of those are indexes for projects that no longer exist.
+`35 namespaces  (orphaned=10 unknown=0 unverifiable=0 live=25)  33.1 GiB on disk`. Ten of those are indexes for projects that no longer exist.
 
 That is a different run from the survey shown on
 [storage and maintenance](storage-maintenance.md), which reports 34 namespaces
