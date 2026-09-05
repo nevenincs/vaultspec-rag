@@ -451,10 +451,10 @@ problem. Without them, it's guesswork.
 
 ## Related projects
 
-| Project                                                       | Maturity | Role                                                                      |
-| ------------------------------------------------------------- | -------- | ------------------------------------------------------------------------- |
-| [vaultspec-core](https://github.com/nevenincs/vaultspec-core) | Beta     | The agent harness: the pipeline, the vault, and the CLI that drives them. |
-| **vaultspec-rag**                                             | Beta     | The semantic search component for vault and code.                         |
+| Project                                                       | Maturity | Role                                                   |
+| ------------------------------------------------------------- | -------- | ------------------------------------------------------ |
+| [vaultspec-core](https://github.com/nevenincs/vaultspec-core) | Beta     | Decision-driven harness for coding agents, and humans. |
+| **vaultspec-rag**                                             | Beta     | The semantic search component for vault and code.      |
 
 [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) is a separate
 project building a dedicated frontend on the same files. It is in early development, in
