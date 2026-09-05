@@ -71,6 +71,10 @@ def isolated_storage(tmp_path: Path) -> Iterator[Path]:
         reset_config()
 
 
+# Bounds the wait for a detached child to acquire the lock and say so.
+_HOLDER_READY_TIMEOUT_SECONDS = 60.0
+
+
 def test_reclaim_terminates_a_wedged_machine_holder(isolated_storage: Path) -> None:
     """A live lock holder with no status file is found and terminated."""
     storage = os.environ[EnvVar.QDRANT_STORAGE_DIR.value]
@@ -95,10 +99,18 @@ def test_reclaim_terminates_a_wedged_machine_holder(isolated_storage: Path) -> N
     else:
         proc = subprocess.Popen(cmd, start_new_session=True)
     try:
-        for _ in range(100):
-            if ready.exists():
-                break
-            time.sleep(0.1)
+        # A detached child on a runner executing a dozen workers can take far
+        # longer than a developer machine simply to be scheduled, and the wait
+        # ends as soon as the file appears. Its absence is reported as the
+        # assertion below rather than as a FileNotFoundError from the read,
+        # which is what a bare read of a file the child never wrote produces.
+        deadline = time.monotonic() + _HOLDER_READY_TIMEOUT_SECONDS
+        while time.monotonic() < deadline and not ready.exists():
+            time.sleep(0.25)
+        assert ready.exists(), (
+            "holder child never signalled ready within "
+            f"{_HOLDER_READY_TIMEOUT_SECONDS:.0f}s"
+        )
         assert ready.read_text(encoding="utf-8") == "1", (
             "holder child failed to acquire the machine lock"
         )
