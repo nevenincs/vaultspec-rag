@@ -117,11 +117,22 @@ def _option_names(command: Command) -> set[str]:
     return names
 
 
+#: Fence languages whose contents are a transcript of what the application
+#: PRINTED, not usage the docs prescribe. A captured run quotes prompts,
+#: error messages and remediation prose, so the executable turns up inside
+#: English sentences - "This vaultspec-rag client is 0.4.21" - where the
+#: following word is not a subcommand and never was. Checking those as
+#: invocations asks the docs to misreport what the tool actually says.
+_OUTPUT_FENCES = {"text"}
+
+
 def _code_spans(text: str) -> list[str]:
     """Return fenced-block lines and inline code spans holding an invocation."""
     spans: list[str] = []
-    fenced = re.findall(r"```[a-zA-Z]*\n(.*?)```", text, re.S)
-    for block in fenced:
+    fenced = re.findall(r"```([a-zA-Z]*)\n(.*?)```", text, re.S)
+    for language, block in fenced:
+        if language.lower() in _OUTPUT_FENCES:
+            continue
         spans.extend(block.splitlines())
     spans.extend(re.findall(r"`([^`\n]+)`", text))
     return [s for s in spans if _EXECUTABLE in s]

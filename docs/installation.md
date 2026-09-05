@@ -469,11 +469,11 @@ uv run vaultspec-rag server qdrant clean --yes
 Delete this project's index:
 
 ```bash
-uv run vaultspec-rag server storage delete --root vaultspec-rag-worktrees/main --dry-run
+uv run vaultspec-rag server storage delete --root <project> --dry-run
 ```
 
 ```text
-Queried root: vaultspec-rag-worktrees/main  prefix: rea7120f40662_
+Queried root: <project>  prefix: rea7120f40662_
 Would remove rea7120f40662_ (4 collections). Re-run with --yes.
 ```
 

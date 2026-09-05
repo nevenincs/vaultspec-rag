@@ -864,7 +864,21 @@ def _text_lines(path: Path) -> list[tuple[int, str]]:
     return list(enumerate(path.read_text(encoding="utf-8").splitlines(), start=1))
 
 
-def _text_blocks(path: Path) -> list[list[tuple[int, str]]]:
+def _fenced_lines(items: list[tuple[int, str]]) -> set[int]:
+    """Return the line numbers inside fenced code blocks, fences included."""
+    inside = False
+    fenced: set[int] = set()
+    for line, text in items:
+        if text.lstrip().startswith("```"):
+            fenced.add(line)
+            inside = not inside
+            continue
+        if inside:
+            fenced.add(line)
+    return fenced
+
+
+def _text_blocks(items: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
     """Return the paragraphs of a non-Python file as blocks of (line, text).
 
     Markdown prose is hard-wrapped, so a paragraph is the unit for the same
@@ -873,7 +887,7 @@ def _text_blocks(path: Path) -> list[list[tuple[int, str]]]:
     """
     blocks: list[list[tuple[int, str]]] = []
     run: list[tuple[int, str]] = []
-    for line, text in _text_lines(path):
+    for line, text in items:
         if text.strip():
             run.append((line, text))
         elif run:
@@ -935,8 +949,18 @@ def scan_text(
     """
     rel = path.relative_to(repo_root).as_posix()
     items = _text_lines(path)
+    # A fenced block in product documentation is a TRANSCRIPT: what the tool
+    # printed, quoted so a reader can recognise it. This product searches
+    # `.vault/`, so its own output names vault documents and can echo a plan
+    # coordinate or a decision token back from a matched passage. Those are
+    # values the tool produced, not the docs citing a development record, and
+    # editing them would make the page misreport what a reader will see.
+    # Only the CITATION walk skips them. The path and identity walks below
+    # still read every line, because a captured run is exactly where a home
+    # directory or a username leaks.
+    prose = [item for item in items if item[0] not in _fenced_lines(items)]
     return (
-        _match_blocks(_text_blocks(path), rel, PATTERNS, allowed_lines=ALLOWLIST),
+        _match_blocks(_text_blocks(prose), rel, PATTERNS, allowed_lines=ALLOWLIST),
         _match_patterns(items, rel, PATH_PATTERNS + identity_patterns),
         _match_patterns(items, rel, PATH_SMELL_PATTERNS),
     )
