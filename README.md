@@ -262,60 +262,25 @@ fields, errors, and exit codes.
 
 ## Documentation
 
-**Start here**
-
-- [Getting started](docs/getting-started.md) - install, index, and search, end to end.
-- [Installation](docs/installation.md) - GPU-specific PyTorch details and how to recover
-  a broken setup.
-
-**Using it**
-
-- [Search and index](docs/search-and-index.md) - running searches and refreshing the
-  index.
-- [Writing a query](docs/query-craft.md) - phrasing, every filter, and what to do when
-  results look wrong.
-- [Retrieval recipes](docs/examples.md) - worked examples, including questions it answers
-  badly.
-- [Verify the index](docs/verification.md) - check the service is healthy and the index
-  covers what you meant.
-- [Service mode](docs/service-mode.md) - keeping the models loaded in the background.
-- [Backends](docs/backends.md) - managed server versus on-disk store.
-- [MCP integration](docs/mcp.md) - connecting AI clients.
-- [Automation](docs/automation.md) - JSON output and scripting.
-- [Preprocessing hooks](docs/preprocessing-hooks.md) - connecting converters, and the
-  trust model.
-
-**Looking things up**
-
-- [CLI reference](docs/cli.md) - every command, flag, and exit code.
-- [Configuration](docs/configuration.md) - settings, environment variables, defaults.
-- [Service discovery](docs/service-discovery.md) - the `service.json` contract.
-- [Glossary](docs/glossary.md) - every term used across these docs.
-
-**How it works**
-
-- [Architecture](docs/architecture.md) - the design, and why a GPU is required.
-- [Indexing](docs/indexing.md) - indexing and retrieval internals.
+- [Run your first search](docs/getting-started.md)
+- [Installation and troubleshooting](docs/installation.md)
+- [Worked searches](docs/examples.md)
+- [Commands and flags](docs/cli.md)
+- [Configuration reference](docs/configuration.md)
+- [Architecture](docs/architecture.md) and [indexing internals](docs/indexing.md)
 
 ## Status and help
 
-vaultspec-rag is Beta. Report bugs and ask questions on the
-[issue tracker](https://github.com/nevenincs/vaultspec-rag/issues).
-
-Please include five things: your vaultspec-rag version, your operating system, your GPU,
-the command you ran, and the full error output. With those, someone can reproduce the
-problem. Without them, it's guesswork.
+vaultspec-rag is Beta. [Report issues](https://github.com/nevenincs/vaultspec-rag/issues)
+with your version, operating system, GPU, command, and error output.
+Redact credentials and private content before posting.
 
 ## Related projects
 
-| Project                                                       | Maturity | Role                                                   |
-| ------------------------------------------------------------- | -------- | ------------------------------------------------------ |
-| [vaultspec-core](https://github.com/nevenincs/vaultspec-core) | Beta     | Decision-driven harness for coding agents, and humans. |
-| **vaultspec-rag**                                             | Beta     | The semantic search component for vault and code.      |
-
-[vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard) is a separate
-project building a dedicated frontend on the same files. It is in early development, in
-the open.
+- [vaultspec-core](https://github.com/nevenincs/vaultspec-core):
+  Decision-driven harness for coding agents, and humans.
+- [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard):
+  The human-facing visual workspace for a Vaultspec project.
 
 ## For contributors
 

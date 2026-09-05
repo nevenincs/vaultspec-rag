@@ -990,4 +990,4 @@ Exit/JSON: `0` on success. With `--json`, the result is one envelope on stdout.
 
 ## Get help
 
-See the [Support](../README.md#support-and-help) section of the repo README.
+[Report a problem](../README.md#status-and-help).
