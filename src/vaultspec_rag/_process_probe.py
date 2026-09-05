@@ -614,6 +614,31 @@ def _resolves_under(value: object, root: Path) -> bool:
         return False
 
 
+def _names_under(value: object, *roots: Path) -> bool:
+    """Whether *value* NAMES a path inside one of *roots*, without following it.
+
+    Deliberately does not resolve. A POSIX virtual environment's interpreter is
+    a symlink pointing OUT of the tree, so resolving the path a process was
+    launched with lands on the base interpreter and reports the environment
+    clear - which is the exact case this exists to catch. The path is
+    normalised so that ``..`` and a relative prefix cannot smuggle a match, and
+    then compared as written.
+
+    Both the resolved and the unresolved root are offered because a temporary
+    directory is itself often reached through a symlink, so the two spellings
+    of the same tree need not agree.
+    """
+    import os
+
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        candidate = Path(os.path.abspath(value))
+    except (OSError, ValueError):
+        return False
+    return any(candidate.is_relative_to(root) for root in roots)
+
+
 def _rendered_cmdline(value: object) -> str | None:
     """Render a process command line for an operator, never for matching."""
     if isinstance(value, list):
@@ -651,6 +676,10 @@ def environment_holders(
         resolved = Path(root).resolve()
     except OSError:
         resolved = Path(root)
+    try:
+        named = Path(root).absolute()
+    except OSError:
+        named = resolved
     excluded = frozenset(exclude_pids)
 
     def scan() -> tuple[tuple[EnvironmentHolder, ...], int] | None:
@@ -669,7 +698,7 @@ def environment_holders(
                 )
                 if _resolves_under(image, resolved):
                     relation = HolderRelation.IMAGE
-                elif _resolves_under(launched_as, resolved):
+                elif _names_under(launched_as, resolved, named):
                     relation = HolderRelation.LAUNCH_PATH
                 elif _resolves_under(working_directory, resolved):
                     relation = HolderRelation.WORKING_DIRECTORY
