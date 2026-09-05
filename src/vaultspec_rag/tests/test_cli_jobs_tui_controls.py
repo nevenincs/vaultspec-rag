@@ -450,7 +450,15 @@ class TestDurableRequestState:
         ``_await_painted`` on the "delete requested" needle; restored, it
         passes.
         """
-        control_service.control_delay = 0.6
+        # The window this test observes is the gap between the keystroke and
+        # the service's answer, so the simulated control has to stay slow for
+        # longer than a loaded runner's scheduling jitter. At 0.6s the answer
+        # landed first on a twelve-worker CI host and the row had already
+        # settled, reported as `pending markers=[none]` - the transient state
+        # was gone before any frame sampled it, which says nothing about the
+        # repaint being absent. A wider gap makes the same assertion, and
+        # costs nothing: the test waits on pixels, not on this delay.
+        control_service.control_delay = 5.0
         app = _app(control_service, [_finished_job("job00000")])
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
