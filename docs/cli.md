@@ -874,9 +874,9 @@ Exit/JSON: `0` on success, an `already_absent` no-op, or a skipped target; `1` w
 
 `vaultspec-rag server storage migrate <root> --to <backend>`
 
-Move one root's index between the managed server and the local on-disk store.
-Switching the backend selection does not move existing data; this is what
-carries it across.
+Copy one root's index between the managed server and the local on-disk store.
+Source collections are retained; existing destination collections are skipped.
+The command does not change backend selection.
 
 Arguments:
 
@@ -886,19 +886,25 @@ Arguments:
 
 Options:
 
-| Flag          | Type            | Default  | Description                                         |
-| ------------- | --------------- | -------- | --------------------------------------------------- |
-| `--to`        | `server\|local` | required | Target backend.                                     |
-| `--yes`, `-y` | flag            | off      | Apply the migration. Without it, nothing is copied. |
-| `--dry-run`   | flag            | off      | Preview without copying.                            |
-| `--json`      | flag            | off      | Emit one JSON envelope to stdout.                   |
+| Flag          | Type            | Default  | Description                                                           |
+| ------------- | --------------- | -------- | --------------------------------------------------------------------- |
+| `--to`        | `server\|local` | required | Target backend.                                                       |
+| `--yes`, `-y` | flag            | off      | Apply the migration. Without it, nothing is copied.                   |
+| `--dry-run`   | flag            | off      | Preview without copying.                                              |
+| `--json`      | flag            | off      | Emit one JSON envelope; requires `--yes`, including with `--dry-run`. |
 
-Migration copies rather than moves, so the source data survives the run. See the
-[storage and maintenance guide](storage-maintenance.md).
+For prerequisites, preview, and application, follow the
+[migration instructions](storage-maintenance.md#migrate-a-root-between-backends).
 
-Exit: `0` on success, including a preview and a run with nothing to move; `2` for
-a usage error such as a `--to` value that is not `server` or `local`; `3` when
-the managed server is unreachable.
+Exit codes:
+
+- `0`: Results were reported, even if individual collections failed.
+- `1`: A caught operation failure, or an implicit preview found work without `--yes` or `--dry-run`.
+- `2`: Invalid target, disabled server mode, unsafe local path, or `--json` without `--yes`.
+
+Inspect each collection's `status` and `reason` (under `data.results` in JSON).
+Neither exit `0` nor JSON `ok: true` proves that every collection was copied.
+An existing destination is skipped, including a partial copy left by a failed run.
 
 ## server storage restore
 
