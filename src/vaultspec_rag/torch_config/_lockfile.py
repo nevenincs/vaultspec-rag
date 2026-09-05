@@ -17,7 +17,7 @@ from __future__ import annotations
 import tomllib
 from typing import TYPE_CHECKING
 
-from ._constants import CU130_INDEX_URL
+from ._index import CU130_INDEX_URL
 
 if TYPE_CHECKING:
     from pathlib import Path

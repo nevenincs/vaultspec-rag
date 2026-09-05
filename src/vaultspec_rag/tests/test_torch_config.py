@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 import tomlkit
 
-from ..torch_config import _constants, _diagnose, _direct_dep, _inspect, _mutate
+from ..torch_config import _constants, _diagnose, _direct_dep, _index, _inspect, _mutate
 from ..torch_config._direct_dep import _is_torch_requirement
 
 if TYPE_CHECKING:
@@ -359,10 +359,10 @@ def test_manual_snippet_is_valid_toml() -> None:
     # Parses without error and yields our canonical shape. unwrap() drops
     # the tomlkit Item wrappers so nested subscription type-checks cleanly.
     doc = tomlkit.parse(snippet).unwrap()
-    assert doc["tool"]["uv"]["index"][0]["name"] == _constants.CU130_INDEX_NAME
-    assert doc["tool"]["uv"]["index"][0]["url"] == _constants.CU130_INDEX_URL
+    assert doc["tool"]["uv"]["index"][0]["name"] == _index.CU130_INDEX_NAME
+    assert doc["tool"]["uv"]["index"][0]["url"] == _index.CU130_INDEX_URL
     torch_source = doc["tool"]["uv"]["sources"]["torch"][0]
-    assert torch_source["index"] == _constants.CU130_INDEX_NAME
+    assert torch_source["index"] == _index.CU130_INDEX_NAME
 
 
 def test_preview_patch_on_missing(tmp_path: Path) -> None:

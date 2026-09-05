@@ -56,8 +56,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-CU130_INDEX_NAME: Final[str] = "pytorch-cu130"
-CU130_INDEX_URL: Final[str] = "https://download.pytorch.org/whl/cu130"
 CU130_MARKER: Final[str] = "sys_platform == 'linux' or sys_platform == 'win32'"
 # Minimum supported torch version. Surfaced through :data:`DIRECT_TORCH_REQUIREMENT`
 # in the educational comment :func:`manual_snippet` appends and in the

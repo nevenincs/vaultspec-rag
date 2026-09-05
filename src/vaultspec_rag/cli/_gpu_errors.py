@@ -112,7 +112,7 @@ def gpu_escape_hatch_command(interpreter: str) -> str:
     (``--torch-backend`` is ``uv pip``-only); pair it with
     :func:`durable_tool_install_command` on tool envs.
     """
-    from ..torch_config._constants import CU130_INDEX_URL
+    from ..torch_config._index import CU130_INDEX_URL
 
     backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
     return (

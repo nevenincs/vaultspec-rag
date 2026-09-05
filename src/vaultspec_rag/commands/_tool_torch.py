@@ -21,7 +21,8 @@ from .._process_probe import (
     HolderRelation,
     environment_holders,
 )
-from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
+from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
+from ..torch_config._index import CU130_INDEX_URL
 
 #: Holders are listed for an operator to act on, not dumped exhaustively.
 HOLDER_REPORT_LIMIT = 10
