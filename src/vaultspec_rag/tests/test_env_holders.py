@@ -40,8 +40,8 @@ _INTERPRETER_RELATIONS = {HolderRelation.IMAGE, HolderRelation.LAUNCH_PATH}
 # single-threaded developer run never needs. The poll interval is deliberately
 # slack for the same reason: a full table walk ten times a second, times a
 # dozen workers, starves the deadline-sensitive tests sharing the runner.
-_SCAN_TIMEOUT = 120.0
-_WAIT_SECONDS = 90.0
+_SCAN_TIMEOUT = 180.0
+_WAIT_SECONDS = 180.0
 _POLL_SECONDS = 0.5
 
 if TYPE_CHECKING:
@@ -52,7 +52,7 @@ pytestmark = [pytest.mark.unit]
 
 # Long enough that a holder outlives the assertions, short enough that a test
 # abandoning one cannot wedge a machine for long.
-_HOLDER_LIFETIME_SECONDS = 90
+_HOLDER_LIFETIME_SECONDS = 240
 _IDLE = f"import time; time.sleep({_HOLDER_LIFETIME_SECONDS})"
 
 

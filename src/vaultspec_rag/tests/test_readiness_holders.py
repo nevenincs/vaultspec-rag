@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -25,6 +26,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+# Each poll walks the whole process table, so the interval is slack and the
+# deadline is generous: a dozen workers scanning at once turn a scan that costs
+# a second alone into one costing many, and a tight poll is what starves them.
+_SCAN_BUDGET_SECONDS = 120.0
+_WAIT_SECONDS = 90.0
+_POLL_SECONDS = 0.5
+_HOLDER_LIFETIME_SECONDS = 120
 
 
 def test_a_held_environment_is_still_a_ready_one() -> None:
@@ -73,12 +82,22 @@ def test_the_snapshot_never_publishes_a_command_line(
         interpreter = root / "bin" / "python"
 
     monkeypatch.setattr(sys, "prefix", str(root))
-    child = subprocess.Popen([str(interpreter), "-c", "import time; time.sleep(60)"])
+    # The production budget is sized for an HTTP route, and a scan walking a
+    # thousand processes does not fit inside it on a runner hosting a dozen
+    # parallel workers. What this test proves is the SHAPE of the snapshot, so
+    # it buys the scan the time it needs rather than asserting against a
+    # timeout that reports "cannot tell" and reads as a missing holder.
+    monkeypatch.setattr(
+        "vaultspec_rag._readiness._HOLDER_SCAN_BUDGET_SECONDS", _SCAN_BUDGET_SECONDS
+    )
+    child = subprocess.Popen(
+        [str(interpreter), "-c", f"import time; time.sleep({_HOLDER_LIFETIME_SECONDS})"]
+    )
     try:
-        deadline = __import__("time").monotonic() + 20.0
+        deadline = time.monotonic() + _WAIT_SECONDS
         snapshot = _environment_holders_readiness()
-        while __import__("time").monotonic() < deadline and not snapshot.held:
-            __import__("time").sleep(0.1)
+        while time.monotonic() < deadline and not snapshot.held:
+            time.sleep(_POLL_SECONDS)
             snapshot = _environment_holders_readiness()
     finally:
         child.terminate()
