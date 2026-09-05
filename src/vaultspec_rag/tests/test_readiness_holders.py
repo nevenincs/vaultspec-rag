@@ -94,16 +94,27 @@ def test_the_snapshot_never_publishes_a_command_line(
         [str(interpreter), "-c", f"import time; time.sleep({_HOLDER_LIFETIME_SECONDS})"]
     )
     try:
-        deadline = time.monotonic() + _WAIT_SECONDS
+        started = time.monotonic()
+        deadline = started + _WAIT_SECONDS
+        attempts = 1
         snapshot = _environment_holders_readiness()
         while time.monotonic() < deadline and not snapshot.held:
             time.sleep(_POLL_SECONDS)
             snapshot = _environment_holders_readiness()
+            attempts += 1
+        waited = time.monotonic() - started
     finally:
         child.terminate()
         child.wait(timeout=30)
 
-    assert snapshot.held, "a live interpreter in the environment was not reported"
+    # certain=False here means the scan could not finish inside its budget,
+    # which is a loaded machine rather than a holder that went unseen. The two
+    # need opposite fixes, so the failure says which one happened.
+    assert snapshot.held, (
+        "a live interpreter in the environment was not reported after "
+        f"{attempts} scans over {waited:.1f}s (certain={snapshot.certain}, "
+        f"scanned={snapshot.scanned})"
+    )
     assert any(holder["pid"] == child.pid for holder in snapshot.holders)
     assert all("cmdline" not in holder for holder in snapshot.holders)
     assert all(
