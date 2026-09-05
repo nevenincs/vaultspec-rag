@@ -154,7 +154,11 @@ def _receipt_package_extras(receipt: Path, package: str) -> tuple[str, ...] | No
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return None
     tool = data.get("tool")
-    requirements = tool.get("requirements") if isinstance(tool, dict) else None
+    requirements = (
+        cast("dict[str, object]", tool).get("requirements")
+        if isinstance(tool, dict)
+        else None
+    )
     if not isinstance(requirements, list):
         return None
     for entry in cast("list[object]", requirements):

@@ -37,9 +37,12 @@ _INTERPRETER_RELATIONS = {HolderRelation.IMAGE, HolderRelation.LAUNCH_PATH}
 
 # CI runs this suite across a dozen xdist workers, and each holder query walks
 # the whole process table, so both the scan and the wait get room that a
-# single-threaded developer run never needs.
+# single-threaded developer run never needs. The poll interval is deliberately
+# slack for the same reason: a full table walk ten times a second, times a
+# dozen workers, starves the deadline-sensitive tests sharing the runner.
 _SCAN_TIMEOUT = 120.0
 _WAIT_SECONDS = 90.0
+_POLL_SECONDS = 0.5
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -98,7 +101,7 @@ def _await_holder(root: Path, pid: int) -> None:
         found = environment_holders(root, timeout=_SCAN_TIMEOUT)
         if any(holder.pid == pid for holder in found.holders):
             return
-        time.sleep(0.1)
+        time.sleep(_POLL_SECONDS)
     pytest.fail(f"holder pid {pid} never appeared for {root}")
 
 
@@ -154,7 +157,7 @@ def test_a_released_environment_reports_no_holders(
         result = environment_holders(environment_root, timeout=_SCAN_TIMEOUT)
         if not any(holder.pid == child.pid for holder in result.holders):
             return
-        time.sleep(0.1)
+        time.sleep(_POLL_SECONDS)
     pytest.fail("a terminated holder was still reported")
 
 

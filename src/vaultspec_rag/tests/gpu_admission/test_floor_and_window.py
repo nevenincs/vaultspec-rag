@@ -58,7 +58,7 @@ from .conftest import (
     _SCENARIO_MARGIN_MIB,
     _SCENARIO_TOTAL_MIB,
     _UNREADABLE_WITH_TOTAL,
-    _windowed,
+    windowed,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -554,7 +554,7 @@ class TestTheUnreadableLedger:
         for _ in range(UNREADABLE_ADMISSION_LIMIT - 1):
             assert device_load_reading() is not None
 
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_UNREADABLE_WITH_TOTAL],
             [],
@@ -585,7 +585,7 @@ class TestTheUnreadableLedger:
         del floor
         entries: list[int] = []
         loads: list[str] = []
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_UNREADABLE_WITH_TOTAL],
             entries,
@@ -620,7 +620,7 @@ class TestTheUnreadableLedger:
         """
         del floor
         entries: list[int] = []
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_UNREADABLE_WITH_TOTAL, _UNREADABLE_WITH_TOTAL, _ROOMY],
             entries,

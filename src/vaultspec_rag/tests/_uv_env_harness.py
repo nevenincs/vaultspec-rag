@@ -40,7 +40,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Generator, Sequence
     from pathlib import Path
 
 __all__ = [
@@ -190,7 +190,7 @@ def build_wheel(
 
 
 @contextlib.contextmanager
-def serve_wheels(directory: Path) -> Iterator[str]:
+def serve_wheels(directory: Path) -> Generator[str]:
     """Serve *directory* over loopback HTTP, yielding its base URL.
 
     Loopback rather than ``file://`` because the receipt records the two
@@ -218,7 +218,7 @@ _IDLE = "import time; time.sleep(90)"
 @contextlib.contextmanager
 def hold_environment(
     root: Path, *, by_image: bool = True, timeout: float = 90.0
-) -> Iterator[subprocess.Popen[bytes]]:
+) -> Generator[subprocess.Popen[bytes]]:
     """Hold *root* with a real process, and release it on the way out.
 
     ``by_image`` runs the environment's own interpreter; otherwise a foreign
@@ -246,7 +246,11 @@ def hold_environment(
 
 
 def _await_hold(root: Path, pid: int, *, timeout: float) -> None:
-    """Block until the holder is visible, so no caller races a starting child."""
+    """Block until the holder is visible, so no caller races a starting child.
+
+    Polls slowly on purpose: every attempt walks the whole process table, and
+    this runs beside a dozen other workers doing the same.
+    """
     from .._process_probe import environment_holders
 
     deadline = time.monotonic() + timeout
@@ -254,7 +258,7 @@ def _await_hold(root: Path, pid: int, *, timeout: float) -> None:
         found = environment_holders(root, timeout=timeout)
         if any(holder.pid == pid for holder in found.holders):
             return
-        time.sleep(0.1)
+        time.sleep(0.5)
     raise TimeoutError(f"holder pid {pid} never took hold of {root}")
 
 
