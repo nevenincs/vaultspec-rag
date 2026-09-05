@@ -15,14 +15,13 @@ from tomlkit.items import AoT, InlineTable, Table
 
 from ._constants import (
     _TABLE_LIKE_TYPES,  # pyright: ignore[reportPrivateUsage]  # intra-package constant
-    CU130_INDEX_NAME,
-    CU130_INDEX_URL,
     CU130_MARKER,
     TableLike,
     TorchConfigState,
     logger,
     tget,
 )
+from ._index import CU130_INDEX_NAME, CU130_INDEX_URL
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -20,8 +20,6 @@ from vaultspec_core.core.helpers import (
 
 from ._constants import (
     _TABLE_LIKE_TYPES,  # pyright: ignore[reportPrivateUsage]  # intra-package constant
-    CU130_INDEX_NAME,
-    CU130_INDEX_URL,
     CU130_MARKER,
     DIRECT_TORCH_REQUIREMENT,
     PatchReport,
@@ -30,6 +28,7 @@ from ._constants import (
     TorchConfigState,
     tget,
 )
+from ._index import CU130_INDEX_NAME, CU130_INDEX_URL
 from ._inspect import (
     classify_doc,
     detect_crlf,

@@ -39,7 +39,7 @@ from ..commands._tool_torch import (
     _wheel_torch_version,
     tool_cuda_install_spec,
 )
-from ..torch_config._constants import CU130_INDEX_URL
+from ..torch_config._index import CU130_INDEX_URL
 
 pytestmark = [pytest.mark.unit]
 
