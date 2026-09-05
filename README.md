@@ -43,28 +43,61 @@ independently in another repository. To index PDFs and other formats,
 
 Indexing and search require:
 
-- **Python:** 3.13 or 3.14.
-- **A GPU:** on Linux and Windows, an NVIDIA card with CUDA and about 3 GB of free video
-  memory. On macOS, Apple silicon, where 8 GiB of unified memory is the tested minimum.
-- **16 GiB of system RAM.** Indexing refuses to start below this, it does not simply run
-  slower.
-- **Free disk:** 8 GiB for the default setup, 5 GiB if you
-  [run without the search server](#run-without-the-search-server).
+- Python 3.13 or 3.14 and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+- On Linux and Windows, an NVIDIA GPU with a working CUDA driver and roughly 3 GiB
+  of free video memory. On macOS, Apple silicon.
+- 16 GiB of system RAM and at least 8 GiB free on the index volume for the default
+  `managed-service` profile. Packages and model files need additional disk space.
 
-**CPU-only machines and AMD GPUs won't work.** There's no fallback. If that rules you
-out, stop here.
+For smaller projects, the `embedded-local` profile lowers the minimums to 8 GiB RAM
+and 5 GiB free disk. Set `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the
+environment that starts the service; `--local-only` alone does not change these
+minimums. See [resource requirements](docs/installation.md#what-you-need-before-you-start).
+
+CPU-only machines and AMD GPUs are unsupported; inference has no CPU fallback.
 
 ## Install
 
-```bash
-uvx --from "vaultspec-rag[gpu]" vaultspec-rag install
+Install a standalone tool for use across repositories. Choose the command for your
+platform. These CUDA commands use Python 3.13 and pin the GPU wheel so later tool
+upgrades retain it.
+
+Windows x64:
+
+```powershell
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
 ```
 
-This sets up the current folder, installs PyTorch for your platform, downloads the three
-search models, and fetches the search-server binary. It asks once before changing any
-config. Expect a few minutes and about 3.7 GB of downloads.
+Linux x86_64 (glibc 2.28 or newer):
 
-Check it worked:
+```bash
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-manylinux_2_28_x86_64.whl"
+```
+
+Apple silicon macOS:
+
+```bash
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
+```
+
+For other Python versions or Linux architectures, see [GPU wheel selection](docs/installation.md#pin-the-gpu-build).
+If uv reports that its executables directory is missing from `PATH`, follow its
+instructions before continuing. For an existing tool installation, follow the
+[upgrade and repair instructions](docs/installation.md#pin-the-gpu-build) before
+replacing its environment.
+
+Once installation succeeds, open the repository you want to search and run:
+
+```bash
+vaultspec-rag install --no-torch-config
+```
+
+This installs the repository's agent integration, downloads the three search models,
+and provisions Qdrant, the index server. The GPU packages are already installed, so
+`--no-torch-config` leaves the project's PyTorch configuration alone. The first setup
+downloads several gigabytes; subsequent projects share the models and server binary.
+
+Check the installation:
 
 ```bash
 vaultspec-rag server doctor
@@ -74,36 +107,31 @@ vaultspec-rag server doctor
 <img src="assets/term-doctor.svg" alt="vaultspec-rag server doctor - service, GPU, model, and Qdrant readiness at a glance" width="880" />
 </p>
 
-You want to see your GPU detected, all three models present, and the server binary
-provisioned. If something's missing, run `vaultspec-rag install --sync` to fix it, and
-open an [issue](https://github.com/nevenincs/vaultspec-rag/issues) if that doesn't.
+Check that the report detects your GPU and finds all three models and the Qdrant
+binary. If it reports a problem, use the [installation troubleshooting guide](docs/installation.md#when-something-goes-wrong).
 
 ## Use it
 
-Three commands.
-
-**1. Start the service.** It loads the models and keeps them in memory, so later
-searches are fast.
+Start the service to load the models. The command waits until it is ready:
 
 ```bash
-uv run vaultspec-rag server start
+vaultspec-rag server start
 ```
 
-**2. Index your project.** Do this once.
+Index the repository from its root:
 
 ```bash
-uv run vaultspec-rag index
+vaultspec-rag index
 ```
 
-This takes minutes on a large project, and the progress bar can sit still while a batch
-runs on the GPU - that's normal, it hasn't stopped responding. After this, the service
-watches your files and re-indexes changes on its own.
+The first index can take several minutes. The service then watches for file changes
+and updates the index automatically. Use `vaultspec-rag server jobs --watch` to
+inspect indexing progress.
 
-**3. Search.** `search` looks in your decision records by default, so pass `--type code`
-to search source:
+Search source code with `--type code`, or feature records with `--type vault`:
 
 ```bash
-uv run vaultspec-rag search "concept plus the domain terms" --type code
+vaultspec-rag search "parse query text into filters" --type code
 ```
 
 <p align="center">
@@ -114,63 +142,24 @@ If no results appear, run `vaultspec-rag server status`: exit code 5 means the m
 are still loading. Check `vaultspec-rag status` to see whether indexing has finished.
 If both are ready, [report the query and result](https://github.com/nevenincs/vaultspec-rag/issues).
 
-You only start the service once per machine, and index once per project.
-
-To wipe the index and start over: `vaultspec-rag clean all`.
+One service handles all your repositories. Run `index` in each repository you want
+to search. See [index maintenance](docs/search-and-index.md) for rebuilding or
+removing indexed content.
 
 ### Other ways to install
 
-As a project dependency, as a tool, or as a standalone binary.
-
-**Add it to a project**, so your team gets the same version:
+For a Python project that should carry the dependency, run:
 
 ```bash
 uv add "vaultspec-rag[gpu]"
 uv run vaultspec-rag install --sync
 ```
 
-On Linux and Windows, `--sync` installs the pinned CUDA build. On macOS you get the
-standard wheel, which already supports Apple silicon.
+Approve the PyTorch configuration prompt. On Linux and Windows, `--sync` applies the
+CUDA package source; macOS uses the standard MPS-capable wheel. Prefix subsequent
+commands with `uv run`, for example `uv run vaultspec-rag server start`.
 
-**Install it as a standalone tool.** On Linux and Windows you have to pin the GPU build,
-or `uv tool upgrade` will silently swap in a CPU one. Both `server start` and `install`
-print the exact command for your machine when they spot this, and refuse to run it for
-you - the installer lives inside the environment a replacement would have to remove.
-Clear the environment first: stop the service, close every editor or agent session
-holding the MCP server, and leave any shell whose working directory sits inside the tool
-tree. A forced reinstall removes the old packages before writing the new ones, so
-anything still holding the environment leaves it half-emptied
-([the way back](docs/installation.md#a-tool-environment-is-missing-packages-after-a-failed-reinstall)).
-It looks like this (Python 3.13, torch 2.13.0, Windows):
-
-```bash
-uv tool install --force --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-win_amd64.whl"
-vaultspec-rag install
-```
-
-The `--python` version has to match the wheel's `cp3XX` tag. On Apple silicon, no pin is
-needed:
-
-```bash
-uv tool install --python 3.13 "vaultspec-rag[mcp]"
-vaultspec-rag install
-```
-
-**Install a standalone binary**, if the machine has no Python toolchain:
-
-```powershell
-scoop bucket add nevenincs https://github.com/nevenincs/homebrew-tap
-scoop install vaultspec-rag
-```
-
-```bash
-brew tap nevenincs/tap https://github.com/nevenincs/homebrew-tap
-brew install vaultspec-rag
-```
-
-These already include the GPU build. The tap covers every vaultspec product, so you add
-it once. Windows and Linux only - on Apple silicon, use one of the routes above. Linux
-binaries need a recent glibc; see the [installation guide](docs/installation.md).
+Without a Python toolchain, use the [prebuilt Windows or Linux binaries](docs/installation.md#install-without-python).
 
 ### Where it puts things, and how to remove it
 
@@ -297,21 +286,21 @@ two to clear the index. Add `--read-only` to offer only the ones that read. See
 
 ## Run without the search server
 
-By default, vaultspec-rag runs a managed Qdrant server to hold the index. Pass
-`--local-only` and it uses a plain on-disk store instead - nothing to download, nothing
-to supervise.
+By default, vaultspec-rag runs a managed Qdrant server to hold the index. For a small
+project, `--local-only` selects an on-disk store and skips the Qdrant server download.
+It still needs the GPU and model files.
+
+Stop any running service with `vaultspec-rag server stop`. Set
+`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the environment that will
+start it, then configure the repository:
 
 ```bash
-vaultspec-rag install --local-only
+vaultspec-rag install --local-only --no-torch-config
 ```
 
-You give up speed when several searches run at once, because the on-disk store handles
-them one at a time. For one person searching now and then, you won't notice. It's a good
-fit for continuous integration, air-gapped machines, and anywhere you can't run an extra
-binary.
-
-This changes **where the index is stored, and nothing else**. You still need the GPU and
-the models. See [backends](docs/backends.md).
+Start the service and index the repository as above. The local store handles searches
+one at a time and has its own index; changing backends does not copy existing indexed
+content. See [backends](docs/backends.md) for storage locations and limitations.
 
 ## Read PDFs and other formats
 
