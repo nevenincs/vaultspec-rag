@@ -898,12 +898,12 @@ For prerequisites, preview, and application, follow the
 
 Exit codes:
 
-- `0`: Results were reported, even if individual collections failed.
-- `1`: A caught operation failure, or an implicit preview found work without `--yes` or `--dry-run`.
+- `0`: No collection failed; results may include skipped collections or an explicit preview.
+- `1`: A collection failed, an operation failure was caught, or an implicit preview found work without `--yes` or `--dry-run`.
 - `2`: Invalid target, disabled server mode, unsafe local path, or `--json` without `--yes`.
 
 Inspect each collection's `status` and `reason` (under `data.results` in JSON).
-Neither exit `0` nor JSON `ok: true` proves that every collection was copied.
+Failed collections produce `ok: false` with error `migrate_failed` and exit `1`.
 An existing destination is skipped, including a partial copy left by a failed run.
 
 ## server storage restore

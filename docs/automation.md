@@ -27,9 +27,9 @@ resolves.
 
 ## The envelope shape
 
-Every `--json` response is one JSON object with `ok`, `command`, and then
-either `data` on success or `error` and `message` on failure. Error envelopes
-may carry extras such as `port` or a `remediation` array.
+Every `--json` response is one JSON object with `ok` and `command`. Success
+includes `data`; failure includes `error` and `message` and may retain partial
+results in `data`. Error envelopes may also carry `port` or a `remediation` array.
 
 `command` is an identifier for the operation rather than the command path you
 typed, and it is not always the subcommand's name: `search` reports `search`,
@@ -130,8 +130,8 @@ mode mismatch, a version floor - so a host whose dependencies are all ready and
 whose install mode has drifted reports `ok: true` and exits `1`. Gate a
 diagnostic on its exit code, and read `ok` for what it says.
 
-For index migration, inspect each entry in `data.results`. Exit `0` and
-`ok: true` do not prove that every collection copied. See the
+For index migration, a failed collection makes the command fail. Inspect
+`data.results` to distinguish copied collections from skipped ones. See the
 [migration result contract](cli.md#server-storage-migrate).
 
 The `message` field is written for people and gets reworded. Branch on the
