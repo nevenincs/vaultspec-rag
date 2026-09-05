@@ -10,10 +10,9 @@ dependency; use a project whose source code you want to search.
 
 ## Step 1: Install vaultspec-rag and download the models
 
-Move into the project you want to search, then add and provision the package:
+Open a terminal in the root of the project you want to search, then add and provision RAG:
 
 ```
-cd path/to/your/project
 uv add "vaultspec-rag[gpu]"
 uv run vaultspec-rag install --sync
 ```
