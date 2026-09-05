@@ -66,9 +66,11 @@ def test_the_pull_request_lane_runs_the_provisioning_proofs_on_windows() -> None
     }
 
     assert windows_pr_jobs, "no Windows job runs on a pull request"
-    commands = [
-        str(step.get("run", ""))
-        for job in windows_pr_jobs.values()
-        for step in job.get("steps", [])  # type: ignore[union-attr]
-    ]
+    commands = []
+    for job in windows_pr_jobs.values():
+        steps = job.get("steps", [])
+        assert isinstance(steps, list)
+        for step in steps:
+            assert isinstance(step, dict)
+            commands.append(str(step.get("run", "")))
     assert any("just test provisioning" in command for command in commands), commands
