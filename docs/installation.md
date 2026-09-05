@@ -1,55 +1,31 @@
 # Installing vaultspec-rag
 
-vaultspec-rag searches your source code, and the decision records your project keeps in `.vault/`, by meaning rather than by keyword. The [project overview](../README.md) covers what it is and why it exists.
-
-**It needs a supported GPU.** Processor-only machines and AMD cards cannot run it, and no fallback exists. If that rules you out, stop here rather than reading on.
-
-This page covers installing the package, provisioning its dependencies, verifying the result, recovering when a step fails, upgrading, and removing it. For a guided first run once it's installed, see the [getting started guide](getting-started.md).
-
 ## What you need before you start
 
-**Hardware and operating system**
+For local inference, use an NVIDIA GPU with CUDA on Linux or Windows, or Apple
+silicon with MPS on macOS. CPU inference and AMD GPUs are unsupported.
 
-- **A GPU:** on Linux and Windows, an NVIDIA card with a working CUDA driver and roughly 3 GiB of free video memory. On macOS, Apple silicon with at least 8 GiB of unified memory (the tested minimum), which PyTorch reaches through Metal Performance Shaders (MPS). On Apple silicon that memory is also the system RAM the next bullet asks for, so a machine at the 8 GiB minimum meets this requirement and not the default profile's: it needs the `embedded-local` profile, whose floor is 8 GiB.
-- **16 GiB of system RAM:** indexing refuses to start below this rather than running slowly. That's the floor for the default `managed-service` profile; the `embedded-local` profile lowers it to 8 GiB.
-- **8 GiB of free disk:** on the volume holding the search index, not the volume holding the model cache. The `embedded-local` profile lowers this to 5 GiB.
-- **Linux, Windows, or Apple silicon macOS.**
+Choose a service resource profile:
 
-System memory and disk figures use binary units (GiB); download sizes use decimal units (GB). Video memory follows the memory convention rather than the download one: `status` carries the card's capacity as `vram_mib` and prints it as GiB, so a `vram_mib` of 16375 renders as `16.0 GiB VRAM`. That happens to match the number the card is sold under, because video memory advertised as "16 GB" is mebibytes too; the same capacity in true decimal gigabytes would read 17.2.
+| Profile | Total system RAM | Free index-store space | Free CUDA memory at startup |
+| --- | --- | --- | --- |
+| `managed-service` (default) | 16 GiB | 8 GiB | 12 GiB |
+| `embedded-local` | 8 GiB | 5 GiB | 6 GiB |
 
-Both floors belong to the default `managed-service` profile. `vaultspec-rag status`
-reports which one you are on, and what it permits:
+The CUDA figures are the default model-loading admission limits; they do not apply
+to Apple silicon. See [GPU memory settings](configuration.md#how-the-cuda-ceiling-and-admission-floor-derive).
+Allow additional disk space for the model cache.
 
-```text
-Support profile: managed-service
-Accepted backends: server
-Minimum RAM: 16.0 GiB
-Minimum free disk: 8.0 GiB
-Code support: 500000 files, 128.0 GiB of source, 5000000 sections generated,
-512.0 GiB weighted
-Document support: 100000 files, 512.0 GiB of source, 5000000 sections generated,
-1.0 TiB weighted
-```
+Use `embedded-local` for smaller corpora or a machine with 8 GiB of unified memory.
+This profile also supports the server. Set
+`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the service startup environment;
+setting it only in the query client's shell does not configure the service.
+Run `vaultspec-rag status` to check the active profile and corpus limits.
 
-Switching to `embedded-local` is a configuration setting rather than a flag:
-`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`, which [configuration](configuration.md) lists
-with the rest of the environment. Indexing runs inside the service, so the variable has
-to be set in the environment the service starts in; exporting it in the shell you type
-a query into changes nothing, and `status` will still report the profile the running
-service was started with.
+Ensure network access to the package index, model host, and search-server release downloads.
 
-What it buys in floor it takes off the ceiling, by a factor of ten rather than the two
-the memory figures suggest: 50,000 source files against 500,000, and 500,000 sections
-against five million. It also widens the backend choice rather than narrowing it, as
-the capture above shows - `managed-service` accepts only the managed server, while
-`embedded-local` accepts that and the on-disk store. The trade suits a smaller project
-on a smaller machine, not a large project on one you would like to squeeze.
-
-The GPU requirement isn't a preference: the embedding, sparse, and reranker models are too slow to be useful on a processor. The [architecture overview](architecture.md) explains the design.
-
-**Network access.** Every route downloads from at least one of the Python package index, the Hugging Face model host, and the search-server release host. On a machine with restricted egress, confirm those before you start.
-
-**Python toolchain.** Install [uv](https://docs.astral.sh/uv/) and CPython 3.13 or 3.14. The runtime rejects anything outside that range at import; 3.15 and later are refused until the test matrix covers them. This applies to the Python routes only. On a machine with no Python toolchain, use [Install without Python](#install-without-python).
+For a Python installation, install [uv](https://docs.astral.sh/uv/) and use CPython
+3.13 or 3.14. Alternatively, [install without Python](#install-without-python).
 
 ## Confirm your GPU is visible
 
@@ -59,7 +35,8 @@ On Linux or Windows:
 nvidia-smi
 ```
 
-If that lists your card and a driver version, the driver is loaded. On Apple silicon, macOS supplies the driver and the standard PyTorch wheel exposes MPS, so nothing needs checking and no CUDA install is involved.
+If that lists your card and a driver version, the driver is loaded. On Apple silicon,
+macOS supplies the driver; no CUDA installation is needed. PyTorch must report MPS available.
 
 vaultspec-rag refuses to start when neither CUDA nor MPS is available, and it refuses MPS when `PYTORCH_ENABLE_MPS_FALLBACK` enables processor execution. Neither platform falls back.
 
@@ -198,7 +175,6 @@ terminal on standard input, so it took the default and exited `2`, which is what
 declining looks like. And `Models` and `Qdrant binary` report `already present`
 because that machine had both cached from an earlier install. On a machine
 without them these are the lines that carry the download, and the wait.
-
 
 ### Install less than the default
 
