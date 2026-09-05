@@ -474,3 +474,29 @@ def test_torch_missing_from_a_gpu_install_is_still_a_defect() -> None:
     assert outcome is not None
     assert accelerator_probe_is_torch_installation_defect(outcome[1])
     assert not accelerator_probe_is_torch_absent_by_design(outcome[1])
+
+
+def test_the_tool_root_is_the_environment_not_the_link_target(tmp_path: Path) -> None:
+    """A symlinked interpreter names its OWN environment, not the base one.
+
+    Guard assertion: a tool environment's interpreter is a symlink to the base
+    interpreter on POSIX. Resolving it yields the shared Python installation,
+    and everything derived from the root then describes that installation
+    instead - the directory the operator is told to leave, the environment
+    scanned for holders, and the receipt looked up. This is the same symlink
+    trap that made the holder query blind to every POSIX virtual environment.
+    """
+    env = tmp_path / "tool-env"
+    (env / "bin").mkdir(parents=True)
+    base = tmp_path / "base" / "bin"
+    base.mkdir(parents=True)
+    base_python = base / "python3.14"
+    base_python.write_text("", encoding="utf-8")
+    interpreter = env / "bin" / "python"
+    try:
+        interpreter.symlink_to(base_python)
+    except (OSError, NotImplementedError):  # pragma: no cover - needs privilege
+        pytest.skip("this platform does not allow creating a symlink here")
+
+    assert _tool_torch._tool_root(str(interpreter)) == env
+    assert _tool_torch._tool_root(str(interpreter)) != base.parent
