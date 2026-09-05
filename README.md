@@ -216,7 +216,7 @@ Switching backends does not migrate your existing index. Follow
 Converters extract content from unsupported formats for indexing. See
 [converter setup](docs/preprocessing-hooks.md).
 
-### What a converter is allowed to do
+<p id="what-a-converter-is-allowed-to-do"></p>
 
 Converters run without a sandbox, with the permissions of the account running RAG.
 They can access files and the network. They can run during explicit indexing,
@@ -226,25 +226,13 @@ Before indexing, inspect `.vaultragpreprocess.toml` and its commands. Use
 `vaultspec-rag preprocess status` to inspect configuration without running converters.
 See [security and disable options](docs/preprocessing-hooks.md#security-posture).
 
-## How it works
-
-A background service holds the models and the index. One service per machine; the index
-itself is per project.
-
-Indexing reads your files once, then keeps up by watching for changes.
-
-A search matches two ways at once - by meaning, and by exact words. A third, slower model
-then re-scores the best few results to put the strongest first. That last step is where
-most of a search's time goes, and the two-way matching is why
-[how you word a query](#write-a-query-that-finds-it) changes so much.
-
-Read the [architecture overview](docs/architecture.md) for the detail.
-
 ## Scripting it
 
 Use `--json` for machine-readable output. Have scripts check `ok`, `error`, and the
 process exit status. See the [automation reference](docs/automation.md) for response
 fields, errors, and exit codes.
+
+<p id="how-it-works"></p>
 
 ## Documentation
 
