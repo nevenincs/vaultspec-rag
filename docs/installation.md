@@ -318,10 +318,9 @@ Document sections: 0
 Compute: CUDA - NVIDIA GeForce RTX 4080 SUPER (16.0 GiB VRAM)
 ```
 
-Two edits to that capture: it is cut before the profile block, which
-[what you need](#what-you-need-before-you-start) prints in full, and the
-absolute project path is shortened to its last two segments and written with
-POSIX separators, because the run was made on Windows. Nothing else is changed.
+The capture omits the profile block. The absolute project path is shortened to its
+last two segments and uses POSIX separators; the run was made on Windows.
+Nothing else is changed.
 
 A healthy result names `cuda` or `mps`, and shows the index location, even before you've indexed anything. It reports CUDA memory as discrete video memory and MPS memory as unified memory, never as zero. The zeroes above are the normal reading before an index exists, not a failure.
 
