@@ -219,7 +219,13 @@ def _startup_load_multiplier() -> float:
 
         cores = psutil.cpu_count(logical=True) or 1
         load1, _, _ = psutil.getloadavg()
-    except (ImportError, OSError, ValueError):
+    except (ImportError, OSError, ValueError, RuntimeError):
+        # RuntimeError is not defensive padding: Windows has no load average,
+        # so psutil emulates one from PDH performance counters and raises
+        # RuntimeError when they are unavailable - which is the state of a
+        # runner whose counters are disabled or whose service account cannot
+        # read them. Without it the documented fallback above never runs and a
+        # host condition fails the suite.
         return 1.0
     return min(_MAX_STARTUP_LOAD_MULTIPLIER, max(1.0, load1 / cores))
 

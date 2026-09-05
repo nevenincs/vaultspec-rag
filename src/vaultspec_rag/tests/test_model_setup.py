@@ -357,6 +357,29 @@ def test_startup_load_multiplier_only_widens_the_default_envelope() -> None:
     assert base <= default <= base * _MAX_STARTUP_LOAD_MULTIPLIER
 
 
+def test_an_unavailable_load_probe_leaves_the_envelope_unscaled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe that cannot answer falls back, rather than failing the suite.
+
+    Guard assertion: Windows has no load average, so psutil emulates one from
+    PDH performance counters and raises RuntimeError where they are disabled
+    or unreadable by the account running the agent. That is a property of the
+    host, not of the code under test, and the multiplier documents a fallback
+    for exactly this - which did not cover RuntimeError, so the host condition
+    failed the suite instead of being absorbed.
+    """
+    import psutil
+
+    def unavailable() -> tuple[float, float, float]:
+        msg = "PdhAddEnglishCounterW failed. Performance counters may be disabled."
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(psutil, "getloadavg", unavailable)
+
+    assert _startup_load_multiplier() == 1.0
+
+
 def _write_incomplete_hf_cache(cache_dir: Path, *, model_id: str) -> None:
     """Materialize a real config-only Hugging Face cache interrupted before weights."""
     owner, name = model_id.split("/", maxsplit=1)
