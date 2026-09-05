@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.23](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.22...vaultspec-rag-v0.4.23) (2026-09-05)
+
+
+### Features
+
+* **probe:** answer who holds an environment, by image path and working directory ([d35b939](https://github.com/nevenincs/vaultspec-rag/commit/d35b939d56494e0cebb7c3b24254225b4b32d427))
+* **readiness:** say who holds the environment, without calling it unhealthy ([1fec97b](https://github.com/nevenincs/vaultspec-rag/commit/1fec97b38e62662c375efceb8bbc2d93a26cebb0))
+
+
+### Bug Fixes
+
+* **ci:** contain the Rust toolchain paths too ([2698f52](https://github.com/nevenincs/vaultspec-rag/commit/2698f52c5b7e6c4d65e70199f642f37c8778174c))
+* **ci:** judge a path by who owns it, not by the prefix it starts with ([e9f976f](https://github.com/nevenincs/vaultspec-rag/commit/e9f976f326d3b2ef0f94d3170682b4595467b482))
+* **ci:** let the runner .env own containment, and stop competing with it ([5e184c0](https://github.com/nevenincs/vaultspec-rag/commit/5e184c0c0c59ecebf213046db04c4fa0760ff592))
+* **ci:** no job on any platform may address a system location ([bb94145](https://github.com/nevenincs/vaultspec-rag/commit/bb94145c25a1052667e81c2240cc17f873ccb812))
+* **ci:** stop the Windows runners writing into the operating system ([7476765](https://github.com/nevenincs/vaultspec-rag/commit/74767659f3746f7f5fc128e10c1966851ffc56ab))
+* **ci:** warm the GPU runner's model cache and make a dead daemon legible ([012481f](https://github.com/nevenincs/vaultspec-rag/commit/012481ff902c22fa1066fd0a9c25723ca2b1a790))
+* **probe:** a torch-free install is a choice, not a defect ([c006690](https://github.com/nevenincs/vaultspec-rag/commit/c006690dec316c561c2b43d7663452870858fb2f))
+* **render:** show the tool repair an operator was only told about in JSON ([4dce128](https://github.com/nevenincs/vaultspec-rag/commit/4dce1280725ecac012d0c473d11b752e85528616))
+* **repair:** refuse to replace an environment from inside it ([831739c](https://github.com/nevenincs/vaultspec-rag/commit/831739cdbec7ee6905e9dbe5f46b7cc987df476a))
+* **repair:** stop asking permission, and stop asking for more than torch ([72286a8](https://github.com/nevenincs/vaultspec-rag/commit/72286a84dd7a5496962db6cbd94f28016d899b86))
+
 ## [0.4.22](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.21...vaultspec-rag-v0.4.22) (2026-09-02)
 
 
