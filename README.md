@@ -260,66 +260,31 @@ Follow [MCP setup](docs/mcp.md) to connect your coding agent. The default toolse
 includes tools that change or delete indexes. To restrict access, see
 [withholding the mutating tools](docs/mcp.md#withholding-the-mutating-tools).
 
-## Run without the search server
+<p id="run-without-the-search-server"></p>
 
-By default, vaultspec-rag runs a managed Qdrant server to hold the index. For a small
-project, `--local-only` selects an on-disk store and skips the Qdrant server download.
-It still needs the GPU and model files.
+## Use an on-disk index
 
-Stop any running service with `vaultspec-rag server stop`. Set
-`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the environment that will
-start it, then configure the repository:
+By default, vaultspec-rag uses managed Qdrant in a separate process. The optional
+local-only backend keeps an embedded on-disk index inside the RAG process. It still
+requires a GPU and models.
 
-```bash
-vaultspec-rag install --local-only --no-torch-config
-```
-
-Start the service and index the repository as above. The local store handles searches
-one at a time and has its own index; changing backends does not copy existing indexed
-content. See [backends](docs/backends.md) for storage locations and limitations.
+Switching backends does not migrate your existing index. Follow
+[backend setup](docs/backends.md).
 
 ## Read PDFs and other formats
 
-vaultspec-rag reads code and Markdown on its own. For anything else - PDFs,
-spreadsheets - you connect a converter, and vaultspec-rag indexes what it produces. You
-define them in a `.vaultragpreprocess.toml` file. The docs and the CLI call these
-preprocessing hooks, which is why the command below is `preprocess`. See
-[preprocessing hooks](docs/preprocessing-hooks.md).
-
-Read the next part before you use someone else's.
+Converters extract content from unsupported formats for indexing. See
+[converter setup](docs/preprocessing-hooks.md).
 
 ### What a converter is allowed to do
 
-**A converter runs whatever command it names, with your user account's permissions.
-Nothing sandboxes it and nothing checks it against a list of approved commands.**
+Converters run without a sandbox, with the permissions of the account running RAG.
+They can access files and the network. They can run during explicit indexing,
+watched changes, and agent-triggered reindexing.
 
-Indexing a repository therefore means trusting that repository, exactly as running its
-`make` or `npm install` does.
-
-It also runs more often than you might expect:
-
-- when you run `vaultspec-rag index`
-- whenever the service notices a matching file change - with no command from you
-- on any re-index request, including from an AI assistant
-
-The limits that exist stop a runaway converter, not a hostile one. It runs in a separate
-process, under a time limit, with its output capped, and with your environment variables
-stripped down so passwords and tokens in them don't reach it. That last one isn't a
-security boundary. The converter runs as your account: it can read and write any file you
-can, and reach the network exactly as you can.
-
-Before you use a converter you didn't write:
-
-- Read the `.vaultragpreprocess.toml` and every command it runs, the way you'd read a
-  build script.
-- Run `vaultspec-rag preprocess status` first. It tells you whether a project defines
-  converters and whether they'd run - without running anything.
-- **Don't index a repository you wouldn't build.**
-
-To turn converters off completely, set `VAULTSPEC_RAG_PREPROCESS=off`. That overrides
-everything else. `server start --no-preprocess` disables them for that service. Note that
-`index --no-preprocess` only applies when indexing runs in-process: if a service is
-already running, `index` hands the work to it and the flag has no effect.
+Before indexing, inspect `.vaultragpreprocess.toml` and its commands. Use
+`vaultspec-rag preprocess status` to inspect configuration without running converters.
+See [security and disable options](docs/preprocessing-hooks.md#security-posture).
 
 ## How it works
 
@@ -337,27 +302,9 @@ Read the [architecture overview](docs/architecture.md) for the detail.
 
 ## Scripting it
 
-Every command except `server warmup` takes `--json`. You get one JSON object on stdout,
-and nothing else - logs go to stderr.
-
-```json
-{ "ok": true, "command": "search", "data": { "results": [] } }
-```
-
-When something fails you get `"ok": false` with `error` and `message`. Branch on the
-`error` value, such as `port_unreachable`, `local_store_locked`, or `stopped`, rather
-than on the message text.
-
-| Exit code | Meaning                                    |
-| --------- | ------------------------------------------ |
-| 0         | Worked                                     |
-| 1         | Failed - GPU error, busy index, no service |
-| 2         | You passed a bad argument or flag          |
-| 3         | Service isn't running                      |
-| 4         | Service crashed, or its state disagrees    |
-| 5         | Service is still loading - try again       |
-
-See [automation](docs/automation.md).
+Use `--json` for machine-readable output. Have scripts check `ok`, `error`, and the
+process exit status. See the [automation reference](docs/automation.md) for response
+fields, errors, and exit codes.
 
 ## Documentation
 
