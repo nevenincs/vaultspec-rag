@@ -104,6 +104,15 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "whose counters work, and the alternative is a contract asserted only "
         "on the machines that never exercise it",
     ),
+    "test_cli_storage_migrate.py": (
+        7,
+        "scripts the stores a migrate command opens so its EXIT STATUS can be "
+        "asserted. Reaching that code for real needs a live Qdrant server and "
+        "populated collections on both backends, which the unit tier has not "
+        "got. The reported envelope is not covered by these: it is a pure "
+        "function of the results, and is driven through the renderer itself "
+        "with nothing substituted",
+    ),
     "test_readiness_holders.py": (
         2,
         "points the readiness scan at a purpose-built environment by "

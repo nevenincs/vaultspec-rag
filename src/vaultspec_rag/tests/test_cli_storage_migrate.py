@@ -1,7 +1,17 @@
-"""Migration results determine the CLI outcome without opening real stores."""
+"""Migration results determine the CLI outcome without opening real stores.
+
+Split by what each half actually needs. The reported envelope is a pure
+function of the results, so it is driven directly through the renderer with no
+substitution at all. The exit status is not: it is raised by the command, and
+reaching that code for real means a live Qdrant server and populated
+collections on both backends, which the unit tier has not got. Only those
+tests go through the CLI, and only they carry the scripted stores.
+"""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
@@ -53,6 +63,19 @@ def run_migration(
     return run
 
 
+def _render(results: list[MigrateResult], *, json_mode: bool, failed: bool) -> str:
+    """Render an outcome through production, with nothing substituted.
+
+    The envelope and the human lines are a pure function of the results, so
+    they are asked of the renderer itself rather than reached through a command
+    that would have to be given scripted stores first.
+    """
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        storage_cli._render_migrate(results, json_mode, failed=failed)
+    return stream.getvalue()
+
+
 @pytest.mark.parametrize("mixed", [False, True])
 @pytest.mark.parametrize("json_mode", [False, True])
 def test_failed_collection_fails_the_command(
@@ -72,8 +95,10 @@ def test_failed_collection_fails_the_command(
     result = run_migration(results, *options)
 
     assert result.exit_code == 1, result.output
+
+    rendered = _render(results, json_mode=json_mode, failed=True)
     if json_mode:
-        lines = result.stdout.splitlines()
+        lines = rendered.splitlines()
         assert len(lines) == 1
         envelope = json.loads(lines[0])
         assert envelope["ok"] is False
@@ -90,8 +115,8 @@ def test_failed_collection_fails_the_command(
             for item in results
         ]
     else:
-        assert "failed" in result.stdout
-        assert "count_mismatch:3!=4" in result.stdout
+        assert "failed" in rendered
+        assert "count_mismatch:3!=4" in rendered
 
 
 @pytest.mark.parametrize("status", ["migrated", "skipped", "would_migrate"])
@@ -102,10 +127,13 @@ def test_success_skip_and_explicit_preview_remain_successful(
     if status == "would_migrate":
         options.append("--dry-run")
 
-    result = run_migration([MigrateResult("source", "target", status)], *options)
+    results = [MigrateResult("source", "target", status)]
+
+    result = run_migration(results, *options)
 
     assert result.exit_code == 0, result.output
-    envelope = json.loads(result.stdout)
+
+    envelope = json.loads(_render(results, json_mode=True, failed=False))
     assert envelope["ok"] is True
     assert "error" not in envelope
     assert envelope["data"]["results"][0]["status"] == status
