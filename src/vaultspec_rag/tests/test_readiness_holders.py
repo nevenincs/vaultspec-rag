@@ -49,7 +49,9 @@ def test_a_held_environment_is_still_a_ready_one() -> None:
     )
 
     assert report.ready
-    assert report.to_dict()["environment_holders"]["held"] is True
+    holders = report.to_dict()["environment_holders"]
+    assert isinstance(holders, dict)
+    assert holders["held"] is True
 
 
 def test_the_snapshot_never_publishes_a_command_line(
