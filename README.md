@@ -4,20 +4,18 @@
 
 The semantic search component for vault and code.
 
+Search code and feature records by meaning through the command line or Model Context
+Protocol (MCP). Inference runs on your GPU.
+
 [![build](https://img.shields.io/github/actions/workflow/status/nevenincs/vaultspec-rag/ci.yml?branch=main&style=flat&label=build&logo=githubactions&logoColor=white&labelColor=24292f&color=57606a)](https://github.com/nevenincs/vaultspec-rag/actions/workflows/ci.yml)
 [![release](https://img.shields.io/pypi/v/vaultspec-rag?style=flat&label=release&logo=pypi&logoColor=white&labelColor=24292f&color=57606a)](https://pypi.org/project/vaultspec-rag/)
 [![runtime](https://img.shields.io/badge/runtime-Python%203.13%20%7C%203.14%20%7C%20CUDA%20%7C%20MPS-57606a?style=flat&logo=python&logoColor=white&labelColor=24292f)](#what-you-need)
 [![license](https://img.shields.io/github/license/nevenincs/vaultspec-rag?style=flat&label=license&logo=opensourceinitiative&logoColor=white&labelColor=24292f&color=57606a)](./LICENSE)
 
-[What it is](#what-it-is) · [Install](#install) · [Use it](#use-it) ·
+[Install](#install) · [Use it](#use-it) ·
 [Docs](#documentation) · [Help](#status-and-help)
 
-## What it is
-
-You remember that your project handles file locking somehow. You don't remember what
-anyone called it. `grep "lock"` gives you two hundred hits.
-
-vaultspec-rag lets you describe it instead:
+For example, find records about concurrent file writes:
 
 ```bash
 vaultspec-rag search "file lock concurrent write per-root" --type vault
@@ -37,19 +35,13 @@ vaultspec-rag search "file lock concurrent write per-root" --type vault
 Every result gives you the file, what kind of record it is, and the passage that
 matched.
 
-It searches two things you already have: your source code, and your project's decision
-records if you keep them with
-[vaultspec-core](https://github.com/nevenincs/vaultspec-core). It reads other formats
-too, like PDFs, once you [connect a converter](#read-pdfs-and-other-formats).
-
-You don't need vaultspec-core. Point vaultspec-rag at any codebase and it works.
-
-Keep using `grep` when you know the string - it's exact and instant. Use this when you
-can't name the thing you're looking for.
+Use it with [vaultspec-core](https://github.com/nevenincs/vaultspec-core) or
+independently in another repository. To index PDFs and other formats,
+[connect a converter](#read-pdfs-and-other-formats).
 
 ## What you need
 
-This runs machine-learning models on your own hardware, so the requirements are real:
+Indexing and search require:
 
 - **Python:** 3.13 or 3.14.
 - **A GPU:** on Linux and Windows, an NVIDIA card with CUDA and about 3 GB of free video
@@ -118,10 +110,9 @@ uv run vaultspec-rag search "concept plus the domain terms" --type code
 <img src="assets/term-search-vault.svg" alt="vaultspec-rag search - a plain-English query surfacing the governing decision record from this repository's own vault" width="880" />
 </p>
 
-**Nothing came back?** Two likely reasons. The service may still be warming up - run
-`vaultspec-rag server doctor`, and note that exit code 5 means "still loading, try
-again". Or the first index may not have finished - `vaultspec-rag status` shows you. If
-it's neither, please [open an issue](https://github.com/nevenincs/vaultspec-rag/issues).
+If no results appear, run `vaultspec-rag server status`: exit code 5 means the models
+are still loading. Check `vaultspec-rag status` to see whether indexing has finished.
+If both are ready, [report the query and result](https://github.com/nevenincs/vaultspec-rag/issues).
 
 You only start the service once per machine, and index once per project.
 
