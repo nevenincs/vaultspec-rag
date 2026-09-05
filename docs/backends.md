@@ -1,145 +1,67 @@
 # Storage backends
 
-vaultspec-rag stores its search index in one of two backends: **the managed server**, a supervised local Qdrant process, or **the local-only store**, an embedded on-disk database. The managed server is the default.
+## Choose a backend
 
-This page assumes vaultspec-rag is already installed. If it isn't, start with the [installation guide](installation.md).
+vaultspec-rag uses a managed local Qdrant server by default. Choose local-only storage if you cannot run a separate Qdrant process.
 
-The how-to sections stay thin on purpose. For the full flag list on any command, see the [CLI reference](cli.md). For the vocabulary, see the [glossary](glossary.md).
+|                        | Managed Qdrant (default)                 | Local-only                        |
+| ---------------------- | ---------------------------------------- | --------------------------------- |
+| Process                | Separate, supervised Qdrant process      | Embedded store                    |
+| Default index location | `~/.vaultspec-rag/qdrant-server/storage` | `.vault/data/search-data/qdrant/` |
+| Qdrant binary          | Pinned and checksum-verified             | No binary download                |
 
-## The two backends in brief
+Managed storage separates projects by namespaces based on each project's resolved root. Local-only storage keeps the index inside each project.
 
-**The managed server** is a supervised local process. vaultspec-rag downloads a pinned Qdrant binary, verifies it, runs it bound to loopback, and monitors it for the life of the search service. It handles its own concurrency, so many searches and index jobs can run at once.
+Both backends need the [GPU runtime and models](installation.md). Local-only storage avoids the Qdrant binary download; packages and models still need downloading if they are not cached.
 
-**The local-only store** is an embedded on-disk Qdrant database. No separate process runs; the search service reads and writes the index files directly. It lives inside your project at `.vault/data/search-data/qdrant/`. Nothing to download, nothing to supervise.
+## Change the backend
 
-|                        | Managed server                                   | Local-only store                                  |
-| ---------------------- | ------------------------------------------------ | ------------------------------------------------- |
-| Separate process       | Yes, supervised                                  | No                                                |
-| Binary download        | Yes, pinned and checksummed                      | None                                              |
-| Index location         | `~/.vaultspec-rag/qdrant-server/storage`, shared | `.vault/data/search-data/qdrant/`, in the project |
-| Concurrent load        | Handled in parallel                              | Serialized through one process                    |
-| Project isolation      | Namespaced per project inside one store          | Separate by location                              |
-| Needs network at setup | Yes                                              | No                                                |
-| GPU and models         | Required                                         | Required                                          |
+Switching backends does not transfer indexes. To keep an existing index, follow [index migration](storage-maintenance.md#migrate-a-root-between-backends). Otherwise, build an index after switching.
 
-The network row is about the pinned binary and nothing else. Both backends need
-the models, so a machine without them already cached reaches a host either way:
-choosing the local-only store removes a download, not the requirement for one.
+If the service is running, stop it first. This interrupts all connected clients. Starting an already-running service does not change its backend.
 
-## Why the managed server is the default
-
-The local-only store serializes work through a single process. Concurrent load means several searches arriving together, or a search competing with an index job. Under that load, requests queue behind one another and throughput drops. The managed server removes that limit: it accepts many requests at once.
-
-"Managed and supervised" means vaultspec-rag does the operational work. It downloads the binary, runs it as a child process, monitors its health, restarts it once if the process exits unexpectedly, and shuts it down cleanly when the service stops. You never install or start Qdrant by hand.
-
-A **pinned binary** is a specific version whose contents are known ahead of time. vaultspec-rag targets one exact Qdrant version per release, not "whatever is latest"; `server qdrant status` reports which. A **checksum** is a fingerprint of the binary's contents, compared against a known-good value before the binary runs, so a tampered or corrupted download is refused.
-
-## When to choose the local-only store instead
-
-The local-only store is a first-class choice, not a degraded mode. Pick it when:
-
-- You're on a CUDA-capable continuous integration worker, where a per-run binary download is wasteful.
-- You're on an air-gapped machine with a pre-provisioned GPU runtime and model cache that cannot reach the download host.
-- Your use is single-user or low-concurrency, so the server's parallelism adds little.
-- Your environment forbids downloading and running an external binary.
-
-The trade-off you accept is lower throughput under concurrent load. For one developer searching occasionally, that is usually invisible.
-
-It changes the storage backend and nothing else. It does not remove the GPU or model requirements. A GPU-less continuous integration host can install the bare package for control-plane commands, but indexing and searching locally still need CUDA or Apple silicon.
-
-## How projects stay isolated on one server
-
-One managed server safely holds many projects' indexes. vaultspec-rag namespaces each project's collections by a per-root prefix, a short hash of the project's resolved path. Two projects pointed at the same server never overwrite each other's data.
-
-This namespacing applies to the managed server only. The local-only store separates projects by location, because each one lives inside its own project directory.
-
-## How to operate the managed server
-
-Four commands under `server qdrant` manage it.
-
-**Provision or upgrade the binary.** `server qdrant install` downloads and verifies the pinned Qdrant server, then registers it as the current install. Use it to provision outside of `install`, or pass `--upgrade` to move to a newer pinned version.
-
-**Check it.** `server qdrant status` reports the managed version, the executable path, the address, and whether the process is running:
-
-```
-Qdrant storage service
-Managed version: 1.19.0
-Executable: ~/.vaultspec-rag/bin/qdrant/1.19.0/qdrant
-Address: http://127.0.0.1:8765
-Connection: accepting requests
-Process: running, started by vaultspec-rag
-Process ID: 36348
-Process port: 8765
-Available installs:
-  1.19.0 - downloaded release (current)
-  1.18.2 - downloaded release
+```sh
+vaultspec-rag server stop
 ```
 
-The version and paths reflect the release you have installed. The executable
-path is written above in its short form; the tool prints it in full, with the
-platform's file extension. `Available installs` is every managed binary still
-on disk rather than only the one in use, which is what the next paragraph's
-`--keep-current` preserves one of.
+Wait for the stop to succeed, then choose one of the following starts.
 
-**Remove installs.** `server qdrant clean` deletes managed Qdrant installs. Deletion requires `--yes`; without it the command prints a preview. Pass `--keep-current` to preserve the pinned version in use. It never touches index data.
+<p id="how-to-run-the-local-only-store"></p>
 
-**Recover from a corrupt collection.** `server qdrant quarantine` moves a corrupt collection aside so the server can start again. Run it with no argument to list the collections in the store, then name one to quarantine it, which requires `--yes`. Nothing is deleted: the quarantined collection re-indexes the next time it is used.
+### Use a local-only index
 
-## How to run the local-only store
-
-Three ways to select it:
-
-- At setup: `vaultspec-rag install --local-only`. This skips the Qdrant binary download and persists the choice, so a later `server start` honors it without the flag.
-- For one run: `vaultspec-rag server start --local-only`.
-- By environment: set `VAULTSPEC_RAG_LOCAL_ONLY=1`.
-
-Only the backend changes. vaultspec-rag reads and writes the on-disk store instead of talking to a managed server.
-
-### Confirming which backend is active
-
-`vaultspec-rag server doctor` reports the active backend as `server` or `local-only`. Check there when a machine has been configured more than once and you're not sure which selection won.
-
-### Switching back to the managed server
-
-Running `vaultspec-rag install` again without `--local-only` persists the server selection, reversing the setup-time choice. For a single run, `server start` without the flag and with `VAULTSPEC_RAG_LOCAL_ONLY` unset uses the managed server: a command-line flag and an environment variable both outrank the persisted marker.
-
-Switching the selection does not move your index. To carry an existing index across, migrate it:
-
-```bash
-vaultspec-rag server storage migrate <project-root> --to server
+```sh
+vaultspec-rag server start --local-only
 ```
 
-Pass `--to local` for the other direction, `--dry-run` to preview without copying, and `--yes` to apply. See [storage maintenance](storage-maintenance.md).
+Include `--local-only` on every start. A plain `server start` overrides a saved or environment-based local-only selection, including one saved by `install --local-only`.
 
-## How provisioning and verification work
+<p id="switching-back-to-the-managed-server"></p>
 
-During setup, vaultspec-rag downloads the pinned Qdrant binary over HTTPS from an allowlist of hosts. It computes the SHA256 checksum of the archive and compares it to a checksum built into the tool. If they don't match, it deletes the partial download and refuses to continue.
+### Use managed Qdrant
 
-vaultspec-rag extracts only a verified binary, and re-checks it against its recorded fingerprint immediately before running it. It stores the verified binary under `~/.vaultspec-rag/bin/qdrant/`.
+```sh
+vaultspec-rag server start --qdrant
+```
 
-For air-gapped machines you supply your own binary instead of downloading one. The operator-supplied binary still flows through the same supervised path, and a checksum mismatch is still a hard failure.
+The explicit flag re-enables managed Qdrant if it was disabled. If the binary is missing, follow the install command printed by startup. See [startup options](cli.md#server-start) for automatic provisioning.
 
-Provisioning happens as part of `install`. For the setup command and its flags, see the [installation guide](installation.md).
+After either start, [build or refresh the project's index](search-and-index.md#build-and-refresh-the-index).
 
-## Troubleshooting
+<p id="confirming-which-backend-is-active"></p>
 
-### The server can't start
+## Check the service
 
-Run `server qdrant status` to see whether the binary is present and what the connection reports. If a collection is corrupt, `server qdrant quarantine` moves it aside so the server starts again. To run without the server while you investigate, `server start --local-only`.
+```sh
+vaultspec-rag server status
+```
 
-### A checksum mismatch
+Check that the service is running. For managed Qdrant, also check its process and connection:
 
-The archive didn't match the digest built into the tool, and vaultspec-rag deleted the partial download. Retry: the usual cause is a truncated transfer. If it persists, provision your own binary with `server qdrant install --binary PATH`.
+```sh
+vaultspec-rag server qdrant status
+```
 
-### You're not sure which backend is active
+`server doctor` assesses the invoking process's backend configuration alongside service health; its backend label does not prove which backend the running daemon uses.
 
-`server doctor` reports the active backend. See [Confirming which backend is active](#confirming-which-backend-is-active).
-
-## Where to go next
-
-- [Installation](installation.md) answers how to provision either backend at setup.
-- [Service mode](service-mode.md) answers how the background service runs and is managed.
-- [Storage maintenance](storage-maintenance.md) answers how to survey, migrate, and reclaim index storage.
-- [Architecture](architecture.md) answers how the backends fit with the models and the index.
-- [CLI reference](cli.md) catalogues every command and flag.
-- For help, the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues) takes questions as well as bug reports.
+For startup failures, follow [service troubleshooting](service-mode.md#troubleshooting). For collection recovery or disk cleanup, use [storage maintenance](storage-maintenance.md).
