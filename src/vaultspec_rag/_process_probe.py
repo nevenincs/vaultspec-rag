@@ -693,9 +693,9 @@ def environment_holders(
                 image = info["exe"]
                 working_directory = info["cwd"]
                 cmdline = info["cmdline"]
-                launched_as = (
-                    cmdline[0] if isinstance(cmdline, list) and cmdline else None
-                )
+                launched_as: object = None
+                if isinstance(cmdline, list) and cmdline:
+                    launched_as = cast("list[object]", cmdline)[0]
                 if _resolves_under(image, resolved):
                     relation = HolderRelation.IMAGE
                 elif _names_under(launched_as, resolved, named):

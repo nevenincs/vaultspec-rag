@@ -35,7 +35,7 @@ from .conftest import (
     _ROOMY,
     _SCENARIO_TOTAL_MIB,
     _UNREADABLE,
-    _windowed,
+    windowed,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -98,7 +98,7 @@ class TestTheAdmissionLatch:
         """
         del floor
         entries: list[int] = []
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_ROOMY, _CROWDED],
             entries,
@@ -122,7 +122,7 @@ class TestTheAdmissionLatch:
         """
         del floor
         entries: list[int] = []
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_CROWDED, _ROOMY],
             entries,
@@ -157,7 +157,7 @@ class TestTheAdmissionLatch:
             total_mib=None,
             own_reserved_mib=None,
         )
-        source = _windowed(tmp_path / "load-window.lock", [cpu_only], entries)
+        source = windowed(tmp_path / "load-window.lock", [cpu_only], entries)
 
         def _loader() -> str:
             raise ImportError("the loader's own verdict")
@@ -178,7 +178,7 @@ class TestTheAdmissionLatch:
         """
         del floor
         entries: list[int] = []
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_ROOMY, _CROWDED],
             entries,
@@ -208,7 +208,7 @@ class TestTheAdmissionLatch:
         from ...memory_probe import rebase_resident_cuda_baseline
 
         entries: list[int] = []
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_ROOMY, _CROWDED],
             entries,
@@ -243,7 +243,7 @@ class TestTheAdmissionLatch:
         """
         del floor
         entries: list[int] = []
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_UNREADABLE, _ROOMY],
             entries,
@@ -275,7 +275,7 @@ class TestTheAdmissionLatch:
         """
         del floor
         entries: list[int] = []
-        source = _windowed(
+        source = windowed(
             tmp_path / "load-window.lock",
             [_UNREADABLE, _CROWDED],
             entries,
@@ -307,7 +307,7 @@ class TestTheAdmissionLatch:
         """
         del floor
         entries: list[int] = []
-        source = _windowed(tmp_path / "load-window.lock", [_ROOMY], entries)
+        source = windowed(tmp_path / "load-window.lock", [_ROOMY], entries)
         start = threading.Barrier(2)
         results: list[str] = []
         failures: list[Exception] = []

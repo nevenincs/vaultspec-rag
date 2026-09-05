@@ -33,11 +33,6 @@ def _cuda_ready_probe(_interpreter: str, timeout: float = 60.0) -> None:
     return None
 
 
-def _cpu_torch_probe(_interpreter: str, timeout: float = 60.0) -> tuple[bool, str]:
-    del timeout
-    return True, "the service interpreter has a CPU-only torch wheel"
-
-
 @pytest.mark.parametrize(
     ("exit_code", "is_installation_defect"),
     [(3, True), (4, True), (5, False), (7, False)],
@@ -323,11 +318,10 @@ def test_a_project_venv_is_not_this_transaction_s_business(
     """Only a persistent tool environment is repaired through this path."""
     from ..cli import _gpu_errors
 
-    monkeypatch.setattr(
-        _gpu_errors,
-        "classify_interpreter_env",
-        lambda _interpreter: RuntimeEnvKind.PROJECT_VENV,
-    )
+    def _project_venv(_interpreter: str) -> RuntimeEnvKind:
+        return RuntimeEnvKind.PROJECT_VENV
+
+    monkeypatch.setattr(_gpu_errors, "classify_interpreter_env", _project_venv)
 
     outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
 

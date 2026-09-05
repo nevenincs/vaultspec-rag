@@ -173,7 +173,7 @@ def floor() -> Generator[int]:
         yield _FLOOR
 
 
-def _windowed(
+def windowed(
     anchor: Path,
     readings: list[CudaDeviceMemory],
     entries: list[int],
