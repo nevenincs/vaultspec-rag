@@ -41,20 +41,13 @@ independently in another repository. To index PDFs and other formats,
 
 ## What you need
 
-Indexing and search require:
+For the Python installation below, use Python 3.13 or 3.14 and
+[uv](https://docs.astral.sh/uv/getting-started/installation/).
+Local indexing and search require NVIDIA CUDA on Linux or Windows, or Apple silicon
+on macOS. CPU inference and AMD GPUs are unsupported.
 
-- Python 3.13 or 3.14 and [uv](https://docs.astral.sh/uv/getting-started/installation/).
-- On Linux and Windows, an NVIDIA GPU with a working CUDA driver and roughly 3 GiB
-  of free video memory. On macOS, Apple silicon.
-- 16 GiB of system RAM and at least 8 GiB free on the index volume for the default
-  `managed-service` profile. Packages and model files need additional disk space.
-
-For smaller projects, the `embedded-local` profile lowers the minimums to 8 GiB RAM
-and 5 GiB free disk. Set `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the
-environment that starts the service; `--local-only` alone does not change these
-minimums. See [resource requirements](docs/installation.md#what-you-need-before-you-start).
-
-CPU-only machines and AMD GPUs are unsupported; inference has no CPU fallback.
+Check the [memory and disk requirements](docs/installation.md#what-you-need-before-you-start)
+before installing. That section also covers the smaller resource profile.
 
 ## Install
 

@@ -38,13 +38,16 @@ The code and the [glossary](glossary.md) say *accelerator*, because the resolved
 
 ## How the two kinds of GPU memory differ
 
-CUDA has discrete video memory. vaultspec-rag checks free memory at load time, and roughly 3 GB free is the practical floor.
+CUDA has discrete video memory. Before loading models, vaultspec-rag checks it
+against the configured admission limit.
 
-Apple silicon has unified memory, shared by the CPU, the GPU, and everything else on the machine. No discrete pool exists to measure, so vaultspec-rag reports allocator and recommended-working-set figures instead of inventing a video-memory number.
+Apple silicon has unified memory shared by the CPU and GPU. vaultspec-rag reports
+allocator and recommended-working-set figures; the CUDA admission limit does not
+apply to this shared memory.
 
-The project validates the dense, sparse, and reranker models running concurrently on an 8 GiB Apple silicon machine. That is a statement about function, not about throughput, battery, or thermals. Don't read it as parity with CUDA.
-
-Memory figures use binary units (GiB), and video memory follows the same convention rather than the vendor's decimal one: `status` carries the card's capacity as `vram_mib` and prints it as GiB, so a `vram_mib` of 16375 renders as `16.0 GiB VRAM`. Download sizes are the decimal ones. The [installation guide](installation.md) and [configuration reference](configuration.md) carry the exact numbers.
+See the [installation requirements](installation.md#what-you-need-before-you-start)
+for profile minimums and [GPU memory settings](configuration.md#index-resource-bounds-and-memory-ceilings)
+for admission and runtime limits.
 
 ## Where the models and the index live between searches
 
