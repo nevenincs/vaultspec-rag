@@ -26,6 +26,14 @@ from ..torch_config._constants import CU130_INDEX_URL, TORCH_TOOL_PIN_VERSION
 #: Holders are listed for an operator to act on, not dumped exhaustively.
 HOLDER_REPORT_LIMIT = 10
 
+#: How long the holder scan may take before the refusal gives up on it. Generous
+#: on purpose: this runs once, immediately before an operator is handed a
+#: command that removes an environment's contents, and a scan cut short reports
+#: FEWER holders than exist. Slow and complete beats fast and blind here, and a
+#: busy machine - the case where holders are most likely - is exactly the case
+#: where the walk takes longest.
+HOLDER_SCAN_BUDGET_SECONDS = 60.0
+
 __all__ = [
     "HOLDER_REPORT_LIMIT",
     "ToolCudaInstallSpec",
@@ -274,11 +282,17 @@ def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
 
 
 def _holder_summary(holder: EnvironmentHolder) -> str:
-    """One holder line, with the remediation its relation actually needs."""
-    if holder.relation is HolderRelation.IMAGE:
-        action = "end this process"
-    else:
+    """One holder line, with the remediation its relation actually needs.
+
+    Only a working-directory holder is asked to move: it is a shell or an
+    editor whose binary has nothing to do with this environment. Anything
+    running the environment's own interpreter - by image path, or by the
+    launch path a symlinked POSIX venv presents - has to end.
+    """
+    if holder.relation is HolderRelation.WORKING_DIRECTORY:
         action = "move this process out of the directory"
+    else:
+        action = "end this process"
     return f"    pid {holder.pid} ({action}): {holder.image or 'unknown image'}"
 
 
@@ -296,7 +310,7 @@ def _handoff_outcome(
     process to end.
     """
     root = _tool_root(interpreter)
-    found = environment_holders(root)
+    found = environment_holders(root, timeout=HOLDER_SCAN_BUDGET_SECONDS)
     lines = [
         f"tool CUDA repair must run from outside {root}",
         "  the environment is replaced wholesale, and this process runs inside it",

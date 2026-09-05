@@ -545,13 +545,22 @@ class HolderRelation(StrEnum):
     """How a process was found to hold an environment.
 
     The witness is carried rather than collapsed into a boolean because the
-    two relations need DIFFERENT remediation: an image-path holder is a
+    relations need DIFFERENT remediation: an image or launch-path holder is a
     process to end, while a working-directory holder is a shell or an editor
     to move out of the tree, whose own binary may have nothing to do with the
     environment it is blocking.
+
+    ``LAUNCH_PATH`` exists because a POSIX virtual environment's interpreter is
+    a SYMLINK to the base interpreter, so the image path of a process running
+    that environment's python resolves outside the tree and the image relation
+    cannot see it. The path the process was launched with still names the
+    environment, so it is asked as well. Windows copies the interpreter into
+    the environment, which is why the image relation suffices there and why
+    this was invisible until the tests ran on Linux.
     """
 
     IMAGE = "image"
+    LAUNCH_PATH = "launch-path"
     WORKING_DIRECTORY = "working-directory"
 
 
@@ -654,8 +663,14 @@ def environment_holders(
                     continue
                 image = info["exe"]
                 working_directory = info["cwd"]
+                cmdline = info["cmdline"]
+                launched_as = (
+                    cmdline[0] if isinstance(cmdline, list) and cmdline else None
+                )
                 if _resolves_under(image, resolved):
                     relation = HolderRelation.IMAGE
+                elif _resolves_under(launched_as, resolved):
+                    relation = HolderRelation.LAUNCH_PATH
                 elif _resolves_under(working_directory, resolved):
                     relation = HolderRelation.WORKING_DIRECTORY
                 else:

@@ -519,7 +519,8 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
                 f"upgrade): {gpu_escape_hatch_command(interpreter)}",
                 "Before the reinstall below, stop everything running out of "
                 "this environment - the service, and every editor or agent "
-                "session holding an MCP server. A held file stops the forced "
+                "session running an MCP stdio transport. A held file stops the "
+                "forced "
                 "reinstall after it has removed the old packages, and the "
                 "environment is left unrunnable.",
                 f"Make upgrades keep the GPU wheel: {durable_tool_install_command()}",
