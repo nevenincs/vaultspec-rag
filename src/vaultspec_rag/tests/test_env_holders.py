@@ -25,6 +25,17 @@ import pytest
 
 from .._process_probe import HolderRelation, environment_holders
 
+# A process running the environment's own interpreter matches by image path on
+# Windows, where the interpreter is copied into the tree, and by launch path on
+# POSIX, where it is a symlink to the base interpreter resolving outside it.
+_INTERPRETER_RELATIONS = {HolderRelation.IMAGE, HolderRelation.LAUNCH_PATH}
+
+# CI runs this suite across a dozen xdist workers, and each holder query walks
+# the whole process table, so both the scan and the wait get room that a
+# single-threaded developer run never needs.
+_SCAN_TIMEOUT = 120.0
+_WAIT_SECONDS = 90.0
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from pathlib import Path
@@ -77,9 +88,10 @@ def _await_holder(root: Path, pid: int) -> None:
     that never appears must give up in seconds rather than turning a failing
     assertion into a multi-minute one in a commit-gating lane.
     """
-    deadline = time.monotonic() + 15.0
+    deadline = time.monotonic() + _WAIT_SECONDS
     while time.monotonic() < deadline:
-        if any(holder.pid == pid for holder in environment_holders(root).holders):
+        found = environment_holders(root, timeout=_SCAN_TIMEOUT)
+        if any(holder.pid == pid for holder in found.holders):
             return
         time.sleep(0.1)
     pytest.fail(f"holder pid {pid} never appeared for {root}")
@@ -93,11 +105,11 @@ def test_an_interpreter_running_from_the_environment_is_an_image_holder(
     holders.append(child)
     _await_holder(environment_root, child.pid)
 
-    result = environment_holders(environment_root)
+    result = environment_holders(environment_root, timeout=_SCAN_TIMEOUT)
 
     found = [holder for holder in result.holders if holder.pid == child.pid]
     assert found, f"the environment's own interpreter was not found: {result.holders}"
-    assert found[0].relation is HolderRelation.IMAGE
+    assert found[0].relation in _INTERPRETER_RELATIONS
     assert result.held is True
 
 
@@ -113,7 +125,7 @@ def test_a_foreign_process_sitting_in_the_environment_is_a_directory_holder(
     holders.append(child)
     _await_holder(environment_root, child.pid)
 
-    result = environment_holders(environment_root)
+    result = environment_holders(environment_root, timeout=_SCAN_TIMEOUT)
 
     found = [holder for holder in result.holders if holder.pid == child.pid]
     assert found, f"a process sitting in the tree was not found: {result.holders}"
@@ -132,9 +144,9 @@ def test_a_released_environment_reports_no_holders(
     child.terminate()
     child.wait(timeout=30)
 
-    deadline = time.monotonic() + 15.0
+    deadline = time.monotonic() + _WAIT_SECONDS
     while time.monotonic() < deadline:
-        result = environment_holders(environment_root)
+        result = environment_holders(environment_root, timeout=_SCAN_TIMEOUT)
         if not any(holder.pid == child.pid for holder in result.holders):
             return
         time.sleep(0.1)
@@ -149,7 +161,9 @@ def test_an_excluded_pid_is_not_reported_as_a_holder(
     holders.append(child)
     _await_holder(environment_root, child.pid)
 
-    result = environment_holders(environment_root, exclude_pids=[child.pid])
+    result = environment_holders(
+        environment_root, exclude_pids=[child.pid], timeout=_SCAN_TIMEOUT
+    )
 
     assert all(holder.pid != child.pid for holder in result.holders)
 

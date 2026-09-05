@@ -340,7 +340,8 @@ def warn_if_active_torch_not_accelerator() -> None:
             "  Repair this environment now (undone by the next upgrade):",
             f"    {gpu_escape_hatch_command(sys.executable)}",
             "  Make upgrades keep the GPU wheel. Stop the service and close "
-            "every editor or agent session holding an MCP server first: a "
+            "every editor or agent session running an MCP stdio transport "
+            "first: a "
             "held file stops the forced reinstall after it has removed the "
             "old packages, leaving the environment unrunnable.",
             f"    {durable_tool_install_command()}",
@@ -354,8 +355,8 @@ def warn_if_active_torch_not_accelerator() -> None:
             "does not match it.",
             "  Reinstall the tool with nothing running out of its "
             "environment - the service, and every editor or agent session "
-            "holding an MCP server, both take the Scripts lock that stops a "
-            "forced reinstall half-way:",
+            "running an MCP stdio transport, both take the Scripts lock that "
+            "stops a forced reinstall half-way:",
             f"    {durable_tool_install_command()}",
         ]
     else:

@@ -217,7 +217,7 @@ _IDLE = "import time; time.sleep(90)"
 
 @contextlib.contextmanager
 def hold_environment(
-    root: Path, *, by_image: bool = True, timeout: float = 20.0
+    root: Path, *, by_image: bool = True, timeout: float = 90.0
 ) -> Iterator[subprocess.Popen[bytes]]:
     """Hold *root* with a real process, and release it on the way out.
 
@@ -251,7 +251,8 @@ def _await_hold(root: Path, pid: int, *, timeout: float) -> None:
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if any(holder.pid == pid for holder in environment_holders(root).holders):
+        found = environment_holders(root, timeout=timeout)
+        if any(holder.pid == pid for holder in found.holders):
             return
         time.sleep(0.1)
     raise TimeoutError(f"holder pid {pid} never took hold of {root}")

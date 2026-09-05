@@ -60,8 +60,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "central torch gate and importlib lookup are substituted only to "
         "produce those otherwise destructive dependency states",
     ),
-    "test_gpu_admission.py": (
-        3,
+    "gpu_admission/test_floor_and_window.py": (
+        1,
+        "forces a present-but-unreadable memory reading, because the streak "
+        "ledger the diagnostic and load paths share is only observable across "
+        "a run of them and no real device yields one on demand",
+    ),
+    "gpu_admission/test_latch_and_wire.py": (
+        2,
         "asserts the shared device-load reading's raise-swallowing behaviour "
         "and its composition with the live evaluator, which requires forcing "
         "a specific reading and a raised exception from it - neither "
@@ -69,6 +75,25 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "present-but-unreadable memory reading, because the streak ledger the "
         "diagnostic and load paths share is only observable across a run of "
         "them and no real device yields one on demand",
+    ),
+    "test_env_holders.py": (
+        2,
+        "drives the two fail-closed branches of the holder query - a process "
+        "whose image and directory both read as unknown, and a process table "
+        "that cannot be enumerated at all. Neither can be provoked on demand "
+        "from a live table: the first needs a process this user may not "
+        "inspect, the second needs the operating system to refuse the walk. "
+        "Every relation the query actually reports is driven for real, "
+        "against real environments held by real child processes",
+    ),
+    "test_readiness_holders.py": (
+        1,
+        "points the readiness scan at a purpose-built environment by "
+        "substituting the running interpreter's own prefix, which the "
+        "reporter reads to decide what to scan. A test cannot relaunch itself "
+        "from inside a temporary virtual environment, and asserting on "
+        "whatever happens to hold the developer's own prefix would assert "
+        "nothing",
     ),
     "test_install_torch_config.py": (
         1,

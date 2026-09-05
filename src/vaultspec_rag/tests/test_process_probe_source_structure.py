@@ -325,6 +325,15 @@ class TestNoStructurallyIdenticalFunctions:
         "unrelated."
     )
 
+    _OWN_FIELDS_AS_JSON = (
+        "Two unrelated dataclasses rendering their own fields as a JSON dict. "
+        "The shape is `return {literal key: self.attribute}` and the whole "
+        "content is WHICH fields; a shared serialiser would have to be told "
+        "the key names and the attributes, which is the body itself. They "
+        "describe different things - a readiness holder snapshot and a "
+        "version-compatibility verdict - and share no base or collaborator."
+    )
+
     _NAMED_SUBSET = (
         "A membership test against a named subset of one enum's members. The "
         "shape is `return self in {...}` and the whole content is WHICH "
@@ -370,6 +379,10 @@ class TestNoStructurallyIdenticalFunctions:
             "cli/_search.py:_render_breadth_shortfall",
             "cli/_search.py:_render_file_breadth_shortfall",
         ): _DISTINCT_PROSE,
+        (
+            "_readiness.py:to_dict",
+            "serviceclient/_compat.py:to_dict",
+        ): _OWN_FIELDS_AS_JSON,
         (
             "_readiness.py:dimension",
             "cli/_jobs_tui_status.py:seat_pool",
