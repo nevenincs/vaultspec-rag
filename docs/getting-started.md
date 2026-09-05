@@ -1,19 +1,12 @@
 # Get started with vaultspec-rag
 
-vaultspec-rag searches your source code by meaning rather than by keyword, so you can find something by describing it when you can't remember what it was called. It also searches the decision records your project keeps in `.vault/`, if it has them. The [project overview](../README.md) covers what it is and why it exists.
-
-By the end of this tutorial you'll have vaultspec-rag installed, a search service running, your own project indexed, and search results on screen. Budget about 20 minutes, most of it waiting for downloads and the first index.
+Index your project, search its source code, and narrow the results to a file.
 
 ## Check your machine can run vaultspec-rag
 
-The search models run on a GPU. Without a supported one you can't complete this tutorial, and the tool has no CPU fallback.
-
-- **A GPU:** on Linux and Windows, an NVIDIA card with CUDA and roughly 3 GiB of free video memory. On macOS, Apple silicon with at least 8 GiB of unified memory (the tested minimum), which on Apple silicon is the same pool as the system RAM below, so a machine at that minimum needs the `embedded-local` profile rather than the default. AMD cards aren't supported.
-- **16 GiB of system RAM:** indexing refuses to start below this rather than running slowly. That's the floor for the default `managed-service` profile; the `embedded-local` profile lowers it to 8 GiB.
-- **8 GiB of free disk:** on the volume holding the search index, and separately room in your Hugging Face cache for the models. The `embedded-local` profile lowers the index figure to 5 GiB.
-- **CPython 3.13 or 3.14**, and [uv](https://docs.astral.sh/uv/).
-
-The [installation guide](installation.md) carries the full compatibility detail and what to do when a step fails.
+Check the [hardware and Python requirements](installation.md#what-you-need-before-you-start)
+and install [uv](https://docs.astral.sh/uv/). The steps below add RAG as a project
+dependency; use a project whose source code you want to search.
 
 ## Step 1: Install vaultspec-rag and download the models
 
