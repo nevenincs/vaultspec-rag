@@ -39,7 +39,7 @@ dependencies = [
   "uvicorn>=0.51.0",
   "textual>=8.2.8",
 ]
-description = "GPU-accelerated semantic search for your docs and source code: hybrid dense + sparse RAG on a local Qdrant backend, served to Claude Code and other MCP clients."
+description = "Search code and feature records by meaning through the command line or Model Context Protocol (MCP). Inference runs on your GPU."
 keywords = [
   "claude-code",
   "code-search",
