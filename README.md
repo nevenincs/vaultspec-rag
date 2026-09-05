@@ -15,26 +15,6 @@ Protocol (MCP). Inference runs on your GPU.
 [Install](#install) · [Use it](#use-it) ·
 [Docs](#documentation) · [Help](#status-and-help)
 
-For example, find records about concurrent file writes:
-
-```bash
-vaultspec-rag search "file lock concurrent write per-root" --type vault
-```
-
-```
-1. .vault/audit/large-index-resilience-ledger-concurrency-audit.md
-   audit | feature: large-index-resilience | 2026-08-13
-   # `large-index-resilience` audit: `ledger concurrency`
-
-   ## Scope
-
-   Mandatory review of the durable-state concurrency work: write-ahead logging on
-   the shared per-root ledger, integrity verification move
-```
-
-Every result gives you the file, what kind of record it is, and the passage that
-matched. The example output omits date prefixes.
-
 Use it with [vaultspec-core](https://github.com/nevenincs/vaultspec-core) or
 independently in another repository. To index PDFs and other formats,
 [connect a converter](#read-pdfs-and-other-formats).
@@ -228,9 +208,7 @@ See [security and disable options](docs/preprocessing-hooks.md#security-posture)
 
 ## Scripting it
 
-Use `--json` for machine-readable output. Have scripts check `ok`, `error`, and the
-process exit status. See the [automation reference](docs/automation.md) for response
-fields, errors, and exit codes.
+For JSON output and result handling, follow [scripting and automation](docs/automation.md).
 
 <p id="how-it-works"></p>
 
@@ -242,6 +220,7 @@ fields, errors, and exit codes.
 - [Commands and flags](docs/cli.md)
 - [Configuration reference](docs/configuration.md)
 - [Architecture](docs/architecture.md) and [indexing internals](docs/indexing.md)
+- [Release notes](CHANGELOG.md)
 
 ## Status and help
 
@@ -256,7 +235,6 @@ Redact credentials and private content before posting.
 - [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard):
   The human-facing visual workspace for a Vaultspec project.
 
-## For contributors
+## License
 
-The [changelog](CHANGELOG.md) has release notes and version history. vaultspec-rag is
-released under the [MIT License](./LICENSE).
+vaultspec-rag is released under the [MIT License](./LICENSE).
