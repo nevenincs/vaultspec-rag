@@ -96,6 +96,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "happens and the assertion reads as a regression. The paired test "
         "drives expiry for real against the production value",
     ),
+    "test_model_setup.py": (
+        1,
+        "makes the load probe unavailable so the documented fallback runs. "
+        "Windows raises this from PDH performance counters being disabled or "
+        "unreadable by the agent's account, which cannot be provoked on a host "
+        "whose counters work, and the alternative is a contract asserted only "
+        "on the machines that never exercise it",
+    ),
     "test_readiness_holders.py": (
         2,
         "points the readiness scan at a purpose-built environment by "
