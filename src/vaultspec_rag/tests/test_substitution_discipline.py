@@ -87,13 +87,17 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "against real environments held by real child processes",
     ),
     "test_readiness_holders.py": (
-        1,
+        2,
         "points the readiness scan at a purpose-built environment by "
         "substituting the running interpreter's own prefix, which the "
         "reporter reads to decide what to scan. A test cannot relaunch itself "
         "from inside a temporary virtual environment, and asserting on "
         "whatever happens to hold the developer's own prefix would assert "
-        "nothing",
+        "nothing. The second widens the scan budget, which production sizes "
+        "for an HTTP route: a walk of every process on a runner hosting a "
+        "dozen parallel workers does not finish inside it, and the snapshot "
+        "then honestly reports that it could not tell - indistinguishable, to "
+        "an assertion about content, from finding no holder",
     ),
     "test_install_torch_config.py": (
         1,

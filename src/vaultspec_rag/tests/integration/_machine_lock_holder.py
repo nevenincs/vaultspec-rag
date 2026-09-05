@@ -22,8 +22,18 @@ from queue import Empty, Queue
 
 from ..._machine_lock import probe_machine_lock
 
-_STARTUP_TIMEOUT = 10.0
-_SHUTDOWN_TIMEOUT = 10.0
+# A held OS lock is released by a real subprocess, and every one of these
+# deadlines waits on a scheduler rather than on work of its own. Ten seconds is
+# ample on an idle developer machine and not ample on a runner executing a
+# dozen workers at once, where a process asked to exit can wait longer than
+# that just to be scheduled - so they are sized for the loaded case. Nothing
+# here sleeps for the full budget: each is an upper bound on a wait that ends
+# as soon as the real lock probe reports release.
+_STARTUP_TIMEOUT = 60.0
+_SHUTDOWN_TIMEOUT = 60.0
+# One probe every hundredth of a second buys no earlier an answer than one
+# every tenth, and costs a lock acquisition attempt each time.
+_RELEASE_POLL_SECONDS = 0.1
 
 _HOLDER = """
 import os
@@ -92,7 +102,7 @@ class ForeignMachineLockHolder:
             self.launcher.kill()
             self.launcher.wait(timeout=5.0)
 
-    def stop(self, *, timeout: float = 10.0) -> HolderReleaseEvidence:
+    def stop(self, *, timeout: float = _SHUTDOWN_TIMEOUT) -> HolderReleaseEvidence:
         """Stop the actual holder and observe lock release before launcher exit.
 
         The control file is unique to this test-owned holder, so this never
@@ -159,7 +169,7 @@ def _wait_for_lock_release(expected_pid: int, *, timeout: float) -> None:
                 f"within {timeout:.1f}s"
             )
             raise AssertionError(msg)
-        poll_gate.wait(0.01)
+        poll_gate.wait(_RELEASE_POLL_SECONDS)
 
 
 def _terminate_confirmed_holder(holder_pid: int, *, timeout: float) -> None:

@@ -604,14 +604,47 @@ class EnvironmentHolders:
         return self.complete and self.uninspectable == 0
 
 
-def _resolves_under(value: object, root: Path) -> bool:
-    """Whether *value* is a path resolving inside *root*."""
+def _launch_path(cmdline: object) -> object:
+    """The path a process was launched with, as written on its command line.
+
+    Needed on every platform, not only where a virtual environment's
+    interpreter is a symlink out of the tree: Windows reports the BASE
+    interpreter as the image path for a process started from a venv through
+    an activated environment, so half the holders of a live environment are
+    invisible to the image relation there too.
+    """
+    if isinstance(cmdline, list) and cmdline:
+        return cast("list[object]", cmdline)[0]
+    return None
+
+
+def _resolves_under(
+    value: object, root: Path, cache: dict[str, Path | None] | None = None
+) -> bool:
+    """Whether *value* is a path resolving inside *root*.
+
+    Resolution touches the filesystem once per distinct path, so a scan asking
+    about every process on the machine passes a *cache*. A thousand processes
+    offer roughly two thousand image and working-directory paths but only a few
+    hundred distinct ones - the same interpreter, the same service binary, the
+    same working directory over and over - and resolving each one once is the
+    difference between a scan that fits inside its budget on a loaded machine
+    and one that times out and reports an environment clear because it never
+    finished looking.
+    """
     if not isinstance(value, str) or not value:
         return False
-    try:
-        return Path(value).resolve().is_relative_to(root)
-    except OSError:
-        return False
+    if cache is None:
+        cache = {}
+    if value in cache:
+        resolved = cache[value]
+    else:
+        try:
+            resolved = Path(value).resolve()
+        except OSError:
+            resolved = None
+        cache[value] = resolved
+    return resolved is not None and resolved.is_relative_to(root)
 
 
 def _names_under(value: object, *roots: Path) -> bool:
@@ -663,9 +696,10 @@ def environment_holders(
     carried on the result.
 
     Only the cheap per-process attributes are read (see :class:`_ProcessInfo`
-    for why that distinction is load-bearing), and the command line is read
-    only for a process that already matched, since it is for the operator to
-    read and never for deciding the match.
+    for why that distinction is load-bearing). The command line is read for
+    every process rather than only for matches, because its first element is
+    the launch path, and that is the only evidence of the POSIX relation where
+    an environment's interpreter is a symlink pointing out of the tree.
 
     Follows this module's fail-closed rule: a process that cannot be inspected
     is counted, not silently dropped, and an empty holder list from an
@@ -685,27 +719,32 @@ def environment_holders(
     def scan() -> tuple[tuple[EnvironmentHolder, ...], int] | None:
         found: list[EnvironmentHolder] = []
         blind = 0
+        resolved_paths: dict[str, Path | None] = {}
         try:
             for info in iter_process_info(["pid", "exe", "cwd", "cmdline"]):
                 pid = info["pid"]
                 if not isinstance(pid, int) or pid in excluded:
                     continue
                 image = info["exe"]
-                working_directory = info["cwd"]
-                cmdline = info["cmdline"]
-                launched_as: object = None
-                if isinstance(cmdline, list) and cmdline:
-                    launched_as = cast("list[object]", cmdline)[0]
-                if _resolves_under(image, resolved):
+                # Read in branch order rather than up front: each attribute is
+                # fetched on access, and on Windows psutil retries a process it
+                # cannot open with a backoff sleep, so reading an attribute for
+                # every process on the machine costs seconds of pure waiting.
+                working_directory: object = None
+                if _resolves_under(image, resolved, resolved_paths):
                     relation = HolderRelation.IMAGE
-                elif _names_under(launched_as, resolved, named):
+                elif _names_under(_launch_path(info["cmdline"]), resolved, named):
                     relation = HolderRelation.LAUNCH_PATH
-                elif _resolves_under(working_directory, resolved):
-                    relation = HolderRelation.WORKING_DIRECTORY
                 else:
-                    if image is None and working_directory is None:
-                        blind += 1
-                    continue
+                    working_directory = info["cwd"]
+                    if _resolves_under(working_directory, resolved, resolved_paths):
+                        relation = HolderRelation.WORKING_DIRECTORY
+                    else:
+                        if image is None and working_directory is None:
+                            blind += 1
+                        continue
+                if working_directory is None:
+                    working_directory = info["cwd"]
                 found.append(
                     EnvironmentHolder(
                         pid=pid,
