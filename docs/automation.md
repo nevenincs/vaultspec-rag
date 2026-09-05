@@ -7,8 +7,8 @@ stderr or the service log, so add `2>/dev/null` when you want stdout alone.
 
 Every command accepts `--json` except `server warmup`.
 
-Scripts read three signals: the `ok` field, the `error` string when `ok` is
-false, and the process exit code. None of them requires matching against prose.
+Read `ok`, `error`, and the process exit code, plus any per-item results required
+by the [command reference](cli.md).
 
 ## Before you start
 
@@ -129,6 +129,10 @@ its exit code from a second axis - a dead daemon, a declared-versus-observed
 mode mismatch, a version floor - so a host whose dependencies are all ready and
 whose install mode has drifted reports `ok: true` and exits `1`. Gate a
 diagnostic on its exit code, and read `ok` for what it says.
+
+For index migration, inspect each entry in `data.results`. Exit `0` and
+`ok: true` do not prove that every collection copied. See the
+[migration result contract](cli.md#server-storage-migrate).
 
 The `message` field is written for people and gets reworded. Branch on the
 `error` code:
