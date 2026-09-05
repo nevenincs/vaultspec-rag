@@ -84,12 +84,12 @@ The first three routes can install the bare package instead of `[gpu]`. That con
 
 A control-plane-only install is a supported state rather than a broken one: `install` completes, and `server doctor` reports torch as absent without calling the environment defective. The service still refuses to start, because it cannot serve a search without a model. The way out is choosing the `[gpu]` extra, not repairing anything.
 
-| Your route                         | Sections you still need                                                                                                           |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Run without installing a tool      | [What the install command provisions](#what-the-install-command-provisions), [Verify the install](#verify-the-install)            |
-| Adding it to a project             | [Install with Python](#install-with-python) in full, [Verify the install](#verify-the-install)                                    |
-| Installing it as a standalone tool | [GPU build](#pin-the-gpu-build), [Project setup](#what-the-install-command-provisions), [Verify the install](#verify-the-install) |
-| Installing a prebuilt binary       | [Install without Python](#install-without-python), [Verify the install](#verify-the-install)                                      |
+| Your route                         | Sections you still need                                                                                        |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Run without installing a tool      | [Set up a project](#set-up-a-project), [Verify the install](#verify-the-install)                               |
+| Adding it to a project             | [Install with Python](#install-with-python) in full, [Verify the install](#verify-the-install)                 |
+| Installing it as a standalone tool | [GPU build](#pin-the-gpu-build), [Project setup](#set-up-a-project), [Verify the install](#verify-the-install) |
+| Installing a prebuilt binary       | [Install without Python](#install-without-python), [Verify the install](#verify-the-install)                   |
 
 ## Install without Python
 
@@ -125,72 +125,32 @@ For project dependencies, prefix `vaultspec-rag` commands with `uv run`.
 For standalone tools, run `vaultspec-rag` directly. For temporary environments,
 use the [uvx invocation](#run-without-installing-a-tool).
 
-### What the install command provisions
+<p id="what-the-install-command-provisions"></p>
+<p id="install-less-than-the-default"></p>
 
-*All Python routes.*
+### Set up a project
 
-```bash
+By default, installation sets up coding-agent integration, including Model Context
+Protocol (MCP), downloads model files into the cache, and provisions a
+checksum-verified Qdrant binary.
+
+For CLI-only use, add `--no-mcp`. To use an embedded store, add `--local-only`;
+see [storage backends](backends.md) for its requirements.
+
+If your project needs a PyTorch configuration patch, the installer asks before adding
+a Linux/Windows CUDA package source to `pyproject.toml`. Its platform marker keeps
+that source inactive on macOS. Enter `y` to accept, or add `--yes` for unattended
+installation. Use `--no-torch-config` to skip that configuration step.
+
+From your project root, run:
+
+```sh
 vaultspec-rag install
 ```
 
-It provisions three things and enrols a fourth:
-
-- The CUDA (`cu130`) PyTorch build, which it records as a Linux and Windows package source in `pyproject.toml`. This reports `configured, sync pending`. The source marker is inactive on macOS, where normal resolution installs the MPS-capable standard wheel.
-- The dense, sparse, and reranker model files, in the Hugging Face cache.
-- The pinned Qdrant search-server binary, downloaded and checksum-verified.
-
-It also enrols the agent-facing MCP search surface, which is on by default and
-writes an entry your coding agent can call. `--no-mcp` opts out and leaves a
-workspace with the command line only. See [use with MCP clients](mcp.md).
-
-The PyTorch step asks before editing `pyproject.toml`, and **the prompt defaults to no**. Type `y` to accept. For an unattended run, pass `--yes` to accept it, or `--no-torch-config` to skip that step and manage PyTorch yourself.
-
-Each dependency reports its outcome as `created`, `updated`, `unchanged`, `skipped`, or `failed`. The run is idempotent: re-running a satisfied dependency reports `unchanged` and makes no network call.
-
-Here is the whole of it, on a project that already had a `pyproject.toml`, with
-the prompt left unanswered:
-
-```text
-Patch <project>/pyproject.toml with the cu130 torch index? This lets uv resolve
-the CUDA torch wheel. [y/n] (n): vaultspec-rag installed
-Target: <project>
-created 4 directories
-seeded 3 bundled files:
-  [ADD] rules/vaultspec-rag.builtin.md
-  [ADD] skills/vaultspec-rag-discovery/SKILL.md
-  [ADD] mcps/vaultspec-rag.builtin.json
-tool integrations: added 8
-Claude MCP: added 1
-Codex MCP: added 1
-MCP optional dependency: tool
-PyTorch configuration: needs confirmation
-Provisioning: mixed
-  PyTorch: skipped (torch configuration handled by the dedicated PyTorch step
-  (it patches pyproject.toml; see 'PyTorch configuration' above) - not re-run
-  here)
-  Models: already present (all 3 model repos already cached)
-  Qdrant binary: already present (Verified install already present; nothing to
-  do.)
-Warning: torch-config patch skipped: confirmation prompt hit EOF
-(non-interactive stdin). Re-run with --yes or --force to apply, or
---no-torch-config to opt out.
-```
-
-If the other installation steps succeed, answering `n` returns `0`;
-missing confirmation input returns `2`. See the [install exit codes](cli.md#install).
-
-### Install less than the default
-
-*All Python routes. These are decisions you make when you run `install`, not afterwards.*
-
-- `--local-only` selects the embedded on-disk store, skips the Qdrant download, and persists the choice so a later `server start` honors it. Throughput drops under concurrent load. It doesn't change Python dependencies, CUDA, or model downloads. See [backends](backends.md).
-- `--skip-torch`, `--skip-models`, `--skip-qdrant` each drop one dependency. `--skip-qdrant` is redundant under `--local-only`.
-- `--no-torch-config` leaves `pyproject.toml` untouched.
-- `--no-mcp` skips the MCP enrolment and its optional dependency, leaving a
-  CLI-only workspace. On Windows it also skips `pywin32`.
-- `--dry-run` reports `preview only` for every step, writes nothing, and never prompts.
-
-The [command-line reference](cli.md) has the complete flag set.
+See the [install command reference](cli.md#install) for all flags and exit codes.
+For project dependencies, [complete the install with a sync](#complete-the-install-with-a-sync).
+Then [verify the install](#verify-the-install).
 
 ### Choose where vaultspec-rag lives
 
@@ -239,7 +199,7 @@ before attempting these steps.
 1. If `vaultspec-rag` runs, preview the repair:
 
    ```sh
-   vaultspec-rag install --dry-run
+   vaultspec-rag install --dry-run --no-torch-config
    ```
 
    For a diagnosed missing or CPU-only CUDA build, this prints a pinned,
