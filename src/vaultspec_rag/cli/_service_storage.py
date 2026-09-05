@@ -824,11 +824,17 @@ def _migrate_name_map(root: str, *, to_server: bool) -> dict[str, str]:
     return {_source(base): base for base in bases}
 
 
-def _render_migrate(results: list[MigrateResult], json_mode: bool) -> None:
+def _render_migrate(
+    results: list[MigrateResult], json_mode: bool, *, failed: bool
+) -> None:
     if json_mode:
         _emit_json(
-            True,
+            not failed,
             _MIGRATE_CMD,
+            error="migrate_failed" if failed else None,
+            message=(
+                "One or more collections could not be migrated." if failed else None
+            ),
             data={
                 "results": [
                     {
@@ -928,7 +934,10 @@ def storage_migrate(
         )
     )
     _rekey_manifest_on_migrate(root, to_backend, preview, results)
-    _render_migrate(results, json_mode)
+    failed = any(result.status == "failed" for result in results)
+    _render_migrate(results, json_mode, failed=failed)
+    if failed:
+        raise typer.Exit(1)
     if not dry_run and not yes and any(r.status == "would_migrate" for r in results):
         raise typer.Exit(1)
 
