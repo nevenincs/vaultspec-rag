@@ -37,9 +37,17 @@ config, so the pin cannot drift away from what the project resolves.
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from pathlib import Path
 from urllib.parse import quote
+
+# The accelerated torch version is derived in ONE place, and that place is the
+# package, so a lock bump cannot leave a second copy of it behind here. This
+# build tooling runs inside a manylinux container where the package is not
+# installed, so the checkout's own source tree is put on the path rather than
+# reimplementing the derivation for the build.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from vaultspec_rag.torch_config._lockfile import locked_torch_version
 
