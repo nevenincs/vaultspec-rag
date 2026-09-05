@@ -96,13 +96,29 @@ def _await_holder(root: Path, pid: int) -> None:
     that never appears must give up in seconds rather than turning a failing
     assertion into a multi-minute one in a commit-gating lane.
     """
-    deadline = time.monotonic() + _WAIT_SECONDS
-    while time.monotonic() < deadline:
-        found = environment_holders(root, timeout=_SCAN_TIMEOUT)
+    started = time.monotonic()
+    deadline = started + _WAIT_SECONDS
+    found = environment_holders(root, timeout=_SCAN_TIMEOUT)
+    attempts = 1
+    while True:
         if any(holder.pid == pid for holder in found.holders):
             return
+        if time.monotonic() >= deadline:
+            break
         time.sleep(_POLL_SECONDS)
-    pytest.fail(f"holder pid {pid} never appeared for {root}")
+        found = environment_holders(root, timeout=_SCAN_TIMEOUT)
+        attempts += 1
+    # Report what the wait SAW, not just that it ended. A scan that ran out of
+    # its own budget reports complete=False and finds nothing, which is a busy
+    # machine; scans that completed and still saw no holder is a detection
+    # failure. Those need opposite fixes and are indistinguishable from the
+    # bare sentence this used to fail with.
+    pytest.fail(
+        f"holder pid {pid} never appeared for {root} after {attempts} scans "
+        f"over {time.monotonic() - started:.1f}s; last scan complete="
+        f"{found.complete}, uninspectable={found.uninspectable}, "
+        f"holders={[(h.pid, str(h.relation)) for h in found.holders]}"
+    )
 
 
 def test_an_interpreter_running_from_the_environment_is_an_image_holder(
