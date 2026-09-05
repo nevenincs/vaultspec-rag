@@ -86,6 +86,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "Every relation the query actually reports is driven for real, "
         "against real environments held by real child processes",
     ),
+    "test_job_progress_durability.py": (
+        1,
+        "pins the progress flush budget so the publish under test lands inside "
+        "it by construction. The budget is two tenths of a second and the test "
+        "asserts the durable write is DEFERRED; establishing that from the "
+        "adjacency of two calls is not sound on a machine that can deschedule "
+        "a process for longer than the budget, where the write legitimately "
+        "happens and the assertion reads as a regression. The paired test "
+        "drives expiry for real against the production value",
+    ),
     "test_readiness_holders.py": (
         2,
         "points the readiness scan at a purpose-built environment by "

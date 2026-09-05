@@ -39,6 +39,10 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
+# Longer than any run of this test, so a publish cannot fall outside the budget
+# no matter how long the machine takes to get from one call to the next.
+_UNREACHABLE_BUDGET_SECONDS = 3600.0
+
 
 def _started_manager(
     state_path: Path,
@@ -75,8 +79,19 @@ def _persisted_job(state_path: Path, job_id: str) -> JobSnapshot:
 
 
 async def test_progress_publish_inside_the_budget_defers_the_durable_write(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The budget is two tenths of a second, and this test needs the publish to
+    # land inside it. Adjacency of two calls does not establish that: a runner
+    # executing a dozen workers deschedules a process for longer than that
+    # routinely, the budget then expires between them, and the durable write
+    # this test exists to prove absent legitimately happens. Pinning the budget
+    # makes "inside" true by construction, so the assertion measures the
+    # deferral rule rather than how busy the machine was.
+    monkeypatch.setattr(
+        "vaultspec_rag.job_manager._persistence.PROGRESS_FLUSH_BUDGET_SECONDS",
+        _UNREACHABLE_BUDGET_SECONDS,
+    )
     state_path = tmp_path / "jobs-state.json"
     task = asyncio.create_task(pending_attempt())
     try:
@@ -89,8 +104,6 @@ async def test_progress_publish_inside_the_budget_defers_the_durable_write(
         assert outcome.code == "progress_updated"
         # Catches a reintroduced per-publish persist: any durable write here
         # rewrites the state file, so unchanged bytes are the deferral.
-        # start_attempt persisted immediately above, so the flush budget
-        # cannot have expired between the two adjacent calls.
         assert state_path.read_bytes() == before
         live = manager.get(job_id)
         assert live is not None
