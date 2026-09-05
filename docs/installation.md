@@ -235,7 +235,7 @@ Check the version:
 vaultspec-rag --version
 ```
 
-This reports `vaultspec-rag v0.4.23`. <!-- x-release-please-version -->
+This reports `vaultspec-rag v0.4.24`. <!-- x-release-please-version -->
 
 Run the readiness report, which checks PyTorch and the resolved GPU backend, the model cache, and the Qdrant binary and server:
 

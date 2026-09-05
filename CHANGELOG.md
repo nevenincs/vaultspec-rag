@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.24](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.23...vaultspec-rag-v0.4.24) (2026-09-05)
+
+
+### Bug Fixes
+
+* **binaries:** let the build tooling find the derivation it imports ([62cd662](https://github.com/nevenincs/vaultspec-rag/commit/62cd66262b052f866dfb0f17f93777769794dbb6))
+* **guards:** a transcript is what the tool printed, not what the docs claim ([e314f21](https://github.com/nevenincs/vaultspec-rag/commit/e314f21174c848cf866a297475d76efb5dab54fc))
+* **probe:** compare a launch path as written, never resolved ([7ce4643](https://github.com/nevenincs/vaultspec-rag/commit/7ce464324d91afce2cf60860107388f8d1db4941))
+* **probe:** see a POSIX venv holder, and stop tripping the guards main runs ([d06fa20](https://github.com/nevenincs/vaultspec-rag/commit/d06fa20908c93702621ed6e411a4b79b53443b68))
+* **storage:** fail migration when a collection copy fails ([f185e4d](https://github.com/nevenincs/vaultspec-rag/commit/f185e4d92ded2aff92e0f5748ed48ee7b5826645)), closes [#460](https://github.com/nevenincs/vaultspec-rag/issues/460)
+* **torch:** give the accelerated index a dependency-free home ([0efae08](https://github.com/nevenincs/vaultspec-rag/commit/0efae08ae271bd75eb579db41f7f770c5bf1009b))
+* **torch:** name the environment an interpreter belongs to, not its target ([ea83429](https://github.com/nevenincs/vaultspec-rag/commit/ea834293a6b67df57db151ae87c7a898da159273))
+* **types:** satisfy the strict gate, and stop the holder polls starving the lane ([9753073](https://github.com/nevenincs/vaultspec-rag/commit/9753073100cd7812f86e79b1bb12445e7b951877))
+
+
+### Performance
+
+* **probe:** resolve each distinct path once per holder scan ([16b5787](https://github.com/nevenincs/vaultspec-rag/commit/16b5787cc27c025e4ad5bc7d3af11d47f8f9c57a))
+
 ## [0.4.23](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.22...vaultspec-rag-v0.4.23) (2026-09-05)
 
 
