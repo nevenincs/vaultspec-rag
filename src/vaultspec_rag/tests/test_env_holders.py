@@ -23,7 +23,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from .._process_probe import HolderRelation, environment_holders
+from .._process_probe import (
+    HolderRelation,
+    _names_under,
+    _resolves_under,
+    environment_holders,
+)
 
 # A process running the environment's own interpreter matches by image path on
 # Windows, where the interpreter is copied into the tree, and by launch path on
@@ -225,3 +230,37 @@ def test_a_scan_that_cannot_enumerate_is_incomplete_rather_than_empty(
     assert result.complete is False
     assert result.certain is False
     assert result.held is False
+
+
+def test_a_symlinked_interpreter_is_named_by_its_launch_path(tmp_path: Path) -> None:
+    """The launch path is compared as written, the image path as resolved.
+
+    Guard assertion: a POSIX virtual environment's interpreter is a symlink
+    pointing OUT of the tree. Resolving the path a process was launched with
+    therefore lands on the base interpreter and reports the environment clear,
+    which is how the holder query missed every Linux venv holder while passing
+    on Windows, where the interpreter is a real file inside the tree.
+    """
+    root = tmp_path / "env"
+    (root / "bin").mkdir(parents=True)
+    outside = tmp_path / "base-python"
+    outside.write_text("", encoding="utf-8")
+    launch_path = root / "bin" / "python"
+    try:
+        launch_path.symlink_to(outside)
+    except (OSError, NotImplementedError):  # pragma: no cover - needs privilege
+        pytest.skip("this platform does not allow creating a symlink here")
+
+    assert _names_under(str(launch_path), root.resolve(), root.absolute())
+    assert not _resolves_under(str(launch_path), root.resolve())
+
+
+def test_a_path_outside_the_tree_is_never_named_under_it(tmp_path: Path) -> None:
+    """Normalisation closes the obvious way to smuggle a match."""
+    root = tmp_path / "env"
+    root.mkdir()
+
+    assert not _names_under(str(tmp_path / "elsewhere" / "python"), root)
+    assert not _names_under(str(root / ".." / "escape"), root)
+    assert not _names_under("python", root)
+    assert not _names_under(None, root)
