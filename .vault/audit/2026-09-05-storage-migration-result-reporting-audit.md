@@ -8,6 +8,7 @@ body_schema: 'body-v2'
 body_hash: 'sha256:fcdc9c585c2fd39878d423a3238e72b5470539a858d9b6d332763d464f57dc2c'
 related: []
 ---
+
 # `storage-migration` audit: result reporting
 
 ## Scope
