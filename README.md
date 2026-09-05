@@ -33,7 +33,7 @@ vaultspec-rag search "file lock concurrent write per-root" --type vault
 ```
 
 Every result gives you the file, what kind of record it is, and the passage that
-matched. The search-output examples omit date prefixes and abbreviate some paths.
+matched. The example output omits date prefixes.
 
 Use it with [vaultspec-core](https://github.com/nevenincs/vaultspec-core) or
 independently in another repository. To index PDFs and other formats,
@@ -117,9 +117,9 @@ Index the repository from its root:
 vaultspec-rag index
 ```
 
-The first index can take several minutes. The service then watches for file changes
-and updates the index automatically. Use `vaultspec-rag server jobs --watch` to
-inspect indexing progress.
+Wait for indexing to finish before searching. Use `vaultspec-rag server jobs --watch`
+to follow progress. The service watches for file changes and updates the index
+automatically afterwards.
 
 Search source code with `--type code`, or feature records with `--type vault`:
 
@@ -131,9 +131,8 @@ vaultspec-rag search "parse query text into filters" --type code
 <img src="assets/term-search-vault.svg" alt="vaultspec-rag search - a plain-English query surfacing the governing decision record from this repository's own vault" width="880" />
 </p>
 
-If no results appear, run `vaultspec-rag server status`: exit code 5 means the models
-are still loading. Check `vaultspec-rag status` to see whether indexing has finished.
-If both are ready, [report the query and result](https://github.com/nevenincs/vaultspec-rag/issues).
+If results are missing or incomplete, [check the index](docs/verification.md) and
+[adjust the query](docs/query-craft.md).
 
 One service handles all your repositories. Run `index` in each repository you want
 to search. See [index maintenance](docs/search-and-index.md) for rebuilding or
@@ -177,61 +176,16 @@ namespace whose project directory is gone. See
 
 ## Write a query that finds it
 
-This matters more than any flag. Describe the **behaviour**, and include the **words the
-code or document would use**. Both halves do work: the description finds things
-that mean the same, the specific words find exact matches.
-
-One noun on its own gives the search almost nothing to go on:
-
-```bash
-vaultspec-rag search "locking" --type vault
-```
-
-```
-1. .vault/adr/threading-lock-for-singleton-adr.md
-2. .vault/audit/code-document-index-boundary-s18-document-store-audit.md
-3. .vault/exec/service-hardware-singleton/...-service-lock-step.md
-```
-
-Describe what happens, and name the specifics:
-
-```bash
-vaultspec-rag search "file lock concurrent write per-root" --type vault
-```
-
-```
-1. .vault/audit/large-index-resilience-ledger-concurrency-audit.md
-2. .vault/research/service-concurrency-research.md
-3. .vault/adr/store-eviction-log-rotation-adr.md
-```
-
-Same topic. The first scatters across unrelated features that merely mention locks. The
-second returns three records about concurrent writes. More in [writing a query](docs/query-craft.md).
+Describe the behaviour and include names or terms the code would use. The description
+finds conceptual matches; the specific terms help distinguish them. See
+[query examples](docs/query-craft.md) for choosing words and interpreting weak matches.
 
 ## Narrow the results
 
-Try these in order.
-
-1. **Search one thing at a time.** `--type code`, `--type vault`, or `--type document`.
-   For decisions specifically, add `--doc-type adr`.
-
-1. **Limit where it looks.** `--language python`, `--include-path "src/**"`,
-   `--exclude-path "**/legacy/**"`. Use `--include-path` for a subtree or glob;
-   `--path` matches one exact path.
-
-1. **Hide the noise.** Code searches compete against tests, generated files, vendored
-   dependencies, and worktree copies. Steer with inline words in the query itself:
-
-   ```bash
-   vaultspec-rag search "fixture setup helpers exclude:tests" --type code
-   ```
-
-   `exclude:` hides a group, `only:` keeps only what you name, `include:` brings back one
-   that's hidden by default. The groups are `prod`, `tests`, `docs`, `locale`,
-   `generated`, `vendored`, and `worktree`.
-
-Asking for more results won't help. That gives you more of the same ranking, not a better
-one - narrow the search instead.
+For code, add `--include-path "src/**"` to limit results to a source directory, or
+`--language python` to select a language. For decision records, use
+`--type vault --doc-type adr`. See [search filters](docs/query-craft.md) for excluding
+tests, generated files, and other noise.
 
 <p align="center">
 <img src="assets/term-search-code.svg" alt="vaultspec-rag code search - the reranker implementation surfaced from a plain-English description" width="880" />
