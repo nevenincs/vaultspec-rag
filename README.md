@@ -33,7 +33,7 @@ vaultspec-rag search "file lock concurrent write per-root" --type vault
 ```
 
 Every result gives you the file, what kind of record it is, and the passage that
-matched.
+matched. The search-output examples omit date prefixes and abbreviate some paths.
 
 Use it with [vaultspec-core](https://github.com/nevenincs/vaultspec-core) or
 independently in another repository. To index PDFs and other formats,
@@ -256,26 +256,9 @@ changed. See [verify the index](docs/verification.md).
 
 ## Use it from an AI assistant
 
-Claude Code and other MCP clients can search your project directly. MCP is the Model
-Context Protocol, a standard way to give AI tools access to things like this.
-
-Start the service first, then add this to `.mcp.json` in your project:
-
-```json
-{
-  "mcpServers": {
-    "vaultspec-rag": {
-      "command": "vaultspec-search-mcp",
-      "env": { "VAULTSPEC_RAG_ROOT": "${workspaceFolder}" }
-    }
-  }
-}
-```
-
-You need the `mcp` extra installed for this. It gives the assistant twelve tools: four
-kinds of search, one to fetch a file, one to report index status, four to re-index, and
-two to clear the index. Add `--read-only` to offer only the ones that read. See
-[MCP integration](docs/mcp.md).
+Follow [MCP setup](docs/mcp.md) to connect your coding agent. The default toolset
+includes tools that change or delete indexes. To restrict access, see
+[withholding the mutating tools](docs/mcp.md#withholding-the-mutating-tools).
 
 ## Run without the search server
 
