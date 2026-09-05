@@ -4,7 +4,7 @@ vaultspec-rag keeps semantic search indexes so agents and operators can search y
 
 Everything here needs the background service running. Start it with `uv run vaultspec-rag server start`. If you haven't set the service up yet, work through [getting started](getting-started.md) first, then [run the background service](service-mode.md) for the full startup and configuration walkthrough.
 
-One caveat on scope: this all applies to the shared server-mode store. A `--local-only` store is private to a single project and carries none of this machinery, so the commands here don't apply to it.
+Maintenance operates on the shared managed store. [Migration](#migrate-a-root-between-backends) also accesses a project's local-only store.
 
 ## Vocabulary
 
@@ -92,6 +92,11 @@ To converge everything at once instead of waiting for the cycles, preview and th
 
 ```
 uv run vaultspec-rag server storage reconcile --dry-run
+```
+
+After reviewing the preview, apply the changes:
+
+```
 uv run vaultspec-rag server storage reconcile --yes
 ```
 
@@ -122,6 +127,11 @@ To restore the archived index directly, use the storage command. Point it at the
 
 ```
 uv run vaultspec-rag server storage restore ~/.vaultspec-rag/qdrant-server/archive/r0123456789ab --root /path/to/project --dry-run
+```
+
+After checking the destination collections, restore them:
+
+```
 uv run vaultspec-rag server storage restore ~/.vaultspec-rag/qdrant-server/archive/r0123456789ab --root /path/to/project --yes
 ```
 
@@ -141,6 +151,11 @@ Preview first, then apply:
 
 ```
 uv run vaultspec-rag server storage prune --dry-run
+```
+
+After checking which namespaces will be deleted, apply the prune:
+
+```
 uv run vaultspec-rag server storage prune --yes
 ```
 
@@ -162,6 +177,11 @@ A crash can leave a half-written collection directory whose config file never la
 
 ```
 uv run vaultspec-rag server storage prune --debris --dry-run
+```
+
+After checking the listed directories, delete them:
+
+```
 uv run vaultspec-rag server storage prune --debris --yes
 ```
 
@@ -201,14 +221,29 @@ Flags and exit codes are in the [CLI reference](cli.md#server-storage-prune).
 
 ## Migrate a root between backends
 
-Move one root's index between the on-disk (`local`) store and the managed (`server`) backend without re-indexing. The positional `root` is the workspace path whose index to migrate, and `--to` (`server` or `local`) is required. Preview first, then apply:
+Copy one project's index between [local-only storage and managed Qdrant](backends.md). The source collections are retained.
 
-```
-uv run vaultspec-rag server storage migrate C:\code\my-project --to server --dry-run
-uv run vaultspec-rag server storage migrate C:\code\my-project --to server --yes
-```
+1. Keep managed Qdrant reachable. Close processes holding the local store, and prevent indexing, watchers, and maintenance from writing to either participating index. Migration does not pause writers.
 
-Migration copies. The source store keeps its collections, so a failed or half-finished run leaves the origin index intact and you can retry. Once the destination works, reclaim the old copy yourself: migration does not do it for you.
+1. In the migration shell, set `VAULTSPEC_RAG_QDRANT_SERVER` to `1` and `VAULTSPEC_RAG_LOCAL_ONLY` to `0` for either direction. These settings configure the invoking CLI, not the running service.
+
+1. Replace the sample path with your project directory and preview the copy to managed Qdrant. For the other direction, use `--to local` in both commands.
+
+   ```sh
+   uv run vaultspec-rag server storage migrate "C:\code\my-project" --to server --dry-run
+   ```
+
+   Preview opens the local store but copies nothing. Inspect the results before proceeding.
+
+1. Apply the copy:
+
+   ```sh
+   uv run vaultspec-rag server storage migrate "C:\code\my-project" --to server --yes
+   ```
+
+1. Inspect every collection's result. Existing destinations are skipped, including partial copies left by failed runs; rerunning does not repair them. See the [result and exit semantics](cli.md#server-storage-migrate). For unresolved failures, [open an issue](https://github.com/nevenincs/vaultspec-rag/issues).
+
+1. Once the required collections have copied successfully, [change the backend](backends.md#change-the-backend) and [run a search](search-and-index.md#run-a-search). Keep the source collections until the destination is verified.
 
 ## Observe maintenance
 
