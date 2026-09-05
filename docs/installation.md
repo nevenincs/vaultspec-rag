@@ -13,7 +13,7 @@ Choose a service resource profile:
 | `embedded-local` | 8 GiB | 5 GiB | 6 GiB |
 
 The CUDA figures are the default model-loading admission limits; they do not apply
-to Apple silicon. See [GPU memory settings](configuration.md#how-the-cuda-ceiling-and-admission-floor-derive).
+to Apple silicon. See [GPU memory settings](configuration.md#index-resource-bounds-and-memory-ceilings).
 Allow additional disk space for the model cache.
 
 Use `embedded-local` for smaller corpora or a machine with 8 GiB of unified memory.
