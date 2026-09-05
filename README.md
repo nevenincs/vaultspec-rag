@@ -153,26 +153,12 @@ commands with `uv run`, for example `uv run vaultspec-rag server start`.
 
 Without a Python toolchain, use the [prebuilt Windows or Linux binaries](docs/installation.md#install-without-python).
 
-### Where it puts things, and how to remove it
+<p id="where-it-puts-things-and-how-to-remove-it"></p>
 
-By default the index lives in the shared service storage under `~/.vaultspec-rag/`, with
-your project's data kept in its own namespace. Your project directory only holds run
-metadata, in `.vault/data/search-data/`. The models and the server binary are also shared
-across every project on the machine, in `~/.cache/huggingface/` and `~/.vaultspec-rag/`.
-Expect the index itself to be substantial: this repository's namespace is about 1.3 GiB.
+### Remove RAG
 
-To remove it:
-
-```bash
-vaultspec-rag uninstall --force
-```
-
-Without `--force` it only shows you what it would delete. Adding `--remove-data` clears
-`.vault/data/`, but your indexed content stays in the shared storage. To reclaim that
-space, run `vaultspec-rag server storage survey` to find the namespace and
-`vaultspec-rag server storage delete` to remove it. `server storage prune` clears every
-namespace whose project directory is gone. See
-[storage maintenance](docs/storage-maintenance.md).
+Follow the [removal guide](docs/installation.md#remove-it) to preview project changes,
+choose whether to clean up indexes, and remove the package.
 
 ## Write a query that finds it
 

@@ -80,8 +80,8 @@ The `server`, `install`, and `uninstall` commands skip workspace resolution; eve
 
 ## Exit codes
 
-The table lists common exit-code meanings. [install](#install) and
-[server doctor](#server-doctor) have command-specific meanings.
+The table lists common exit-code meanings. [install](#install),
+[uninstall](#uninstall), and [server doctor](#server-doctor) have command-specific meanings.
 
 | Code | Meaning                                                                                                                                                                     |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -250,23 +250,24 @@ With `--json`, the result is one report on stdout.
 
 `vaultspec-rag uninstall`
 
-Remove vaultspec-rag enrollment from a workspace. This mirrors `install`: it removes the bundled rule and MCP source files and runs the vaultspec-core sync. Vault documents and index data are preserved unless `--remove-data` is passed.
+Remove vaultspec-rag enrollment from a workspace. This removes the bundled rule and MCP source files and runs the vaultspec-core sync. Vault documents are preserved, as is index data by default.
 
 Arguments: none.
 
 Options:
 
-| Flag             | Type | Default                   | Description                                                 |
-| ---------------- | ---- | ------------------------- | ----------------------------------------------------------- |
-| `--target`, `-t` | path | current working directory | Workspace path.                                             |
-| `--remove-data`  | flag | off                       | Also remove index data under `.vault/data/`.                |
-| `--dry-run`      | flag | off                       | Preview the removal without writing.                        |
-| `--force`        | flag | off                       | Execute the removal. Without it, the command previews only. |
-| `--skip`         | text | unset                     | Skip a component by token. Repeatable.                      |
-| `--yes`, `-y`    | flag | off                       | Skip the confirmation prompt.                               |
-| `--json`         | flag | off                       | Emit one JSON envelope to stdout.                           |
+| Flag             | Type | Default                   | Description                                                                                 |
+| ---------------- | ---- | ------------------------- | ------------------------------------------------------------------------------------------- |
+| `--target`, `-t` | path | current working directory | Workspace path.                                                                             |
+| `--remove-data`  | flag | off                       | Delete all of `.vault/data/`, including the default local index and other components' data. |
+| `--dry-run`      | flag | off                       | Preview the removal without writing.                                                        |
+| `--force`        | flag | off                       | Execute the removal. Without it, the command previews only.                                 |
+| `--skip`         | text | unset                     | Skip a component by token. Repeatable.                                                      |
+| `--yes`, `-y`    | flag | off                       | Accepted but has no effect. Use `--force` to apply removal.                                 |
+| `--json`         | flag | off                       | Emit one JSON envelope to stdout.                                                           |
 
-Exit/JSON: `0` on success; `1` on uninstall failure. With `--json`, the result is one envelope on stdout.
+Exit/JSON: `0` on success; `1` on uninstall failure; `2` on MCP cleanup failure.
+With `--json`, the result is one envelope on stdout.
 
 ## server start
 

@@ -365,70 +365,40 @@ The `server updates` commands are unrelated to upgrades; they control the automa
 
 ## Remove it
 
-Run these in order. The first three need the command-line interface, so removing the package has to come last.
+Uninstalling removes the project's integration, not the package. It preserves
+data by default. Read the [uninstall flags](cli.md#uninstall) before choosing
+data removal.
 
-Remove the workspace setup:
+If RAG is a project dependency, prefix `vaultspec-rag` commands with `uv run`.
 
-```bash
-uv run vaultspec-rag uninstall --force
-```
+1. From your project root, preview the integration changes:
 
-This reverts the PyTorch entry in `pyproject.toml`, removes vaultspec-rag's bundled files from `.vaultspec/`, and removes its MCP registration. **Without `--force` it only previews what it would remove.** It leaves your indexed data alone unless you add `--remove-data`, which deletes `.vault/data/`.
+   ```sh
+   vaultspec-rag uninstall
+   ```
 
-Delete the managed Qdrant installs:
+1. Review the preview, then apply it:
 
-```bash
-uv run vaultspec-rag server qdrant clean --yes
-```
+   ```sh
+   vaultspec-rag uninstall --force
+   ```
 
-`--yes` is required; without it the command prints a preview only. Pass `--keep-current` to preserve the pinned version. This step never touches index data.
+1. For optional shared-index cleanup, [inspect the store](storage-maintenance.md#inspect-what-is-stored)
+   and follow [storage maintenance](storage-maintenance.md#reclaim-space-manually).
+   Models and Qdrant binaries are shared across projects; removing one project's
+   setup does not require deleting them.
 
-Delete this project's index:
+1. Before removing the package, run `vaultspec-rag server stop` and close connected
+   MCP clients. Stopping the service affects its other clients too.
 
-```bash
-uv run vaultspec-rag server storage delete --root <project> --dry-run
-```
+1. Remove the package using your installation method:
 
-```text
-Queried root: <project>  prefix: rea7120f40662_
-Would remove rea7120f40662_ (4 collections). Re-run with --yes.
-```
-
-One edit to that capture, the same one the status capture above takes: the
-absolute project path is shortened to its last two segments and written with
-POSIX separators, because the run was made on Windows. Nothing else is changed -
-the prefix is the real one that run reported. Pass your own project directory
-instead, and expect a different prefix: it is a hash of the resolved root, which
-is the point of running the dry run before the real one.
-
-This is the step the other three do not cover, and skipping it is the one way
-to remove vaultspec-rag and still be paying for it. On the default
-`managed-service` backend the index does not live in your project: it lives in
-the service's own storage, keyed by a hash of the source root. `--remove-data`
-above deletes `.vault/data/`, which is run metadata, not the index. Deleting
-the project directory afterwards does not reclaim it either - it only turns the
-namespace *orphaned*, meaning the source root it was built from is gone, and
-leaves it on disk.
-
-The sizes are not small. Surveyed on the machine these captures were taken on,
-this project's own namespace is `1.3 GiB`, and the store holds
-`35 namespaces  (orphaned=10 unknown=0 unverifiable=0 live=25)  33.1 GiB on disk`. Ten of those are indexes for projects that no longer exist.
-
-That is a different run from the survey shown on
-[storage and maintenance](storage-maintenance.md), which reports 34 namespaces
-and 33.4 GiB: the same store, measured on another day, with one namespace fewer
-and slightly more on disk. Read either as the shape of the answer rather than as
-a figure to match against your own.
-
-Run [storage and maintenance](storage-maintenance.md) first if you want the
-survey before you delete, or `server storage prune --dry-run` to see every
-orphaned namespace at once rather than this one project's.
-
-Remove the package:
-
-```bash
-uv remove vaultspec-rag
-```
+   | Installation          | Command                           |
+   | --------------------- | --------------------------------- |
+   | uv project dependency | `uv remove vaultspec-rag`         |
+   | uv tool               | `uv tool uninstall vaultspec-rag` |
+   | Scoop                 | `scoop uninstall vaultspec-rag`   |
+   | Homebrew              | `brew uninstall vaultspec-rag`    |
 
 ## Which Linux binary your distribution can run
 
