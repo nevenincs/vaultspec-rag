@@ -289,12 +289,14 @@ It needs consent it doesn't have, and exits non-zero. Re-run with `--yes` to app
 
 ### `server start` cannot find the Qdrant binary
 
-Provision it, or run without the server:
+Install the Qdrant binary, then retry your original start command.
+For a project dependency, add `uv run`:
 
 ```bash
-uv run vaultspec-rag server qdrant install
-uv run vaultspec-rag server start --local-only
+vaultspec-rag server qdrant install
 ```
+
+To use embedded storage instead, follow [storage backends](backends.md).
 
 ### The Qdrant download failed a checksum
 
