@@ -15,7 +15,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: publish
+  # KEYED BY TAG. An unkeyed `publish` group means GitHub holds at most one
+  # running and one pending run, so a third release silently CANCELS the
+  # queued one - and a cancelled run reports `cancelled`, not `failed`, so a
+  # release that never happened raises no alarm. binaries.yml already keys
+  # its group this way; this is that line.
+  group: publish-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
