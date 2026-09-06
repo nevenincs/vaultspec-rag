@@ -17,7 +17,7 @@ Inspect `Live service`, `Installed dependencies`, and, when present,
 - For service faults, follow the [service troubleshooting guide](service-mode.md#troubleshooting).
 - For provisioning faults, read the reported detail.
 
-If none of these checks reports a problem, [check whether the index is current](#is-the-index-current).
+If none of these checks reports a problem, [check index status](#check-index-status).
 
 <a id="is-the-index-current"></a>
 
