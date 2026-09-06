@@ -39,39 +39,28 @@ If the version check fails, the [installation guide](installation.md) covers rec
 
 ## Step 2: Start the service and index your project
 
-Three pieces are now in play. The *service* is a background process that holds the models in memory so searches are fast. The *models* are the files you just downloaded. The *index* is the searchable copy of your project that the service builds and then maintains.
+From your project directory, start the service and submit indexing jobs:
 
-Start the service and index the project:
-
-```
+```bash
 uv run vaultspec-rag server start
 uv run vaultspec-rag index
 ```
 
-`server start` loads the models before it reports ready, so the first start is slower than later ones. `index` hands the work to the service as a background job and returns immediately. The command finishing doesn't mean the indexing has.
+`server start` waits until the service is ready. `index` prints IDs
+for the jobs it submits. Indexing continues after the command returns.
 
-Watch for it to finish:
+Open the live job view:
 
-```
-uv run vaultspec-rag server jobs
-```
-
-```
-Jobs
-Address: http://127.0.0.1:8766
-Displayed: 3 jobs
-Total: 262 jobs
-Displayed jobs: 0 active, 0 waiting, 3 finished, 0 failed
-Showing: active, waiting, failed, then latest finished
-Order: latest job appears last
-Legend: * active, ~ waiting, ! failed, - finished
-Scripting: use --json (this summary always contains the word 'active')
-- 15:34:20 finished vault index update for main (job ad5e3dca) - added 26, updated 7, removed 0, finished in 7 seconds
-- 15:34:41 finished code index update for main (job 5a318228) - added 120, updated 0, removed 0, finished in 34 seconds
-- 15:34:52 finished document index update for main (job f7daa7b9) - added 0, updated 0, removed 0, finished in less than 1 second
+```bash
+uv run vaultspec-rag server jobs --watch
 ```
 
-`index` builds three indexes by default: `vault`, `code`, and `document`. Wait until all three show a line that reads `finished`. Read the word, not the `-` prefix alone: a job that was interrupted or cancelled also starts with `-`. Searching before all three finish returns whatever has been indexed so far, which looks like poor results rather than an error. A small project takes under a minute.
+Match the first eight characters of the returned job IDs and check the project
+path. Wait until each submitted job shows `finished` before continuing. For jobs
+no longer in view, [inspect a job by ID](service-mode.md#control-one-job).
+
+If a submission fails or a job shows `failed` or `cancelled`, follow the
+[verification guide](verification.md).
 
 ## Step 3: Run your first search
 
