@@ -56,7 +56,7 @@ uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 For other Python versions or Linux architectures, see [GPU wheel selection](docs/installation.md#pin-the-gpu-build).
 If uv reports that its executables directory is missing from `PATH`, follow its
 instructions before continuing. For an existing tool installation, follow the
-[upgrade and repair instructions](docs/installation.md#pin-the-gpu-build) before
+[upgrade instructions](docs/installation.md#upgrade) before
 replacing its environment.
 
 Once installation succeeds, open the repository you want to search and run:
@@ -116,16 +116,8 @@ removing indexed content.
 
 ### Other ways to install
 
-For a Python project that should carry the dependency, run:
-
-```bash
-uv add "vaultspec-rag[gpu]"
-uv run vaultspec-rag install --sync
-```
-
-Approve the PyTorch configuration prompt. On Linux and Windows, `--sync` applies the
-CUDA package source; macOS uses the standard MPS-capable wheel. Prefix subsequent
-commands with `uv run`, for example `uv run vaultspec-rag server start`.
+To share a version with collaborators,
+[add RAG as a project dependency](docs/installation.md#adding-it-to-a-project).
 
 Without a Python toolchain, use the [prebuilt Windows or Linux binaries](docs/installation.md#install-without-python).
 
