@@ -107,10 +107,6 @@ Search source code with `--type code`, or feature records with `--type vault`:
 vaultspec-rag search "parse query text into filters" --type code
 ```
 
-<p align="center">
-<img src="assets/term-search-vault.svg" alt="vaultspec-rag search - a plain-English query surfacing the governing decision record from this repository's own vault" width="880" />
-</p>
-
 If results are missing or incomplete, [check the index](docs/verification.md) and
 [adjust the query](docs/query-craft.md).
 
