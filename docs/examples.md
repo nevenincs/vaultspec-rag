@@ -127,25 +127,8 @@ because every indexed file in this repository is Python.
 
 ## What does the score mean?
 
-`--scores`, used above, prints a number per hit. Rank order is only meaningful
-within a single query. Absolute magnitude is coarse but usable: tenths mean the
-corpus held something, thousandths mean it did not.
-
-```
-vaultspec-rag search "medieval falconry glove stitching patterns" --type code --max-results 3 --scores
-```
-
-```
-1. src/vaultspec_rag/indexer/_ignore_specs.py (score 0.0066)
-2. tools/citation_gate.py (score 0.0019)
-3. src/vaultspec_rag/indexer/_ignore_specs.py (score 0.0009)
-```
-
-Three rows came back because `--max-results 3` asked for three; without the cap
-that query returns the default ten, none of them relevant. No threshold filters
-results out on relevance, so a search does not report "nothing found" when the
-corpus simply has no answer - a hard filter matching nothing, or an empty index,
-still can. A top score in the thousandths is how you tell the first case.
+See [inspect result scores](query-craft.md#inspect-result-scores) for interpreting
+`--scores` output and its limits.
 
 ## What it answers badly
 
