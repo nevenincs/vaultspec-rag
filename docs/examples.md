@@ -1,69 +1,31 @@
 # Retrieval recipes
 
-Worked searches for the questions this tool answers well, and a plain account of
-the ones it answers badly. Every command and every number on this page came from
-a real run against this repository, whose index holds 5,140 vault documents and
-11,279 code passages.
+Use these examples with an indexed project. Replace query terms and feature tags with
+your own. Commands use a standalone installation; for other routes, use the
+[matching command prefix](installation.md#install-with-python).
 
-Ten results is the default, and it is a ceiling rather than a quota: a query
-that matches fewer passages returns fewer, so a block below with two or three
-rows is the whole answer and not an abridged one. Raise the cap with
-`--max-results` when you are surveying rather than looking something up. Result
-snippets below are shortened, and example filenames are shown without their date
-prefix; the paths, the ordering, and the scores are as the tool reported them.
-
-[Writing a query that finds it](query-craft.md) covers phrasing and the full
-filter surface. This page covers what to reach for and when.
+For query wording and filters, see the [query guide](query-craft.md).
 
 ## Why was this decided?
 
-Ask for the reasoning behind a behaviour, and restrict the answer to decision
-records so plans and execution logs do not crowd them out:
+Search decision records for the behavior you want to understand:
 
-```
+```bash
 vaultspec-rag search "cache control on deployed assets" --type vault --doc-type adr
 ```
 
-```
-1. .vault/adr/store-eviction-log-rotation-adr.md
-   adr | feature: store-eviction-log-rotation | 2026-04-12
-   ## Rationale
-
-   The decision pattern is: keep the smallest amount of state under
-   the smallest number of locks, reuse existing teardown paths ...
-2. .vault/adr/service-graph-adr.md
-   adr | feature: service-graph | 2026-04-02
-   ## Rationale
-
-   - **MCP-as-service**: zero new infrastructure. The server process already
-     owns GPU resources, has thread-safe lazy init, ...
-```
-
-Each hit is a path, a metadata line naming the document type, feature, and date,
-and the passage that matched. You are describing a concept rather than naming a
-file. Rationale gets written in whatever words its author chose that day, which
-is what makes it hard to grep for.
+Read the matching ADRs for their rationale and scope.
 
 ## What happened on this feature?
 
-Swap `--doc-type` for `--feature` and the search stops asking why and starts
-asking what:
+Search one feature across document types. Replace `service-graph` with your feature tag:
 
-```
+```bash
 vaultspec-rag search "graph rebuild race" --type vault --feature service-graph --max-results 3
 ```
 
-```
-1. .vault/adr/service-graph-adr.md
-   adr | feature: service-graph | 2026-04-02
-2. .vault/research/service-graph-research.md
-   research | feature: service-graph | 2026-04-02
-3. .vault/plan/service-graph-phase1-plan.md
-   plan | feature: service-graph | 2026-04-02
-```
-
-The decision, the research that informed it, and the plan that carried it out.
-Reach for this when you are picking up work you have not touched in a while.
+Use the matching records to resume work or investigate a change. Search ranks passages;
+it doesn't list every record for the feature.
 
 ## Where does this identifier live?
 
