@@ -58,93 +58,70 @@ jobs:
   #
   # Hosted, deliberately - a preflight that needs the fleet cannot report that
   # the fleet is down.
-  preflight:
-    name: Preflight runners
+  # DERIVE, then call the fleet's own guard.
+  #
+  # This job used to contain a full copy of the preflight, and so did
+  # vaultspec-core and vaultspec-dashboard - three hand-maintained
+  # implementations of one check, while nevenincs/ci-fleet shipped a reusable
+  # one that had ZERO callers because its Actions access level was `none` and
+  # nothing could call it. The copies drifted exactly as duplication does:
+  # this one checked two of the three label sets its matrix required, because
+  # a comment instructing a maintainer to add the third is not a mechanism.
+  #
+  # What stays here is the part that CANNOT be shared: deriving the selectors
+  # from this repo's own matrix. Passing a hardcoded list to the shared guard
+  # would reintroduce the drift the derivation exists to prevent, so the list
+  # is computed here and handed over as an input.
+  #
+  # Hosted, deliberately - a guard that needs the fleet cannot report that the
+  # fleet is down. That is one of the two exceptions the fleet standard allows.
+  derive-selectors:
+    name: Derive the selectors this matrix requires
     runs-on: ubuntu-latest
+    outputs:
+      selectors: ${{ steps.derive.outputs.selectors }}
     steps:
-      # Only the workflow directory, only this commit: the step below reads the
-      # matrix out of this file to learn which selectors it must check.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
           sparse-checkout: .github/workflows
           sparse-checkout-cone-mode: false
 
-      - name: Every matrix selector has an online runner
+      - name: Read the self-hosted selectors out of the matrix
+        id: derive
         shell: bash
-        env:
-          # A PAT with `administration: read` if configured; the default token
-          # otherwise. The default GITHUB_TOKEN CANNOT read `actions/runners` -
-          # that endpoint needs admin - so without the PAT this check is blind
-          # and says so rather than guessing.
-          GH_TOKEN: ${{ secrets.FLEET_PREFLIGHT_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          # NOT `set -e`. An unobservable preflight must not refuse a build: the
-          # `gh api` below returns 403 under the default GITHUB_TOKEN, and under
-          # `set -e` that aborts the step and skips everything downstream. It
-          # blocked vaultspec-dashboard v0.1.6 exactly that way. A check that
-          # cannot tell "no runner" from "cannot see runners" must not speak for
-          # the first.
-          set -uo pipefail
-          if ! runners=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runners" --jq '.runners[] | [.status, ([.labels[].name] | map(ascii_downcase) | join(","))] | @tsv' 2>&1); then
-            echo "::warning::preflight cannot read the runner list: ${runners}"
-            echo "::warning::The default GITHUB_TOKEN cannot read actions/runners. Set FLEET_PREFLIGHT_TOKEN to a PAT with administration:read to enable this check."
-            echo "::warning::SKIPPING - unobservable is not the same as unserviceable."
-            exit 0
-          fi
-          [ -n "${runners}" ] || { echo "::error::no self-hosted runners are registered"; exit 1; }
-
-          # DERIVED from the matrix rather than kept in step with it by hand.
-          #
-          # The comment this replaces read: "Add the aarch64 selector here in
-          # the same change that re-enables that leg." The leg was re-enabled
-          # and the selector was not added, so this check has been passing on
-          # two of the three label sets the matrix requires. With the ARM64
-          # runner offline, preflight would report every selector healthy and
-          # the build would then QUEUE on a leg no online runner can serve -
-          # the single failure this job exists to prevent, and the reason
-          # earlier releases ran for 24 hours before failing.
-          #
-          # An instruction in a comment is not a mechanism. vaultspec-core had
-          # the mirror image - a selector left behind after its leg was removed,
-          # which would have REFUSED a serviceable build - and both stayed
-          # invisible in review for the same reason: nothing connects the list
-          # to the matrix except a maintainer remembering to.
+          set -euo pipefail
           workflow=".github/workflows/binaries.yml"
-          [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out; cannot derive selectors" >&2; exit 1; }
+          [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out" >&2; exit 1; }
+
+          # Only bracketed `runner:` values are label sets. A string-valued
+          # runner is a hosted one and has no fleet runner to check.
           mapfile -t selectors < <(awk -F'[][]' '/^[[:space:]]*runner:/ && NF > 2 {print $2}' "${workflow}" | tr -d ' ' | tr '[:upper:]' '[:lower:]' | sort -u)
           if [ "${#selectors[@]}" -eq 0 ]; then
-            echo "::error::derived no runner selector from ${workflow}; refusing to pass vacuously" >&2
+            echo "::error::derived no selector from ${workflow}; refusing to pass vacuously" >&2
             exit 1
           fi
           printf 'derived selector: %s\n' "${selectors[@]}"
 
-          failed=0
-          for want in "${selectors[@]}"; do
-            online=0; registered=0
-            while IFS=$'	' read -r status labels; do
-              missing=0
-              IFS=',' read -ra parts <<< "${want}"
-              for part in "${parts[@]}"; do
-                case ",${labels}," in *",${part},"*) ;; *) missing=1; break ;; esac
-              done
-              [ "${missing}" -eq 0 ] || continue
-              registered=$((registered + 1))
-              [ "${status}" = "online" ] && online=$((online + 1))
-            done <<< "${runners}"
+          {
+            echo 'selectors<<SELECTORS_EOF'
+            printf '%s\n' "${selectors[@]}"
+            echo 'SELECTORS_EOF'
+          } >> "${GITHUB_OUTPUT}"
 
-            if [ "${online}" -gt 0 ]; then
-              echo "ok        [${want}] -> ${online} online"
-            elif [ "${registered}" -eq 0 ]; then
-              echo "::error::[${want}] is carried by no registered runner." >&2
-              failed=1
-            else
-              echo "::error::[${want}] matches ${registered} runner(s), none online - usually the power-gated host on battery. Dispatch again on AC." >&2
-              failed=1
-            fi
-          done
-
-          [ "${failed}" -eq 0 ] || { echo "::error::preflight refused a build that would queue rather than run" >&2; exit 1; }
+  # The fleet's guard, called rather than copied. SHA-pinned per the fleet
+  # standard; nevenincs/ci-fleet is private, and same-owner reusable calls are
+  # permitted by its Actions access level.
+  preflight:
+    name: Preflight runners
+    needs: derive-selectors
+    uses: nevenincs/ci-fleet/.github/workflows/preflight.yml@95ec2046a19befab04a9c64e80a11eafb9196bca
+    with:
+      repo: ${{ github.event.repository.name }}
+      selectors: ${{ needs.derive-selectors.outputs.selectors }}
+    secrets:
+      fleet_token: ${{ secrets.FLEET_PREFLIGHT_TOKEN }}
 
   build:
     needs: preflight
