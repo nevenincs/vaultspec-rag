@@ -2,40 +2,13 @@
 
 Index your project, search its source code, and narrow the results to a file.
 
-## Check your machine can run vaultspec-rag
-
-Check the [hardware and Python requirements](installation.md#what-you-need-before-you-start)
-and install [uv](https://docs.astral.sh/uv/). The steps below add RAG as a project
-dependency; use a project whose source code you want to search.
-
 ## Step 1: Install vaultspec-rag and download the models
 
-Open a terminal in the root of the project you want to search, then add and provision RAG:
+Open the [installation guide](installation.md) and choose "Adding it to a project."
+Work from your project root. Complete the project setup to download the models,
+then follow "Verify the install."
 
-```
-uv add "vaultspec-rag[gpu]"
-uv run vaultspec-rag install --sync
-```
-
-`install` asks once before it changes your PyTorch configuration. The prompt defaults to no, so type `y` to continue. On Linux and Windows this selects the CUDA build; on macOS the entry's platform marker leaves it inactive, because the standard wheel already supports Apple silicon.
-
-This is the slowest part of the tutorial. Budget roughly 5 GB for the CUDA PyTorch stack and another 4 GB for the three search models.
-
-Confirm it worked:
-
-```
-uv run vaultspec-rag --version
-```
-
-<!-- x-release-please-start-version -->
-
-```
-vaultspec-rag v0.4.24
-```
-
-<!-- x-release-please-end -->
-
-If the version check fails, the [installation guide](installation.md) covers recovery for each step.
+Once verification succeeds, return here for Step 2.
 
 ## Step 2: Start the service and index your project
 
