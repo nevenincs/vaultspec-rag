@@ -1,58 +1,19 @@
 # Writing a query that finds the right result
 
-Search returns the closest matches it can rank, never an exhaustive list. So when
-a query finds nothing useful, the wording is rarely the cause. Usually the corpus
-doesn't hold the answer, or the query asks two things at once.
+Describe the behavior you want to find, then narrow the search with filters.
 
-This page shows you how to tell those apart, what to type, and what to change
-when a result looks wrong. For how the ranking works underneath, read the
-[architecture overview](architecture.md) and the
-[indexing internals](indexing.md).
+Examples use the `uv run` prefix, which runs the command inside a project environment.
+If you installed vaultspec-rag as a standalone tool, drop the prefix and call
+`vaultspec-rag` directly; see the [installation guide](installation.md).
 
-Examples use the `uv run` prefix, which runs the command inside a project
-environment. If you installed vaultspec-rag as a standalone tool, drop the prefix
-and call `vaultspec-rag` directly; see the
-[installation guide](installation.md).
+<p id="check-coverage-before-you-blame-the-query"></p>
 
-## Check coverage before you blame the query
+## Check file coverage
 
-An index that doesn't hold what you're looking for produces confusing results,
-and no amount of rewording fixes that. Ask what's admitted:
-
-```
-uv run vaultspec-rag index --type code --dry-run --dry-run-limit 5
-```
-
-```
-Dry run: 110 source-code files would be indexed.
-Admission summary:
-  - unowned/rejected/ignored: 16
-  - code/rejected/source_profile_excluded: 911
-  - code/admitted/source_profile: 110
-Files shown:
-  - .agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js
-  - .agents/skills/impeccable/scripts/live-browser-dom.js
-  - .agents/skills/impeccable/scripts/live-browser-session.js
-  - .agents/skills/impeccable/scripts/live-browser.js
-  - .agents/skills/impeccable/scripts/modern-screenshot.umd.js
-105 more files not shown. Use --dry-run-limit 110 or --json for the full list.
-```
-
-That run is a documentation project, not this one, and the verification guide
-runs the same command against this repository and reports several hundred more.
-The count is about the tree in front of you, which is the reason to run it.
-
-Read the count, not the sample. A hundred and ten files out of a thousand-odd
-considered is the number to weigh against the tree you have in mind. The paths a
-dry run prints - fifty by default, five in the run above because
-`--dry-run-limit 5` asked for five - are the head of the list, not the most
-important files. A
-sample full of vendored tool scripts doesn't mean the rest of the set is vendored
-too.
-
-If the count is far off what you expect, fix admission before you pay for a full
-indexing run. [Verify the index](verification.md) covers this check and the two
-that go with it, and [indexing](indexing.md) covers how admission is decided.
+If expected code is missing from results,
+[check which files would be indexed](verification.md#is-it-indexing-the-right-files) and
+[check index status](verification.md#check-index-status). A dry run previews file
+selection; it does not show what is already stored.
 
 ## Filters do more than phrasing
 
