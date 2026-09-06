@@ -272,9 +272,10 @@ After making changes, [verify the install](#verify-the-install).
 
 ### `install` refused to repair the tool environment
 
-It printed the pinned command instead of running it, and named the processes holding the environment. That is the whole behaviour: the installer never replaces a tool environment, because it runs inside the only environment it would ever target, and a replacement issued from there has to remove the interpreter issuing it.
-
-Each holder is listed with its pid and what to do about it - end the process, or move it out of the directory. Clear them, then run the printed command from a shell that holds nothing in that tree. `--no-tool-repair` skips the check entirely if you would rather manage the environment yourself; `--no-torch-config` does not, it governs only the `pyproject.toml` step.
+The installer prints a repair command instead of replacing the environment it
+is running in. Follow [GPU build pinning](#pin-the-gpu-build) to stop clients
+and run the saved command from outside the tool environment. See
+[install options](cli.md#install) for configuration flags.
 
 ### A tool environment is missing packages after a failed reinstall
 
