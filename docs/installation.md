@@ -42,26 +42,31 @@ vaultspec-rag refuses to start when neither CUDA nor MPS is available, and it re
 
 ## Choose an install route
 
-Four routes. Pick one.
-
 <p id="trying-it-without-commitment"></p>
 
 ### Run without installing a tool
 
-`uvx` runs RAG in a temporary Python environment. The `install` command still
-configures your project. From the project root:
+From your project root, run:
 
 ```bash
 uvx --from "vaultspec-rag[gpu]" vaultspec-rag install
 ```
 
+`uvx` uses a temporary environment, but this command configures your project.
+See [project setup](#set-up-a-project) for options, then
+[verify the install](#verify-the-install).
+
 ### Adding it to a project
 
-Choose this when the project itself should carry the dependency, so teammates and continuous integration (CI) resolve the same version:
+Use a project dependency when collaborators need to share the same version.
+From your project root, run:
 
 ```bash
 uv add "vaultspec-rag[gpu]"
 ```
+
+Continue with [Python installation](#install-with-python) to complete setup,
+then [verify the install](#verify-the-install).
 
 ### Installing it as a standalone tool
 
@@ -72,24 +77,19 @@ uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
 On Linux or Windows, check the [GPU build](#pin-the-gpu-build) before using it.
-This command does not pin a CUDA wheel.
+`uv tool install` doesn't pin a CUDA wheel.
+
+From each project's root, [set up the project](#set-up-a-project), then
+[verify the install](#verify-the-install).
 
 ### Installing a prebuilt binary
 
-Choose this when the machine has no Python toolchain at all. See [Install without Python](#install-without-python).
+Follow [Install without Python](#install-without-python).
 
-### Which sections you still need
+<p id="which-sections-you-still-need"></p>
 
-The first three routes can install the bare package instead of `[gpu]`. That control-plane-only install runs service and diagnostic commands but cannot index or search locally, because it omits PyTorch and the model stack. It avoids roughly 5 GB of dependencies. The binary route always carries the GPU build.
-
-A control-plane-only install is a supported state rather than a broken one: `install` completes, and `server doctor` reports torch as absent without calling the environment defective. The service still refuses to start, because it cannot serve a search without a model. The way out is choosing the `[gpu]` extra, not repairing anything.
-
-| Your route                         | Sections you still need                                                                                        |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Run without installing a tool      | [Set up a project](#set-up-a-project), [Verify the install](#verify-the-install)                               |
-| Adding it to a project             | [Install with Python](#install-with-python) in full, [Verify the install](#verify-the-install)                 |
-| Installing it as a standalone tool | [GPU build](#pin-the-gpu-build), [Project setup](#set-up-a-project), [Verify the install](#verify-the-install) |
-| Installing a prebuilt binary       | [Install without Python](#install-without-python), [Verify the install](#verify-the-install)                   |
+For diagnostic and service-control commands without local inference, Python
+routes can omit `gpu` from the extras. This omits PyTorch and model dependencies.
 
 ## Install without Python
 
