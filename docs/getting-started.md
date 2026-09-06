@@ -96,27 +96,26 @@ narrow a search.
 
 ## When you are finished
 
-Stop the service:
+Stop the service when you no longer need it:
 
-```
+```bash
 uv run vaultspec-rag server stop
 ```
 
-Your index survives, and while the service runs it watches your files and re-indexes changes on its own. So your next session is shorter: start the service again, then go straight to searching. You won't reinstall, and you won't run `index` a second time.
+Stopping the service leaves stored indexes in place. Next session,
+[start the service again](#step-2-start-the-service-and-index-your-project).
+For stale indexes or configuration changes, see [reindexing](verification.md#reindexing).
 
 ## If a step didn't work
 
-**`install` fails on the PyTorch step.** Usually a GPU the toolchain can't see. Run `uv run vaultspec-rag server doctor`, which reports what it detected, and check your machine against [the requirements](#check-your-machine-can-run-vaultspec-rag).
+- [Resolve installation failures](installation.md#when-something-goes-wrong).
+- [Investigate missing or incomplete results](verification.md).
+- [Improve poor matches](query-craft.md).
 
-**Searching returns nothing.** Either the service is still loading or the first index hasn't finished. `uv run vaultspec-rag server status` reports the service state and exits 5 while the models are still loading. `uv run vaultspec-rag server jobs` shows whether indexing has finished.
-
-**Results look thin or irrelevant.** Check that indexing finished, then re-read Step 3 on query wording. A query of only common words returns weak matches.
-
-For anything else, the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues) takes questions as well as bug reports, so a setup problem on your own machine belongs there too.
+If you still need help, [report the problem](https://github.com/nevenincs/vaultspec-rag/issues).
 
 ## Where to go next
 
-- [Search and index](search-and-index.md) answers how ranking works and what the full filter set can do.
-- [Writing a query](query-craft.md) answers what to change when results look wrong.
-- [Architecture](architecture.md) answers why the tool needs a GPU and how the service, the models, and the index fit together.
-- [CLI reference](cli.md) catalogues every command, flag, and exit code.
+- [Search and index your project](search-and-index.md)
+- [Understand the architecture](architecture.md)
+- [Command-line reference](cli.md)
