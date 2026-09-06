@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.25](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.24...vaultspec-rag-v0.4.25) (2026-09-06)
+
+
+### Bug Fixes
+
+* **ci:** embed the fleet preflight; a public repo cannot call a private one ([d2c2606](https://github.com/nevenincs/vaultspec-rag/commit/d2c26067b2ee78c110696ea5774071985b79d001))
+* **publish:** key the concurrency group by tag ([e410d02](https://github.com/nevenincs/vaultspec-rag/commit/e410d0227f2f1baf814ca891030cadf60702caa2))
+
 ## [0.4.24](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.23...vaultspec-rag-v0.4.24) (2026-09-05)
 
 
