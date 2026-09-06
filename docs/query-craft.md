@@ -185,57 +185,29 @@ uv run vaultspec-rag search "gpu lock decision type:adr status:active"
 plain one matches that path and everything under it. `--path` is a different,
 exact-path filter.
 
-### Telling a weak result from an empty corpus
+<p id="telling-a-weak-result-from-an-empty-corpus"></p>
 
-Search returns up to its ten closest chunks - `--max-results` defaults to ten,
-and that is a ceiling rather than a promise, so a query can come back with fewer.
-What it does not do is come back empty for want of a good answer, so a query with
-nothing to match looks much like one with a poor answer. `--scores` separates
-them.
+### Inspect result scores
 
-Both runs below are against this project's vault, cut to their top three rows;
-each returned the full ten.
+Show numeric scores alongside results:
 
-A query the corpus genuinely answers scores in the tenths:
-
-```
+```bash
 uv run vaultspec-rag search "graph rebuild race" --type vault --scores
 ```
 
-```text
-1. .vault/audit/2026-03-09-graph-embedding-round36-audit.md (score 0.8316)
-2. .vault/research/2026-04-02-service-graph-research.md (score 0.8267)
-3. .vault/audit/2026-04-02-release-readiness-audit.md (score 0.7379)
-```
+Scores help compare ranked results; they aren't probabilities that your question has
+been answered. Their meaning depends on the ranking configuration. No universal score
+cutoff establishes whether your index contains an answer.
 
-A query with nothing relevant scores in the thousandths, and still fills all ten
-rows:
+`--max-results` caps the results at 10 by default, but doesn't guarantee that many
+matches. Results can be irrelevant, and empty output doesn't explain why.
 
-```
-uv run vaultspec-rag search "medieval falconry glove stitching patterns" --type vault --scores
-```
-
-```text
-1. .vault/audit/2026-03-07-test-compliance-round2-audit.md (score 0.0044)
-2. .vault/plan/2026-04-04-vaultragignore-plan.md (score 0.0008)
-3. .vault/audit/2026-03-08-test-mandate-audit.md (score 0.0007)
-```
-
-Three orders of magnitude separate them. Absolute scores aren't comparable
-between different queries, but that gap is: a top score in the thousandths means
-the corpus holds no answer, and rewording won't produce one. Index the right
-content instead.
-
-`--json` gives a script the same results without the human formatting.
+Use `--json` for structured output. See the [search options](cli.md#search) for details.
 
 ## When a result looks wrong
 
-Work down this list rather than rewording repeatedly. Rewording is the last step,
-not the first.
-
-1. Run `--scores`. If the top score sits in the thousandths, the corpus holds no
-   answer and no wording will find one.
-1. If you're searching code, check coverage with a dry run.
+1. Read the returned passages to check whether they answer your question.
+1. [Check file coverage](#check-file-coverage) and index status if expected code is missing.
 1. Add the filter that states which kind of thing you want.
 1. If results arrive doubled, exclude the mirrored tree with `exclude:worktree`
    or an `--exclude-path` pattern.
