@@ -304,7 +304,9 @@ For anything not covered here, the [issue tracker](https://github.com/nevenincs/
 
 ## The model cache and its first download
 
-The first index or search downloads the dense, sparse, and reranker model files once, so it runs slower than later work. The files land in the Hugging Face cache. If they appear to re-download every run, point `HF_HOME` at a persistent location; see the [configuration guide](configuration.md).
+Model files use the [Hugging Face cache](configuration.md#hugging-face-cache).
+Set `HF_HOME` to a persistent location before setup if you need to choose where
+downloads are stored.
 
 If a run exhausts GPU memory, that's a runtime concern rather than an install one: see [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed). On MPS, memory is unified with the rest of the system rather than dedicated.
 
