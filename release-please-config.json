@@ -18,7 +18,6 @@
         { "type": "test", "section": "Tests", "hidden": true }
       ],
       "extra-files": [
-        "docs/getting-started.md",
         "docs/installation.md"
       ]
     }
