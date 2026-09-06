@@ -132,7 +132,7 @@ Arguments:
 
 | Name         | Required | Description                                                                                                                                                     |
 | ------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clean_type` | yes      | One of `vault`, `code`, `document`, or `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. No default, so nothing is deleted by accident. |
+| `clean_type` | yes      | One of `vault`, `code`, `document`, or `combined`. Aliases: `docs`→`vault`, `codebase`→`code`, `all`→`combined`. Required; there is no default. |
 
 Options:
 

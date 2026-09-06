@@ -304,28 +304,26 @@ owner in [preprocessing hooks](preprocessing-hooks.md).
 
 ## Rebuild from scratch
 
-Use `--rebuild` with an explicit `--type` to drop one index and recreate it (for example, after changing the embedding model or recovering from a corrupted index):
+To delete and recreate the code index, run:
 
 ```
-uv run vaultspec-rag index --rebuild --type vault
 uv run vaultspec-rag index --rebuild --type code
-uv run vaultspec-rag index --rebuild --type document
 ```
 
-`--rebuild` requires an explicit `--type`. A bare `index --rebuild` errors out, so it can't rebuild everything by accident.
+`--rebuild` deletes the selected index data before rebuilding. Choose the domain
+carefully; an explicit `--type` is required. See the [index reference](cli.md#index)
+for other targets and options.
 
 ## Clean index data
 
-To delete index data without rebuilding it, use `clean` with a required target of
-`vault`, `code`, `document`, or `combined`, and confirm with `--yes`:
+To delete the code index without rebuilding it, run:
 
 ```
-uv run vaultspec-rag clean vault --yes
-uv run vaultspec-rag clean document --yes
-uv run vaultspec-rag clean combined --yes
+uv run vaultspec-rag clean code
 ```
 
-The target is required, so `clean` removes a corpus only when you name it. `clean` doesn't load models or touch the GPU.
+Review the target before confirming. See the [clean reference](cli.md#clean) for
+other targets and non-interactive use.
 
 ## Where to go next
 
