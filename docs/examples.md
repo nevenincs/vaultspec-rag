@@ -92,70 +92,24 @@ because every indexed file in this repository is Python.
 See [inspect result scores](query-craft.md#inspect-result-scores) for interpreting
 `--scores` output and its limits.
 
-## What it answers badly
+<p id="what-it-answers-badly"></p>
+<p id="can-it-list-every-place-something-appears"></p>
+<p id="can-it-find-what-was-never-indexed"></p>
+<p id="can-it-answer-two-questions-at-once"></p>
+<p id="are-the-results-current"></p>
 
-### Can it list every place something appears?
+## Search limits
 
-No. Search ranks; it does not enumerate.
-
-```
-vaultspec-rag search "body_hash" --type vault --max-results 100
-```
-
-That returned 24 results, where `grep -rl body_hash .vault/` matches 2,397 files.
-The rows are not printed here because the count is the whole argument: asking for
-a hundred did not produce a hundred, and no flag turns ranking into a complete
-list.
-
-So never answer "how many places do this?" or "have I changed every caller?"
-with a search. Use `grep` or `rg`, which are exhaustive by construction. Search
-tells you where to start reading, not what the full set is.
-
-### Can it find what was never indexed?
-
-No, and coverage is narrower than the file count suggests. Indexing this
-repository considers 906 files and admits 714 of them. The other 192 are turned
-away: 180 fall outside the source profile and 12 are ignored outright. Only
-admitted files can answer a query, and the proportion differs per project.
-
-When results seem unrelated to what you asked, check coverage before rewording.
-[Verify the index](verification.md) has the commands.
-
-### Can it answer two questions at once?
-
-No. A query carrying two concepts ranks against both and matches neither well.
-Asking about the reranker and the binary checksum together puts a settings file
-on top, which is neither:
-
-```
-vaultspec-rag search "how the reranker scores results and how the qdrant binary is verified" --type code --max-results 4 --scores
-```
-
-```
-1. src/vaultspec_rag/config/_settings.py:239 (score 0.7414)
-2. src/vaultspec_rag/tests/test_provision.py:415 (score 0.3466)
-3. src/vaultspec_rag/search/_searcher.py:628 (score 0.2585)
-4. src/vaultspec_rag/search/_searcher.py:475 (score 0.1739)
-```
-
-Split it and both halves land on the right file, scoring far higher:
-
-```
-vaultspec-rag search "reranker scores and reorders the candidate list" --type code --max-results 1 --scores
-vaultspec-rag search "verify the downloaded qdrant binary checksum" --type code --max-results 1 --scores
-```
-
-```
-1. src/vaultspec_rag/search/_searcher.py:440 (score 0.9029)
-1. src/vaultspec_rag/qdrant_runtime/_provision.py:313 (score 0.9856)
-```
-
-### Are the results current?
-
-Only as current as the last successful index. Results describe that index, not
-your working tree: a file saved seconds ago is not searchable until the next
-index run, and a stale generation makes every answer describe an older shape of
-the project.
+- Semantic search ranks passages. For exact occurrences, use text search and check
+  which paths and ignore rules it uses.
+- A low score or missing result doesn't prove absence.
+  [Check file coverage](verification.md#is-it-indexing-the-right-files) to see whether
+  expected files are selected for indexing.
+- Unrelated questions can make matches harder to interpret.
+  [Split them into separate queries](query-craft.md#name-the-nouns-and-ask-one-thing).
+- Results reflect stored index data.
+  [Check index status](verification.md#check-index-status) when files change; a
+  successful indexing job doesn't prove the index matches the current project.
 
 ## Related documentation
 
