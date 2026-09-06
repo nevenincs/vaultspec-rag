@@ -279,9 +279,9 @@ operation.
 
 Three surfaces carry the evidence when an index behaves unexpectedly.
 
-`vaultspec-rag status` reports the index generation for each domain, the index
-location, and the compute device. A domain that says it is not indexed yet has no
-searchable content, whatever the store contains.
+`vaultspec-rag status` reports stored counts, storage location, device, and the
+latest recorded indexing job per domain. See [Check index status](verification.md#is-the-index-current)
+to interpret the report.
 
 `vaultspec-rag server jobs` reports every index run and how it ended. A `failed`
 run carries a stable `error_kind`; a run whose progress has not moved for five

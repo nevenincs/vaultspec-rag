@@ -19,64 +19,23 @@ Inspect `Live service`, `Installed dependencies`, and, when present,
 
 If none of these checks reports a problem, [check whether the index is current](#is-the-index-current).
 
-## Is the index current?
+<a id="is-the-index-current"></a>
 
-```
+## Check index status
+
+```bash
 vaultspec-rag status
 ```
 
-```
-Project index
-Project: /path/to/your/project
-Index data: running service storage
-Vault documents: 5140
-Source code sections: 11279
-Document sections: 0
-Compute: CUDA - NVIDIA GeForce RTX 4080 SUPER (16.0 GiB VRAM)
-Support profile: managed-service
-Index generations:
-  code: generation 1, succeeded, job 54afa4d5
-  document: generation 1, succeeded, job 91a74931
-  vault: generation 1, succeeded, job 0ba8fb89
-Server: running
-Address: http://127.0.0.1:8766
-Next action:
-  vaultspec-rag index --type document
-```
+Counts describe stored sections, not source files, and don't prove the index is current.
 
-The counts and the generation lines answer different questions.
+Under `Index generations`, each domain shows its latest recorded indexing job
+for this project. `not indexed yet` means no matching job was found in the
+retained history; it doesn't establish that the store is empty. `succeeded`
+records that job's success, not whether the index matches your current files.
 
-The counts describe what is stored right now. `Document sections: 0` above is
-not a fault: this project routes no files through preprocessing, which is why
-`Next action` offers to index that domain. A suggestion there is a suggestion,
-not a diagnosis.
-
-The generation lines describe whether your current configuration has been
-indexed at all. A generation fingerprints your indexing configuration: the
-profile, the routes, the ignores, and more, with code, documents, and the vault
-each carrying their own. The [indexing guide](indexing.md) lists everything that
-goes into one.
-
-The combination to watch for is a non-zero count beside a generation that reads
-`not indexed yet`:
-
-```
-Vault documents: 5140
-Index generations:
-  vault: not indexed yet
-```
-
-That means stored data from an earlier run, under a configuration that no longer
-matches. Search will still return results, built from the previous
-configuration.
-
-Compare the counts against the tree, but do not expect them to match. A document
-is stored as several sections, so a healthy index reports more rows than the
-tree has files. This repository holds 2,396 Markdown files under `.vault/`
-(`find .vault -name '*.md' | wc -l`) and indexes them to the 5,140 documents
-shown above, a little over two apiece. A count well below the file count is the
-warning sign: that is what a partial or abandoned run looks like, and nothing in
-the tool flags the ratio for you.
+To index the domains you need, follow [reindexing](#reindexing). If expected
+files are missing, [check file coverage](#is-it-indexing-the-right-files).
 
 ## Is it indexing the right files?
 
@@ -127,19 +86,17 @@ gitignore-syntax pattern, or change the profile. The
 
 ## Reindexing
 
-When `status` shows a generation that does not match your configuration:
+To update the index after changing files or indexing settings:
 
 ```
 vaultspec-rag index
 ```
 
 Scope it with `--type vault`, `--type code`, or `--type document` when only one
-kind has moved. Add `--rebuild` to delete the selected data before rebuilding
-it.
+kind has changed. To delete and rebuild a domain, pass both `--type` and `--rebuild`.
 
-The running service reindexes as files change, so a healthy setup rarely needs
-this by hand. Reach for it after an upgrade, after a profile change, or when a
-generation goes stale.
+The running service reindexes as files change. See [watcher operation](automation.md#automatic-re-indexing)
+for automatic updates.
 
 ## Gating a script on these checks
 
