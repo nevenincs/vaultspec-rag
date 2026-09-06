@@ -64,56 +64,35 @@ If a submission fails or a job shows `failed` or `cancelled`, follow the
 
 ## Step 3: Run your first search
 
-vaultspec-rag keeps your code and your `.vault/` records in separate *domains* and searches one at a time. `--type code` selects your source. Without the flag it searches `vault`, which is empty unless your project keeps decision records, so pass the flag here. The [search and index guide](search-and-index.md) covers every domain.
+Choose a function you know exists in your indexed project. Replace the example
+query with its name and a brief description of its behavior:
 
-Write a query that pairs the concept with the concrete words the code itself contains, such as symbol and type names:
-
-```
-uv run vaultspec-rag search "parse the query text into filters" --type code
-```
-
-Each search returns up to 10 results, each with a rank, a file location, and the
-matching lines. The capture below is that command run against this project's own
-source, so yours will name your files instead. Each result's matching lines are
-cut here to the first one; on your terminal they run to a dozen lines or more:
-
-```text
-1. src/vaultspec_rag/search/_parsing.py:51
-   def parse_query(raw_query: str) -> ParsedQuery:
-2. src/vaultspec_rag/search/_searcher.py:1129
-           """Search documents from one already encoded query."""
-3. src/vaultspec_rag/search/_parsing.py:1
-   """Query parsing: extract metadata filter tokens from raw queries.
+```bash
+uv run vaultspec-rag search "parse_query convert query text into filters" --type code
 ```
 
-Ten came back; three are shown. The ranking is the point: the function that
-does the thing you asked for is first, and one file can hold several of the
-results because a result is a passage rather than a file.
+The `--type code` option searches source files. Inspect the returned file paths
+and matching passages to find your function. A file may have several matching
+passages.
+
+If no results appear, use the [verification guide](verification.md) and
+[query guidance](query-craft.md) before continuing.
 
 ## Step 4: Narrow the search to part of your project
 
-Run the same query again with a path filter:
+Reuse your query from Step 3, adding a filter for one file. Replace `src/search.py`
+with a project-relative path from the results, keeping forward slashes and
+omitting any `:LINE` suffix:
 
-```
-uv run vaultspec-rag search "parse the query text into filters" --type code --include-path 'src/vaultspec_rag/search/_parsing.py'
-```
-
-Only the filter changed, so any difference in what comes back is the filter's
-doing. Cut to the first matching line again:
-
-```text
-1. src/vaultspec_rag/search/_parsing.py:51
-   def parse_query(raw_query: str) -> ParsedQuery:
-2. src/vaultspec_rag/search/_parsing.py:1
-   """Query parsing: extract metadata filter tokens from raw queries.
-3. src/vaultspec_rag/search/_parsing.py:31
-   _FILTER_KEY_MAP = {
+```bash
+uv run vaultspec-rag search "parse_query convert query text into filters" --type code --path "src/search.py"
 ```
 
-Ten results became three, every one of them inside the file you named, and the
-same passage that was first before is first again. Point the filter at a path your own tree has; if
-it does not exist, expect none, which is the filter working rather than the
-search failing.
+Check that every result belongs to the selected file. The `--path` option matches
+an exact project-relative path.
+
+See the [filter reference](query-craft.md#the-filter-surface) for other ways to
+narrow a search.
 
 ## When you are finished
 
