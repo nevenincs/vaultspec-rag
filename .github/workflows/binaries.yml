@@ -116,7 +116,7 @@ jobs:
   preflight:
     name: Preflight runners
     needs: derive-selectors
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Every required selector has an online runner
         shell: bash
