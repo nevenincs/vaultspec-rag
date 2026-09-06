@@ -312,20 +312,55 @@ If a run exhausts GPU memory, that's a runtime concern rather than an install on
 
 ## Upgrade
 
-Bump the dependency and sync:
+Close connected clients before stopping the service. The service may be shared
+with other clients, so coordinate the interruption.
+
+The service and setup commands use `vaultspec-rag`. For project dependencies, add `uv run`;
+for the temporary route, use your original `uvx` invocation. See
+[Python installation](#install-with-python).
 
 ```bash
-uv add --upgrade vaultspec-rag
-uv sync
+vaultspec-rag server stop
 ```
 
-`uv sync` refetches the platform PyTorch build if it changed. Two follow-ups apply only when a release changes bundled content. Run `uv run vaultspec-rag install --upgrade` to refresh the bundled rules and integration files. If a release pins a newer Qdrant, run `uv run vaultspec-rag server qdrant install --upgrade`.
+Resolve any stop failure before updating. Use the command for your installation route:
 
-Nothing migrates and nothing reindexes automatically. If a release notes a changed embedding or reranker model, reindex by hand with `index --rebuild`.
+| Installation route | Update command                            |
+| ------------------ | ----------------------------------------- |
+| Project dependency | `uv sync --upgrade-package vaultspec-rag` |
+| Standalone tool    | `uv tool upgrade vaultspec-rag`           |
+| Scoop              | `scoop update vaultspec-rag`              |
+| Homebrew           | `brew upgrade vaultspec-rag`              |
 
-One refresh matters for AI-assistant integrations. Workspaces set up before the tokenized launch format still carry a static MCP seed that bypasses vaultspec-core's launch renderer. `install --upgrade` rewrites it to the tokenized form, which renders a launch matching the workspace's declared placement. If an assistant's MCP config predates that refresh, re-run the client's MCP setup afterwards.
+uv upgrades respect version constraints. Preserve your Python selection and
+[CUDA build pin](#pin-the-gpu-build).
 
-The `server updates` commands are unrelated to upgrades; they control the automatic-reindex watcher, covered in [service mode](service-mode.md).
+For `uvx`, follow [version selection](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)
+and keep your chosen extras.
+
+From each project root, refresh the bundled rules, skills, and MCP files.
+Reuse your original installation options, including `--no-mcp` or `--local-only`
+if you selected them:
+
+```bash
+vaultspec-rag install --upgrade
+```
+
+If the [release notes](https://github.com/nevenincs/vaultspec-rag/releases) specify
+a new bundled Qdrant version, update Qdrant:
+
+```bash
+vaultspec-rag server qdrant install --upgrade
+```
+
+Restart the service with its usual options:
+
+```bash
+vaultspec-rag server start
+```
+
+Reconnect clients and [verify the install](#verify-the-install). If the release
+requires rebuilding indexes, follow [reindexing](verification.md#reindexing).
 
 ## Remove it
 
