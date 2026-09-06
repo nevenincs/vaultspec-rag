@@ -1,66 +1,23 @@
 # When search results look wrong
 
-Search reads the index, not your working tree. When a result looks wrong, the
-cause is usually one of three: the service is not healthy (`server doctor`), the
-index is behind the tree (`status`), or the tree it indexed is not the tree you
-meant (`index --dry-run`). Two more sections follow those: how to reindex, and
-how to gate a script on the same checks.
-
-This guide assumes an installed, provisioned workspace. If you do not have that
-yet, start with the [installation guide](installation.md). For what the service
-is and how it stays warm, see the [service mode guide](service-mode.md).
-
-Output below is from a run against this repository. Your paths, counts, and
-versions will differ.
+Search reads the stored index. Start with an [installed and provisioned
+workspace](installation.md). Output examples in this guide come from this
+repository. Counts and paths vary by project.
 
 ## Is the service healthy?
 
-```
+```bash
 vaultspec-rag server doctor
 ```
 
-```
-Service readiness
-Backend: server
-Readiness: ready for requests
-Live service:
-  status: running (running)
-  process: pid 46220 (alive)
-  network: port 8766 (listening)
-  heartbeat: 13s ago
-  release: 0.4.21 (matches this client)
-Installed dependencies: ready
-  torch: ready - CUDA available on NVIDIA GeForce RTX 4080 SUPER
-  models: ready - all 3 model repos present in the cache
-  qdrant: ready - qdrant binary resolves from provisioned
-Provisioning (vaultspec-rag):
-  declared mode: tool
-  install mode: mismatch - .mcp.json launch shape disagrees with the declared mode
-  version floor: ok
-```
+Inspect `Live service`, `Installed dependencies`, and, when present,
+`Provisioning (vaultspec-rag)`.
 
-One line above reports a failure state, and that run exits `1`.
+- For dependency faults, follow the [installation troubleshooting guide](installation.md#when-something-goes-wrong).
+- For service faults, follow the [service troubleshooting guide](service-mode.md#troubleshooting).
+- For provisioning faults, read the reported detail.
 
-So do not gate on the word `ready`. A service can be running, reachable, on a
-matching release, and still fail this check. Scan the lines rather than the
-summary - but scan the state each one reports, not the words it happens to use.
-Most of these lines never say `ready` or `ok` at all: `Backend: server`,
-`heartbeat: 13s ago` and `declared mode: tool` are all healthy, and taking the
-first line without those words would stop at the first of them. The fault is
-the line whose state is a problem, and it says so with a dash and an
-explanation after it. Above, that is `install mode: mismatch`.
-
-Two common failures and their fixes. A `release: ... (INCOMPATIBLE)` line means
-the running service is an older build than the client asking for it. Stop and
-start it after upgrading the package:
-
-```
-vaultspec-rag server stop
-vaultspec-rag server start
-```
-
-For a `Provisioning` mismatch, the [installation guide](installation.md) covers
-reconciling the install with the declared mode.
+If none of these checks reports a problem, [check whether the index is current](#is-the-index-current).
 
 ## Is the index current?
 
@@ -186,28 +143,7 @@ generation goes stale.
 
 ## Gating a script on these checks
 
-Gate on the exit code. The top of the JSON body is not enough: `server doctor
---json` returns `ok: true` with `data.ready: true` on the run above and still
-exits `1`. The mismatch that caused it is in the payload, but further down than
-a health check usually looks - `data.mode.mode_mismatch` reads `mismatch` on
-that run - so a script that gates on `ok` alone calls a failing workspace
-healthy.
-
-```bash
-if ! vaultspec-rag server doctor --json >/dev/null 2>&1; then
-  echo "service check failed; run 'vaultspec-rag server doctor' to see why" >&2
-  exit 1
-fi
-```
-
-For the index the exit code is not enough either, in the opposite direction:
-`status` exits `0` whenever it can report, including when what it reports is an
-empty or stale index. Read the counts and the generations from `status --json`
-and compare them against what you expect the tree to hold. A check that only
-asserts the service is running will pass against an index built last month.
-
-[Scripting and automation](automation.md) covers the JSON envelope and the exit
-codes in full.
+See [scripting and automation](automation.md) for JSON output and exit-code handling.
 
 ## Related documentation
 
