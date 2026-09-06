@@ -248,22 +248,27 @@ check index coverage, follow [verify the index](verification.md).
 
 ## When something goes wrong
 
-### Telling two lookalikes apart
+<p id="telling-two-lookalikes-apart"></p>
+<p id="the-driver-isn-t-loaded"></p>
+<p id="the-environment-has-a-processor-only-build"></p>
+<p id="a-tool-environment-lost-its-gpu-build"></p>
 
-A missing driver and a processor-only environment both end in a refusal to start. `nvidia-smi` distinguishes them. If it doesn't list your card, the driver isn't loaded, and reinstalling PyTorch doesn't help. If it does list your card but `server doctor` reports the `torch` line as not ready, the driver is fine and your environment holds the wrong build.
+### GPU backend unavailable
 
-### The driver isn't loaded
+A `torch: not ready` result from `server doctor` can mean missing PyTorch,
+an unavailable accelerator, an unsuitable PyTorch build, or rejected MPS fallback.
+Read the diagnostic detail before choosing a repair.
 
-Fix that before installing anything further. On Apple silicon, an unavailable MPS backend or `PYTORCH_ENABLE_MPS_FALLBACK=1` is an explicit startup failure, not a fallback.
+First, [confirm your GPU is visible](#confirm-your-gpu-is-visible). If that check
+fails, resolve the visibility problem before repairing packages. Apple silicon
+uses MPS, not CUDA.
 
-### The environment has a processor-only build
+For a project dependency, follow [Python installation](#install-with-python),
+including dependency sync. For a standalone `uv` tool on Linux or Windows,
+follow [GPU build pinning](#pin-the-gpu-build). Running `uv sync` in a project
+doesn't update the tool's environment.
 
-On Linux or Windows run `uv sync`, or `uv run vaultspec-rag install --sync`. On Apple silicon, sync the standard wheel and check that `torch.backends.mps.is_available()` is true.
-
-### A tool environment lost its GPU build
-
-Follow [Pin the GPU build](#pin-the-gpu-build) to save the CUDA wheel requirement
-in the tool's installation receipt.
+After making changes, [verify the install](#verify-the-install).
 
 ### `install` refused to repair the tool environment
 
