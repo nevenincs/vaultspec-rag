@@ -1,19 +1,17 @@
 name: CI
 
-# TWO TIERS, split by trust and by cost.
+# TWO TIERS, split by cost. Every job in both runs on the self-hosted fleet.
 #
-#   pull_request  -> `pr-gate` only. Minimal, and on a GitHub-HOSTED runner.
+#   pull_request  -> `pr-gate` only. Minimal.
 #   push to main,
 #   release,
-#   workflow_dispatch -> the full tier below, on the self-hosted fleet.
+#   workflow_dispatch -> the full tier below.
 #
-# The split is not only about speed. This repository is PUBLIC, and a
-# `pull_request` from a fork runs code the author of the pull request
-# controls. Scheduling that onto a self-hosted runner is arbitrary code
-# execution on a real workstation that also hosts a live service and other
-# work. Every trigger that reaches the self-hosted fleet below therefore
-# requires write access to this repository; the one trigger that does not is
-# the one that stays on hosted infrastructure.
+# THE TRUST QUESTION THE SPLIT NO LONGER ANSWERS. This repository is PUBLIC,
+# and a `pull_request` from a fork runs code the author of the pull request
+# controls. That code now runs on the fleet like everything else, so the
+# protection has to come from the repository's own fork-approval setting for
+# workflow runs rather than from where the job lands.
 on:
   push:
     branches:
@@ -64,8 +62,7 @@ jobs:
       # Each job carries its own literal group instead.
       group: ci-workflow-lint-${{ github.ref }}
       cancel-in-progress: false
-    # Hosted: this runs on pull_request too, so it must not reach the fleet.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -89,9 +86,8 @@ jobs:
     # the comprehensive tier, because paying for it on every push to every
     # branch buys latency, not signal.
     #
-    # Hosted, and that is load-bearing rather than incidental: see the trust
-    # note on the triggers above. A fork pull request runs here, so "here"
-    # must not be a workstation.
+    # A fork pull request runs here, on the fleet; see the trust note on the
+    # triggers above for what that does and does not protect.
     if: github.event_name == 'pull_request'
     timeout-minutes: 25
     concurrency:
@@ -99,7 +95,7 @@ jobs:
       # run is what you want - only the tip of the branch is being reviewed.
       group: ci-pr-gate-${{ github.ref }}
       cancel-in-progress: true
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -152,9 +148,7 @@ jobs:
     # lane that gates a merge, which is how a Windows-only regression reaches
     # the default branch unseen.
     #
-    # Hosted, for the same reason pr-gate is: a fork pull request runs here,
-    # so "here" must not be a workstation. The self-hosted Windows job stays
-    # out of the pull-request lane and this leg is not a route into it. It
+    # On the fleet's Windows machine, like the comprehensive Windows job. It
     # needs no GPU, no model cache and no Hugging Face token: every test in
     # the class declares the fast tier, and the token gate applies only to the
     # GPU tiers.
@@ -163,7 +157,7 @@ jobs:
     concurrency:
       group: ci-pr-gate-windows-${{ github.ref }}
       cancel-in-progress: true
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2

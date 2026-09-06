@@ -65,7 +65,7 @@ jobs:
           - image: almalinux:8
             setup: dnf install -y -q curl
             arch: aarch64
-            runner: ubuntu-24.04-arm
+            runner: [self-hosted, ARM64, Linux]
             triple: aarch64-unknown-linux-gnu
           # Above the floor and below the build host, which is the band a user
           # is most likely to be in. bookworm is 2.36, jammy is 2.35.
@@ -77,7 +77,7 @@ jobs:
           - image: debian:bookworm-slim
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
             arch: aarch64
-            runner: ubuntu-24.04-arm
+            runner: [self-hosted, ARM64, Linux]
             triple: aarch64-unknown-linux-gnu
           - image: ubuntu:22.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
@@ -87,7 +87,7 @@ jobs:
           - image: ubuntu:22.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
             arch: aarch64
-            runner: ubuntu-24.04-arm
+            runner: [self-hosted, ARM64, Linux]
             triple: aarch64-unknown-linux-gnu
     # BOTH ARCHITECTURES, and the aarch64 half is new because the artifact it
     # tests is new.
@@ -111,6 +111,14 @@ jobs:
     # have pulled the x86_64 binary onto an ARM64 machine. `ldd` would have
     # refused it and the leg would have failed for the wrong reason - or worse,
     # been "fixed" by relaxing the assertion that catches it.
+    #
+    # THE aarch64 LEGS ARE KNOWN TO FAIL AS WRITTEN. They are container jobs
+    # on `macbook-neo-linux-arm-rag`, which is itself a colima container
+    # whose `/home/runner` is a named volume, so a sibling job container
+    # mounts a path that does not exist in the VM and the job dies in
+    # `Initialize containers` before any step runs. The fix is to bind-mount
+    # the runner's home from the identical path in the VM, which needs the
+    # runner re-enrolled.
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     steps:

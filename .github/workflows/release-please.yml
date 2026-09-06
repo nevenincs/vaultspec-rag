@@ -18,7 +18,7 @@ jobs:
   release-please:
     name: Release Please
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Run release-please
         id: release
