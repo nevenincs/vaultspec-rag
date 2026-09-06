@@ -173,54 +173,18 @@ uv run vaultspec-rag search "greeting" --type code --no-dedup-locales
 
 ## Prefer production, tests, or documentation
 
-To bias a code search toward one kind of file, use `--prefer` with `production`,
-`tests`, or `documentation`:
+Use `--prefer production`, `--prefer tests`, or `--prefer documentation` to favor that
+kind of code in the ranking:
 
-```
-uv run vaultspec-rag search "encode batch" --type code --prefer production --max-results 12 --scores
-```
-
-```text
- 1. src/vaultspec_rag/cli/_service_jobs_presentation.py:348 (score 1.0171)
- 2. src/vaultspec_rag/config/_settings.py:163 (score 0.9654)
- 3. src/vaultspec_rag/embeddings.py:1197 (score 0.9459)
- ...
-11. src/vaultspec_rag/indexer/_streaming.py:926 (score 0.8106)
-12. src/vaultspec_rag/indexer/_streaming.py:892 (score 0.7898)
-```
-
-Now the same query preferring tests instead:
-
-```
+```bash
 uv run vaultspec-rag search "encode batch" --type code --prefer tests --max-results 12 --scores
 ```
 
-```text
- 1. src/vaultspec_rag/cli/_service_jobs_presentation.py:348 (score 0.9171)
- 2. src/vaultspec_rag/config/_settings.py:163 (score 0.8654)
- 3. src/vaultspec_rag/embeddings.py:1197 (score 0.8459)
- ...
-11. src/vaultspec_rag/indexer/_streaming.py:926 (score 0.7106)
-12. src/vaultspec_rag/tests/test_config.py:391 (score 0.7026)
-```
+This preference doesn't exclude other code results or guarantee that a preferred
+result ranks first. Inspect the returned passages to judge their relevance.
 
-Both blocks are against this project's own source, cut to their first three rows
-and last two; the rows between them are production files in the same order in
-each run.
-
-Read those two together, because the flag is easy to mistake for broken. Eleven
-of the twelve rows are the same file in the same position, and every one of them
-scores exactly `0.1000` lower in the second run. `--prefer` does not promote the
-domain you name; it takes a fixed amount off everything you did not name. So a
-result list that is all production stays in the same order and simply moves down
-the scale, and the only place the ranking can change is where a file from the
-preferred domain sits inside that margin. Here exactly one does: at row twelve a
-test file at `0.7026` displaces a production file that scored `0.7898`.
-
-That is the flag working, not failing. If you want tests and see no difference,
-the reason is usually that no test scored within a tenth of the production rows
-you are looking at - so widen `--max-results` before concluding the flag did
-nothing, or use `only:tests` to ask the harder question.
+To return only test code, use `only:tests` in the query instead. See
+[noise-domain filters](#filter-noise-by-domain) for other restrictions.
 
 
 ## Filter noise by domain

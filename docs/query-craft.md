@@ -53,20 +53,14 @@ See the [filter reference](#the-filter-surface) for more options.
 
 ## Name the nouns, and ask one thing
 
-Search matches your query two ways at once: by meaning, and by exact term. Pure
-natural language gives the second half little to work with. So describe the
-behavior and name the concrete nouns the target would use, in the same breath:
+Describe the behavior you want to find. Include relevant identifiers or technical
+terms when you know them:
 
 ```
 uv run vaultspec-rag search "immutable cache-control on non-hashed assets" --type vault
 ```
 
-Plain questions work. Against a current index, `why did we change how caching works` returned the right execution record first. Name the nouns when a rare
-identifier, symbol, or spelling is involved, where the exact half has something
-to catch.
-
-Ask one thing at a time. A query carrying two concepts ranks against both and
-matches the middle, which is usually neither. Run two searches.
+Ask one question at a time. Split unrelated questions into separate searches.
 
 ## The filter surface
 
@@ -83,7 +77,9 @@ Code results:
 | `--include-path` / `--exclude-path` | paths matching or missing a pattern      |
 | `--function-name` / `--class-name`  | one function or class                    |
 | `--structure`                       | one source-code structure kind           |
-| `--prefer`                          | production code, tests, or documentation |
+
+To favor production code, tests, or documentation without excluding other code results,
+use [`--prefer`](search-and-index.md#prefer-production-tests-or-documentation).
 
 Document and vault results:
 
