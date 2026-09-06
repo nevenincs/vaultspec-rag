@@ -17,9 +17,10 @@ name: Fleet Health
 # The second case is not hypothetical here: a workflow targeting a label the
 # fleet never had queued and self-cancelled for four months unnoticed.
 #
-# HOSTED, DELIBERATELY. A health check scheduled onto the fleet it monitors
-# dies with that fleet and reports nothing, which is worse than no check at
-# all - it looks like coverage. This job must stay on `ubuntu-latest`.
+# THE CHECK RUNS ON THE FLEET IT MONITORS, so it inherits the outage it
+# exists to report: when the fleet is down this job queues rather than
+# raising an issue, and silence here is not evidence of health. Read a run
+# that never starts as the alarm.
 
 on:
   schedule:
@@ -40,7 +41,7 @@ jobs:
   queue-age:
     name: Stalled Queue Check
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Find runs that no runner has claimed
         id: scan
