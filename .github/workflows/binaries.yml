@@ -56,8 +56,6 @@ jobs:
   # The gate is not the problem and this does not fight it. Stopping runners on
   # battery is correct; spending a day discovering it is not.
   #
-  # Hosted, deliberately - a preflight that needs the fleet cannot report that
-  # the fleet is down.
   # DERIVE, then call the fleet's own guard.
   #
   # This job used to contain a full copy of the preflight, and so did
@@ -73,11 +71,12 @@ jobs:
   # would reintroduce the drift the derivation exists to prevent, so the list
   # is computed here and handed over as an input.
   #
-  # Hosted, deliberately - a guard that needs the fleet cannot report that the
-  # fleet is down. That is one of the two exceptions the fleet standard allows.
+  # On the fleet, like every other job here. The derivation is a checkout and
+  # an awk pass over a file in this repository - it needs no capability the
+  # build runners do not already have.
   derive-selectors:
     name: Derive the selectors this matrix requires
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, build]
     outputs:
       selectors: ${{ steps.derive.outputs.selectors }}
     steps:
@@ -95,8 +94,8 @@ jobs:
           workflow=".github/workflows/binaries.yml"
           [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out" >&2; exit 1; }
 
-          # Only bracketed `runner:` values are label sets. A string-valued
-          # runner is a hosted one and has no fleet runner to check.
+          # Only bracketed `runner:` values are label sets, and every leg of
+          # this matrix now carries one.
           mapfile -t selectors < <(awk -F'[][]' '/^[[:space:]]*runner:/ && NF > 2 {print $2}' "${workflow}" | tr -d ' ' | tr '[:upper:]' '[:lower:]' | sort -u)
           if [ "${#selectors[@]}" -eq 0 ]; then
             echo "::error::derived no selector from ${workflow}; refusing to pass vacuously" >&2
@@ -271,20 +270,16 @@ jobs:
           # The accelerated torch pin already covers this target: the cu130
           # index publishes a manylinux_2_28_aarch64 wheel, which
           # tools/binaries/torch_channel.py resolves like any other.
-          # HOSTED, and the only leg that is. `macbook-neo-linux-arm-rag`
-          # still cannot serve this target and nothing about that has changed:
-          # it is itself a colima container with no reachable docker daemon, so
-          # a nested container dies in `Initialize containers` with
-          # `Value cannot be null. (Parameter 'network')`, and building
-          # natively there inherits the guest's glibc 2.39.
+          # ON THE FLEET, like every other leg. This target is served by
+          # `macbook-neo-linux-arm-rag`.
           #
-          # The note this replaces said the fix was "an ARM64 Linux host that
-          # can run containers, at which point this gets the same pinned
-          # manylinux_2_28_aarch64 image as x86_64 and the floor drops to 2.28
-          # with it". That host is `ubuntu-24.04-arm`: a GitHub-hosted ARM64
-          # runner with a working docker daemon, FREE for public repositories,
-          # which this repository is. No hardware was needed - the blocker was
-          # the assumption that hosted runners were not an option here.
+          # KNOWN TO FAIL AS WRITTEN, and stated here rather than discovered:
+          # that runner is itself a colima container whose `/home/runner` is a
+          # named volume, so the container this leg declares mounts a path that
+          # does not exist in the VM and the job dies in `Initialize containers`
+          # before any step runs. The fix is to bind-mount the runner's home
+          # from the identical path in the VM, which needs the runner
+          # re-enrolled; until then this leg cannot build.
           #
           # Same manylinux RELEASE as the x86_64 leg (2026.08.24-1), not merely
           # the same floor: the build environment is a downloaded, executed
@@ -295,7 +290,7 @@ jobs:
           # #397 started - a release no longer waits on that host being on AC
           # for this leg.
           - name: linux-aarch64
-            runner: ubuntu-24.04-arm
+            runner: [self-hosted, ARM64, Linux]
             target: aarch64-unknown-linux-gnu
             container: quay.io/pypa/manylinux_2_28_aarch64@sha256:29a6ceb78de5b00494e6e7456a72782a4cb54238de102e7491d15fe47789b4d1
           # NO macOS LEGS, deliberately. vaultspec-rag is CUDA-only:
@@ -589,15 +584,13 @@ jobs:
     name: Verify the release carries artifacts
     needs: release
     if: ${{ always() }}
-    # HOSTED. This job demotes a release whose build just failed - and a build
-    # fails most often when the fleet is congested or down, which is exactly
-    # when a self-hosted job will not be scheduled.
-    #
-    # vaultspec-dashboard proved the cost: its v0.1.7 guard sat QUEUED for over
-    # an hour behind the one Linux/X64 runner it shares with the build, while
-    # the empty release went on serving as `latest`, and had to be demoted by
-    # hand. The preflight above is hosted on this same reasoning.
-    runs-on: ubuntu-latest
+    # ON THE FLEET, and it shares the build's Linux/X64 runners, so it is only
+    # scheduled once they are free. That cost is real and worth naming:
+    # vaultspec-dashboard's v0.1.7 guard sat QUEUED for over an hour behind the
+    # one Linux/X64 runner it shared with the build, while the empty release
+    # went on serving as `latest`, and had to be demoted by hand. A congested
+    # or down fleet delays this demotion rather than performing it.
+    runs-on: [self-hosted, Linux, X64, build]
     permissions:
       contents: write
       # Dispatching the acquisition check is a write to the Actions API.
@@ -615,8 +608,8 @@ jobs:
       #
       # The empty-derivation branch below meant the symptom would have been a
       # loud refusal rather than a vacuous pass, which is the right failure to
-      # have - but it is still a failure, and moving to a hosted runner makes
-      # it certain. So the file is now checked out explicitly.
+      # have - but it is still a failure, and inheriting a workspace is not a
+      # thing to rely on. So the file is now checked out explicitly.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
