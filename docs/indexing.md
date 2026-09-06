@@ -280,7 +280,7 @@ operation.
 Three surfaces carry the evidence when an index behaves unexpectedly.
 
 `vaultspec-rag status` reports stored counts, storage location, device, and the
-latest recorded indexing job per domain. See [Check index status](verification.md#is-the-index-current)
+latest recorded indexing job per domain. See [Check index status](verification.md#check-index-status)
 to interpret the report.
 
 `vaultspec-rag server jobs` reports every index run and how it ended. A `failed`
