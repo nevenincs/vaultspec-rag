@@ -15,96 +15,41 @@ If expected code is missing from results,
 [check index status](verification.md#check-index-status). A dry run previews file
 selection; it does not show what is already stored.
 
-## Filters do more than phrasing
+<p id="filters-do-more-than-phrasing"></p>
 
-Filters are the sharpest tool here, because they remove candidates before
-ranking rather than competing with it.
+## Narrow results with filters
 
-### Narrowing document results
+Keep your query and add a filter to select part of the index.
 
-The same query against one project's vault, narrowed two ways:
+<p id="narrowing-document-results"></p>
 
-```
+### Document results
+
+Limit document results to ADRs:
+
+```bash
 uv run vaultspec-rag search "cache control on deployed assets" --type vault --doc-type adr
 ```
 
-```text
-1. .vault/adr/2026-08-28-docs-site-adr.md
-   adr | feature: docs-site | 2026-08-28
-2. .vault/adr/2026-07-01-neve-deployment-adr.md
-   adr | feature: neve-deployment | 2026-07-01
-3. .vault/adr/2026-06-28-landing-page-adr.md
-   adr | feature: landing-page | 2026-06-28
-4. .vault/adr/2026-09-02-docs-site-version-truth-adr.md
-   adr | feature: docs-site | 2026-09-02
-```
+To search one feature across document types, replace `docs-site` with your feature tag:
 
-Every result is an `adr`, which is the filter doing its work and the shape you
-want when you're asking why something was decided. The matching passage that
-prints under each result is cut from the blocks here; the ranks, the paths, and
-the type-and-feature lines are as printed. Ask instead for everything on one
-feature:
-
-```
+```bash
 uv run vaultspec-rag search "cache control on deployed assets" --type vault --feature docs-site
 ```
 
-```text
-1. .vault/plan/2026-08-28-docs-site-plan.md
-   plan | feature: docs-site | 2026-08-28
-2. .vault/exec/2026-08-28-docs-site/2026-08-28-docs-site-W05-P09-S50.md
-   exec | feature: docs-site | 2026-08-28
-3. .vault/adr/2026-08-28-docs-site-adr.md
-   adr | feature: docs-site | 2026-08-28
-```
+<p id="narrowing-code-results"></p>
 
-Nine came back and the first three are shown. A plan, an execution record, and
-the decision behind them: the document type is no longer fixed, and the feature
-is. Same query, different question. One asked "what was decided", the other asked
-"what happened on this feature". Neither needed better wording.
+### Code results
 
-### Narrowing code results
+Exclude a mirrored directory. Replace `.claude/*` with the path glob you want to exclude:
 
-Path filters earn their place when a tree is mirrored. Here the same file is
-indexed under two roots, and every result arrives doubled:
-
-```
-uv run vaultspec-rag search "detect antipatterns in the page DOM" --type code
-```
-
-```
-1. .claude/skills/impeccable/scripts/detector/detect-antipatterns-browser.js:8278
-2. .agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js:8278
-3. .claude/skills/impeccable/scripts/detector/detect-antipatterns-browser.js:5039
-4. .agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js:5039
-```
-
-Two distinct chunks occupying four slots. Drop one copy of the tree and the same
-four slots carry four different pieces of code:
-
-```
+```bash
 uv run vaultspec-rag search "detect antipatterns in the page DOM" --type code --exclude-path ".claude/*"
 ```
 
-```
-1. .agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js:8278
-2. .agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js:1
-3. .agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js:1322
-4. .agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js:5039
-```
+Append `--language python` to limit code results to Python.
 
-`--language` steers the same question into a different part of the project.
-Asked without one, that query answers from JavaScript. Add `--language python`
-to the command above and the same question answers from the project's own
-Python instead:
-
-```
-1. src/vaultspec_marketing/scrape/__init__.py:1
-2. src/vaultspec_marketing/__main__.py:1
-```
-
-The index holds both sets. The filter decided which one you were asking
-about.
+See the [filter reference](#the-filter-surface) for more options.
 
 ## Name the nouns, and ask one thing
 
