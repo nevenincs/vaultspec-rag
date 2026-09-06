@@ -1,8 +1,7 @@
 # When search results look wrong
 
 Search reads the stored index. Start with an [installed and provisioned
-workspace](installation.md). Output examples in this guide come from this
-repository. Counts and paths vary by project.
+workspace](installation.md).
 
 ## Is the service healthy?
 
@@ -39,50 +38,21 @@ files are missing, [check file coverage](#is-it-indexing-the-right-files).
 
 ## Is it indexing the right files?
 
-Even a current index is useless if it covers the wrong tree. Ask before
-indexing, not after:
+Preview which source files would be indexed without changing the index:
 
-```
-vaultspec-rag index --type code --dry-run --dry-run-limit 5
-```
-
-`--dry-run-limit` shows 50 paths by default. Raise it, or use `--json`, which
-lists every path regardless.
-
-```
-Dry run: 717 source-code files would be indexed.
-Admission summary:
-  - unowned/rejected/ignored: 12
-  - code/rejected/source_profile_excluded: 181
-  - code/admitted/source_profile: 717
-Files shown:
-  - conftest.py
-  - src/vaultspec_rag/__init__.py
-  - src/vaultspec_rag/__main__.py
-  - src/vaultspec_rag/_anchor_claim.py
-  - src/vaultspec_rag/_atomic_write.py
-712 more files not shown. Use --dry-run-limit 717 or --json for the full list.
+```bash
+vaultspec-rag index --type code --dry-run
 ```
 
-That run is this project's own source. Another page shows the same command
-against a smaller repository and reports a different admitted count, which is
-the point of running it: the numbers describe the tree in front of you.
+Check that expected files appear and unwanted files stay out. The admission
+summary counts admitted and rejected files by reason.
 
-The admission summary is the answer: read it off the three lines above rather
-than off this sentence, because the counts move with the tree. In that run it
-is 717 admitted, 181 rejected by the source profile, and 12 ignored as
-unowned, which is 910 files considered. A gap that size is not a fault by
-itself, because the profile exists to keep vendored trees and build output out
-of your results.
+By default, the preview displays up to 50 paths. Use `--dry-run-limit N` to
+change that limit, or add `--json` for the full admitted path list.
 
-Scan the file list to confirm the profile admitted what you expected. These are
-the project's own modules, which is what you want. If instead the list opens
-with vendored dependencies or tooling scripts, the profile is admitting the
-wrong tree, and indexing it will bury your code under things you did not write.
-
-Fix that before you index. Narrow with `--exclude`, which takes a repeatable
-gitignore-syntax pattern, or change the profile. The
-[indexing guide](indexing.md) covers the profiles and how admission is decided.
+If file selection is wrong, review the [admission rules](indexing.md#indexing-pipeline)
+and [routing configuration](preprocessing-hooks.md#configure-rules). Repeat the
+preview after making changes.
 
 ## Reindexing
 
