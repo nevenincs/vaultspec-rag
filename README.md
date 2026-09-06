@@ -140,39 +140,16 @@ Without a Python toolchain, use the [prebuilt Windows or Linux binaries](docs/in
 Follow the [removal guide](docs/installation.md#remove-it) to preview project changes,
 choose whether to clean up indexes, and remove the package.
 
-## Write a query that finds it
+<p id="write-a-query-that-finds-it"></p>
+<p id="narrow-the-results"></p>
+<p id="check-on-the-index"></p>
 
-Describe the behaviour and include names or terms the code would use. The description
-finds conceptual matches; the specific terms help distinguish them. See
-[query examples](docs/query-craft.md) for choosing words and interpreting weak matches.
+## Refine searches
 
-## Narrow the results
-
-For code, add `--include-path "src/**"` to limit results to a source directory, or
-`--language python` to select a language. For decision records, use
-`--type vault --doc-type adr`. See [search filters](docs/query-craft.md) for excluding
-tests, generated files, and other noise.
-
-<p align="center">
-<img src="assets/term-search-code.svg" alt="vaultspec-rag code search - the reranker implementation surfaced from a plain-English description" width="880" />
-</p>
-
-## Check on the index
-
-`vaultspec-rag status` tells you what's indexed, where it's stored, and which GPU it's
-using. `vaultspec-rag server doctor` tells you whether the service, models, and search
-server are ready.
-
-To watch indexing as it happens, `vaultspec-rag server jobs --watch` opens a live view of
-the running service. You get progress per job, what's waiting on the GPU, and the log for
-whichever job you select.
-
-<p align="center">
-<img src="assets/term-jobs-watch.svg" alt="vaultspec-rag server jobs --watch - the live jobs interface showing an active vault index, two jobs waiting on the GPU slot, and the selected job's service log" width="880" />
-</p>
-
-If the index has fallen behind, run `vaultspec-rag index` again - it only picks up what
-changed. See [verify the index](docs/verification.md).
+- [Choose query terms](docs/query-craft.md#name-the-nouns-and-ask-one-thing).
+- [Filter by language, path, or document type](docs/query-craft.md#the-filter-surface).
+- [Investigate missing results and index coverage](docs/verification.md).
+- [Monitor indexing jobs](docs/service-mode.md#observe-activity).
 
 ## Use it from an AI assistant
 
