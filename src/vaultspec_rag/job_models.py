@@ -658,6 +658,16 @@ class JobSnapshot:
                 "source": self.spec.source.value,
                 "project_root": self.spec.project_root,
                 "mode": self.spec.mode.value if self.spec.mode is not None else None,
+                "requested_mode": (
+                    self.spec.mode.value if self.spec.mode is not None else None
+                ),
+                # Incremental execution is forbidden from escalating beyond
+                # its admitted cost class. Keeping the effective value
+                # explicit makes that invariant observable instead of asking
+                # clients to infer it from logs.
+                "effective_mode": (
+                    self.spec.mode.value if self.spec.mode is not None else None
+                ),
             },
             "state": self.state.value,
             "desired_state": self.desired_state.value,
