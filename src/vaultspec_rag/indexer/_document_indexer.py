@@ -1318,26 +1318,17 @@ class DocumentIndexer:
                     limits=limits,
                     run_control=run_control,
                 )
-            except RunLedgerCompatibilityError:
-                # The manifest is trustworthy and the store still backs it,
-                # but the ledger holds no generation the run can build on -
-                # nothing to resume, nothing to diff against. That is the
-                # same "no usable published evidence" the checks above
-                # escalate for, so it converges on the same rebuild rather
-                # than failing every incremental until someone intervenes.
-                logger.info(
-                    "No compatible published document manifest; running a "
-                    "full failure-safe reconciliation"
-                )
+            except RunLedgerCompatibilityError as exc:
+                raise JobError(
+                    JobErrorKind.FULL_REINDEX_REQUIRED,
+                    f"no compatible published document manifest ({exc}); request "
+                    "an explicit full document reindex",
+                ) from exc
         if previous is None or checkpoint is None:
-            return self.full_index(
-                reporter=reporter,
-                preflight=DocumentIndexPreflight(
-                    self.root_dir,
-                    policy,
-                    self._discover(policy, run_control=run_control),
-                ),
-                run_control=run_control,
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                "no compatible storage-backed document manifest; request an "
+                "explicit full document reindex",
             )
 
         with checkpoint.preserve_incomplete_generation():
