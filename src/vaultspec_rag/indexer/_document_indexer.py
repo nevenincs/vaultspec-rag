@@ -1320,6 +1320,7 @@ class DocumentIndexer:
                     run_control=run_control,
                 )
             except RunLedgerCompatibilityError as exc:
+                logger.warning("document incremental ledger is incompatible: %s", exc)
                 raise JobError(
                     JobErrorKind.FULL_REINDEX_REQUIRED,
                     f"no compatible published document manifest ({exc}); request "

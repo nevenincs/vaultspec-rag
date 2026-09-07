@@ -998,6 +998,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 )
             )
         except RunLedgerCompatibilityError as exc:
+            logger.warning("code incremental ledger is incompatible: %s", exc)
             raise JobError(
                 JobErrorKind.FULL_REINDEX_REQUIRED,
                 f"no compatible published code manifest ({exc}); request an "
@@ -1219,6 +1220,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 )
             )
         except RunLedgerCompatibilityError as exc:
+            logger.warning("scoped code ledger is incompatible: %s", exc)
             raise JobError(
                 JobErrorKind.FULL_REINDEX_REQUIRED,
                 f"no compatible published code manifest ({exc}); request an "

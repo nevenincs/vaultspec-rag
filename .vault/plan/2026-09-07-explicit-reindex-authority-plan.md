@@ -9,7 +9,7 @@ related:
   - '[[2026-09-07-explicit-reindex-authority-research]]'
 modified: '2026-09-07'
 body_schema: body-v2
-body_hash: 'sha256:f4af4048b5ac0702d2c643120d336dc59a5e9c191ce1152655f86e4f5ec54285'
+body_hash: 'sha256:00ac064e15f0961bcd650d807182d03e39f1d335d35f285104e5577fba51d797'
 ---
 
 # `explicit-reindex-authority` plan
@@ -69,7 +69,7 @@ Recognize durable cleanup work, propagate degradation, and preserve compatibilit
 
 - [x] `W03.P05.S10` - Record durable progress for committed reconciliation batches; `src/vaultspec_rag/indexer/_route_migration.py, src/vaultspec_rag/indexer/_run_policy.py`.
 - [x] `W03.P05.S11` - Propagate degraded job counts and effective operation through health; `src/vaultspec_rag/server`.
-- [ ] `W03.P05.S12` - Log compatibility causes and correct local-only startup guidance; `src/vaultspec_rag`.
+- [x] `W03.P05.S12` - Log compatibility causes and correct local-only startup guidance; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/indexer/_codebase_indexer.py, src/vaultspec_rag/indexer/_document_indexer.py`.
 
 ### Phase `W03.P06` - Prove the system invariant
 

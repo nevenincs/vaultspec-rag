@@ -469,8 +469,10 @@ async def _start_components(
                     f"start: {exc}\n"
                     "Provision the server binary with: "
                     "vaultspec-rag server qdrant install\n"
-                    "Or run the service in local-only mode (on-disk store, "
-                    "no server) with: vaultspec-rag server start --local-only"
+                    "Local-only is a separate, project-local backend and does "
+                    "not contain data from the failed server backend. Select it "
+                    "only intentionally with: vaultspec-rag server start "
+                    "--local-only"
                 ) from exc
             # Publish the in-process URL through the env so every
             # config read (registry stores, watcher reindexes) sees
