@@ -201,5 +201,6 @@ class DocumentRunCheckpoint(RunCheckpointBase):
                 membership_fingerprint=fingerprints.membership,
                 content_fingerprint=fingerprints.content,
                 policy_snapshot=self.policy.fingerprints.snapshot,
+                backend_identity=self.generation.signature.backend_identity,
             )
         )

@@ -338,5 +338,6 @@ class CodeRunCheckpoint(RunCheckpointBase):
                 content_epoch=fingerprints.content,
                 published_points_count=published_points,
                 published_files_count=published_files,
+                backend_identity=self.generation.signature.backend_identity,
             )
         )

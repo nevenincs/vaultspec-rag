@@ -332,6 +332,41 @@ class WatcherRetryPolicy:
                     state,
                     convergence_pending=True,
                     convergence_generation=state.convergence_generation + 1,
+                    last_error_kind=(
+                        None
+                        if state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+                        and not state.unscoped_required
+                        and self._scoped_generation == state.convergence_generation
+                        else state.last_error_kind
+                    ),
+                    last_error_detail=(
+                        None
+                        if state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+                        and not state.unscoped_required
+                        and self._scoped_generation == state.convergence_generation
+                        else state.last_error_detail
+                    ),
+                    consecutive_failures=(
+                        0
+                        if state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+                        and not state.unscoped_required
+                        and self._scoped_generation == state.convergence_generation
+                        else state.consecutive_failures
+                    ),
+                    next_retry_at=(
+                        0.0
+                        if state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+                        and not state.unscoped_required
+                        and self._scoped_generation == state.convergence_generation
+                        else state.next_retry_at
+                    ),
+                    circuit_state=(
+                        WatcherCircuitState.CLOSED
+                        if state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+                        and not state.unscoped_required
+                        and self._scoped_generation == state.convergence_generation
+                        else state.circuit_state
+                    ),
                     updated_at=timestamp,
                 )
             )

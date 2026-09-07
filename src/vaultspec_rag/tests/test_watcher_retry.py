@@ -205,6 +205,11 @@ def test_full_reindex_required_is_terminal_and_clears_pending_intent(
     assert not state.convergence_pending
     assert not policy.admit(now=1000.0).admitted
 
+    renewed = policy.mark_convergence_pending(now=1001.0)
+    assert renewed.last_error_kind is None
+    assert renewed.circuit_state is WatcherCircuitState.CLOSED
+    assert policy.admit(now=1001.0).admitted
+
 
 def test_half_open_probe_is_single_flight(tmp_path: Path) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)

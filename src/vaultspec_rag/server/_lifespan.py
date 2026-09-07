@@ -1201,7 +1201,10 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
             "interrupted",
         }:
             continue
-        operation = str(spec.get("effective_mode") or spec.get("mode") or "unknown")
+        typed_spec = cast("dict[str, object]", spec)
+        operation = str(
+            typed_spec.get("effective_mode") or typed_spec.get("mode") or "unknown"
+        )
         effective_operations[operation] = effective_operations.get(operation, 0) + 1
     jobs_health: dict[str, object] = {
         "running": summary["running"],

@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._index_breadth import index_meta_path
+from ..._index_integrity import VERDICT_UNVERIFIABLE, evaluate_index_integrity
+from ..._source_types import PublicSourceType
+from ...indexer._code_meta import publish_meta_from_file_states
 from ...indexer._content_policy import ContentKind
+from ...indexer._file_state import FileState
 from ...indexer._run_ledger_models import RunOperation, RunSignature
 from ...indexer._run_policy import DurableProgressKind, RunPolicy
 from ...store_runtime import VaultStore
@@ -65,3 +70,25 @@ def test_committed_reconciliation_batches_extend_liveness() -> None:
         DurableProgressKind.RECONCILIATION_BATCH_COMMITTED
     )
     assert not snapshot.expired
+
+
+def test_foreign_backend_manifest_cannot_claim_loss(tmp_path: Path) -> None:
+    publish_meta_from_file_states(
+        index_meta_path(tmp_path, PublicSourceType.CODE),
+        [FileState.indexed("src/a.py", ContentKind.CODE, "digest")],
+        generation_id="generation",
+        membership_epoch="membership",
+        content_epoch="content",
+        published_points_count=10,
+        backend_identity="qdrant-local:C:/foreign",
+    )
+
+    verdict = evaluate_index_integrity(
+        tmp_path,
+        PublicSourceType.CODE,
+        1,
+        claim_ttl_seconds=0.0,
+        backend_identity="qdrant-server:http://127.0.0.1:6333",
+    )
+
+    assert verdict.verdict == VERDICT_UNVERIFIABLE
