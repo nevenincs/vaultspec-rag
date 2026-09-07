@@ -9,7 +9,7 @@ related:
   - '[[2026-09-07-explicit-reindex-authority-research]]'
 modified: '2026-09-07'
 body_schema: body-v2
-body_hash: 'sha256:67d6bce57e6697373c3dad42a945dd0a9829a58add58f2e8dad353a69d15f38c'
+body_hash: 'sha256:03df5d36dd4bd73c171fc5c7aba5d811686787ac165cfe49edfd4d677a3797c8'
 ---
 
 # `explicit-reindex-authority` plan
@@ -30,7 +30,7 @@ Establish the typed refusal and make every incremental indexer incapable of ente
 
 Add one typed service-domain outcome and remediation for detected work that requires explicit full-reindex authority.
 
-- [ ] `W01.P01.S01` - Add full-reindex-required taxonomy and remediation; `src/vaultspec_rag/_job_errors.py`.
+- [x] `W01.P01.S01` - Add full-reindex-required taxonomy and remediation; `src/vaultspec_rag/_job_errors.py`.
 - [ ] `W01.P01.S02` - Expose requested and effective indexing cost class in job state; `src/vaultspec_rag/job_models.py`.
 
 ### Phase `W01.P02` - Remove silent indexer escalation
