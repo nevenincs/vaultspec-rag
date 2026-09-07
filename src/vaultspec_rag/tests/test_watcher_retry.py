@@ -187,6 +187,25 @@ def test_third_failure_opens_the_circuit(tmp_path: Path) -> None:
     assert not policy.admit(now=59.9).admitted
 
 
+def test_full_reindex_required_is_terminal_and_clears_pending_intent(
+    tmp_path: Path,
+) -> None:
+    policy = _policy(tmp_path / "code.json", tmp_path)
+    policy.mark_convergence_pending(now=0.0)
+
+    state = _fail_once(
+        policy,
+        JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "explicit consent required"),
+        now=1.0,
+        random_unit=0.5,
+    )
+
+    assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert state.circuit_state is WatcherCircuitState.OPEN
+    assert not state.convergence_pending
+    assert not policy.admit(now=1000.0).admitted
+
+
 def test_half_open_probe_is_single_flight(tmp_path: Path) -> None:
     policy = _policy(tmp_path / "code.json", tmp_path)
     _drive_to_open_circuit(policy)

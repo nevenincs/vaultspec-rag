@@ -9,7 +9,7 @@ related:
   - '[[2026-09-07-explicit-reindex-authority-research]]'
 modified: '2026-09-07'
 body_schema: body-v2
-body_hash: 'sha256:00ac064e15f0961bcd650d807182d03e39f1d335d35f285104e5577fba51d797'
+body_hash: 'sha256:7363dde20468a5e4108fc3d33896266fc67fc7a34c042d4c56248a8909cc8f8b'
 ---
 
 # `explicit-reindex-authority` plan
@@ -75,7 +75,7 @@ Recognize durable cleanup work, propagate degradation, and preserve compatibilit
 
 Exercise cross-backend, watcher, search, timeout, health, and explicit rebuild behavior through guard and integration tests.
 
-- [ ] `W03.P06.S13` - Add mutation-proven unit guards for automatic full-work refusal; `src/vaultspec_rag/tests`.
+- [x] `W03.P06.S13` - Add mutation-proven unit guards for automatic full-work refusal; `src/vaultspec_rag/tests`.
 - [ ] `W03.P06.S14` - Add integration coverage for backend transitions and contended finalization; `src/vaultspec_rag/tests/integration`.
 
 ## Parallelization
