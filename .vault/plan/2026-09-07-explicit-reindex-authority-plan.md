@@ -9,7 +9,7 @@ related:
   - '[[2026-09-07-explicit-reindex-authority-research]]'
 modified: '2026-09-07'
 body_schema: body-v2
-body_hash: 'sha256:14b56d9bf3e58e076846a37490cba6e430d1da801d3cb599a9180c7ffa3a7371'
+body_hash: 'sha256:396f473da4e8d0d60541432f9bb154463f45cd5e0dec6fc91b05b36fc6e64515'
 ---
 
 # `explicit-reindex-authority` plan
@@ -55,7 +55,7 @@ Make sidecars and checkpoints distinguish local and managed backend evidence wit
 
 Keep search read-only by default and recover exact watcher scope or stop with the typed refusal.
 
-- [ ] `W02.P04.S07` - Disable search-triggered mutation by default while retaining integrity reporting; `src/vaultspec_rag/_integrity_remediation.py`.
+- [x] `W02.P04.S07` - Disable search-triggered mutation by default while retaining integrity reporting; `src/vaultspec_rag/_integrity_remediation.py, src/vaultspec_rag/config/_settings.py`.
 - [ ] `W02.P04.S08` - Persist bounded watcher path scope and refuse unknown-scope recovery; `src/vaultspec_rag/watcher_retry.py`.
 - [ ] `W02.P04.S09` - Stop automatic retries for full-reindex-required outcomes; `src/vaultspec_rag/watcher_execution.py`.
 
