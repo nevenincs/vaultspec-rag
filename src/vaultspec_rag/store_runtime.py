@@ -14,6 +14,7 @@ import warnings
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal, TypedDict, Unpack
+from urllib.parse import urlsplit
 
 from . import store_schema
 from ._store_locks import (
@@ -343,8 +344,16 @@ class VaultStore(
         self.db_path: str | _pathlib.Path
         if qdrant_url:
             self._open_server_client(qdrant_url, cfg)
+            parsed = urlsplit(qdrant_url)
+            endpoint = f"{parsed.scheme.lower()}://{parsed.hostname or ''}"
+            if parsed.port is not None:
+                endpoint += f":{parsed.port}"
+            endpoint += parsed.path.rstrip("/")
+            self.backend_identity = f"qdrant-server:{endpoint}"
         else:
             self._open_local_client(cfg)
+            local_identity = _pathlib.Path(self.db_path).resolve()
+            self.backend_identity = f"qdrant-local:{local_identity}"
 
         # Default the collection's dense dimension from the same source the wire
         # descriptor advertises, so the advertised dimension always equals what
