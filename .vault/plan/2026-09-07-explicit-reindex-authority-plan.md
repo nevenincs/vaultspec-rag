@@ -9,7 +9,7 @@ related:
   - '[[2026-09-07-explicit-reindex-authority-research]]'
 modified: '2026-09-07'
 body_schema: body-v2
-body_hash: 'sha256:3a2b9ec0c4bf48fe57d80ea31aedddab614553847232a42256575f26a0137eda'
+body_hash: 'sha256:14b56d9bf3e58e076846a37490cba6e430d1da801d3cb599a9180c7ffa3a7371'
 ---
 
 # `explicit-reindex-authority` plan
@@ -49,7 +49,7 @@ Bind evidence to its backend, preserve watcher scope, and keep search-time integ
 Make sidecars and checkpoints distinguish local and managed backend evidence without rebuilding older or foreign evidence.
 
 - [x] `W02.P03.S05` - Persist and compare backend identity in publication evidence; `src/vaultspec_rag/indexer`.
-- [ ] `W02.P03.S06` - Carry backend identity through store and checkpoint construction; `src/vaultspec_rag/store_runtime.py`.
+- [x] `W02.P03.S06` - Carry backend identity through store and checkpoint construction; `src/vaultspec_rag/store_runtime.py`.
 
 ### Phase `W02.P04` - Bound automatic initiators and recovery scope
 

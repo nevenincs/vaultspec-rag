@@ -818,6 +818,7 @@ class DocumentIndexer:
                     sparse_dimension=sparse_dimension,
                     encode_batch_size=int(config.embedding_document_encode_batch_size),
                 ),
+                backend_identity=self.store.backend_identity,
             )
         )
         self._last_checkpoint = checkpoint

@@ -604,4 +604,9 @@ def _signature_from_payload(payload: dict[str, object]) -> RunSignature:
             payload, "configuration_fingerprint", str
         ),
         policy_fingerprint=_typed_field(payload, "policy_fingerprint", str),
+        backend_identity=(
+            str(payload["backend_identity"])
+            if isinstance(payload.get("backend_identity"), str)
+            else "legacy:unknown"
+        ),
     )
