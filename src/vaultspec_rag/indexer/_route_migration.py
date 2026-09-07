@@ -20,6 +20,7 @@ from ._run_ledger_models import (
     ledger_transaction,
 )
 from ._run_ledger_runtime import RunLedger
+from ._run_policy import DurableProgressKind
 
 if TYPE_CHECKING:
     import sqlite3
@@ -457,6 +458,10 @@ def reconcile_origin_after_destination(
         _delete_origin_points(store, migration)
         journal.mark_origin_deleted(migration.migration_id)
         removed += len(migration.point_ids)
+        checkpoint.run_policy.record_durable_progress(
+            kind=DurableProgressKind.RECONCILIATION_BATCH_COMMITTED,
+            label="route origin deletion committed",
+        )
         checkpoint.run_policy.checkpoint("route migration after origin delete")
     return removed
 
@@ -524,6 +529,10 @@ def reconcile_checkpoint_routes(
             _delete_origin_points(store, migration)
             journal.mark_origin_deleted(migration.migration_id)
             removed += len(migration.point_ids)
+            checkpoint.run_policy.record_durable_progress(
+                kind=DurableProgressKind.RECONCILIATION_BATCH_COMMITTED,
+                label="route page deletion committed",
+            )
             checkpoint.run_policy.checkpoint("route page after origin delete")
     return removed
 
@@ -595,6 +604,10 @@ def purge_unpublished_rows(
             code_collection=options.code_collection,
         )
         removed += len(stale_ids)
+        checkpoint.run_policy.record_durable_progress(
+            kind=DurableProgressKind.RECONCILIATION_BATCH_COMMITTED,
+            label="stale route purge committed",
+        )
         checkpoint.run_policy.checkpoint("route purge after stale delete")
     return removed
 

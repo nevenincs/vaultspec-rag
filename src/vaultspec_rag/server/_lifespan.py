@@ -469,8 +469,10 @@ async def _start_components(
                     f"start: {exc}\n"
                     "Provision the server binary with: "
                     "vaultspec-rag server qdrant install\n"
-                    "Or run the service in local-only mode (on-disk store, "
-                    "no server) with: vaultspec-rag server start --local-only"
+                    "Local-only is a separate, project-local backend and does "
+                    "not contain data from the failed server backend. Select it "
+                    "only intentionally with: vaultspec-rag server start "
+                    "--local-only"
                 ) from exc
             # Publish the in-process URL through the env so every
             # config read (registry stores, watcher reindexes) sees
@@ -1189,6 +1191,21 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
             if isinstance(record.get("resilience"), dict)
         ]
     )
+    effective_operations: dict[str, int] = {}
+    for record in canonical_records:
+        spec = record.get("spec")
+        if not isinstance(spec, dict) or job_state(record) in {
+            "succeeded",
+            "failed",
+            "cancelled",
+            "interrupted",
+        }:
+            continue
+        typed_spec = cast("dict[str, object]", spec)
+        operation = str(
+            typed_spec.get("effective_mode") or typed_spec.get("mode") or "unknown"
+        )
+        effective_operations[operation] = effective_operations.get(operation, 0) + 1
     jobs_health: dict[str, object] = {
         "running": summary["running"],
         "queued": summary["queued"],
@@ -1196,6 +1213,8 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
         "transitional": summary["transitional"],
         "active": summary["active"],
         "stalled": summary["stalled"],
+        "degraded": summary["degraded"],
+        "effective_operations": effective_operations,
         "control_pending": summary["control_pending"],
         "states": summary["states"],
         "last_failed": _failed_job_health(last_failed),
@@ -1204,6 +1223,10 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
     degraded_reasons: list[str] = []
     if summary["stalled"]:
         degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
+    if summary["degraded"]:
+        degraded_reasons.append(
+            f"{summary['degraded']} indexing job(s) are degraded"
+        )
     if (
         last_failed is not None
         and _failure_belongs_to_this_generation(last_failed)

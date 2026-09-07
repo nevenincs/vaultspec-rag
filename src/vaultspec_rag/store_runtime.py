@@ -14,6 +14,7 @@ import warnings
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal, TypedDict, Unpack
+from urllib.parse import urlsplit
 
 from . import store_schema
 from ._store_locks import (
@@ -58,6 +59,7 @@ __all__ = [
     "DonorPoint",
     "IngestVerificationError",
     "VaultStore",
+    "configured_backend_identity",
 ]
 
 
@@ -65,6 +67,26 @@ _WRITE_LOCK_POLL_SECONDS = 0.1
 # Donor reads page ids in bounded batches: large enough to amortize the
 # round-trip, small enough that one response stays cheap to parse and hold.
 DONOR_RETRIEVE_BATCH_SIZE = 256
+
+
+def configured_backend_identity(root_dir: pathlib.Path | str) -> str:
+    """Return the canonical identity of the backend configured for *root_dir*."""
+    import pathlib as _pathlib
+
+    from .config._settings import get_config
+
+    cfg = get_config()
+    qdrant_url = _typed_optional_setting(cfg.qdrant_url, str, "qdrant_url")
+    if qdrant_url:
+        parsed = urlsplit(qdrant_url)
+        endpoint = f"{parsed.scheme.lower()}://{parsed.hostname or ''}"
+        if parsed.port is not None:
+            endpoint += f":{parsed.port}"
+        return f"qdrant-server:{endpoint}{parsed.path.rstrip('/')}"
+    data_dir = _typed_setting(cfg.data_dir, str, "data_dir")
+    qdrant_dir = _typed_setting(cfg.qdrant_dir, str, "qdrant_dir")
+    local_path = (_pathlib.Path(root_dir) / data_dir / qdrant_dir).resolve()
+    return f"qdrant-local:{local_path}"
 
 
 class ScrollOptions(TypedDict, total=False):
@@ -345,6 +367,7 @@ class VaultStore(
             self._open_server_client(qdrant_url, cfg)
         else:
             self._open_local_client(cfg)
+        self.backend_identity = configured_backend_identity(self.root_dir)
 
         # Default the collection's dense dimension from the same source the wire
         # descriptor advertises, so the advertised dimension always equals what

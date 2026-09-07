@@ -72,21 +72,22 @@ class TestRepairDecision:
         removed, the second observation requests again and the middle
         assertion fails.
         """
-        first, _ = _record_verdict(
-            tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=100.0
-        )
-        assert first is True
-        again, _ = _record_verdict(
-            tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=101.0
-        )
-        assert again is False
-        past_interval, _ = _record_verdict(
-            tmp_path,
-            PublicSourceType.CODE,
-            VERDICT_SHRUNKEN,
-            now=101.0 + REPAIR_REQUEST_MIN_INTERVAL_SECONDS,
-        )
-        assert past_interval is True
+        with managed_env(VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR="1"):
+            first, _ = _record_verdict(
+                tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=100.0
+            )
+            assert first is True
+            again, _ = _record_verdict(
+                tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=101.0
+            )
+            assert again is False
+            past_interval, _ = _record_verdict(
+                tmp_path,
+                PublicSourceType.CODE,
+                VERDICT_SHRUNKEN,
+                now=101.0 + REPAIR_REQUEST_MIN_INTERVAL_SECONDS,
+            )
+            assert past_interval is True
 
     def test_consistent_clears_the_observation(self, tmp_path: Path) -> None:
         _record_verdict(tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=100.0)
@@ -124,12 +125,12 @@ class TestOperatorSwitch:
             assert observed["code"]["auto_repair"] == "disabled"
             assert observed["code"]["repair_job_id"] is None
 
-    def test_the_knob_defaults_on(self) -> None:
+    def test_the_knob_defaults_off_and_can_be_enabled(self) -> None:
         from ..config._settings import get_config
 
-        assert bool(get_config().integrity_auto_repair) is True
-        with managed_env(VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR="0"):
-            assert bool(get_config().integrity_auto_repair) is False
+        assert bool(get_config().integrity_auto_repair) is False
+        with managed_env(VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR="1"):
+            assert bool(get_config().integrity_auto_repair) is True
 
 
 class TestStatusSurface:
@@ -147,7 +148,10 @@ class TestStatusSurface:
 
         from ..jobs import index_job_status, reset
 
-        with managed_env(VAULTSPEC_RAG_STATUS_DIR=str(tmp_path / "status")):
+        with managed_env(
+            VAULTSPEC_RAG_STATUS_DIR=str(tmp_path / "status"),
+            VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR="1",
+        ):
             reset()
             try:
                 root = tmp_path / "project"

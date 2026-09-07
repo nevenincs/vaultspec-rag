@@ -528,6 +528,7 @@ def _try_in_process_search(
         )
         from .._index_integrity import evaluate_index_integrity
         from .._search_state import BreadthFindings, search_index_state
+        from ..store_runtime import configured_backend_identity
 
         # Breadth is published for the code index alone, so a vault- or
         # document-only search has no claim to fall short of.
@@ -552,6 +553,7 @@ def _try_in_process_search(
             target,
             integrity_source,
             counts[integrity_source],
+            backend_identity=configured_backend_identity(target),
         )
         envelope["index_state"] = search_index_state(
             indexed_count=(
