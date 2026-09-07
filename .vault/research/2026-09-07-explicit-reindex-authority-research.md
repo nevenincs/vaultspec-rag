@@ -5,7 +5,7 @@ tags:
 date: '2026-09-07'
 modified: '2026-09-07'
 body_schema: 'body-v2'
-body_hash: 'sha256:645470193042c77f7bd49568f2ebfb4c4bc53e4c102c6558331a05b43f60dbaf'
+body_hash: 'sha256:1eed00b0fcc066de0d35b67bdd14ca569030c979dbe2f293339f7282a87867e5'
 related:
   - "[[2026-07-25-index-completeness-guard-research]]"
   - "[[2026-07-28-convergence-cost-research]]"
@@ -19,7 +19,7 @@ On 2026-09-07 a managed-Qdrant startup failure was followed by a local-backend s
 
 ### The production incident was an incremental-to-full escalation, not an operator rebuild
 
-Managed Qdrant exceeded its 300-second readiness deadline twice. The replacement daemon opened the project-local Qdrant store; its log compared zero local code points with a sidecar claim of 131,481 points, admitted an incremental job, and discovered 14,949 files for full reconciliation. That run processed the corpus but failed publication after 900.111 seconds without a recognized durable-progress event; retry state admitted another unscoped attempt. Raw evidence is retained under `C:/Users/hello/.vaultspec-rag/service.log*`; defaults are at `src/vaultspec_rag/config/_settings.py:296` and `:300`.
+Managed Qdrant exceeded its 300-second readiness deadline twice. The replacement daemon opened the project-local Qdrant store; its log compared zero local code points with a sidecar claim of 131,481 points, admitted an incremental job, and discovered 14,949 files for full reconciliation. That run processed the corpus but failed publication after 900.111 seconds without a recognized durable-progress event; retry state admitted another unscoped attempt. Raw evidence is retained under the current user's `.vaultspec-rag/service.log*`; defaults are at `src/vaultspec_rag/config/_settings.py:296` and `:300`.
 
 The job record continued to describe the request as incremental. `JobSpec` has no effective operation or escalation authority, and dispatch hands incremental execution to the indexer without a cost-class guard (`src/vaultspec_rag/job_models.py:346`, `src/vaultspec_rag/job_dispatch.py:250`).
 
@@ -65,7 +65,7 @@ Vector migration between backends and Qdrant recovery algorithms were not invest
 
 ## Sources
 
-- `C:/Users/hello/.vaultspec-rag/service.log*`
+- Current-user `.vaultspec-rag/service.log*`
 - `src/vaultspec_rag/config/_settings.py:112`, `:296`, `:300`, `:301`
 - `src/vaultspec_rag/job_models.py:346`
 - `src/vaultspec_rag/job_dispatch.py:250`
