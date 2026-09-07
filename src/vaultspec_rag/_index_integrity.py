@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MANIFEST_CLAIM_TTL_SECONDS",
+    "REASON_BACKEND_UNVERIFIED",
     "REASON_COUNT_UNAVAILABLE",
     "REASON_FILE_COVERAGE_SHORTFALL",
     "REASON_MANIFEST_INCOMPLETE",
@@ -74,6 +75,7 @@ REASON_NO_CLAIM = "no_claim"
 #: figure never reached the envelope site. Degraded, never fatal: a count that
 #: could not be taken proves nothing about the collection either way.
 REASON_COUNT_UNAVAILABLE = "count_unavailable"
+REASON_BACKEND_UNVERIFIED = "backend_unverified"
 
 #: The manifest says of itself that it does not describe a complete
 #: publication, so its point figure is not a breadth claim to hold the
@@ -135,6 +137,7 @@ class _BreadthClaim(NamedTuple):
 
     covered_files: int | None = None
     """How many the publication recorded covering; ``None`` when unrecorded."""
+    backend_identity: str | None = None
 
     def self_contradiction(self) -> str | None:
         """Return why this manifest disagrees with itself, or ``None``.
@@ -229,6 +232,7 @@ def _read_code_claim(root: pathlib.Path) -> _BreadthClaim:
         None,
         claim.named_files,
         claim.published_files,
+        claim.backend_identity,
     )
 
 
@@ -256,7 +260,12 @@ def _read_document_claim(root: pathlib.Path) -> _BreadthClaim:
         return _BreadthClaim(None, None, REASON_NO_MANIFEST)
     if not meta.complete:
         return _BreadthClaim(None, meta.generation_id, REASON_MANIFEST_INCOMPLETE)
-    return _BreadthClaim(meta.claimed_points, meta.generation_id, None)
+    return _BreadthClaim(
+        meta.claimed_points,
+        meta.generation_id,
+        None,
+        backend_identity=meta.backend_identity,
+    )
 
 
 def _read_vault_claim(root: pathlib.Path) -> _BreadthClaim:
@@ -351,6 +360,7 @@ def evaluate_index_integrity(
     live_count: int | None,
     *,
     claim_ttl_seconds: float = MANIFEST_CLAIM_TTL_SECONDS,
+    backend_identity: str | None = None,
 ) -> IndexIntegrity:
     """Reconcile *source*'s live breadth for *root* against its published claim.
 
@@ -395,7 +405,17 @@ def evaluate_index_integrity(
     if source not in _CLAIM_READERS:
         raise ValueError(f"no per-domain breadth claim exists for {source!r}")
     claim = _cached_claim(root, source, claim_ttl_seconds)
-    if live_count is None:
+    if backend_identity is not None and claim.backend_identity != backend_identity:
+        integrity = IndexIntegrity(
+            verdict=VERDICT_UNVERIFIABLE,
+            source=source.value,
+            claimed_count=claim.claimed,
+            live_count=live_count,
+            generation_id=claim.generation_id,
+            reason=REASON_BACKEND_UNVERIFIED,
+            named_files=claim.named_files or None,
+        )
+    elif live_count is None:
         integrity = IndexIntegrity(
             verdict=VERDICT_UNVERIFIABLE,
             source=source.value,

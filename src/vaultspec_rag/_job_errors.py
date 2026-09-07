@@ -93,6 +93,7 @@ class JobErrorKind(StrEnum):
     CHUNK_FAILED = "chunk_failed"
     LEDGER_CONTENDED = "ledger_contended"
     INGEST_VERIFICATION_FAILED = "ingest_verification_failed"
+    FULL_REINDEX_REQUIRED = "full_reindex_required"
 
 
 _REMEDIATION: Final = MappingProxyType(
@@ -171,6 +172,10 @@ _REMEDIATION: Final = MappingProxyType(
             "Retrying will not clear this - rebuild the affected index with a "
             "clean re-index, which is also the remedy after the store is carried "
             "across a Qdrant version change"
+        ),
+        JobErrorKind.FULL_REINDEX_REQUIRED: (
+            "the requested incremental operation cannot safely reconcile this index; "
+            "explicitly request a rebuild for the affected source and project"
         ),
     }
 )
