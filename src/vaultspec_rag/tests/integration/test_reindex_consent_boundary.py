@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -75,7 +76,11 @@ def test_committed_reconciliation_batches_extend_liveness() -> None:
 def test_foreign_backend_manifest_cannot_claim_loss(tmp_path: Path) -> None:
     publish_meta_from_file_states(
         index_meta_path(tmp_path, PublicSourceType.CODE),
-        [FileState.indexed("src/a.py", ContentKind.CODE, "digest")],
+        [
+            FileState.indexed(
+                "src/a.py", ContentKind.CODE, hashlib.blake2b(b"src/a.py").hexdigest()
+            )
+        ],
         generation_id="generation",
         membership_epoch="membership",
         content_epoch="content",
