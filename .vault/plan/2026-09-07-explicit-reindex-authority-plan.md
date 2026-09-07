@@ -9,7 +9,7 @@ related:
   - '[[2026-09-07-explicit-reindex-authority-research]]'
 modified: '2026-09-07'
 body_schema: body-v2
-body_hash: 'sha256:bfef10f9890ed20d65ce2e9ad0c15bfe5ea129e832d43892014017ac68bc2371'
+body_hash: 'sha256:f4af4048b5ac0702d2c643120d336dc59a5e9c191ce1152655f86e4f5ec54285'
 ---
 
 # `explicit-reindex-authority` plan
@@ -68,7 +68,7 @@ Instrument reconciliation progress, health, compatibility logging, startup guida
 Recognize durable cleanup work, propagate degradation, and preserve compatibility causes.
 
 - [x] `W03.P05.S10` - Record durable progress for committed reconciliation batches; `src/vaultspec_rag/indexer/_route_migration.py, src/vaultspec_rag/indexer/_run_policy.py`.
-- [ ] `W03.P05.S11` - Propagate degraded job counts and effective operation through health; `src/vaultspec_rag/server`.
+- [x] `W03.P05.S11` - Propagate degraded job counts and effective operation through health; `src/vaultspec_rag/server`.
 - [ ] `W03.P05.S12` - Log compatibility causes and correct local-only startup guidance; `src/vaultspec_rag`.
 
 ### Phase `W03.P06` - Prove the system invariant
