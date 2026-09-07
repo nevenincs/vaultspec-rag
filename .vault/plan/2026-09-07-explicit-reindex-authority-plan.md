@@ -9,7 +9,7 @@ related:
   - '[[2026-09-07-explicit-reindex-authority-research]]'
 modified: '2026-09-07'
 body_schema: body-v2
-body_hash: 'sha256:47ae76ff77862be629104ecbd52f0afa6cadcf323c7f4f37250b6dea43d29cfd'
+body_hash: 'sha256:1351baf5022a6ccaec67935337a0d7b90e66bfe6137a37936dc5e8e4d0621118'
 ---
 
 # `explicit-reindex-authority` plan
@@ -37,7 +37,7 @@ Add one typed service-domain outcome and remediation for detected work that requ
 
 Replace code, document, and vault incremental-to-full transitions while retaining explicit full entry points.
 
-- [ ] `W01.P02.S03` - Refuse every code incremental-to-full transition with typed detail; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
+- [x] `W01.P02.S03` - Refuse every code incremental-to-full transition with typed detail; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [ ] `W01.P02.S04` - Refuse document and vault incremental-to-full transitions with typed detail; `src/vaultspec_rag/indexer`.
 
 ## Wave `W02` - Preserve bounded automatic recovery
