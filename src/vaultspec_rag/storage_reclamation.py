@@ -185,6 +185,38 @@ def _active_index_prefixes() -> frozenset[str]:
     return frozenset(prefixes)
 
 
+def _survey_tier(survey: NamespaceSurvey) -> str:
+    """Return the destruction tier a namespace's point count selects.
+
+    Point count picks the tier wherever destruction is decided, and this is
+    the one place that rule is written down. An unverified count picks the
+    protective tier: the empty tier drops without an archive, so reading a
+    namespace nobody could finish counting as empty is the single mis-tiering
+    that destroys data outright instead of deferring it.
+    """
+    if not survey.points_verified:
+        return "data"
+    return "empty" if survey.points == 0 else "data"
+
+
+def _unverified_points_pending(survey: NamespaceSurvey) -> ReclaimDecision:
+    """Hold a namespace whose survey could not finish counting it.
+
+    Every question left between here and a drop is asked of the point total:
+    which tier applies, and whether the count moved between the survey and
+    the act. A partial total answers neither, and a namespace waiting a cycle
+    for a total that is whole has lost nothing but time.
+    """
+    return ReclaimDecision(
+        survey.prefix,
+        "pending",
+        _survey_tier(survey),
+        reason="survey_points_unverifiable",
+        points=survey.points,
+        footprint_bytes=survey.footprint_bytes,
+    )
+
+
 def _evaluate_ephemeral(
     surveys: list[NamespaceSurvey],
     last_indexed: dict[str, str],
@@ -204,7 +236,8 @@ def _evaluate_ephemeral(
     (``update_activity_stamps``), because an indexer that writes without
     stamping is exactly the writer whose data this tier would destroy. A
     missing or unparsable stamp is ``pending`` (never destroy on absent
-    evidence). ``unknown``/``unverifiable`` namespaces never reach this
+    evidence), and so is a survey that could not finish counting the
+    namespace. ``unknown``/``unverifiable`` namespaces never reach this
     function (they are not ``live``).
     """
     from .storage_survey import is_temp_rooted
@@ -214,10 +247,13 @@ def _evaluate_ephemeral(
         return decisions
     candidates = sorted(
         (s for s in surveys if s.status == "live" and is_temp_rooted(s.root)),
-        key=lambda s: (s.points > 0, s.prefix),
+        key=lambda s: (_survey_tier(s) == "data", s.prefix),
     )
     for survey in candidates:
-        tier = "empty" if survey.points == 0 else "data"
+        if not survey.points_verified:
+            decisions.append(_unverified_points_pending(survey))
+            continue
+        tier = _survey_tier(survey)
         stamped = parse_iso_timestamp(
             last_indexed.get(survey.prefix, ""), field="last_indexed"
         )
@@ -274,8 +310,10 @@ def evaluate_reclaim(
 
     Safety gates stacked per prefix: only ``orphaned`` survey entries are
     considered (``unknown``/``unverifiable``/``live`` never appear in the
-    output); a missing or unparsable grace stamp means the window has just
-    started (``pending``); the window length is the ephemeral one when the
+    output); a namespace the survey could not finish counting is ``pending``
+    whatever its partial total says, because both the window and the tier are
+    read off that total; a missing or unparsable grace stamp means the window
+    has just started (``pending``); the window length is the ephemeral one when the
     root was temp-rooted and otherwise tiered by whether the namespace holds
     points, while the tier itself is always the point count; and eligible
     prefixes beyond ``policy.max_per_cycle`` are ``deferred`` to the next
@@ -313,7 +351,7 @@ def evaluate_reclaim(
     eligible: list[ReclaimDecision] = []
     orphaned = sorted(
         (s for s in surveys if s.status == "orphaned"),
-        key=lambda s: (s.points > 0, s.prefix),
+        key=lambda s: (_survey_tier(s) == "data", s.prefix),
     )
     for survey in orphaned:
         decision = _decide_orphan(survey, stamps, now=now, policy=policy)
@@ -352,10 +390,17 @@ def _decide_orphan(
     because what the tier governs downstream - the archive that must
     complete before any point-bearing drop - does not depend on how long the
     namespace waited.
+
+    Neither input is read at all until the count is whole. A partial total
+    would pick the window and the tier from a number the survey did not
+    finish taking, and the tier it picks on a silent zero is the one that
+    drops without archiving.
     """
     from .storage_survey import is_temp_rooted
 
-    tier = "empty" if survey.points == 0 else "data"
+    if not survey.points_verified:
+        return _unverified_points_pending(survey)
+    tier = _survey_tier(survey)
     tiered_hours = policy.grace_hours if tier == "empty" else policy.grace_hours_data
     window_hours = (
         policy.grace_hours_ephemeral if is_temp_rooted(survey.root) else tiered_hours
@@ -919,9 +964,14 @@ def run_maintenance_cycle(
     # The ephemeral tier's idle clock, advanced from what the stored data is
     # doing rather than from index-run stamps alone. Reading the manifest
     # directly here would see only what an indexer chose to stamp, which is
-    # the blind spot this tier cannot afford.
+    # the blind spot this tier cannot afford. A namespace the survey could
+    # not finish counting reports no total at all, so a partial sum can never
+    # be the reading a later cycle agrees with.
     last_indexed = update_activity_stamps(
-        {s.prefix: (s.status, s.points) for s in surveys},
+        {
+            s.prefix: (s.status, s.points if s.points_verified else None)
+            for s in surveys
+        },
         now_iso=request.now.isoformat(),
     )
     decisions = evaluate_reclaim(

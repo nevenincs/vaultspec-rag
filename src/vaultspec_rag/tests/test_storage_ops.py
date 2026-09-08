@@ -859,6 +859,12 @@ class _CycleClient:
     races the gates exist to catch - ``counts_after_survey`` is a writer
     landing points between the survey and the drop, ``counts_after_snapshot``
     is one landing points during the archive, tearing it.
+
+    ``uncountable_after_survey`` is the third of that family and is scoped
+    the same way. A namespace the SURVEY cannot count never reaches the
+    pre-drop gates at all - it is held at evaluation, on the total the
+    survey could not take - so a stand-in that refused every count would
+    exercise a gate the cycle no longer arrives at.
     """
 
     def __init__(
@@ -868,13 +874,13 @@ class _CycleClient:
         snapshots_dir: Path | None = None,
         counts_after_survey: dict[str, int] | None = None,
         counts_after_snapshot: dict[str, int] | None = None,
-        uncountable: bool = False,
+        uncountable_after_survey: bool = False,
     ) -> None:
         self._counts = dict(counts)
         self._snapshots_dir = snapshots_dir
         self._after_survey = counts_after_survey
         self._after_snapshot = counts_after_snapshot
-        self._uncountable = uncountable
+        self._uncountable_after_survey = uncountable_after_survey
         self._survey_calls = len(counts)
         self._count_calls = 0
         self.deleted: list[str] = []
@@ -886,7 +892,7 @@ class _CycleClient:
         )
 
     def count(self, *, collection_name: str) -> object:
-        if self._uncountable:
+        if self._uncountable_after_survey and self._count_calls >= self._survey_calls:
             raise RuntimeError("collection count unavailable")
         value = self._counts[collection_name]
         self._count_calls += 1
@@ -1036,9 +1042,16 @@ class TestPreDropRecount:
     def test_uncountable_namespace_defers_rather_than_dropping(
         self, tmp_path: Path
     ) -> None:
+        """A re-count that cannot be taken defers, on the tier with no archive.
+
+        Surveyed empty and eligible on the riskless tier, so nothing but this
+        gate stands between the namespace and a drop that writes no snapshot.
+        Letting the gate borrow the survey's own number would make the
+        unverifiable count agree with it by construction.
+        """
         prefix = _orphaned_namespace(tmp_path, now=_NOW)
         collection = _collection_of(prefix)
-        client = _CycleClient({collection: 10}, uncountable=True)
+        client = _CycleClient({collection: 0}, uncountable_after_survey=True)
         result = _run_cycle(client, tmp_path)
         decision = next(d for d in result.decisions if d.prefix == prefix)
         assert decision.action == "deferred"

@@ -672,7 +672,7 @@ def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str,
 
 
 def update_activity_stamps(
-    observations: dict[str, tuple[str, int]], *, now_iso: str
+    observations: dict[str, tuple[str, int | None]], *, now_iso: str
 ) -> dict[str, str]:
     """Advance the persisted idle clocks from one survey's observations.
 
@@ -686,7 +686,7 @@ def update_activity_stamps(
     exists to prove a namespace has gone a whole TTL unused, and an indexer
     that writes without stamping is exactly the writer whose data would be
     destroyed. So the clock resets unless this cycle can positively confirm
-    the namespace held still, which takes three things to be true at once:
+    the namespace held still, which takes four things to be true at once:
 
     - a previous count exists to compare against. A FIRST observation
       confirms nothing - there is no earlier reading it could have held
@@ -694,6 +694,11 @@ def update_activity_stamps(
       orphan clock already works this way: an entry predating the field
       cannot be reclaimed until one full window has elapsed since the field
       appeared, and one observation is no more of a window here.
+    - this cycle actually counted the namespace. A count that could not be
+      taken is not a reading the next one may compare against, so it clears
+      the recorded count back to never-observed rather than persisting the
+      partial sum it happens to hold. Comparing across a cycle nobody could
+      see would let a blackout pass for confirmed stillness.
     - the count has not moved. Movement is direct evidence of a live writer,
       whether or not anything stamped a completed run.
     - the root was verifiable. An unreadable root is not evidence of
@@ -706,7 +711,9 @@ def update_activity_stamps(
 
     Args:
         observations: Mapping of collection prefix to its
-            ``(survey status, total stored points)`` for this cycle.
+            ``(survey status, total stored points)`` for this cycle. A
+            ``None`` count is a survey that could not finish counting the
+            namespace, which is an absence of evidence and never a zero.
         now_iso: ISO-8601 timestamp to stamp when activity is observed.
 
     Returns:
@@ -722,13 +729,14 @@ def update_activity_stamps(
             if entry is None:
                 continue
             held_still = (
-                entry.observed_points >= 0
+                points is not None
+                and entry.observed_points >= 0
                 and points == entry.observed_points
                 and status != "unverifiable"
             )
             updated = replace(
                 entry,
-                observed_points=points,
+                observed_points=-1 if points is None else points,
                 last_indexed=entry.last_indexed if held_still else now_iso,
             )
             if updated != entry:
