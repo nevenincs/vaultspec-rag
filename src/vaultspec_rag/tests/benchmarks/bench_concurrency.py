@@ -21,15 +21,19 @@ shared service is an operator action, not a unit-test side effect.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import statistics
 import sys
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
+
+from ...server._search_readiness import PublicationTarget, ReadinessRevisionRegistry
 
 if TYPE_CHECKING:
     from http.client import HTTPResponse
@@ -49,10 +53,12 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "ReadinessControlResult",
     "RequestOutcome",
     "ScenarioResult",
     "ServiceTarget",
     "build_scenarios",
+    "run_readiness_control_benchmark",
     "run_scenario",
 ]
 
@@ -68,6 +74,7 @@ _PHASE_KEYS = (
 
 #: Extra keys nested under ``timing.phases``.
 _NESTED_PHASE_KEYS = ("gpu_queue_wait_seconds", "queue_wait_seconds")
+_READINESS_WAIT_PHASE = "freshness_wait_seconds"
 
 _QUERIES = (
     "how does the watcher debounce and cooldown work",
@@ -79,6 +86,17 @@ _QUERIES = (
     "error handling for locked local store",
     "capacity limits for concurrent requests",
 )
+
+
+def _decode_response_object(raw: bytes, *, status: int) -> dict[str, object]:
+    """Decode one HTTP response without inventing a canonical envelope."""
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"HTTP {status} returned a non-JSON response") from exc
+    if not isinstance(body, dict):
+        raise RuntimeError(f"HTTP {status} returned a non-object response")
+    return cast("dict[str, object]", body)
 
 
 @dataclass
@@ -123,8 +141,8 @@ class ServiceTarget:
         path: str,
         payload: dict[str, object],
         timeout: float,
-    ) -> dict[str, object]:
-        """POST JSON and decode the JSON response."""
+    ) -> tuple[int, dict[str, object]]:
+        """POST JSON and preserve canonical success or HTTP-error content."""
         url = f"http://127.0.0.1:{self.port}{path}"
         headers = {"Content-Type": "application/json"}
         if self.token:
@@ -138,12 +156,16 @@ class ServiceTarget:
         # urlopen()'s return is typed Any upstream (it dispatches across
         # FTP/HTTP/file handlers); this request is always http://, so the
         # concrete response type is genuinely HTTPResponse.
-        opened = cast("HTTPResponse", urllib.request.urlopen(req, timeout=timeout))
+        try:
+            opened = cast("HTTPResponse", urllib.request.urlopen(req, timeout=timeout))
+        except urllib.error.HTTPError as exc:
+            with exc:
+                return exc.code, _decode_response_object(exc.read(), status=exc.code)
         with opened as resp:
             # The service's response shape is only a contract at the JSON
             # boundary; decode it once here and let every caller narrow the
             # specific keys it reads instead of carrying `Any` outward.
-            return cast("dict[str, object]", json.loads(resp.read().decode("utf-8")))
+            return resp.status, _decode_response_object(resp.read(), status=resp.status)
 
 
 @dataclass
@@ -192,8 +214,12 @@ class ScenarioResult:
     def phase_summary(self) -> dict[str, dict[str, float]]:
         """Mean and max per recorded service phase across OK requests."""
         summary: dict[str, dict[str, float]] = {}
-        for key in (*_PHASE_KEYS, *_NESTED_PHASE_KEYS):
-            values = [o.phases[key] for o in self.outcomes if o.ok and key in o.phases]
+        for key in (*_PHASE_KEYS, *_NESTED_PHASE_KEYS, _READINESS_WAIT_PHASE):
+            values = [
+                o.phases[key]
+                for o in self.outcomes
+                if key in o.phases and (o.ok or key == _READINESS_WAIT_PHASE)
+            ]
             if values:
                 summary[key] = {
                     "mean": statistics.fmean(values),
@@ -217,6 +243,84 @@ class ScenarioResult:
                 for key, stats in self.phase_summary().items()
             },
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ReadinessControlResult:
+    """CPU-only readiness admission overhead and contention measurements."""
+
+    concurrency: int
+    immediate_wall_seconds: float
+    bounded_wall_seconds: float
+    bounded_waiters: int
+    cleanup_verified: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "concurrency": self.concurrency,
+            "immediate_wall_seconds": round(self.immediate_wall_seconds, 6),
+            "bounded_wall_seconds": round(self.bounded_wall_seconds, 6),
+            "bounded_waiters": self.bounded_waiters,
+            "cleanup_verified": self.cleanup_verified,
+        }
+
+
+async def _measure_readiness_control(
+    root: str, concurrency: int
+) -> ReadinessControlResult:
+    registry = ReadinessRevisionRegistry(max_observers=concurrency)
+    registry.start()
+    initial = registry.publish_next(root, "vault", generation="benchmark-initial")
+    immediate_target = PublicationTarget(
+        initial.key,
+        cast("int", initial.publication_revision),
+        initial.published_generation,
+    )
+    started = time.perf_counter()
+    immediate = await asyncio.gather(
+        *(
+            registry.published_at_least((immediate_target,), timeout_seconds=0.0)
+            for _ in range(concurrency)
+        )
+    )
+    immediate_wall = time.perf_counter() - started
+
+    bounded_wall = 0.0
+    cleanup_verified = True
+    for wave in range(2):
+        generation = f"benchmark-wait-{wave}"
+        desired = registry.notify_controller(root, "vault", generation=generation)
+        target = PublicationTarget(
+            desired.key,
+            cast("int", desired.controller_revision),
+            generation,
+        )
+        started = time.perf_counter()
+        waiters = [
+            asyncio.create_task(
+                registry.published_at_least((target,), timeout_seconds=1.0)
+            )
+            for _ in range(concurrency)
+        ]
+        await asyncio.sleep(0)
+        registry.publish_next(root, "vault", generation=generation)
+        cleanup_verified = cleanup_verified and all(await asyncio.gather(*waiters))
+        bounded_wall += time.perf_counter() - started
+    registry.close()
+    return ReadinessControlResult(
+        concurrency=concurrency,
+        immediate_wall_seconds=immediate_wall,
+        bounded_wall_seconds=bounded_wall,
+        bounded_waiters=concurrency * 2,
+        cleanup_verified=cleanup_verified and all(immediate),
+    )
+
+
+def run_readiness_control_benchmark(
+    root: str, concurrency: int
+) -> ReadinessControlResult:
+    """Measure immediate bypass and two bounded waves without GPU work."""
+    return asyncio.run(_measure_readiness_control(root, concurrency))
 
 
 def _percentile(sorted_values: list[float], q: float) -> float:
@@ -247,6 +351,40 @@ def _extract_phases(timing: object) -> dict[str, float]:
     return phases
 
 
+def _extract_readiness_wait(body: dict[str, object]) -> float | None:
+    """Return service-observed bounded readiness wait without inferring a wait."""
+    readiness = body.get("readiness")
+    if not isinstance(readiness, dict):
+        return None
+    readiness_map = cast("dict[str, object]", readiness)
+    sources = readiness_map.get("sources")
+    if not isinstance(sources, list):
+        return None
+    source_items = cast("list[object]", sources)
+    waited: list[float] = []
+    for source in source_items:
+        if not isinstance(source, dict):
+            continue
+        source_map = cast("dict[str, object]", source)
+        waits = source_map.get("waits")
+        if not isinstance(waits, list):
+            continue
+        wait_items = cast("list[object]", waits)
+        for wait in wait_items:
+            if not isinstance(wait, dict):
+                continue
+            wait_map = cast("dict[str, object]", wait)
+            if wait_map.get("cause") not in {
+                "index_transition",
+                "controller_deferral",
+            }:
+                continue
+            value = wait_map.get("waited_seconds")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                waited.append(float(value))
+    return max(waited) if waited else None
+
+
 def _one_request(
     target: ServiceTarget,
     payload: dict[str, object],
@@ -254,25 +392,31 @@ def _one_request(
 ) -> RequestOutcome:
     started = time.perf_counter()
     try:
-        body = target.post("/search", payload, timeout)
+        status, body = target.post("/search", payload, timeout)
+        latency = time.perf_counter() - started
+        phases = _extract_phases(body.get("timing"))
+        readiness_wait = _extract_readiness_wait(body)
+        if readiness_wait is not None:
+            phases[_READINESS_WAIT_PHASE] = readiness_wait
+        results = body.get("results")
+        if not 200 <= status < 300 or not isinstance(results, list):
+            return RequestOutcome(
+                latency_seconds=latency,
+                ok=False,
+                error=str(body.get("error", f"http_{status}_no_results_key")),
+                phases=phases,
+            )
+        return RequestOutcome(
+            latency_seconds=latency,
+            ok=True,
+            phases=phases,
+        )
     except Exception as exc:
         return RequestOutcome(
             latency_seconds=time.perf_counter() - started,
             ok=False,
             error=f"{exc.__class__.__name__}: {exc}",
         )
-    latency = time.perf_counter() - started
-    if "results" not in body:
-        return RequestOutcome(
-            latency_seconds=latency,
-            ok=False,
-            error=str(body.get("error", "no_results_key")),
-        )
-    return RequestOutcome(
-        latency_seconds=latency,
-        ok=True,
-        phases=_extract_phases(body.get("timing")),
-    )
 
 
 def run_scenario(
@@ -300,13 +444,26 @@ def run_scenario(
     )
 
 
-def _payload(root: str, search_type: str, query: str, top_k: int) -> dict[str, object]:
-    return {
+def _payload(
+    root: str,
+    search_type: str,
+    query: str,
+    top_k: int,
+    *,
+    freshness: tuple[str, float | None] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "type": search_type,
         "query": query,
         "top_k": top_k,
         "project_root": root,
     }
+    if freshness is not None:
+        policy, wait_seconds = freshness
+        payload["freshness_policy"] = policy
+        if wait_seconds is not None:
+            payload["freshness_wait_seconds"] = wait_seconds
+    return payload
 
 
 def _cycle_payloads(
@@ -352,6 +509,32 @@ def build_scenarios(
             "same-root-mixed",
             _cycle_payloads([primary], ["vault", "codebase"], n_requests, top_k),
         ),
+        (
+            "readiness-immediate",
+            [
+                _payload(
+                    primary,
+                    "codebase",
+                    _QUERIES[i % len(_QUERIES)],
+                    top_k,
+                    freshness=("immediate", None),
+                )
+                for i in range(n_requests)
+            ],
+        ),
+        (
+            "readiness-bounded-contention",
+            [
+                _payload(
+                    primary,
+                    "codebase",
+                    _QUERIES[i % len(_QUERIES)],
+                    top_k,
+                    freshness=("bounded", 1.0),
+                )
+                for i in range(n_requests)
+            ],
+        ),
     ]
     if len(roots) > 1:
         scenarios.append(
@@ -366,7 +549,7 @@ def build_scenarios(
 def _start_reindex(target: ServiceTarget, root: str, timeout: float) -> str | None:
     """Kick an incremental codebase reindex; return its job id if accepted."""
     try:
-        body = target.post(
+        _status, body = target.post(
             "/reindex",
             {
                 "type": "codebase",
@@ -449,8 +632,17 @@ def main(argv: list[str] | None = None) -> int:
         run_scenario(target, name, payloads, args.concurrency, args.timeout)
         for name, payloads in build_scenarios(roots, args.requests, args.top_k)
     ]
+    readiness_control = run_readiness_control_benchmark(roots[0], args.concurrency)
 
     _print_summary(results)
+    print(
+        "readiness-control "
+        f"c={readiness_control.concurrency} "
+        f"immediate={readiness_control.immediate_wall_seconds}s "
+        f"bounded={readiness_control.bounded_wall_seconds}s "
+        f"waiters={readiness_control.bounded_waiters} "
+        f"cleanup={str(readiness_control.cleanup_verified).lower()}"
+    )
     if args.json is not None:
         report = {
             "port": target.port,
@@ -460,6 +652,7 @@ def main(argv: list[str] | None = None) -> int:
             "with_reindex": bool(reindex_job),
             "reindex_job": reindex_job,
             "scenarios": [r.to_dict() for r in results],
+            "readiness_control": readiness_control.to_dict(),
         }
         args.json.write_text(
             json.dumps(report, indent=2) + "\n",
