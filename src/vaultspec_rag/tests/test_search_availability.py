@@ -33,7 +33,9 @@ from ..job_models import (
     JobState,
 )
 from ..server._search_availability import (
+    CanonicalSearchEvidence,
     SearchAvailabilityContext,
+    SearchResponseClassification,
     classify_qdrant_collection_disappearance,
     classify_search_response,
 )
@@ -404,6 +406,341 @@ def _canonical_snapshot(
     )
     assert outcome.job is not None
     return replace(outcome.job, state=state)
+
+
+def _readiness_classification(
+    root: Path,
+    *,
+    evidence: CanonicalSearchEvidence | None = None,
+    snapshots: Sequence[object] = (),
+    results: list[object] | None = None,
+) -> SearchResponseClassification:
+    resolved_root = root.resolve()
+    return classify_search_response(
+        {"request_id": "readiness-request", "results": results or []},
+        SearchAvailabilityContext(
+            before_snapshot=(),
+            after_snapshot=snapshots,
+            requested_root=resolved_root,
+            source="vault",
+            request_id="readiness-request",
+            index_state={
+                "source": "vault",
+                "indexed_count": 1,
+                "indexed_target_root": str(resolved_root),
+                "requested_target_root": str(resolved_root),
+                "target_matches": True,
+            },
+            port=8766,
+            canonical_evidence=evidence or CanonicalSearchEvidence(),
+        ),
+    )
+
+
+def test_projection_requires_explicit_complete_proof_for_current_authority(
+    tmp_path: Path,
+) -> None:
+    classification = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(
+            served_generation="generation-2",
+            desired_generation="generation-2",
+            publication_revision=4,
+            desired_revision=4,
+            collection_present=True,
+            target_matches=True,
+            integrity_verified=True,
+        ),
+    )
+
+    assert classification.source_fact.availability is SearchAvailability.USABLE
+    assert classification.source_fact.freshness is SearchFreshness.CURRENT
+    assert (
+        classification.source_fact.absence_authority is AbsenceAuthority.AUTHORITATIVE
+    )
+    assert classification.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        CanonicalSearchEvidence(
+            served_generation="generation-2",
+            desired_generation="generation-2",
+            target_matches=True,
+            integrity_verified=True,
+        ),
+        CanonicalSearchEvidence(
+            served_generation="generation-2",
+            desired_generation="generation-2",
+            collection_present=True,
+            integrity_verified=True,
+        ),
+        CanonicalSearchEvidence(
+            served_generation="generation-2",
+            desired_generation="generation-2",
+            collection_present=True,
+            target_matches=True,
+        ),
+        CanonicalSearchEvidence(
+            served_generation="generation-2",
+            collection_present=True,
+            target_matches=True,
+            integrity_verified=True,
+        ),
+        CanonicalSearchEvidence(
+            desired_generation="generation-2",
+            collection_present=True,
+            target_matches=True,
+            integrity_verified=True,
+        ),
+    ],
+)
+def test_projection_never_infers_current_from_partial_proof(
+    tmp_path: Path,
+    evidence: CanonicalSearchEvidence,
+) -> None:
+    classification = _readiness_classification(tmp_path, evidence=evidence)
+
+    assert classification.source_fact.freshness is SearchFreshness.UNVERIFIABLE
+    assert (
+        classification.source_fact.absence_authority
+        is AbsenceAuthority.NON_AUTHORITATIVE
+    )
+
+
+@pytest.mark.parametrize("publication_revision", [4, 5])
+def test_projection_accepts_satisfied_revision_only_current_proof(
+    tmp_path: Path,
+    publication_revision: int,
+) -> None:
+    classification = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(
+            publication_revision=publication_revision,
+            desired_revision=4,
+            collection_present=True,
+            target_matches=True,
+            integrity_verified=True,
+        ),
+    )
+
+    assert classification.source_fact.freshness is SearchFreshness.CURRENT
+    assert (
+        classification.source_fact.absence_authority is AbsenceAuthority.AUTHORITATIVE
+    )
+
+
+@pytest.mark.parametrize("publication_revision", [3, None])
+def test_projection_rejects_unsatisfied_revision_only_current_proof(
+    tmp_path: Path,
+    publication_revision: int | None,
+) -> None:
+    classification = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(
+            publication_revision=publication_revision,
+            desired_revision=4,
+            collection_present=True,
+            target_matches=True,
+            integrity_verified=True,
+        ),
+    )
+
+    assert classification.source_fact.freshness is SearchFreshness.UNVERIFIABLE
+    assert (
+        classification.source_fact.absence_authority
+        is AbsenceAuthority.NON_AUTHORITATIVE
+    )
+
+
+def test_projection_rejects_mismatched_generation_current_proof(
+    tmp_path: Path,
+) -> None:
+    classification = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(
+            served_generation="generation-1",
+            desired_generation="generation-2",
+            collection_present=True,
+            target_matches=True,
+            integrity_verified=True,
+        ),
+    )
+
+    assert classification.source_fact.freshness is SearchFreshness.UNVERIFIABLE
+    assert (
+        classification.source_fact.absence_authority
+        is AbsenceAuthority.NON_AUTHORITATIVE
+    )
+
+
+def test_projection_keeps_a_prior_complete_generation_usable_while_updating(
+    tmp_path: Path,
+) -> None:
+    snapshot = _canonical_snapshot(tmp_path, job_id="updating")
+    classification = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(
+            served_generation="generation-1",
+            desired_generation="generation-2",
+            collection_present=True,
+        ),
+        snapshots=(snapshot.to_dict(),),
+        results=[{"id": "kept"}],
+    )
+
+    assert classification.source_fact.availability is SearchAvailability.USABLE
+    assert classification.source_fact.freshness is SearchFreshness.UPDATING
+    assert (
+        classification.source_fact.absence_authority
+        is AbsenceAuthority.NON_AUTHORITATIVE
+    )
+    assert classification.status_code == 200
+
+
+def test_projection_marks_updating_unavailable_without_a_served_generation(
+    tmp_path: Path,
+) -> None:
+    snapshot = _canonical_snapshot(tmp_path, job_id="first-publication")
+    classification = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(collection_present=True),
+        snapshots=(snapshot.to_dict(),),
+    )
+
+    assert classification.source_fact.availability is SearchAvailability.UNAVAILABLE
+    assert classification.source_fact.freshness is SearchFreshness.UPDATING
+    assert classification.source_fact.reason_code == "index_updating"
+    assert classification.status_code == 503
+
+
+def test_projection_keeps_absent_optional_evidence_unknown(tmp_path: Path) -> None:
+    classification = _readiness_classification(tmp_path)
+
+    assert classification.source_fact.availability is SearchAvailability.UNAVAILABLE
+    assert classification.source_fact.freshness is SearchFreshness.UNVERIFIABLE
+    assert (
+        classification.source_fact.absence_authority
+        is AbsenceAuthority.NON_AUTHORITATIVE
+    )
+    assert classification.source_fact.generation.as_dict() == {}
+    assert classification.source_fact.reason_code == "index_unverifiable"
+
+
+def test_projection_uses_only_explicit_rebuild_required_evidence(
+    tmp_path: Path,
+) -> None:
+    classification = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(rebuild_required=True),
+    )
+
+    assert classification.source_fact.availability is SearchAvailability.UNAVAILABLE
+    assert classification.source_fact.freshness is SearchFreshness.REBUILD_REQUIRED
+    assert classification.source_fact.reason_code == "rebuild_required"
+    assert classification.source_fact.retryable is False
+
+
+def test_projection_never_infers_rebuild_required_from_job_mode(tmp_path: Path) -> None:
+    snapshot = _canonical_snapshot(
+        tmp_path,
+        job_id="rebuild-job",
+        mode=JobMode.REBUILD,
+    )
+    classification = _readiness_classification(
+        tmp_path,
+        snapshots=(snapshot.to_dict(),),
+    )
+
+    assert classification.rebuilding is True
+    assert classification.source_fact.freshness is SearchFreshness.UPDATING
+    assert classification.source_fact.reason_code == "index_updating"
+
+
+def test_projection_uses_only_explicit_capacity_refusal(tmp_path: Path) -> None:
+    refused = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(capacity_refused=True),
+    )
+    unknown = _readiness_classification(tmp_path)
+
+    assert refused.source_fact.availability is SearchAvailability.CAPACITY_LIMITED
+    assert refused.source_fact.reason_code == "capacity_limited"
+    assert refused.source_fact.retryable is True
+    assert unknown.source_fact.availability is SearchAvailability.UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("evidence", "message"),
+    [
+        (
+            lambda: CanonicalSearchEvidence(capacity_refused=cast("bool", 1)),
+            "capacity_refused must be a boolean",
+        ),
+        (
+            lambda: CanonicalSearchEvidence(rebuild_required=cast("bool", 1)),
+            "rebuild_required must be a boolean",
+        ),
+    ],
+)
+def test_canonical_evidence_requires_strict_refusal_flags(
+    evidence: Callable[[], CanonicalSearchEvidence],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        evidence()
+
+
+def test_canonical_evidence_rejects_conflicting_refusals() -> None:
+    with pytest.raises(
+        ValueError,
+        match="capacity_refused and rebuild_required are mutually exclusive",
+    ):
+        CanonicalSearchEvidence(capacity_refused=True, rebuild_required=True)
+
+
+def test_empty_authority_follows_the_canonical_source_fact(tmp_path: Path) -> None:
+    authoritative = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(
+            served_generation="generation-1",
+            desired_generation="generation-1",
+            collection_present=True,
+            target_matches=True,
+            integrity_verified=True,
+        ),
+    )
+    snapshot = _canonical_snapshot(tmp_path, job_id="empty-updating")
+    non_authoritative = _readiness_classification(
+        tmp_path,
+        evidence=CanonicalSearchEvidence(
+            served_generation="generation-1",
+            desired_generation="generation-2",
+            collection_present=True,
+        ),
+        snapshots=(snapshot.to_dict(),),
+    )
+
+    assert authoritative.source_fact.absence_authority is AbsenceAuthority.AUTHORITATIVE
+    assert authoritative.status_code == 200
+    assert (
+        non_authoritative.source_fact.absence_authority
+        is AbsenceAuthority.NON_AUTHORITATIVE
+    )
+    assert non_authoritative.status_code == 503
+
+
+def test_projection_and_legacy_job_evidence_share_one_bound(tmp_path: Path) -> None:
+    snapshots = tuple(
+        _canonical_snapshot(tmp_path, job_id=f"bounded-{index}").to_dict()
+        for index in range(MAX_SEARCH_EVIDENCE_ITEMS + 1)
+    )
+    classification = _readiness_classification(tmp_path, snapshots=snapshots)
+
+    assert len(classification.source_fact.evidence) == MAX_SEARCH_EVIDENCE_ITEMS
+    assert len(classification.matching_jobs) == MAX_SEARCH_EVIDENCE_ITEMS
+    assert classification.matching_jobs_truncated is True
 
 
 def _availability_response(
