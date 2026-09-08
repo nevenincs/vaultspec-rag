@@ -6,8 +6,11 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:0eded9e2e099029020a4e8e3baa446d22c74fd5c4d10d3329386de5daf96ecd0'
+body_hash: 'sha256:dcfe0372b20002198d1cee67ffb442e046396e8f867bac562700a8b1fc61d344'
 related:
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S01]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S02]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S03]]'
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-plan]]'
   - '[[2026-09-08-qdrant-collection-sprawl-research]]'
@@ -21,7 +24,13 @@ Auto-generated index of all documents tagged with `#qdrant-collection-sprawl`.
 
 ### adr
 
-- `2026-09-08-qdrant-collection-sprawl-adr` - `qdrant-collection-sprawl` adr: `retention discrimination for the ephemeral namespace class, and the prerequisites that let it execute` | (**status:** `proposed`)
+- `2026-09-08-qdrant-collection-sprawl-adr` - `qdrant-collection-sprawl` adr: `retention discrimination for the ephemeral namespace class, and the prerequisites that let it execute` | (**status:** `accepted`)
+
+### exec
+
+- `2026-09-08-qdrant-collection-sprawl-P01-S01` - Make the qdrant readiness wait treat observable recovery progress as liveness, keeping the existing fixed budget as a hard ceiling
+- `2026-09-08-qdrant-collection-sprawl-P01-S02` - Add a guard test proving a child still recovering collections survives past the old fixed budget
+- `2026-09-08-qdrant-collection-sprawl-P01-S03` - Add a guard test proving a wedged child making no progress is still stopped at the hard ceiling
 
 ### plan
 
