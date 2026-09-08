@@ -977,10 +977,15 @@ def _run_cycle(
     tmp_path: Path,
     *,
     now: datetime = _NOW,
-    active: frozenset[str] = frozenset(),
+    active: frozenset[str] | None = frozenset(),
     policy: ReclaimPolicy | None = None,
 ):
-    """Run one real maintenance cycle against *client*, reconcile disabled."""
+    """Run one real maintenance cycle against *client*, reconcile disabled.
+
+    ``active`` is what the liveness probe answers. The empty default is a
+    positive finding - nothing is busy - and ``None`` is the probe failing to
+    establish anything, which the gate must not read as the same thing.
+    """
     return run_maintenance_cycle(
         MaintenanceCycleRequest(
             client=cast("QdrantClient", client),

@@ -13,9 +13,10 @@ The second is that the shorter window a temp-rooted orphan draws buys only
 time. A namespace of that class is reclaimed sooner than a deleted worktree,
 and everything the reclamation contract promises about how it is reclaimed -
 the archive that must complete before any point-bearing drop, the point
-re-count taken immediately before acting, and the refusal to touch a
+re-count taken immediately before acting, the liveness probe that has to
+positively establish nothing is writing, and the refusal to touch a
 namespace that is not provably a dead orphan - is unchanged by it. Those
-three are the ones a shorter window would be tempting to trade away, so each
+four are the ones a shorter window would be tempting to trade away, so each
 has been broken deliberately and observed to fail on the assertion it names.
 """
 
@@ -303,3 +304,84 @@ class TestEphemeralWindowKeepsEveryDestructionGate:
 
         assert client.deleted == []
         assert [d.prefix for d in result.decisions] == []
+
+    def test_an_unverifiable_liveness_probe_defers_under_its_own_reason(
+        self, tmp_path: Path
+    ) -> None:
+        """A probe that could not answer holds the namespace, and says so.
+
+        The empty set is a positive finding - nothing is busy - and it is the
+        finding that authorises the drop. A probe that could not read the job
+        registry has established nothing, and the two must not arrive at the
+        gate as the same value. No later gate covers the difference: a queued
+        or paused index run has written nothing yet, so the pre-drop re-count
+        agrees with the survey and the drop proceeds.
+
+        Two mutations, each run alone against this test and each observed to
+        fail on the assertion named beside it.
+
+        Reading the unestablished answer as the empty set - binding
+        ``active = active_prefixes() or frozenset()`` in
+        ``_pre_drop_reclaim_gate`` - fails ``assert unreadable.deleted == []``.
+        The namespace is archived and destroyed on a liveness check that never
+        happened.
+
+        Wiring the deferral to the busy branch's reason instead of its own
+        fails ``assert unreadable_decision.reason == "liveness_unverifiable"``.
+        Both facts hold the namespace back for one cycle, so a test accepting
+        either string would pass on the wrong one - and the operator reading
+        it would be told a job is running when nobody could tell whether one
+        is.
+        """
+        unreadable_prefix = _ephemeral_orphan(tmp_path, name="sandbox-probe-down")
+        unreadable = _CycleClient(
+            {_collection_of(unreadable_prefix): 10},
+            snapshots_dir=tmp_path / "snapshots",
+        )
+
+        unreadable_result = _run_cycle(
+            unreadable, tmp_path, active=None, policy=_EPHEMERAL_ONLY
+        )
+
+        assert unreadable.deleted == []
+        # The liveness gate precedes the archive, so an unanswered probe stops
+        # the snapshot too: there is no point copying a namespace that may
+        # have a writer in it.
+        assert unreadable.snapshotted == []
+        unreadable_decision = _outcome_for(unreadable_result, unreadable_prefix)
+        assert unreadable_decision.action == "deferred"
+        assert unreadable_decision.reason == "liveness_unverifiable"
+
+        # The known-busy branch, asserted here rather than trusted from
+        # elsewhere: its reason is what the case above must NOT report, so the
+        # two have to be observed against one another.
+        busy_prefix = _ephemeral_orphan(tmp_path, name="sandbox-probe-busy")
+        busy = _CycleClient(
+            {_collection_of(busy_prefix): 10},
+            snapshots_dir=tmp_path / "snapshots",
+        )
+
+        busy_result = _run_cycle(
+            busy, tmp_path, active=frozenset({busy_prefix}), policy=_EPHEMERAL_ONLY
+        )
+
+        assert busy.deleted == []
+        busy_decision = _outcome_for(busy_result, busy_prefix)
+        assert busy_decision.action == "deferred"
+        assert busy_decision.reason == "active_index_job"
+
+        # The positive control. Without it, a gate that deferred every
+        # namespace unconditionally would satisfy both branches above.
+        clear_prefix = _ephemeral_orphan(tmp_path, name="sandbox-probe-clear")
+        clear_collection = _collection_of(clear_prefix)
+        clear = _CycleClient(
+            {clear_collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+        )
+
+        clear_result = _run_cycle(
+            clear, tmp_path, active=frozenset(), policy=_EPHEMERAL_ONLY
+        )
+
+        assert clear.deleted == [clear_collection]
+        assert _outcome_for(clear_result, clear_prefix).action == "archived_removed"
