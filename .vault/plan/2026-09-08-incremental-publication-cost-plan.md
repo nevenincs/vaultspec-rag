@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:f703fb8f98894e88ff2ba4dce6bf02ef16bb3f8ca54d631a7f79a0bb9f0c1d33'
+body_hash: 'sha256:f9a63bd5ad2f647e25ad73599d495ecbd5af8e54a911e83f4250cec4d6ca1b83'
 ---
 
 <!-- RETIRED: S13, S14, S15, S18, S19, S23, S24 -->
@@ -76,7 +76,7 @@ Make rebuild and non-seeding audit authority operational, then move every proof 
 
 Ensure old or missing proof can only be replaced by an explicit rebuild while audit verification checks existing canonical proof without creating or repairing it.
 
-- [ ] `W03.P08.S37` - Encode persisted publication, rebuild, and audit-verification authority independently of run mode without migration authority; `src/vaultspec_rag/indexer/_run_ledger_models.py`.
+- [x] `W03.P08.S37` - Encode persisted publication, rebuild, and audit-verification authority independently of run mode without migration authority; `src/vaultspec_rag/indexer/_run_ledger_models.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
 - [ ] `W03.P08.S52` - Carry explicit publication and verification authority through every persisted job contract and transition; `src/vaultspec_rag/job_models.py, src/vaultspec_rag/job_manager/models.py, src/vaultspec_rag/job_manager/_control.py, src/vaultspec_rag/job_manager/_execution.py, src/vaultspec_rag/job_manager/_persistence.py, src/vaultspec_rag/job_persistence.py`.
 - [ ] `W03.P08.S38` - Route generic service and job creation through explicit authority without widening scoped publication; `src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_routes_reindex.py, src/vaultspec_rag/job_dispatch.py`.
 - [ ] `W03.P08.S39` - Route CLI rebuild and verification requests through explicit authority without granting scoped scan permission; `src/vaultspec_rag/cli/_index.py`.
