@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import socket
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -17,6 +19,7 @@ from .._store_locks import VaultStoreLockedError
 from ..config._settings import get_config, reset_config
 from ..mcp._tools import _search_envelope_or_raise
 from ..registry import get_registry, reset_registry
+from ..search._models import SearchResult
 from ..server import (
     ServerRouteRuntime,
     _local_store_locked_error_dict,
@@ -45,6 +48,8 @@ from ..serviceclient._search_transport import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from .._source_types import IndexSource
 
 pytestmark = [pytest.mark.unit]
@@ -706,3 +711,177 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
         assert response.status_code == 503, response.text
         payload: dict[str, object] = response.json()
         assert payload["error"] == "quiesce_admission_closed"
+
+
+class _CombinedRouteSearcher:
+    def __init__(self, vault_results: list[SearchResult]) -> None:
+        self._vault_results = vault_results
+
+    def search_vault(self, *_args: object, **_kwargs: object) -> list[SearchResult]:
+        return self._vault_results
+
+
+class _CombinedRouteRegistry(ServiceRegistry):
+    """Real route registry with deterministic, model-free domain seams."""
+
+    def __init__(
+        self,
+        *,
+        vault_count: int | Exception,
+        code_count: int | Exception,
+        document_count: int | Exception,
+        vault_results: list[SearchResult] | None = None,
+    ) -> None:
+        super().__init__()
+        self._counts = {
+            "vault": vault_count,
+            "code": code_count,
+            "document": document_count,
+        }
+        self._searcher = _CombinedRouteSearcher(vault_results or [])
+
+    def _count(self, source: str) -> int:
+        value = self._counts[source]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def vault_doc_count(self, root: Path) -> int:
+        del root
+        return self._count("vault")
+
+    def code_chunk_count(self, root: Path) -> int:
+        del root
+        return self._count("code")
+
+    def document_chunk_count(self, root: Path) -> int:
+        del root
+        return self._count("document")
+
+    @contextmanager
+    def search_lease(self, root: Path) -> Generator[SimpleNamespace]:  # type: ignore[override]
+        del root
+        yield SimpleNamespace(searcher=self._searcher)
+
+
+def _combined_http_response(
+    tmp_path: Path, registry: ServiceRegistry
+) -> tuple[int, dict[str, object], dict[str, str]]:
+    root = tmp_path / "combined-vault"
+    (root / ".vault").mkdir(parents=True)
+    app = create_http_app(
+        ServerRouteRuntime(token="combined-token", registry=registry, port=8765),
+        lifespan=None,
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/search",
+            headers={"Authorization": "Bearer combined-token"},
+            json={
+                "query": "combined readiness contract",
+                "type": PublicSourceType.COMBINED.value,
+                "project_root": str(root),
+            },
+        )
+    return response.status_code, response.json(), dict(response.headers)
+
+
+def test_combined_http_retains_useful_results_and_failed_constituent(
+    tmp_path: Path,
+) -> None:
+    """The real route serializes classification instead of bypassing it.
+
+    Mutation evidence: temporarily returning ``None`` instead of ``combined``
+    from combined dispatch made the exact ``partial`` lookup fail with
+    ``KeyError`` (exit 1); restoration passed (exit 0). Filtering ``domains``
+    to successful legs then failed the exact three-source tuple assertion
+    because ``code`` disappeared (exit 1); restoration passed (exit 0).
+    """
+    registry = _CombinedRouteRegistry(
+        vault_count=1,
+        code_count=RuntimeError("code collection unavailable"),
+        document_count=0,
+        vault_results=[SearchResult("v", "v.md", "Vault", 0.9, "body", "vault")],
+    )
+
+    status, payload, _headers = _combined_http_response(tmp_path, registry)
+
+    assert status == 200
+    assert [
+        item["id"] for item in cast("list[dict[str, object]]", payload["results"])
+    ] == ["v"]
+    assert payload["partial"] is True
+    domains = cast("dict[str, dict[str, object]]", payload["domains"])
+    assert tuple(domains) == ("vault", "code", "document")
+    assert domains["vault"]["ok"] is True
+    assert domains["code"]["ok"] is False
+    assert domains["code"]["error_kind"] == "RuntimeError"
+    readiness = cast("dict[str, object]", payload["readiness"])
+    sources = cast("list[dict[str, object]]", readiness["sources"])
+    assert [source["source"] for source in sources] == ["vault", "code", "document"]
+    assert cast("dict[str, object]", readiness["aggregate"])["source_count"] == 3
+
+
+def test_combined_http_empty_partial_is_typed_failure_without_results(
+    tmp_path: Path,
+) -> None:
+    """A failed constituent cannot be hidden behind an empty success.
+
+    Mutation evidence: temporarily removing ``combined.partial`` from the
+    empty-authority guard made the exact status assertion report 200 instead
+    of 503 (exit 1); restoration passed (exit 0). Removing result suppression
+    failed the exact ``results`` absence assertion (exit 1), and adding a
+    speculative final ``Retry-After: 1`` failed its exact header absence
+    assertion (exit 1); each restoration passed (exit 0).
+    """
+    registry = _CombinedRouteRegistry(
+        vault_count=0,
+        code_count=RuntimeError("code collection unavailable"),
+        document_count=0,
+    )
+
+    status, payload, headers = _combined_http_response(tmp_path, registry)
+
+    assert status == 503
+    assert payload["ok"] is False
+    assert payload["error"] == "index_unverifiable"
+    assert "results" not in payload
+    assert payload["remediation"] is not None
+    assert "retry-after" not in headers
+    assert (
+        cast("dict[str, dict[str, object]]", payload["domains"])["code"]["ok"] is False
+    )
+    assert cast("dict[str, object]", payload["readiness"])["aggregate"]
+
+
+def test_combined_http_complete_failure_has_canonical_retry_and_remediation(
+    tmp_path: Path,
+) -> None:
+    """Complete failure retains all constituents and suppresses all results.
+
+    Mutation evidence: removing the complete-failure result suppression
+    failed the exact ``results`` absence assertion (exit 1); restoration
+    passed (exit 0). Removing the document constituent from route serialization
+    failed the exact ordered domain-key assertion (exit 1); restoration passed
+    (exit 0).
+    """
+    registry = _CombinedRouteRegistry(
+        vault_count=RuntimeError("vault unavailable"),
+        code_count=RuntimeError("code unavailable"),
+        document_count=RuntimeError("document unavailable"),
+    )
+
+    status, payload, headers = _combined_http_response(tmp_path, registry)
+
+    assert status == 503
+    assert payload["ok"] is False
+    assert payload["error"] == "combined_search_failed"
+    assert payload["retryable"] is False
+    assert payload["remediation"] is not None
+    assert "results" not in payload
+    assert "retry-after" not in headers
+    domains = cast("dict[str, dict[str, object]]", payload["domains"])
+    assert tuple(domains) == ("vault", "code", "document")
+    assert all(domain["ok"] is False for domain in domains.values())
+    readiness = cast("dict[str, object]", payload["readiness"])
+    assert cast("dict[str, object]", readiness["aggregate"])["source_count"] == 3
