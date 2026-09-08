@@ -84,7 +84,7 @@ test target='all':
     {{dev}} test {{target}}
 
 # Build the Python distribution artifacts.
-build target='python':
+build target='all':
     {{dev}} build {{target}}
 
 # MEASUREMENT ONLY - always exits 0. Composes the gates rather than
