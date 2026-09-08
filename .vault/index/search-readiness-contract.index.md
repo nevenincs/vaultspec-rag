@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:8dce4097ba3c6a83e3d12822a7452d00ec75240fa6b8e7a39bcbf44b58e8897a'
+body_hash: 'sha256:9891479ec7e3f58dc56155d386c6636117d67f7136eeb3777fb22ca881ace572'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -20,6 +20,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W01-P03-S08]]'
   - '[[2026-09-08-search-readiness-contract-W01-P03-S09]]'
   - '[[2026-09-08-search-readiness-contract-W01-P03-S10]]'
+  - '[[2026-09-08-search-readiness-contract-W01-P03-S11]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -50,6 +51,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W01-P03-S08` - Implement a service-owned readiness revision registry and cancellable monotonic publication waiter
 - `2026-09-08-search-readiness-contract-W01-P03-S09` - Own the readiness registry lifecycle and inject one registry-allocated revision emission after canonical code publication succeeds
 - `2026-09-08-search-readiness-contract-W01-P03-S10` - Inject one registry-allocated readiness revision after each canonical document generation publication succeeds
+- `2026-09-08-search-readiness-contract-W01-P03-S11` - Emit controller-only readiness notifications after canonical desired-state persistence without advancing publication
 
 ### plan
 

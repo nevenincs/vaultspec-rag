@@ -270,38 +270,24 @@ class ReadinessRevisionRegistry:
         root: str | Path,
         source: IndexSource,
         *,
-        revision: int,
         generation: str | None = None,
     ) -> ReadinessRevisionSnapshot:
-        """Record a target change and wake waiters without claiming publication."""
+        """Allocate a target revision and wake without claiming publication."""
         _identity(generation, field="generation")
-        _revision(revision, field="revision")
-        if revision is None:
-            raise ValueError("revision must be a non-negative integer")
         key = ReadinessSourceKey.from_root(root, source)
         with self._lock:
             loop = self._require_live_locked()
             current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
-            previous_revision = current.controller_revision
-            if previous_revision is not None and revision < previous_revision:
-                raise ValueError("controller_revision must not regress")
-            if (
-                previous_revision == revision
-                and generation is not None
-                and current.desired_generation is not None
-                and generation != current.desired_generation
-            ):
-                raise ValueError(
-                    "desired_generation must agree at the same controller_revision"
+            revision = (
+                max(
+                    current.publication_revision or 0,
+                    current.controller_revision or 0,
                 )
-            desired_generation = (
-                current.desired_generation
-                if previous_revision == revision and generation is None
-                else generation
+                + 1
             )
             updated = replace(
                 current,
-                desired_generation=desired_generation,
+                desired_generation=generation,
                 controller_revision=revision,
             )
             self._snapshots[key] = updated
