@@ -7,13 +7,13 @@ questions, and is always safe to run again.
 
 The recipes:
 
-| Recipe | What it does |
-| --- | --- |
-| `just init` | Everything, in dependency order. |
-| `just init-python` | The Python environment and its locked dependencies. |
-| `just init-node` | The pinned Node dependency graph. |
-| `just init-tools` | Framework enrollment, git hooks, and host-tool diagnosis. |
-| `just init-check` | Reports whether the worktree is initialized. Mutates nothing. |
+| Recipe             | What it does                                                  |
+| ------------------ | ------------------------------------------------------------- |
+| `just init`        | Everything, in dependency order.                              |
+| `just init-python` | The Python environment and its locked dependencies.           |
+| `just init-node`   | The pinned Node dependency graph.                             |
+| `just init-tools`  | Framework enrollment, git hooks, and host-tool diagnosis.     |
+| `just init-check`  | Reports whether the worktree is initialized. Mutates nothing. |
 
 ## The contract
 
@@ -37,14 +37,14 @@ always printed). `VAULTSPEC_INIT_JSON=1`, or `--json`, additionally streams
 NDJSON events on stdout while human prose stays on stderr. Exit codes come from
 `dev/exit_codes.py` and are identical fleet-wide:
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Initialized, or already initialized. |
-| `2` | A required host tool is absent. The report names it and where to get it. |
-| `3` | `init-check` only: the worktree is not initialized, or is stale. |
-| `4` | A bootstrap step ran and failed. |
-| `5` | Drift: a lockfile no longer matches its project metadata. |
-| `6` | The environment is held open by another process. Close it and re-run. |
+| Code | Meaning                                                                  |
+| ---- | ------------------------------------------------------------------------ |
+| `0`  | Initialized, or already initialized.                                     |
+| `2`  | A required host tool is absent. The report names it and where to get it. |
+| `3`  | `init-check` only: the worktree is not initialized, or is stale.         |
+| `4`  | A bootstrap step ran and failed.                                         |
+| `5`  | Drift: a lockfile no longer matches its project metadata.                |
+| `6`  | The environment is held open by another process. Close it and re-run.    |
 
 Code `6` is the one worth knowing by sight. On Windows an editor, an MCP
 server, or another agent's session holding a console-script `.exe` under
@@ -71,13 +71,13 @@ stay behind their own named recipes. `init` restores what the lockfiles pin.
 Every file here except `plan.py` is byte-identical in `vaultspec-core`,
 `vaultspec-rag`, `vaultspec-dashboard`, `vaultspec-a2a` and `cadrumo`.
 
-| File | Role |
-| --- | --- |
-| `contract.py` | Phases, steps, results, the event stream, the report schema. |
-| `process.py` | Running a step, and classifying its failure into an exit code. |
-| `probe.py` | Host-tool discovery and version comparison. |
-| `stamp.py` | Input digests and the idempotence stamp. |
-| `plan.py` | **This repository's** phases. The only file that differs. |
+| File          | Role                                                           |
+| ------------- | -------------------------------------------------------------- |
+| `contract.py` | Phases, steps, results, the event stream, the report schema.   |
+| `process.py`  | Running a step, and classifying its failure into an exit code. |
+| `probe.py`    | Host-tool discovery and version comparison.                    |
+| `stamp.py`    | Input digests and the idempotence stamp.                       |
+| `plan.py`     | **This repository's** phases. The only file that differs.      |
 
 The package imports only the standard library and `dev.exit_codes`. It must
 never import `dev.toolchain`, `dev.runner`, or anything reached through

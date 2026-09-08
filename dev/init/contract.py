@@ -41,8 +41,10 @@ JSON_ENV: Final = "VAULTSPEC_INIT_JSON"
 #: The environment variable that forces a full run, ignoring the stamp.
 FORCE_ENV: Final = "VAULTSPEC_INIT_FORCE"
 
-#: Statuses a phase or a run can end in.
-OK: Final = "ok"
+#: Statuses a phase or a run can end in. Deliberately NOT named ``OK``: the
+#: exit-code contract already owns that name for the integer 0, and a module
+#: importing both would silently mix a status string into an exit code.
+DONE: Final = "ok"
 SKIPPED: Final = "skipped"
 FRESH: Final = "fresh"
 FAILED: Final = "failed"
