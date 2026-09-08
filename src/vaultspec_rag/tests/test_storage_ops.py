@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 
     from qdrant_client import QdrantClient
 
+    from ..storage_reclamation import MaintenanceResult, ReclaimDecision
+
 #: Includes the helpers a sibling suite imports from here. Declared so a
 #: checker reads them as this module's surface rather than as helpers it
 #: defines and never calls.
@@ -61,6 +63,7 @@ __all__ = [
     "_collection_of",
     "_identity",
     "_orphaned_namespace",
+    "_outcome_for",
     "_run_cycle",
     "_survey",
     "_temp_survey",
@@ -428,14 +431,24 @@ def _temp_survey(
     prefix: str,
     points: int = 0,
     footprint: int = 2_100,
+    *,
+    status: str = "live",
 ) -> NamespaceSurvey:
+    """Return a survey whose root is under the OS temp directory.
+
+    ``status`` defaults to the leak signature this helper was written for - a
+    harness temp dir that still exists - and is overridable because the same
+    temp root under a different classification is what separates the class
+    from the classification: one temp-rooted namespace is reclaimable and
+    another is untouchable, and the difference is only ever the status.
+    """
     import pathlib
     import tempfile
 
     return NamespaceSurvey(
         prefix=prefix,
         root=str(pathlib.Path(tempfile.gettempdir()) / f"vaultspec-livetest-{prefix}"),
-        status="live",
+        status=status,
         collections=[f"{prefix}vault_docs"],
         points=points,
         footprint_bytes=footprint,
@@ -907,15 +920,40 @@ def _collection_of(prefix: str) -> str:
     return prefix + VAULT_COLLECTION
 
 
-def _orphaned_namespace(
-    tmp_path: Path, *, now: datetime, name: str = "vanished-root"
-) -> str:
-    """Record a root, remove it, and age its orphan clock past both windows.
+def _outcome_for(result: MaintenanceResult, prefix: str) -> ReclaimDecision:
+    """Return the cycle's single outcome for *prefix*, asserting it exists.
 
-    Uses the orphan tier rather than the ephemeral one so the pre-drop gates
-    can be exercised without also depending on temp-rootedness. ``name``
-    distinguishes roots so one test can stand up several namespaces, which is
-    what a per-namespace failure has to be observed against.
+    A cycle that stopped early reports nothing at all for the namespaces
+    behind the failure, and an absent outcome must read as the named
+    continuation failure it is rather than as a lookup error on the way to an
+    assertion that never ran.
+    """
+    matched = [d for d in result.decisions if d.prefix == prefix]
+    assert len(matched) == 1, f"cycle reported no outcome for {prefix}"
+    return matched[0]
+
+
+def _orphaned_namespace(
+    tmp_path: Path,
+    *,
+    now: datetime,
+    name: str = "vanished-root",
+    aged_hours: float = 1000.0,
+) -> str:
+    """Record a root, remove it, and age its orphan clock by *aged_hours*.
+
+    Uses the orphan tier rather than the live ephemeral-idle one, so the
+    pre-drop gates are reached through a vanished root rather than through an
+    activity clock. The default age is past every window at once, which is
+    what a gate test wants: eligibility is a given and the gate is the only
+    thing left that can hold the namespace back.
+
+    ``aged_hours`` is for the tests that need the opposite - an age inside one
+    window and outside another - because which window applied is only
+    observable from a stamp the two windows disagree about.
+
+    ``name`` distinguishes roots so one test can stand up several namespaces,
+    which is what a per-namespace failure has to be observed against.
     """
     root = tmp_path / name
     root.mkdir()
@@ -923,7 +961,7 @@ def _orphaned_namespace(
     root.rmdir()
     update_orphan_stamps(
         {entry.prefix: "orphaned"},
-        now_iso=(now - timedelta(hours=1000)).isoformat(),
+        now_iso=(now - timedelta(hours=aged_hours)).isoformat(),
     )
     return entry.prefix
 

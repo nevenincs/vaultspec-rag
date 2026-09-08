@@ -49,6 +49,13 @@ class ReclaimPolicy:
         grace_hours_data: Continuous-orphan hours before a POINT-BEARING
             namespace may be archived and reclaimed. Deliberately longer:
             a namespace with points is semantic data.
+        grace_hours_ephemeral: Continuous-orphan hours before a TEMP-ROOTED
+            namespace may be reclaimed, replacing both windows above for
+            that class whatever it holds. Deliberately shorter: the root was
+            always throwaway AND is provably gone, which is stronger
+            evidence of death than a point count. Point count still selects
+            the TIER within this window, so a point-bearing one is archived
+            before it is dropped; only the waiting period changes.
         max_per_cycle: Hard cap on reclaims per cycle; the remainder waits.
         archive_retention_days: Age past which archived snapshots are
             deleted by the retention sweep.
@@ -70,6 +77,7 @@ class ReclaimPolicy:
 
     grace_hours: float = 24.0
     grace_hours_data: float = 168.0
+    grace_hours_ephemeral: float = 24.0
     max_per_cycle: int = 16
     archive_retention_days: float = 30.0
     archive_max_bytes: int = 20 * 1024**3
@@ -267,11 +275,12 @@ def evaluate_reclaim(
     Safety gates stacked per prefix: only ``orphaned`` survey entries are
     considered (``unknown``/``unverifiable``/``live`` never appear in the
     output); a missing or unparsable grace stamp means the window has just
-    started (``pending``); the window length is tiered by whether the
-    namespace holds points; and eligible prefixes beyond
-    ``policy.max_per_cycle`` are ``deferred`` to the next cycle. Empty
-    namespaces are ordered before point-bearing ones so the riskless tier
-    always reclaims first under a tight cap.
+    started (``pending``); the window length is the ephemeral one when the
+    root was temp-rooted and otherwise tiered by whether the namespace holds
+    points, while the tier itself is always the point count; and eligible
+    prefixes beyond ``policy.max_per_cycle`` are ``deferred`` to the next
+    cycle. Empty namespaces are ordered before point-bearing ones so the
+    riskless tier always reclaims first under a tight cap.
 
     Reachability is the only classification this function reads, and a
     collection's conformance verdict is deliberately not an input to it. The
@@ -326,9 +335,31 @@ def _decide_orphan(
     now: datetime,
     policy: ReclaimPolicy,
 ) -> ReclaimDecision:
-    """Decide one orphaned namespace against its tiered grace window."""
+    """Decide one orphaned namespace against its tiered grace window.
+
+    Two inputs choose the window and they answer different questions. Point
+    count picks the TIER - empty drops, point-bearing archives first - and
+    picks it here unchanged. Ephemerality picks the WINDOW: a root created
+    under the OS temp directory and now provably absent was a throwaway that
+    was torn down, which is stronger evidence of death than either signal
+    alone and stronger than the point count the tiered windows key on.
+    Reading the point count alone gave a sandbox that cleaned up after
+    itself a longer window than one that leaked its directory - the same
+    temp-rootedness the live idle tier already trusts, discarded at the
+    moment it became best-evidenced.
+
+    The tier survives the shorter window rather than being folded into it,
+    because what the tier governs downstream - the archive that must
+    complete before any point-bearing drop - does not depend on how long the
+    namespace waited.
+    """
+    from .storage_survey import is_temp_rooted
+
     tier = "empty" if survey.points == 0 else "data"
-    window_hours = policy.grace_hours if tier == "empty" else policy.grace_hours_data
+    tiered_hours = policy.grace_hours if tier == "empty" else policy.grace_hours_data
+    window_hours = (
+        policy.grace_hours_ephemeral if is_temp_rooted(survey.root) else tiered_hours
+    )
     first_seen = parse_iso_timestamp(stamps.get(survey.prefix, ""), field="first_seen")
     if first_seen is None:
         return ReclaimDecision(
