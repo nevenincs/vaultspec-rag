@@ -78,6 +78,14 @@ replacing its environment.
 
 Once installation succeeds, open the repository you want to search and run:
 
+The default setup downloads
+[`naver/splade-v3`](https://huggingface.co/naver/splade-v3), a gated sparse model.
+Before running it, accept the model's access conditions and authenticate the service
+account with `HF_TOKEN` or `hf auth login`; a token alone is insufficient until its
+account has accepted the conditions. The model's CC-BY-NC-SA-4.0 license restricts
+commercial use. If the gate or license is unsuitable, follow the
+[dense-only setup](docs/installation.md#the-model-cache-and-its-first-download) instead.
+
 ```bash
 vaultspec-rag install --no-torch-config
 ```

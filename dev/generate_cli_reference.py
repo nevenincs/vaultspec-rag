@@ -69,7 +69,8 @@ def _parameter_rows(command: Any, *, options: bool) -> list[str]:
         help_text = _cell(getattr(param, "help", "") or "-")
         required = "yes" if getattr(param, "required", False) else "no"
         rows.append(
-            f"| {name} | {_type_name(param)} | {required} | {_default(param)} | {help_text} |"
+            f"| {name} | {_type_name(param)} | {required} "
+            f"| {_default(param)} | {help_text} |"
         )
     return rows
 
@@ -91,7 +92,7 @@ def _command_tree(commands: list[tuple[tuple[str, ...], Any]]) -> list[str]:
     previous: tuple[str, ...] = ()
     for path, _ in commands:
         shared = 0
-        for left, right in zip(previous, path):
+        for left, right in zip(previous, path, strict=False):
             if left != right:
                 break
             shared += 1
@@ -100,7 +101,9 @@ def _command_tree(commands: list[tuple[tuple[str, ...], Any]]) -> list[str]:
             label = " ".join(partial)
             indent = "  " * depth
             if depth == len(path) - 1:
-                lines.append(f"{indent}- [{path[-1]}](#{label.replace(' ', '-').lower()})")
+                lines.append(
+                    f"{indent}- [{path[-1]}](#{label.replace(' ', '-').lower()})"
+                )
             else:
                 lines.append(f"{indent}- **{path[-1]}**")
         previous = path

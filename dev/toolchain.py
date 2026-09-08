@@ -74,7 +74,6 @@ LINK_PATHS = ("README.md", ".vault", ".vaultspec")
 #: Pinned images backing the native binaries that cannot live in the lockfile.
 TAPLO_IMAGE = "tamasfe/taplo:0.9"
 LYCHEE_IMAGE = "lycheeverse/lychee:latest"
-ACTIONLINT_IMAGE = "rhysd/actionlint:latest"
 
 #: Duplication-detector thresholds. jscpd's own defaults (5 lines / 50 tokens)
 #: report formatting coincidences; 20 lines with 70 tokens is the threshold at
@@ -329,13 +328,15 @@ LINT = Verb(
         ),
         Target(
             "workflow",
-            "Check the GitHub Actions workflows (actionlint).",
+            "Lint the workflows, then hold them to the CI/justfile contract.",
             (
-                ToolOrDocker(
-                    tool="actionlint",
-                    argv=(),
-                    image=ACTIONLINT_IMAGE,
-                ),
+                # Two questions about the same artifacts. actionlint asks
+                # whether the YAML is well-formed and its expressions resolve;
+                # the contract asks whether a `run:` step is calling a recipe
+                # or re-implementing one. A workflow can be perfectly valid
+                # YAML and still install `just` by hand-rolled pwsh download.
+                uv_run("python", "-m", "dev.actionlint"),
+                uv_run("python", "-m", "dev.ci_contract"),
             ),
         ),
         Target(
@@ -743,9 +744,21 @@ CI = Verb(
             "Run the complete local validation baseline.",
             (
                 _verb("lint", "all"),
+                # `audit deps` and nothing else from the audit verb. The rest
+                # of that group is advisory by construction - each finding is
+                # a lead to confirm, and a pipeline that fails on a lead
+                # teaches people to stop reading it. A published advisory
+                # against a pinned version is not a lead, it is a verdict.
                 _verb("audit", "deps"),
                 uv_run("vaultspec-core", "vault", "check", "all"),
                 _verb("test", "all"),
+                # BUILD IS PART OF CI, and this repository is where that was
+                # measured: the wheel build broke on the release path and
+                # surfaced at release time, with the tag already cut. The
+                # gates above prove the source is well-formed and the tests
+                # pass; only this one proves the artifact a user receives can
+                # still be produced from it.
+                _verb("build", "all"),
             ),
         ),
     ),
