@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.26](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.25...vaultspec-rag-v0.4.26) (2026-09-07)
+
+
+### Bug Fixes
+
+* require explicit authority for full reindex ([#467](https://github.com/nevenincs/vaultspec-rag/issues/467)) ([60b66f1](https://github.com/nevenincs/vaultspec-rag/commit/60b66f155cff1da476780d841c8c91c916fb9cc1))
+
+## [0.4.25](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.24...vaultspec-rag-v0.4.25) (2026-09-06)
+
+
+### Bug Fixes
+
+* **ci:** embed the fleet preflight; a public repo cannot call a private one ([d2c2606](https://github.com/nevenincs/vaultspec-rag/commit/d2c26067b2ee78c110696ea5774071985b79d001))
+* **publish:** key the concurrency group by tag ([e410d02](https://github.com/nevenincs/vaultspec-rag/commit/e410d0227f2f1baf814ca891030cadf60702caa2))
+
 ## [0.4.24](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.23...vaultspec-rag-v0.4.24) (2026-09-05)
 
 

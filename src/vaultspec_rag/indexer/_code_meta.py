@@ -42,6 +42,7 @@ class _MetaPublishOptions(TypedDict, total=False):
     content_epoch: str
     published_points_count: int
     published_files_count: int | None
+    backend_identity: str
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class _MetaPublishRequest:
     content_epoch: str
     published_points_count: int
     published_files_count: int | None = None
+    backend_identity: str = "legacy:unknown"
 
 
 #: Version of the embedding-input format for code chunks. ``2`` embeds
@@ -212,6 +214,7 @@ def _publish_meta_from_file_states(request: _MetaPublishRequest) -> int:
         content_epoch,
         published_points_count,
         published_files_count,
+        backend_identity,
     ) = (
         request.meta_path,
         request.states,
@@ -220,12 +223,14 @@ def _publish_meta_from_file_states(request: _MetaPublishRequest) -> int:
         request.content_epoch,
         request.published_points_count,
         request.published_files_count,
+        request.backend_identity,
     )
 
     for name, value in (
         ("generation_id", generation_id),
         ("membership_epoch", membership_epoch),
         ("content_epoch", content_epoch),
+        ("backend_identity", backend_identity),
     ):
         if not value.strip():
             raise ValueError(f"{name} must not be empty")
@@ -250,6 +255,7 @@ def _publish_meta_from_file_states(request: _MetaPublishRequest) -> int:
                 (MEMBERSHIP_EPOCH_KEY, membership_epoch),
                 (CONTENT_EPOCH_KEY, content_epoch),
                 (GENERATION_ID_KEY, generation_id),
+                ("__storage_backend_identity__", backend_identity),
                 (PUBLISHED_POINTS_KEY, str(published_points_count)),
             ) + (
                 ()

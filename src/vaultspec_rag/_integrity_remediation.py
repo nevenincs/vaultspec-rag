@@ -8,14 +8,10 @@ job machinery for exactly one non-destructive repair per demonstrated shrink,
 and answers the status surface's question - "is a repair in flight for this?" -
 without the status path re-counting anything.
 
-The repair is deliberately the weakest verb that heals: an ordinary
-incremental index job. The indexer's own evidence check compares the published
-breadth against the live store at the start of every incremental run and
-escalates to a full failure-safe reconciliation itself when the store falls
-short, so the decision of *how* to rebuild stays with the one place that
-already owns it. Nothing here drops, cleans, or rebuilds destructively - a
-repair that destroyed served data to fix a shrink would be the defect wearing
-a cure's name.
+Repair admission is disabled by default. Operators may opt into an ordinary
+incremental repair job, but the indexer's evidence gate still refuses work
+that requires a full rebuild. Search therefore reports degradation without
+silently authorizing a corpus-wide mutation.
 
 Three restraints keep this from becoming a loop:
 

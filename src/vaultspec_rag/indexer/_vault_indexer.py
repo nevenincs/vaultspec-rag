@@ -24,6 +24,7 @@ from .._index_breadth import (
     VAULT_PUBLISHED_POINTS_KEY,
     index_meta_path,
 )
+from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
@@ -498,26 +499,16 @@ class VaultIndexer(VaultIncrementalMixin):
         """
         run_control.checkpoint()
         if self._needs_layout_rebuild():
-            logger.info(
-                "Vault point layout changed; running a one-time clean "
-                "rebuild of the vault collection",
-            )
-            return self._full_index_locked(
-                clean=True,
-                reporter=reporter,
-                run_control=run_control,
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                "vault point layout changed; request an explicit full vault reindex",
             )
 
         run_control.checkpoint()
         if self._needs_content_rebuild():
-            logger.info(
-                "Vault chunk boundary changed; running a one-time clean "
-                "rebuild of the vault collection",
-            )
-            return self._full_index_locked(
-                clean=True,
-                reporter=reporter,
-                run_control=run_control,
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                "vault chunk boundary changed; request an explicit full vault reindex",
             )
 
         run_control.checkpoint()

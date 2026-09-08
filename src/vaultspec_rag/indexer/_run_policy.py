@@ -43,10 +43,11 @@ class CleanupQueuePutOutcome(StrEnum):
 
 
 class DurableProgressKind(StrEnum):
-    """The two events allowed to advance the no-progress clock."""
+    """Committed storage or ledger events allowed to advance liveness."""
 
     LEDGER_UNIT_COMMITTED = "ledger_unit_committed"
     FINALIZATION_PHASE_COMMITTED = "finalization_phase_committed"
+    RECONCILIATION_BATCH_COMMITTED = "reconciliation_batch_committed"
 
 
 class ThreadWaitOutcome(StrEnum):
@@ -174,7 +175,7 @@ class RunPolicy:
 
         Callers must invoke this only after the matching store mutation and
         local ledger transaction have both completed. The policy accepts only
-        the two architecture-defined durable progress kinds so UI progress,
+        architecture-defined durable progress kinds so UI progress,
         queue motion, encoding, and retry activity cannot be mistaken for a
         liveness reset.
         """
