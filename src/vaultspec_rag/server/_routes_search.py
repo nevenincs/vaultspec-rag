@@ -15,7 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 from functools import partial
-from math import isfinite
+from math import ceil, isfinite
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -31,6 +31,7 @@ from .._operator_commands import (
     server_status_command,
 )
 from .._search_state import (
+    MAX_SEARCH_EVIDENCE_ITEMS,
     AbsenceAuthority,
     FreshnessWaitPolicy,
     GenerationEvidence,
@@ -69,6 +70,7 @@ from ..service_quiesce import QuiesceAdmissionClosedError
 from ._auth import require_token
 from ._runtime import get_request_runtime
 from ._search_activity import (
+    SearchActivityAdmissionError,
     SearchActivityCompletion,
     SearchActivityStart,
     SearchActivityTicket,
@@ -262,6 +264,43 @@ class SearchRouteResult:
     status_code: int
     total_seconds: float
     availability_cause: str | None
+
+
+def _attach_route_waits(
+    result: dict[str, object], waits: tuple[WaitObservation, ...]
+) -> None:
+    """Append route-owned waits to every carried concrete source fact."""
+    readiness = result.get("readiness")
+    if not isinstance(readiness, dict):
+        return
+    sources = readiness.get("sources")
+    if not isinstance(sources, list):
+        return
+    additions = [wait.as_dict() for wait in waits]
+
+    def attach(source: dict[object, object]) -> None:
+        existing = source.get("waits")
+        carried = list(existing) if isinstance(existing, list) else []
+        route_owned: list[dict[str, object]] = []
+        for addition in additions:
+            if addition not in route_owned:
+                route_owned.append(addition)
+        route_owned = route_owned[-MAX_SEARCH_EVIDENCE_ITEMS:]
+        prior = [item for item in carried if item not in route_owned]
+        prior_capacity = MAX_SEARCH_EVIDENCE_ITEMS - len(route_owned)
+        source["waits"] = [*prior[:prior_capacity], *route_owned]
+
+    for source in sources:
+        if isinstance(source, dict):
+            attach(source)
+    domains = result.get("domains")
+    if isinstance(domains, dict):
+        for domain in domains.values():
+            if not isinstance(domain, dict):
+                continue
+            source = domain.get("readiness")
+            if isinstance(source, dict):
+                attach(source)
 
 
 @dataclass(frozen=True, slots=True)
@@ -885,7 +924,9 @@ def _execute_search_request(
     request: SearchRequest, registry: ServiceRegistry
 ) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
+    compute_wait_started = time.perf_counter()
     ticket = registry.acquire_compute_ticket()
+    compute_ticket_wait_seconds = time.perf_counter() - compute_wait_started
     try:
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
@@ -951,6 +992,7 @@ def _execute_search_request(
                 "project_lease_seconds": phase_timing.get(PHASE_PROJECT_LEASE),
                 "serialization_seconds": time.perf_counter() - phase_started,
                 "queue_wait_seconds": phase_timing.get("queue_wait_seconds", 0.0),
+                "compute_ticket_wait_seconds": compute_ticket_wait_seconds,
                 "timing_scope": "server_route",
                 "phases": phase_timing,
             },
@@ -1419,6 +1461,7 @@ async def _execute_search_route(
     search_request: SearchRequest,
     port: int | None,
     registry: ServiceRegistry,
+    activity_waits: tuple[WaitObservation, ...] = (),
 ) -> SearchRouteResult:
     """Run, classify, and record the public response for one valid search."""
     from ._routes import canonical_job_snapshot
@@ -1461,13 +1504,32 @@ async def _execute_search_route(
         )
     )
     run = partial(_execute_search_request, search_request, registry)
+    limiter_submitted = time.perf_counter()
+    worker_started: list[float] = []
+
+    def witnessed_run() -> dict[str, object]:
+        started_at = time.perf_counter()
+        worker_started.append(started_at)
+        result = run()
+        timing = result.get("timing")
+        if isinstance(timing, dict):
+            compute_wait = timing.get("compute_ticket_wait_seconds")
+            if isinstance(compute_wait, (int, float)) and not isinstance(
+                compute_wait, bool
+            ):
+                timing["worker_service_seconds"] = max(
+                    0.0,
+                    time.perf_counter() - started_at - float(compute_wait),
+                )
+        return result
+
     try:
         if availability_facts is None:
-            result = await _run_in_thread(run, limiter=get_search_limiter())
+            result = await _run_in_thread(witnessed_run, limiter=get_search_limiter())
             classification = None
         else:
             result, classification = await _run_search_with_availability(
-                run,
+                witnessed_run,
                 availability_facts,
             )
     except QuiesceAdmissionClosedError as exc:
@@ -1500,6 +1562,10 @@ async def _execute_search_route(
             availability_cause=None,
         )
     total_seconds = time.perf_counter() - started
+    limiter_wait = worker_started[0] - limiter_submitted if worker_started else 0.0
+    timing = result.get("timing")
+    if isinstance(timing, dict):
+        timing["search_limiter_wait_seconds"] = limiter_wait
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
     response_status = _search_response_status(result)
@@ -1518,6 +1584,7 @@ async def _execute_search_route(
                 registry=registry,
                 total_seconds=total_seconds,
             )
+    _attach_route_waits(result, activity_waits)
     return SearchRouteResult(
         result=result,
         status_code=response_status,
@@ -1571,6 +1638,30 @@ def _quiesce_admission_closed_result(
     }
 
 
+def _activity_admission_response(exc: SearchActivityAdmissionError) -> JSONResponse:
+    """Render bounded ledger capacity refusal from its canonical deadline."""
+    result: dict[str, object] = {
+        "ok": False,
+        "error": "capacity_limited",
+        "message": "Search activity capacity is temporarily unavailable.",
+        "retryable": True,
+        "request_id": exc.request_id,
+        "waits": [exc.wait.as_dict()],
+        "remediation": "Retry after active searches complete.",
+    }
+    headers: dict[str, str] | None = None
+    status = 503
+    now = time.time()
+    if (
+        exc.reason == "deadline_exceeded"
+        and exc.deadline is not None
+        and exc.deadline > now
+    ):
+        status = 429
+        headers = {"Retry-After": str(max(1, ceil(exc.deadline - now)))}
+    return JSONResponse(result, status_code=status, headers=headers)
+
+
 def _classify_completed_search(
     result: dict[str, object],
     search_request: SearchRequest,
@@ -1610,19 +1701,27 @@ async def _search_route_response(request: Request) -> JSONResponse:
     activity_ticket = SearchActivityTicket(request_id=request_id)
     finalization = SearchActivityFinalization()
     try:
-        await _run_in_thread(
-            partial(
-                search_activity_ledger().start,
-                SearchActivityStart(
-                    request_id=request_id,
-                    query="",
-                    search_type="unknown",
-                    root=None,
-                    top_k=None,
-                    ticket=activity_ticket,
-                ),
+        try:
+            await _run_in_thread(
+                partial(
+                    search_activity_ledger().start,
+                    SearchActivityStart(
+                        request_id=request_id,
+                        query="",
+                        search_type="unknown",
+                        root=None,
+                        top_k=None,
+                        ticket=activity_ticket,
+                    ),
+                )
             )
-        )
+        except SearchActivityAdmissionError as exc:
+            response = _activity_admission_response(exc)
+            finalization.status_code = response.status_code
+            finalization.outcome = "admission_failed"
+            finalization.error_code = "capacity_limited"
+            finalization.error_message = str(exc)
+            return response
         payload = await _search_payload(request)
         if isinstance(payload, SearchRouteError):
             _record_validation_rejection(finalization, payload)
@@ -1638,6 +1737,7 @@ async def _search_route_response(request: Request) -> JSONResponse:
             search_request,
             request.url.port,
             get_request_runtime(request).registry,
+            activity_ticket.admission_waits,
         )
         finalization.result = completed.result
         finalization.status_code = completed.status_code
@@ -1661,10 +1761,11 @@ async def _execute_search_until_disconnect(
     search_request: SearchRequest,
     port: int | None,
     registry: ServiceRegistry,
+    activity_waits: tuple[WaitObservation, ...] = (),
 ) -> SearchRouteResult:
     """Cancel route work when the already-read ASGI request disconnects."""
     executing = asyncio.create_task(
-        _execute_search_route(search_request, port, registry)
+        _execute_search_route(search_request, port, registry, activity_waits)
     )
     disconnected = asyncio.create_task(_wait_for_http_disconnect(request))
     try:
