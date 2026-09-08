@@ -15,7 +15,7 @@ four citations survived it.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path  # noqa: TC003  (a runtime value, not only an annotation)
 
 import pytest
 
@@ -31,7 +31,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: strings would appear in this file and the sweep below would flag its own
 #: source - the guard failing on itself is how the first version behaved.
 RETIRED_INVOCATIONS: tuple[str, ...] = tuple(
-    "just " + verb + " " for verb in ('lint', 'fix', 'audit', 'test', 'deps', 'health', 'build', 'readme-assets', 'binaries', 'channels')
+    "just " + verb + " "
+    for verb in (
+        "lint",
+        "fix",
+        "audit",
+        "test",
+        "deps",
+        "health",
+        "build",
+        "readme-assets",
+        "binaries",
+        "channels",
+    )
 )
 
 #: The contexts a real citation appears in. Bare prose is deliberately NOT one
@@ -48,6 +60,7 @@ def _retired_citations() -> tuple[str, ...]:
         for invocation in RETIRED_INVOCATIONS
         for context in CITATION_CONTEXTS
     )
+
 
 #: Trees excluded from the sweep. `.vault/` records state what was true when
 #: they were written and are deliberately never rewritten; the rest are
@@ -130,9 +143,7 @@ def _sweepable(repo_root: Path) -> list[Path]:
         globs to nothing would retire this guard silently, so the caller
         asserts on the count.
     """
-    candidates: list[Path] = [
-        path for path in repo_root.glob("*") if path.is_file()
-    ]
+    candidates: list[Path] = [path for path in repo_root.glob("*") if path.is_file()]
     for name in SWEPT_ROOTS:
         tree = repo_root / name
         if tree.is_dir():
