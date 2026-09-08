@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:8905369ae4661a9d5f0970ebf0a8eba37607ee994c76387f57c21d83b1dc24c6'
+body_hash: 'sha256:63a447e1eadda685e2c6f41e5858a82872ece989247eaaef0573aecb57f10d6d'
 ---
 
 <!-- RETIRED: P14 -->
@@ -131,7 +131,7 @@ Expose caller policy and render canonical JSON and concise human diagnostics.
 
 Preserve canonical structured success and recoverable failure content through every MCP search tool.
 
-- [ ] `W03.P10.S41` - Extend MCP input and result models with policy and canonical readiness content; `src/vaultspec_rag/mcp/_tools.py`.
+- [x] `W03.P10.S41` - Extend MCP input and result models with policy and canonical readiness content; `src/vaultspec_rag/mcp/_tools.py`.
 - [ ] `W03.P10.S42` - Replace opaque RuntimeError reduction with structured error content and actionable text; `src/vaultspec_rag/mcp/_tools.py`.
 - [ ] `W03.P10.S43` - Prove every MCP search tool preserves structured success and failure through the official client; `src/vaultspec_rag/tests/integration/_service_search_diagnostics_mcp.py`.
 - [ ] `W03.P10.S44` - Prove MCP schemas expose bounded policy consistently for every search source; `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`.
