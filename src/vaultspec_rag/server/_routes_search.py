@@ -607,10 +607,14 @@ def _complete_classified_search(
     facts: SearchAvailabilityRequestFacts,
     registry: ServiceRegistry,
     total_seconds: float,
-) -> tuple[dict[str, object], Literal[200, 503]]:
+) -> tuple[dict[str, object], Literal[200, 409, 503]]:
     """Complete watcher and log effects from one classification decision."""
     result = classification.response
-    response_status = classification.status_code
+    # The classifier owns the canonical failure code and evidence. HTTP owns
+    # only the protocol mapping of that code; it must not inherit the legacy
+    # classifier's blanket 503 when the canonical state is a rebuild conflict.
+    # Capacity remains 503 while no canonical reset deadline can justify 429.
+    response_status = _search_response_status(result)
     root = facts.root
     source = facts.source
     _m._ensure_watcher_soon(root, registry)
@@ -1386,15 +1390,24 @@ async def _execute_search_route(
     )
 
 
-def _search_response_status(result: dict[str, object]) -> int:
-    """Fail the response status for any envelope that declares itself failed.
+def _search_response_status(
+    result: dict[str, object],
+) -> Literal[200, 409, 503]:
+    """Map canonical search outcomes onto their stable HTTP status.
 
     Retrieval envelopes carry no ``ok`` key, so only a failure declares one.
-    Keying the status on that declaration rather than on which failures the
-    route happens to enumerate means a newly added error envelope reports a
-    failure status the day it is written.
+    Rebuild-required/refused states conflict with the requested target. Every
+    transient availability, capacity, backend, or wait failure remains 503.
+    Capacity can become 429 only when a canonical enforced future reset
+    deadline exists; no current response fact carries one, so neither 429 nor
+    Retry-After can be truthfully emitted here.
     """
-    return 503 if result.get("ok") is False else 200
+    if result.get("ok") is not False:
+        return 200
+    error = result.get("error")
+    if error in {"rebuild_required", "rebuild_refused"}:
+        return 409
+    return 503
 
 
 def _quiesce_admission_closed_result(
