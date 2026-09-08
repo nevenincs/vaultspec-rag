@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import random
 from dataclasses import FrozenInstanceError, dataclass
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -18,9 +21,19 @@ from vaultspec_rag.watcher_controller import (
     ScopeObservation,
     WatcherController,
 )
-from vaultspec_rag.watcher_retry import WatcherCircuitState, WatcherSource
+from vaultspec_rag.watcher_retry import (
+    WatcherCircuitState,
+    WatcherPathEvent,
+    WatcherPathObservation,
+    WatcherRetryPolicy,
+    WatcherSource,
+    _WatcherRetryOptions,
+)
 
 pytestmark = pytest.mark.unit
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _Clock:
@@ -87,6 +100,32 @@ def _observation(path: str = "src/example.py") -> ScopeObservation:
             {ControllerEventKind.ADDED, ControllerEventKind.MODIFIED}
         ),
         generation=3,
+    )
+
+
+def _retry_policy(path: Path, root: Path, *, now: float) -> WatcherRetryPolicy:
+    return WatcherRetryPolicy(
+        path,
+        _WatcherRetryOptions(
+            canonical_root=os.path.normcase(str(root.resolve())),
+            source=WatcherSource.CODE,
+            base_seconds=1.0,
+            max_seconds=8.0,
+            jitter_fraction=0.0,
+            failure_threshold=3,
+            now=now,
+        ),
+    )
+
+
+def _path_observation(path: str, *, observed_at: float) -> WatcherPathObservation:
+    return WatcherPathObservation(
+        relative_path=path,
+        source=WatcherSource.CODE,
+        first_observed_at=observed_at,
+        latest_observed_at=observed_at,
+        event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+        generation=1,
     )
 
 
@@ -431,3 +470,155 @@ def test_typed_refusal_stops_admission_with_remediation(
     assert refused.state is ControllerState.REFUSED
     assert refused.next_decision_at is None
     assert refused.remediation == "run an explicit full index"
+
+
+def test_generated_pressure_sequences_never_defer_past_freshness() -> None:
+    for seed in range(64):
+        generator = random.Random(seed)
+        clock = _Clock(12.0)
+        limits = ControllerLimits(
+            coalesce_min_seconds=2.0,
+            coalesce_max_seconds=30.0,
+            maximum_freshness_seconds=60.0,
+            measurement_reevaluation_seconds=5.0,
+        )
+        controller = _controller(clock, limits=limits)
+        observed = controller.observe(
+            ControllerScope(generation=3, pending=(_observation(),))
+        )
+        deadline = observed.freshness_deadline
+        assert deadline is not None
+        assert deadline == 70.0
+
+        while clock.now < deadline:
+            evidence = generator.choice(
+                (
+                    _MeasurementEvidence(job_backlog=1),
+                    _MeasurementEvidence(search_in_flight=1),
+                    _MeasurementEvidence(gpu_pressure=True),
+                )
+            )
+            decision = controller.evaluate(_measurement(clock, evidence))
+            assert decision.state is ControllerState.BACKPRESSURED
+            next_decision = decision.next_decision_at
+            assert next_decision is not None
+            assert clock.now < next_decision <= deadline
+            clock.now = next_decision
+
+        due = controller.evaluate(
+            _measurement(clock, _MeasurementEvidence(job_backlog=1))
+        )
+        assert due.state is ControllerState.READY
+        assert due.reason is ControllerReason.MAXIMUM_FRESHNESS_DUE
+
+
+def test_every_eligible_controller_can_claim_selection_independently() -> None:
+    controllers: list[WatcherController] = []
+    for index, source in enumerate(WatcherSource):
+        clock = _Clock(20.0)
+        observation = ScopeObservation(
+            relative_path=f"src/{source.value}.txt",
+            source=source,
+            first_observed_at=10.0,
+            latest_observed_at=10.0,
+            event_kinds=frozenset({ControllerEventKind.MODIFIED}),
+            generation=1,
+        )
+        controller = WatcherController(
+            ControllerSnapshot(
+                canonical_root=f"C:/work/project-{index}",
+                source=source,
+                state=ControllerState.IDLE,
+                reason=ControllerReason.CONVERGED,
+                scope=ControllerScope(generation=0),
+                observed_at=clock.now,
+            ),
+            monotonic=clock,
+            wall_clock=clock,
+            limits=ControllerLimits(batch_path_limit=1),
+        )
+        controller.observe(ControllerScope(generation=1, pending=(observation,)))
+        controller.evaluate(_measurement(clock))
+        controllers.append(controller)
+
+    selected = [controller.select() for controller in controllers]
+
+    assert [item.source for item in selected] == list(WatcherSource)
+    assert all(item.reason is ControllerReason.FAIR_TURN_SELECTED for item in selected)
+    assert len({item.canonical_root for item in selected}) == len(selected)
+
+
+def test_generated_durable_sequences_preserve_exact_scope_once(tmp_path: Path) -> None:
+    state_path = tmp_path / "code.json"
+    policy = _retry_policy(state_path, tmp_path, now=0.0)
+    expected: set[str] = set()
+    generator = random.Random(470)
+
+    for step in range(80):
+        observed_paths = {
+            f"src/item-{generator.randrange(12)}.py"
+            for _ in range(generator.randrange(1, 5))
+        }
+        expected.update(observed_paths)
+        state = policy.mark_scope_pending(
+            tuple(
+                _path_observation(path, observed_at=float(step))
+                for path in sorted(observed_paths)
+            ),
+            now=float(step),
+        )
+        assert {item.relative_path for item in state.pending_paths} == expected
+        assert not state.unscoped_required
+
+        decision = policy.admit_reserved(
+            policy.reserve_admission(), now=float(step), job_id=f"job-{step}"
+        )
+        assert decision.admitted
+        captured = {item.relative_path for item in policy.state.captured_paths}
+        assert captured == expected
+        assert not policy.state.pending_paths
+
+        if generator.randrange(3) == 0:
+            later = f"src/later-{step}.py"
+            expected.add(later)
+            policy.mark_scope_pending(
+                (_path_observation(later, observed_at=float(step) + 0.25),),
+                now=float(step) + 0.25,
+            )
+
+        generation = decision.attempt_generation
+        assert generation is not None
+        if generator.randrange(2) == 0:
+            settled = policy.record_interrupted(generation, now=float(step) + 0.5)
+            assert {item.relative_path for item in settled.pending_paths} == expected
+        else:
+            expected.difference_update(captured)
+            settled = policy.record_success(generation, now=float(step) + 0.5)
+            assert {item.relative_path for item in settled.pending_paths} == expected
+        assert not settled.captured_paths
+        assert not settled.unscoped_required
+
+
+def test_restart_preserves_fenced_exact_scope_without_unscoped_escalation(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "code.json"
+    policy = _retry_policy(state_path, tmp_path, now=0.0)
+    paths = {"src/a.py", "src/b.py"}
+    policy.mark_scope_pending(
+        tuple(_path_observation(path, observed_at=1.0) for path in sorted(paths)),
+        now=1.0,
+    )
+    decision = policy.admit_reserved(
+        policy.reserve_admission(), now=2.0, job_id="job-restart"
+    )
+    assert decision.admitted
+
+    restarted = _retry_policy(state_path, tmp_path, now=3.0)
+
+    assert restarted.state.attempt_generation == decision.attempt_generation
+    assert restarted.state.attempt_job_id == "job-restart"
+    assert {item.relative_path for item in restarted.state.captured_paths} == paths
+    assert not restarted.state.pending_paths
+    assert not restarted.state.unscoped_required
+    assert restarted.state.scope_refusal is None
