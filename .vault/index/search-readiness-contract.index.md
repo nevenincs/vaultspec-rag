@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:773903caaac1b7eb6f24d7cb59b013ec97335fe95c3696186721cbe608fbf87d'
+body_hash: 'sha256:95cfd3c75ef99bf58be86e60e1bb9d2fa096cf68b6846f8a1761b7aee4665739'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -40,6 +40,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P06-S25]]'
   - '[[2026-09-08-search-readiness-contract-W02-P06-S26]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S28]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P07-S30]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -90,6 +91,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P06-S25` - Carry per-domain facts through route dispatch and require all-source authority for empty aggregate
 - `2026-09-08-search-readiness-contract-W02-P06-S26` - Prove partial degraded failed authoritative-empty non-authoritative-empty and omitted-domain combined outcomes
 - `2026-09-08-search-readiness-contract-W02-P07-S28` - Record admission before blocking and expose bounded queued-request wait observations
+- `2026-09-08-search-readiness-contract-W02-P07-S30` - Preserve GPU-compute and project-lease measurements as distinct named causes without widening lock scope
 
 ### plan
 
