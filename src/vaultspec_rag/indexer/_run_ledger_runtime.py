@@ -6,6 +6,7 @@ import json
 import sqlite3
 import time
 import uuid
+from functools import cache
 from pathlib import Path
 
 from ._content_policy import ContentKind
@@ -19,6 +20,9 @@ from ._run_ledger_files import (
 from ._run_ledger_finalization import RunLedgerFinalizationMethods
 from ._run_ledger_models import (
     MAX_RESUME_FAILURES,
+    PUBLICATION_PROOF_SCHEMA,
+    REQUIRED_INDEX_PREDICATES,
+    REQUIRED_INDEXES,
     REQUIRED_SCHEMA,
     RESUMABLE_STATES,
     SCHEMA_VERSION,
@@ -41,6 +45,11 @@ from ._run_ledger_models import (
 )
 
 __all__ = ["RunLedger"]
+
+
+def _normalize_schema_definition(definition: str) -> str:
+    """Collapse non-semantic whitespace in one SQLite schema definition."""
+    return " ".join(definition.split()).removesuffix(";")
 
 
 class RunLedger(
@@ -466,18 +475,10 @@ class RunLedger(
                     ON file_states(generation_id, state, rel_path);
                 """
             )
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            connection.commit()
-            return
-        # Additive migrations for ledgers created before these existed. Both
-        # must reach existing files - including the ones these changes repair -
-        # and neither alters stored data or query results, so they need no
-        # schema-version bump. A bump would reach those ledgers only by
-        # rejecting them, since the compatibility check admits one exact
-        # version, forcing every current ledger to rebuild from zero.
-        #
-        # Without the index the bounded retained-point lookup degrades to a
-        # full scan of every point in the ledger.
+
+        # Additive migrations must reach every existing v6 ledger without
+        # translating legacy rows into proof. A version bump would reject those
+        # files before they could acquire the new empty normalized projection.
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS commit_point_ids_point
@@ -495,9 +496,478 @@ class RunLedger(
                 ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0
                 """
             )
+
+        self._create_publication_tables(connection)
+        # A table left behind by a partial or foreign migration must be
+        # rejected before index creation attempts to use columns it may lack.
+        self._verify_schema_tables(connection)
+        self._create_required_indexes(connection)
+        if version == 0:
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         connection.commit()
 
+    @staticmethod
+    def _create_publication_tables(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS publication_proofs (
+                source_type TEXT NOT NULL
+                    CHECK(source_type IN ('vault', 'code', 'document')),
+                root_identity TEXT NOT NULL
+                    CHECK(length(trim(root_identity)) > 0),
+                backend_identity TEXT NOT NULL
+                    CHECK(length(trim(backend_identity)) > 0),
+                collection_identity TEXT NOT NULL
+                    CHECK(length(trim(collection_identity)) > 0),
+                storage_schema INTEGER NOT NULL CHECK(storage_schema > 0),
+                payload_schema INTEGER NOT NULL CHECK(payload_schema > 0),
+                embedding_schema_identity TEXT NOT NULL
+                    CHECK(length(trim(embedding_schema_identity)) > 0),
+                chunking_schema_identity TEXT NOT NULL
+                    CHECK(length(trim(chunking_schema_identity)) > 0),
+                membership_identity TEXT NOT NULL
+                    CHECK(length(trim(membership_identity)) > 0),
+                content_identity TEXT NOT NULL
+                    CHECK(length(trim(content_identity)) > 0),
+                policy_identity TEXT NOT NULL
+                    CHECK(length(trim(policy_identity)) > 0),
+                generation_id TEXT NOT NULL
+                    REFERENCES generations(generation_id) ON DELETE RESTRICT,
+                revision INTEGER NOT NULL CHECK(revision >= 0),
+                reservation_sequence INTEGER NOT NULL
+                    CHECK(reservation_sequence >= 0),
+                indexed_identities INTEGER NOT NULL
+                    CHECK(indexed_identities >= 0),
+                retained_points INTEGER NOT NULL CHECK(retained_points >= 0),
+                provenance TEXT NOT NULL
+                    CHECK(provenance IN ('verified', 'delta_derived')),
+                committed_at REAL NOT NULL CHECK(committed_at >= 0),
+                verified_at REAL CHECK(verified_at IS NULL OR verified_at >= 0),
+                PRIMARY KEY(
+                    source_type, root_identity, backend_identity,
+                    collection_identity
+                ),
+                CHECK(
+                    (
+                        provenance = 'verified'
+                        AND verified_at IS NOT NULL
+                        AND verified_at <= committed_at
+                    ) OR (
+                        provenance = 'delta_derived'
+                        AND verified_at IS NULL
+                    )
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS publication_evidence (
+                source_type TEXT NOT NULL,
+                root_identity TEXT NOT NULL,
+                backend_identity TEXT NOT NULL,
+                collection_identity TEXT NOT NULL,
+                rel_path TEXT NOT NULL CHECK(length(trim(rel_path)) > 0),
+                content_identity TEXT NOT NULL
+                    CHECK(length(trim(content_identity)) > 0),
+                evidence_generation_id TEXT NOT NULL
+                    REFERENCES generations(generation_id) ON DELETE RESTRICT,
+                PRIMARY KEY(
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path
+                ),
+                FOREIGN KEY(
+                    source_type, root_identity, backend_identity,
+                    collection_identity
+                ) REFERENCES publication_proofs(
+                    source_type, root_identity, backend_identity,
+                    collection_identity
+                ) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS publication_points (
+                source_type TEXT NOT NULL,
+                root_identity TEXT NOT NULL,
+                backend_identity TEXT NOT NULL,
+                collection_identity TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                point_ordinal INTEGER NOT NULL CHECK(point_ordinal >= 0),
+                point_id TEXT NOT NULL CHECK(length(trim(point_id)) > 0),
+                PRIMARY KEY(
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path, point_ordinal
+                ),
+                UNIQUE(
+                    source_type, root_identity, backend_identity,
+                    collection_identity, point_id
+                ),
+                FOREIGN KEY(
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path
+                ) REFERENCES publication_evidence(
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path
+                ) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS publication_receipts (
+                receipt_id TEXT NOT NULL PRIMARY KEY
+                    CHECK(length(trim(receipt_id)) > 0),
+                reservation_sequence INTEGER NOT NULL
+                    CHECK(reservation_sequence > 0),
+                source_type TEXT NOT NULL
+                    CHECK(source_type IN ('vault', 'code', 'document')),
+                root_identity TEXT NOT NULL
+                    CHECK(length(trim(root_identity)) > 0),
+                backend_identity TEXT NOT NULL
+                    CHECK(length(trim(backend_identity)) > 0),
+                collection_identity TEXT NOT NULL
+                    CHECK(length(trim(collection_identity)) > 0),
+                storage_schema INTEGER NOT NULL CHECK(storage_schema > 0),
+                payload_schema INTEGER NOT NULL CHECK(payload_schema > 0),
+                embedding_schema_identity TEXT NOT NULL
+                    CHECK(length(trim(embedding_schema_identity)) > 0),
+                chunking_schema_identity TEXT NOT NULL
+                    CHECK(length(trim(chunking_schema_identity)) > 0),
+                membership_identity TEXT NOT NULL
+                    CHECK(length(trim(membership_identity)) > 0),
+                content_identity TEXT NOT NULL
+                    CHECK(length(trim(content_identity)) > 0),
+                policy_identity TEXT NOT NULL
+                    CHECK(length(trim(policy_identity)) > 0),
+                generation_id TEXT NOT NULL
+                    REFERENCES generations(generation_id) ON DELETE RESTRICT,
+                parent_revision INTEGER NOT NULL CHECK(parent_revision >= 0),
+                target_revision INTEGER NOT NULL
+                    CHECK(target_revision = parent_revision + 1),
+                state TEXT NOT NULL
+                    CHECK(state IN (
+                        'reserved', 'sealed', 'committed', 'rolled_back'
+                    )),
+                reserved_at REAL NOT NULL CHECK(reserved_at >= 0),
+                sealed_at REAL CHECK(sealed_at IS NULL OR sealed_at >= reserved_at),
+                committed_at REAL CHECK(
+                    committed_at IS NULL OR (
+                        sealed_at IS NOT NULL AND committed_at >= sealed_at
+                    )
+                ),
+                rolled_back_at REAL CHECK(
+                    rolled_back_at IS NULL OR
+                    rolled_back_at >= COALESCE(sealed_at, reserved_at)
+                ),
+                UNIQUE(
+                    source_type, root_identity, backend_identity,
+                    collection_identity, reservation_sequence
+                ),
+                CHECK(
+                    (
+                        state = 'reserved'
+                        AND sealed_at IS NULL
+                        AND committed_at IS NULL
+                        AND rolled_back_at IS NULL
+                    ) OR (
+                        state = 'sealed'
+                        AND sealed_at IS NOT NULL
+                        AND committed_at IS NULL
+                        AND rolled_back_at IS NULL
+                    ) OR (
+                        state = 'committed'
+                        AND sealed_at IS NOT NULL
+                        AND committed_at IS NOT NULL
+                        AND rolled_back_at IS NULL
+                    ) OR (
+                        state = 'rolled_back'
+                        AND committed_at IS NULL
+                        AND rolled_back_at IS NOT NULL
+                    )
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS publication_mutation_units (
+                receipt_id TEXT NOT NULL
+                    REFERENCES publication_receipts(receipt_id) ON DELETE CASCADE,
+                mutation_ordinal INTEGER NOT NULL CHECK(mutation_ordinal >= 0),
+                sealed_ordinal INTEGER
+                    CHECK(sealed_ordinal IS NULL OR sealed_ordinal >= 0),
+                unit_id TEXT NOT NULL CHECK(length(trim(unit_id)) > 0),
+                rel_path TEXT NOT NULL CHECK(length(trim(rel_path)) > 0),
+                unit_kind TEXT NOT NULL
+                    CHECK(unit_kind IN ('upsert', 'delete_path', 'delete_stale')),
+                source_digest TEXT,
+                segment_ordinal INTEGER NOT NULL CHECK(segment_ordinal >= 0),
+                is_file_end INTEGER NOT NULL CHECK(is_file_end IN (0, 1)),
+                state TEXT NOT NULL
+                    CHECK(state IN ('prepared', 'applied', 'confirmed')),
+                prepared_at REAL NOT NULL CHECK(prepared_at >= 0),
+                applied_at REAL CHECK(
+                    applied_at IS NULL OR applied_at >= prepared_at
+                ),
+                confirmed_at REAL CHECK(
+                    confirmed_at IS NULL AND state != 'confirmed' OR
+                    applied_at IS NOT NULL AND confirmed_at >= applied_at
+                ),
+                PRIMARY KEY(receipt_id, mutation_ordinal),
+                UNIQUE(receipt_id, unit_id),
+                UNIQUE(receipt_id, rel_path, unit_kind, segment_ordinal),
+                CHECK(
+                    (
+                        unit_kind = 'upsert'
+                        AND source_digest IS NOT NULL
+                        AND length(source_digest) = 128
+                        AND source_digest NOT GLOB '*[^0-9a-f]*'
+                    ) OR
+                    (unit_kind != 'upsert' AND source_digest IS NULL)
+                ),
+                CHECK(
+                    unit_kind = 'upsert' OR
+                    (segment_ordinal = 0 AND is_file_end = 1)
+                ),
+                CHECK(
+                    (state = 'prepared' AND applied_at IS NULL) OR
+                    (
+                        state = 'applied'
+                        AND applied_at IS NOT NULL
+                        AND confirmed_at IS NULL
+                    ) OR (
+                        state = 'confirmed'
+                        AND applied_at IS NOT NULL
+                        AND confirmed_at IS NOT NULL
+                    )
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS publication_mutation_points (
+                receipt_id TEXT NOT NULL,
+                mutation_ordinal INTEGER NOT NULL,
+                point_ordinal INTEGER NOT NULL CHECK(point_ordinal >= 0),
+                point_id TEXT NOT NULL CHECK(length(trim(point_id)) > 0),
+                PRIMARY KEY(receipt_id, mutation_ordinal, point_ordinal),
+                UNIQUE(receipt_id, mutation_ordinal, point_id),
+                FOREIGN KEY(receipt_id, mutation_ordinal)
+                    REFERENCES publication_mutation_units(
+                        receipt_id, mutation_ordinal
+                    ) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS publication_receipt_deltas (
+                receipt_id TEXT NOT NULL
+                    REFERENCES publication_receipts(receipt_id) ON DELETE CASCADE,
+                delta_ordinal INTEGER NOT NULL CHECK(delta_ordinal >= 0),
+                outcome TEXT NOT NULL CHECK(outcome IN (
+                    'add', 'modify', 'delete', 'rename', 'empty', 'ignored',
+                    'rejected', 'noop'
+                )),
+                rel_path TEXT NOT NULL CHECK(length(trim(rel_path)) > 0),
+                target_rel_path TEXT CHECK(
+                    target_rel_path IS NULL OR length(trim(target_rel_path)) > 0
+                ),
+                old_content_identity TEXT CHECK(
+                    old_content_identity IS NULL OR
+                    length(trim(old_content_identity)) > 0
+                ),
+                new_content_identity TEXT CHECK(
+                    new_content_identity IS NULL OR
+                    length(trim(new_content_identity)) > 0
+                ),
+                PRIMARY KEY(receipt_id, delta_ordinal),
+                CHECK(
+                    (
+                        outcome = 'rename'
+                        AND target_rel_path IS NOT NULL
+                        AND target_rel_path != rel_path
+                    ) OR (
+                        outcome != 'rename' AND target_rel_path IS NULL
+                    )
+                ),
+                CHECK(
+                    (
+                        outcome = 'add'
+                        AND old_content_identity IS NULL
+                        AND new_content_identity IS NOT NULL
+                    ) OR (
+                        outcome = 'modify'
+                        AND old_content_identity IS NOT NULL
+                        AND new_content_identity IS NOT NULL
+                        AND old_content_identity != new_content_identity
+                    ) OR (
+                        outcome = 'rename'
+                        AND old_content_identity IS NOT NULL
+                        AND new_content_identity IS NOT NULL
+                    ) OR (
+                        outcome = 'delete'
+                        AND old_content_identity IS NOT NULL
+                        AND new_content_identity IS NULL
+                    ) OR (
+                        outcome IN ('empty', 'ignored', 'rejected')
+                        AND new_content_identity IS NULL
+                    ) OR (
+                        outcome = 'noop'
+                        AND old_content_identity IS NOT NULL
+                        AND old_content_identity = new_content_identity
+                    )
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS publication_receipt_points (
+                receipt_id TEXT NOT NULL,
+                delta_ordinal INTEGER NOT NULL,
+                evidence_side TEXT NOT NULL
+                    CHECK(evidence_side IN ('old', 'new')),
+                point_ordinal INTEGER NOT NULL CHECK(point_ordinal >= 0),
+                point_id TEXT NOT NULL CHECK(length(trim(point_id)) > 0),
+                PRIMARY KEY(
+                    receipt_id, delta_ordinal, evidence_side, point_ordinal
+                ),
+                UNIQUE(receipt_id, delta_ordinal, evidence_side, point_id),
+                FOREIGN KEY(receipt_id, delta_ordinal)
+                    REFERENCES publication_receipt_deltas(
+                        receipt_id, delta_ordinal
+                    ) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS file_state_tombstones (
+                generation_id TEXT NOT NULL
+                    REFERENCES generations(generation_id) ON DELETE CASCADE,
+                rel_path TEXT NOT NULL CHECK(length(trim(rel_path)) > 0),
+                PRIMARY KEY(generation_id, rel_path)
+            );
+
+            """
+        )
+
+    @staticmethod
+    @cache
+    def _expected_publication_table_definitions() -> tuple[tuple[str, str], ...]:
+        """Build the exact normalized-table contract from its DDL authority.
+
+        SQLite retains each table's complete definition in ``sqlite_master``.
+        That definition includes nullability, primary and unique keys, CHECK
+        expressions, foreign keys, and their actions. Building it once in an
+        isolated in-memory database makes real ledgers fail closed on a partial
+        or foreign migration while keeping the definition single-sourced.
+        """
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.row_factory = sqlite3.Row
+            RunLedger._create_publication_tables(connection)
+            definitions: list[tuple[str, str]] = []
+            for table in PUBLICATION_PROOF_SCHEMA:
+                row: sqlite3.Row | None = fetch_one(
+                    connection,
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    (table,),
+                )
+                assert row is not None
+                definitions.append(
+                    (table, _normalize_schema_definition(column_text(row, "sql")))
+                )
+            return tuple(definitions)
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _create_required_indexes(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS generations_active
+                ON generations(source_type, terminal_state, created_at DESC);
+            CREATE INDEX IF NOT EXISTS commit_units_path
+                ON commit_units(generation_id, rel_path, segment_ordinal);
+            CREATE INDEX IF NOT EXISTS commit_point_ids_point
+                ON commit_point_ids(point_id);
+            CREATE INDEX IF NOT EXISTS file_states_state
+                ON file_states(generation_id, state, rel_path);
+
+            CREATE INDEX IF NOT EXISTS publication_proofs_generation
+                ON publication_proofs(generation_id);
+            CREATE INDEX IF NOT EXISTS publication_evidence_generation
+                ON publication_evidence(evidence_generation_id);
+            CREATE INDEX IF NOT EXISTS publication_points_point
+                ON publication_points(point_id);
+            CREATE INDEX IF NOT EXISTS publication_receipts_generation
+                ON publication_receipts(generation_id, state);
+            CREATE UNIQUE INDEX IF NOT EXISTS publication_receipts_open
+                ON publication_receipts(
+                    source_type, root_identity, backend_identity,
+                    collection_identity
+                ) WHERE state IN ('reserved', 'sealed');
+            CREATE INDEX IF NOT EXISTS publication_mutation_units_state
+                ON publication_mutation_units(
+                    receipt_id, state, mutation_ordinal
+                );
+            CREATE UNIQUE INDEX IF NOT EXISTS publication_mutation_units_sealed
+                ON publication_mutation_units(receipt_id, sealed_ordinal)
+                WHERE sealed_ordinal IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS publication_mutation_points_point
+                ON publication_mutation_points(point_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS publication_receipt_deltas_path
+                ON publication_receipt_deltas(receipt_id, rel_path);
+            CREATE INDEX IF NOT EXISTS publication_receipt_points_point
+                ON publication_receipt_points(point_id);
+            CREATE INDEX IF NOT EXISTS file_state_tombstones_path
+                ON file_state_tombstones(rel_path, generation_id);
+            """
+        )
+
     def _verify_schema(self, connection: sqlite3.Connection) -> None:
+        self._verify_schema_tables(connection)
+        for index_name, (
+            table,
+            expected_columns,
+            expected_unique,
+            expected_partial,
+        ) in REQUIRED_INDEXES.items():
+            index_rows: list[sqlite3.Row] = fetch_all(
+                connection, f'PRAGMA index_list("{table}")'
+            )
+            index_row = next(
+                (row for row in index_rows if column_text(row, "name") == index_name),
+                None,
+            )
+            if index_row is None:
+                raise RunLedgerCompatibilityError(
+                    f"run ledger schema is incomplete; missing index: {index_name}"
+                )
+            info_rows: list[sqlite3.Row] = fetch_all(
+                connection, f'PRAGMA index_info("{index_name}")'
+            )
+            columns = tuple(
+                column_text(row, "name")
+                for row in sorted(info_rows, key=lambda row: column_int(row, "seqno"))
+            )
+            unique = column_int(index_row, "unique") != 0
+            partial = column_int(index_row, "partial") != 0
+            if (
+                columns != expected_columns
+                or unique is not expected_unique
+                or partial is not expected_partial
+            ):
+                raise RunLedgerCompatibilityError(
+                    f"run ledger index {index_name!r} does not match its contract"
+                )
+            expected_predicate = REQUIRED_INDEX_PREDICATES.get(index_name)
+            if expected_predicate is not None:
+                definition_row: sqlite3.Row | None = fetch_one(
+                    connection,
+                    """
+                    SELECT sql FROM sqlite_master
+                    WHERE type = 'index' AND name = ?
+                    """,
+                    (index_name,),
+                )
+                if definition_row is None:
+                    raise RunLedgerCompatibilityError(
+                        f"run ledger schema is incomplete; missing index: {index_name}"
+                    )
+                definition = " ".join(
+                    column_text(definition_row, "sql").lower().split()
+                )
+                _prefix, separator, predicate = definition.partition(" where ")
+                actual_predicate = f"where {predicate}" if separator else ""
+                if actual_predicate != expected_predicate:
+                    raise RunLedgerCompatibilityError(
+                        f"run ledger index {index_name!r} does not match its contract"
+                    )
+
+    @staticmethod
+    def _verify_schema_tables(connection: sqlite3.Connection) -> None:
         table_rows: list[sqlite3.Row] = fetch_all(
             connection, "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
@@ -518,6 +988,26 @@ class RunLedger(
                 raise RunLedgerCompatibilityError(
                     f"run ledger table {table!r} is missing columns: "
                     + ", ".join(sorted(missing_columns))
+                )
+        for (
+            table,
+            expected_definition,
+        ) in RunLedger._expected_publication_table_definitions():
+            definition_row: sqlite3.Row | None = fetch_one(
+                connection,
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            )
+            if definition_row is None:
+                raise RunLedgerCompatibilityError(
+                    f"run ledger schema is incomplete; missing table: {table}"
+                )
+            actual_definition = _normalize_schema_definition(
+                column_text(definition_row, "sql")
+            )
+            if actual_definition != expected_definition:
+                raise RunLedgerCompatibilityError(
+                    f"run ledger table {table!r} does not match its contract"
                 )
 
     @staticmethod

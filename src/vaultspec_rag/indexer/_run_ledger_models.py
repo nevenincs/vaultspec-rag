@@ -35,6 +35,7 @@ __all__ = [
     "PUBLICATION_PROOF_SCHEMA",
     "CommitUnit",
     "CommitUnitKind",
+    "FileStateTombstoneRow",
     "FinalizationPhase",
     "PublicationEvidenceRow",
     "PublicationMutationPointRow",
@@ -463,11 +464,18 @@ class PublicationReceiptPointRow(TypedDict):
     point_id: str
 
 
+class FileStateTombstoneRow(TypedDict):
+    """One generation-local deletion that shadows inherited file state."""
+
+    generation_id: str
+    rel_path: str
+
+
 SCHEMA_VERSION: Final = 6
 FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
 INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
-REQUIRED_SCHEMA: Final = {
+_BASE_LEDGER_SCHEMA: Final = {
     "generations": frozenset(
         {
             "generation_id",
@@ -516,8 +524,6 @@ REQUIRED_SCHEMA: Final = {
     ),
 }
 
-# Proof tables are migrated before this contract is merged into REQUIRED_SCHEMA.
-# Keeping it separate lets a legacy ledger open far enough to run that migration.
 PUBLICATION_PROOF_SCHEMA: Final = {
     "publication_proofs": frozenset(PublicationProofRow.__annotations__),
     "publication_evidence": frozenset(PublicationEvidenceRow.__annotations__),
@@ -529,6 +535,115 @@ PUBLICATION_PROOF_SCHEMA: Final = {
     ),
     "publication_receipt_deltas": frozenset(PublicationReceiptDeltaRow.__annotations__),
     "publication_receipt_points": frozenset(PublicationReceiptPointRow.__annotations__),
+    "file_state_tombstones": frozenset(FileStateTombstoneRow.__annotations__),
+}
+
+REQUIRED_SCHEMA: Final = {**_BASE_LEDGER_SCHEMA, **PUBLICATION_PROOF_SCHEMA}
+
+# Named indexes are part of the durable schema contract, not optional tuning.
+# Each tuple is ``(table, ordered columns, unique, partial)`` and is verified on
+# every open after additive migration has had a chance to install it.
+REQUIRED_INDEXES: Final[dict[str, tuple[str, tuple[str, ...], bool, bool]]] = {
+    "generations_active": (
+        "generations",
+        ("source_type", "terminal_state", "created_at"),
+        False,
+        False,
+    ),
+    "commit_units_path": (
+        "commit_units",
+        ("generation_id", "rel_path", "segment_ordinal"),
+        False,
+        False,
+    ),
+    "commit_point_ids_point": (
+        "commit_point_ids",
+        ("point_id",),
+        False,
+        False,
+    ),
+    "file_states_state": (
+        "file_states",
+        ("generation_id", "state", "rel_path"),
+        False,
+        False,
+    ),
+    "publication_proofs_generation": (
+        "publication_proofs",
+        ("generation_id",),
+        False,
+        False,
+    ),
+    "publication_evidence_generation": (
+        "publication_evidence",
+        ("evidence_generation_id",),
+        False,
+        False,
+    ),
+    "publication_points_point": (
+        "publication_points",
+        ("point_id",),
+        False,
+        False,
+    ),
+    "publication_receipts_generation": (
+        "publication_receipts",
+        ("generation_id", "state"),
+        False,
+        False,
+    ),
+    "publication_receipts_open": (
+        "publication_receipts",
+        (
+            "source_type",
+            "root_identity",
+            "backend_identity",
+            "collection_identity",
+        ),
+        True,
+        True,
+    ),
+    "publication_mutation_units_state": (
+        "publication_mutation_units",
+        ("receipt_id", "state", "mutation_ordinal"),
+        False,
+        False,
+    ),
+    "publication_mutation_units_sealed": (
+        "publication_mutation_units",
+        ("receipt_id", "sealed_ordinal"),
+        True,
+        True,
+    ),
+    "publication_mutation_points_point": (
+        "publication_mutation_points",
+        ("point_id",),
+        False,
+        False,
+    ),
+    "publication_receipt_deltas_path": (
+        "publication_receipt_deltas",
+        ("receipt_id", "rel_path"),
+        True,
+        False,
+    ),
+    "publication_receipt_points_point": (
+        "publication_receipt_points",
+        ("point_id",),
+        False,
+        False,
+    ),
+    "file_state_tombstones_path": (
+        "file_state_tombstones",
+        ("rel_path", "generation_id"),
+        False,
+        False,
+    ),
+}
+
+REQUIRED_INDEX_PREDICATES: Final = {
+    "publication_receipts_open": "where state in ('reserved', 'sealed')",
+    "publication_mutation_units_sealed": "where sealed_ordinal is not null",
 }
 
 
