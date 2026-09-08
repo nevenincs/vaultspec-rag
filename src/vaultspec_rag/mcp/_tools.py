@@ -52,12 +52,24 @@ class SearchGenerationEvidence(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    served_generation: str | None = None
-    observed_generation: str | None = None
-    desired_generation: str | None = None
-    served_revision: int | None = Field(default=None, ge=0)
-    observed_revision: int | None = Field(default=None, ge=0)
-    desired_revision: int | None = Field(default=None, ge=0)
+    served_generation: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    observed_generation: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    desired_generation: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    served_revision: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
+    observed_revision: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
+    desired_revision: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
 
 
 class SearchWaitContent(BaseModel):
@@ -84,9 +96,13 @@ class SearchSourceReadiness(BaseModel):
     wait_policy: FreshnessWaitPolicy
     waits: list[SearchWaitContent]
     evidence: list[str]
-    reason_code: str | None = None
+    reason_code: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     retryable: bool
-    remediation: str | None = None
+    remediation: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class SearchReadinessSummary(BaseModel):
@@ -127,12 +143,14 @@ class SearchResults(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
-    summary: str | None = None
-    error: str | None = None
-    message: str | None = None
-    retryable: bool | None = None
-    request_id: str | None = None
-    remediation: str | list[str] | None = None
+    summary: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    error: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    message: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    retryable: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    request_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    remediation: str | list[str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     readiness: SearchReadinessContent
 
     @model_validator(mode="after")

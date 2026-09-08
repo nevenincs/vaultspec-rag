@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:6b566ee8753afcde49e5537aa77b53277fb143b0333b434b6b69e24bbda1f77e'
+body_hash: 'sha256:c0746ce7ab3fe516262d144deb4c2bcbf43825065d9b603348880e256a89bab9'
 ---
 
 <!-- RETIRED: P14 -->
@@ -133,9 +133,9 @@ Preserve canonical structured success and recoverable failure content through ev
 
 - [x] `W03.P10.S41` - Extend MCP input and result models with policy and canonical readiness content; `src/vaultspec_rag/mcp/_tools.py`.
 - [x] `W03.P10.S42` - Replace opaque RuntimeError reduction with structured error content and actionable text; `src/vaultspec_rag/mcp/_tools.py`.
-- [ ] `W03.P10.S43` - Prove every MCP search tool preserves structured success and failure through the official client; `src/vaultspec_rag/tests/integration/_service_search_diagnostics_mcp.py`.
+- [x] `W03.P10.S43` - Prove every MCP search tool preserves structured success and failure through the official client; `src/vaultspec_rag/mcp/_tools.py, src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py, and src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`.
 - [ ] `W03.P10.S44` - Prove MCP schemas expose bounded policy consistently for every search source; `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`.
-- [ ] `W03.P10.S45` - Mutation-prove the MCP structured-failure preservation guard; `src/vaultspec_rag/tests/integration/_service_search_diagnostics_mcp.py`.
+- [ ] `W03.P10.S45` - Mutation-prove the MCP structured-failure preservation guard; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py`.
 
 ## Wave `W04` - end-to-end proof and performance protection
 
@@ -148,7 +148,7 @@ Drive identical readiness scenarios through HTTP CLI MCP and combined search.
 - [ ] `W04.P11.S46` - Define reusable current updating unavailable unverifiable rebuild timeout capacity backend empty and mixed scenarios; `src/vaultspec_rag/tests/_search_readiness_scenarios.py`.
 - [ ] `W04.P11.S47` - Apply the readiness scenario matrix to real HTTP responses and headers; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py`.
 - [ ] `W04.P11.S48` - Apply the readiness scenario matrix to CLI JSON and human rendering; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py`.
-- [ ] `W04.P11.S49` - Apply the readiness scenario matrix to official-client MCP structured responses; `src/vaultspec_rag/tests/integration/_service_search_diagnostics_mcp.py`.
+- [ ] `W04.P11.S49` - Apply the readiness scenario matrix to official-client MCP structured responses; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py`.
 - [ ] `W04.P11.S50` - Prove rebuild-required behavior and remediation across service and adapters; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`.
 
 ### Phase `W04.P12` - enforce compatibility and load budgets

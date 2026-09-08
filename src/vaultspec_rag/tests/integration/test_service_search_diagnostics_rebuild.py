@@ -29,12 +29,6 @@ from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpe
 from ...service_quiesce import ServiceQuiesceController
 from ...serviceclient._search_transport import try_http_search
 from ..corpus import build_synthetic_vault
-from ._service_search_diagnostics_mcp import (
-    McpConcurrentRequest,
-    assert_mcp_unavailable_response,
-    mcp_search_after_concurrent_admission,
-    wait_for_mcp_initialization,
-)
 from ._service_search_diagnostics_support import (
     RawSearchPayloads,
     RawSearchResponse,
@@ -50,6 +44,12 @@ from ._service_search_diagnostics_support import (
     wait_for_succeeded_job,
 )
 from .conftest import _live_service_context
+from .test_service_search_diagnostics_mcp import (
+    McpConcurrentRequest,
+    assert_mcp_unavailable_response,
+    mcp_search_after_concurrent_admission,
+    wait_for_mcp_initialization,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
