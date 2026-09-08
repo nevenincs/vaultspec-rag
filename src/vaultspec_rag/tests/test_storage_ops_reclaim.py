@@ -26,17 +26,17 @@ from .test_storage_ops import (
     _CycleClient,
     _identity,
     _orphaned_namespace,
+    _outcome_for,
     _run_cycle,
     _ScriptedClient,
     _survey,
+    _temp_survey,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from qdrant_client import QdrantClient
-
-    from ..storage_reclamation import MaintenanceResult, ReclaimDecision
 
 pytestmark = [pytest.mark.unit]
 
@@ -319,6 +319,98 @@ class TestEvaluateReclaim:
             )
             == []
         )
+
+
+class TestEphemeralOrphanWindow:
+    """Ephemerality picks the orphan window; point count still picks the tier.
+
+    Every assertion below is pinned to an hour count only one window can
+    produce. The two windows are 24 and 168 hours apart in effect, so a stamp
+    placed between them is admitted by exactly one of them and the remaining
+    hours reported by the other cannot be mistaken for it. Asserting merely
+    that something was reclaimed would pass under either window given a stamp
+    old enough, which is the whole failure this class exists to detect.
+    """
+
+    def test_a_torn_down_sandbox_draws_the_ephemeral_window(self) -> None:
+        """A temp-rooted orphan holding points reclaims on the short window.
+
+        25 hours is past the ephemeral window and nowhere near the data one,
+        so ``reclaim_data`` here can only have come from the ephemeral
+        window. The tier is asserted alongside it because the shorter window
+        must not also demote the namespace out of the archived tier: the
+        waiting period is the only thing ephemerality is allowed to change.
+        """
+        prefix = "rbbbbbbbbbbb1_"
+        stamp = (_NOW - timedelta(hours=25)).isoformat()
+
+        decisions = evaluate_reclaim(
+            [_temp_survey(prefix, points=42, status="orphaned")],
+            {prefix: stamp},
+            now=_NOW,
+            policy=_POLICY,
+        )
+
+        assert [d.action for d in decisions] == ["reclaim_data"]
+        assert decisions[0].tier == "data"
+
+    def test_the_ephemeral_window_is_a_window_and_not_a_licence(self) -> None:
+        """Inside the short window the same namespace is still pending.
+
+        The reported remainder is asserted whole rather than by prefix: one
+        hour left is the ephemeral window's arithmetic and only its own. The
+        data window would report 145 through the identical message, so a
+        prefix match would accept the defect this class is written against.
+        """
+        prefix = "rbbbbbbbbbbb2_"
+        stamp = (_NOW - timedelta(hours=23)).isoformat()
+
+        decisions = evaluate_reclaim(
+            [_temp_survey(prefix, points=42, status="orphaned")],
+            {prefix: stamp},
+            now=_NOW,
+            policy=_POLICY,
+        )
+
+        assert decisions[0].action == "pending"
+        assert decisions[0].reason == "grace_remaining_h=1.0"
+
+    def test_a_non_temp_orphan_still_draws_the_full_data_window(self) -> None:
+        """A deleted worktree is not a sandbox and keeps the seven days.
+
+        This is the over-broad-match detector. Were the window selected
+        without consulting the root - every orphan drawing the ephemeral
+        window - this namespace would be ``reclaim_data`` at 25 hours and the
+        first assertion would fail; the 143 remaining hours then pin which
+        window actually ran, because no other window in the policy produces
+        that number from this stamp.
+        """
+        prefix = "rbbbbbbbbbbb3_"
+        stamp = (_NOW - timedelta(hours=25)).isoformat()
+
+        decisions = evaluate_reclaim(
+            [_survey(prefix, points=42)],
+            {prefix: stamp},
+            now=_NOW,
+            policy=_POLICY,
+        )
+
+        assert decisions[0].action == "pending"
+        assert decisions[0].reason == "grace_remaining_h=143.0"
+
+    def test_the_full_data_window_still_expires(self) -> None:
+        """Positive control: the long window is longer, not unreachable."""
+        prefix = "rbbbbbbbbbbb4_"
+        stamp = (_NOW - timedelta(hours=169)).isoformat()
+
+        decisions = evaluate_reclaim(
+            [_survey(prefix, points=42)],
+            {prefix: stamp},
+            now=_NOW,
+            policy=_POLICY,
+        )
+
+        assert [d.action for d in decisions] == ["reclaim_data"]
 
 
 class TestConvergenceDetection:
@@ -621,19 +713,6 @@ class TestTransportTimeoutIsolation:
     """
 
     @staticmethod
-    def _outcome(result: MaintenanceResult, prefix: str) -> ReclaimDecision:
-        """Return the cycle's single outcome for *prefix*, asserting it exists.
-
-        A cycle that stopped early reports nothing at all for the namespaces
-        behind the failure, and an absent outcome must read as the named
-        continuation failure it is rather than as a lookup error on the way to
-        an assertion that never ran.
-        """
-        matched = [d for d in result.decisions if d.prefix == prefix]
-        assert len(matched) == 1, f"cycle reported no outcome for {prefix}"
-        return matched[0]
-
-    @staticmethod
     def _two_orphans(tmp_path: Path) -> tuple[str, str]:
         """Return two aged data-tier orphans in the order the cycle applies them.
 
@@ -672,7 +751,7 @@ class TestTransportTimeoutIsolation:
 
         result = _run_cycle(client, tmp_path)
 
-        failed, survivor = self._outcome(result, first), self._outcome(result, second)
+        failed, survivor = _outcome_for(result, first), _outcome_for(result, second)
         assert failed.action == "failed"
         assert failed.reason == "archive_failed: timed out"
         # Sequence, not mere survival: the failing namespace is reached first,
@@ -705,7 +784,7 @@ class TestTransportTimeoutIsolation:
 
         result = _run_cycle(client, tmp_path)
 
-        held, survivor = self._outcome(result, first), self._outcome(result, second)
+        held, survivor = _outcome_for(result, first), _outcome_for(result, second)
         assert held.action == "deferred"
         assert held.reason == "points_unverifiable"
         assert survivor.action == "archived_removed"

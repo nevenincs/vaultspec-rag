@@ -543,6 +543,7 @@ def _build_reclaim_policy() -> ReclaimPolicy:
     return ReclaimPolicy(
         grace_hours=float(cfg.storage_autoprune_grace_hours),
         grace_hours_data=float(cfg.storage_autoprune_grace_hours_data),
+        grace_hours_ephemeral=float(cfg.storage_autoprune_grace_hours_ephemeral),
         max_per_cycle=int(cfg.storage_autoprune_max_per_cycle) if autoprune else 0,
         archive_retention_days=float(cfg.storage_autoprune_archive_retention_days),
         archive_max_bytes=int(float(cfg.storage_autoprune_archive_max_gb) * 1024**3),

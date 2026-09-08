@@ -238,6 +238,9 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "storage_autoprune_interval_minutes": EnvVar.STORAGE_AUTOPRUNE_INTERVAL_MINUTES,
     "storage_autoprune_grace_hours": EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS,
     "storage_autoprune_grace_hours_data": EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_DATA,
+    "storage_autoprune_grace_hours_ephemeral": (
+        EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL
+    ),
     "storage_autoprune_archive_retention_days": (
         EnvVar.STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS
     ),
@@ -355,6 +358,7 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "storage_autoprune_interval_minutes": _POSITIVE_NUMBER,
     "storage_autoprune_grace_hours": _NON_NEGATIVE_NUMBER,
     "storage_autoprune_grace_hours_data": _NON_NEGATIVE_NUMBER,
+    "storage_autoprune_grace_hours_ephemeral": _NON_NEGATIVE_NUMBER,
     "storage_autoprune_archive_retention_days": _NON_NEGATIVE_NUMBER,
     "storage_autoprune_archive_max_gb": _NON_NEGATIVE_NUMBER,
     "storage_autoprune_max_per_cycle": _NON_NEGATIVE_INT,

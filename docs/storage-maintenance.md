@@ -72,11 +72,13 @@ A namespace is only ever reclaimed automatically when all of the following hold:
 
 Reclamation is tiered. A namespace holding zero documents is dropped after 24 hours of continuous orphan-hood. A namespace holding data waits 7 days, then each of its collections is written to a snapshot archive, and the namespace is dropped only if every snapshot succeeded - a failed archive always cancels the drop.
 
+One class waits less. A namespace whose root lived under the OS temp directory was a throwaway sandbox, and an orphaned one is a sandbox that was torn down, so it is reclaimed after 24 hours whatever it holds. That shortens the waiting period and nothing else: a point-bearing temp-rooted namespace is still archived first and still not dropped if the archive fails. An absent root on an unreachable volume classifies `unverifiable` rather than `orphaned` and so never draws this window.
+
 The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unplugged drive looks exactly like a deleted root, so it is never treated as one), or - with one exception, temp-rooted namespaces - anything `live`. At most 16 namespaces are reclaimed per cycle; the remainder waits for the next one.
 
 The exception is temp-rooted namespaces. A harness temp directory that still exists classifies `live` and would otherwise survive every prune forever, which is exactly how leaked harness namespaces once filled a disk. A namespace whose root lives under an OS temp directory therefore runs on an additional clock: every successful index run stamps a persisted `last_indexed` time, and once that stamp is older than the ephemeral idle TTL (72 hours by default) the namespace is treated as dangling even though its root exists. The same tiers then apply - empty ones drop, data-bearing ones are archived first - under the same per-cycle cap, with ordinary orphans taking priority. An actively re-indexed temp root keeps refreshing its stamp and is never touched; set `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS=0` to disable the tier.
 
-The interval, both grace windows, the ephemeral idle TTL, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
+The interval, all three grace windows, the ephemeral idle TTL, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 
 ## Shrinking collections you keep
 
