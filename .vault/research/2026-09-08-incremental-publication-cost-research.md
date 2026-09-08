@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:5654631aad5d872c6308e655778e61365926a9a90d130ebb69a7053c58d44193'
+body_hash: 'sha256:3f53058d0cda7883bc44080a97e72d05b68dcbffb06128b0dedf2b3afc060008'
 related:
   - "[[2026-09-08-incremental-publication-cost-reference]]"
   - "[[2026-09-07-explicit-reindex-authority-research]]"
@@ -76,12 +76,44 @@ retain O(total) serialization and fragile invalidation. Shadow-copying each incr
 also O(total). Normalized bounded row updates are the only investigated option combining
 exactness, durable replay, and changed-scope steady-state cost.
 
-### Open questions
+### Reader safety requires a proof fence, not ordering alone
 
-The ADR and plan must resolve reader exclusion during in-place mutation, backend write
-consistency, managed-Qdrant out-of-band equal-cardinality drift, vault lifecycle
-integration, and proof-history retention. These affect sequencing, not the need to remove
-full scans and rewrites from the normal path.
+Storage-first ordering prevents proof from leading storage but does not stop a live reader
+from observing a mutation whose proof is still old. The safe bounded protocol is a
+seqlock-style token: read the current revision while no receipt is open, query storage,
+then validate the same revision and receipt absence. A changed token is transiently
+unverifiable or retried; it is never accepted as complete.
+
+### Streaming publication requires intent before each mutation unit
+
+Exact point membership is learned during streaming, after a whole-delta prepare point would
+already be too late. Evidence favors reserving one parent-to-target revision, durably
+preparing each bounded mutation unit before its store call, confirming it after storage
+acknowledgement, sealing the complete path delta before destructive reconciliation, and
+committing only when every required unit is confirmed.
+
+### Sparse current state must not become an unbounded ancestry chain
+
+Removing parent snapshot copies without a replacement makes inherited reads disappear and
+deleted child paths reveal parent rows. A current normalized proof projection should remain
+bounded: committed heads plus sparse generation-local overrides and deletion tombstones are
+folded atomically at proof commit. Historical generations remain provenance rather than the
+normal lookup structure.
+
+### Proportionality includes routing and stat evidence
+
+The scoped path still rewrites the complete stat-evidence JSON map and may perform full
+route reconciliation or materialize all retained ids. These operations violate the same
+steady-state cost bound as sidecar serialization. They require normalized changed-key
+updates or explicitly authorized full-sweep paths.
+
+### Cutover order and source coverage are architectural constraints
+
+Sidecar-backed breadth, donor, survey, reclamation, archive, and cleanup readers must move
+to compatible proof reads before publication stops producing sidecars. Vault must enter the
+same source-neutral publication coordinator despite retaining its own classification and
+payload adapter. Receipt history, evidence owners, cleanup, archive, and compaction need
+bounded retention rules so no exposed proof references reclaimed state.
 
 ## Sources
 
@@ -94,3 +126,18 @@ full scans and rewrites from the normal path.
 - `src/vaultspec_rag/indexer/_checkpoint_common.py:233`
 - `src/vaultspec_rag/indexer/_checkpoint_common.py:306`
 - `src/vaultspec_rag/indexer/_generation_lifecycle.py:352`
+- `src/vaultspec_rag/indexer/_run_ledger_runtime.py:236`
+- `src/vaultspec_rag/indexer/_run_ledger_files.py:456`
+- `src/vaultspec_rag/indexer/_run_ledger_commits.py:115`
+- `src/vaultspec_rag/indexer/_run_ledger_commits.py:519`
+- `src/vaultspec_rag/indexer/_run_ledger_finalization.py:88`
+- `src/vaultspec_rag/indexer/_run_ledger_finalization.py:260`
+- `src/vaultspec_rag/indexer/_streaming.py:698`
+- `src/vaultspec_rag/indexer/_stat_gate.py:283`
+- `src/vaultspec_rag/indexer/_consumer_pipeline.py:270`
+- `src/vaultspec_rag/indexer/_route_migration.py:615`
+- `src/vaultspec_rag/generation_survey.py:105`
+- `src/vaultspec_rag/indexer/_vault_indexer.py:79`
+- `src/vaultspec_rag/job_manager/models.py:27`
+- `src/vaultspec_rag/job_models.py:596`
+- `src/vaultspec_rag/job_manager/_persistence.py:430`
