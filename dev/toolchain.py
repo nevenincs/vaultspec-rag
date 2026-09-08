@@ -378,8 +378,9 @@ LINT = Verb(
         ),
         Target(
             "all",
-            "Run every gating dimension, stopping at the first failure.",
+            "Run every gating dimension; one red dimension never hides the rest.",
             tuple(Ref(name) for name in LINT_ALL),
+            keep_going=True,
         ),
     ),
 )
@@ -436,6 +437,7 @@ FIX = Verb(
             "all",
             "Apply every automatic fix, in one pass.",
             (Ref("python"), Ref("toml"), Ref("markdown"), Ref("vault")),
+            keep_going=True,
         ),
     ),
 )
@@ -659,7 +661,7 @@ TEST = Verb(
         ),
         Target(
             "all",
-            "Run every lane; gated lanes are reported skipped, never dropped.",
+            "Run every lane; a failed or gated lane never hides the ones after it.",
             (
                 Ref("python"),
                 Ref("gpu"),
@@ -667,6 +669,7 @@ TEST = Verb(
                 Ref("perf"),
             ),
             aggregate=True,
+            keep_going=True,
         ),
     ),
 )
