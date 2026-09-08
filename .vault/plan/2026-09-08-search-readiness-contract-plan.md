@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:7c49f6bf36eea52a1163b76c84465aadbddf3d95dead8cc10b8fa74ff4fb1630'
+body_hash: 'sha256:4afdd625281aea78d2651af773d8eda17bb0a34620c4b75c8fb8cb1b5d664080'
 ---
 
 <!-- RETIRED: P14 -->
@@ -58,7 +58,7 @@ Wait for publication revisions under a monotonic cancellable bound instead of tr
 - [x] `W01.P03.S08` - Implement a service-owned readiness revision registry and cancellable monotonic publication waiter; `src/vaultspec_rag/server/_search_readiness.py`.
 - [x] `W01.P03.S09` - Own the readiness registry lifecycle and inject one registry-allocated revision emission after canonical code publication succeeds; `src/vaultspec_rag/server/_search_readiness.py, src/vaultspec_rag/service.py, src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/indexer/_codebase_indexer.py, and src/vaultspec_rag/indexer/_generation_lifecycle.py`.
 - [x] `W01.P03.S10` - Inject one registry-allocated readiness revision after each canonical document generation publication succeeds; `src/vaultspec_rag/indexer/_document_indexer.py, src/vaultspec_rag/service.py, and src/vaultspec_rag/server/_search_readiness.py`.
-- [ ] `W01.P03.S11` - Emit controller target changes without treating job completion as publication; `src/vaultspec_rag/jobs.py`.
+- [ ] `W01.P03.S11` - Emit controller-only readiness notifications after canonical desired-state persistence without advancing publication; `src/vaultspec_rag/job_manager/_control.py, src/vaultspec_rag/job_manager/manager.py, src/vaultspec_rag/service.py, and src/vaultspec_rag/server/_search_readiness.py`.
 - [ ] `W01.P03.S12` - Prove immediate bypass notification wake monotonic timeout cancellation cleanup and multi-source convergence with a virtual clock; `src/vaultspec_rag/tests/test_search_readiness.py`.
 - [ ] `W01.P03.S13` - Mutation-prove waiter cleanup and job-terminal-not-publication guards; `src/vaultspec_rag/tests/test_search_readiness.py`.
 
