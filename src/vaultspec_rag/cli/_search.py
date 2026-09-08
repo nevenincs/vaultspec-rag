@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, cast
@@ -912,6 +913,58 @@ def _local_search_mandated(allow_fallback: bool) -> bool:
     return bool(allow_fallback) or _local_only_configured()
 
 
+def _validate_freshness_options(
+    policy: str,
+    wait_seconds: float | None,
+    *,
+    json_mode: bool,
+) -> tuple[str, float | None]:
+    """Validate the CLI spelling of the service-owned freshness policy."""
+    if policy not in {"immediate", "bounded"}:
+        code = "invalid_freshness_policy"
+        message = "freshness_policy must be 'immediate' or 'bounded'"
+    elif policy == "immediate" and wait_seconds is not None:
+        code = "invalid_freshness_wait_seconds"
+        message = "freshness_wait_seconds requires freshness_policy 'bounded'"
+    elif policy == "immediate":
+        return policy, None
+    else:
+        from ..config._settings import get_config
+
+        maximum = float(get_config().search_freshness_wait_max_seconds)
+        if (
+            wait_seconds is None
+            or not math.isfinite(wait_seconds)
+            or wait_seconds < 0
+            or wait_seconds > maximum
+        ):
+            code = "invalid_freshness_wait_seconds"
+            message = (
+                "freshness_wait_seconds must be a finite number between 0 and "
+                f"{maximum:g}"
+            )
+        else:
+            return policy, wait_seconds
+    if json_mode:
+        _emit_json_error_and_exit("search", code, message, 2)
+    _plain(f"Error: {message}")
+    raise typer.Exit(code=2)
+
+
+def _reject_bounded_local_search(*, json_mode: bool) -> NoReturn:
+    """Reject a service-owned wait policy before entering local execution."""
+    message = (
+        "Bounded freshness requires a running service; local search has no "
+        "publication-wait authority."
+    )
+    if json_mode:
+        _emit_json_error_and_exit(
+            "search", "bounded_freshness_requires_service", message, 2
+        )
+    _plain(f"Error: {message}")
+    raise typer.Exit(code=2)
+
+
 def _display_service_down_error(*, json_mode: bool) -> NoReturn:
     """Report that no service is reachable and local search was not mandated."""
     if json_mode:
@@ -1255,6 +1308,25 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             ),
         ),
     ] = None,
+    freshness_policy: Annotated[
+        str,
+        typer.Option(
+            "--freshness-policy",
+            metavar="immediate|bounded",
+            help="Return immediately or wait within a bounded publication window.",
+            show_default=True,
+        ),
+    ] = "immediate",
+    freshness_wait_seconds: Annotated[
+        float | None,
+        typer.Option(
+            "--freshness-wait-seconds",
+            help=(
+                "Publication wait bound in seconds; requires "
+                "--freshness-policy bounded."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Search vault documents or source code."""
     _validate_search_extra_args(ctx)
@@ -1262,6 +1334,11 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         _suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
+    freshness_policy, freshness_wait_seconds = _validate_freshness_options(
+        freshness_policy,
+        freshness_wait_seconds,
+        json_mode=json_mode,
+    )
     prefer = _search_prefer_filter(prefer, json_mode=json_mode)
     search_type = _validate_search_type(search_type, json_mode=json_mode)
     local_request = _InProcessSearchRequest(
@@ -1322,6 +1399,8 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             port,
             str(target),
             timeout=timeout,
+            freshness_policy=freshness_policy,
+            freshness_wait_seconds=freshness_wait_seconds,
             language=language,
             path=path,
             node_type=structure,
@@ -1363,6 +1442,9 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             raise typer.Exit(code=1)
     elif not mandate:
         _display_service_down_error(json_mode=json_mode)
+
+    if freshness_policy == "bounded":
+        _reject_bounded_local_search(json_mode=json_mode)
 
     # A local mandate is present; run the in-process search under a wall-clock
     # deadline so a degraded local store or wedged model load cannot hang while
