@@ -66,11 +66,44 @@ async def get_watcher_state_route(request: Request) -> JSONResponse:
     with _m._watcher_lock:
         roots = [str(p) for p in _m._watcher_tasks]
 
+    from ..api import controller_snapshot_envelope
+    from ._watcher import _controller_snapshots
+
+    raw_limit = request.query_params.get("limit")
+    try:
+        limit = min(256, max(0, int(raw_limit))) if raw_limit is not None else 256
+    except ValueError:
+        limit = 256
+    snapshots, globally_truncated = _controller_snapshots()
+    root_filter = request.query_params.get("root") or project_root
+    source_filter = request.query_params.get("source")
+    state_filter = request.query_params.get("state")
+    filtered = [
+        snapshot
+        for snapshot in snapshots
+        if (root_filter is None or snapshot.canonical_root == root_filter)
+        and (source_filter is None or snapshot.source.value == source_filter)
+        and (state_filter is None or snapshot.state.value == state_filter)
+    ]
+    returned = filtered[:limit]
+
     state = {
         "watch_enabled": bool(cfg.watch_enabled),
         "debounce_ms": int(cfg.watch_debounce_ms),
         "cooldown_s": float(cfg.watch_cooldown_s),
         "watching": sorted(roots),
+        "controllers": [
+            controller_snapshot_envelope(snapshot) for snapshot in returned
+        ],
+        "controllers_total": len(filtered),
+        "controllers_returned": len(returned),
+        "controllers_truncated": globally_truncated or len(filtered) > len(returned),
+        "filters": {
+            "root": root_filter,
+            "source": source_filter,
+            "state": state_filter,
+            "limit": limit,
+        },
     }
 
     if project_root is not None:
