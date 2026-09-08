@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:172399df2710a89ec2afef2d88fe28d831ae4dea0852bc469de69d578caa4a95'
+body_hash: 'sha256:3e9ef0463d95d7e3797858111d695e75e38894d256a225c54a196751dfa7f9dd'
 ---
 
 # `qdrant-collection-sprawl` plan
@@ -70,15 +70,15 @@ Delivers the two prerequisites without which no retention change executes: a rea
 
 Delivers the core decision: an orphaned temp-rooted namespace draws its own short window instead of the full data window, so ephemerality survives teardown.
 
-- [ ] `P02.S09` - Add the ephemeral-orphan grace window as a configuration default alongside the existing autoprune knobs; `src/vaultspec_rag/config/_settings.py`.
-- [ ] `P02.S10` - Add the ephemeral-orphan window field to the reclaim policy with its documented default; `src/vaultspec_rag/storage_reclamation.py`.
-- [ ] `P02.S11` - Select the ephemeral window in the orphan decision when the namespace root was temp-rooted, keeping point count as the tier selector; `src/vaultspec_rag/storage_reclamation.py`.
-- [ ] `P02.S12` - Thread the configured ephemeral window into the policy the maintenance tick constructs; `src/vaultspec_rag/server/_lifecycle.py`.
-- [ ] `P02.S13` - Add a test proving an orphaned temp-rooted point-bearing namespace draws the ephemeral window, not the data window; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
-- [ ] `P02.S14` - Add a test proving an orphaned non-temp point-bearing namespace still draws the full data window; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
-- [ ] `P02.S15` - Add a guard test proving the ephemeral window does not bypass the archive-before-destroy gate; `src/vaultspec_rag/tests/test_storage_safety.py`.
-- [ ] `P02.S16` - Add a guard test proving the ephemeral window does not bypass the pre-drop point re-count; `src/vaultspec_rag/tests/test_storage_safety.py`.
-- [ ] `P02.S17` - Add a guard test proving an unknown or unverifiable namespace is still never reached by the ephemeral path; `src/vaultspec_rag/tests/test_storage_safety.py`.
+- [x] `P02.S09` - Add the ephemeral-orphan grace window as a configuration default alongside the existing autoprune knobs; `src/vaultspec_rag/config/_settings.py`.
+- [x] `P02.S10` - Add the ephemeral-orphan window field to the reclaim policy with its documented default; `src/vaultspec_rag/storage_reclamation.py`.
+- [x] `P02.S11` - Select the ephemeral window in the orphan decision when the namespace root was temp-rooted, keeping point count as the tier selector; `src/vaultspec_rag/storage_reclamation.py`.
+- [x] `P02.S12` - Thread the configured ephemeral window into the policy the maintenance tick constructs; `src/vaultspec_rag/server/_lifecycle.py`.
+- [x] `P02.S13` - Add a test proving an orphaned temp-rooted point-bearing namespace draws the ephemeral window, not the data window; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [x] `P02.S14` - Add a test proving an orphaned non-temp point-bearing namespace still draws the full data window; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [x] `P02.S15` - Add a guard test proving the ephemeral window does not bypass the archive-before-destroy gate; `src/vaultspec_rag/tests/test_storage_safety.py`.
+- [x] `P02.S16` - Add a guard test proving the ephemeral window does not bypass the pre-drop point re-count; `src/vaultspec_rag/tests/test_storage_safety.py`.
+- [x] `P02.S17` - Add a guard test proving an unknown or unverifiable namespace is still never reached by the ephemeral path; `src/vaultspec_rag/tests/test_storage_safety.py`.
 
 ### Phase `P03` - size the archive for the drain and report the growth
 
