@@ -177,7 +177,7 @@ These bound the segment and queue geometry of one index run, its memory use, and
 | `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`           | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB)                             | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`                 | Fraction of CUDA memory the index allocator may reserve                                                | -        |
 | `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB`           | integer | `0` (auto-derive)     | Free device memory required before this process loads model stacks (MiB)                               | -        |
-| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service; `managed-service` or `embedded-local`                 | -        |
+| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service; `managed-service` or `embedded-local`                | -        |
 
 #### How the CUDA ceiling and admission floor derive
 
@@ -214,11 +214,11 @@ A floor has to cover the resident stack a load creates, plus the largest demand 
 
 ### Automatic updates
 
-| Variable                          | Type    | Default    | Controls                                                     | CLI flag                     |
-| --------------------------------- | ------- | ---------- | ------------------------------------------------------------ | ---------------------------- |
-| `VAULTSPEC_RAG_WATCH_ENABLED`     | boolean | `1` (true) | Filesystem auto-reindex on/off (`0` = pull-only)             | `--updates` / `--no-updates` |
-| `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` | integer | `2000`     | Debounce window coalescing change events before reindex (ms) | `--update-delay-ms`          |
-| `VAULTSPEC_RAG_WATCH_COOLDOWN_S`  | float   | `30`       | Per-source re-index cooldown after a completed run (s)       | `--repeat-update-delay-s`    |
+| Variable                          | Type    | Default    | Controls                                                           | CLI flag                     |
+| --------------------------------- | ------- | ---------- | ------------------------------------------------------------------ | ---------------------------- |
+| `VAULTSPEC_RAG_WATCH_ENABLED`     | boolean | `1` (true) | Filesystem auto-reindex on/off (`0` = pull-only)                   | `--updates` / `--no-updates` |
+| `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` | integer | `2000`     | Compatibility input mapped to both adaptive coalescing bounds (ms) | `--update-delay-ms`          |
+| `VAULTSPEC_RAG_WATCH_COOLDOWN_S`  | float   | `30`       | Compatibility input mapped to the adaptive cooling maximum (s)     | `--repeat-update-delay-s`    |
 
 A failed auto-reindex retries with exponential backoff and a circuit breaker that stops retrying a persistently failing source.
 

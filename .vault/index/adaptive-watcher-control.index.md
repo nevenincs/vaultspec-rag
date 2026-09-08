@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:5f40162ee1bebbb98698ed94d1eda541b6f2fe4a6509a9757c14ed3bb8233c2a'
+body_hash: 'sha256:977a6de31eb0307be7f4a859c77dc8867da0586d7a96e86a72c9026dd2a89a49'
 related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
@@ -27,6 +27,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-W03-P06-S17]]'
   - '[[2026-09-08-adaptive-watcher-control-W03-P06-S18]]'
   - '[[2026-09-08-adaptive-watcher-control-W03-P07-S19]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P07-S20]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -69,6 +70,7 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 - `2026-09-08-adaptive-watcher-control-W03-P06-S17` - Demonstrate bounded batch frequency, maximum freshness, fair progress, and pressure recovery under load
 - `2026-09-08-adaptive-watcher-control-W03-P06-S18` - Assert service, HTTP, CLI, and MCP controller telemetry conformance
 - `2026-09-08-adaptive-watcher-control-W03-P07-S19` - Add mutation-proved guards for trailing flush, freshness, refusal, exact recovery, fair rotation, and adapter ownership
+- `2026-09-08-adaptive-watcher-control-W03-P07-S20` - Document adaptive policy defaults, validation, telemetry, and rebuild-required remediation
 
 ### plan
 
