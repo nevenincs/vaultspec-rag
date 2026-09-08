@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:b3209d10241207b5adf1da6f94ef4d910e9e64045e37a5356f68b4df030439f5'
+body_hash: 'sha256:2aff2cfd4936eabbe3b765dceb0ba5f9d534c2cad7fccce0914e1a40b9f8c589'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -23,6 +23,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W01-P03-S11]]'
   - '[[2026-09-08-search-readiness-contract-W01-P03-S12]]'
   - '[[2026-09-08-search-readiness-contract-W01-P03-S13]]'
+  - '[[2026-09-08-search-readiness-contract-W01-P03-summary]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -56,6 +57,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W01-P03-S11` - Emit controller-only readiness notifications after canonical desired-state persistence without advancing publication
 - `2026-09-08-search-readiness-contract-W01-P03-S12` - Prove immediate bypass notification wake monotonic timeout cancellation cleanup and multi-source convergence with a virtual clock
 - `2026-09-08-search-readiness-contract-W01-P03-S13` - Mutation-prove waiter cleanup and job-terminal-not-publication guards
+- `2026-09-08-search-readiness-contract-W01-P03-summary` - `search-readiness-contract` `W01.P03` summary
 
 ### plan
 
