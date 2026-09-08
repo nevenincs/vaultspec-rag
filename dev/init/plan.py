@@ -6,7 +6,7 @@ each phase runs, and - the part that is easy to get wrong - the inputs whose
 change makes a phase stale and the artifacts whose absence does the same.
 
 ``vaultspec-rag`` had no bootstrap recipe at all before this: the only way to
-provision a worktree was to know that ``just deps sync`` happened to be the
+provision a worktree was to know that ``just deps-sync`` happened to be the
 step, and the committed `.pre-commit-config.yaml` had no installer anywhere in
 the repository, so every checkout silently bypassed its own hooks. Both are
 closed here. ``deps sync`` stays as the dependency-management verb it is;
