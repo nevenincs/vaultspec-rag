@@ -110,14 +110,22 @@ def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
     least one collection could not be counted, and is never treated as a
     number: comparing a total that silently omits a collection would read a
     partial sum as agreement with the survey.
+
+    A slow server is one of the ways a collection cannot be counted. The client
+    does not signal that with a builtin: it wraps the underlying read timeout
+    in ``ResponseHandlingException``, a plain ``Exception``, so a guard naming
+    only the builtin types let a timeout past this function and unwound the
+    whole cycle instead of leaving one namespace unverifiable.
     """
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
     total = 0
     for collection in client.get_collections().collections:
         if not collection.name.startswith(prefix):
             continue
         try:
             total += int(client.count(collection_name=collection.name).count)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ResponseHandlingException):
             return None
     return total
 
@@ -139,15 +147,20 @@ def _active_index_prefixes() -> frozenset[str]:
 
     A registry that cannot be read yields the empty set rather than raising:
     this runs inside a background cycle, and the pre-drop re-count and the
-    persisted grace windows both remain in force behind it.
+    persisted grace windows both remain in force behind it. That promise holds
+    for whatever the read raises, so the guard names the client's transport
+    failure alongside the builtins - it is a plain ``Exception`` and would
+    otherwise unwind the cycle this probe is only consulted from.
     """
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
     from . import jobs
     from ._store_models import root_collection_prefix
     from .job_models import JobOperation
 
     try:
         active = jobs.get_job_manager().active()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ResponseHandlingException):
         logger.exception("active-job probe failed; treating no namespace as busy")
         return frozenset()
     prefixes: set[str] = set()
@@ -680,6 +693,8 @@ def _apply_reclaim(
     Returns:
         The outcome decision and the archive paths written.
     """
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
     gate = _pre_drop_reclaim_gate(client, decision, active_prefixes=active_prefixes)
     if isinstance(gate, ReclaimDecision):
         return gate, []
@@ -693,7 +708,11 @@ def _apply_reclaim(
                 snapshots_dir=snapshots_dir,
                 archive_dir=archive_dir,
             )
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, ResponseHandlingException) as exc:
+            # A snapshot is the slowest call in the cycle and the likeliest to
+            # time out. The client wraps that timeout in its own plain
+            # ``Exception``, so naming only the builtins here turned one slow
+            # namespace into an aborted cycle that reclaimed nothing.
             return _redecide(decision, "failed", f"archive_failed: {exc}"), []
         # The snapshot is a point-in-time copy. A write landing during it
         # tears the copy, and the delete below would then destroy the delta

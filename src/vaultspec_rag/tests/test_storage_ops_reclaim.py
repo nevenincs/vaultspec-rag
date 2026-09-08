@@ -22,7 +22,11 @@ from ..store_schema import (
 from .test_storage_ops import (
     _NOW,
     _POLICY,
+    _collection_of,
+    _CycleClient,
     _identity,
+    _orphaned_namespace,
+    _run_cycle,
     _ScriptedClient,
     _survey,
 )
@@ -31,6 +35,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from qdrant_client import QdrantClient
+
+    from ..storage_reclamation import MaintenanceResult, ReclaimDecision
 
 pytestmark = [pytest.mark.unit]
 
@@ -542,3 +548,169 @@ class TestPlanReconcile:
 
         assert selected == []
         assert remaining == 2
+
+
+def _read_timeout() -> Exception:
+    """Build the object a qdrant REST call really raises when it times out.
+
+    Not a stand-in for one: every server call in the reclaim path goes through
+    the client's own send path, which catches whatever ``httpx`` raised and
+    re-raises it wrapped in ``ResponseHandlingException``. That wrapper is a
+    plain ``Exception``, which is precisely why guards naming only ``OSError``
+    and ``RuntimeError`` never saw it.
+    """
+    import httpx
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
+    return ResponseHandlingException(httpx.ReadTimeout("timed out"))
+
+
+class _TimeoutClient(_CycleClient):
+    """A cycle client whose named collections time out on one call each.
+
+    Fault injection at the transport boundary only - the one condition a live
+    server cannot be asked to reproduce on demand. Enumeration, counting,
+    snapshot files on disk and deletes stay the real ``_CycleClient``
+    behaviour, so a namespace that does not time out is reclaimed exactly as
+    it would be without this subclass, and the surviving candidate is
+    therefore evidence about the cycle rather than about the stand-in.
+    """
+
+    def __init__(
+        self,
+        counts: dict[str, int],
+        *,
+        snapshots_dir: Path | None = None,
+        snapshot_timeouts: frozenset[str] = frozenset(),
+        recount_timeouts: frozenset[str] = frozenset(),
+    ) -> None:
+        super().__init__(counts, snapshots_dir=snapshots_dir)
+        self._snapshot_timeouts = snapshot_timeouts
+        self._recount_timeouts = recount_timeouts
+        self._counted: dict[str, int] = {}
+
+    def count(self, *, collection_name: str) -> object:
+        seen = self._counted.get(collection_name, 0) + 1
+        self._counted[collection_name] = seen
+        # The survey counts each collection once and the pre-drop re-count is
+        # the second visit, so only the second is failed. Failing the survey's
+        # count instead would degrade the namespace to zero points long before
+        # the gate under test was ever consulted.
+        if collection_name in self._recount_timeouts and seen > 1:
+            raise _read_timeout()
+        return super().count(collection_name=collection_name)
+
+    def create_snapshot(self, *, collection_name: str, wait: bool = True) -> object:
+        if collection_name in self._snapshot_timeouts:
+            # Recorded before raising: the attempt is what the ordering
+            # assertions read, and a snapshot that timed out was still asked
+            # for.
+            self.snapshotted.append(collection_name)
+            raise _read_timeout()
+        return super().create_snapshot(collection_name=collection_name, wait=wait)
+
+
+class TestTransportTimeoutIsolation:
+    """One slow server call defers one namespace, never the whole cycle.
+
+    The reclaim gates promise a per-namespace skip carrying a reported reason.
+    A read timeout arrives as a plain ``Exception`` rather than an ``OSError``,
+    so guards naming only the builtin types propagated it out of the cycle
+    entirely: the tick died reporting a timeout and reclaimed nothing,
+    including from every candidate it had not reached yet.
+    """
+
+    @staticmethod
+    def _outcome(result: MaintenanceResult, prefix: str) -> ReclaimDecision:
+        """Return the cycle's single outcome for *prefix*, asserting it exists.
+
+        A cycle that stopped early reports nothing at all for the namespaces
+        behind the failure, and an absent outcome must read as the named
+        continuation failure it is rather than as a lookup error on the way to
+        an assertion that never ran.
+        """
+        matched = [d for d in result.decisions if d.prefix == prefix]
+        assert len(matched) == 1, f"cycle reported no outcome for {prefix}"
+        return matched[0]
+
+    @staticmethod
+    def _two_orphans(tmp_path: Path) -> tuple[str, str]:
+        """Return two aged data-tier orphans in the order the cycle applies them.
+
+        Same-tier orphans are ordered by prefix, so sorting here names which
+        namespace the cycle reaches first. Continuation is only a meaningful
+        claim about the one queued behind the failure, never about one already
+        processed before it.
+        """
+        first, second = sorted(
+            (
+                _orphaned_namespace(tmp_path, now=_NOW, name="vanished-a"),
+                _orphaned_namespace(tmp_path, now=_NOW, name="vanished-b"),
+            )
+        )
+        return first, second
+
+    def test_a_snapshot_timeout_fails_one_namespace_and_the_cycle_goes_on(
+        self, tmp_path: Path
+    ) -> None:
+        """A timed-out archive marks that namespace failed; the next still runs.
+
+        Mutation it catches: narrowing the archive guard back to
+        ``(OSError, RuntimeError)``, which lets the wrapped read timeout escape
+        ``_apply_reclaim`` and unwind ``run_maintenance_cycle`` before the
+        second candidate is reached. The reason is asserted whole rather than
+        by prefix because a torn archive reports ``archive_failed:`` too, and a
+        prefix match would pass on whichever of the two branches fired.
+        """
+        first, second = self._two_orphans(tmp_path)
+        stalled, healthy = _collection_of(first), _collection_of(second)
+        client = _TimeoutClient(
+            {stalled: 10, healthy: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            snapshot_timeouts=frozenset({stalled}),
+        )
+
+        result = _run_cycle(client, tmp_path)
+
+        failed, survivor = self._outcome(result, first), self._outcome(result, second)
+        assert failed.action == "failed"
+        assert failed.reason == "archive_failed: timed out"
+        # Sequence, not mere survival: the failing namespace is reached first,
+        # so the second one's snapshot and delete are what prove the cycle
+        # carried on past the failure instead of never meeting it.
+        assert survivor.action == "archived_removed"
+        assert client.snapshotted == [stalled, healthy]
+        assert client.deleted == [healthy]
+
+    def test_a_recount_timeout_defers_one_namespace_and_the_cycle_goes_on(
+        self, tmp_path: Path
+    ) -> None:
+        """A timed-out re-count is unverifiable, never zero, and never fatal.
+
+        Mutation it catches: narrowing the ``_prefix_points`` guard back to
+        ``(OSError, RuntimeError)``, which lets the wrapped read timeout escape
+        the pre-drop gate and abort the cycle. ``points_unverifiable`` is
+        asserted exactly because it is the only reason meaning the count could
+        not be established - the movement branches report their own strings,
+        and matching loosely would accept a namespace deferred for having been
+        counted successfully at a different number.
+        """
+        first, second = self._two_orphans(tmp_path)
+        stalled, healthy = _collection_of(first), _collection_of(second)
+        client = _TimeoutClient(
+            {stalled: 10, healthy: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            recount_timeouts=frozenset({stalled}),
+        )
+
+        result = _run_cycle(client, tmp_path)
+
+        held, survivor = self._outcome(result, first), self._outcome(result, second)
+        assert held.action == "deferred"
+        assert held.reason == "points_unverifiable"
+        assert survivor.action == "archived_removed"
+        # The gate precedes the archive, so the deferred namespace is never
+        # snapshotted at all; the entry that IS here belongs to the candidate
+        # behind it, which is the continuation this test exists for.
+        assert client.snapshotted == [healthy]
+        assert client.deleted == [healthy]
