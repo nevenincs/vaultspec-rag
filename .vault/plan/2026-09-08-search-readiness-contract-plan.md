@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:08e7f0a5b737831a5bf92c61fea3fb4ecf3cc514b2616d06621a5c0643d9fe67'
+body_hash: 'sha256:fa5c6a318435821243a3b8b292d041b808ac6baae18b35520fe944bbedea437b'
 ---
 
 <!-- RETIRED: P14 -->
@@ -47,7 +47,7 @@ Define and validate the immutable source and aggregate contract.
 Project existing job generation controller integrity and collection facts through one service authority.
 
 - [x] `W01.P02.S04` - Replace the empty-only classifier with per-source projection from canonical job generation controller integrity and collection evidence; `src/vaultspec_rag/server/_search_availability.py`.
-- [ ] `W01.P02.S05` - Project generation summary requested and effective mode controller resilience and revision evidence without a second authority; `src/vaultspec_rag/jobs.py`.
+- [x] `W01.P02.S05` - Project generation summary requested and effective mode controller resilience and revision evidence without a second authority; `src/vaultspec_rag/jobs.py`.
 - [ ] `W01.P02.S06` - Cover current updating unavailable unverifiable rebuild capacity and empty-authority classifications; `src/vaultspec_rag/tests/test_search_availability.py`.
 - [ ] `W01.P02.S07` - Mutation-prove exact source and root matching plus bounded evidence; `src/vaultspec_rag/tests/test_search_availability.py`.
 
