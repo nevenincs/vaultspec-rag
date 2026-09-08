@@ -17,8 +17,10 @@ from ._content_policy import ContentKind
 from ._file_state import validate_rel_path
 from ._publication_proof import (
     PathDelta,
+    PathOutcome,
     ProofAggregate,
-    ProofIdentity,
+    ProofCompatibilityKey,
+    ProofMutationState,
     ProofProvenance,
     ProofReceiptState,
 )
@@ -35,6 +37,9 @@ __all__ = [
     "CommitUnitKind",
     "FinalizationPhase",
     "PublicationEvidenceRow",
+    "PublicationMutationPointRow",
+    "PublicationMutationUnit",
+    "PublicationMutationUnitRow",
     "PublicationPointRow",
     "PublicationProof",
     "PublicationProofRow",
@@ -342,7 +347,6 @@ class PublicationProofRow(TypedDict):
     root_identity: str
     backend_identity: str
     collection_identity: str
-    generation_id: str
     storage_schema: int
     payload_schema: int
     embedding_schema_identity: str
@@ -350,7 +354,9 @@ class PublicationProofRow(TypedDict):
     membership_identity: str
     content_identity: str
     policy_identity: str
+    generation_id: str
     revision: int
+    reservation_sequence: int
     indexed_identities: int
     retained_points: int
     provenance: str
@@ -386,11 +392,11 @@ class PublicationReceiptRow(TypedDict):
     """Durable state-machine header for one publication attempt."""
 
     receipt_id: str
+    reservation_sequence: int
     source_type: str
     root_identity: str
     backend_identity: str
     collection_identity: str
-    generation_id: str
     storage_schema: int
     payload_schema: int
     embedding_schema_identity: str
@@ -398,13 +404,41 @@ class PublicationReceiptRow(TypedDict):
     membership_identity: str
     content_identity: str
     policy_identity: str
+    generation_id: str
     parent_revision: int
     target_revision: int
+    state: str
+    reserved_at: float
+    sealed_at: float | None
+    committed_at: float | None
+    rolled_back_at: float | None
+
+
+class PublicationMutationUnitRow(TypedDict):
+    """One receipt-bound deterministic storage mutation and its durable state."""
+
+    receipt_id: str
+    mutation_ordinal: int
+    sealed_ordinal: int | None
+    unit_id: str
+    rel_path: str
+    unit_kind: str
+    source_digest: str | None
+    segment_ordinal: int
+    is_file_end: int
     state: str
     prepared_at: float
     applied_at: float | None
     confirmed_at: float | None
-    committed_at: float | None
+
+
+class PublicationMutationPointRow(TypedDict):
+    """One exact point identity carried by a receipt mutation unit."""
+
+    receipt_id: str
+    mutation_ordinal: int
+    point_ordinal: int
+    point_id: str
 
 
 class PublicationReceiptDeltaRow(TypedDict):
@@ -489,6 +523,10 @@ PUBLICATION_PROOF_SCHEMA: Final = {
     "publication_evidence": frozenset(PublicationEvidenceRow.__annotations__),
     "publication_points": frozenset(PublicationPointRow.__annotations__),
     "publication_receipts": frozenset(PublicationReceiptRow.__annotations__),
+    "publication_mutation_units": frozenset(PublicationMutationUnitRow.__annotations__),
+    "publication_mutation_points": frozenset(
+        PublicationMutationPointRow.__annotations__
+    ),
     "publication_receipt_deltas": frozenset(PublicationReceiptDeltaRow.__annotations__),
     "publication_receipt_points": frozenset(PublicationReceiptPointRow.__annotations__),
 }
@@ -701,7 +739,7 @@ class RunSignature:
 
 @dataclass(frozen=True, slots=True)
 class CommitUnit:
-    """One bounded storage mutation confirmed before ledger insertion."""
+    """One deterministic bounded storage mutation suitable for replay."""
 
     rel_path: str
     kind: CommitUnitKind
@@ -778,24 +816,93 @@ def _require_timestamp(value: float, *, name: str) -> None:
         raise ValueError(f"{name} must be a finite non-negative timestamp")
 
 
+def _require_non_empty_text(value: str, *, name: str) -> None:
+    if not isinstance(value, str) or not value.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+        raise ValueError(f"{name} must be non-empty")
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationMutationUnit:
+    """Receipt-bound progress for one deterministic storage mutation."""
+
+    ordinal: int
+    unit: CommitUnit
+    state: ProofMutationState
+    prepared_at: float
+    applied_at: float | None = None
+    confirmed_at: float | None = None
+    sealed_ordinal: int | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.ordinal, bool)
+            or not isinstance(self.ordinal, int)  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            or self.ordinal < 0
+        ):
+            raise ValueError("ordinal must be a non-negative integer")
+        if not isinstance(self.unit, CommitUnit):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("unit must be a CommitUnit")
+        if not isinstance(self.state, ProofMutationState):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("state must be a ProofMutationState")
+        if self.sealed_ordinal is not None and (
+            isinstance(self.sealed_ordinal, bool)
+            or not isinstance(self.sealed_ordinal, int)  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            or self.sealed_ordinal < 0
+        ):
+            raise ValueError("sealed_ordinal must be a non-negative integer")
+        _require_timestamp(self.prepared_at, name="prepared_at")
+        required = {
+            ProofMutationState.PREPARED: 0,
+            ProofMutationState.APPLIED: 1,
+            ProofMutationState.CONFIRMED: 2,
+        }[self.state]
+        timestamps = (self.applied_at, self.confirmed_at)
+        if any(value is None for value in timestamps[:required]) or any(
+            value is not None for value in timestamps[required:]
+        ):
+            raise ValueError("mutation timestamps must match its state")
+        present = (
+            self.prepared_at,
+            *(value for value in timestamps if value is not None),
+        )
+        for name, value in zip(
+            ("prepared_at", "applied_at", "confirmed_at"),
+            present,
+            strict=False,
+        ):
+            _require_timestamp(value, name=name)
+        if present != tuple(sorted(present)):
+            raise ValueError("mutation timestamps must be monotonic")
+
+    @property
+    def identity(self) -> str:
+        """Return the deterministic idempotency identity of this mutation."""
+        return self.unit.identity
+
+
 @dataclass(frozen=True, slots=True)
 class PublicationProof:
     """Committed ledger projection of one exact publication proof revision."""
 
     revision: int
-    identity: ProofIdentity
+    reservation_sequence: int
+    compatibility_key: ProofCompatibilityKey
+    generation_id: str
     aggregate: ProofAggregate
     provenance: ProofProvenance
     committed_at: float
     verified_at: float | None = None
 
     def __post_init__(self) -> None:
-        if isinstance(self.revision, bool) or not isinstance(self.revision, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
-            raise TypeError("revision must be an integer")
-        if self.revision < 0:
-            raise ValueError("revision must be non-negative")
-        if not isinstance(self.identity, ProofIdentity):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
-            raise TypeError("identity must be a ProofIdentity")
+        for name in ("revision", "reservation_sequence"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if not isinstance(self.compatibility_key, ProofCompatibilityKey):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("compatibility_key must be a ProofCompatibilityKey")
+        _require_non_empty_text(self.generation_id, name="generation_id")
         if not isinstance(self.aggregate, ProofAggregate):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
             raise TypeError("aggregate must be a ProofAggregate")
         if not isinstance(self.provenance, ProofProvenance):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
@@ -817,61 +924,249 @@ class PublicationReceipt:
     """Durable replay contract spanning external storage and proof commit."""
 
     receipt_id: str
-    identity: ProofIdentity
+    reservation_sequence: int
+    compatibility_key: ProofCompatibilityKey
+    generation_id: str
     parent_revision: int
     target_revision: int
     state: ProofReceiptState
-    deltas: tuple[PathDelta, ...]
-    prepared_at: float
-    applied_at: float | None = None
-    confirmed_at: float | None = None
+    reserved_at: float
+    mutations: tuple[PublicationMutationUnit, ...] = ()
+    deltas: tuple[PathDelta, ...] = ()
+    sealed_at: float | None = None
     committed_at: float | None = None
+    rolled_back_at: float | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.receipt_id, str) or not self.receipt_id.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
-            raise ValueError("receipt_id must be non-empty")
-        if not isinstance(self.identity, ProofIdentity):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
-            raise TypeError("identity must be a ProofIdentity")
-        for name in ("parent_revision", "target_revision"):
+        _require_non_empty_text(self.receipt_id, name="receipt_id")
+        if not isinstance(self.compatibility_key, ProofCompatibilityKey):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("compatibility_key must be a ProofCompatibilityKey")
+        _require_non_empty_text(self.generation_id, name="generation_id")
+        for name in ("reservation_sequence", "parent_revision", "target_revision"):
             value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int):
+            if isinstance(value, bool) or not isinstance(value, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
                 raise TypeError(f"{name} must be an integer")
             if value < 0:
                 raise ValueError(f"{name} must be non-negative")
+        if self.reservation_sequence == 0:
+            raise ValueError("reservation_sequence must be positive")
         if self.target_revision != self.parent_revision + 1:
             raise ValueError("target_revision must immediately follow parent_revision")
         if not isinstance(self.state, ProofReceiptState):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
             raise TypeError("state must be a ProofReceiptState")
+        if not isinstance(self.mutations, tuple):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("mutations must be a tuple")
+        _validate_receipt_mutations(self.mutations)
         if not isinstance(self.deltas, tuple):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
             raise TypeError("deltas must be a tuple")
         _validate_receipt_deltas(self.deltas, parent_revision=self.parent_revision)
         self._validate_timestamps()
+        self._validate_mutation_timestamps()
+        self._validate_sealed_mutations()
+        if self.state is ProofReceiptState.COMMITTED:
+            if not any(delta.changes_proof for delta in self.deltas):
+                raise ValueError("a no-op receipt must not commit a proof revision")
+            if any(
+                mutation.state is not ProofMutationState.CONFIRMED
+                for mutation in self.mutations
+            ):
+                raise ValueError(
+                    "committed receipt requires every mutation to be confirmed"
+                )
+
+    @property
+    def is_open(self) -> bool:
+        """Return whether this receipt fences live proof reads."""
+        return self.state.is_open
 
     def _validate_timestamps(self) -> None:
-        _require_timestamp(self.prepared_at, name="prepared_at")
-        timestamps = (self.applied_at, self.confirmed_at, self.committed_at)
-        required = {
-            ProofReceiptState.PREPARED: 0,
-            ProofReceiptState.APPLIED: 1,
-            ProofReceiptState.CONFIRMED: 2,
-            ProofReceiptState.COMMITTED: 3,
+        _require_timestamp(self.reserved_at, name="reserved_at")
+        optional_timestamps = {
+            "sealed_at": self.sealed_at,
+            "committed_at": self.committed_at,
+            "rolled_back_at": self.rolled_back_at,
+        }
+        for name, value in optional_timestamps.items():
+            if value is not None:
+                _require_timestamp(value, name=name)
+        valid_shape = {
+            ProofReceiptState.RESERVED: (
+                self.sealed_at is None
+                and self.committed_at is None
+                and self.rolled_back_at is None
+            ),
+            ProofReceiptState.SEALED: (
+                self.sealed_at is not None
+                and self.committed_at is None
+                and self.rolled_back_at is None
+            ),
+            ProofReceiptState.COMMITTED: (
+                self.sealed_at is not None
+                and self.committed_at is not None
+                and self.rolled_back_at is None
+            ),
+            ProofReceiptState.ROLLED_BACK: (
+                self.committed_at is None and self.rolled_back_at is not None
+            ),
         }[self.state]
-        if any(value is None for value in timestamps[:required]) or any(
-            value is not None for value in timestamps[required:]
-        ):
+        if not valid_shape:
             raise ValueError("receipt timestamps must match its state")
-        present = (
-            self.prepared_at,
-            *(value for value in timestamps if value is not None),
+        terminal_at = (
+            self.committed_at if self.committed_at is not None else self.rolled_back_at
         )
-        for name, value in zip(
-            ("prepared_at", "applied_at", "confirmed_at", "committed_at"),
-            present,
-            strict=False,
-        ):
-            _require_timestamp(value, name=name)
+        present = (
+            self.reserved_at,
+            *((self.sealed_at,) if self.sealed_at is not None else ()),
+            *((terminal_at,) if terminal_at is not None else ()),
+        )
         if present != tuple(sorted(present)):
             raise ValueError("receipt timestamps must be monotonic")
+
+    def _validate_mutation_timestamps(self) -> None:
+        terminal_at = (
+            self.committed_at if self.committed_at is not None else self.rolled_back_at
+        )
+        for mutation in self.mutations:
+            if mutation.prepared_at < self.reserved_at:
+                raise ValueError("mutation cannot precede receipt reservation")
+            mutation_at = (
+                mutation.confirmed_at
+                if mutation.confirmed_at is not None
+                else mutation.applied_at
+                if mutation.applied_at is not None
+                else mutation.prepared_at
+            )
+            if terminal_at is not None and mutation_at > terminal_at:
+                raise ValueError("mutation cannot follow receipt closure")
+
+    def _validate_sealed_mutations(self) -> None:
+        if self.sealed_at is None:
+            if self.deltas:
+                raise ValueError("receipt deltas exist only after sealing")
+            if any(mutation.sealed_ordinal is not None for mutation in self.mutations):
+                raise ValueError("unsealed receipt must not seal mutation identities")
+            return
+        sealed = sorted(self.mutations, key=lambda mutation: mutation.identity)
+        if tuple(mutation.sealed_ordinal for mutation in sealed) != tuple(
+            range(len(sealed))
+        ):
+            raise ValueError(
+                "sealed receipt must freeze every mutation in identity order"
+            )
+        _validate_mutation_coverage(self.deltas, self.mutations)
+
+
+def _validate_receipt_mutations(
+    mutations: tuple[PublicationMutationUnit, ...],
+) -> None:
+    if any(not isinstance(mutation, PublicationMutationUnit) for mutation in mutations):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+        raise TypeError("mutations must contain only PublicationMutationUnit values")
+    if tuple(mutation.ordinal for mutation in mutations) != tuple(
+        range(len(mutations))
+    ):
+        raise ValueError("mutations must use contiguous ordinal ordering")
+    identities = tuple(mutation.identity for mutation in mutations)
+    if len(frozenset(identities)) != len(identities):
+        raise ValueError("mutation identities must be unique within a receipt")
+
+
+def _validate_mutation_coverage(
+    deltas: tuple[PathDelta, ...],
+    mutations: tuple[PublicationMutationUnit, ...],
+) -> None:
+    expected_points, expected_content = _expected_mutation_coverage(deltas)
+    actual_units: dict[tuple[CommitUnitKind, str], list[CommitUnit]] = {}
+    for mutation in mutations:
+        key = (mutation.unit.kind, mutation.unit.rel_path)
+        actual_units.setdefault(key, []).append(mutation.unit)
+    if actual_units.keys() != expected_points.keys():
+        raise ValueError("sealed mutations must exactly cover changed proof paths")
+
+    for key, units in actual_units.items():
+        _validate_mutation_group(
+            key,
+            units,
+            expected_points=expected_points[key],
+            expected_content=expected_content.get(key[1]),
+        )
+
+
+def _expected_mutation_coverage(
+    deltas: tuple[PathDelta, ...],
+) -> tuple[
+    dict[tuple[CommitUnitKind, str], frozenset[str]],
+    dict[str, str],
+]:
+    expected_points: dict[tuple[CommitUnitKind, str], frozenset[str]] = {}
+    expected_content: dict[str, str] = {}
+    for delta in deltas:
+        if not delta.changes_proof:
+            continue
+        if delta.new is not None:
+            expected_points[(CommitUnitKind.UPSERT, delta.new.rel_path)] = frozenset(
+                delta.new.point_ids
+            )
+            expected_content[delta.new.rel_path] = delta.new.content_identity
+        deletion = _expected_deletion(delta)
+        if deletion is not None:
+            deletion_kind, rel_path, deleted_points = deletion
+            expected_points[(deletion_kind, rel_path)] = deleted_points
+    return expected_points, expected_content
+
+
+def _expected_deletion(
+    delta: PathDelta,
+) -> tuple[CommitUnitKind, str, frozenset[str]] | None:
+    if delta.old is None:
+        return None
+    if delta.outcome in {PathOutcome.DELETE, PathOutcome.RENAME}:
+        return (
+            CommitUnitKind.DELETE_PATH,
+            delta.old.rel_path,
+            frozenset(delta.old.point_ids),
+        )
+    if delta.outcome not in {
+        PathOutcome.MODIFY,
+        PathOutcome.EMPTY,
+        PathOutcome.IGNORED,
+        PathOutcome.REJECTED,
+    }:
+        return None
+    new_points: frozenset[str] = (
+        frozenset(delta.new.point_ids) if delta.new is not None else frozenset()
+    )
+    deleted_points = frozenset(delta.old.point_ids).difference(new_points)
+    if not deleted_points:
+        return None
+    return CommitUnitKind.DELETE_STALE, delta.old.rel_path, deleted_points
+
+
+def _validate_mutation_group(
+    key: tuple[CommitUnitKind, str],
+    units: list[CommitUnit],
+    *,
+    expected_points: frozenset[str],
+    expected_content: str | None,
+) -> None:
+    point_ids = tuple(point_id for unit in units for point_id in unit.point_ids)
+    if len(frozenset(point_ids)) != len(point_ids):
+        raise ValueError("sealed mutation point identities must not overlap")
+    if frozenset(point_ids) != expected_points:
+        raise ValueError("sealed mutations must match exact proof point membership")
+    kind, _rel_path = key
+    if kind is CommitUnitKind.UPSERT:
+        if any(unit.source_digest != expected_content for unit in units):
+            raise ValueError("upsert mutation content must match new proof evidence")
+        segments = sorted(units, key=lambda unit: unit.segment_ordinal)
+        if tuple(unit.segment_ordinal for unit in segments) != tuple(
+            range(len(segments))
+        ) or tuple(unit.is_file_end for unit in segments) != (
+            *(False for _ in segments[:-1]),
+            True,
+        ):
+            raise ValueError("upsert mutations must form one complete segment stream")
+    elif len(units) != 1:
+        raise ValueError("one deletion mutation must carry exact removed membership")
 
 
 def _validate_receipt_deltas(
@@ -895,6 +1190,32 @@ def _validate_receipt_deltas(
         if any(path in reserved_paths for path in paths):
             raise ValueError("a receipt must not affect one path more than once")
         reserved_paths.update(paths)
+    _validate_delta_point_ownership(deltas)
+
+
+def _validate_delta_point_ownership(deltas: tuple[PathDelta, ...]) -> None:
+    old_owners: dict[str, str] = {}
+    new_owners: dict[str, str] = {}
+    for delta in deltas:
+        for evidence, owners in (
+            (delta.old, old_owners),
+            (delta.new, new_owners),
+        ):
+            if evidence is None:
+                continue
+            for point_id in evidence.point_ids:
+                owner = owners.setdefault(point_id, evidence.rel_path)
+                if owner != evidence.rel_path:
+                    raise ValueError(
+                        "one point identity must not belong to multiple proof paths"
+                    )
+    transferred = {
+        point_id
+        for point_id in old_owners.keys() & new_owners.keys()
+        if old_owners[point_id] != new_owners[point_id]
+    }
+    if transferred:
+        raise ValueError("a receipt must not transfer point identity between paths")
 
 
 def _is_digest(value: object) -> bool:

@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:93c54460c73734aa86817e2cc7093a783fe5c36fa7c0255d25a54a37bd0e9eea'
+body_hash: 'sha256:b3ae9f10934114da0de1ad64241b0a3da07d0560eae67ba0858b805e059aa653'
 ---
 
 # `incremental-publication-cost` plan
@@ -43,7 +43,7 @@ Provide source-neutral immutable values for proof identity, path outcomes, aggre
 
 - [x] `W01.P01.S01` - Define publication proof identities, path deltas, aggregate arithmetic, receipt states, provenance, and typed failures; `src/vaultspec_rag/indexer/_publication_proof.py`.
 - [x] `W01.P01.S02` - Prove add, modify, delete, rename, empty, ignored, rejected, and no-op delta behavior; `src/vaultspec_rag/tests/test_publication_proof.py`.
-- [ ] `W01.P01.S53` - Correct proof compatibility, streaming mutation, and reader-transition contracts; `src/vaultspec_rag/indexer/_publication_proof.py, src/vaultspec_rag/indexer/_run_ledger_models.py, src/vaultspec_rag/tests/test_publication_proof.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
+- [x] `W01.P01.S53` - Correct proof compatibility, streaming mutation, and reader-transition contracts; `src/vaultspec_rag/indexer/_publication_proof.py, src/vaultspec_rag/indexer/_run_ledger_models.py, src/vaultspec_rag/tests/test_publication_proof.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
 
 ### Phase `W01.P02` - persist normalized proofs and receipts
 
