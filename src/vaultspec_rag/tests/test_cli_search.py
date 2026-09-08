@@ -1121,80 +1121,29 @@ class TestSearchResultRendering:
         assert "Search service returned an error." in out
         assert "RAG service" not in out
 
-    def test_display_search_timeout_error_humanizes_diagnostics(
-        self, capsys: pytest.CaptureFixture[str]
-    ):
-        """Search timeout errors answer readiness/work status without raw keys."""
-        _display_service_error(
-            {
-                "ok": False,
-                "error": "http_search_timeout",
-                "message": (
-                    "HTTP search on port 8766 timed out after 180.0s. "
-                    "The service may still be processing the request. "
-                    "Service status=unknown; running_jobs=unknown; "
-                    "same_project_search_strategy=serialized."
-                ),
-                "backend_capabilities": {
-                    "same_project_search_strategy": "serialized",
-                    "cross_project_search_strategy": "parallel",
-                    "local_storage_process_model": "exclusive",
-                },
-                "diagnostics": {
-                    "health": {
-                        "available": False,
-                        "error": "TimeoutError",
-                        "message": "timed out",
-                    },
-                    "jobs": {
-                        "available": True,
-                        "running_count": 2,
-                    },
-                },
-                "remediation": [
-                    "vaultspec-rag search ... --port 8766 --timeout 360",
-                    "vaultspec-rag server status",
-                    "vaultspec-rag server jobs --state active --port 8766",
-                ],
-            },
-        )
-
-        out = capsys.readouterr().out
-        assert "HTTP search on port 8766 timed out after 180.0s." in out
-        assert "Service: request check timed out" in out
-        assert "Work: 2 active index jobs" in out
-        assert "vaultspec-rag server jobs --state active --port 8766" in out
-        assert "same_project_search_strategy" not in out
-        assert "serialized" not in out
-        for forbidden in ("┌", "└", "│"):
-            assert forbidden not in out
-
-    def test_display_search_timeout_missing_job_count_uses_absence_language(
+    def test_display_transport_failure_uses_only_generic_error_fields(
         self, capsys: pytest.CaptureFixture[str]
     ):
         _display_service_error(
             {
                 "ok": False,
-                "error": "http_search_timeout",
-                "message": "HTTP search on port 8766 timed out after 180.0s.",
+                "error": "http_call_failed",
+                "message": "HTTP search on port 8766 failed: TimeoutError: timed out",
                 "diagnostics": {
-                    "health": {
-                        "available": True,
-                        "status": "ready",
-                    },
-                    "jobs": {
-                        "available": True,
-                    },
+                    "health": {"status": "ready"},
+                    "jobs": {"running_count": 2},
                 },
             },
         )
 
         out = capsys.readouterr().out
-        assert "Service: reachable; requests ready" in out
-        assert "Work: active job count not reported by service" in out
-        assert "running work status unknown" not in out
-        assert "unknown" not in out
-        assert "health check" not in out
+        assert "Error: HTTP search on port 8766 failed: TimeoutError: timed out" in out
+        assert "Code: http_call_failed" in out
+        # Mutation evidence: restoring client-side diagnostic rendering printed
+        # Service/Work lines and failed this exact assertion (exit 1); the
+        # transport-only renderer passed after restoration (exit 0).
+        assert "Service:" not in out
+        assert "Work:" not in out
 
 
 class TestArgvPathPatterns:
