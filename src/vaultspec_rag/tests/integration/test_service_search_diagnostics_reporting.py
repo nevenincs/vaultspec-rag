@@ -3,9 +3,8 @@
 These scenarios each drive a single search against a quiet service and
 assert the report it produces: that an unindexed root is named as missing
 rather than answered as empty, that the request id on the response is the
-one that turns up in the structured log, and that a timeout still carries
-health, jobs, and backpressure diagnostics an operator can act on -
-including when the probe port answers nothing at all.
+one that turns up in the structured log, and that a client transport timeout
+does not manufacture service readiness diagnostics.
 """
 
 from __future__ import annotations
@@ -15,9 +14,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ...serviceclient._search_transport import _timeout_diagnostics, try_http_search
+from ...serviceclient._search_transport import try_http_search
 from ...serviceclient._transport import _do_http_call
-from .._ports import free_loopback_port
 from ._service_search_diagnostics_support import (
     assert_empty_search_phase_timing,
     assert_request_id,
@@ -107,7 +105,7 @@ def test_search_request_id_is_log_correlatable(
 
 
 @pytest.mark.subprocess_gpu
-def test_service_search_short_timeout_reports_operational_diagnostics(
+def test_service_search_short_timeout_remains_transport_only(
     live_service: tuple[int, Path],
     tmp_path: Path,
 ) -> None:
@@ -126,31 +124,6 @@ def test_service_search_short_timeout_reports_operational_diagnostics(
 
     assert isinstance(result, dict)
     assert result["ok"] is False
-    assert result["error"] == "http_search_timeout"
-    assert result["timeout_seconds"] == 0.000001
-    diagnostics = cast("dict[str, object]", result["diagnostics"])
-    health = cast("dict[str, object]", diagnostics["health"])
-    jobs = cast("dict[str, object]", diagnostics["jobs"])
-    remediation = cast("list[object]", result["remediation"])
-    assert health["status"] == "ready"
-    assert jobs["available"] is True
-    backpressure = cast("dict[str, object]", diagnostics["backpressure"])
-    assert backpressure["active_indexing_conflict"] is False
-    assert isinstance(remediation, list)
-    assert f"vaultspec-rag server status --port {port}" in remediation
-    assert any("server jobs --state active" in str(item) for item in remediation)
-
-
-@pytest.mark.unit
-def test_timeout_diagnostics_survive_unavailable_probe_port() -> None:
-    result = _timeout_diagnostics(free_loopback_port(), 0.01)
-
-    assert result["ok"] is False
-    assert result["error"] == "http_search_timeout"
-    diagnostics = cast("dict[str, object]", result["diagnostics"])
-    health = cast("dict[str, object]", diagnostics["health"])
-    jobs = cast("dict[str, object]", diagnostics["jobs"])
-    backpressure = cast("dict[str, object]", diagnostics["backpressure"])
-    assert health["available"] is False
-    assert jobs["available"] is False
-    assert backpressure["active_indexing_conflict"] is None
+    assert result["error"] == "http_call_failed"
+    assert isinstance(result["message"], str)
+    assert set(result) == {"ok", "error", "message"}

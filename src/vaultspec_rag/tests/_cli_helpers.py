@@ -520,13 +520,8 @@ def _status_contract_health_payload() -> dict[str, object]:
     }
 
 
-def _slow_search_contract_server(
-    *,
-    health_payload: dict[str, object] | None = None,
-    jobs_payload: dict[str, object] | None = None,
-    jobs_status_code: int = 200,
-) -> _ContractServer:
-    """Start a local service that lets /search time out while probes work."""
+def _slow_search_contract_server() -> _ContractServer:
+    """Start a local service whose ``/search`` response exceeds a short bound."""
     import threading
     import time
 
@@ -543,40 +538,6 @@ def _slow_search_contract_server(
             with contextlib.suppress(OSError):
                 self.wfile.write(json.dumps({"ok": True, "results": []}).encode())
 
-        def do_GET(self):
-            payload: dict[str, object]
-            if self.path == "/health":
-                payload = (
-                    health_payload
-                    if health_payload is not None
-                    else _status_contract_health_payload()
-                )
-            elif self.path.startswith("/jobs"):
-                payload = (
-                    jobs_payload
-                    if jobs_payload is not None
-                    else {
-                        "ok": True,
-                        "jobs": [],
-                        "total": 0,
-                        "returned": 0,
-                        "summary": {"running": 0, "phases": {}},
-                    }
-                )
-                self.send_response(jobs_status_code)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(payload).encode("utf-8"))
-                return
-            else:
-                self.send_response(404)
-                self.end_headers()
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(payload).encode("utf-8"))
-
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowSearchHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -586,9 +547,6 @@ def _slow_search_contract_server(
 def invoke_timed_out_search(
     tmp_path: Path,
     *extra: str,
-    health_payload: dict[str, object] | None = None,
-    jobs_payload: dict[str, object] | None = None,
-    jobs_status_code: int = 200,
 ) -> tuple[Result, int]:
     """Run one CLI search whose service answers /search too slowly.
 
@@ -597,11 +555,7 @@ def invoke_timed_out_search(
     failing assertion cannot leave the contract server running.
     """
     (tmp_path / ".vaultspec").mkdir()
-    server, thread = _slow_search_contract_server(
-        health_payload=health_payload,
-        jobs_payload=jobs_payload,
-        jobs_status_code=jobs_status_code,
-    )
+    server, thread = _slow_search_contract_server()
     port = server.server_address[1]
     try:
         result = runner.invoke(
