@@ -17,6 +17,8 @@ from ..indexer._publication_proof import (
     ProofIncompatibleError,
     ProofReadConflictError,
     ProofReadToken,
+    ProofRebuildRequiredError,
+    ProofUnverifiableReason,
 )
 
 if TYPE_CHECKING:
@@ -293,6 +295,26 @@ def test_read_token_fences_open_or_changed_receipt_snapshots() -> None:
             revision=7,
             reservation_sequence=11,
             has_open_receipt=False,
+        )
+
+
+def test_rebuild_reasons_exclude_old_format_statuses() -> None:
+    """Mutation proving this can fail: add an old-format evidence reason."""
+    assert set(ProofUnverifiableReason) == {
+        ProofUnverifiableReason.MISSING,
+        ProofUnverifiableReason.INCOMPATIBLE,
+        ProofUnverifiableReason.PARENT_MISMATCH,
+        ProofUnverifiableReason.OLD_EVIDENCE_MISMATCH,
+        ProofUnverifiableReason.CORRUPT_RECEIPT,
+        ProofUnverifiableReason.UNEXPLAINED_DRIFT,
+    }
+    for reason in (
+        ProofUnverifiableReason.CORRUPT_RECEIPT,
+        ProofUnverifiableReason.UNEXPLAINED_DRIFT,
+    ):
+        assert (
+            ProofRebuildRequiredError("rebuild required", reason=reason).reason
+            is reason
         )
 
 

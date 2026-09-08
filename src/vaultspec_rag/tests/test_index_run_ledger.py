@@ -6,7 +6,7 @@ import hashlib
 import sqlite3
 import threading
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -43,7 +43,9 @@ from ..indexer._run_ledger_models import (
     PUBLICATION_PROOF_SCHEMA,
     REQUIRED_INDEX_PREDICATES,
     REQUIRED_INDEXES,
+    REQUIRED_SCHEMA,
     RESUMABLE_STATES,
+    SCHEMA_VERSION,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
@@ -53,6 +55,7 @@ from ..indexer._run_ledger_models import (
     RunLedgerCompatibilityError,
     RunLedgerCorruptionError,
     RunLedgerIndexedPathCollisionError,
+    RunLedgerRebuildRequiredError,
     RunLedgerStateError,
     RunOperation,
     RunSignature,
@@ -62,9 +65,6 @@ from ..indexer._run_ledger_models import (
 from ..indexer._run_ledger_publication import RunLedgerPublicationMethods
 from ..indexer._run_ledger_runtime import RunLedger
 from ._production_service import PROCESS_TIMEOUT_SECONDS
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -148,6 +148,31 @@ def _proof_key_for_signature(signature: RunSignature) -> ProofCompatibilityKey:
         content_identity=signature.content_epoch,
         policy_identity=signature.policy_fingerprint,
     )
+
+
+def _assert_rebuild_required_without_mutation(
+    path: Path,
+    *,
+    match: str,
+) -> None:
+    before = path.read_bytes()
+    companions = tuple(
+        Path(f"{path}{suffix}") for suffix in ("-journal", "-shm", "-wal")
+    )
+    companion_bytes = {
+        companion: companion.read_bytes() if companion.exists() else None
+        for companion in companions
+    }
+
+    with pytest.raises(RunLedgerRebuildRequiredError, match=match) as caught:
+        RunLedger(path)
+
+    assert type(caught.value) is RunLedgerRebuildRequiredError
+    assert path.read_bytes() == before
+    assert {
+        companion: companion.read_bytes() if companion.exists() else None
+        for companion in companions
+    } == companion_bytes
 
 
 def _seed_publication_proof(
@@ -676,6 +701,11 @@ def test_publication_schema_separates_receipts_from_streaming_mutations() -> Non
     assert "prepared_at" not in PUBLICATION_PROOF_SCHEMA["publication_receipts"]
 
 
+def test_publication_ledger_schema_has_a_distinct_current_version() -> None:
+    """Mutation: restoring version 6 would admit the pre-proof ledger format."""
+    assert SCHEMA_VERSION == 7
+
+
 def test_run_ledger_installs_and_verifies_normalized_publication_schema(
     tmp_path: Path,
 ) -> None:
@@ -694,6 +724,9 @@ def test_run_ledger_installs_and_verifies_normalized_publication_schema(
     }
 
     with sqlite3.connect(ledger.path) as connection:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
+            SCHEMA_VERSION
+        )
         tables = {
             str(row[0])
             for row in connection.execute(
@@ -1131,43 +1164,193 @@ def test_publication_schema_enforces_open_receipt_and_state_constraints(
             )
 
 
-def test_v6_migration_preserves_legacy_rows_without_manufacturing_proof(
-    tmp_path: Path,
-) -> None:
-    digest = _digest("legacy")
-    ledger, generation_id = _indexed_path_ledger(tmp_path, digest)
-    before = list(ledger.iter_file_states(generation_id))
-    retained = _unit("src/drift.py", 0, 1, digest=digest).point_ids
-
-    with sqlite3.connect(ledger.path) as connection:
-        connection.execute("PRAGMA foreign_keys = OFF")
-        for table in PUBLICATION_PROOF_SCHEMA:
-            connection.execute(f'DROP TABLE "{table}"')
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 6
+def test_old_ledger_format_requires_rebuild_without_mutation(tmp_path: Path) -> None:
+    """Mutation: requesting WAL before the version gate mutates this database."""
+    path = tmp_path / "runs.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE old_runs (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO old_runs VALUES ('preserve-me')")
+        connection.execute("PRAGMA user_version = 6")
         connection.commit()
 
-    migrated = RunLedger(ledger.path)
-    assert migrated.generation(generation_id).generation_id == generation_id
-    assert list(migrated.iter_file_states(generation_id)) == before
-    assert migrated.retained_point_ids_for_candidates(
-        generation_id, retained
-    ) == frozenset(retained)
-    with sqlite3.connect(migrated.path) as connection:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 6
-        assert {
-            table: int(
-                connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+    _assert_rebuild_required_without_mutation(path, match="not supported")
+
+
+def test_live_wal_old_ledger_requires_rebuild_without_sidecar_mutation(
+    tmp_path: Path,
+) -> None:
+    """Mutation: writable preflight changes shared-memory state before refusal."""
+    path = tmp_path / "runs.sqlite3"
+    peer = sqlite3.connect(path)
+    try:
+        assert peer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        peer.execute("CREATE TABLE old_runs (value TEXT NOT NULL)")
+        peer.execute("INSERT INTO old_runs VALUES ('preserve-me')")
+        peer.execute("PRAGMA user_version = 6")
+        peer.commit()
+
+        _assert_rebuild_required_without_mutation(path, match="rebuild")
+    finally:
+        peer.close()
+
+
+def test_nonempty_schema_zero_requires_rebuild_without_mutation(tmp_path: Path) -> None:
+    """Mutation: treating every schema-zero database as fresh overwrites its shape."""
+    path = tmp_path / "runs.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE foreign_state (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO foreign_state VALUES ('preserve-me')")
+        connection.commit()
+
+    _assert_rebuild_required_without_mutation(path, match="nonempty pre-proof")
+
+
+def test_fresh_schema_creation_is_atomic_and_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: autocommitted schema scripts leave a partial version-zero file."""
+    path = tmp_path / "runs.sqlite3"
+    create_publication_tables = RunLedger._create_publication_tables
+
+    def fail_after_publication_tables(connection: sqlite3.Connection) -> None:
+        create_publication_tables(connection)
+        raise RuntimeError("injected schema-creation interruption")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            RunLedger,
+            "_create_publication_tables",
+            staticmethod(fail_after_publication_tables),
+        )
+        with pytest.raises(RuntimeError, match="injected schema-creation interruption"):
+            RunLedger(path)
+
+    with sqlite3.connect(path) as connection:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 0
+        assert connection.execute("SELECT name FROM sqlite_master").fetchall() == []
+
+    ledger = RunLedger(path)
+    with sqlite3.connect(ledger.path) as connection:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
+            SCHEMA_VERSION
+        )
+
+
+def _open_concurrent_fresh_ledgers(
+    path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[RunLedger], list[BaseException], tuple[threading.Thread, ...]]:
+    create_base_tables = RunLedger._create_base_tables
+    require_schema = RunLedger._require_current_or_empty_schema
+    first_base_created = threading.Event()
+    release_first_creator = threading.Event()
+    second_preflight_finished = threading.Event()
+    first_call = True
+    call_lock = threading.Lock()
+    ledgers: list[RunLedger] = []
+    errors: list[BaseException] = []
+
+    def blocking_create_base_tables(connection: sqlite3.Connection) -> None:
+        nonlocal first_call
+        create_base_tables(connection)
+        with call_lock:
+            should_block = first_call
+            first_call = False
+        if should_block:
+            first_base_created.set()
+            assert release_first_creator.wait(PROCESS_TIMEOUT_SECONDS)
+
+    def tracked_require_schema(
+        self: RunLedger,
+        connection: sqlite3.Connection,
+    ) -> None:
+        try:
+            require_schema(self, connection)
+        finally:
+            if threading.current_thread().name == "second-schema-opener":
+                second_preflight_finished.set()
+
+    def open_ledger() -> None:
+        try:
+            ledgers.append(RunLedger(path))
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            RunLedger,
+            "_create_base_tables",
+            staticmethod(blocking_create_base_tables),
+        )
+        patch.setattr(
+            RunLedger, "_require_current_or_empty_schema", tracked_require_schema
+        )
+        first = threading.Thread(target=open_ledger, name="first-schema-opener")
+        second = threading.Thread(target=open_ledger, name="second-schema-opener")
+        first.start()
+        try:
+            assert first_base_created.wait(PROCESS_TIMEOUT_SECONDS)
+            second.start()
+            assert second_preflight_finished.wait(PROCESS_TIMEOUT_SECONDS)
+        finally:
+            release_first_creator.set()
+        first.join(PROCESS_TIMEOUT_SECONDS)
+        second.join(PROCESS_TIMEOUT_SECONDS)
+
+    return ledgers, errors, (first, second)
+
+
+def test_concurrent_fresh_schema_openers_observe_only_empty_or_current(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: removing the creation transaction exposes a partial schema."""
+    path = tmp_path / "runs.sqlite3"
+    ledgers, errors, (first, second) = _open_concurrent_fresh_ledgers(
+        path,
+        monkeypatch,
+    )
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert len(ledgers) == 2
+    with sqlite3.connect(path) as connection:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
+            SCHEMA_VERSION
+        )
+
+
+def test_existing_empty_file_receives_the_exact_current_schema(tmp_path: Path) -> None:
+    path = tmp_path / "runs.sqlite3"
+    path.touch()
+
+    ledger = RunLedger(path)
+
+    with sqlite3.connect(ledger.path) as connection:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
+            SCHEMA_VERSION
+        )
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                """
             )
-            for table in PUBLICATION_PROOF_SCHEMA
-        } == dict.fromkeys(PUBLICATION_PROOF_SCHEMA, 0)
+        }
+    assert tables == set(REQUIRED_SCHEMA)
 
 
 def test_open_refuses_a_preexisting_incompatible_publication_index(
     tmp_path: Path,
 ) -> None:
-    """Mutation proving this can fail: skip post-migration index verification."""
+    """Mutation proving this can fail: skip exact current-index verification."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("DROP INDEX publication_receipts_open")
         connection.execute(
             """
@@ -1180,8 +1363,7 @@ def test_open_refuses_a_preexisting_incompatible_publication_index(
         )
         connection.commit()
 
-    with pytest.raises(RunLedgerCompatibilityError, match="does not match"):
-        RunLedger(ledger.path)
+    _assert_rebuild_required_without_mutation(ledger.path, match="does not match")
 
 
 def test_open_refuses_a_preexisting_publication_table_without_constraints(
@@ -1190,6 +1372,7 @@ def test_open_refuses_a_preexisting_publication_table_without_constraints(
     """Mutation proving this can fail: skip exact table-definition verification."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute("DROP TABLE file_state_tombstones")
         connection.execute(
@@ -1200,10 +1383,59 @@ def test_open_refuses_a_preexisting_publication_table_without_constraints(
             )
             """
         )
+        connection.execute(
+            """
+            CREATE INDEX file_state_tombstones_path
+            ON file_state_tombstones(rel_path, generation_id)
+            """
+        )
         connection.commit()
 
-    with pytest.raises(RunLedgerCompatibilityError, match="does not match"):
-        RunLedger(ledger.path)
+    _assert_rebuild_required_without_mutation(ledger.path, match="does not match")
+
+
+def test_open_refuses_unexpected_current_schema_objects_without_mutation(
+    tmp_path: Path,
+) -> None:
+    """Mutation: checking only required names admits a second durable authority."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute("CREATE TABLE shadow_proof (value TEXT NOT NULL)")
+        connection.commit()
+
+    _assert_rebuild_required_without_mutation(ledger.path, match="unexpected tables")
+
+
+@pytest.mark.parametrize(
+    "ddl",
+    [
+        """
+        CREATE VIEW shadow_proof_view AS
+        SELECT generation_id FROM publication_proofs
+        """,
+        """
+        CREATE TRIGGER shadow_proof_trigger
+        AFTER INSERT ON publication_proofs
+        BEGIN
+            SELECT 1;
+        END
+        """,
+    ],
+    ids=["view", "trigger"],
+)
+def test_open_refuses_unexpected_schema_authorities_without_mutation(
+    tmp_path: Path,
+    ddl: str,
+) -> None:
+    """Mutation: ignoring views or triggers admits another durable authority."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute(ddl)
+        connection.commit()
+
+    _assert_rebuild_required_without_mutation(ledger.path, match="unexpected objects")
 
 
 def test_backend_identity_is_part_of_manifest_compatibility(tmp_path: Path) -> None:

@@ -91,7 +91,6 @@ class ProofUnverifiableReason(StrEnum):
     PARENT_MISMATCH = "parent_mismatch"
     OLD_EVIDENCE_MISMATCH = "old_evidence_mismatch"
     CORRUPT_RECEIPT = "corrupt_receipt"
-    INEXACT_LEGACY_EVIDENCE = "inexact_legacy_evidence"
     UNEXPLAINED_DRIFT = "unexplained_drift"
 
 
@@ -148,7 +147,6 @@ class ProofRebuildRequiredError(ProofUnverifiableError):
     ) -> None:
         if reason not in {
             ProofUnverifiableReason.CORRUPT_RECEIPT,
-            ProofUnverifiableReason.INEXACT_LEGACY_EVIDENCE,
             ProofUnverifiableReason.UNEXPLAINED_DRIFT,
         }:
             raise ValueError("reason does not require authoritative reconstruction")
