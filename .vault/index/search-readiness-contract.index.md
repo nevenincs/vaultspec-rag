@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:e9d35bc3d1c3bd71a244d6c8617c009880ed2ffe4562c84a859f5e3730414cb8'
+body_hash: 'sha256:7f1b3e07172ec79656b798439664322886a981877514e7f01c28f0ffcf626654'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -60,6 +60,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W03-P10-S41]]'
   - '[[2026-09-08-search-readiness-contract-W03-P10-S42]]'
   - '[[2026-09-08-search-readiness-contract-W03-P10-S43]]'
+  - '[[2026-09-08-search-readiness-contract-W03-P10-S44]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -130,6 +131,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W03-P10-S41` - Extend MCP input and result models with policy and canonical readiness content
 - `2026-09-08-search-readiness-contract-W03-P10-S42` - Replace opaque RuntimeError reduction with structured error content and actionable text
 - `2026-09-08-search-readiness-contract-W03-P10-S43` - Prove every MCP search tool preserves structured success and failure through the official client
+- `2026-09-08-search-readiness-contract-W03-P10-S44` - Prove MCP schemas expose bounded policy consistently for every search source
 
 ### plan
 

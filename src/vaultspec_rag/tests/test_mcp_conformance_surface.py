@@ -77,6 +77,12 @@ _REFRESH_TOOLS = {
     "reindex_all",
 }
 _CLEAN_TOOLS = {"clean_documents", "clean_all"}
+_SEARCH_TOOLS = {
+    "search_vault",
+    "search_codebase",
+    "search_documents",
+    "search_combined",
+}
 
 
 def _tools() -> list[Tool]:
@@ -195,23 +201,65 @@ class TestNarrowedSurface:
             props = tool.input_schema.get("properties", {})
             assert props["top_k"].get("default") == _DEFAULT_TOP_K
 
-    def test_search_tools_declare_a_result_output_schema(self) -> None:
-        # The declared outputSchema must reflect the SearchResults model the
-        # tools return (results + summary), not merely be present.
-        from ..mcp._tools import SearchResults
+    @pytest.mark.parametrize("tool_name", sorted(_SEARCH_TOOLS))
+    def test_search_input_schema_publishes_bounded_freshness_policy(
+        self, tool_name: str
+    ) -> None:
+        """The published schema, not a private signature, owns MCP admission input."""
+        tool = next(tool for tool in _tools() if tool.name == tool_name)
+        properties = tool.input_schema["properties"]
+        policy = properties["freshness_policy"]
+        policy_definition = tool.input_schema["$defs"]["FreshnessWaitPolicy"]
+        wait_seconds = properties["freshness_wait_seconds"]
 
-        model_props = set(SearchResults.model_json_schema().get("properties", {}))
-        for tool in _tools():
-            if tool.name in {
-                "search_vault",
-                "search_codebase",
-                "search_documents",
-                "search_combined",
-            }:
-                assert tool.output_schema is not None, tool.name
-                props = set(tool.output_schema.get("properties", {}))
-                assert {"results", "summary"} <= props, tool.name
-                assert {"results", "summary"} <= model_props
+        # Mutation proof: replacing both defaults with required parameters put
+        # both names in ``required`` and failed this exact disjointness assertion
+        # for all four tools (exit 1); restoring both defaults passed (exit 0).
+        assert set(tool.input_schema["required"]).isdisjoint(
+            {"freshness_policy", "freshness_wait_seconds"}
+        )
+        assert policy == {
+            "$ref": "#/$defs/FreshnessWaitPolicy",
+            "default": "immediate",
+        }
+        assert policy_definition["enum"] == ["immediate", "bounded"]
+        assert policy_definition["type"] == "string"
+        assert wait_seconds["default"] is None
+        # Mutation proof: removing ``ge=0`` from FreshnessWaitSeconds removed
+        # ``minimum`` and failed this exact assertion for all four tools (exit 1);
+        # restoration passed all four (exit 0). JSON numbers are finite on the
+        # published wire; production validation additionally refuses nonfinite floats.
+        assert wait_seconds["anyOf"] == [
+            {"minimum": 0, "type": "number"},
+            {"type": "null"},
+        ]
+
+    @pytest.mark.parametrize("tool_name", sorted(_SEARCH_TOOLS))
+    def test_search_output_schema_requires_canonical_readiness_contract(
+        self, tool_name: str
+    ) -> None:
+        """Every published result carries readiness and declares failure fields."""
+        tool = next(tool for tool in _tools() if tool.name == tool_name)
+        assert tool.output_schema is not None
+        schema = tool.output_schema
+        properties = schema["properties"]
+
+        assert schema["required"] == ["readiness"]
+        assert properties["readiness"] == {"$ref": "#/$defs/SearchReadinessContent"}
+        assert set(schema["$defs"]["SearchReadinessContent"]["required"]) == {
+            "sources",
+            "aggregate",
+        }
+        assert {
+            "ok",
+            "results",
+            "error",
+            "message",
+            "retryable",
+            "request_id",
+            "remediation",
+            "readiness",
+        } <= properties.keys()
 
 
 class TestProjectRootWireContract:
