@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:93509d8c33a7aeaca81ef9161ce410e448866e7a29d0bace3cdc7d5af8d46100'
+body_hash: 'sha256:d8a906535b6c20f53a4314680014b90a44ac7de0c1c63108c5938048e007f641'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -69,6 +69,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W04-P11-S49]]'
   - '[[2026-09-08-search-readiness-contract-W04-P11-S50]]'
   - '[[2026-09-08-search-readiness-contract-W04-P11-summary]]'
+  - '[[2026-09-08-search-readiness-contract-W04-P12-S51]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -148,6 +149,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W04-P11-S49` - Apply the readiness scenario matrix to official-client MCP structured responses
 - `2026-09-08-search-readiness-contract-W04-P11-S50` - Prove rebuild-required behavior and remediation across service and adapters
 - `2026-09-08-search-readiness-contract-W04-P11-summary` - `search-readiness-contract` `W04.P11` summary
+- `2026-09-08-search-readiness-contract-W04-P12-S51` - Add immediate readiness overhead and bounded-wait contention to the concurrency benchmark
 
 ### plan
 
