@@ -732,6 +732,8 @@ def test_empty_authority_follows_the_canonical_source_fact(tmp_path: Path) -> No
 
 
 def test_projection_and_legacy_job_evidence_share_one_bound(tmp_path: Path) -> None:
+    # Proven red by slicing matching jobs at MAX_SEARCH_EVIDENCE_ITEMS - 1:
+    # the exact shared-bound assertion below fails as 7 == 8 before restoration.
     snapshots = tuple(
         _canonical_snapshot(tmp_path, job_id=f"bounded-{index}").to_dict()
         for index in range(MAX_SEARCH_EVIDENCE_ITEMS + 1)
@@ -805,6 +807,9 @@ def test_only_canonical_nonterminal_states_make_empty_results_unavailable(
 
 
 def test_legacy_and_invalid_canonical_identity_are_rejected(tmp_path: Path) -> None:
+    # Proven red independently by accepting every non-null normalized root and
+    # by removing exact source equality: the wrong-root and wrong-source records
+    # each fail the exact `is None` rejection assertion before restoration.
     root = (tmp_path / "project").resolve()
     other_root = (tmp_path / "other-project").resolve()
     snapshot = _canonical_snapshot(root, job_id="canonical")
