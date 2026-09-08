@@ -7,8 +7,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from httpx import Headers
+from qdrant_client.http.exceptions import UnexpectedResponse
 from starlette.testclient import TestClient
 
+from .._search_state import MAX_SEARCH_EVIDENCE_ITEMS
 from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_locks import VaultStoreLockedError
 from ..config._settings import get_config, reset_config
@@ -25,8 +28,16 @@ from ..server._routes_search import (
     SearchAvailabilityRequestFacts,
     SearchRequest,
     _classify_completed_search,
+    _classify_search_result,
     _search_response_status,
 )
+from ..server._search_availability import (
+    CanonicalSearchEvidence,
+    SearchAvailabilityContext,
+    classify_qdrant_collection_disappearance,
+    classify_search_response,
+)
+from ..server._search_readiness import ReadinessRevisionSnapshot, ReadinessSourceKey
 from ..service import RegistryFullError, ServiceRegistry
 from ..serviceclient._search_transport import (
     _search_response_envelope,
@@ -145,7 +156,7 @@ def _status_contract_facts(root: Path) -> SearchAvailabilityRequestFacts:
 def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
     tmp_path: Path,
 ) -> None:
-    """An empty runtime-owned vault still answers when the global registry closed.
+    """An unverifiable empty runtime vault fails after global registry shutdown.
 
     The real, model-free count reaches the runtime registry. Reverting the
     route to a public facade that resolves ``get_registry()`` makes this a 500
@@ -177,8 +188,12 @@ def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
                 },
             )
 
-        assert response.status_code == 200, response.text
-        assert response.json()["results"] == []
+        assert response.status_code == 503, response.text
+        payload = response.json()
+        assert payload["error"] == "index_unverifiable"
+        assert payload["retryable"] is False
+        assert "results" not in payload
+        assert response.headers.get("retry-after") is None
     finally:
         runtime_registry.close_all()
         reset_registry()
@@ -279,6 +294,278 @@ class TestSearchResponseStatus:
         }
 
         assert _search_response_status(envelope) == 503
+
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            ("index_unavailable", 503),
+            ("index_unverifiable", 503),
+            ("capacity_limited", 503),
+            ("backend_unavailable", 503),
+            ("freshness_wait_timeout", 503),
+            ("rebuild_required", 409),
+            ("rebuild_refused", 409),
+        ],
+    )
+    def test_canonical_failure_codes_map_to_exact_status(
+        self,
+        error: str,
+        expected: int,
+    ) -> None:
+        # Returning the legacy blanket 503 made rebuild_required equal 503 and
+        # failed its exact 409 assertion; restoration passed every case.
+        envelope: dict[str, object] = {
+            "ok": False,
+            "error": error,
+            "retryable": error not in {"rebuild_required", "rebuild_refused"},
+        }
+
+        actual = _search_response_status(envelope)
+
+        assert actual == expected
+        assert actual != 429
+
+
+def _canonical_classification_facts(
+    root: Path,
+    *,
+    current: bool,
+    updating: bool = False,
+) -> SearchAvailabilityRequestFacts:
+    key = ReadinessSourceKey.from_root(root, "vault")
+    return SearchAvailabilityRequestFacts(
+        job_snapshot_before=(
+            [
+                {
+                    "id": "updating-vault",
+                    "state": "running",
+                    "spec": {
+                        "operation": "index",
+                        "project_root": str(root.resolve()),
+                        "source": "vault",
+                        "mode": "incremental",
+                    },
+                }
+            ]
+            if updating
+            else []
+        ),
+        root=root,
+        source="vault",
+        request_id="canonical-envelope-request",
+        port=8766,
+        readiness_snapshot=ReadinessRevisionSnapshot(
+            key=key,
+            published_generation="served",
+            publication_revision=1,
+            desired_generation="served" if current else "desired",
+            controller_revision=1 if current else 2,
+        ),
+    )
+
+
+def _canonical_searched(results: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "results": results,
+        "summary": "search summary",
+        "index_state": {
+            "source": "vault",
+            "indexed_count": 1,
+            "indexed_target_root": "project",
+            "requested_target_root": "project",
+            "target_matches": True,
+            "status": "available",
+            "index_integrity": {"verdict": "consistent"},
+        },
+    }
+
+
+def _matching_index_job(root: Path, *, mode: str = "incremental") -> dict[str, object]:
+    return {
+        "id": f"{mode}-vault-job",
+        "state": "running",
+        "spec": {
+            "operation": "index",
+            "project_root": str(root.resolve()),
+            "source": "vault",
+            "mode": mode,
+        },
+    }
+
+
+def _availability_context(
+    root: Path,
+    *,
+    evidence: CanonicalSearchEvidence,
+    jobs: list[dict[str, object]] | None = None,
+    request_id: str = "canonical-builder-request",
+) -> SearchAvailabilityContext:
+    return SearchAvailabilityContext(
+        before_snapshot=[] if jobs is None else jobs,
+        after_snapshot=[],
+        requested_root=root,
+        source="vault",
+        request_id=request_id,
+        index_state=cast("dict[str, object]", _canonical_searched([])["index_state"]),
+        port=8766,
+        canonical_evidence=evidence,
+    )
+
+
+def _assert_stable_failure_envelope(
+    envelope: dict[str, object],
+    *,
+    error: str,
+    retryable: bool,
+    request_id: str,
+    status: int,
+) -> None:
+    assert envelope["error"] == error
+    assert envelope["retryable"] is retryable
+    assert envelope["request_id"] == request_id
+    assert isinstance(envelope["remediation"], str)
+    assert envelope["remediation"]
+    assert "results" not in envelope
+    assert _search_response_status(envelope) == status
+    assert _search_response_status(envelope) != 429
+    readiness = cast("dict[str, object]", envelope["readiness"])
+    sources = cast("list[dict[str, object]]", readiness["sources"])
+    aggregate = cast("dict[str, object]", readiness["aggregate"])
+    assert len(sources) == 1
+    assert sources[0]["waits"] == []
+    assert isinstance(sources[0]["evidence"], list)
+    assert (
+        len(cast("list[object]", sources[0]["evidence"])) <= MAX_SEARCH_EVIDENCE_ITEMS
+    )
+    assert aggregate["source_count"] == 1
+    assert aggregate["absence_authority"] == "non_authoritative"
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected"),
+    [
+        (
+            CanonicalSearchEvidence(rebuild_required=True),
+            ("rebuild", "rebuild_required", False, 409),
+        ),
+        (
+            CanonicalSearchEvidence(capacity_refused=True),
+            ("incremental", "capacity_limited", True, 503),
+        ),
+    ],
+    ids=["rebuild-required", "capacity-limited"],
+)
+def test_canonical_classifier_builds_stable_admission_failure_envelope(
+    tmp_path: Path,
+    evidence: CanonicalSearchEvidence,
+    expected: tuple[str, str, bool, int],
+) -> None:
+    mode, error, retryable, status = expected
+    root = (tmp_path / "project").resolve()
+    request_id = f"{error}-request"
+
+    classification = classify_search_response(
+        {"results": []},
+        _availability_context(
+            root,
+            evidence=evidence,
+            jobs=[_matching_index_job(root, mode=mode)],
+            request_id=request_id,
+        ),
+    )
+
+    _assert_stable_failure_envelope(
+        classification.response,
+        error=error,
+        retryable=retryable,
+        request_id=request_id,
+        status=status,
+    )
+
+
+def test_collection_disappearance_builds_stable_unavailable_envelope(
+    tmp_path: Path,
+) -> None:
+    request_id = "collection-disappearance-request"
+    missing = UnexpectedResponse(
+        404,
+        "Not Found",
+        b'{"status":{"error":"Not found: Collection `vault_docs` doesn\'t exist!"}}',
+        Headers(),
+    )
+
+    classification = classify_qdrant_collection_disappearance(
+        missing,
+        _availability_context(
+            tmp_path,
+            evidence=CanonicalSearchEvidence(),
+            request_id=request_id,
+        ),
+    )
+
+    assert classification is not None
+    assert classification.availability_cause == "collection_missing"
+    _assert_stable_failure_envelope(
+        classification.response,
+        error="index_unavailable",
+        retryable=True,
+        request_id=request_id,
+        status=503,
+    )
+
+
+def test_usable_updating_nonempty_success_preserves_results_and_readiness(
+    tmp_path: Path,
+) -> None:
+    # Removing success readiness attachment raised KeyError at the exact
+    # readiness lookup below; restoration passed without changing useful hits.
+    result: dict[str, object] = {
+        "id": "useful-prior-generation",
+        "score": 0.8,
+    }
+    classification = _classify_search_result(
+        _canonical_searched([result]),
+        _canonical_classification_facts(tmp_path, current=False, updating=True),
+    )
+
+    assert classification.status_code == 200
+    assert classification.response["results"] == [result]
+    readiness = cast("dict[str, object]", classification.response["readiness"])
+    source = cast("list[dict[str, object]]", readiness["sources"])[0]
+    assert source["availability"] == "usable"
+    assert source["freshness"] == "updating"
+    assert source["absence_authority"] == "non_authoritative"
+
+
+def test_authoritative_empty_success_carries_current_readiness(tmp_path: Path) -> None:
+    classification = _classify_search_result(
+        _canonical_searched([]),
+        _canonical_classification_facts(tmp_path, current=True),
+    )
+
+    assert classification.status_code == 200
+    assert classification.response["results"] == []
+    readiness = cast("dict[str, object]", classification.response["readiness"])
+    aggregate = cast("dict[str, object]", readiness["aggregate"])
+    assert aggregate["absence_authority"] == "authoritative"
+
+
+def test_non_authoritative_empty_is_typed_failure_without_results(
+    tmp_path: Path,
+) -> None:
+    classification = _classify_search_result(
+        _canonical_searched([]),
+        _canonical_classification_facts(tmp_path, current=False),
+    )
+
+    assert classification.status_code == 503
+    _assert_stable_failure_envelope(
+        classification.response,
+        error="index_unverifiable",
+        retryable=False,
+        request_id="canonical-envelope-request",
+        status=503,
+    )
 
 
 class TestCompletedSearchClassificationSkip:
