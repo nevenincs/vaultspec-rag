@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from tools.binaries.build_pyapp import (
+    APPLICATION_ICON,
     BINARIES,
     PROJECT_FEATURES,
     PROJECT_NAME,
@@ -32,6 +33,7 @@ from tools.binaries.build_pyapp import (
     version_from_tag,
     write_checksum,
 )
+from tools.binaries.windows_icon import parse_ico
 
 pytestmark = pytest.mark.unit
 
@@ -135,6 +137,40 @@ def test_binary_names_are_unique() -> None:
     """Two binaries sharing a name would overwrite each other in ``--outdir``."""
     names = [binary.name for binary in BINARIES]
     assert len(names) == len(set(names)), names
+
+
+def test_every_windows_binary_is_stamped_before_its_checksum() -> None:
+    """The published digest must bind the icon-bearing executable bytes."""
+    tree = ast.parse(
+        textwrap.dedent(
+            inspect.getsource(
+                __import__("tools.binaries.build_pyapp", fromlist=["main"]).main
+            )
+        )
+    )
+    loop = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "binary"
+    )
+    calls = [
+        node.func.id
+        for statement in loop.body
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+
+    assert calls.index("stamp_icon") < calls.index("write_checksum")
+    assert tuple(image.width for image in parse_ico(APPLICATION_ICON)) == (
+        256,
+        128,
+        64,
+        48,
+        32,
+        16,
+    )
 
 
 def test_project_name_matches_the_distribution_pyapp_installs(

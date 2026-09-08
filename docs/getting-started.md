@@ -2,11 +2,18 @@
 
 Index your project, search its source code, and narrow the results to a file.
 
-## Step 1: Install vaultspec-rag and download the models
+## Step 1: Prepare an inference host
 
-Open the [installation guide](installation.md) and choose "Adding it to a project."
-Work from your project root. Complete the project setup to download the models,
+This tutorial starts and uses the resident inference service in the same project
+environment. Open the [installation guide](installation.md), read
+[the installation lanes](installation.md#choose-what-this-environment-runs), and choose
+"Adding it to a project" with the `[gpu]` extra. Work from your project root. Complete
+the normal project setup to download the models, including the
+[default sparse-model access check](installation.md#the-model-cache-and-its-first-download),
 then follow "Verify the install."
+
+A base or `[mcp]` client installation is intentionally model-free and cannot perform
+this tutorial's `server start` step by itself. There is no `[rag]` extra.
 
 Once verification succeeds, return here for Step 2.
 

@@ -73,4 +73,4 @@ def test_the_pull_request_lane_runs_the_provisioning_proofs_on_windows() -> None
         for step in steps:
             assert isinstance(step, dict)
             commands.append(str(step.get("run", "")))
-    assert any("just test provisioning" in command for command in commands), commands
+    assert any("just test-provisioning" in command for command in commands), commands

@@ -509,4 +509,4 @@ def test_main_push_runs_the_prepublication_mps_gate() -> None:
     ).read_text(encoding="utf-8")
     macos_job = workflow.split("  tests-macos:", 1)[1].split("  gpu-tests:", 1)[0]
     assert "github.event_name == 'push'" in macos_job
-    assert "run: just test mps" in macos_job
+    assert "run: just test-mps" in macos_job
