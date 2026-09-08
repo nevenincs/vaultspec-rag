@@ -646,11 +646,24 @@ def _job_snapshot_stalled(job: JobSnapshot, *, now: float) -> bool:
 def _domain_job_snapshot(job: JobSnapshot, *, now: float) -> dict[str, object]:
     """Project one immutable canonical job onto the read-only status surface."""
     raw = job.to_dict()
+    spec = cast("dict[str, object]", raw["spec"])
+    resilience_generation_id = (
+        job.resilience.generation_id if job.resilience is not None else None
+    )
     return {
+        # This existing field is the job-attempt generation. Publication
+        # consumers must use durable generation evidence instead.
         "generation": job.attempt.number,
         "job_id": job.id,
+        "job_revision": job.revision,
         "state": job.state.value,
+        "controller_state": None,
         "desired_state": job.desired_state.value,
+        "requested_mode": spec["requested_mode"],
+        "effective_mode": spec["effective_mode"],
+        "generation_evidence": {
+            "resilience_generation_id": resilience_generation_id,
+        },
         "attempt": {
             "number": job.attempt.number,
             "parent_job_id": raw["parent_job_id"],
