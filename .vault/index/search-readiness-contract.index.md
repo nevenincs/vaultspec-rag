@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:f9e846b8ad6b37fc75a556f3fb65022754237faa17ca86bba3398d5623b82159'
+body_hash: 'sha256:bedb0e7597f0fe1a4a9db1be65dcf912c5f42ac41bd359503596ebe7ffbe42e5'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -56,6 +56,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W03-P09-S38]]'
   - '[[2026-09-08-search-readiness-contract-W03-P09-S39]]'
   - '[[2026-09-08-search-readiness-contract-W03-P09-S40]]'
+  - '[[2026-09-08-search-readiness-contract-W03-P09-summary]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -122,6 +123,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W03-P09-S38` - Preserve canonical JSON and render concise human readiness wait identifiers code and remediation
 - `2026-09-08-search-readiness-contract-W03-P09-S39` - Prove JSON parity policy validation updating success typed failure wait cause and identifier bounds
 - `2026-09-08-search-readiness-contract-W03-P09-S40` - Prove fallback and timeout safety never recreate adapter readiness diagnosis
+- `2026-09-08-search-readiness-contract-W03-P09-summary` - `search-readiness-contract` `W03.P09` summary
 
 ### plan
 
