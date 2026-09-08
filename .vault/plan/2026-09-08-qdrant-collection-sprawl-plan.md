@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:3e9ef0463d95d7e3797858111d695e75e38894d256a225c54a196751dfa7f9dd'
+body_hash: 'sha256:4660586e121c7e8bb90daa568fa13290aab4a54cf33d9a0f68ba5ce5af505c37'
 ---
 
 # `qdrant-collection-sprawl` plan
@@ -59,12 +59,12 @@ Delivers the two prerequisites without which no retention change executes: a rea
 - [x] `P01.S06` - Widen the active-index-job probe guard to catch the qdrant client transport failures; `src/vaultspec_rag/storage_reclamation.py`.
 - [x] `P01.S07` - Add a guard test proving a snapshot read timeout marks that namespace failed and the cycle continues to the next candidate; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
 - [x] `P01.S08` - Add a guard test proving a re-count read timeout defers the namespace rather than aborting the cycle; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
-- [ ] `P01.S27` - Widen the survey-time point-count guard so a transport timeout leaves that collection uncounted rather than unwinding the survey and the cycle with it; `src/vaultspec_rag/storage_survey_ops.py`.
-- [ ] `P01.S28` - Carry an uncountable collection through the survey as unverifiable rather than as zero points, so a failed count cannot mis-tier a data-bearing namespace as empty; `src/vaultspec_rag/storage_survey_ops.py`.
-- [ ] `P01.S29` - Guard the collection enumeration in the pre-drop re-count so a transport timeout yields an unverifiable count instead of escaping; `src/vaultspec_rag/storage_reclamation.py`.
-- [ ] `P01.S30` - Return an unverifiable result from the active-index-job probe so a registry read failure defers the namespace instead of reporting no job busy; `src/vaultspec_rag/storage_reclamation.py`.
-- [ ] `P01.S31` - Add a guard test proving a survey-time transport timeout leaves the maintenance cycle running and the namespace unreclaimed; `src/vaultspec_rag/tests/test_storage_survey.py`.
-- [ ] `P01.S32` - Add a guard test proving an unverifiable active-job probe defers the namespace rather than authorising the drop; `src/vaultspec_rag/tests/test_storage_safety.py`.
+- [x] `P01.S27` - Widen the survey-time point-count guard so a transport timeout leaves that collection uncounted rather than unwinding the survey and the cycle with it; `src/vaultspec_rag/storage_survey_ops.py`.
+- [x] `P01.S28` - Carry an uncountable collection through the survey as unverifiable rather than as zero points, so a failed count cannot mis-tier a data-bearing namespace as empty; `src/vaultspec_rag/storage_survey_ops.py`.
+- [x] `P01.S29` - Guard the collection enumeration in the pre-drop re-count so a transport timeout yields an unverifiable count instead of escaping; `src/vaultspec_rag/storage_reclamation.py`.
+- [x] `P01.S30` - Return an unverifiable result from the active-index-job probe so a registry read failure defers the namespace instead of reporting no job busy; `src/vaultspec_rag/storage_reclamation.py`.
+- [x] `P01.S31` - Add a guard test proving a survey-time transport timeout leaves the maintenance cycle running and the namespace unreclaimed; `src/vaultspec_rag/tests/test_storage_survey.py`.
+- [x] `P01.S32` - Add a guard test proving an unverifiable active-job probe defers the namespace rather than authorising the drop; `src/vaultspec_rag/tests/test_storage_safety.py`.
 
 ### Phase `P02` - discriminate retention by namespace class
 
