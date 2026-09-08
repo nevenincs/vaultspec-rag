@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:edef6b7519dd53872acfdab211702564615853c4af38fb40148c9899f8103216'
+body_hash: 'sha256:931f841978f5b70c98d93843f141f34227db9bc678652ee638fcd981c1840135'
 related:
   - "[[2026-09-08-incremental-publication-cost-research]]"
   - "[[2026-09-08-incremental-publication-cost-reference]]"
@@ -33,6 +33,8 @@ and `2026-09-08-incremental-publication-cost-reference`.
   storage-confirmed mutations; it cannot cheaply rediscover arbitrary backend corruption.
 - Storage and the durable ledger lack a shared transaction, so intermediate states must
   be explicit and recoverable.
+- Live readers can straddle that transaction gap, so publication also needs a stable
+  revision fence that fails closed while mutation intent is open.
 - The accepted explicit-reindex and pointer-last generation boundaries remain stable.
 - Code, document, and vault share proof invariants but retain distinct source semantics.
 - Deterministic operation counts are the primary proportionality gate; time budgets support
@@ -58,8 +60,11 @@ retained as the exceptional verification path.
 
 ## Constraints
 
-- Proof identity includes source kind, root, backend, collection, generation, storage and
-  payload schema, embedding or chunking schema, and membership, content, and policy identity.
+- A stable compatibility key includes source kind, root, backend, collection, storage and
+  payload schema, embedding or chunking schema, and membership, content, and policy
+  identity. Publication generation identifies provenance and is not part of compatibility.
+- One bounded current proof projection exists per source, root, backend, and collection.
+  Normal reads never traverse an unbounded generation or delta chain.
 - The canonical manifest is normalized durable state. Each indexed identity carries its
   content identity and exact retained point identities or an equivalently exact relation.
 - Aggregate breadth includes exact point or chunk count and exact distinct indexed identity
@@ -67,50 +72,89 @@ retained as the exceptional verification path.
 - Each delta names its expected parent revision and complete old-to-new outcomes. Parent or
   old-evidence mismatch fails closed.
 - Add, modify, delete, rename, empty, ignored, rejected, and no-op use one delta algebra.
-  Rename is atomic remove-plus-add; no-op changes neither rows nor aggregates.
-- Proof never leads storage. A prepared or partially applied publication is uncertified and
-  must replay, finish, or return a typed unverifiable or rebuild-required outcome.
+  Modify requires changed evidence, rename is atomic remove-plus-add, and no-op changes no
+  storage, proof rows, aggregate, or revision.
+- An active generation reads its committed parent projection plus sparse local overrides
+  and deletion tombstones. Proof commit folds changed heads and aggregates atomically;
+  historical generations remain provenance, not the normal lookup structure.
+- Proof never leads storage. Reserve a parent-to-target revision before the first mutation;
+  prepare each bounded mutation unit before its store call, confirm it after acknowledgement,
+  seal complete path outcomes before destructive reconciliation, and commit only when every
+  required unit is confirmed.
+- Any open receipt makes the current proof uncertifiable for live reads. Readers acquire a
+  token containing the revision and absence of an open receipt, query storage, then validate
+  the same token. Change yields a typed transient or unverifiable result or a bounded retry.
+- Async backend writes are confirmed only after their ingest barrier. Recovery replays a
+  deterministic unit or performs an exact authorized rollback; changed source bytes cannot
+  silently alter the reserved delta.
 - Replacement proof commits before the served pointer moves; failure leaves the previous
   generation served.
 - Backend mismatch, missing ancestry, incompatible policy or schema, corrupt receipts,
   inexact legacy evidence, and unexplained drift cannot manufacture proof.
-- Only explicitly authorized rebuild, migration, recovery, or audit may perform full
-  verification.
+- Only persisted explicit rebuild, migration, or audit authority may perform full identity
+  and payload verification. Recovery may finish or roll back recorded units but does not
+  silently acquire full-scan authority.
+- Cheap serve-time integrity may compare an O(1) backend count with the proof aggregate and
+  must check pending receipts. Equal-cardinality substitution remains unverifiable until an
+  authorized exact verification.
 - Existing explicit-reindex authority, non-destructive publication, generation accounting,
   and source isolation decisions remain stable; this record refines rather than supersedes
   them.
 - Legacy consumers migrate to the canonical proof reader. Publication never dual-writes an
   independently authoritative full manifest.
+- Compatibility readers cut over atomically before producers stop legacy sidecar writes.
+- Open receipts and referenced evidence owners are retained; committed history is bounded.
+  Cleanup removes proof state before its collection, while archive and restore carry a
+  consistent proof export.
+- Code, document, and vault use one source-neutral publication coordinator with
+  source-specific adapters. Vault gains the same durable receipt and generation lifecycle.
+- Scoped routing reconciliation touches only affected identities, and scoped stat evidence
+  updates only changed keys. Full route sweeps and complete evidence rewrites require
+  explicit authority.
 - Fault-injection and architectural guard tests demonstrate their intended failure before
   restoration.
 
 ## Implementation
 
-Introduce one publication-proof owner in the durable ledger layer. It stores normalized
-per-source manifest rows, exact retained-point relations, aggregate breadth, proof identity
-and provenance, the published revision, and prepare/apply/commit receipts. Source adapters
-translate code, document, and vault outcomes into one typed delta while retaining their
+Introduce one source-neutral publication coordinator backed by the durable ledger. It owns
+the stable compatibility key, bounded current proof rows, exact retained-point relations,
+aggregates, revision tokens, provenance, and streaming mutation receipts. Code, document,
+and vault adapters translate their outcomes into the shared contract while retaining their
 classification and payload rules.
 
-For each affected identity, validate the authoritative old row and derive aggregate changes
-by subtracting old point membership and adding new point membership. Commit normalized rows
-and aggregates in one ledger transaction. Incremental generations reference unchanged parent
-state without copying it into a new full manifest.
+For each affected identity, validate the authoritative old head and derive aggregate changes
+by subtracting old point membership and adding new point membership. During an active run,
+sparse overrides and tombstones shadow the committed parent. Commit changed current heads,
+aggregates, revision, and provenance in one ledger transaction; never copy a complete parent
+manifest or retain recursive ancestry on the normal read path.
 
-Before external mutation, durably prepare a receipt containing the parent revision, exact
-delta, target identity, and deterministic mutation identities. Apply or replay storage
-mutations idempotently, record storage confirmation, then commit proof changes, aggregates,
-revision, provenance, and receipt status in one transaction. Advance final generation state
-only afterward; explicit replacement still moves the served pointer last.
+Before external mutation, durably reserve the parent and target revisions. Streaming writers
+prepare each deterministic mutation unit with its path, content, and point identities before
+the store call, then confirm it after acknowledgement and ingest barriers. Seal the complete
+delta before stale deletion. Once all units are confirmed, commit proof changes and close the
+receipt in one transaction. Advance generation state afterward; replacement still moves the
+served pointer last.
 
-Recovery resumes from receipt state: replay unapplied or partial storage mutations, commit a
-storage-confirmed proof, and advance lagging generation bookkeeping idempotently. Refuse a
-receipt bound to another backend, collection, parent revision, or policy.
+Recovery resumes from receipt and unit state: replay prepared deterministic units, confirm
+acknowledged units, commit a sealed fully confirmed proof, or perform an exact authorized
+rollback. Refuse a receipt bound to another compatibility key or parent revision. Retain open
+receipts and evidence owners through compaction, and prune committed history by a bounded
+policy only after no exposed proof references it.
+
+Fence live reads around backend access. A reader first verifies no open receipt and captures
+the current revision, reads storage, and then validates both conditions again. It retries
+within a bounded policy or returns typed transient or unverifiable state on change; it never
+accepts mixed proof and storage generations.
 
 Keep authoritative verification as a separate operation and cost class. It scans backend
 point identities and source payloads, reconstructs normalized evidence, and detects missing,
 extra, foreign, incompatible, or partial state. Only successful authorized verification may
 establish ancestry where none exists.
+
+Move proof consumers before removing legacy publication writes, including breadth, integrity,
+donor selection, generation and storage surveys, reclamation, archive, restore, and cleanup.
+Route reconciliation and stat evidence use changed-key operations during scoped work; their
+full-corpus forms remain explicit-authority operations.
 
 Report changed identities, proof rows, and backend point operations plus data-apply,
 proof-commit, pointer-publication, and writer-lease timings. Full verification additionally
@@ -118,10 +162,12 @@ reports its scanned breadth and elapsed cost.
 
 ## Rationale
 
-Normalized rows plus exact delta arithmetic are the only evaluated combination that retains
-complete hash and point-membership semantics without rediscovering or rewriting unchanged
-state. Durable receipts convert the unavoidable storage/ledger transaction gap into a
-replayable state machine rather than an ordering assumption.
+Normalized current heads plus exact delta arithmetic are the only evaluated combination that
+retains complete hash and point-membership semantics without rediscovering, recursively
+reading, or rewriting unchanged state. Streaming receipts and reader revision fences convert
+the storage/ledger transaction gap into a replayable and observable state machine rather than
+an ordering assumption; a reader cannot mistake an intermediate store image for certified
+publication.
 
 The design preserves established authority: incremental publication proves only authorized
 mutations against evidence it can validate. Untrusted ancestry requests authoritative work
