@@ -6,8 +6,9 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:3d56b5c7e2c392a00199ea5b7ba569fcc4fd7136f0be77bea2b99c7614b91556'
+body_hash: 'sha256:e5555f5f9b097312d8408e1c06d6a81147c5fc08192750eaed9e8df9345e2037'
 related:
+  - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -23,6 +24,10 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 ### adr
 
 - `2026-09-08-adaptive-watcher-control-adr` - `adaptive-watcher-control` adr: `durable adaptive automatic convergence` | (**status:** `accepted`)
+
+### exec
+
+- `2026-09-08-adaptive-watcher-control-W01-P01-S01` - Define controller state, reason, transition, measurement, scope, and snapshot models
 
 ### plan
 
