@@ -114,6 +114,8 @@ def test_source_fact_rejects_unknown_closed_vocabulary(
 def test_source_fact_rejects_authoritative_contradictions(
     mutation: Callable[[SearchSourceFact], SearchSourceFact],
 ) -> None:
+    # Proven red by temporarily inverting the production authority predicate to
+    # NON_AUTHORITATIVE: both cases fail here with DID NOT RAISE before restoration.
     with pytest.raises(
         ValueError,
         match="authoritative absence requires a usable, current source",
