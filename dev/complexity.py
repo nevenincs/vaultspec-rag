@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import argparse
 
-from dev.runner import UTF8, run
+from dev.runner import run
 
 #: The shipped package, as a repository-root-relative path.
 PACKAGE = "src/vaultspec_rag"
@@ -84,7 +84,7 @@ def gate() -> int:
         the offending blocks, but XENON's status is what propagates - a
         diagnostic must never be able to turn a red gate green.
     """
-    code = run(_uv_run("complexipy", PACKAGE), UTF8)
+    code = run(_uv_run("complexipy", PACKAGE))
     if code != 0:
         return code
 
@@ -107,7 +107,7 @@ def audit() -> int:
         0 when both scanners ran and reported only findings, otherwise the
         first non-zero status that was not a findings code.
     """
-    worst = run(_advisory(1, "complexipy", f"{PACKAGE}/tests", "--failed"), UTF8)
+    worst = run(_advisory(1, "complexipy", f"{PACKAGE}/tests", "--failed"))
     code = run(_advisory(1, "xenon", MODULE, *XENON_LIMITS, from_src=True), cwd="src")
     return worst or code
 
