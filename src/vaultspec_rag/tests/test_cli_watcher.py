@@ -216,6 +216,36 @@ def test_updates_status_forwards_controller_filters_and_renders_service_facts() 
     assert "Remediation: Wait for GPU pressure to clear." in result.output
 
 
+def test_updates_status_json_preserves_canonical_controller_envelope() -> None:
+    controller = {
+        "root": _TEST_PROJECT_ROOT,
+        "source": "vault",
+        "state": "refused",
+        "reason": "full_reindex_required",
+        "pending_count": 0,
+        "oldest_age_seconds": None,
+        "next_decision_at": None,
+        "freshness_deadline": 80.0,
+        "backpressure": [],
+        "measurement": None,
+        "last_transition": None,
+        "remediation": "Request an explicit rebuild.",
+    }
+    payload: dict[str, object] = {
+        "watch_enabled": True,
+        "watching": [],
+        "controllers": [controller],
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "updates", "status", "--json", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["data"]["controllers"] == [controller]
+
+
 def _help_command_names(output: str) -> list[str]:
     names: list[str] = []
     in_commands = False
