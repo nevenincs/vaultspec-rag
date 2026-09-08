@@ -29,6 +29,7 @@ from ...serviceclient._transport import _do_http_call
 from .._search_readiness_scenarios import (
     SEARCH_READINESS_SCENARIOS,
     SearchReadinessScenario,
+    canonical_service_envelope,
 )
 from ._service_search_diagnostics_support import (
     assert_empty_search_phase_timing,
@@ -44,36 +45,12 @@ if TYPE_CHECKING:
     from ...server._routes_search import SearchAvailabilityRequestFacts
 
 
-def _injected_domain_response(
-    scenario: SearchReadinessScenario,
-) -> dict[str, object]:
-    response: dict[str, object] = {
-        "request_id": scenario.request_id,
-        "readiness": scenario.readiness(),
-    }
-    if scenario.failure is None:
-        response["results"] = scenario.result_payloads()
-        if len(scenario.source_facts) > 1:
-            response.update({"ok": True, "partial": True, "domains": {}})
-        return response
-    response.update(
-        {
-            "ok": False,
-            "error": scenario.failure.code,
-            "message": scenario.failure.message,
-            "retryable": scenario.failure.retryable,
-            "remediation": scenario.failure.remediation,
-        }
-    )
-    return response
-
-
 @contextmanager
 def _inject_classified_domain_outcome(
     scenario: SearchReadinessScenario,
 ) -> Generator[None]:
     """Inject classification before production completion and HTTP shaping."""
-    response = _injected_domain_response(scenario)
+    response = canonical_service_envelope(scenario)
     classification = SearchResponseClassification(
         response=response,
         status_code=503 if scenario.failure is not None else 200,

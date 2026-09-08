@@ -40,7 +40,12 @@ class ScenarioResult:
     text: str
 
     def as_dict(self) -> dict[str, object]:
-        return {"source": self.source, "id": self.result_id, "text": self.text}
+        return {
+            "source": self.source,
+            "id": self.result_id,
+            "path": self.result_id,
+            "snippet": self.text,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +90,59 @@ class SearchReadinessScenario:
 
     def result_payloads(self) -> list[dict[str, object]]:
         return [result.as_dict() for result in self.results]
+
+
+def canonical_service_envelope(
+    scenario: SearchReadinessScenario,
+) -> dict[str, object]:
+    """Build service-owned canonical content without adapter rendering."""
+    envelope: dict[str, object] = {
+        "request_id": scenario.request_id,
+        "readiness": scenario.readiness(),
+    }
+    if scenario.failure is not None:
+        envelope.update(
+            {
+                "ok": False,
+                "error": scenario.failure.code,
+                "message": scenario.failure.message,
+                "retryable": scenario.failure.retryable,
+                "remediation": scenario.failure.remediation,
+            }
+        )
+        return envelope
+    envelope["results"] = scenario.result_payloads()
+    if len(scenario.source_facts) > 1:
+        results_by_source = {
+            source: sum(result.source == source for result in scenario.results)
+            for source in (fact.source for fact in scenario.source_facts)
+        }
+        domains = {
+            fact.source: {
+                "ok": fact.availability is SearchAvailability.USABLE,
+                "results_count": results_by_source[fact.source],
+                "error_kind": (
+                    None
+                    if fact.availability is SearchAvailability.USABLE
+                    else fact.reason_code
+                ),
+                "detail": (
+                    None
+                    if fact.availability is SearchAvailability.USABLE
+                    else fact.remediation
+                ),
+                "readiness": fact.as_dict(),
+            }
+            for fact in scenario.source_facts
+        }
+        envelope.update(
+            {
+                "ok": True,
+                "partial": any(not domain["ok"] for domain in domains.values()),
+                "domains": domains,
+            }
+        )
+    return envelope
 
 
 def _generation(source: IndexSource, *, current: bool) -> GenerationEvidence:
@@ -337,4 +395,5 @@ __all__ = [
     "ScenarioFailure",
     "ScenarioResult",
     "SearchReadinessScenario",
+    "canonical_service_envelope",
 ]
