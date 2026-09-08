@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:fe52dbb5b15567e97b02eccc3f5377249e78457a69779a6189e9b63115673e26'
+body_hash: 'sha256:638952c2f56b9c15128d8b4e688bec1ed67f37371c93c6cbd5c9d7711246c35f'
 related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
@@ -22,6 +22,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-W02-P04-S12]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P05-S13]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P05-S14]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P05-S15]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -59,6 +60,7 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 - `2026-09-08-adaptive-watcher-control-W02-P04-S12` - Reconcile restart, cancellation, failure, and terminal rebuild refusal without duplicate admission
 - `2026-09-08-adaptive-watcher-control-W02-P05-S13` - Add canonical controller snapshots and structured transition evidence to service state, jobs, and logs
 - `2026-09-08-adaptive-watcher-control-W02-P05-S14` - Project identical controller facts through watcher and job HTTP routes
+- `2026-09-08-adaptive-watcher-control-W02-P05-S15` - Adapt controller state and stable reasons through CLI and MCP clients
 
 ### plan
 
