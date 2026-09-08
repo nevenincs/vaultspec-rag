@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:39c4d07fb0430e7c46c979c85fb1aaea6f0bc1ceefa19f02eb83e0e0f05b7644'
+body_hash: 'sha256:13d9d3494a287a444879156ee99672c2610909ad31628dc767700ebc95bd3776'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -64,6 +64,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W03-P10-S45]]'
   - '[[2026-09-08-search-readiness-contract-W03-P10-summary]]'
   - '[[2026-09-08-search-readiness-contract-W04-P11-S46]]'
+  - '[[2026-09-08-search-readiness-contract-W04-P11-S47]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -138,6 +139,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W03-P10-S45` - Mutation-prove the MCP structured-failure preservation guard
 - `2026-09-08-search-readiness-contract-W03-P10-summary` - `search-readiness-contract` `W03.P10` summary
 - `2026-09-08-search-readiness-contract-W04-P11-S46` - Define reusable current updating unavailable unverifiable rebuild timeout capacity backend empty and mixed scenarios
+- `2026-09-08-search-readiness-contract-W04-P11-S47` - Apply the readiness scenario matrix to real HTTP responses and headers
 
 ### plan
 
