@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import http.server
+import json
 import os
 import threading
 import time
@@ -14,6 +15,7 @@ import pytest
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Mapping
 
 from ._cli_helpers import (
     DEFAULT_SEARCH_TIMEOUT_SECONDS,
@@ -31,7 +33,9 @@ pytestmark = [pytest.mark.unit]
 
 
 @contextlib.contextmanager
-def _misbehaving_service(*, stall_seconds: float = 0.0):
+def _misbehaving_service(
+    *, stall_seconds: float = 0.0, observed_paths: list[str] | None = None
+):
     """Serve a live-but-broken response, optionally after stalling.
 
     A live service that answers with something unusable is a different
@@ -42,7 +46,15 @@ def _misbehaving_service(*, stall_seconds: float = 0.0):
     body = b"<html>not the service you are looking for</html>"
 
     class _Handler(QuietHandler):
+        def do_GET(self) -> None:
+            if observed_paths is not None:
+                observed_paths.append(self.path)
+            self.send_response(503)
+            self.end_headers()
+
         def do_POST(self) -> None:
+            if observed_paths is not None:
+                observed_paths.append(self.path)
             length = int(self.headers.get("Content-Length", "0"))
             self.rfile.read(length)
             if stall_seconds:
@@ -58,6 +70,35 @@ def _misbehaving_service(*, stall_seconds: float = 0.0):
     thread.start()
     try:
         yield int(server.server_address[1])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextlib.contextmanager
+def _search_envelope_service(envelope: Mapping[str, object], *, status: int = 200):
+    """Serve one canonical JSON envelope and retain the exact request payload."""
+    requests: list[dict[str, object]] = []
+    body = json.dumps(envelope).encode()
+
+    class _Handler(QuietHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw_request: object = json.loads(self.rfile.read(length))
+            assert isinstance(raw_request, dict)
+            requests.append(typing.cast("dict[str, object]", raw_request))
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield int(server.server_address[1]), requests
     finally:
         server.shutdown()
         server.server_close()
@@ -94,6 +135,92 @@ class TestMcpFastPath:
     """Tests for MCP fast-path functions (try_http_search, _display_search_results)."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_search_transport_propagates_default_and_bounded_freshness(self) -> None:
+        success: dict[str, object] = {
+            "ok": True,
+            "results": [{"text": "canonical"}],
+        }
+        with _search_envelope_service(success) as (port, requests):
+            immediate = try_http_search("q", "code", 5, port, "/tmp/proj")
+            bounded = try_http_search(
+                "q",
+                "code",
+                5,
+                port,
+                "/tmp/proj",
+                freshness_policy="bounded",
+                freshness_wait_seconds=2.5,
+            )
+
+        assert immediate == success
+        assert bounded == success
+        # Mutation evidence: removing freshness_policy from the wire payload
+        # failed here with KeyError (exit 1); restoration passed (exit 0).
+        assert requests[0]["freshness_policy"] == "immediate"
+        assert "freshness_wait_seconds" not in requests[0]
+        assert requests[1]["freshness_policy"] == "bounded"
+        assert requests[1]["freshness_wait_seconds"] == 2.5
+
+    def test_search_transport_preserves_canonical_failure_envelope_exactly(
+        self,
+    ) -> None:
+        failure: dict[str, object] = {
+            "ok": False,
+            "error": "freshness_wait_timeout",
+            "message": "canonical service refusal",
+            "retryable": True,
+            "request_id": "request-1",
+            "readiness": {"sources": [], "aggregate": {"authoritative": False}},
+            "remediation": "wait for publication",
+        }
+        with _search_envelope_service(failure, status=503) as (port, requests):
+            result = try_http_search(
+                "q",
+                "vault",
+                5,
+                port,
+                "/tmp/proj",
+                freshness_policy="bounded",
+                freshness_wait_seconds=1.0,
+            )
+
+        # Mutation evidence: wrapping the returned service dict with a client
+        # timeout diagnosis failed this exact equality (exit 1); restoration
+        # passed (exit 0). This guards adapter ownership of the canonical body.
+        assert result == failure
+        assert requests == [
+            {
+                "query": "q",
+                "top_k": 5,
+                "project_root": "/tmp/proj",
+                "type": "vault",
+                "freshness_policy": "bounded",
+                "freshness_wait_seconds": 1.0,
+            }
+        ]
+
+    def test_search_timeout_remains_transport_only_without_diagnostic_probes(
+        self,
+    ) -> None:
+        observed_paths: list[str] = []
+        with _misbehaving_service(
+            stall_seconds=0.1, observed_paths=observed_paths
+        ) as port:
+            result = try_http_search("q", "code", 5, port, "/tmp/proj", timeout=0.01)
+
+        assert result is not None
+        assert result["ok"] is False
+        assert result["error"] == "http_call_failed"
+        # Mutation evidence: restoring the removed timeout-diagnostics branch
+        # failed on the exact error assertion above (exit 1); restoration passed
+        # (exit 0), proving the client cannot recreate readiness or retry facts.
+        assert "readiness" not in result
+        assert "retryable" not in result
+        assert "remediation" not in result
+        assert "Retry-After" not in result
+        assert "diagnostics" not in result
+        assert observed_paths == ["/search"]
 
     def test_tool_map_vault(self):
         """Connection refused on port 1 returns None, no exception."""

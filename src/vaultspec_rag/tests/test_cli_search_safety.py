@@ -123,7 +123,9 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["freshness_policy"] = "immediate"
+        assert requests == [expected]
         records = search_records(result.output)
         assert [record["number"] for record in records] == [1, 2]
         _assert_record(
@@ -164,6 +166,7 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 0, result.output
         expected = _expected_code_search_request(tmp_path, "service status")
+        expected["freshness_policy"] = "immediate"
         expected["node_type"] = "function"
         assert requests == [expected]
         assert "--node-type" not in result.output
@@ -187,6 +190,7 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 0, result.output
         expected = _expected_code_search_request(tmp_path, "service status")
+        expected["freshness_policy"] = "immediate"
         expected["prefer"] = "prod"
         assert requests == [expected]
 
@@ -203,7 +207,9 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["freshness_policy"] = "immediate"
+        assert requests == [expected]
         records = search_records(result.output)
         _assert_record(
             records[0],
@@ -265,7 +271,9 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == [_expected_code_search_request(tmp_path, "missing symbol")]
+        expected = _expected_code_search_request(tmp_path, "missing symbol")
+        expected["freshness_policy"] = "immediate"
+        assert requests == [expected]
         lines = _plain_lines(result.output)
         assert lines[0].endswith("missing symbol")
         assert lines[1].startswith("Why:")
