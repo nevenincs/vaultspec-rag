@@ -162,7 +162,7 @@ packages = ["src/vaultspec_rag"]
 #
 # The sdist deliberately keeps them: a source distribution is the artifact a
 # downstream packager runs the suite from, and there pytest is available.
-# Excluding here changes no gate - `just test python` and `just test gpu` both
+# Excluding here changes no gate - `just test-python` and `just test-gpu` both
 # run pytest against the checkout, never the installed copy.
 exclude = ["src/vaultspec_rag/tests"]
 
@@ -312,7 +312,7 @@ root = [".", "src"]
 
 # Strict-mode type checking — now GATING (the burndown reached zero on
 # 2026-06-10). `ty` remains the fast gate to run by hand; basedpyright gates in CI
-# and `just lint all`. Run via `just lint type-strict` or `just health`.
+# and `just check-all`. Run via `just check-type-strict` or `just health`.
 [tool.basedpyright]
 include = ["src/vaultspec_rag"]
 pythonVersion = "3.13"
@@ -347,7 +347,7 @@ typeCheckingMode = "strict"
 # Production only. The tree's worst score overall is 44, in a test that walks
 # the AST of every module to prove a structural invariant; that shape is
 # inherent to the guard, not debt to pay down. Tests are measured by
-# `just audit complexity` instead, which reports without failing.
+# `just audit-complexity` instead, which reports without failing.
 [tool.complexipy]
 exclude = ["**/tests/**"]
 max-complexity-allowed = 20
@@ -445,7 +445,7 @@ paths = ["src/vaultspec_rag"]
 # than a defect. They stay ENABLED and are read per finding — suppressing a
 # family wholesale would also hide the first real one.
 #
-# The test tree is excluded by the `-x` flag in the `just audit security`
+# The test tree is excluded by the `-x` flag in the `just audit-security`
 # recipe, NOT by an `exclude_dirs` key here. bandit reads `skips` from this
 # table but silently ignores `exclude_dirs` from it: configured here the scan
 # returns 320 findings, 280 of them inside the tree this was meant to exclude.

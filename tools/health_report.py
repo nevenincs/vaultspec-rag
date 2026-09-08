@@ -170,7 +170,7 @@ def report_function_limits(top: int) -> None:
     _section(
         "Function-size limits (ruff PLR091x / PLR1702 vs upstream defaults)",
         "PLR0911/0912/0913/0915 gated at upstream defaults by `just lint "
-        "python`; PLR1702 by `just lint nesting`",
+        "python`; PLR1702 by `just check-nesting`",
     )
     defaults = {
         "lint.pylint.max-args": 5,
