@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:ec67b34d5de6029d2d881b8e0a0cb374ea52ea422c29d36030a85bfc9c09f60e'
+body_hash: 'sha256:2e5669d9df004b876e301b981e827b6104b0e8c975369d3110f182b958b5cfef'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -40,6 +40,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P06-S25]]'
   - '[[2026-09-08-search-readiness-contract-W02-P06-S26]]'
   - '[[2026-09-08-search-readiness-contract-W02-P06-S27]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P06-summary]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S28]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S30]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
@@ -92,6 +93,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P06-S25` - Carry per-domain facts through route dispatch and require all-source authority for empty aggregate
 - `2026-09-08-search-readiness-contract-W02-P06-S26` - Prove partial degraded failed authoritative-empty non-authoritative-empty and omitted-domain combined outcomes
 - `2026-09-08-search-readiness-contract-W02-P06-S27` - Prove combined HTTP no longer bypasses classification or hides constituent failure
+- `2026-09-08-search-readiness-contract-W02-P06-summary` - `search-readiness-contract` `W02.P06` summary
 - `2026-09-08-search-readiness-contract-W02-P07-S28` - Record admission before blocking and expose bounded queued-request wait observations
 - `2026-09-08-search-readiness-contract-W02-P07-S30` - Preserve GPU-compute and project-lease measurements as distinct named causes without widening lock scope
 
