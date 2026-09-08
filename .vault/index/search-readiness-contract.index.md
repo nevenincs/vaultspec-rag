@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:b8efa6f893f545df8349b100d5b0700b0acbb3761f60764d31332f2930384e54'
+body_hash: 'sha256:13ba4ad2c04de313c2d58874096549f7a43febdf53ec74fba83fb00cfbfc9c29'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -45,6 +45,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P07-S29]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S30]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S31]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P07-S32]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -100,6 +101,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P07-S29` - Measure search-limiter and compute-ticket waits separately from service duration
 - `2026-09-08-search-readiness-contract-W02-P07-S30` - Preserve GPU-compute and project-lease measurements as distinct named causes without widening lock scope
 - `2026-09-08-search-readiness-contract-W02-P07-S31` - Map storage duration and refusal to storage-owned outcomes without guessing index state
+- `2026-09-08-search-readiness-contract-W02-P07-S32` - Prove queued visibility deadlines bounded history completion and cancellation cleanup
 
 ### plan
 
