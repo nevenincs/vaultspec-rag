@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:b7c3ace4ad3f7a1a173de9c38c4a6d19c717f9b78209404927ef98e7f1c65df0'
+body_hash: 'sha256:39c4d07fb0430e7c46c979c85fb1aaea6f0bc1ceefa19f02eb83e0e0f05b7644'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -63,6 +63,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W03-P10-S44]]'
   - '[[2026-09-08-search-readiness-contract-W03-P10-S45]]'
   - '[[2026-09-08-search-readiness-contract-W03-P10-summary]]'
+  - '[[2026-09-08-search-readiness-contract-W04-P11-S46]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -136,6 +137,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W03-P10-S44` - Prove MCP schemas expose bounded policy consistently for every search source
 - `2026-09-08-search-readiness-contract-W03-P10-S45` - Mutation-prove the MCP structured-failure preservation guard
 - `2026-09-08-search-readiness-contract-W03-P10-summary` - `search-readiness-contract` `W03.P10` summary
+- `2026-09-08-search-readiness-contract-W04-P11-S46` - Define reusable current updating unavailable unverifiable rebuild timeout capacity backend empty and mixed scenarios
 
 ### plan
 
