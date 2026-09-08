@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from .._operator_commands import server_jobs_command
+from .._operator_commands import (
+    IndexCommandOptions,
+    index_command,
+    server_jobs_command,
+    server_status_command,
+)
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
     AbsenceAuthority,
@@ -19,6 +24,7 @@ from .._search_state import (
     SearchAvailability,
     SearchFreshness,
     SearchSourceFact,
+    search_readiness_block,
 )
 
 if TYPE_CHECKING:
@@ -312,6 +318,33 @@ def _project_source_fact(
         and freshness is SearchFreshness.CURRENT
         else AbsenceAuthority.NON_AUTHORITATIVE
     )
+    reason_code = (
+        "capacity_limited"
+        if canonical.capacity_refused
+        else "rebuild_required"
+        if canonical.rebuild_required
+        else "index_unavailable"
+        if canonical.collection_present is False
+        else "index_updating"
+        if matches
+        else "index_unverifiable"
+        if not current
+        else None
+    )
+    remediation = (
+        index_command(
+            context.source,
+            IndexCommandOptions(rebuild=True, port=context.port),
+        )
+        if reason_code == "rebuild_required"
+        else server_status_command(context.port, verbose=True)
+        if reason_code == "index_unverifiable"
+        else server_jobs_command(context.port, index=context.source)
+        if matches or reason_code == "capacity_limited"
+        else index_command(context.source, IndexCommandOptions(port=context.port))
+        if reason_code == "index_unavailable"
+        else None
+    )
     return SearchSourceFact(
         source=context.source,
         availability=availability,
@@ -324,20 +357,13 @@ def _project_source_fact(
             desired_revision=canonical.desired_revision,
         ),
         evidence=tuple(match.id for match in matches[:MAX_SEARCH_EVIDENCE_ITEMS]),
-        reason_code=(
-            "capacity_limited"
-            if canonical.capacity_refused
-            else "rebuild_required"
-            if canonical.rebuild_required
-            else "index_unavailable"
-            if canonical.collection_present is False
-            else "index_updating"
-            if matches
-            else "index_unverifiable"
-            if not current
-            else None
+        reason_code=reason_code,
+        retryable=(
+            canonical.capacity_refused
+            or canonical.collection_present is False
+            or bool(matches)
         ),
-        retryable=canonical.capacity_refused or bool(matches),
+        remediation=remediation,
     )
 
 
@@ -347,15 +373,22 @@ def _build_index_unavailable_response(
     matching_jobs: Sequence[MatchingIndexJobReference],
     matching_jobs_truncated: bool,
     rebuilding: bool,
+    source_fact: SearchSourceFact,
 ) -> dict[str, object]:
-    """Build the exact failure body from the classification's own evidence."""
+    """Build a canonical failure body from the classification's source fact."""
     response_index_state: dict[str, object] = {
         "source": context.index_state["source"],
         "indexed_count": context.index_state["indexed_count"],
         "indexed_target_root": context.index_state["indexed_target_root"],
         "requested_target_root": context.index_state["requested_target_root"],
         "target_matches": context.index_state["target_matches"],
-        "status": "rebuilding" if rebuilding else "updating",
+        "status": (
+            "unavailable"
+            if context.canonical_evidence.collection_present is False
+            else "rebuilding"
+            if rebuilding
+            else "updating"
+        ),
         "matching_jobs": [job.to_dict() for job in matching_jobs],
         "matching_jobs_truncated": matching_jobs_truncated,
     }
@@ -365,19 +398,28 @@ def _build_index_unavailable_response(
     integrity = context.index_state.get("index_integrity")
     if integrity is not None:
         response_index_state["index_integrity"] = integrity
+    error = (
+        source_fact.reason_code
+        if source_fact.reason_code in {"capacity_limited", "rebuild_required"}
+        else "index_unavailable"
+    )
+    state = (
+        "unavailable"
+        if context.canonical_evidence.collection_present is False
+        else "changing"
+    )
     return {
         "ok": False,
-        "error": "index_unavailable",
+        "error": error,
         "message": (
-            f"The {context.source} index for {context.requested_root} is changing; "
+            f"The {context.source} index for {context.requested_root} is {state}; "
             "this empty search cannot establish that no matches exist."
         ),
         "request_id": context.request_id,
         "index_state": response_index_state,
-        "remediation": [
-            server_jobs_command(context.port, index=context.source),
-            "Retry the search after the matching index job reaches a terminal state.",
-        ],
+        "retryable": source_fact.retryable,
+        "readiness": search_readiness_block((source_fact,)),
+        "remediation": source_fact.remediation,
     }
 
 
@@ -426,9 +468,19 @@ def classify_qdrant_collection_disappearance(
         {"results": []},
         disappearance_context,
     )
-    if classification.status_code != 503:
-        return None
-    return replace(classification, availability_cause="collection_missing")
+    response = _build_index_unavailable_response(
+        disappearance_context,
+        matching_jobs=classification.matching_jobs,
+        matching_jobs_truncated=classification.matching_jobs_truncated,
+        rebuilding=classification.rebuilding,
+        source_fact=classification.source_fact,
+    )
+    return replace(
+        classification,
+        response=response,
+        status_code=503,
+        availability_cause="collection_missing",
+    )
 
 
 def classify_search_response(
@@ -461,6 +513,7 @@ def classify_search_response(
             matching_jobs=matching_jobs,
             matching_jobs_truncated=matching_jobs_truncated,
             rebuilding=rebuilding,
+            source_fact=source_fact,
         )
         return SearchResponseClassification(
             response=response,
