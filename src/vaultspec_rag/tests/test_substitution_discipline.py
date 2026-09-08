@@ -53,6 +53,15 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "every run, which the suite's mirror-the-installed-binary design "
         "exists to avoid",
     ),
+    "test_document_index_escalation.py": (
+        1,
+        "not a substitute for production behaviour but a tripwire: the "
+        "replacement only ever fails the test, so it cannot make a "
+        "regressed path pass, which is the risk this guard exists for. A "
+        "call that must never happen is not observable from outside the "
+        "object, and asserting on side effects instead would pass when an "
+        "escalation left the store coincidentally unchanged",
+    ),
     "test_embeddings_dependencies.py": (
         3,
         "the two package-absence paths must be exercised without uninstalling "
