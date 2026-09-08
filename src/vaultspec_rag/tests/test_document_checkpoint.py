@@ -18,6 +18,7 @@ file to green. Re-run that mutation before loosening any assertion below.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
@@ -172,6 +173,14 @@ def test_record_confirmed_deletion_is_idempotent_and_clears_the_indexed_state(
     assert checkpoint.record_confirmed_deletion("docs/a.md", ("removed-1",)) is False
 
     assert checkpoint.current_files() == {}
+    with sqlite3.connect(checkpoint.ledger.path) as connection:
+        assert connection.execute(
+            """
+            SELECT 1 FROM file_state_tombstones
+            WHERE generation_id = ? AND rel_path = ?
+            """,
+            (checkpoint.generation_id, "docs/a.md"),
+        ).fetchone() == (1,)
 
 
 def test_record_confirmed_stale_deletion_keeps_the_path_indexed(
